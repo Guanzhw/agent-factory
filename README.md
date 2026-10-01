@@ -56,3 +56,5 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 ## Remaining acceptance
 
 The production temporary-plan policy, department identity/connection provisioning and approved model budget are unresolved. Live ORX needs approved binary provenance and output fixtures. Remote compute providers and actual remote execution are not connected. Arbitrary untrusted code needs separate OS tenant isolation/egress enforcement; the local fixed-program sandbox is not that boundary. Guarded schedule hard-process restart/stale-lease takeover, autonomous failure observation, material archive/import, administrative review separation, backups and capacity benchmarks remain tracked work. Target single-server profiles are 32 cores/64 GB or 54 cores/192 GB; neither has been load-tested. Twenty users does not imply twenty concurrent workers.
+
+Plan approval is configurable with a conservative production administrator-review default. The real UI supports review requests and administrative decisions; see [plan policy and tested boundaries](docs/PLAN_POLICY.md). Live identity/model/ORX acceptance remains separate.

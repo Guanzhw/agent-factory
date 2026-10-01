@@ -1,4 +1,4 @@
-import type { ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
+import type { PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
@@ -63,6 +63,11 @@ export const api = {
   publish: (material: FactoryMaterial) => request<FactoryMaterial>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST'),
   plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
   instantiate,
+  planAuthorization: (id: string, signal?: AbortSignal) => request<PlanAuthorization>(`/plans/${segment(id)}/authorization`, 'GET', undefined, signal),
+  inspectPlanReview: (id: string, signal?: AbortSignal) => request<PlanReview>(`/plan-reviews/${segment(id)}`, 'GET', undefined, signal),
+  requestPlanReview: (planId: string, requestId: string) => request<PlanReview>('/plan-reviews', 'POST', { planId, requestId }),
+  planReviews: (allOwners = false, signal?: AbortSignal) => request<PlanReview[]>(`/plan-reviews?allOwners=${allOwners}`, 'GET', undefined, signal),
+  decidePlanReview: (id: string, approved: boolean, requestId: string) => request<PlanReview>(`/plan-reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
   jobs: (signal?: AbortSignal) => request<FactoryJob[]>('/jobs', 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),
   cancel: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/cancel`, 'POST'),

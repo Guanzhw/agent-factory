@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
 
@@ -20,6 +21,7 @@ from .runtime import build_runtime
 from .resources import PersistentResourceService
 from .resource_api import resource_router
 from .store import Store
+from .plan_policy import PolicyName, PlanPolicyConfig, PlanPolicyService, persisted_ancestor_guard, plan_policy_router
 from .scheduling import SchedulingService
 from .scheduling_api import scheduling_router
 
@@ -57,9 +59,14 @@ def create_app(settings=None):
     delegation = DelegationService(settings, store, auth, bridge)
     delegation.initialize()
     store.delegation = delegation
+    policy = PlanPolicyService(store, auth, PlanPolicyConfig(
+        name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
+        review_ttl_seconds=settings.plan_review_ttl_seconds), ancestor_guard=persisted_ancestor_guard(store))
+    store.plan_policy = policy
     schedules = SchedulingService(settings, store, native_db, auth, bridge)
     schedules.initialize()
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
+    base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
@@ -105,7 +112,7 @@ def create_app(settings=None):
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     native.add_middleware(NativeIngress)
     bridge.attach(native)
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules}
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy}
     return CookieBridge(native, settings)
 
 

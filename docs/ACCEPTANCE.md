@@ -6,7 +6,7 @@ The target is complete factory/v0.3 functionality. This is a verified stage; pro
 |---|---|
 | Selected native platform | Agno 3.1.0 fixed upstream revision, eight critical installed files matched; exact native HTTP/queue/auth regression passed |
 | Material library | Six kinds, version/digest, manager create/publish and transitive preflight implemented; archive/import governance pending |
-| Callable factory / FR16 | Bounded natural-language goal to approved material proposal, preflight and immutable temporary instance implemented in demo; production policy unset |
+| Callable factory / FR16 | Bounded natural-language goal to approved material proposal, preflight and immutable temporary instances and configurable exact-plan review implemented; conservative production admin-review default, live adapters still blocked |
 | Snapshot/durability | One registered executor, native queue recovery after hard kill; old plan preserved across newer publication; no upstream fork/nested loop |
 | Second application | Actual-input checksum through same factory/executor, tested; frontend prioritizes Auto-Research |
 | Identity/access | Native managed roles/directory, same-token revoke/disable, current tool checks, owner-only plan/job/artifact; production identity provisioning pending |
@@ -24,3 +24,7 @@ The target is complete factory/v0.3 functionality. This is a verified stage; pro
 The 32-core/64-GB and 54-core/192-GB single-server profiles are capacity targets, not measured benchmarks. The initial native concurrency cap is two. Current fact/inspection calls bypass the model queue.
 
 The mapped actual-backend contract coverage and explicit remote handoff/replay gaps are recorded in [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md). Controlled native cancellation tests prove query-schema compatibility and cancellation intent, not external process cleanup.
+
+## Configurable plan-review stage
+
+See [PLAN_POLICY.md](PLAN_POLICY.md) for current native-authority checks, exact-plan review bindings, expiry/revision withdrawal, delegated approval inheritance and real owner/admin browser evidence. Production defaults conservatively to administrator review; selecting a policy does not enable a live model or remove production preflight restrictions.

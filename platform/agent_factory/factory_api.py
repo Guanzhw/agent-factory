@@ -219,7 +219,8 @@ class FactoryAPI:
         def plan_create(body: PlanRequest, request: Request):
             user = self.user(request)
             fields = body.model_dump(exclude={"requestId"})
-            return self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application))
+            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application))
+            return {**plan, "authorization": self.store.plan_policy.status(user["id"], plan)}
 
         @router.post("/instances", status_code=202)
         async def instantiate(body: InstanceRequest, request: Request):
@@ -230,6 +231,7 @@ class FactoryAPI:
                 raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
             if plan["status"] != "ready":
                 raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
+            self.store.require_plan_execution(user["id"], plan)
             task, fresh = self.store.reserve_task(plan, body.requestId)
             if fresh:
                 try:

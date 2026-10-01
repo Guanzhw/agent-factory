@@ -34,6 +34,8 @@ class Store:
         self.auth: Any = None
         self.delegation: Any = None
         self.native_db: Any = None
+        self.plan_policy: Any = None
+        self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
 
@@ -194,7 +196,9 @@ class Store:
         if task["owner_id"] != ctx.user_id or task["plan_id"] != envelope.get("plan_ref"):
             raise InputCheckError("Run identity does not match trusted task binding")
         self.accept(task["id"], ctx.run_id)
-        return self.resolve_run(ctx)
+        plan = self.resolve_run(ctx)
+        self.require_plan_execution(ctx.user_id, plan, run_context=ctx)
+        return plan
 
     def resolve_run(self, ctx):
         task = self.task(ctx.run_id)
@@ -206,6 +210,10 @@ class Store:
     def authorize_tool(self, ctx, name):
         plan = self.resolve_run(ctx)
         self.require_current_policy()
+        if self.plan_policy is not None:
+            self.plan_policy.require_context_tool(ctx, name)
+        for guard in self.execution_guards.values():
+            guard(ctx.user_id, plan, ctx, name)
         if self.auth is None:
             raise PermissionError("Native authorization unavailable")
         self.auth.require(ctx.user_id, "run")
@@ -217,8 +225,24 @@ class Store:
         return plan
 
     def require_current_policy(self):
-        if not self.settings.demo or self.settings.temporary_policy != "bounded-synthetic":
-            raise HTTPException(409, "POLICY_UNSET: current execution policy has no approved live adapter")
+        # Configuration only: per-plan review is checked separately. Keeping this
+        # boundary nonrecursive permits persisted ancestor mandate verification.
+        if self.settings.temporary_policy == "unset":
+            raise HTTPException(409, "POLICY_UNSET: current execution policy denies execution")
+        if self.plan_policy is not None:
+            if self.plan_policy.current()["name"] == "unset":
+                raise HTTPException(409, "POLICY_UNSET: current execution policy denies execution")
+        elif not self.settings.demo or self.settings.temporary_policy != "bounded-synthetic":
+            raise HTTPException(409, "POLICY_UNSET: plan policy service is unavailable")
+
+    def require_plan_execution(self, owner, plan, *, run_context=None):
+        self.require_current_policy()
+        if self.auth is not None:
+            self.auth.require(owner, "run")
+        if self.plan_policy is not None:
+            self.plan_policy.require_execution(owner, self.plan(plan["id"], owner), run_context=run_context)
+        for guard in self.execution_guards.values():
+            guard(owner, plan, run_context, None)
 
     def event(self, identifier, event_type, message, data=None):
         task = self.task(identifier)

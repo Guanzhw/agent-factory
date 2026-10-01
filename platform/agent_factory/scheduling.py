@@ -82,6 +82,7 @@ class SchedulingService:
         plan = self.store.plan(plan_id, owner)
         if plan["status"] != "ready" or plan.get("delegation"):
             raise HTTPException(409, "Schedule requires a ready, top-level immutable plan")
+        self.store.require_plan_execution(owner, plan)
         return plan
 
     def _bound(self, schedule_id: str, owner: str) -> tuple[Schedule, dict[str, Any]]:

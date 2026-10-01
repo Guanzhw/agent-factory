@@ -28,8 +28,16 @@ Screenshots/logs/SQL/runtime state remain ignored local artifacts. The committed
 
 Agno upstream revision is ab1d6007f09163c3adadbe06f998dc481b77a09a. ORX source is f336b121525d99364e2dee4fe90b2784894a54e6 (declares 0.2.13); installed 0.2.10 was not updated or treated as compatible. ORX contract tests execute controlled subprocess fixtures; no actual literature search, paid model, autonomous scientific result, remote lifecycle/provider execution, deployment or new external access was performed.
 
-Stock native queue hard-process recovery was tested; that does not establish full guarded scheduling adapter restart or concurrent stale-lease takeover. Actual remote adapter evidence covers metadata only; lifecycle recovery uses explicit synthetic transports. Production temporary-plan approval, identity provisioning, approved provider/model budget, exact ORX binary attestation, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
+Stock native queue hard-process recovery was tested; that does not establish full guarded scheduling adapter restart or concurrent stale-lease takeover. Actual remote adapter evidence covers metadata only; lifecycle recovery uses explicit synthetic transports. Final production policy selection, identity provisioning, approved provider/model budget, exact ORX binary attestation, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
 
 ## Backend contract extension
 
 See [actual backend contracts](BACKEND_CONTRACTS.md) for the mapped subset of independent draft PR #8, committed-ACK-loss and process-restart acceptance, native cancellation Query compatibility and remaining complete v0.3 boundaries. The actual browser ACK-loss recovery task was 72964902-5a49-4c6e-a85d-4d4b94fd2413: one POST, one receipt GET, one native acceptance, one artifact and explicitly synthetic evidence. Exact-head CI is recorded with each draft update.
+
+## Configurable plan-review checkpoint
+
+The complete staged backend suite passed all 107 tests with actual PostgreSQL enabled in 59.058 seconds, including 18 new plan-policy cases. This invocation loaded only tracked/staged test modules and excluded an independent remote adapter still under development. Ruff and Pyright passed; frontend lint/typecheck, eight client tests and production build passed.
+
+The real isolated browser owner/admin workflow refused self-approval (403) and unreviewed admission (409), retained one review after repeated submission, then completed one native execution with one POST and one artifact. A second workflow denied a plan, kept execution disabled with zero tasks, explicitly created a new review and recovered after administrator approval. Desktop review scope was visually inspected; its initially narrow grid was corrected and rechecked. Administrator and owner 390px pages stayed within viewport width. Prior evidence is retained when current authority is withdrawn. See [plan policy](PLAN_POLICY.md) for tested configuration, expiry and ancestor boundaries.
+
+This checkpoint adds configurable approval with a conservative production default; it does not authorize a live provider or production identities. Exact remote SHA/CI is verified after each publication and recorded in the draft PR.

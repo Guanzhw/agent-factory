@@ -377,7 +377,7 @@ class DelegationService:
                 "cancelRequested": task["cancel_requested"], "unknown": unknown, "failed": failed, "pending": not stopped, "stopped": stopped}
 
     async def children(self, owner: str, parentid: str) -> list[dict[str, Any]]:
-        self.auth.require(owner, "run")
+        self.auth.require(owner, "read")
         parent = self.store.task(parentid, owner)
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE parent_id=:parent ORDER BY created_at", parent=parent["id"])
         return [await self._linked_facts(owner, link) for link in links]
@@ -390,7 +390,7 @@ class DelegationService:
         return {**await self._facts(self.store.task(link["child_id"], owner)), "link": link}
 
     async def inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
-        self.auth.require(owner, "run")
+        self.auth.require(owner, "read")
         parent = self.store.task(parentid, owner)
         children = [await self._linked_facts(owner, link) for link in self._descendants(parent["id"])]
         parent_facts = await self._facts(parent)

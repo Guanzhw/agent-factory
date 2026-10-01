@@ -12,6 +12,7 @@ export interface Plan {
   missing: string[];
   status: 'ready' | 'blocked';
   createdAt: string;
+  authorization?: PlanAuthorization;
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
@@ -125,4 +126,18 @@ export function pendingApproval(detail: JobDetail): PendingApproval | undefined 
   if (job.approval && job.requirementId && typeof job.approvalVersion === 'number') {
     return { id: job.requirementId, version: job.approvalVersion, scope: job.approval.scope };
   }
+}
+
+export interface PlanAuthorization {
+  executionAllowed: boolean; reviewRequired: boolean; code?: string; message?: string;
+  policy: { name: string; revision: string; fingerprint: string; review_ttl_seconds: number };
+  nativeToolConfirmationSeparate: boolean;
+}
+export interface PlanReview {
+  id: string; ownerId: string; planId: string; planDigest: string; planFingerprint: string;
+  policyRevision: string; expiresAt: string; expired: boolean; currentPolicy: boolean;
+  planIntegrityMatches?: boolean;
+  decision: 'pending' | 'approved' | 'denied'; approvalEffective: boolean; reviewerId: string | null;
+  planSummary?: { normalizedGoal?: string; application?: string; mode?: string; tools?: string[];
+    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[] };
 }

@@ -35,7 +35,7 @@ class NativeBridge:
     async def _request(self, method: str, path: str, user_id: str, **kwargs: Any) -> dict[str, Any]:
         if self._app is None:
             raise RuntimeError("Native HTTP application has not been attached")
-        self.auth.require(user_id, "run")
+        self.auth.require(user_id, "read" if method == "GET" else "run")
         headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.auth._issue_native_token(user_id)}"}
         trusted_context = INTERNAL_NATIVE.set(True)
         try:
@@ -94,7 +94,7 @@ class NativeBridge:
         Queue commit can precede the session's accepted-run row. Read the native
         ticket first, without replaying submission or changing native queue state.
         """
-        self.auth.require(user_id, "run")
+        self.auth.require(user_id, "read")
         try:
             engine = self.native_db.db_engine
             table_name = self.native_db.job_table_name

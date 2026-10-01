@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import secrets
+import re
 
 
 @dataclass
@@ -19,7 +20,9 @@ class Settings:
     experiment_timeout_seconds: int = 8
     experiment_output_bytes: int = 65536
     workspace: Path = field(default_factory=lambda: Path(".local"))
-    temporary_policy: str = "bounded-synthetic"
+    temporary_policy: str | None = None
+    policy_revision: str = "plan-policy-v1"
+    plan_review_ttl_seconds: int = 3600
     port: int = 3100
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
@@ -31,10 +34,16 @@ class Settings:
             self.jwt_key = secrets.token_urlsafe(48)
         if not 1 <= self.max_workers <= 4:
             raise ValueError("Worker concurrency must be 1–4 until a capacity benchmark is approved")
-        if self.temporary_policy not in {"bounded-synthetic", "unset"}:
-            raise ValueError("Unsupported temporary-plan policy; keep unset until implemented and reviewed")
-        if not self.demo and self.temporary_policy != "unset":
-            raise ValueError("Production temporary-plan policy is not implemented; use unset")
+        if self.temporary_policy is None:
+            self.temporary_policy = "bounded-synthetic" if self.demo else "admin-review"
+        if self.temporary_policy not in {"bounded-synthetic", "unset", "admin-review", "read-only-auto"}:
+            raise ValueError("Unsupported temporary-plan policy")
+        if not self.demo and self.temporary_policy == "bounded-synthetic":
+            raise ValueError("The synthetic temporary-plan policy is restricted to demo mode")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.policy_revision):
+            raise ValueError("Policy revision must be a bounded identifier")
+        if not 60 <= self.plan_review_ttl_seconds <= 86400:
+            raise ValueError("Plan review TTL must be 60 through 86400 seconds")
 
     @property
     def runtime_directory(self) -> Path:
@@ -49,10 +58,12 @@ class Settings:
         key = os.getenv("FACTORY_JWT_KEY", "")
         if not demo and len(key) < 32:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 characters)")
-        policy = os.getenv("FACTORY_TEMPORARY_POLICY", "bounded-synthetic" if demo else "unset")
+        policy = os.getenv("FACTORY_TEMPORARY_POLICY", "bounded-synthetic" if demo else "admin-review")
         if not demo and policy == "bounded-synthetic":
             raise ValueError("The synthetic temporary-plan policy is restricted to demo mode")
         return cls(db_url=url, demo=demo, jwt_key=key or secrets.token_urlsafe(48),
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
-                   temporary_policy=policy, max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
+                   temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "plan-policy-v1"),
+                   plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
+                   max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))
