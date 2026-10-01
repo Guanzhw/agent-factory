@@ -58,7 +58,7 @@ or arbitrary command. Raw native executor/schedule ingress stays blocked.
 
 ## Evidence and limits
 
-Twenty adapter tests and eight product HTTP tests passed against two actual
+Adapter and product HTTP tests passed against two actual
 Factory apps, separate generated PostgreSQL databases, native authentication,
 queue/HITL and deterministic models. They cover concurrency, exact identities,
 lost delivery/reply/cancel acknowledgement, current revocation, child-tree scope,
@@ -73,3 +73,14 @@ and literature sources are still synthetic. Local HTTP proves this composed
 product boundary; it does not prove external-host TLS, distributed credentials,
 multi-host process restart, hostile-code isolation or real scientific results.
 No host/cloud provisioning, access grant, paid model or deployment is performed.
+
+## Cancellation delivery window
+
+Persisted origin cancellation may be observed before the receiver cancel POST.
+Only a trusted callback signal bound to the exact original owner/task/manifest,
+after original target/configuration validation, carries cancellation semantics.
+Receiver lifecycle and native tool hooks stop this existing work without false
+failure provenance. Wrong signal bindings fail closed. Current revocation or
+policy failure remains a failed application outcome. A read-only downgraded owner
+can retain exact native facts while trusted cleanup completes, but cannot answer,
+dispatch or cancel through execution-authorized user routes.

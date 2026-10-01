@@ -48,3 +48,16 @@ Those deployments require approved native coordination and authoritative remote
 stop receipts; no signal acknowledgement alone is stop proof. Monitoring/export
 of observer error counters remains operational follow-up; no full production
 availability/load guarantee is claimed.
+
+## Trusted remote cancellation provenance
+
+The origin persists its cancellation before sending the receiver cancel request.
+A trusted current-origin callback can observe that intent during this delivery
+window. Its native cancellation signal is bound to the original owner, task and
+immutable manifest after target/configuration validation; the receiver checks the
+same binding. Earlier protected failure is not converted to user cancellation.
+This signal stops existing work and grants no execution. Observer, compute and
+native hooks preserve cancellation without creating false failure events.
+Arbitrary permission denials, actual revocation and expiry retain failure reasons.
+Deterministic native tests force observation before receiver request delivery for
+both a paused descendant tree and an active experiment.

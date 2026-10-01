@@ -155,6 +155,29 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                                                             old.identity_map, old.headers, transport,
                                                             configuration_revision=old.configuration_revision)
 
+    def cancel_with_observation_before_receiver_delivery(self, origin_id, remote_id, descendants=()):
+        """Force the real origin-intent/receiver-delivery race on every host."""
+        original = self.handoff._request
+        observations = []
+
+        async def observe_before_delivery(owner, target, method, path, **kwargs):
+            if method == "POST" and path.endswith("/cancel") and not observations:
+                self.assertTrue(self.origin["store"].task(origin_id, owner)["cancel_requested"])
+                # Native cleanup runs on the receiver's actual lifespan loop,
+                # before this controlled ASGI request reaches its cancel route.
+                observed = self.receiver_client.portal.call(self.receiver["lifecycle_observer"].observe_root, remote_id)
+                observations.append(observed)
+                self.assertEqual(observed["errors"], [], observed)
+                for identifier in (remote_id, *descendants):
+                    self.assertTrue(self.receiver["store"].task(identifier)["cancel_requested"])
+                    self.assertFalse(self.receiver["store"].failure_cleanup_requested(identifier))
+                self.assertFalse(self.receiver["store"].has_failures(remote_id))
+            return await original(owner, target, method, path, **kwargs)
+
+        with mock.patch.object(self.handoff, "_request", side_effect=observe_before_delivery):
+            self.request("POST", f'/jobs/{origin_id}/cancel')
+        self.assertEqual(len(observations), 1)
+
     def test_01_trusted_target_discovery_and_rejected_user_connection(self):
         self.assertIs(self.origin["store"].remote_execution.client, self.handoff)
         self.assertIsNotNone(self.receiver["handoff_receiver"])
@@ -260,7 +283,9 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         foreign_remote_id = self.placement(foreign["id"])["body"]["receipt"]["remoteTaskId"]
         self.request("GET", f'/jobs/{root["id"]}~{foreign_remote_id}', expected=404)
         self.request("GET", "/jobs/" + child_id, owner="bob", expected=404)
-        self.request("POST", f'/jobs/{root["id"]}/cancel')
+        remote_root_id = self.placement(root["id"])["body"]["receipt"]["remoteTaskId"]
+        remote_child_id = child_id.split("~", 1)[1]
+        self.cancel_with_observation_before_receiver_delivery(root["id"], remote_root_id, (remote_child_id,))
         stopped = self.wait(root["id"], {"canceled", "failed", "unknown"})
         self.assertEqual(stopped["job"]["status"], "canceled", stopped)
         self.assertTrue(stopped["snapshot"]["delegation"]["allStopped"])
@@ -352,7 +377,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
             time.sleep(.02)
         else:
             self.fail("Actual fixed receiver experiment process did not start")
-        self.request("POST", f'/jobs/{job["id"]}/cancel')
+        self.cancel_with_observation_before_receiver_delivery(job["id"], remote_id)
         stopped = self.wait(job["id"], {"canceled", "failed", "unknown"})
         self.assertEqual(stopped["job"]["status"], "canceled", stopped)
         self.assertTrue(stopped["snapshot"]["delegation"]["allStopped"])
@@ -360,6 +385,8 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertTrue(any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete")
                             for event in stopped["events"]))
         self.assertFalse(any(event["type"] == "experiment_completed" for event in stopped["events"]))
+        self.assertFalse(self.receiver["store"].has_failures(remote_id), "Explicit trusted cancellation must not create failure provenance")
+        self.assertFalse(self.receiver["store"].failure_cleanup_requested(remote_id))
         self.assertEqual(self.ticket_count(self.origin), 0)
 
     def test_09_remote_event_pages_preserve_receiver_stream_and_current_read_scope(self):

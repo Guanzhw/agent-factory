@@ -29,7 +29,7 @@ from agent_factory.config import Settings
 from agent_factory.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory.remote_handoff import (
-    HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
+    HandoffCancellationRequested, HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
 )
 from agent_factory.runtime import build_runtime
 from agent_factory.store import digest
@@ -495,16 +495,27 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.remote_settings.temporary_policy = "unset"
         result = self.call(self.handoff.cancel, "alice", row["task_id"])
         self.assertTrue(self.origin["store"].task(row["task_id"])["cancel_requested"])
-        self.assertIn(child["childTask"]["id"], result["requested"])
+        # The autonomous observer may already have issued the child's native
+        # cancel. Current durable intent and positive whole-tree stop are the
+        # contract; this request's newly-signaled subset depends on timing.
+        for identifier in (receipt["remoteTaskId"], child["childTask"]["id"]):
+            self.assertTrue(self.remote["store"].task(identifier, "bob")["cancel_requested"])
+        self.assertEqual(result["errors"], [])
         deadline = time.monotonic() + 15
         observed = {}
         while time.monotonic() < deadline:
             observed = self.call(self.handoff.receipt, "alice", row["task_id"])
-            if observed["allStopped"]:
+            if observed["allStopped"] and all(self.remote["store"].task(identifier, "bob")["terminal"]
+                    for identifier in (receipt["remoteTaskId"], child["childTask"]["id"])):
                 break
             time.sleep(.03)
         self.assertTrue(observed["allStopped"], observed)
         self.assertEqual(observed["applicationStatus"], "canceled")
+        for identifier in (receipt["remoteTaskId"], child["childTask"]["id"]):
+            task = self.remote["store"].task(identifier, "bob")
+            self.assertTrue(task["cancel_requested"])
+            self.assertTrue(task["terminal"])
+            self.assertEqual(self.remote["store"].native_db.get_job(task["run_id"], strict=True)["status"], "cancelled")
         effects = self.remote["store"].effects(receipt["remoteTaskId"])
         self.assertEqual([effect["status"] for effect in effects], ["CANCELLED"])
         self.assertTrue(any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete") for event in self.remote["store"].events(receipt["remoteTaskId"])))
@@ -548,6 +559,8 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.call(self.handoff.prepare, "alice", row["task_id"])
         receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
         self.wait_native(receipt, {"paused"})
+        before_artifacts = self.remote["store"].artifacts(receipt["remoteTaskId"])
+        before_effects = self.remote["store"].effects(receipt["remoteTaskId"])
         for state, owner in ((self.origin, "alice"), (self.remote, "bob")):
             state["auth"].authorization.define_role("fixture-handoff-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
             state["auth"].authorization.unassign(owner, "factory-user")
@@ -556,7 +569,11 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             observed = self.call(self.handoff.receipt, "alice", row["task_id"])
             self.assertEqual(observed["remoteRunId"], receipt["remoteRunId"])
             detail = self.call(self.handoff.detail, "alice", row["task_id"])
-            self.assertEqual(detail["job"]["status"], "waiting_input")
+            self.assertIn(detail["job"]["status"], {"waiting_input", "canceling", "failed"})
+            snapshot = detail["snapshot"].get("run", detail["snapshot"])
+            self.assertTrue(snapshot["readOnly"])
+            self.assertEqual(snapshot["run_id"], receipt["remoteRunId"])
+            self.assertEqual(snapshot["session_id"], receipt["remoteTaskId"])
             self.assertEqual(self.call(self.handoff.children, "alice", row["task_id"]), [])
             with self.assertRaises(HTTPException) as cannot_cancel:
                 self.call(self.handoff.cancel, "alice", row["task_id"])
@@ -564,6 +581,26 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as cannot_dispatch:
                 self.call(self.handoff.dispatch, "alice", row["task_id"])
             self.assertEqual(cannot_dispatch.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as cannot_answer:
+                self.call(self.handoff.answer, "alice", row["task_id"],
+                          {"questionId": "fixture-denied", "version": 1, "answer": "No new execution grant"})
+            self.assertEqual(cannot_answer.exception.status_code, 403)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                observed = self.call(self.handoff.receipt, "alice", row["task_id"])
+                detail = self.call(self.handoff.detail, "alice", row["task_id"])
+                if observed["allStopped"] and detail["job"]["status"] == "failed" and self.remote["store"].task(receipt["remoteTaskId"], "bob")["terminal"]:
+                    break
+                time.sleep(.03)
+            self.assertTrue(observed["allStopped"], observed)
+            self.assertEqual(detail["job"]["status"], "failed", detail)
+            self.assertTrue(self.remote["store"].task(receipt["remoteTaskId"], "bob")["cancel_requested"])
+            self.assertTrue(self.remote["store"].task(receipt["remoteTaskId"], "bob")["terminal"])
+            self.assertTrue(self.origin["store"].task(row["task_id"], "alice")["terminal"])
+            self.assertEqual(self.remote["store"].artifacts(receipt["remoteTaskId"]), before_artifacts)
+            self.assertEqual(self.remote["store"].effects(receipt["remoteTaskId"]), before_effects)
+            self.assertEqual(self.ticket_count(self.remote, receipt["remoteTaskId"]), 1)
+            self.assertEqual(self.ticket_count(self.origin), 0)
         finally:
             for state, owner in ((self.origin, "alice"), (self.remote, "bob")):
                 state["auth"].authorization.unassign(owner, "fixture-handoff-reader")
@@ -639,6 +676,130 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertTrue(task["cancel_requested"])
         self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), 0)
 
+
+    def test_21_misbound_trusted_cancel_denies_native_continuation_without_touching_other_run(self):
+        row = self.reserve()
+        self.call(self.handoff.prepare, "alice", row["task_id"])
+        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+        self.wait_native(receipt, {"paused"})
+        foreign = self.reserve()
+        self.call(self.handoff.prepare, "alice", foreign["task_id"])
+        foreign_receipt = self.call(self.handoff.dispatch, "alice", foreign["task_id"])
+        self.wait_native(foreign_receipt, {"paused"})
+        detail = self.call(self.handoff.detail, "alice", row["task_id"])
+        question = detail["job"]["questionDetail"]
+        body = {"questionId": question["id"], "version": question["version"],
+                "answer": "Controlled native continuation must remain denied"}
+        identifiers = (receipt["remoteTaskId"], foreign_receipt["remoteTaskId"])
+        before = {identifier: {"effects": self.remote["store"].effects(identifier),
+                               "artifacts": self.remote["store"].artifacts(identifier)} for identifier in identifiers}
+        ticket_count = self.ticket_count(self.remote)
+        original = self.receiver.origins["origin-fixture"]
+        wired = self.remote["lifecycle_observer"]
+        # A denial itself authorizes cleanup of the exact bound current run.
+        # Stop this fixture's autonomous observer to isolate the rejected HTTP
+        # action and prove the misbound signal cannot target either native run.
+        self.call_remote(wired.stop)
+        try:
+            for mutation in ("owner", "task", "manifest"):
+                def misbound(owner, task_id, manifest_hash, tool):
+                    if task_id != row["task_id"]:
+                        return original.authorize(owner, task_id, manifest_hash, tool)
+                    raise HandoffCancellationRequested(
+                        "bob" if mutation == "owner" else owner,
+                        foreign["task_id"] if mutation == "task" else task_id,
+                        "0" * 64 if mutation == "manifest" else manifest_hash)
+                self.receiver.origins["origin-fixture"] = TrustedOrigin(original.reference, original.identity_map, misbound)
+                with self.subTest(mutation=mutation), mock.patch("agent_factory.lifecycle_observer.Agent.acancel_run") as signal:
+                    with self.assertRaises(HTTPException) as denied:
+                        self.call(self.handoff.answer, "alice", row["task_id"], body)
+                    self.assertEqual(denied.exception.status_code, 403)
+                    signal.assert_not_called()
+                    for identifier in identifiers:
+                        task = self.remote["store"].task(identifier, "bob")
+                        self.assertFalse(task["cancel_requested"])
+                        self.assertFalse(task["terminal"])
+                        self.assertEqual(self.remote["store"].native_db.get_job(task["run_id"], strict=True)["status"], "paused")
+                        self.assertEqual(self.remote["store"].effects(identifier), before[identifier]["effects"])
+                        self.assertEqual(self.remote["store"].artifacts(identifier), before[identifier]["artifacts"])
+                    self.assertEqual(self.ticket_count(self.remote), ticket_count)
+                    self.assertFalse(self.origin["store"].task(row["task_id"], "alice")["terminal"])
+                    self.assertFalse(self.origin["store"].task(foreign["task_id"], "alice")["terminal"])
+        finally:
+            self.receiver.origins["origin-fixture"] = original
+            self.call_remote(wired.start)
+
+    def test_22_late_origin_cancel_at_native_recheck_returns_public_409_without_dispatch_or_continuation(self):
+        wired = self.remote["lifecycle_observer"]
+        self.call_remote(wired.stop)
+        try:
+            for stage in ("prepare", "dispatch", "answer", "children"):
+                with self.subTest(stage=stage):
+                    row = self.reserve()
+                    prepared = None
+                    if stage != "prepare":
+                        prepared = self.call(self.handoff.prepare, "alice", row["task_id"])
+                    if stage in {"answer", "children"}:
+                        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+                        native = self.wait_native(receipt, {"paused"})
+                        detail = self.call(self.handoff.detail, "alice", row["task_id"])
+                        task = self.remote["store"].task(receipt["remoteTaskId"], "bob")
+                    before_tickets = self.ticket_count(self.remote)
+                    entered = []
+                    original = self.remote["store"].require_plan_execution
+
+                    def cancel_at_recheck(owner, plan, *, run_context=None):
+                        entered.append(plan["id"])
+                        self.origin["store"].request_cancel(row["task_id"])
+                        return original(owner, plan, run_context=run_context)
+
+                    if stage in {"prepare", "dispatch"}:
+                        def cancel_at_admission(owner, plan):
+                            return cancel_at_recheck(owner, plan)
+                        patch = mock.patch.object(self.receiver, "admission_guard", side_effect=cancel_at_admission)
+                    else:
+                        patch = mock.patch.object(self.remote["store"], "require_plan_execution", side_effect=cancel_at_recheck)
+                    path = "/api/factory/remote-handoffs"
+                    if stage == "prepare":
+                        body = self.body(row).model_dump(mode="json")
+                        path += "/prepare"
+                    else:
+                        path += "/" + prepared["id"] + "/" + stage
+                        if stage == "answer":
+                            question = detail["job"]["questionDetail"]
+                            body = {"questionId": question["id"], "version": question["version"], "answer": "Controlled canceled scope"}
+                        elif stage == "children":
+                            body = {"goal": "sort", "mode": "literature", "requestId": str(uuid4())}
+                        else:
+                            body = {}
+                    # The first public origin check succeeds. Cancellation is
+                    # committed only inside the subsequent installed native
+                    # plan/admission guard. The HTTP route must contain it.
+                    with patch:
+                        response = self.remote_client.post(path, headers=self.headers(self.remote, "bob"), json=body)
+                    self.assertEqual(response.status_code, 409, response.text)
+                    self.assertEqual(len(entered), 1)
+                    self.assertIn("cancellation", response.json()["message"])
+                    self.assertEqual(self.ticket_count(self.remote), before_tickets)
+                    records = self.remote["store"].sql("SELECT * FROM af_remote_handoffs WHERE origin_task=:id", id=row["task_id"])
+                    self.assertEqual(len(records), 1)
+                    record = records[0]
+                    if stage == "prepare":
+                        self.assertEqual(record["state"], "PREPARING")
+                        self.assertIsNone(record["body"]["remoteTaskId"])
+                    elif stage == "dispatch":
+                        self.assertEqual(record["state"], "PREPARED")
+                        self.assertIsNone(self.remote["store"].task(prepared["remoteTaskId"], "bob")["run_id"])
+                    else:
+                        unchanged = self.remote["store"].native_db.get_job(task["run_id"], strict=True)
+                        self.assertEqual(unchanged["status"], "paused")
+                        self.assertEqual(unchanged["attempt"], native["attempt"])
+                        self.assertFalse(self.remote["store"].task(task["id"], "bob")["terminal"])
+                        self.assertEqual(self.remote["store"].effects(task["id"]), [])
+                        self.assertEqual(self.remote["store"].artifacts(task["id"]), [])
+                        self.assertEqual(self.remote["store"].sql("SELECT * FROM af_delegation_links WHERE root_id=:id", id=task["id"]), [])
+        finally:
+            self.call_remote(wired.start)
 
 if __name__ == "__main__":
     unittest.main()

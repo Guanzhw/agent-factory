@@ -117,6 +117,10 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
                 if authority_check is not None and time.monotonic() >= next_authority_check:
                     try:
                         authority_check()
+                    except RunCancelledException:
+                        # An exact trusted origin cancellation is already a
+                        # native stop signal, not a new authority failure.
+                        raise
                     except Exception as error:
                         store.event(ctx.run_id, 'protected_denied', 'Current authority ended during owned compute; stopping this process', {'tool': 'run_experiment'})
                         raise RunCancelledException('Current task authority ended during owned compute') from error

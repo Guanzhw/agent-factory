@@ -24,6 +24,8 @@ def build_runtime(settings, store, native_db):
         try:
             store.authorize_tool(run_context, fc.function.name)
             service.consume_tool_budget(run_context, fc.call_id, fc.function.name)
+        except RunCancelledException:
+            raise
         except Exception as error:
             store.event(run_context.run_id, "protected_denied", "Shared durable tool budget or current authority denied execution", {"tool": fc.function.name})
             # Native tool pre-hooks stop only on AgentRunException subclasses.
@@ -40,7 +42,7 @@ def build_runtime(settings, store, native_db):
             store.event(run_context.run_id, 'plan_bound', 'Native run bound to immutable plan snapshot', {'planId':plan['id'],'fingerprint':plan['fingerprint'],'modelId':model.id})
             if store.cancellation_requested(run_context.run_id):
                 raise InputCheckError('Factory cancellation requested before execution')
-        except InputCheckError:
+        except (InputCheckError, RunCancelledException):
             raise
         except Exception as error:
             # Agno swallows ordinary pre-hook exceptions. Its native guardrail
@@ -66,12 +68,16 @@ def build_runtime(settings, store, native_db):
             if store.cancellation_requested(run_context.run_id):
                 raise RunCancelledException('Factory cancellation requested before tool execution')
             store.authorize_tool(run_context, function_name)
+        except RunCancelledException:
+            raise
         except BaseException as error:
             store.event(run_context.run_id, 'protected_denied', 'Protected tool denied by current authority or cancellation', {'tool':function_name,'error':str(error)})
             raise
         try:
             result = function_call(**arguments)
             return await result if inspect.isawaitable(result) else result
+        except RunCancelledException:
+            raise
         except BaseException as error:
             store.event(run_context.run_id, 'tool_failed', 'Native protected tool did not establish successful domain evidence', {'tool':function_name,'error':str(error)})
             raise

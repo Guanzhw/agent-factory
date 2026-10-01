@@ -3,7 +3,7 @@
 This optional adapter never accepts a user URL, bearer credential, native
 session_state, or native run payload. Preparation reserves metadata only. A
 durable UNKNOWN boundary precedes native submission; recovery is a ticket read.
-Default application registration and remote UI forwarding are separate work.
+Main registration and UI routing remain optional; no target is installed by default.
 """
 from __future__ import annotations
 
@@ -16,7 +16,9 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 from uuid import UUID, uuid4
 
+from agno.exceptions import RunCancelledException
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.routing import APIRoute
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
@@ -31,6 +33,32 @@ PLAN_KEYS = {"id", "ownerId", "normalizedGoal", "mode", "application", "instruct
              "materialRefs", "materials", "capabilities", "missing", "status", "createdAt", "policy", "budget",
              "syntheticFixture", "fingerprint"}
 REQUEST = re.compile(r"^[a-zA-Z0-9_.:-]{8,100}$")
+
+
+class HandoffCancellationRequested(RunCancelledException):
+    """Trusted cleanup signal; never a grant, receipt, or request-body field."""
+    def __init__(self, owner: str, task_id: str, manifest_hash: str):
+        super().__init__("Origin cancellation requested for this immutable handoff")
+        self.owner, self.task_id, self.manifest_hash = owner, task_id, manifest_hash
+
+
+class FactoryPublicRoute(APIRoute):
+    """Translate late validated cleanup signals only at Factory HTTP ingress.
+
+    Native AgentOS routes and background guards retain RunCancelledException.
+    A signal for a different binding is rejected by _authority before reaching
+    this boundary. No request body can construct or install a trusted signal.
+    """
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def scoped(request: Request):
+            try:
+                return await handler(request)
+            except HandoffCancellationRequested as error:
+                raise HTTPException(409, "Origin cancellation ended this immutable handoff") from error
+
+        return scoped
 
 
 @dataclass(frozen=True)
@@ -162,7 +190,7 @@ class PreparedHandoffService:
                  *, admission_guard: Callable[[str, Any], Any] | None = None):
         self.store, self.auth, self.bridge, self.origins = store, auth, bridge, dict(origins)
         self.admission_guard = admission_guard or store.require_plan_execution
-        self.router = APIRouter(prefix="/api/factory/remote-handoffs")
+        self.router = APIRouter(prefix="/api/factory/remote-handoffs", route_class=FactoryPublicRoute)
         self._installed = False
         self.initialize()
         self._routes()
@@ -184,7 +212,7 @@ class PreparedHandoffService:
         return origin
 
     def _authority(self, origin: TrustedOrigin, owner: str, task_id: str, manifest_hash: str,
-                   plan: Mapping[str, Any], tool: str | None = None) -> None:
+                   plan: Mapping[str, Any], tool: str | None = None, *, native: bool = False) -> None:
         try:
             current = origin.authorize(owner, task_id, manifest_hash, tool)
             if not isinstance(current, HandoffAuthority):
@@ -200,6 +228,12 @@ class PreparedHandoffService:
                     raise PermissionError("Current origin/receiver budget intersection denies the manifest")
             if tool is not None and tool not in current.tools & origin.tools:
                 raise PermissionError("Current origin denies this protected tool")
+        except HandoffCancellationRequested as error:
+            if (error.owner, error.task_id, error.manifest_hash) != (owner, task_id, manifest_hash):
+                raise HTTPException(403, "Origin cancellation signal differs from this handoff binding") from error
+            if native:
+                raise  # This exact trusted intent ends execution; it grants no work.
+            raise HTTPException(409, "Origin cancellation ended this immutable handoff") from error
         except HTTPException:
             raise
         except Exception as error:
@@ -233,13 +267,13 @@ class PreparedHandoffService:
         return rows[0]
 
     def _check_row(self, row: Mapping[str, Any], owner: str, *, tool: str | None = None,
-                   execution: bool = True) -> dict[str, Any]:
+                   execution: bool = True, native: bool = False) -> dict[str, Any]:
         origin = self._origin(owner, row["origin_ref"], row["origin_owner"], execution=execution)
         if row["configuration_hash"] != origin.fingerprint:
             raise HTTPException(409, "Trusted origin configuration changed; handoff cannot be replayed")
         source = row["body"]["manifest"]["plan"]
         if execution:
-            self._authority(origin, row["origin_owner"], row["origin_task"], row["manifest_hash"], source, tool)
+            self._authority(origin, row["origin_owner"], row["origin_task"], row["manifest_hash"], source, tool, native=native)
         return source
 
     def prepare(self, remote_owner: str, body: PrepareBody) -> dict[str, Any]:
@@ -491,7 +525,7 @@ class PreparedHandoffService:
         row = self._row(binding["receiptId"], context.user_id)
         if row["body"].get("remoteTaskId") != root["id"] or row["body"]["remotePlan"] != plan or row["state"] not in {"UNKNOWN", "ACCEPTED"}:
             raise PermissionError("Remote handoff task/plan/dispatch binding is unavailable")
-        self._check_row(row, context.user_id, tool=tool)
+        self._check_row(row, context.user_id, tool=tool, native=True)
 
     def install_guard(self) -> None:
         if self._installed:
@@ -503,7 +537,7 @@ class PreparedHandoffService:
                 row = self._row(plan["remoteHandoff"]["receiptId"], owner)
                 if self.store.plan(plan["id"], owner) != row["body"]["remotePlan"]:
                     raise PermissionError("Imported admission plan differs from its trusted receiver manifest")
-                self._check_row(row, owner)
+                self._check_row(row, owner, native=True)
 
         self.store.execution_guards["remote_receiver"] = guard
         self._installed = True
@@ -852,10 +886,18 @@ class TrustedHandoffClient:
 
     def authority_callback(self, owner: str, task_id: str, manifest_hash: str, tool: str | None) -> HandoffAuthority:
         row = self._row(owner, task_id)
-        self._target(owner, row)
         if row["manifest_hash"] != manifest_hash:
             raise PermissionError("Origin immutable manifest changed")
-        plan = self.store.plan(self.store.task(task_id, owner)["plan_id"], owner)
+        # Validate owner, initial target/configuration, absence of a local run,
+        # and the persisted immutable manifest before interpreting cleanup.
+        # A public cancel commits at the origin before its receiver POST. That
+        # gap must stop receiver work as cancellation, not manufacture failure.
+        self._target(owner, row, execution=False)
+        task = self.store.task(task_id, owner)
+        if task["cancel_requested"] and not self.store.failure_cleanup_requested(task_id) and not self.store.has_failures(task_id):
+            raise HandoffCancellationRequested(owner, task_id, manifest_hash)
+        self._target(owner, row)
+        plan = self.store.plan(task["plan_id"], owner)
         if tool is not None and tool not in plan["tools"]:
             raise PermissionError("Origin plan denies this protected tool")
         return HandoffAuthority(frozenset(plan["capabilities"]), frozenset(plan["tools"]),

@@ -125,3 +125,29 @@ Staged publication scanning found no known credential/private-path/runtime-file
 findings. Runtime state, screenshots/logs and temporary databases remain ignored.
 Exact remote commit/CI verification is recorded in the draft PR after publication;
 no merge, exposure, paid model, cloud provisioning or production grant is implied.
+
+## Final remote cancellation publication checkpoint
+
+The final complete backend suite passed **all 202 tests in 191.763 seconds**,
+with actual PostgreSQL, official clean-stop dump/restore and exact ORX binary
+opt-ins enabled; no cases were skipped. Complete Ruff and Pyright passed.
+Frontend source was unchanged after its thirteen client tests, lint/typecheck,
+production build and browser checks. The staged fix scan found no known
+credential/private-path/runtime-file findings.
+
+The first publication CI exposed a real remote cancellation classification race:
+origin intent was visible before receiver request delivery and was treated as a
+generic authority failure. An exact trusted owner/task/manifest cancellation
+signal now preserves cancellation through receiver guards, lifecycle observation,
+active compute and native hooks. Genuine revocation/expiry retains failure
+provenance. Factory-only HTTP route boundaries return409 for cancellation during
+later native rechecks; native worker guards retain the native stop signal.
+
+Thirty-two focused actual native remote tests passed, including forced delivery
+windows for paused descendants/active compute, wrong owner/task/manifest signals
+rejected403 without touching either native run or capacity, and four late public
+admission/continuation/delegation checks rejected409 without new effects.
+Read-only downgraded owners retain exact facts while positive cleanup converges;
+new execution remains denied. Eleven observer regressions also passed. Earlier
+failed publication logs remain ignored local diagnostic evidence. Exact final
+remote SHA and its CI are checked after publication and recorded in the draft PR.

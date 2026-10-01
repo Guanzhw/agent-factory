@@ -20,6 +20,8 @@ from agno.agent import Agent
 from agno.db.base import SessionType
 from fastapi import HTTPException
 
+from .remote_handoff import HandoffCancellationRequested
+
 
 TERMINAL = {"completed", "cancelled", "failed"}
 
@@ -126,6 +128,8 @@ class FactoryLifecycleObserver:
                     guard(task["owner_id"], plan, context, None)
             else:
                 self.store.require_plan_execution(task["owner_id"], plan, run_context=context if ticket else None)
+        except HandoffCancellationRequested:
+            return "cancel-requested"
         except HTTPException as error:
             if error.status_code in {403, 409}:
                 return "current-authority-ended"

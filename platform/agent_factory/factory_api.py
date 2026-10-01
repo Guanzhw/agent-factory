@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from .catalog import create_plan
 from .delegation import application_group_status
+from .remote_handoff import FactoryPublicRoute
 from .store import canonical
 
 
@@ -108,7 +109,7 @@ class FactoryAPI:
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
         self.remote = getattr(store, "remote_execution", None)
-        self.router = APIRouter(prefix="/api/factory")
+        self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
     def user(self, request, action="run"):
