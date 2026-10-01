@@ -30,12 +30,14 @@ npm run dev:web
 
 | Milestone | Acceptance | Current status |
 |---|---|---|
-| M1 | Safe project directory, public MIT repo, pinned install, lint/typecheck/tests/build, local startup and capability preflight | Foundation implemented; see verification record |
-| M2 | Material catalog, composition, versioned definitions, manager/user roles, credentials/data bindings, durable jobs/scheduling/events/cancel/artifacts/audit | Planned, awaiting reuse-first platform decision |
+| M1 | Safe project directory, public MIT repo, pinned install, checks/startup/browser capability preflight, complete design traceability and reuse selection | Environment passed; design gate pending; see verification record |
+| M2 | Material catalog, callable composition, reviewed natural-language assembly (FR16), versioned definitions, roles/bindings, durable jobs/scheduling/events/cancel/artifacts/audit | Planned, awaiting reuse-first platform decision |
 | M3 | Auto-Research literature and executable experiments, real OpenCode integration, narrow ORX tools, approval/evidence/report frontends | Planned; live models need explicit budget approval |
 | M4 | Recovery, security/isolation, complete browser workflows, deployment and operational acceptance | Planned |
 
 See [acceptance matrix](docs/ACCEPTANCE.md), [architecture](docs/ARCHITECTURE.md), [integration contracts](docs/INTEGRATIONS.md) and [security assumptions](docs/SECURITY.md).
+
+[Environment verification](docs/VERIFICATION.md) is complete. This does not close the architecture/design gate or claim the full platform is delivered.
 
 ## Integration status
 
