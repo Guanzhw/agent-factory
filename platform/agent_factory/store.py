@@ -162,6 +162,16 @@ class Store:
             raise HTTPException(404, "Task not found")
         return rows[0]
 
+    def task_for_request(self, request_id, owner):
+        # Recovery is a read of the original owner-bound intent, never admission.
+        if not request_id or len(request_id) > 200:
+            raise HTTPException(404, "Request receipt not found")
+        rows = self.sql("SELECT * FROM af_tasks WHERE owner_id=:owner AND request_id=:request",
+                        owner=owner, request=request_id)
+        if not rows:
+            raise HTTPException(404, "Request receipt not found; admission remains unresolved")
+        return rows[0]
+
     def tasks(self, owner):
         return self.sql("SELECT * FROM af_tasks WHERE owner_id=:owner ORDER BY body->>'createdAt' DESC LIMIT 100", owner=owner)
 

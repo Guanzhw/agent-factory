@@ -4,9 +4,9 @@ Verified locally on 2026-10-01 with Windows, Python 3.14.3, Node 26.5.1, Agno 3.
 
 ## Checks
 
-- Frontend lint/typecheck, four HTTP client contract tests and production Vite build passed.
+- Frontend lint/typecheck, eight HTTP client contract tests and production Vite build passed.
 - Python Ruff and Pyright passed with zero errors.
-- The complete opt-in suite exercises native runtime/auth, actual PostgreSQL API/queue/delegation/schedules, dependency preflight and narrow adapter contracts. All 80 tests passed locally in 37.950 seconds with PostgreSQL enabled. Exact commit CI is recorded in the draft PR after publication.
+- The complete opt-in suite exercises native runtime/auth, actual PostgreSQL API/queue/delegation/schedules, dependency preflight and narrow adapter contracts. The initial stage passed 80 tests. The expanded stage passed all 89 tests with PostgreSQL enabled, including five real TCP acceptance cases and four actual native cancellation-contract regressions. Exact commit CI is recorded in the draft PR after publication.
 - Official npm registry audit found zero vulnerabilities. The user's configured mirror has no audit endpoint; the audit used a command-scoped official registry override without changing global configuration.
 - CI is configured for frontend/Python on Windows and Ubuntu plus isolated PostgreSQL integration on Ubuntu. Actions, dependencies and PostgreSQL image are pinned. PostgreSQL fixtures create only randomly named loopback databases; intentional UNKNOWN facts are retained during each test and never discharged to make quota tests pass.
 
@@ -29,3 +29,7 @@ Screenshots/logs/SQL/runtime state remain ignored local artifacts. The committed
 Agno upstream revision is ab1d6007f09163c3adadbe06f998dc481b77a09a. ORX source is f336b121525d99364e2dee4fe90b2784894a54e6 (declares 0.2.13); installed 0.2.10 was not updated or treated as compatible. ORX contract tests execute controlled subprocess fixtures; no actual literature search, paid model, autonomous scientific result, remote lifecycle/provider execution, deployment or new external access was performed.
 
 Stock native queue hard-process recovery was tested; that does not establish full guarded scheduling adapter restart or concurrent stale-lease takeover. Actual remote adapter evidence covers metadata only; lifecycle recovery uses explicit synthetic transports. Production temporary-plan approval, identity provisioning, approved provider/model budget, exact ORX binary attestation, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
+
+## Backend contract extension
+
+See [actual backend contracts](BACKEND_CONTRACTS.md) for the mapped subset of independent draft PR #8, committed-ACK-loss and process-restart acceptance, native cancellation Query compatibility and remaining complete v0.3 boundaries. The actual browser ACK-loss recovery task was 72964902-5a49-4c6e-a85d-4d4b94fd2413: one POST, one receipt GET, one native acceptance, one artifact and explicitly synthetic evidence. Exact-head CI is recorded with each draft update.

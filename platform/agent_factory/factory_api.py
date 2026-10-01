@@ -246,6 +246,16 @@ class FactoryAPI:
                     self.store.admission_unknown(task["id"])
             return (await self.detail(self.store.task(task["id"], user["id"]))) ["job"]
 
+        @router.get("/requests/{request_id}")
+        def request_receipt(request_id: str, request: Request):
+            user = self.user(request)
+            task = self.store.task_for_request(request_id, user["id"])
+            # Do not invoke detail/reconciliation: this lookup cannot submit,
+            # continue, cancel, emit events or release a reservation.
+            return {"requestId": request_id, "taskId": task["id"], "planId": task["plan_id"],
+                    "runId": task["run_id"], "admission": task["admission"],
+                    "outcomeSource": "persisted_factory_intent"}
+
         @router.get("/jobs")
         async def jobs(request: Request):
             user = self.user(request)

@@ -149,7 +149,7 @@ class NativeAgnoHTTP:
 
     async def cancel(self, owner: str, lease: dict) -> dict:
         return await self.request(owner, "POST", self.run_path(lease["remoteRunId"]) + "/cancel",
-                                  data={"session_id": lease["remoteSessionId"]})
+                                  params={"session_id": lease["remoteSessionId"]})
 
 
 class PersistentResourceService:

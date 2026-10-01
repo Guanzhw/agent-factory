@@ -32,6 +32,26 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
   return data as T;
 }
 const segment = encodeURIComponent;
+async function instantiate(planId: string, requestId: string): Promise<FactoryJob> {
+  try {
+    const job = await request<FactoryJob>('/instances', 'POST', { planId, requestId });
+    if (typeof job?.id !== 'string' || job.planId !== planId) throw new ApiError('创建回执不完整，请核对原请求。', 202, 'INVALID_RESPONSE');
+    return job;
+  } catch (error) {
+    const ambiguous = error instanceof TypeError || error instanceof ApiError &&
+      (error.status === 0 || error.status === 408 || error.status >= 500 || error.code === 'INVALID_RESPONSE');
+    if (ambiguous) {
+      try {
+        const receipt = await request<{ requestId: string; planId: string; taskId: string }>(`/requests/${segment(requestId)}`);
+        if (receipt.requestId !== requestId || receipt.planId !== planId || typeof receipt.taskId !== 'string') throw error;
+        const detail = await request<JobDetail>(`/jobs/${segment(receipt.taskId)}`);
+        if (detail.job.id !== receipt.taskId || detail.job.planId !== planId) throw error;
+        return detail.job;
+      } catch { /* Keep the original uncertainty; never issue a second POST. */ }
+    }
+    throw error;
+  }
+}
 export const api = {
   session: (signal?: AbortSignal) => request<User>('/session', 'GET', undefined, signal),
   login: (persona: 'manager' | 'alice' | 'bob') => request<User>('/demo/login', 'POST', { persona }),
@@ -42,7 +62,7 @@ export const api = {
   createMaterial: (draft: MaterialDraft) => request<FactoryMaterial>('/materials', 'POST', draft),
   publish: (material: FactoryMaterial) => request<FactoryMaterial>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST'),
   plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
-  instantiate: (planId: string, requestId: string) => request<FactoryJob>('/instances', 'POST', { planId, requestId }),
+  instantiate,
   jobs: (signal?: AbortSignal) => request<FactoryJob[]>('/jobs', 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),
   cancel: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/cancel`, 'POST'),
