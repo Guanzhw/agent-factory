@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Any
 
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
@@ -35,15 +36,24 @@ print(json.dumps({'baseline':baseline,'candidate':score,'delta':baseline-score,'
 
 class _WindowsJob:
     """Documented Windows job-object containment, including descendant cleanup."""
+    kernel: Any  # Platform-specific ctypes DLL/handle types.
+    handle: Any = None
+
     def __init__(self, pid, memory_bytes=256 * 1024 * 1024, process_limit=4, cpu_percent=10):
+        if os.name != 'nt':
+            raise RuntimeError('Windows job containment requires Windows')
         from ctypes import wintypes
+        # These ctypes exports exist only on Windows; resolve after the OS guard.
+        win_dll = getattr(ctypes, 'WinDLL')
+        win_error = getattr(ctypes, 'WinError')
+        last_error = getattr(ctypes, 'get_last_error')
         class Basic(ctypes.Structure):
             _fields_ = [('process_time', ctypes.c_int64), ('job_time', ctypes.c_int64), ('flags', wintypes.DWORD), ('min_ws', ctypes.c_size_t), ('max_ws', ctypes.c_size_t), ('active_limit', wintypes.DWORD), ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD), ('scheduling', wintypes.DWORD)]
         class Io(ctypes.Structure):
             _fields_ = [(name, ctypes.c_uint64) for name in ['read_ops','write_ops','other_ops','read_bytes','write_bytes','other_bytes']]
         class Extended(ctypes.Structure):
             _fields_ = [('basic', Basic), ('io', Io), ('process_memory', ctypes.c_size_t), ('job_memory', ctypes.c_size_t), ('peak_process_memory', ctypes.c_size_t), ('peak_job_memory', ctypes.c_size_t)]
-        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel = win_dll('kernel32', use_last_error=True)
         kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         kernel.CreateJobObjectW.restype = wintypes.HANDLE
         kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
@@ -60,15 +70,15 @@ class _WindowsJob:
         process = None
         try:
             if not self.handle or not kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise win_error(last_error())
             class CpuRate(ctypes.Structure):
                 _fields_ = [('flags', wintypes.DWORD), ('rate', wintypes.DWORD)]
             cpu = CpuRate(0x1 | 0x4, cpu_percent * 100)  # enabled hard CPU-rate cap
             if not kernel.SetInformationJobObject(self.handle, 15, ctypes.byref(cpu), ctypes.sizeof(cpu)):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise win_error(last_error())
             process = kernel.OpenProcess(0x100 | 0x1, False, pid)
             if not process or not kernel.AssignProcessToJobObject(self.handle, process):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise win_error(last_error())
         except BaseException:
             self.close()
             raise

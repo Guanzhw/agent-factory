@@ -114,7 +114,8 @@ class SyntheticCLI(OpenResearchAdapter):
 class OpenResearchContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = TemporaryDirectory()
-        self.root = Path(self.directory.name)
+        # Hosted Windows TEMP can traverse a junction; compare canonical paths.
+        self.root = Path(self.directory.name).resolve()
         self.fixture = self.root / "synthetic-orx.py"
         self.fixture.write_text(FIXTURE, encoding="utf-8")
         self.task_id = str(uuid4())
