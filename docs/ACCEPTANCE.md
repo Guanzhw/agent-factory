@@ -1,42 +1,24 @@
-# Full-function acceptance matrix
+# Acceptance ledger
 
-Checkpoints describe intended complete functionality, not a claim that deferred features are delivered. M1 initializes the environment. M2–M4 require implementation and acceptance evidence after the reuse-first platform decision.
+This is a working synthetic vertical slice, not full production/scientific acceptance. Tests exercise actual Agno/PostgreSQL/FastAPI behavior; model output alone is deterministic.
 
-| ID | Capability and evidence required | Phase | Status |
-|---|---|---|---|
-| ENV-1 | Install from lockfile; lint/typecheck/tests/build; API startup/stop and browser smoke | M1 | Passed; see verification record |
-| ENV-2 | GitHub authenticated identity, new public MIT repo, milestones/issues, exact remote commit and CI | M1 | Passed at foundation commit; see verification record |
-| DESIGN-1 | Complete approved design traceability, explicit corrections and reuse-first platform selection | M1 | Pending; environment completion does not close design gate |
-| LIB-1 | Material create/edit/version/archive/import with origin/license/digest | M2 | Planned |
-| LIB-2 | Skills/tools/prompts/knowledge/models/environment materials with schemas, dependencies and permission metadata | M2 | Planned |
-| ASM-1 | Callable catalog/discovery → plan/preflight → instantiate → inspect/reclaim; idempotency and permission recheck; immutable revisions; manager UI | M2 | Planned |
-| ASM-2 | Second synthetic profile assembled without core rewrite | M2 | Planned |
-| ASM-3 / FR16 | Natural-language demand → bounded approved-material selection → proposal → dependency/permission preflight → scoped temporary task instance; shared-definition publication requires administrator review; AT-28/29 | M2 | Required now; temporary-plan approval policy remains unresolved |
-| DEL-1 / FR16 | Scoped parent-task delegation, shared budgets, depth/count bounds, permission recheck, persistent parent/child links and safe reclaim; AT-30 | M2/M4 | Required; full Core traceability pending |
-| IAM-1 | Authenticated users, manager/user enforcement, cross-user job/artifact/connection denial | M2 | Planned |
-| BIND-1 | Per-user/task data and trusted credential references; secrets excluded from model input/artifacts | M2 | Planned |
-| JOB-1 | Durable queue/concurrency/lifecycle/event replay, input questions and scoped approvals | M2 | Planned |
-| JOB-2 | Delayed/recurring schedules, attempt history/retry and restart reconciliation | M2 | Planned |
-| JOB-3 | Cancel queued/running/waiting jobs and all outstanding experiments, terminal-state races | M2/M3 | Planned |
-| AUD-1 | Persistent action/approval audit and artifact metadata/digests/download authorization | M2 | Planned |
-| RES-1 | Actual pinned selected runtime integration, permissions, event stream, errors and cancellation | M3 | Planned; OpenCode is a candidate |
-| RES-2 | Pinned ORX adapter command/API contracts and matching binary provenance | M3 | Planned; installed ORX differs |
-| LIT-1 | Literature query/retrieve/read/source ledger, evidence-linked report and uncertainty | M3 | Planned |
-| EXP-1 | Hypothesis/run config/approval/launch/supervision/lineage/metrics/evaluator/report | M3 | Planned |
-| UI-1 | Manager catalog/assembly/users/policy UI and user tasks/questions/approvals/events/results UI | M2/M3 | Planned |
-| SEC-1 | Isolated workspace/home/config/credentials/process; controlled egress; tool and prompt-injection boundaries | M4 | Planned |
-| REC-1 | Disconnect/reconnect, process failure, restart, repeated submission/idempotency, cancellation recovery | M4 | Planned |
-| E2E-1 | Browser tests for submission/questions/approval/cancel/repeat/error/recovery on actual workflows | M4 | Planned |
-| OPS-1 | Deployment, backups/restore, monitoring, limits, upgrades and known-risk documentation | M4 | Planned |
-| LIVE-1 | User-approved real model calls; usage/cost evidence and independent research evaluation | M3/M4 | Awaiting explicit provider/budget authorization |
+| Capability | Current evidence / limits |
+|---|---|
+| Selected native platform | Agno 3.1.0 fixed upstream revision, eight critical installed files matched; exact native HTTP/queue/auth regression passed |
+| Material library | Six kinds, version/digest, manager create/publish and transitive preflight implemented; archive/import governance pending |
+| Callable factory / FR16 | Bounded natural-language goal to approved material proposal, preflight and immutable temporary instance implemented in demo; production policy unset |
+| Snapshot/durability | One registered executor, native queue recovery after hard kill; old plan preserved across newer publication; no upstream fork/nested loop |
+| Second application | Actual-input checksum through same factory/executor, tested; frontend prioritizes Auto-Research |
+| Identity/access | Native managed roles/directory, same-token revoke/disable, current tool checks, owner-only plan/job/artifact; production identity provisioning pending |
+| Lifecycle/HITL | Native input question, exact-version confirmation, continuation, paused/run cancellation, cleanup and artifact hashes passed actual PostgreSQL API tests |
+| Idempotency/effects | Identical replay reuses task; changed payload 409; unknown receipt/effect refuses blind retry/release |
+| Evidence | Actual synthetic subprocess metrics/evaluator/dataset/runtime/output provenance; scientific success explicitly unverified |
+| Remote resources | Persistent reference/lease service and API; actual native metadata attach, synthetic lifecycle recovery tests; real endpoints/providers/run routing not verified |
+| OpenResearch | Exact-source CLI contract adapter and real subprocess fixture tests; installed 0.2.10 differs from required 0.2.13, production registration disabled |
+| Frontend | Real backend polling, preflight/jobs/questions/approval/cancel/artifact and manager UI; browser evidence recorded separately |
+| Delegation | Independent native tickets, inherited current rights, depth/count/shared durable tool budget, group state/cascade, no child-plan reuse; 13 actual PostgreSQL tests including side-effect spies |
+| Schedules | One public native poller, immutable-plan/owner/occurrence admission and guarded HTTP API; 7 actual PostgreSQL tests; guarded hard-process restart/stale-lease takeover pending |
+| Isolation/operations | Fixed demo child containment tested; full hostile-code tenancy, egress, restore, monitoring and target load acceptance pending |
+| Live acceptance | Requires explicit approved provider/model budget, exact ORX binary attestation, production policy/OS/identity and authorized remote endpoints |
 
-## Decisions awaiting direction
-
-1. Adopt/extend a complete existing platform first, then implement verified gaps after full design traceability and comparative evaluation.
-2. Runtime choice and hosting strategy; if OpenCode is selected, its current embedded SDK and network client differ from legacy `/v2` exports.
-3. Real model provider and an explicit cost/time/resource budget for live acceptance.
-4. Department deployment identity source and isolation platform. Proposed default: local development first, dedicated production worker isolation before shared use.
-
-Resolved scope: FR16 natural-language assembly is included in the current full delivery. Temporary task instances and shared definitions are distinct. Administrator review is required before shared publication; approval policy for temporary task plans remains an explicit decision. Model proposals are restricted to approved versioned materials and cannot enlarge permissions. Delegation/budget/reclaim semantics remain part of the requirement, not merely text generation.
-
-These decisions do not block safe environment initialization. They do block treating the full platform/live research as delivered.
+The 32-core/64-GB and 54-core/192-GB single-server profiles are capacity targets, not measured benchmarks. The initial native concurrency cap is two. Current fact/inspection calls bypass the model queue.

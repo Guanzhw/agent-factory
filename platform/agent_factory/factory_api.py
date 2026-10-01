@@ -1,0 +1,357 @@
+import asyncio
+import copy
+import hashlib
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
+from .catalog import create_plan
+from .delegation import application_group_status
+from .store import canonical
+
+
+class Body(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Login(Body):
+    persona: Literal["manager", "alice", "bob"]
+
+
+class PlanRequest(Body):
+    topic: str = Field(min_length=2, max_length=2000)
+    mode: Literal["literature", "experiment"] = "literature"
+    application: Literal["research", "checksum"] = "research"
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+
+
+class InstanceRequest(Body):
+    planId: str = Field(max_length=100)
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+
+
+class ChildRequest(Body):
+    goal: str = Field(min_length=2, max_length=2000)
+    mode: Literal["literature", "experiment"] = "literature"
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+
+
+class MaterialRequest(Body):
+    id: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(max_length=2000)
+    content: str = Field(max_length=16000)
+    dependencies: list[dict] = Field(default_factory=list, max_length=30)
+    permissions: list[str] = Field(default_factory=list, max_length=30)
+
+
+class Answer(Body):
+    questionId: str
+    version: int
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+class Approval(Body):
+    requirementId: str
+    version: int
+    approved: bool
+
+
+def requirement_version(requirement):
+    # A native requirement ID plus canonical contents form a stable stale-action token.
+    return int(hashlib.sha256(canonical(requirement).encode()).hexdigest()[:12], 16)
+
+
+def native_requirements(snapshot):
+    run = snapshot.get("run", snapshot)
+    return run.get("requirements") or []
+
+
+def status_of(task, snapshot, effects, events):
+    if task["admission"] == "rejected":
+        return "failed"
+    if task["admission"] in {"unknown", "reserved"} and not task.get("run_id"):
+        return "unknown"
+    queue = snapshot.get("queue") or snapshot.get("job") or {}
+    run = snapshot.get("run", snapshot)
+    raw = str(queue.get("status") or run.get("status") or "queued").lower()
+    if any(effect["status"] == "UNKNOWN" for effect in effects) and raw not in {"running", "runstatus.running"}:
+        return "unknown"
+    if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
+        return "canceling"
+    if raw in {"paused", "runstatus.paused"}:
+        requirements = native_requirements(snapshot)
+        if any((r.get("tool_execution") or {}).get("requires_user_input") for r in requirements):
+            return "waiting_input"
+        return "waiting_approval"
+    if raw in {"cancelled", "canceled", "runstatus.cancelled"}:
+        return "canceled"
+    if raw in {"failed", "error", "runstatus.error"}:
+        return "failed"
+    if raw in {"completed", "runstatus.completed"}:
+        # A model's completed response is not evidence that a protected tool succeeded.
+        if any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
+            return "failed"
+        return "completed"
+    return "running" if raw in {"running", "runstatus.running"} else "queued"
+
+
+class FactoryAPI:
+    def __init__(self, settings, store, auth, bridge):
+        self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
+        self.delegation = getattr(store, "delegation", None)
+        self.router = APIRouter(prefix="/api/factory")
+        self.routes()
+
+    def user(self, request, action="run"):
+        user = self.auth.user(request)
+        self.auth.require(user["id"], "components:write" if action == "write" else action)
+        return user
+
+    async def detail(self, task):
+        snapshot = {}
+        if task.get("run_id"):
+            snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+        effects = self.store.effects(task["id"])
+        events = self.store.events(task["id"])
+        status = status_of(task, snapshot, effects, events)
+        group = None
+        if self.delegation:
+            group = await self.delegation.inspect_group(task["owner_id"], task["id"])
+            if status in {"failed", "canceled"} and not group["allStopped"]:
+                group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
+                task = self.store.task(task["id"], task["owner_id"])
+            status = application_group_status(status, group)
+            if task["cancel_requested"] and not group["allStopped"]:
+                status = "unknown" if group["unknown"] else "canceling"
+            elif task["cancel_requested"] and group["allStopped"]:
+                status = "canceled"
+        self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
+        plan = self.store.plan(task["plan_id"], task["owner_id"])
+        definition = {"id": plan["application"], "version": 1, "name": "Auto-Research" if plan["application"] == "research" else "Checksum",
+            "description": "Scoped synthetic application over native Agno", "instructions": "\n".join(plan["instructions"]),
+            "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
+            "modelPolicy": {"providerId": "local-synthetic", "modelId": "factory-synthetic-v1", "maxSteps": plan["budget"]["toolCalls"]},
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": plan["mode"] == "experiment"}, "published": False, "createdAt": plan["createdAt"]}
+        delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
+        actions = ["inspect"]
+        if delegation_scope and delegation_scope["allowed"]:
+            actions.append("delegate")
+        if status in {"queued", "running", "waiting_input", "waiting_approval", "unknown", "canceling", "waiting_children"}:
+            actions.append("cancel")
+        if status == "unknown":
+            actions.append("reconcile")
+        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": 1,
+            "definition": definition, "binding": {}, "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
+            "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
+            "runtime": "demo" if self.settings.demo else "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
+            "allowedActions": actions, "validationStatus": "执行链路已验证；研究数据为合成示例", "evidenceKind": "合成示例"}
+        for requirement in native_requirements(snapshot):
+            tool = requirement.get("tool_execution") or {}
+            version = requirement_version(requirement)
+            if tool.get("requires_user_input") and not tool.get("answered"):
+                question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
+                job.update(questionDetail=question, question=question["text"])
+                if status == "waiting_input":
+                    actions.append("answer")
+            elif tool.get("requires_confirmation") and tool.get("confirmed") is None:
+                approval = {"id": requirement["id"], "version": version, "scope": f"运行本任务的固定本地合成实验：最长 {self.settings.experiment_timeout_seconds} 秒，输出最多 {self.settings.experiment_output_bytes // 1024} KB；不调用付费模型。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
+                job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
+                if status == "waiting_approval":
+                    actions.append("approve")
+        evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
+        return {"job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+                "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
+
+    def routes(self):
+        router = self.router
+
+        @router.get("/status")
+        def status():
+            rows = self.store.sql("SELECT body->>'lastStatus' AS state,COUNT(*) AS n FROM af_tasks WHERE NOT terminal GROUP BY state")
+            counts = {row["state"]: row["n"] for row in rows}
+            return {"mode": "demo" if self.settings.demo else "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
+                    "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
+                    "liveEnabled": False, "observedMetrics": True}
+
+        @router.post("/demo/login")
+        def login(body: Login, response: Response):
+            if not self.settings.demo:
+                raise HTTPException(404, "Demo login is disabled")
+            token = self.auth.issue_demo_token(body.persona)
+            response.set_cookie("factory_demo_session", token, httponly=True, samesite="strict", secure=False, max_age=3600)
+            return {"id": body.persona, "name": {"manager": "Demo manager", "alice": "Alice", "bob": "Bob"}[body.persona], "role": "manager" if body.persona == "manager" else "user"}
+
+        @router.post("/logout", status_code=204)
+        def logout(request: Request, response: Response):
+            self.auth.user(request)
+            response.delete_cookie("factory_demo_session", httponly=True, samesite="strict")
+
+        @router.get("/session")
+        def session(request: Request):
+            return self.auth.user(request)
+
+        @router.get("/materials")
+        def materials(request: Request):
+            user = self.user(request)
+            return self.store.materials(published_only=user["role"] != "manager")
+
+        @router.post("/materials", status_code=201)
+        def material_create(body: MaterialRequest, request: Request):
+            user = self.user(request, "write")
+            material = {**body.model_dump(exclude_none=True), "license": "MIT", "origin": "manager-authored",
+                        "compatibility": ["agno:3.1.0", "mode:demo"], "inputSchema": {}, "outputSchema": {}, "archived": False}
+            return self.store.add_material(material, user["id"])
+
+        @router.post("/materials/{material_id}/{version}/publish")
+        def material_publish(material_id: str, version: int, request: Request):
+            user = self.user(request, "write")
+            return self.store.publish_material(material_id, version, user["id"])
+
+        @router.get("/connections")
+        def connections(request: Request):
+            user = self.user(request)
+            return [{"id": "synthetic-model", "ownerId": user["id"], "name": "Synthetic fixture (no account credentials)", "providerId": "synthetic", "status": "configured"},
+                    {"id": "orx-live", "ownerId": user["id"], "name": "OpenResearch live adapter — not configured", "providerId": "openresearch", "status": "unavailable"}]
+
+        @router.post("/plans", status_code=201)
+        def plan_create(body: PlanRequest, request: Request):
+            user = self.user(request)
+            fields = body.model_dump(exclude={"requestId"})
+            return self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application))
+
+        @router.post("/instances", status_code=202)
+        async def instantiate(body: InstanceRequest, request: Request):
+            user = self.user(request)
+            self.store.require_current_policy()
+            plan = self.store.plan(body.planId, user["id"])
+            if plan.get("delegation"):
+                raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
+            if plan["status"] != "ready":
+                raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
+            task, fresh = self.store.reserve_task(plan, body.requestId)
+            if fresh:
+                try:
+                    receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, user["id"], body.requestId)
+                    self.store.accept(task["id"], receipt["run_id"])
+                    self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
+                except HTTPException as error:
+                    if error.status_code >= 500:
+                        self.store.admission_unknown(task["id"])
+                    else:
+                        self.store.admission_failed(task["id"], "Native admission rejected")
+                        raise error
+                except Exception:
+                    self.store.admission_unknown(task["id"])
+            return (await self.detail(self.store.task(task["id"], user["id"]))) ["job"]
+
+        @router.get("/jobs")
+        async def jobs(request: Request):
+            user = self.user(request)
+            details = await asyncio.gather(*(self.detail(task) for task in self.store.tasks(user["id"])))
+            return [detail["job"] for detail in details]
+
+        @router.get("/jobs/{task_id}")
+        async def task_detail(task_id: str, request: Request):
+            user = self.user(request)
+            return await self.detail(self.store.task(task_id, user["id"]))
+
+        @router.post("/jobs/{task_id}/children", status_code=202)
+        async def delegate(task_id: str, body: ChildRequest, request: Request):
+            user = self.user(request)
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            result = await self.delegation.create(user["id"], task_id, body.goal, body.mode, body.requestId)
+            return {**result, "job": (await self.detail(result["childTask"]))["job"]}
+
+        @router.get("/jobs/{task_id}/children")
+        async def children(task_id: str, request: Request):
+            user = self.user(request)
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            return await self.delegation.children(user["id"], task_id)
+
+        @router.get("/jobs/{task_id}/group")
+        async def group(task_id: str, request: Request):
+            user = self.user(request)
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            return await self.delegation.inspect_group(user["id"], task_id)
+
+        @router.post("/jobs/{task_id}/cancel")
+        async def cancel(task_id: str, request: Request):
+            user = self.user(request)
+            task = self.store.task(task_id, user["id"])
+            before = await self.detail(task)
+            if self.delegation:
+                if before["job"]["status"] in {"completed", "failed", "canceled"} and before["snapshot"]["delegation"]["allStopped"]:
+                    return before["job"]
+                await self.delegation.cascade_cancel(user["id"], task_id)
+                return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+            if before["job"]["status"] in {"completed", "failed", "canceled"}:
+                return before["job"]
+            self.store.request_cancel(task_id)
+            if task.get("run_id"):
+                await self.bridge.cancel_run(task["run_id"], task["id"], user["id"])
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        async def continue_requirement(task_id, request, requirement_id, version, approved=None, answer=None):
+            user = self.user(request)
+            task = self.store.task(task_id, user["id"])
+            detail = await self.detail(task)
+            expected = "waiting_input" if answer is not None else "waiting_approval"
+            if detail["job"]["status"] != expected or task["cancel_requested"]:
+                raise HTTPException(409, "Task is no longer waiting for this action")
+            requirements = copy.deepcopy(native_requirements(detail["snapshot"]))
+            requirement = next((r for r in requirements if r.get("id") == requirement_id), None)
+            if requirement is None or requirement_version(requirement) != version:
+                raise HTTPException(409, "STALE_REQUIREMENT: refresh the task before deciding")
+            tool = requirement["tool_execution"]
+            if answer is not None:
+                if not tool.get("requires_user_input"):
+                    raise HTTPException(409, "This requirement is not a question")
+                fields = requirement.get("user_input_schema") or tool.get("user_input_schema") or []
+                unanswered = [field for field in fields if field.get("value") is None]
+                if len(unanswered) != 1 or unanswered[0].get("name") != "scope":
+                    raise HTTPException(409, "Unsupported question schema")
+                unanswered[0]["value"] = answer
+                requirement["user_input_schema"] = fields
+                tool["user_input_schema"] = fields
+                tool["answered"] = True
+            else:
+                if not tool.get("requires_confirmation"):
+                    raise HTTPException(409, "This requirement is not an approval")
+                requirement["confirmation"] = approved
+                tool["confirmed"] = approved
+            await self.bridge.continue_run(task["run_id"], task["id"], user["id"], requirements)
+            self.store.event(task_id, "question_answered" if answer is not None else "approval_decided", "Scoped native continuation submitted", {"requirementId": requirement_id, "version": version, "approved": approved})
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        @router.post("/jobs/{task_id}/answer")
+        async def answer(task_id: str, body: Answer, request: Request):
+            return await continue_requirement(task_id, request, body.questionId, body.version, answer=body.answer)
+
+        @router.post("/jobs/{task_id}/approve")
+        async def approve(task_id: str, body: Approval, request: Request):
+            return await continue_requirement(task_id, request, body.requirementId, body.version, approved=body.approved)
+
+        @router.post("/jobs/{task_id}/reconcile")
+        async def reconcile(task_id: str, request: Request):
+            user = self.user(request)
+            task = self.store.task(task_id, user["id"])
+            # Snapshot/receipt lookup only; no replay and no timeout-based capacity release.
+            if not task.get("run_id"):
+                finder = getattr(self.bridge, "find_run", None)
+                receipt = await finder(task["id"], user["id"]) if finder else None
+                if receipt:
+                    self.store.accept(task_id, receipt["run_id"])
+            self.store.event(task_id, "reconciliation", "Queried native state; unresolved effects remain UNKNOWN", {})
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        @router.get("/jobs/{task_id}/artifacts/{artifact_id}")
+        def download(task_id: str, artifact_id: str, request: Request):
+            user = self.user(request)
+            self.store.task(task_id, user["id"])
+            meta, raw = self.store.artifact(task_id, artifact_id)
+            return Response(raw, media_type=meta["mediaType"], headers={"Content-Disposition": "attachment; filename*=UTF-8''" + __import__("urllib.parse", fromlist=["quote"]).quote(meta["name"]), "X-Content-SHA256": meta["sha256"], "Cache-Control": "private, no-store"})

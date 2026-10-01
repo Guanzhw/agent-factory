@@ -1,20 +1,31 @@
-# Environment verification
+# Verification record
 
-The environment subcheckpoint passed on 2026-10-01. Full M1 also includes design traceability and reuse selection, which remain pending. Core implementation is on hold during that decision.
+Verified locally on 2026-10-01 with Windows, Python 3.14.3, Node 26.5.1, Agno 3.1.0 and task-owned loopback PostgreSQL 17.11. This record describes the synthetic implementation milestone. Earlier foundation commit ba707a272c9d3fdfcbbe479f4278ee50bde3b703 remains historical evidence, not current acceptance.
 
-Verified foundation commit: `ba707a272c9d3fdfcbbe479f4278ee50bde3b703`. The local and remote commit matched. [CI run](https://github.com/Guanzhw/agent-factory/actions/runs/36867161141) completed successfully for Windows and Ubuntu at that exact commit.
+## Checks
 
-- Locked `npm ci --ignore-scripts` succeeded.
-- ESLint, TypeScript typecheck, 4 foundation boundary tests and Vite production build passed.
-- Dependency audit reported 0 vulnerabilities.
-- Loopback API startup, stop and restart were observed; `/api/health` returned healthy.
-- Supported Playwright CLI verified actual milestone navigation, API offline error, online recovery and desktop/mobile rendering. Screenshots are local ignored artifacts.
-- Staged new project files were reviewed/scanned for known credential formats and prohibited private paths before publication. No personal/company/source-design files were included.
+- Frontend lint/typecheck, four HTTP client contract tests and production Vite build passed.
+- Python Ruff and Pyright passed with zero errors.
+- The complete opt-in suite exercises native runtime/auth, actual PostgreSQL API/queue/delegation/schedules, dependency preflight and narrow adapter contracts. All 80 tests passed locally in 37.950 seconds with PostgreSQL enabled. Exact commit CI is recorded in the draft PR after publication.
+- Official npm registry audit found zero vulnerabilities. The user's configured mirror has no audit endpoint; the audit used a command-scoped official registry override without changing global configuration.
+- CI is configured for frontend/Python on Windows and Ubuntu plus isolated PostgreSQL integration on Ubuntu. Actions, dependencies and PostgreSQL image are pinned. PostgreSQL fixtures create only randomly named loopback databases; intentional UNKNOWN facts are retained during each test and never discharged to make quota tests pass.
 
-Verified installed tools: Node 26.5.1, npm 11.17.0, Git 2.53.0, OpenCode 2.0.16, Bun 1.3.13 and ORX 0.2.10. ORX differs from the target pinned source; it was not updated. The legacy SDK import check does not verify the installed OpenCode 2 runtime.
+## Fail-closed evidence
 
-This executor has no first-class browser-use, computer-use or Node REPL tools. Playwright CLI worked with its authorized browser session. GitHub SSH port 22 was refused; authenticated HTTPS publication worked with command-scoped credentials and Windows certificate trust, without global configuration changes.
+Actual native Function tool pre-hooks must throw StopAgentRun. InputCheckError is appropriate for Agent input hooks but is swallowed by Function pre-hooks. Native regression verifies exhausted shared budget produces no unbudgeted artifact. Current SQL revocation, current policy withdrawal and persisted UNKNOWN effects were tested on actual approved native continuations: subprocess.Popen spies were never called; there were no new effects, compute_started events or artifacts. The direct registered experiment entrypoint also denies before compute. Application state is failed for denied authority/policy and unknown for an unresolved effect, regardless of a native loop's COMPLETED marker.
 
-The complete private design package did not materialize locally: the official Library helper reached metadata application and failed because Windows Python lacks `os.setxattr`. The requested final ZIP was absent. No helper modification or alternate transfer bypass was used. Detailed source traceability remains pending a supported content handoff.
+Independent child tickets preserve parent/root scope and shared counts. Reusing a child plan through standalone admission is denied, with factory task and native ticket counts unchanged. Cancellation settles the actual owned synthetic process tree before a CANCELLED effect is accepted. Rejected metadata with an acknowledged live native ticket cannot imply stopped or release capacity.
 
-No models, paid APIs, cloud compute or public deployment were invoked. Factory/research features remain planned acceptance items. The verification record is scoped to the foundation/environment and does not assert production isolation or live research compatibility.
+## Browser evidence
+
+Supported Playwright CLI drove the actual loopback application, not screenshots of mocked data. Observed: login, owner-isolated Bob workspace, immutable preflight, double submission creating one ticket, native question restored after API restart and answered to completion, restored scoped experiment approval, actual evaluator values and hashed artifacts, approval followed by cancellation while compute was running, and confirmed cleanup/CANCELLED effect. Browser offline/online recovery and manager draft followed by separate publication passed. Desktop/mobile and final delegation checks are recorded with their local screenshots and final PR evidence.
+
+One actual cancellation task was 506f5920-dbee-464f-a05b-847c6af4c3d5: compute_started, compute_stopped(cleanupComplete=true), compute_cancelled(cleanupComplete=true), application canceled and effect CANCELLED; no experiment_completed event. These identifiers belong only to disposable synthetic demo data. Browser logs contain expected unauthenticated-session and intentionally offline errors; those are not counted as unexplained product exceptions.
+
+Screenshots/logs/SQL/runtime state remain ignored local artifacts. The committed project contains original code/docs and synthetic inputs only. Staged publication is scanned for known credential formats, private paths and prohibited runtime files.
+
+## Limits
+
+Agno upstream revision is ab1d6007f09163c3adadbe06f998dc481b77a09a. ORX source is f336b121525d99364e2dee4fe90b2784894a54e6 (declares 0.2.13); installed 0.2.10 was not updated or treated as compatible. ORX contract tests execute controlled subprocess fixtures; no actual literature search, paid model, autonomous scientific result, remote lifecycle/provider execution, deployment or new external access was performed.
+
+Stock native queue hard-process recovery was tested; that does not establish full guarded scheduling adapter restart or concurrent stale-lease takeover. Actual remote adapter evidence covers metadata only; lifecycle recovery uses explicit synthetic transports. Production temporary-plan approval, identity provisioning, approved provider/model budget, exact ORX binary attestation, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
