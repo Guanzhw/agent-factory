@@ -122,7 +122,7 @@ class DelegationService:
         for current in [task, *ancestors]:
             if current["owner_id"] != owner or current["cancel_requested"] or current["admission"] != "accepted":
                 raise HTTPException(403, "Ancestor mandate is canceled, unavailable or belongs to another user")
-            if any(event["type"] in {"protected_denied", "tool_failed", "experiment_failed"} for event in self.store.events(current["id"])):
+            if self.store.has_failures(current["id"]):
                 raise HTTPException(409, "Ancestor application mandate has failed")
             native = self._native(current)
             raw = str(native.get("status", "")).lower()
@@ -131,6 +131,8 @@ class DelegationService:
             if current["id"] == task["id"] and raw not in ACTIVE:
                 raise HTTPException(409, "Parent must have an active or paused native ticket" if creating else "Child native ticket is no longer active")
             plan = self.store.plan(current["plan_id"], owner)
+            if self.store.material_governance is not None:
+                self.store.material_governance.require_materials_current(plan)
             if plan["status"] != "ready":
                 raise HTTPException(409, "Ancestor plan is blocked")
             if creating:
@@ -369,7 +371,7 @@ class DelegationService:
         # retains capacity, but becomes externally UNKNOWN after native work
         # stops without a confirmed result/cleanup.
         unknown = unavailable or (unresolved_effect and raw != "running") or (not task.get("run_id") and task["admission"] != "rejected")
-        failed = task["admission"] == "rejected" or raw in {"failed", "error"} or any(event["type"] in {"protected_denied", "tool_failed", "experiment_failed"} for event in self.store.events(task["id"]))
+        failed = task["admission"] == "rejected" or raw in {"failed", "error"} or self.store.has_failures(task["id"])
         known_rejected_without_ticket = task["admission"] == "rejected" and not task.get("run_id")
         stopped = not unknown and not unresolved_effect and (raw in TERMINAL or known_rejected_without_ticket)
         return {"taskId": task["id"], "ownerId": task["owner_id"], "planId": task["plan_id"], "runId": task.get("run_id"),

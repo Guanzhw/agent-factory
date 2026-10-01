@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from .store import canonical, digest
 
 
 class RemoteExecution:
@@ -106,6 +107,24 @@ class RemoteExecution:
                 return self.unresolved(task, error.status_code)
             raise
         return self.project(task, detail)
+
+    async def events(self, task: dict, child: str | None = None, *, cursor=None, limit=100) -> dict:
+        value = copy.deepcopy(await self.client.events(task["owner_id"], task["id"], child, cursor=cursor, limit=limit))
+        receipt = self.client._row(task["owner_id"], task["id"])["body"]["receipt"]
+        remote_root = receipt["remoteTaskId"]
+        value["receiverPayloadSha256"] = value["payloadSha256"]
+        for event in value["events"]:
+            event["receiverPayloadSha256"] = event.pop("payloadSha256")
+            event["jobId"] = self.identifier(task, event["jobId"], remote_root)
+            event["payloadSha256"] = digest({key: item for key, item in event.items() if key != "sequence"})
+        value["payloadSha256"] = digest(value["events"])
+        value["source"] = "factory-remote-af_events"
+        # Cursor/sequence belong to the receiver stream, never the origin table.
+        value["executionTargetRef"] = self.client._row(task["owner_id"], task["id"])["target_ref"]
+        value["payloadBytes"] = len(canonical(value["events"]).encode())
+        if len(canonical(value).encode()) > self.store.event_replay.max_page_bytes:
+            raise HTTPException(413, "EVENT_PAGE_LIMIT: projected remote page exceeds its configured byte budget; reduce the page limit")
+        return value
 
     async def instantiate(self, owner: str, plan_id: str, target_ref: str, request_id: str) -> dict:
         row = self.client.reserve(owner, plan_id, target_ref, request_id)

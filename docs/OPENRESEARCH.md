@@ -2,8 +2,9 @@
 
 `platform/agent_factory/openresearch.py` implements a bounded CLI adapter for
 the selected AgentOS runtime. It is **disabled by default and not registered as
-a production tool**. Synthetic contract tests exercise OS subprocesses; live
-literature retrieval and experiment execution remain unverified.
+a production tool**. Synthetic contract tests exercise OS subprocesses; one actual bounded public
+OpenAlex discovery is verified below. Integrated model-driven literature tasks
+and experiment execution remain unverified.
 
 ## Fixed source and binary admission
 
@@ -168,3 +169,19 @@ There is no successful live project/experiment workflow evidence.
 wrong-pin rejection. Ordinary CI does not download/build/run ORX. This manifest
 attests one local build, not reproducibility or production approval. Neither the
 binary, build cache, isolated homes nor private build paths are published.
+
+## Actual public metadata discovery
+
+One bounded actual `OpenResearchAdapter.discover` call against the exact pinned
+binary returned three OpenAlex records in 1.034 seconds. The adapter used a trusted
+BinaryPin, task-owned isolated homes/store, current authorization callback,
+15-second timeout and 64 KiB output cap. Its local version preflight preceded
+the one retrieval operation. No credentials file, receipt/project state,
+model/provider request or resource provisioning was involved. Adapter result JSON
+SHA-256 was `4c9ad41210c88dfb9b5798258bd619791e43441badda5ff853d0720bcdcbdece`.
+
+Pinned source implements this route as an unauthenticated public OpenAlex metadata
+GET. A separate raw CLI diagnostic also succeeded; it is not substituted for the
+Python adapter result. This proves that narrow retrieval path only. It does not
+enable production registration, verify literature synthesis/scientific outcomes,
+or resolve actual experiment/supervisor/isolation/model-budget acceptance.

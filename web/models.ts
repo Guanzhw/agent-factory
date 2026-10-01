@@ -1,7 +1,22 @@
 import type { Artifact, Connection, Job, JobEvent, Material, MaterialReference, PlatformInfo, User } from '../shared/types.js';
 
 export type { Artifact, Connection, JobEvent, MaterialReference, User };
-export type FactoryMaterial = Material & { published: boolean };
+export type FactoryMaterial = Material & {
+  published: boolean;
+  governance?: { state: 'draft' | 'published' | 'withdrawn' | 'archived'; authorId?: string; reason?: string | null; reviewId?: string | null };
+  provenance?: { kind: 'original' | 'upstream'; source?: string | null; revision?: string | null; notice: string };
+};
+export interface MaterialGovernancePolicy {
+  review_mode: 'separate-admin' | 'demo-self-review'; revision: string; fingerprint: string;
+  demoCompatibility: boolean; taskApprovalSeparate: boolean; importExecutesCode: boolean;
+}
+export interface MaterialReview {
+  id: string; materialId: string; version: number; authorId: string; sha256: string;
+  immutableDigest: string; policyRevision: string; currentPolicy: boolean;
+  decision: 'pending' | 'approved' | 'denied'; reviewerId?: string | null; requestedBy: string;
+  createdAt: string; decidedAt?: string | null; state: 'draft' | 'published' | 'withdrawn' | 'archived';
+  material: FactoryMaterial; demoCompatibility: boolean; taskApprovalSeparate: boolean;
+}
 export type FactoryStatus = PlatformInfo;
 export interface Plan {
   id: string;
@@ -144,3 +159,12 @@ export interface PlanReview {
 }
 
 export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }
+
+export interface EventPage {
+  events: (JobEvent & { sequence: number; payloadSha256: string; receiverPayloadSha256?: string })[];
+  nextCursor: string; streamId: string; schema: 1; nativeCursor: false;
+  source: 'factory-af_events' | 'factory-remote-af_events'; hasMore: boolean;
+  highWatermark: number; highWatermarkSequence: number; afterSequence: number;
+  startSequence: number | null; endSequence: number | null;
+  payloadSha256: string; payloadBytes: number; executionTargetRef?: string;
+}

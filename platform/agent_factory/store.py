@@ -35,6 +35,9 @@ class Store:
         self.delegation: Any = None
         self.native_db: Any = None
         self.plan_policy: Any = None
+        self.material_governance: Any = None
+        self.lifecycle_observer: Any = None
+        self.event_replay: Any = None
         self.remote_execution: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
@@ -76,7 +79,10 @@ class Store:
 
     def materials(self, published_only=False):
         rows = self.sql("SELECT body,published FROM af_materials WHERE (:all OR published) ORDER BY id,version DESC", all=not published_only)
-        return [{**row["body"], "published": row["published"]} for row in rows]
+        values = [{**row["body"], "published": row["published"]} for row in rows]
+        if published_only and self.material_governance is not None:
+            return self.material_governance.filter_active(values)
+        return values
 
     def add_material(self, body, actor, seed=False):
         material_id = body.get("id") or str(uuid4())
@@ -252,7 +258,14 @@ class Store:
 
     def events(self, task_id):
         return [{"id": row["id"], "jobId": task_id, "type": row["type"], "message": row["message"], "data": row["data"], "createdAt": row["created_at"]}
-                for row in self.sql("SELECT * FROM af_events WHERE task_id=:id ORDER BY id LIMIT 1000", id=task_id)]
+                for row in self.sql("SELECT * FROM (SELECT * FROM af_events WHERE task_id=:id ORDER BY id DESC LIMIT 1000) AS recent ORDER BY id", id=task_id)]
+
+    def has_failures(self, task_id):
+        # A bounded display window cannot erase an earlier protected failure.
+        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type IN ('tool_failed','protected_denied','experiment_failed')) AS failed", id=task_id)[0]["failed"])
+
+    def failure_cleanup_requested(self, task_id):
+        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure')) AS failed", id=task_id)[0]["failed"])
 
     def observed(self, task, status, terminal):
         if task["body"].get("lastStatus") != status:

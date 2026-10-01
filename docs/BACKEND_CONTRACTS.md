@@ -25,10 +25,19 @@ The frontend issues one submission. After a disconnected, timed-out, malformed o
 
 Actual Playwright acceptance dropped the response after native admission. The UI recovered with one POST and one receipt GET, produced one native_accepted event and one hashed synthetic artifact, and displayed completion with the synthetic evidence label.
 
-## Required next boundaries
+## Additional implemented boundaries and remaining work
 
-- Factory-to-Factory execution must be chosen before native admission, with separate databases, trusted target identity and immutable prepared material/scope bindings. Current native-only attachment does not accomplish this.
-- Both current origin mandate and current remote rights must gate effects. The entire delegated tree needs one execution owner and explicit owner/host reservation accounting. Moving individual descendants is not supported.
-- Remote cancel must use the Factory's descendant/experiment cleanup path, not interpret native cancellation intent as process termination. UNKNOWN, expiry and disconnect retain capacity.
-- Generic mutation receipts, durable client command journals, contiguous event replay/cursor recovery, guarded scheduler crash/stale-lease recovery, material governance, hostile-code isolation, measured capacity and restore acceptance remain tracked work.
-- Actual ORX research/experiment output and remote execution require separate source/build/endpoint evidence. Controlled tests do not establish live research.
+Trusted Factory-to-Factory preparation precedes native admission. The selected
+receiver owns the whole tree; origin/receiver current authority, immutable material
+manifests, unknown receipts, native cleanup and artifact hashes are enforced.
+Ten actual two-app product tests include paginated receiver-owned history and
+child/cursor scope; two actual loopback HTTP browser services verified the UI.
+Remote deployment/TLS/credential/host-restart proof remains separate.
+
+Material imports/publication/archive/withdrawal and distinct current-admin review
+are integrated. Signed, bounded Factory replay detects late commit prefix changes.
+Guarded schedule interruption/restart/takeover tests expose the upstream lease
+release race. Twenty-user admission and clean-stop official PostgreSQL restore
+are verified. Generic mutation receipts/durable journals, hostile-code tenancy,
+sustained target-host load, production monitoring/recovery and actual ORX research
+remain tracked full-scope work.

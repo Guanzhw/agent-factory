@@ -1,6 +1,7 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
 
@@ -16,6 +17,9 @@ from .catalog import seed_catalog
 from .config import Settings
 from .delegation import DelegationService
 from .factory_api import FactoryAPI
+from .event_replay import EventReplay
+from .lifecycle_observer import FactoryLifecycleObserver
+from .material_governance import GovernanceConfig, MaterialGovernance, material_governance_router
 from .native_bridge import INTERNAL_NATIVE, NativeBridge
 from .runtime import build_runtime
 from .resources import PersistentResourceService
@@ -54,8 +58,16 @@ def create_app(settings=None):
     auth = AuthService(settings, native_db)
     auth.initialize_demo()
     store.auth = auth
+    replay = EventReplay(store, auth, signing_key=auth._key)
+    store.event_replay = replay
     if settings.demo:
         seed_catalog(store)
+    governance = MaterialGovernance(store, auth, GovernanceConfig(
+        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision))
+    if settings.demo:
+        governance.adopt_demo_bootstrap()
+    store.material_governance = governance
+    store.execution_guards["material-governance"] = lambda owner, plan, context, tool: governance.require_materials_current(plan)
     executor, registry = build_runtime(settings, store, native_db)
     bridge = NativeBridge(settings, native_db, auth)
     delegation = DelegationService(settings, store, auth, bridge)
@@ -76,6 +88,7 @@ def create_app(settings=None):
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
     if receiver:
         base.include_router(receiver.router)
+    base.include_router(material_governance_router(auth, governance))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
@@ -122,7 +135,20 @@ def create_app(settings=None):
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     native.add_middleware(NativeIngress)
     bridge.attach(native)
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver}
+    # Start after the native DB/worker lifespans; stop before their drain.
+    observer = FactoryLifecycleObserver(store, auth, native_db,
+                                        lambda: getattr(native.state, "queue_worker", None))
+    store.lifecycle_observer = observer
+    native_lifespan = native.router.lifespan_context
+
+    @asynccontextmanager
+    async def observed_lifespan(app: FastAPI):
+        async with native_lifespan(app) as state:
+            async with observer.lifespan(app):
+                yield state or {}
+
+    native.router.lifespan_context = observed_lifespan
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer}
     return CookieBridge(native, settings)
 
 

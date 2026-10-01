@@ -23,6 +23,8 @@ class Settings:
     temporary_policy: str | None = None
     policy_revision: str = "plan-policy-v1"
     plan_review_ttl_seconds: int = 3600
+    material_review_mode: str = "separate-admin"
+    material_policy_revision: str = "material-governance-v1"
     port: int = 3100
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
@@ -34,6 +36,10 @@ class Settings:
             raise ValueError("Production requires an explicitly configured JWT key")
         if self.demo and not self.jwt_key:
             self.jwt_key = secrets.token_urlsafe(48)
+        if self.material_review_mode not in {"separate-admin", "demo-self-review"}:
+            raise ValueError("Unsupported material review mode")
+        if not self.demo and self.material_review_mode == "demo-self-review":
+            raise ValueError("Material self-review compatibility requires explicit demo mode")
         if not 1 <= self.max_workers <= 4:
             raise ValueError("Worker concurrency must be 1–4 until a capacity benchmark is approved")
         if self.temporary_policy is None:
@@ -67,5 +73,7 @@ class Settings:
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "plan-policy-v1"),
                    plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
+                   material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
+                   material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

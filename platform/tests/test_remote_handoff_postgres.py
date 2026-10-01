@@ -18,6 +18,7 @@ from unittest import mock
 from uuid import uuid4
 
 from agno.run import RunContext
+from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import httpx
@@ -305,7 +306,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
                         async def entrypoint():
                             return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
-                        with self.assertRaises((HTTPException, PermissionError, RuntimeError)):
+                        with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
                             self.call_remote(entrypoint)
                         spawn.assert_not_called()
                         self.assertEqual(self.remote["store"].effects(task["id"]), effects)

@@ -2,7 +2,7 @@
 
 An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Managers maintain versioned materials; users create immutable, scoped task plans and inspect native runs. Auto-Research is the first application, with a second checksum application available through the same factory API.
 
-The current milestone is a working **synthetic vertical slice**: real authentication, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, real literature investigation, remote host, deployment or external access is enabled. Full production acceptance remains open.
+This is a **verified implementation stage toward the complete factory/v0.3 scope**: real authentication, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, real literature investigation, remote host, deployment or external access is enabled. Full production acceptance remains open.
 
 ## Start locally
 
@@ -25,7 +25,7 @@ For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run s
 
 ## Implemented boundary
 
-- Six material kinds, immutable content versions/digests, manager draft/publication, pinned transitive dependency preflight and bounded approved-material discovery.
+- Six material kinds, immutable content versions/digests, author drafts, separate-administrator review, archive/withdrawal and inert structured import, pinned transitive dependency preflight and bounded approved-material discovery.
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
 - Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicit demo identity with HttpOnly cookie.
 - Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation including bounded experiment process trees, persistent application events and artifact hashes.
@@ -55,7 +55,7 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 
 ## Remaining acceptance
 
-The production temporary-plan policy, department identity/connection provisioning and approved model budget are unresolved. Live ORX needs approved binary provenance and output fixtures. Remote compute providers and actual remote execution are not connected. Arbitrary untrusted code needs separate OS tenant isolation/egress enforcement; the local fixed-program sandbox is not that boundary. Guarded schedule hard-process restart/stale-lease takeover, autonomous failure observation, material archive/import, administrative review separation, backups and capacity benchmarks remain tracked work. Target single-server profiles are 32 cores/64 GB or 54 cores/192 GB; neither has been load-tested. Twenty users does not imply twenty concurrent workers.
+Department identity/connection provisioning, approved model budget and production-host isolation remain open. Exact-source ORX build/preflight is verified, but actual retrieval/experiment output and tool registration are still unverified. Trusted remote task routing is implemented and tested with two local native services; real external endpoints and compute providers are not connected. Generic command receipts/journals, target-host throughput, monitoring, retention and live-write recovery remain tracked work. Native schedule lease release has a documented race, so multiple scheduler replicas are not certified. Fixed-program containment does not establish hostile-code tenancy. Twenty users does not imply twenty concurrent workers.
 
 Plan approval is configurable with a conservative production administrator-review default. The real UI supports review requests and administrative decisions; see [plan policy and tested boundaries](docs/PLAN_POLICY.md). Live identity/model/ORX acceptance remains separate.
 
@@ -64,3 +64,10 @@ Trusted execution location selection and receiver-owned task trees are described
 Guarded hard-process schedule recovery and its native lease-release limitation are
 recorded in [SCHEDULING](docs/SCHEDULING.md). Exact-source ORX build/preflight is
 recorded separately from unverified live research.
+
+Versioned publication/import and current material guards are described in
+[material governance](docs/MATERIAL_GOVERNANCE.md). History pagination is documented
+in [event replay](docs/EVENT_REPLAY.md). Actual twenty-user admission and clean-stop
+PostgreSQL backup/restore evidence are in [operations](docs/OPERATIONS.md).
+
+[Background lifecycle cleanup](docs/LIFECYCLE.md) observes current authority and descendant stop evidence without requiring the research page to poll.

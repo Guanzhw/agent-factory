@@ -91,7 +91,7 @@ class _WindowsJob:
             self.handle = None
 
 
-def _experiment(settings, store, ctx, plan, stop_signal):
+def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
     runtime_root = Path(getattr(settings, 'runtime_directory', '.local/runtime')).resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     timeout = min(30.0, max(.1, float(getattr(settings, 'experiment_timeout_seconds', 5))))
@@ -103,6 +103,7 @@ def _experiment(settings, store, ctx, plan, stop_signal):
     proc = job = None
     failure = None
     started = time.monotonic()
+    next_authority_check = started
     try:
         with tempfile.TemporaryFile(dir=runtime_root) as output:
             proc = subprocess.Popen([sys.executable, '-I', '-c', EXPERIMENT_PROGRAM, str(duration), str(memory_cap), str(int(timeout)+1), str(process_cap)], stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
@@ -113,6 +114,13 @@ def _experiment(settings, store, ctx, plan, stop_signal):
             while proc.poll() is None:
                 if stop_signal.is_set() or store.cancellation_requested(ctx.run_id):
                     raise RunCancelledException('Factory cancellation requested during local compute')
+                if authority_check is not None and time.monotonic() >= next_authority_check:
+                    try:
+                        authority_check()
+                    except Exception as error:
+                        store.event(ctx.run_id, 'protected_denied', 'Current authority ended during owned compute; stopping this process', {'tool': 'run_experiment'})
+                        raise RunCancelledException('Current task authority ended during owned compute') from error
+                    next_authority_check = time.monotonic() + .25
                 if time.monotonic() - started > timeout:
                     raise TimeoutError('Bounded experiment exceeded wall-clock limit')
                 if output.seek(0, os.SEEK_END) > output_cap:
@@ -151,9 +159,9 @@ def _experiment(settings, store, ctx, plan, stop_signal):
             setattr(failure, 'compute_cleanup_complete', True)
 
 
-def _experiment_outcome(settings, store, ctx, plan, stop_signal):
+def _experiment_outcome(settings, store, ctx, plan, stop_signal, authority_check=None):
     try:
-        return {'ok': True, 'result': _experiment(settings, store, ctx, plan, stop_signal), 'cleanupComplete': True}
+        return {'ok': True, 'result': _experiment(settings, store, ctx, plan, stop_signal, authority_check), 'cleanupComplete': True}
     except BaseException as error:
         return {'ok': False, 'error': error, 'cleanupComplete': bool(getattr(error, 'compute_cleanup_complete', False))}
 
@@ -214,7 +222,7 @@ def build_tools(settings, store):
         recorded = False
         try:
             stop_signal = threading.Event()
-            worker = asyncio.create_task(asyncio.to_thread(_experiment_outcome, settings, store, run_context, plan, stop_signal))
+            worker = asyncio.create_task(asyncio.to_thread(_experiment_outcome, settings, store, run_context, plan, stop_signal, lambda: store.authorize_tool(run_context, "run_experiment")))
             try:
                 outcome = await asyncio.shield(worker)
             except BaseException:

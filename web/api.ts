@@ -1,4 +1,4 @@
-import type { ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
+import type { EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
@@ -52,17 +52,55 @@ async function instantiate(planId: string, requestId: string, executionTargetRef
     throw error;
   }
 }
+async function events(id: string, cursor?: string, signal?: AbortSignal): Promise<EventPage> {
+  const query = new URLSearchParams({ limit: '100' });
+  if (cursor !== undefined) query.set('cursor', cursor);
+  const value = await request<EventPage>(`/jobs/${segment(id)}/events?${query}`, 'GET', undefined, signal);
+  const integer = (item: unknown): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item >= 0;
+  const hash = (item: unknown) => typeof item === 'string' && /^[a-f0-9]{64}$/.test(item);
+  if (!value || value.schema !== 1 || value.nativeCursor !== false || !['factory-af_events', 'factory-remote-af_events'].includes(value.source)
+      || typeof value.streamId !== 'string' || !/^[a-f0-9-]{36}$/.test(value.streamId)
+      || typeof value.nextCursor !== 'string' || value.nextCursor.length < 1 || value.nextCursor.length > 4096
+      || typeof value.hasMore !== 'boolean' || !integer(value.highWatermark) || !integer(value.highWatermarkSequence)
+      || !integer(value.afterSequence) || value.afterSequence > value.highWatermarkSequence || !hash(value.payloadSha256)
+      || !Array.isArray(value.events) || value.events.length > 100 || !integer(value.payloadBytes)) {
+    throw new ApiError('事件分页响应无法核对，请重试原分页。', 200, 'INVALID_RESPONSE');
+  }
+  for (const [index, event] of value.events.entries()) {
+    if (!event || event.jobId !== id || !integer(event.id) || event.id < 1 || event.id > value.highWatermark
+        || event.sequence !== value.afterSequence + index + 1 || !hash(event.payloadSha256)
+        || typeof event.type !== 'string' || typeof event.message !== 'string' || typeof event.createdAt !== 'string') {
+      throw new ApiError('事件记录与当前任务或分页位置不一致。', 200, 'INVALID_RESPONSE');
+    }
+  }
+  if (value.startSequence !== (value.events[0]?.sequence ?? null)
+      || value.endSequence !== (value.events.at(-1)?.sequence ?? null)
+      || (value.endSequence ?? value.afterSequence) > value.highWatermarkSequence
+      || value.hasMore !== ((value.endSequence ?? value.afterSequence) < value.highWatermarkSequence)) {
+    throw new ApiError('事件分页边界不一致，请重试原分页。', 200, 'INVALID_RESPONSE');
+  }
+  return value;
+}
 export const api = {
+  events,
   session: (signal?: AbortSignal) => request<User>('/session', 'GET', undefined, signal),
   login: (persona: 'manager' | 'alice' | 'bob') => request<User>('/demo/login', 'POST', { persona }),
   logout: () => request<void>('/logout', 'POST'),
   status: (signal?: AbortSignal) => request<FactoryStatus>('/status', 'GET', undefined, signal),
   materials: (signal?: AbortSignal) => request<FactoryMaterial[]>('/materials', 'GET', undefined, signal),
   connections: (signal?: AbortSignal) => request<Connection[]>('/connections', 'GET', undefined, signal),
-  createMaterial: (draft: MaterialDraft) => request<FactoryMaterial>('/materials', 'POST', draft),
-  publish: (material: FactoryMaterial) => request<FactoryMaterial>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST'),
+  createMaterial: (draft: MaterialDraft & { requestId: string }) => request<FactoryMaterial>('/materials', 'POST', draft),
+  publish: (material: FactoryMaterial, requestId: string) => request<MaterialReview>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST', { requestId }),
   plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
   instantiate,
+  governanceDraft: (definition: Record<string, unknown>, requestId: string) => request<FactoryMaterial>('/material-governance/drafts', 'POST', { definition, requestId }),
+  importMaterials: (definitions: Record<string, unknown>[], requestId: string) => request<{ materials: FactoryMaterial[]; outcomeSource: string; executesCode: boolean }>('/material-governance/imports', 'POST', { definitions, requestId }),
+  materialPolicy: (signal?: AbortSignal) => request<MaterialGovernancePolicy>('/material-governance/policy', 'GET', undefined, signal),
+  requestMaterialPublication: (materialId: string, version: number, requestId: string) => request<MaterialReview>('/material-governance/reviews', 'POST', { materialId, version, requestId }),
+  materialReviews: (allAuthors = false, signal?: AbortSignal) => request<MaterialReview[]>(`/material-governance/reviews?allAuthors=${allAuthors}`, 'GET', undefined, signal),
+  decideMaterialReview: (id: string, approved: boolean, requestId: string) => request<MaterialReview>(`/material-governance/reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
+  archiveMaterial: (id: string, version: number, reason: string, requestId: string) => request(`/material-governance/versions/${segment(id)}/${version}/archive`, 'POST', { reason, requestId }),
+  withdrawMaterial: (id: string, version: number, reason: string, requestId: string) => request(`/material-governance/versions/${segment(id)}/${version}/withdraw`, 'POST', { reason, requestId }),
   executionTargets: (signal?: AbortSignal) => request<ExecutionTarget[]>('/execution-targets', 'GET', undefined, signal),
   planAuthorization: (id: string, signal?: AbortSignal) => request<PlanAuthorization>(`/plans/${segment(id)}/authorization`, 'GET', undefined, signal),
   inspectPlanReview: (id: string, signal?: AbortSignal) => request<PlanReview>(`/plan-reviews/${segment(id)}`, 'GET', undefined, signal),

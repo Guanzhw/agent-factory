@@ -129,13 +129,26 @@ class FactoryPostgresTests(unittest.TestCase):
 
     def test_04_native_bypass_and_manager_publication(self):
         self.login("manager")
-        body = {"id": "test-prompt", "kind": "prompt", "name": "Synthetic prompt", "description": "Fixture", "content": "Evidence only"}
+        body = {"id": "test-prompt", "kind": "prompt", "name": "Synthetic prompt", "description": "Fixture", "content": "Evidence only", "requestId": "draft-first-v1"}
         first = self.client.post("/api/factory/materials", json=body)
         self.assertEqual(first.status_code, 201, first.text)
         material = first.json()
-        published = self.client.post(f'/api/factory/materials/{material["id"]}/{material["version"]}/publish')
-        self.assertEqual(published.status_code, 200, published.text)
-        second = self.client.post("/api/factory/materials", json={**body, "content": "New version"})
+        reviewed = self.client.post(f'/api/factory/materials/{material["id"]}/{material["version"]}/publish', json={"requestId": "request-publication-v1"})
+        self.assertEqual(reviewed.status_code, 202, reviewed.text)
+        review = reviewed.json()
+        path = '/api/factory/material-governance/reviews/' + review["id"] + '/decision'
+        self.assertEqual(self.client.post(path, json={"approved": True, "requestId": "reject-self-review"}).status_code, 403)
+        state = self.app.app.state.factory
+        state["store"].native_db.replace_authz_subject_roles("bob", "factory-manager")  # Isolated test identity only.
+        try:
+            self.login("bob")
+            published = self.client.post(path, json={"approved": True, "requestId": "distinct-admin-review"})
+            self.assertEqual(published.status_code, 200, published.text)
+            self.assertEqual(published.json()["reviewerId"], "bob")
+        finally:
+            state["store"].native_db.replace_authz_subject_roles("bob", "factory-user")
+            self.login("manager")
+        second = self.client.post("/api/factory/materials", json={**body, "content": "New version", "requestId": "draft-second-v2"})
         self.assertEqual(second.json()["version"], material["version"] + 1)
         self.assertNotEqual(second.json()["sha256"], material["sha256"])
         self.assertEqual(self.client.post("/agents/factory-executor/runs", data={"message": "bypass", "background": "true"}).status_code, 403)

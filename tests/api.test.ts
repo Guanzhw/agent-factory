@@ -84,3 +84,33 @@ describe('remote admission recovery binds the selected execution target', () => 
     expect(fetch.mock.calls.map(call => call[1].method)).toEqual(['POST','GET']);
   });
 });
+
+describe('bounded owner-scoped Factory event replay', () => {
+  const receipt = () => ({ events: [{ id: 17, jobId: 'task', sequence: 1, type: 'fixture', message: 'Synthetic evidence', data: {}, createdAt: '2026-10-01T00:00:00Z', payloadSha256: 'a'.repeat(64) }],
+    nextCursor: 'opaque-signed-cursor', streamId: 'b1696e85-12ef-4e58-910d-a4eebf26b0f1', schema: 1, nativeCursor: false,
+    source: 'factory-af_events', hasMore: false, highWatermark: 17, highWatermarkSequence: 1, afterSequence: 0,
+    startSequence: 1, endSequence: 1, payloadSha256: 'b'.repeat(64), payloadBytes: 300 });
+  it('uses one read with encoded task and exact opaque cursor', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt())));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.events('task', 'signed+cursor/=')).resolves.toMatchObject({ endSequence: 1 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe('/api/factory/jobs/task/events?limit=100&cursor=signed%2Bcursor%2F%3D');
+    expect(fetch.mock.calls[0][1].method).toBe('GET');
+  });
+  it('fails closed for foreign task, noncontiguous sequence, native-cursor claim, and malformed page', async () => {
+    for (const changed of [ { ...receipt(), events: [{ ...receipt().events[0], jobId: 'foreign' }] },
+      { ...receipt(), events: [{ ...receipt().events[0], sequence: 9 }] },
+      { ...receipt(), nativeCursor: true }, { ...receipt(), hasMore: true }, { events: [] } ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(changed))));
+      await expect(api.events('task')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
+  it('preserves prefix-change recovery details without repeating or mutating work', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({message:'Earlier commits changed cursor prefix',code:'EVENT_PREFIX_CHANGED'}),{status:409}));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.events('task', 'old-cursor')).rejects.toMatchObject({ status:409,code:'EVENT_PREFIX_CHANGED' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1].method).toBe('GET');
+  });
+});

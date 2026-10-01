@@ -77,7 +77,7 @@ def persisted_ancestor_guard(store: Any):
                 raise HTTPException(403, "Current delegation mandate is revoked")
             if current["id"] != task["id"] and current["admission"] != "accepted":
                 raise HTTPException(409, "Ancestor native acknowledgement is unavailable")
-            if any(event["type"] in {"protected_denied", "tool_failed", "experiment_failed"} for event in store.events(current["id"])):
+            if store.has_failures(current["id"]):
                 raise HTTPException(409, "Current delegation application mandate failed")
             run_id = context.run_id if current["id"] == task["id"] else current["run_id"]
             native = store.native_db.get_job(run_id) or {}

@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import MetaData, Table, func, select
 from pg_fixture import IsolatedPostgres
+from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
 from agent_factory.config import Settings
@@ -212,7 +213,12 @@ class DelegationPostgresTests(unittest.TestCase):
             self.service.authorize_child(SimpleNamespace(run_id=grand["run_id"], session_id=grand["id"], user_id="alice"))
         self.denied(403, self.service.create, "alice", child["id"], "sort", "literature", str(uuid4()))
         result = self.call(self.service.cascade_cancel, "alice", root["id"])
-        self.assertEqual(set(result["requested"]), {root["id"], child["id"], grand["id"]})
+        expected = {root["id"], child["id"], grand["id"]}
+        # The autonomous observer may already have delivered native cleanup
+        # after the root's durable cancel intent. This call requests only work
+        # still outstanding; final positive native/effect/group proof below
+        # still covers every member of the original exact tree.
+        self.assertLessEqual(set(result["requested"]), expected)
         group = self.wait_group(root["id"])
         self.assertTrue(group["allStopped"])
         self.assertTrue(all(entry["cancelRequested"] for entry in [group["parent"], *group["children"]]))
@@ -416,7 +422,7 @@ class DelegationPostgresTests(unittest.TestCase):
                         ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="alice", session_state={})
                         async def direct_entrypoint():
                             return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
-                        with self.assertRaises((HTTPException, PermissionError, RuntimeError)):
+                        with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
                             self.call(direct_entrypoint)
                         start_process.assert_not_called()
                         self.assertEqual(self.store.effects(task["id"]), effects_before)

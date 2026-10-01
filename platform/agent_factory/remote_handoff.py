@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
@@ -365,6 +365,12 @@ class PreparedHandoffService:
         detail["handoff"] = await self.receipt(remote_owner, identifier)
         return detail
 
+    def events(self, remote_owner: str, identifier: str, remote_task_id: str | None = None, *, cursor=None, limit=100):
+        row = self._row(identifier, remote_owner)
+        self._check_row(row, remote_owner, execution=False)
+        task = self._task(row, remote_task_id)
+        return self.store.event_replay.page(remote_owner, task["id"], cursor=cursor, limit=limit)
+
     async def cancel(self, remote_owner: str, identifier: str, remote_task_id: str | None = None) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner, execution=False)
@@ -527,6 +533,12 @@ class PreparedHandoffService:
         @self.router.get("/{identifier}/detail")
         async def detail(identifier: str, request: Request, remoteTaskId: str | None = None):
             return await self.detail(owner(request), identifier, remoteTaskId)
+
+        @self.router.get("/{identifier}/events")
+        def events(identifier: str, request: Request, remoteTaskId: str | None = None,
+                   cursor: str | None = Query(default=None, max_length=4096),
+                   limit: int = Query(default=100, ge=1, le=1000)):
+            return self.events(owner(request), identifier, remoteTaskId, cursor=cursor, limit=limit)
 
         @self.router.post("/{identifier}/cancel")
         async def cancel(identifier: str, request: Request, remoteTaskId: str | None = None):
@@ -801,6 +813,29 @@ class TrustedHandoffClient:
         if not isinstance(result, list) or len(result) > 4:
             raise HTTPException(502, "Remote descendant response exceeds the delegation ceiling")
         return result
+
+    async def events(self, owner: str, task_id: str, remote_task_id: str | None = None, *, cursor=None, limit=100):
+        row, target, identifier = await self._binding(owner, task_id, execution=False)
+        params: dict[str, Any] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if remote_task_id:
+            params["remoteTaskId"] = remote_task_id
+        value = await self._request(owner, target, "GET", "/api/factory/remote-handoffs/" + identifier + "/events", params=params)
+        expected = remote_task_id or row["body"]["receipt"].get("remoteTaskId")
+        if (not isinstance(value, dict) or value.get("schema") != 1 or value.get("nativeCursor") is not False
+                or value.get("source") != "factory-af_events" or not isinstance(value.get("events"), list)
+                or len(value["events"]) > limit or not isinstance(value.get("nextCursor"), str)
+                or len(value["nextCursor"]) > 4096 or not isinstance(value.get("streamId"), str)
+                or type(value.get("hasMore")) is not bool):
+            raise HTTPException(502, "Remote event page has an invalid bounded Factory replay receipt")
+        for event in value["events"]:
+            if (not isinstance(event, dict) or event.get("jobId") != expected
+                    or event.get("payloadSha256") != digest({key: item for key, item in event.items() if key not in {"payloadSha256", "sequence"}})):
+                raise HTTPException(409, "Remote event payload is outside its scoped task or differs from its digest")
+        if value.get("payloadSha256") != digest(value["events"]):
+            raise HTTPException(409, "Remote event page differs from its payload digest")
+        return value
 
     async def artifact(self, owner: str, task_id: str, artifact_id: str, remote_task_id: str | None = None) -> tuple[dict[str, Any], bytes]:
         _, target, identifier = await self._binding(owner, task_id, execution=False)

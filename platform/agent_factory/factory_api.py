@@ -3,7 +3,7 @@ import copy
 import hashlib
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from .catalog import create_plan
 from .delegation import application_group_status
@@ -38,6 +38,7 @@ class ChildRequest(Body):
 
 
 class MaterialRequest(Body):
+    requestId: str | None = Field(default=None, min_length=1, max_length=200)
     id: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
     kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
     name: str = Field(min_length=1, max_length=120)
@@ -45,6 +46,10 @@ class MaterialRequest(Body):
     content: str = Field(max_length=16000)
     dependencies: list[dict] = Field(default_factory=list, max_length=30)
     permissions: list[str] = Field(default_factory=list, max_length=30)
+
+
+class PublicationRequest(Body):
+    requestId: str = Field(min_length=1, max_length=200)
 
 
 class Answer(Body):
@@ -92,7 +97,7 @@ def status_of(task, snapshot, effects, events):
         return "failed"
     if raw in {"completed", "runstatus.completed"}:
         # A model's completed response is not evidence that a protected tool succeeded.
-        if any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
+        if task.get("protected_failed") or any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
             return "failed"
         return "completed"
     return "running" if raw in {"running", "runstatus.running"} else "queued"
@@ -122,7 +127,7 @@ class FactoryAPI:
             snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
-        status = status_of(task, snapshot, effects, events)
+        status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
@@ -139,7 +144,7 @@ class FactoryAPI:
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
-                status = "canceled"
+                status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
         self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         definition = {"id": plan["application"], "version": 1, "name": "Auto-Research" if plan["application"] == "research" else "Checksum",
@@ -200,7 +205,7 @@ class FactoryAPI:
                 raise HTTPException(404, "Demo login is disabled")
             token = self.auth.issue_demo_token(body.persona)
             response.set_cookie("factory_demo_session", token, httponly=True, samesite="strict", secure=False, max_age=3600)
-            return {"id": body.persona, "name": {"manager": "Demo manager", "alice": "Alice", "bob": "Bob"}[body.persona], "role": "manager" if body.persona == "manager" else "user"}
+            return self.auth.identity(body.persona)
 
         @router.post("/logout", status_code=204)
         def logout(request: Request, response: Response):
@@ -214,19 +219,39 @@ class FactoryAPI:
         @router.get("/materials")
         def materials(request: Request):
             user = self.user(request, "read")
-            return self.store.materials(published_only=user["role"] != "manager")
+            service = self.store.material_governance
+            values = self.store.materials(published_only=user["role"] != "manager")
+            if service is None:
+                raise HTTPException(503, "Material governance is unavailable")
+            projected = []
+            for material in values:
+                try:
+                    version = service.inspect_version(user["id"], material["id"], material["version"])
+                except HTTPException as error:
+                    if error.status_code not in {403, 404, 409}:
+                        raise
+                    continue
+                state = version["governance"]
+                projected.append({**version["material"], "archived": state["state"] == "archived",
+                    "published": state["state"] == "published" and version["material"]["published"],
+                    "governance": {"state": state["state"], "authorId": state["author_id"],
+                                   "reason": state["reason"], "reviewId": state["review_id"]}})
+            return projected
 
         @router.post("/materials", status_code=201)
         def material_create(body: MaterialRequest, request: Request):
             user = self.user(request, "write")
-            material = {**body.model_dump(exclude_none=True), "license": "MIT", "origin": "manager-authored",
-                        "compatibility": ["agno:3.1.0", "mode:demo"], "inputSchema": {}, "outputSchema": {}, "archived": False}
-            return self.store.add_material(material, user["id"])
+            if not body.requestId:
+                raise HTTPException(400, "Material drafts require a stable requestId")
+            definition = {**body.model_dump(exclude_none=True, exclude={"requestId"}), "license": "MIT",
+                          "compatibility": ["agno:3.1.0"], "provenance": {"kind": "original", "notice": "Original manager-authored material."}}
+            return self.store.material_governance.create_draft(user["id"], definition, body.requestId)
 
-        @router.post("/materials/{material_id}/{version}/publish")
-        def material_publish(material_id: str, version: int, request: Request):
+        @router.post("/materials/{material_id}/{version}/publish", status_code=202)
+        def material_publish(material_id: str, version: int, body: PublicationRequest, request: Request):
             user = self.user(request, "write")
-            return self.store.publish_material(material_id, version, user["id"])
+            # Compatibility route requests review; it cannot bypass distinct admin.
+            return self.store.material_governance.request_publication(user["id"], material_id, version, body.requestId)
 
         @router.get("/connections")
         def connections(request: Request):
@@ -303,6 +328,15 @@ class FactoryAPI:
             user = self.user(request, "read")
             task, child = self.scoped_task(task_id, user["id"])
             return await self.detail(task, child)
+
+        @router.get("/jobs/{task_id}/events")
+        async def event_page(task_id: str, request: Request, cursor: str | None = Query(default=None, max_length=4096),
+                             limit: int = Query(default=100, ge=1, le=1000)):
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.events(task, child, cursor=cursor, limit=limit)
+            return self.store.event_replay.page(user["id"], task["id"], cursor=cursor, limit=limit)
 
         @router.post("/jobs/{task_id}/children", status_code=202)
         async def delegate(task_id: str, body: ChildRequest, request: Request):

@@ -86,14 +86,28 @@ class AuthService:
         user_id = getattr(request.state, "user_id", None)
         if not isinstance(user_id, str):
             raise HTTPException(401, "A verified user identity is required")
+        return self.identity(user_id)
+
+    def identity(self, user_id: str) -> dict[str, Any]:
+        """Trusted verified/whitelisted identity projection; grants remain current."""
         # No user/name/role information is taken from form values or JWT claims.
         current = self._current_user(user_id)
         try:
             roles = Context().run(self.authorization.roles_of, user_id)
         except Exception as error:
             raise HTTPException(503, "Authorization store is unavailable") from error
-        native_role = roles[0] if roles else None
-        role = {"factory-manager": "manager", "factory-user": "user"}.get(native_role, native_role) if native_role is not None else None
+        # Product labels follow CURRENT managed capabilities, including an
+        # operator's custom author role; they never grant permission themselves.
+        role = None
+        if roles:
+            try:
+                self.require(user_id, "components:write")
+            except HTTPException as error:
+                if error.status_code != 403:
+                    raise
+                role = "user"
+            else:
+                role = "manager"
         return {"id": user_id, "name": current.get("name") or user_id, "role": role}
 
     def require(self, user_id: str, action: str = "run", resource: str = "agents",

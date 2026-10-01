@@ -286,7 +286,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(receipt["taskId"], job["id"])
         self.assertEqual(receipt["executionTargetRef"], self.target.reference)
         detail = self.request("GET", "/jobs/" + job["id"]).json()
-        self.assertEqual(detail["job"]["status"], "waiting_input")
+        self.assertIn(detail["job"]["status"], {"waiting_input", "canceling", "canceled", "failed"})
         self.assertTrue(detail["snapshot"].get("run", detail["snapshot"]).get("readOnly"))
         self.assertEqual(self.request("GET", f'/jobs/{job["id"]}/children').json(), [])
         self.request("POST", f'/jobs/{job["id"]}/cancel', expected=403)
@@ -294,7 +294,11 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(transport.attempts, 1)
         remote_id = detail["job"]["executionPlacement"]["remoteTaskId"]
         self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)
-        self.assertFalse(self.origin["store"].task(job["id"])["cancel_requested"])
+        # Trusted cleanup is autonomous after current run authority ends;
+        # read-only recovery itself never submits or authorizes another effect.
+        settled = self.wait(job["id"], {"canceled", "failed"})
+        self.assertTrue(settled["snapshot"]["delegation"]["allStopped"])
+        self.assertEqual(transport.attempts, 1)
 
     def test_06_lost_request_before_delivery_retains_unknown_and_never_replays(self):
         transport = ControlledDispatchLoss(self.receiver_app, before_delivery=True)
@@ -357,6 +361,60 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                             for event in stopped["events"]))
         self.assertFalse(any(event["type"] == "experiment_completed" for event in stopped["events"]))
         self.assertEqual(self.ticket_count(self.origin), 0)
+
+    def test_09_remote_event_pages_preserve_receiver_stream_and_current_read_scope(self):
+        from agent_factory.store import digest
+        job, _ = self.submit(self.plan("Synthetic receiver replay checksum"))
+        self.wait(job["id"], {"completed"})
+        path = f'/jobs/{job["id"]}/events'
+        first = self.request("GET", path, params={"limit": 2}).json()
+        self.assertEqual(first["source"], "factory-remote-af_events")
+        self.assertFalse(first["nativeCursor"])
+        self.assertTrue(first["hasMore"])
+        self.assertEqual(first["payloadSha256"], digest(first["events"]))
+        cursor, seen = first["nextCursor"], list(first["events"])
+        self.assertEqual(self.request("GET", path, params={"limit": 2}).json(), first)
+        for _ in range(40):
+            page = self.request("GET", path, params={"limit": 2, "cursor": cursor}).json()
+            self.assertEqual(page["streamId"], first["streamId"])
+            self.assertEqual(page["afterSequence"], len(seen))
+            self.assertEqual(page["payloadSha256"], digest(page["events"]))
+            seen.extend(page["events"])
+            cursor = page["nextCursor"]
+            if not page["hasMore"]:
+                break
+        else:
+            self.fail("Bounded receiver replay did not reach its known watermark")
+        self.assertEqual([event["sequence"] for event in seen], list(range(1, len(seen) + 1)))
+        self.assertTrue(all(event["jobId"] == job["id"] for event in seen))
+        remote_id = self.placement(job["id"])["body"]["receipt"]["remoteTaskId"]
+        self.assertEqual({event["id"] for event in seen}, {event["id"] for event in self.receiver["store"].events(remote_id)})
+        for event in seen:
+            receiver_event = {key: value for key, value in event.items() if key not in {"sequence", "payloadSha256", "receiverPayloadSha256"}}
+            receiver_event["jobId"] = remote_id
+            self.assertEqual(event["receiverPayloadSha256"], digest(receiver_event))
+        self.request("GET", path, expected=404, owner="bob")
+        self.request("GET", path, expected=400, params={"cursor": first["nextCursor"] + "tamper"})
+        other, _ = self.submit(self.plan("A second receiver replay checksum"))
+        self.wait(other["id"], {"completed"})
+        self.request("GET", f'/jobs/{other["id"]}/events', expected=404, params={"cursor": first["nextCursor"]})
+        self.origin["auth"].authorization.define_role("fixture-product-reader", ["agents:factory-executor:read"])
+        self.origin["store"].native_db.replace_authz_subject_roles("alice", "fixture-product-reader")
+        self.assertEqual(self.request("GET", path, params={"limit": 2}).json(), first)
+        self.assertEqual(self.ticket_count(self.origin), 0)
+        self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)
+
+    def test_10_remote_child_event_cursor_is_scoped_to_one_receiver_tree_member(self):
+        job, _ = self.submit(self.plan("sort", application="research"))
+        self.wait(job["id"], {"waiting_input"})
+        child = self.request("POST", f'/jobs/{job["id"]}/children', expected=202,
+            json={"goal": "sort", "mode": "literature", "requestId": str(uuid4())}).json()["job"]
+        self.wait(child["id"], {"waiting_input"})
+        page = self.request("GET", f'/jobs/{child["id"]}/events', params={"limit": 2}).json()
+        self.assertTrue(all(event["jobId"] == child["id"] for event in page["events"]))
+        self.request("GET", f'/jobs/{job["id"]}/events', expected=404, params={"cursor": page["nextCursor"]})
+        self.request("GET", f'/jobs/{job["id"]}~{uuid4()}/events', expected=404)
+        self.request("GET", f'/jobs/{child["id"]}/events', expected=404, owner="bob")
 
 
 if __name__ == "__main__":

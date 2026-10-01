@@ -1,6 +1,6 @@
 # Verification record
 
-Verified locally on 2026-10-01 with Windows, Python 3.14.3, Node 26.5.1, Agno 3.1.0 and task-owned loopback PostgreSQL 17.11. This record describes the synthetic implementation milestone. Earlier foundation commit ba707a272c9d3fdfcbbe479f4278ee50bde3b703 remains historical evidence, not current acceptance.
+Verified locally on 2026-10-01 with Windows, Python 3.14.3, Node 26.5.1, Agno 3.1.0 and task-owned loopback PostgreSQL 17.11. This record keeps historical checkpoints; the latest verified stage is recorded at the end. Earlier foundation commit ba707a272c9d3fdfcbbe479f4278ee50bde3b703 remains historical evidence, not current acceptance.
 
 ## Checks
 
@@ -26,9 +26,9 @@ Screenshots/logs/SQL/runtime state remain ignored local artifacts. The committed
 
 ## Limits
 
-Agno upstream revision is ab1d6007f09163c3adadbe06f998dc481b77a09a. ORX source is f336b121525d99364e2dee4fe90b2784894a54e6 (declares 0.2.13); installed 0.2.10 was not updated or treated as compatible. ORX contract tests execute controlled subprocess fixtures; no actual literature search, paid model, autonomous scientific result, remote lifecycle/provider execution, deployment or new external access was performed.
+Agno upstream revision is ab1d6007f09163c3adadbe06f998dc481b77a09a. ORX source is f336b121525d99364e2dee4fe90b2784894a54e6 (declares 0.2.13); installed 0.2.10 was not updated or treated as compatible. ORX contract tests execute controlled subprocess fixtures; no integrated literature/model task, paid model, autonomous scientific result, external provider execution, deployment or new external access was performed. A narrow actual public OpenAlex metadata lookup is recorded separately below.
 
-Stock native queue hard-process recovery was tested; that does not establish full guarded scheduling adapter restart or concurrent stale-lease takeover. Actual remote adapter evidence covers metadata only; lifecycle recovery uses explicit synthetic transports. Final production policy selection, identity provisioning, approved provider/model budget, exact ORX binary attestation, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
+Guarded schedule hard-process recovery and stale-lease takeover are now tested, with the native unconditional-release race explicitly retained as a limit. Native resource attachment has metadata evidence; Factory-to-Factory execution has actual two-app and loopback HTTP evidence. Production identity/model budget, captured actual ORX experiment outputs, real remote endpoints and hostile-code isolation remain open. See ACCEPTANCE.md and SECURITY.md.
 
 ## Backend contract extension
 
@@ -74,3 +74,54 @@ ORX local status lookup timed out, so no successful real project/experiment or
 research workflow is claimed. The checkpoint scan found no credential, private
 path or runtime-file findings. Exact remote commit and CI are checked separately
 after publication and recorded in the draft PR.
+
+## Governed materials, replay and autonomous cleanup checkpoint
+
+The final complete staged suite passed **all 200 tests in 177.610 seconds** with
+actual PostgreSQL enabled, official PG17.11 dump/restore binaries configured and
+the exact ORX0.2.13 binary checks enabled. There were no skipped cases in this
+invocation. Without those local opt-ins, ordinary CI explicitly skips the two
+actual ORX binary checks and the backup/restore case; PostgreSQL cases run in the
+separate CI service job. Ruff and Pyright passed with zero errors; frontend lint,
+typecheck, thirteen HTTP client tests and production build passed. Official npm
+registry audit found zero vulnerabilities.
+
+New acceptance includes nineteen material governance cases, fifteen Factory
+event replay cases, three active-compute authority-loss cases, three actual
+twenty-user admission cases, one official PostgreSQL logical restore and eleven
+main-wired lifecycle cleanup cases. Two added product tests relay receiver-owned
+event pages and child cursors through actual separate native apps/databases.
+The full run retains earlier hard-process native queue/schedule and real TCP
+acknowledgement-loss checks.
+
+Actual Edge material acceptance verified all six kinds, repeated clicks producing
+one command, lost persisted acknowledgement retried with the exact original key,
+author self-review refusal, independent current administrator publication,
+immutable version history/archive/withdrawal and malformed policy fail-closed
+recovery. Desktop/mobile screenshots were visually inspected; 390px documents
+fit their viewport. Reviewer grants were only in the generated synthetic fixture.
+
+Actual event UI read seven real server events with matching task IDs/sequences.
+Controlled browser responses separately verified offline exact-cursor retry,
+prefix-change409/from-start recovery, malformed/foreign-task rejection and
+preservation of the last good page. Ten replay reads made no mutation. Normal
+and recovery layouts at390px had no horizontal overflow. Controlled responses
+are not substituted for native server replay tests.
+
+The first observer integration regression exposed pre-ACK and completed-child
+eligibility errors. They were fixed and covered by a real administrator-reviewed
+healthy tree before/after native admission. Background cleanup preserves failure
+reasons, keeps UNKNOWN/stale-running-ticket work held, and proves whole-tree stop
+using public native APIs without owner/admin JWT impersonation. Timing assertions
+now allow earlier legitimate autonomous cleanup while retaining positive native,
+effect, group and quota evidence. Default running signals remain single-process.
+
+Separately, one actual bounded pinned OpenResearchAdapter OpenAlex discovery
+returned three public metadata records without credentials, a model call or
+resource provisioning. This is narrow adapter retrieval proof, not an integrated
+research/scientific/experiment workflow. See OPENRESEARCH.md for the result hash.
+
+Staged publication scanning found no known credential/private-path/runtime-file
+findings. Runtime state, screenshots/logs and temporary databases remain ignored.
+Exact remote commit/CI verification is recorded in the draft PR after publication;
+no merge, exposure, paid model, cloud provisioning or production grant is implied.
