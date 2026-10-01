@@ -35,6 +35,7 @@ class Store:
         self.delegation: Any = None
         self.native_db: Any = None
         self.plan_policy: Any = None
+        self.remote_execution: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()

@@ -26,6 +26,8 @@ class Settings:
     port: int = 3100
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
+    handoff_targets: dict = field(default_factory=dict)
+    handoff_origins: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.demo and len(self.jwt_key) < 32:

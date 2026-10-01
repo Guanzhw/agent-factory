@@ -65,3 +65,22 @@ describe('ambiguous admission recovery', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('remote admission recovery binds the selected execution target', () => {
+  it('reads the original remote task after acknowledgement loss without dispatching twice', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response('uncertain', {status:503}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({requestId:'key', taskId:'task', planId:'plan', executionTargetRef:'trusted-receiver'})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({job:{id:'task', planId:'plan', status:'waiting_input', executionPlacement:{targetRef:'trusted-receiver'}}})));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.instantiate('plan', 'key', 'trusted-receiver')).resolves.toMatchObject({id:'task', executionPlacement:{targetRef:'trusted-receiver'}});
+    expect(fetch.mock.calls.map(call => call[1].method)).toEqual(['POST','GET','GET']);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).executionTargetRef).toBe('trusted-receiver');
+  });
+  it('preserves uncertainty when the original key belongs to a different target', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response('uncertain', {status:503}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({requestId:'key', taskId:'task', planId:'plan', executionTargetRef:'earlier-target'})));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.instantiate('plan', 'key', 'requested-target')).rejects.toMatchObject({status:503});
+    expect(fetch.mock.calls.map(call => call[1].method)).toEqual(['POST','GET']);
+  });
+});

@@ -28,6 +28,7 @@ class PlanRequest(Body):
 class InstanceRequest(Body):
     planId: str = Field(max_length=100)
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    executionTargetRef: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ChildRequest(Body):
@@ -101,6 +102,7 @@ class FactoryAPI:
     def __init__(self, settings, store, auth, bridge):
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
+        self.remote = getattr(store, "remote_execution", None)
         self.router = APIRouter(prefix="/api/factory")
         self.routes()
 
@@ -109,7 +111,12 @@ class FactoryAPI:
         self.auth.require(user["id"], "components:write" if action == "write" else action)
         return user
 
-    async def detail(self, task):
+    def scoped_task(self, identifier, owner):
+        return self.remote.resolve(identifier, owner) if self.remote else (self.store.task(identifier, owner), None)
+
+    async def detail(self, task, remote_child=None):
+        if self.remote and self.remote.placed(task):
+            return await self.remote.detail(task, remote_child)
         snapshot = {}
         if task.get("run_id"):
             snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
@@ -120,8 +127,14 @@ class FactoryAPI:
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
             if status in {"failed", "canceled"} and not group["allStopped"]:
-                group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
-                task = self.store.task(task["id"], task["owner_id"])
+                try:
+                    self.auth.require(task["owner_id"], "run")
+                except HTTPException as error:
+                    if error.status_code != 403:
+                        raise
+                else:
+                    group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
+                    task = self.store.task(task["id"], task["owner_id"])
             status = application_group_status(status, group)
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"
@@ -160,6 +173,12 @@ class FactoryAPI:
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
+        try:
+            self.auth.require(task["owner_id"], "run")
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+            job["allowedActions"] = ["inspect"]
         evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
         return {"job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
@@ -194,7 +213,7 @@ class FactoryAPI:
 
         @router.get("/materials")
         def materials(request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             return self.store.materials(published_only=user["role"] != "manager")
 
         @router.post("/materials", status_code=201)
@@ -211,9 +230,15 @@ class FactoryAPI:
 
         @router.get("/connections")
         def connections(request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             return [{"id": "synthetic-model", "ownerId": user["id"], "name": "Synthetic fixture (no account credentials)", "providerId": "synthetic", "status": "configured"},
                     {"id": "orx-live", "ownerId": user["id"], "name": "OpenResearch live adapter — not configured", "providerId": "openresearch", "status": "unavailable"}]
+
+        @router.get("/execution-targets")
+        def execution_targets(request: Request):
+            user = self.user(request, "read")
+            return [{"id": ref, "name": ref, "kind": "remote-factory", "connectivityVerified": False}
+                    for ref, target in self.remote.client.targets.items() if user["id"] in target.identity_map] if self.remote else []
 
         @router.post("/plans", status_code=201)
         def plan_create(body: PlanRequest, request: Request):
@@ -227,12 +252,18 @@ class FactoryAPI:
             user = self.user(request)
             self.store.require_current_policy()
             plan = self.store.plan(body.planId, user["id"])
-            if plan.get("delegation"):
+            if plan.get("delegation") or plan.get("remoteHandoff"):
                 raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
             if plan["status"] != "ready":
                 raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
             self.store.require_plan_execution(user["id"], plan)
+            if body.executionTargetRef:
+                if self.remote is None:
+                    raise HTTPException(503, "Trusted remote execution is unavailable")
+                return await self.remote.instantiate(user["id"], plan["id"], body.executionTargetRef, body.requestId)
             task, fresh = self.store.reserve_task(plan, body.requestId)
+            if self.remote and self.remote.placed(task):
+                raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
             if fresh:
                 try:
                     receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, user["id"], body.requestId)
@@ -250,28 +281,35 @@ class FactoryAPI:
 
         @router.get("/requests/{request_id}")
         def request_receipt(request_id: str, request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             task = self.store.task_for_request(request_id, user["id"])
             # Do not invoke detail/reconciliation: this lookup cannot submit,
             # continue, cancel, emit events or release a reservation.
+            placement = self.store.sql("SELECT target_ref FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner",
+                                       id=task["id"], owner=user["id"])
             return {"requestId": request_id, "taskId": task["id"], "planId": task["plan_id"],
+                    "executionTargetRef": placement[0]["target_ref"] if placement else None,
                     "runId": task["run_id"], "admission": task["admission"],
                     "outcomeSource": "persisted_factory_intent"}
 
         @router.get("/jobs")
         async def jobs(request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             details = await asyncio.gather(*(self.detail(task) for task in self.store.tasks(user["id"])))
             return [detail["job"] for detail in details]
 
         @router.get("/jobs/{task_id}")
         async def task_detail(task_id: str, request: Request):
-            user = self.user(request)
-            return await self.detail(self.store.task(task_id, user["id"]))
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            return await self.detail(task, child)
 
         @router.post("/jobs/{task_id}/children", status_code=202)
         async def delegate(task_id: str, body: ChildRequest, request: Request):
             user = self.user(request)
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.delegate(task, body.goal, body.mode, body.requestId, child)
             if self.delegation is None:
                 raise HTTPException(503, "Delegation service is unavailable")
             result = await self.delegation.create(user["id"], task_id, body.goal, body.mode, body.requestId)
@@ -279,22 +317,30 @@ class FactoryAPI:
 
         @router.get("/jobs/{task_id}/children")
         async def children(task_id: str, request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             if self.delegation is None:
                 raise HTTPException(503, "Delegation service is unavailable")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.children(task, child)
             return await self.delegation.children(user["id"], task_id)
 
         @router.get("/jobs/{task_id}/group")
         async def group(task_id: str, request: Request):
-            user = self.user(request)
+            user = self.user(request, "read")
             if self.delegation is None:
                 raise HTTPException(503, "Delegation service is unavailable")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return (await self.remote.detail(task, child))["snapshot"].get("delegation")
             return await self.delegation.inspect_group(user["id"], task_id)
 
         @router.post("/jobs/{task_id}/cancel")
         async def cancel(task_id: str, request: Request):
             user = self.user(request)
-            task = self.store.task(task_id, user["id"])
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.cancel(task, child)
             before = await self.detail(task)
             if self.delegation:
                 if before["job"]["status"] in {"completed", "failed", "canceled"} and before["snapshot"]["delegation"]["allStopped"]:
@@ -310,7 +356,10 @@ class FactoryAPI:
 
         async def continue_requirement(task_id, request, requirement_id, version, approved=None, answer=None):
             user = self.user(request)
-            task = self.store.task(task_id, user["id"])
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                body = {"questionId": requirement_id, "version": version, "answer": answer} if answer is not None else {"requirementId": requirement_id, "version": version, "approved": approved}
+                return await self.remote.action(task, "answer" if answer is not None else "approve", body, child)
             detail = await self.detail(task)
             expected = "waiting_input" if answer is not None else "waiting_approval"
             if detail["job"]["status"] != expected or task["cancel_requested"]:
@@ -351,7 +400,9 @@ class FactoryAPI:
         @router.post("/jobs/{task_id}/reconcile")
         async def reconcile(task_id: str, request: Request):
             user = self.user(request)
-            task = self.store.task(task_id, user["id"])
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return (await self.remote.detail(task, child))["job"]
             # Snapshot/receipt lookup only; no replay and no timeout-based capacity release.
             if not task.get("run_id"):
                 finder = getattr(self.bridge, "find_run", None)
@@ -362,8 +413,11 @@ class FactoryAPI:
             return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
 
         @router.get("/jobs/{task_id}/artifacts/{artifact_id}")
-        def download(task_id: str, artifact_id: str, request: Request):
-            user = self.user(request)
-            self.store.task(task_id, user["id"])
-            meta, raw = self.store.artifact(task_id, artifact_id)
+        async def download(task_id: str, artifact_id: str, request: Request):
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                meta, raw = await self.remote.client.artifact(user["id"], task["id"], artifact_id, child)
+            else:
+                meta, raw = self.store.artifact(task_id, artifact_id)
             return Response(raw, media_type=meta["mediaType"], headers={"Content-Disposition": "attachment; filename*=UTF-8''" + __import__("urllib.parse", fromlist=["quote"]).quote(meta["name"]), "X-Content-SHA256": meta["sha256"], "Cache-Control": "private, no-store"})

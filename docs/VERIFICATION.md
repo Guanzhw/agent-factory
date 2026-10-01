@@ -41,3 +41,36 @@ The complete staged backend suite passed all 107 tests with actual PostgreSQL en
 The real isolated browser owner/admin workflow refused self-approval (403) and unreviewed admission (409), retained one review after repeated submission, then completed one native execution with one POST and one artifact. A second workflow denied a plan, kept execution disabled with zero tasks, explicitly created a new review and recovered after administrator approval. Desktop review scope was visually inspected; its initially narrow grid was corrected and rechecked. Administrator and owner 390px pages stayed within viewport width. Prior evidence is retained when current authority is withdrawn. See [plan policy](PLAN_POLICY.md) for tested configuration, expiry and ancestor boundaries.
 
 This checkpoint adds configurable approval with a conservative production default; it does not authorize a live provider or production identities. Exact remote SHA/CI is verified after each publication and recorded in the draft PR.
+
+## Remote placement and guarded schedule restart checkpoint
+
+The complete staged suite passed 146 tests in 111.443 seconds with actual
+PostgreSQL enabled (144 passed; two explicit ORX-binary opt-in tests skipped).
+It excludes a separately developed material governance module not yet wired at
+this checkpoint. The two optional tests were then run against the exact isolated
+ORX 0.2.13 build and both passed in 0.157 seconds. Ruff and Pyright passed;
+frontend lint/typecheck, ten HTTP client tests and production build passed.
+
+New coverage comprises twenty adapter and eight main-wired product remote tests,
+plus nine real guarded schedule interruption/recovery cases. ASGI transports are
+controlled; native database, queue, authentication, questions/approvals and fixed
+experiment process cleanup are actual. Read-only identity downgrade retains fact
+inspection and rejects new execution. The scheduler tests explicitly expose the
+native unconditional lease-release race; they do not certify atomic lease release
+or multiple scheduler replicas. Full default 300-second grace was not awaited.
+
+Supported browser acceptance used two actual loopback HTTP servers and separate
+PostgreSQL stores. The remote root and one child were paused at native questions;
+repeated clicks produced one child POST, and root cancellation finished with
+allStopped=true, unknown=false. Stale answer version returned 409. A separate
+selected remote goal produced one task, one dispatch boundary and one artifact;
+downloaded bytes and receipt SHA-256 matched. Bob saw zero jobs/targets and the
+foreign task returned 404. The 390px page document width was exactly 390px.
+Desktop/mobile screenshots were visually inspected and remain ignored evidence.
+Synthetic model/literature labels remained visible throughout.
+
+Public safe build provenance is in ORX_BUILD_PROVENANCE.json. An actual bounded
+ORX local status lookup timed out, so no successful real project/experiment or
+research workflow is claimed. The checkpoint scan found no credential, private
+path or runtime-file findings. Exact remote commit and CI are checked separately
+after publication and recorded in the draft PR.

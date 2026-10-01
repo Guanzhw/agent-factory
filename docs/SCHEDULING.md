@@ -61,8 +61,10 @@ idempotency key. Duplicate or interrupted reservations inspect their exact nativ
 ticket; they never submit again automatically. An unobserved acknowledgement
 stays `unknown`, and its task retains capacity. Startup performs bounded ticket
 reconciliation of uncertain receipts, not submission retries. Ambiguous native
-tickets remain an error. A crash before the task binding remains an explicit
-unknown receipt needing operator reconciliation.
+tickets remain an error. After a crash between reservation commit and occurrence linking, recovery reads
+the exact original owner/request task and validates its plan/hash/fingerprint
+before binding it. An occurrence with no authoritative reservation or native
+ticket remains UNKNOWN; recovery never reserves or submits another task.
 
 Native `ScheduleRun` entries record **admission** status (`accepted`, `rejected`,
 `unknown`) and link the native run/session immediately. Their `completed_at`
@@ -100,19 +102,29 @@ ScheduleRun remained `running` with no run/session ID. Stock executor cancellati
 also left its accepted queue job running until an explicit owned native
 cancellation reached a cooperative boundary. These findings motivate the binding
 and cancellation guards; that probe is not proof of a hard restart of the full
-Factory adapter. Full composed application hard-kill and multi-process lease
-takeover acceptance remain to be run.
+Factory adapter. Nine additional guarded application tests now exercise owned process hard-kill
+before native submission, after queue commit and before occurrence linking. A
+restarted native worker reaches its actual persisted question with the original
+request/task/run/occurrence and one ticket. A native-poller due occurrence is
+likewise killed/restarted. Unknown reservations retain capacity without replay.
 
 Native schedules use a 300-second stale-lock grace and coalesce missed cron times.
 The adapter retains these native clock semantics, checks the claimed lease before
 releasing it, and prevents duplicate task submission independently of clock
 reclaim. It does not add catch-up replay, native lease renewal, a custom timer,
-or an upstream lease-fencing fork. A direct administrative database change racing
-the final native release is outside the supported wrapper boundary.
+or an upstream lease-fencing fork. Current lease identity is checked at admission entry and immediately before
+native submission, preventing a stale claimant from admitting new work. Native
+`release_schedule` still lacks a conditional lease-token API: a successor claim
+can race the final read and unconditional release, even through public native
+APIs. A regression exposes that release limitation while the immutable occurrence
+fence retains exactly one task/ticket. Atomic lease release remains unresolved.
+Keep one scheduler-active application process in the supported initial topology;
+concurrent scheduler replicas require an upstream conditional-release API and
+additional acceptance. The full default 300-second grace was not awaited.
 
 The current application execution policy admits bounded synthetic demo plans.
-Production remains fail-closed until live adapter and temporary-plan policy
-approval are implemented and reviewed. Schedule catalog quota, deletion/history
+Production defaults to current administrator plan review and remains fail-closed
+until a live adapter, identity and model budget are configured and accepted. Schedule catalog quota, deletion/history
 retention policy and user self-service scheduling beyond the manager are separate
 unfinished product policies; active task quotas are enforced now. No worker
 capacity or multi-host scheduling claim is made.

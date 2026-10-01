@@ -1,4 +1,4 @@
-import type { PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
+import type { ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, Connection, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
@@ -32,20 +32,20 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
   return data as T;
 }
 const segment = encodeURIComponent;
-async function instantiate(planId: string, requestId: string): Promise<FactoryJob> {
+async function instantiate(planId: string, requestId: string, executionTargetRef?: string): Promise<FactoryJob> {
   try {
-    const job = await request<FactoryJob>('/instances', 'POST', { planId, requestId });
-    if (typeof job?.id !== 'string' || job.planId !== planId) throw new ApiError('创建回执不完整，请核对原请求。', 202, 'INVALID_RESPONSE');
+    const job = await request<FactoryJob>('/instances', 'POST', { planId, requestId, ...(executionTargetRef ? { executionTargetRef } : {}) });
+    if (typeof job?.id !== 'string' || job.planId !== planId || (job.executionPlacement?.targetRef ?? undefined) !== executionTargetRef) throw new ApiError('创建回执不完整，请核对原请求。', 202, 'INVALID_RESPONSE');
     return job;
   } catch (error) {
     const ambiguous = error instanceof TypeError || error instanceof ApiError &&
       (error.status === 0 || error.status === 408 || error.status >= 500 || error.code === 'INVALID_RESPONSE');
     if (ambiguous) {
       try {
-        const receipt = await request<{ requestId: string; planId: string; taskId: string }>(`/requests/${segment(requestId)}`);
-        if (receipt.requestId !== requestId || receipt.planId !== planId || typeof receipt.taskId !== 'string') throw error;
+        const receipt = await request<{ requestId: string; planId: string; taskId: string; executionTargetRef?: string | null }>(`/requests/${segment(requestId)}`);
+        if (receipt.requestId !== requestId || receipt.planId !== planId || typeof receipt.taskId !== 'string' || (receipt.executionTargetRef ?? undefined) !== executionTargetRef) throw error;
         const detail = await request<JobDetail>(`/jobs/${segment(receipt.taskId)}`);
-        if (detail.job.id !== receipt.taskId || detail.job.planId !== planId) throw error;
+        if (detail.job.id !== receipt.taskId || detail.job.planId !== planId || (detail.job.executionPlacement?.targetRef ?? undefined) !== executionTargetRef) throw error;
         return detail.job;
       } catch { /* Keep the original uncertainty; never issue a second POST. */ }
     }
@@ -63,6 +63,7 @@ export const api = {
   publish: (material: FactoryMaterial) => request<FactoryMaterial>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST'),
   plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
   instantiate,
+  executionTargets: (signal?: AbortSignal) => request<ExecutionTarget[]>('/execution-targets', 'GET', undefined, signal),
   planAuthorization: (id: string, signal?: AbortSignal) => request<PlanAuthorization>(`/plans/${segment(id)}/authorization`, 'GET', undefined, signal),
   inspectPlanReview: (id: string, signal?: AbortSignal) => request<PlanReview>(`/plan-reviews/${segment(id)}`, 'GET', undefined, signal),
   requestPlanReview: (planId: string, requestId: string) => request<PlanReview>('/plan-reviews', 'POST', { planId, requestId }),

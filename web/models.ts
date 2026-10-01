@@ -18,6 +18,7 @@ export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
 export type FactoryJob = Job & {
   planId?: string;
+  executionPlacement?: { kind: string; targetRef: string; originTaskId: string; remoteTaskId?: string; state: string };
   allowedActions?: string[];
   validationStatus?: string;
   evidenceKind?: string;
@@ -141,3 +142,5 @@ export interface PlanReview {
   planSummary?: { normalizedGoal?: string; application?: string; mode?: string; tools?: string[];
     capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[] };
 }
+
+export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }

@@ -82,7 +82,26 @@ class NativeBridge:
         return f"/agents/{EXECUTOR_ID}/runs/{quote(run_id, safe='')}"
 
     async def detail(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
-        result = await self._request("GET", self._run_path(run_id), user_id, params={"session_id": session_id})
+        try:
+            result = await self._request("GET", self._run_path(run_id), user_id, params={"session_id": session_id})
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+            # Pinned Agno's agent-run GET requires run rights. Its native session
+            # GET is the supported owner-scoped read path; no admin token is used.
+            result = await self._request("GET", f"/sessions/{quote(session_id, safe='')}/runs/{quote(run_id, safe='')}",
+                user_id, params={"type": "agent", "db_id": self.native_db.id})
+            if result.get("run_id") != run_id or result.get("agent_id") != EXECUTOR_ID:
+                raise HTTPException(403, "Native session read returned a different executor/run")
+            session = self.native_db.get_session(session_id, session_type=SessionType.AGENT, user_id=user_id)
+            if session is None or session.agent_id != EXECUTOR_ID or session.user_id != user_id:
+                raise HTTPException(403, "Native session ownership differs from the task")
+            exact = [run for run in session.runs or [] if run.run_id == run_id and run.agent_id == EXECUTOR_ID]
+            if len(exact) != 1:
+                raise HTTPException(404, "Exact native owner-scoped run not found")
+            # Native session RunSchema omits requirements. Enrich only after its
+            # HTTP ownership check, preserving persisted native question types.
+            result = {**exact[0].to_dict(), "readOnly": True}
         # Only query the ticket after native HTTP ownership/resource checks succeed.
         # Preserve requirements and the actual status; no synthetic status translation.
         result["queue"] = jsonable_encoder(self.native_db.get_job(run_id))

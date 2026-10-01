@@ -80,7 +80,7 @@ class SchedulingService:
         self.store.require_current_policy()
         self.auth.require(owner, "run")
         plan = self.store.plan(plan_id, owner)
-        if plan["status"] != "ready" or plan.get("delegation"):
+        if plan["status"] != "ready" or plan.get("delegation") or plan.get("remoteHandoff"):
             raise HTTPException(409, "Schedule requires a ready, top-level immutable plan")
         self.store.require_plan_execution(owner, plan)
         return plan
@@ -194,9 +194,36 @@ class SchedulingService:
             raise HTTPException(409, "UNKNOWN native admission; cancellation retained pending reconciliation")
         return await self.bridge.cancel_run(task["run_id"], task["id"], owner)
 
+    def _require_lease(self, claimed: Schedule) -> None:
+        current = self.db.get_schedule(claimed.id)
+        if not current or not claimed.locked_by or claimed.locked_at is None or any(
+            current.get(field) != getattr(claimed, field)
+            for field in ("locked_by", "locked_at", "next_run_at")
+        ):
+            raise HTTPException(409, "SCHEDULE_LEASE_CHANGED: current native claim no longer belongs to this worker")
+
     async def _reconcile(self, receipt: dict[str, Any]) -> dict[str, Any]:
         if receipt["status"] == "rejected":
             return receipt
+        if not receipt["task_id"]:
+            try:
+                task = self.store.task_for_request(receipt["request_id"], receipt["owner_id"])
+            except HTTPException as error:
+                if error.status_code != 404:
+                    raise
+            else:
+                # Read the original committed reservation after a crash between
+                # reservation and occurrence binding; never reserve or submit again.
+                _, binding = self._bound(receipt["schedule_id"], receipt["owner_id"])
+                plan = self.store.plan(binding["plan_id"], receipt["owner_id"])
+                expected = digest({"definition": binding["definition_hash"], "plan": binding["plan_hash"]})
+                if (receipt["fingerprint"] != expected or digest(plan) != binding["plan_hash"]
+                        or task["plan_id"] != binding["plan_id"]
+                        or task["fingerprint"] != digest({"planId": plan["id"], "planHash": digest(plan)})):
+                    raise HTTPException(409, "SCHEDULE_INTEGRITY: original reservation differs from its occurrence")
+                self.store.sql("UPDATE af_schedule_occurrences SET task_id=:task WHERE id=:id AND task_id IS NULL",
+                               id=receipt["id"], task=task["id"])
+                receipt = self._receipt(receipt["id"])
         if receipt["task_id"]:
             task = self.store.task(receipt["task_id"], receipt["owner_id"])
             if not task["run_id"] and task["admission"] != "rejected":
@@ -233,6 +260,9 @@ class SchedulingService:
                 owner = claimed.user_id
                 if not owner:
                     raise HTTPException(403, "Unowned schedules cannot admit Factory tasks")
+                self.auth.require(owner, "run")
+                if release:
+                    self._require_lease(claimed)
                 current, binding = self._bound(claimed.id, owner)
                 if not current.enabled or self._definition(claimed) != self._definition(current):
                     raise HTTPException(409, "Schedule disabled or changed after claim")
@@ -266,7 +296,9 @@ class SchedulingService:
                 if not fresh:
                     return await self._reconcile(self._receipt(identifier))
                 try:
-                    # Fresh current rights/policy immediately before native admission.
+                    # Fresh current lease, rights and policy before native admission.
+                    if release:
+                        self._require_lease(claimed)
                     self._plan(binding["plan_id"], owner)
                     native = await asyncio.wait_for(self.bridge.submit({**plan, "task_id": task["id"]}, owner, request_id), timeout=30)
                     run_id = native.get("run_id")

@@ -142,3 +142,29 @@ no-cost retrieval/citation checks, approved experiment execution/evaluation,
 supervisor hard-restart recovery/cancellation, model budget authorization and
 tool registration in the plan-aware executor. No provider/model request, remote
 compute or live research success is claimed by these tests.
+
+## Exact-source native build checkpoint
+
+A separate task-owned Windows build of the exact source revision succeeded with
+`cargo build --locked --release --bin orx`, Rust/Cargo 1.93.1 and
+`x86_64-pc-windows-msvc`. The installed 0.2.10 executable was left unchanged.
+The isolated 0.2.13 executable is 42,894,336 bytes, SHA-256
+`d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7`.
+Source archive: 7,317,108 bytes, SHA-256
+`396ef8731e8531f676171640e04b05848c00cb23c9647ccd6cadbcbda9f9a62a`.
+Cargo.toml SHA-256: `e430beec668ed34b9c171bc814dfae90bd5362a0ab5c598b6cfdde00a1380dda`;
+Cargo.lock SHA-256: `5e9f1753089dcdba38ba9f750a0b8b4acc625d6e0f98e4f8f58927ede8719ee6`.
+
+The actual adapter version/hash preflight passed against this executable; a
+wrong pin rejected before spawning. Version/help startup and unsupported-harness
+allowlist rejection were checked with isolated homes and filtered provider
+environment. No provider/research/session/server operation ran. A bounded
+local-only status lookup for a nonexistent experiment timed out at 10 seconds;
+cleanup ran, but its cause and successful real status parsing remain unverified.
+There is no successful live project/experiment workflow evidence.
+
+`platform/tests/test_actual_orx_preflight.py` is opt-in with an operator-supplied
+`FACTORY_ORX_BINARY` and `FACTORY_ORX_SHA256`. It runs only version preflight and
+wrong-pin rejection. Ordinary CI does not download/build/run ORX. This manifest
+attests one local build, not reproducibility or production approval. Neither the
+binary, build cache, isolated homes nor private build paths are published.
