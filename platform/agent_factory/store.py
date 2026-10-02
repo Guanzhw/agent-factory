@@ -83,6 +83,14 @@ class Store:
         if connection is not None:
             result = connection.execute(text(statement), params)
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
+        # A standalone SELECT previously opened and committed its own read
+        # transaction. AUTOCOMMIT preserves that single-statement snapshot and
+        # releases the connection immediately, without BEGIN/COMMIT round trips.
+        # Explicit transaction connections above still own all locking reads.
+        if statement.lstrip().split(None, 1)[0].upper() == "SELECT":
+            with self.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                result = conn.execute(text(statement), params)
+                return [dict(row) for row in result.mappings()] if result.returns_rows else []
         with self.engine.begin() as conn:
             result = conn.execute(text(statement), params)
             return [dict(row) for row in result.mappings()] if result.returns_rows else []

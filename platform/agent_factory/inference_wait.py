@@ -228,7 +228,7 @@ def acknowledged_work(store, task):
     return work
 
 
-def pause(store, response, messages, error, *, streaming=False):
+def prepare_pause(store, response, error):
     if not transient(error) or os.name != "posix" or getattr(store, "usage_ledger", None) is None:
         return None
     task = store.task(response.session_id, response.user_id)
@@ -249,6 +249,19 @@ def pause(store, response, messages, error, *, streaming=False):
         "deadline": previous["deadline"] if previous else (at + timedelta(seconds=seconds)).isoformat(),
         "createdAt": previous["createdAt"] if previous else at.isoformat(), "controlId": str(uuid4())}
     observe(store, task, body, admitting=True)
+    return body
+
+
+def publish_pause(store, response, messages, body, *, streaming=False):
+    # Native output and requirement mutation must stay on the calling event loop.
+    # A cancelled blocking preparation can never publish a late native pause.
+    task = store.task(response.session_id, response.user_id)
+    if task["cancel_requested"]:
+        raise RunCancelledException("Existing cancellation denies inference recovery")
+    if store.has_failures(task["id"]):
+        raise PermissionError("Existing protected failure denies inference recovery")
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(body["deadline"]):
+        raise HTTPException(409, "INFERENCE_WAIT_EXPIRED: original deadline cannot renew")
     # Persist before exposing the native pause. A crash here grants no replay;
     # the observer still bounds and checks the original external workload.
     store.sql("""INSERT INTO af_inference_waits VALUES(:task,CAST(:body AS JSONB),:hash,'WAITING')
@@ -265,6 +278,11 @@ def pause(store, response, messages, error, *, streaming=False):
     return ModelResponse(event=ModelResponseEvent.tool_call_paused.value, tool_executions=[execution])
 
 
+def pause(store, response, messages, error, *, streaming=False):
+    body = prepare_pause(store, response, error)
+    return None if body is None else publish_pause(store, response, messages, body, streaming=streaming)
+
+
 def validate_requirement(store, task, tool):
     wait = read(store, task["id"])
     if (not wait or wait["state"] != "WAITING" or tool.get("tool_name") != CONTROL_NAME
@@ -272,5 +290,8 @@ def validate_requirement(store, task, tool):
             or tool.get("external_execution_required") is not True or tool.get("result") is not None):
         raise HTTPException(409, "INFERENCE_WAIT_CHANGED: exact native recovery requirement required")
     # Approval cannot outrun the observer and discard a drifted external binding.
-    observe(store, task, wait)
+    try:
+        observe(store, task, wait)
+    except (PermissionError, RunCancelledException) as error:
+        raise HTTPException(409, "INFERENCE_WAIT_UNAVAILABLE: original work no longer permits recovery") from error
     return wait

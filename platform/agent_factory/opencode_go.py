@@ -170,12 +170,19 @@ class GoDevelopmentModel(Model):
                             "name": item["name"], "arguments": item["arguments"]}}))
                 result = ModelResponse(role="assistant", content="".join(content) or None, tool_calls=calls)
             else:
+                if not isinstance(response["choices"], list) or len(response["choices"]) != 1:
+                    raise _unknown("Unexpected multiple or missing choices")
                 choice = response["choices"][0]
                 if choice.get("finish_reason") not in {"stop", "tool_calls"}:
                     raise _unknown("Go response did not complete")
                 message = choice["message"]
+                if message.get("content") is not None and not isinstance(message["content"], str):
+                    raise _unknown()
                 result = ModelResponse(role="assistant", content=message.get("content"),
                                        tool_calls=[_call(call) for call in message.get("tool_calls", [])])
+            calls = result.tool_calls or []
+            if len({call["id"] for call in calls}) != len(calls):
+                raise _unknown("Go response contains duplicate tool identities")
             result.response_usage = _usage(response.get("usage"), responses)
             return result
         except (KeyError, TypeError, IndexError, AttributeError):
@@ -273,21 +280,34 @@ class _Stream:
             else:
                 if "error" in value:
                     raise _unknown("Go stream failed")
-                if value.get("usage") is not None:
-                    self.usage = value["usage"]
-                for choice in value.get("choices", []):
+                choices = value.get("choices", [])
+                if not isinstance(choices, list) or len(choices) > 1:
+                    raise _unknown("Unexpected multiple choices")
+                for choice in choices:
                     if choice.get("index", 0) != 0:
                         raise _unknown("Unexpected multiple choices")
+                    if self.reason is not None:
+                        raise _unknown("Go stream contains a choice after its terminal event")
                     delta = choice.get("delta", {})
                     self.content += delta.get("content") or ""
                     for tool in delta.get("tool_calls", []):
                         index = tool["index"]
+                        if type(index) is not int or index < 0:
+                            raise _unknown("Invalid streamed tool index")
+                        if tool.get("type", "function") != "function":
+                            raise _unknown("Unsupported streamed tool type")
                         call = self.calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                         call["id"] += tool.get("id", "")
                         for key in ("name", "arguments"):
                             call["function"][key] += tool.get("function", {}).get(key, "")
                     if choice.get("finish_reason"):
                         self.reason = choice["finish_reason"]
+                if value.get("usage") is not None:
+                    if self.reason is None:
+                        raise _unknown("Go stream contains usage before its terminal choice")
+                    if self.usage is not None:
+                        raise _unknown("Go stream contains repeated usage")
+                    self.usage = value["usage"]
 
     def finish(self):
         if self.buffer.strip() or not self.done:

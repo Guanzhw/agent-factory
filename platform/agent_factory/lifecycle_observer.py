@@ -208,7 +208,6 @@ class FactoryLifecycleObserver:
         service = self.store.delegation
         if service is None:
             raise ValueError("Trusted lifecycle cleanup requires persisted delegation bindings")
-        requested: dict[str, dict] = {}
         errors = []
         from .inference_wait import read as read_wait, observe as observe_wait, reconcile_recovered_children
         for current_task in self._group(root)[0]:
@@ -242,6 +241,27 @@ class FactoryLifecycleObserver:
                                  "code": (str(error.detail).split(":", 1)[0] if isinstance(error, HTTPException)
                                           and isinstance(error.detail, str) and error.detail.startswith(("INFERENCE_WAIT_", "USAGE_BUDGET_", "ORIGIN_AUTHORITY_"))
                                           else getattr(error, "code", None))})
+        requested, phase_errors = await asyncio.to_thread(self._request_cleanup, root)
+        errors.extend(phase_errors)
+        for task in requested.values():
+            try:
+                await self._cancel_bound(task)
+            except Exception as error:
+                errors.append({"taskId": task["id"], "errorType": type(error).__name__})
+        facts = await asyncio.to_thread(self._observe_stopped, root)
+        return {"rootTaskId": root["id"], "allStopped": facts[root["id"]]["groupStopped"],
+                "requested": list(requested), "facts": list(facts.values()), "errors": errors}
+
+    def _request_cleanup(self, root: dict) -> tuple[dict, list]:
+        """Keep fresh synchronous authority and its complete root lock off the loop.
+
+        Cancellation can leave this read/cleanup-marking phase finishing in its
+        thread. It cannot submit work or reclaim capacity; native cancellation
+        and positive stop observation remain separate awaited phases.
+        """
+        service = self.store.delegation
+        requested: dict[str, dict] = {}
+        errors = []
         with service._root_lock(root["id"]):
             root = self.store.task(root["id"], root["owner_id"])
             tasks, links = self._group(root)
@@ -260,11 +280,12 @@ class FactoryLifecycleObserver:
                         if current["id"] in affected:
                             self._mark_cancel(current, reason)
                             requested[current["id"]] = current
-        for task in requested.values():
-            try:
-                await self._cancel_bound(task)
-            except Exception as error:
-                errors.append({"taskId": task["id"], "errorType": type(error).__name__})
+        return requested, errors
+
+    def _observe_stopped(self, root: dict) -> dict:
+        # Acquire/release the session advisory lock in the same thread. Never
+        # carry its SQLAlchemy connection across an asynchronous suspension.
+        service = self.store.delegation
         with service._root_lock(root["id"]):
             tasks, links = self._group(self.store.task(root["id"], root["owner_id"]))
             facts = {task["id"]: self._facts(task) for task in tasks}
@@ -279,8 +300,7 @@ class FactoryLifecycleObserver:
                     self.store.observed(task, status, True)
             if facts[root["id"]]["groupStopped"]:
                 self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner", id=root["id"], owner=root["owner_id"])
-        return {"rootTaskId": root["id"], "allStopped": facts[root["id"]]["groupStopped"],
-                "requested": list(requested), "facts": list(facts.values()), "errors": errors}
+        return facts
 
     async def tick(self) -> dict:
         async with self._tick_lock:

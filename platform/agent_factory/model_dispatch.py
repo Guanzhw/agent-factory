@@ -7,6 +7,7 @@ native Model retains its own provider formatting and native tool/HITL loop.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from agno.exceptions import InputCheckError, RunCancelledException, ModelProviderError
@@ -14,7 +15,7 @@ from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 
-from .execution_bindings import ExecutionBindings
+from .execution_bindings import BindingContext, ExecutionBindings
 
 
 class DelegatingModel(Model):
@@ -26,7 +27,7 @@ class DelegatingModel(Model):
         # This dispatcher holds trusted services, not a mutable per-run model.
         return self
 
-    def _select(self, arguments, kwargs, *, streaming=False):
+    def _prepare_selection(self, arguments, kwargs, *, streaming=False):
         response = kwargs.get("run_response")
         if response is None and len(arguments) > (6 if streaming else 5):
             response = arguments[6 if streaming else 5]
@@ -45,9 +46,12 @@ class DelegatingModel(Model):
                              session_state={**state, "factory_envelope": envelope})
         plan = store.resolve_run(context)
 
-        def current():
+        def local_current():
             if store.cancellation_requested(response.run_id):
                 raise RunCancelledException("Factory cancellation requested before model invocation")
+
+        def current():
+            local_current()
             latest = store.resolve_run(context)
             store.require_plan_execution(context.user_id, latest, run_context=context)
             self.bindings.recheck(latest, context)
@@ -57,10 +61,19 @@ class DelegatingModel(Model):
         waiting = read_wait(store, task["id"]) if getattr(store, "usage_ledger", None) is not None else None
         if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
             check_wait(store, task, waiting)
-        model = self.bindings.model_for(plan, context)
+        binding = self.bindings.resolve(plan, context)["model"]
+        if not isinstance(binding, BindingContext):
+            raise InputCheckError("Trusted model binding is required")
+        return response, plan, context, current, local_current, binding
+
+    def _complete_selection(self, prepared):
+        response, plan, context, current, local_current, binding = prepared
+        local_current()
+        store = self.bindings.store
+        model = self.bindings.model_from_binding(binding)
         # Only this fresh per-response adapter is wrapped. Shared Agent/model
         # state is unchanged, and every provider retry/tool-loop call rechecks.
-        self._guard_provider_calls(model, current,
+        self._guard_provider_calls(model, current, local_current=local_current,
             ledger=getattr(store, "usage_ledger", None), plan=plan, context=context)
         response.model = model.id
         response.model_provider = model.provider
@@ -69,8 +82,15 @@ class DelegatingModel(Model):
                      "executionBindingsSha256": self.bindings.manifest(plan)["sha256"], "createsExecution": False})
         return model
 
+    def _select(self, arguments, kwargs, *, streaming=False):
+        return self._complete_selection(self._prepare_selection(arguments, kwargs, streaming=streaming))
+
+    async def _aselect(self, arguments, kwargs, *, streaming=False):
+        prepared = await asyncio.to_thread(self._prepare_selection, arguments, kwargs, streaming=streaming)
+        return self._complete_selection(prepared)
+
     @staticmethod
-    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None):
+    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None):
         invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
 
         def reserve(args, kwargs, *, streaming=False):
@@ -100,14 +120,19 @@ class DelegatingModel(Model):
             return response
 
         async def aguard(*args, **kwargs):
-            identity = reserve(args, kwargs)
+            await asyncio.to_thread(current)
+            if local_current is not None:
+                local_current()
+            identity = ledger.begin_attempt(context, plan, model, streaming=False, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
             try:
                 response = await ainvoke(*args, **kwargs)
             except BaseException as error:
                 finish(identity, error)
                 raise
             finish(identity, response)
-            current()
+            await asyncio.to_thread(current)
+            if local_current is not None:
+                local_current()
             recovered()
             return response
 
@@ -137,7 +162,10 @@ class DelegatingModel(Model):
                         close()
 
         async def astream(*args, **kwargs):
-            identity = reserve(args, kwargs, streaming=True)
+            await asyncio.to_thread(current)
+            if local_current is not None:
+                local_current()
+            identity = ledger.begin_attempt(context, plan, model, streaming=True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
             values, evidence = None, None
             try:
                 values = ainvoke_stream(*args, **kwargs)
@@ -146,9 +174,13 @@ class DelegatingModel(Model):
                         authoritative = ledger.evidence_for(plan, value)
                         if authoritative is not None:
                             evidence = authoritative
-                    current()
+                    await asyncio.to_thread(current)
+                    if local_current is not None:
+                        local_current()
                     yield value
-                current()
+                await asyncio.to_thread(current)
+                if local_current is not None:
+                    local_current()
                 recovered()
             finally:
                 try:
@@ -174,11 +206,12 @@ class DelegatingModel(Model):
 
     async def aresponse(self, *args, **kwargs):
         try:
-            result = await self._select(args, kwargs).aresponse(*args, **kwargs)
+            model = await self._aselect(args, kwargs)
+            result = await model.aresponse(*args, **kwargs)
             self._recovered(args, kwargs)
             return result
         except ModelProviderError as error:
-            result = self._pause(args, kwargs, error)
+            result = await self._apause(args, kwargs, error)
             if result is None:
                 raise
             return result
@@ -195,14 +228,26 @@ class DelegatingModel(Model):
 
     async def aresponse_stream(self, *args, **kwargs):
         try:
-            async for value in self._select(args, kwargs, streaming=True).aresponse_stream(*args, **kwargs):
+            model = await self._aselect(args, kwargs, streaming=True)
+            async for value in model.aresponse_stream(*args, **kwargs):
                 yield value
             self._recovered(args, kwargs, streaming=True)
         except ModelProviderError as error:
-            result = self._pause(args, kwargs, error, streaming=True)
+            result = await self._apause(args, kwargs, error, streaming=True)
             if result is None:
                 raise
             yield result
+
+    async def _apause(self, arguments, kwargs, error, *, streaming=False):
+        from .inference_wait import prepare_pause, publish_pause
+        response = kwargs.get("run_response")
+        if response is None and len(arguments) > (6 if streaming else 5):
+            response = arguments[6 if streaming else 5]
+        messages = kwargs.get("messages", arguments[0] if arguments else None)
+        if not isinstance(response, RunOutput) or not isinstance(messages, list):
+            return None
+        body = await asyncio.to_thread(prepare_pause, self.bindings.store, response, error)
+        return None if body is None else publish_pause(self.bindings.store, response, messages, body, streaming=streaming)
 
     def _pause(self, arguments, kwargs, error, *, streaming=False):
         from .inference_wait import pause

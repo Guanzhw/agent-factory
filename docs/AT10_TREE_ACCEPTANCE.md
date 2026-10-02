@@ -12,7 +12,7 @@ The integration owner maintains exact final commit/CI evidence when available.
 | Receiver root inference pause and hard restart | Passed: same native/ORX IDs, one launch, completed, positive kernel stop, two independent services/DBs |
 | Receiver child inference pause and hard restart | Passed: original receiver receipt/root ownership plus child native/ORX identity preserved |
 | Parent inference fault over live approved child, hard restart | Passed locally: explicit separate recovery receipt; original native/ORX identity and one launch; parent and child completed |
-| Receiver parent fault over approved child, hard restart | FAILED latest run: child orx_experiment_inspect cancelled before approval; remote-parent recovery has not been accepted |
+| Receiver parent fault over approved child, hard restart | Still unaccepted in resumed container: inspect can reach approval and parent can reach inference pause, but child native 60-second timeout during inspect/wait invalidates recovery; final combined matrix pending |
 | Parent cancellation of waiting child | Implemented test; actual acceptance pending |
 | Child authoritative overrun under shared ancestor budget | Implemented test; actual acceptance pending |
 | Current source account overrun | Passed controlled accounting fault; no provider bill is claimed |
@@ -77,3 +77,25 @@ coverage, sustained department concurrency, and user-authorized production host
 capacity. The development Go transport remains unregistered and billing-gated;
 see [OPENCODE_GO.md](OPENCODE_GO.md). No paid model/compute or production access
 is established by this matrix.
+
+## Resumed coordinator diagnosis (2026-10-02)
+
+The new container rebuilt the pinned Linux binary with an exact hash match.
+No old scratch path was reused as evidence. Deterministic regressions reproduced
+synchronous authority blocking native-loop progress. Async checks now yield to
+the loop, retaining fresh authority and a loop-local cancellation fence before
+provider/tool entry. Model construction and native pause publication stay on the
+loop; canceled preparation cannot publish a late requirement.
+
+Repeated version CLI checks reuse only a successful exact BinaryPin version fact;
+permissions and the complete current binary hash are checked on every preflight.
+Windows capability detection fails closed without no-follow/nonblocking opens.
+Standalone metadata SELECTs use one immediately released autocommit connection;
+explicit transactions and durable denial writes keep their original semantics.
+
+Actual receiver-parent attempts remain red: both inspect and later child-wait
+native timeout variants were observed. One reached the parent's durable pause
+before child failure invalidated it. None is claimed as completed recovery.
+Optional fixed-label timing and allowlisted failure snapshots distinguish native
+queue state, usage holds and cancellation from synthetic fixture assumptions.
+The final exact-commit CI and real runtime matrix are still required.

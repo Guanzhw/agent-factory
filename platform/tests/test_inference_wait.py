@@ -257,6 +257,35 @@ class CompletedExperimentReadTests(unittest.IsolatedAsyncioTestCase):
             receipt['stop_evidence']['allStopped']=False
             with self.assertRaises(OpenResearchError):TaskLocalORXAdapter.read_completed_logs(adapter)
 
+    def _assert_completed_logs_require_flag(self, flag):
+        import os
+        import tempfile
+        from pathlib import Path
+        from agent_factory.orx_local import TaskLocalORXAdapter
+        from agent_factory.openresearch import OpenResearchError
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logs = root / 'orx-store' / 'run-logs'
+            logs.mkdir(parents=True)
+            (logs / 'run.log').write_bytes(b'original')
+            adapter = SimpleNamespace(scope=root, max_output_bytes=8, _id=lambda value: value,
+                observe_existing=lambda: {'state': 'done', 'run_id': 'run', 'stop_evidence': {'allStopped': True}})
+            for value in (None, 0, 'unsupported'):
+                with self.subTest(flag=flag, value=value), patch.object(os, flag, value, create=True), patch.object(os, 'open') as opener:
+                    if value is None:
+                        delattr(os, flag)  # Exercise genuinely absent platform capability.
+                    with self.assertRaises(OpenResearchError) as raised:
+                        TaskLocalORXAdapter.read_completed_logs(adapter)
+                    self.assertEqual(raised.exception.code, 'UNSUPPORTED_PLATFORM')
+                    opener.assert_not_called()
+
+    def test_completed_log_read_fails_closed_without_nofollow(self):
+        self._assert_completed_logs_require_flag('O_NOFOLLOW')
+
+    def test_completed_log_read_fails_closed_without_nonblock(self):
+        self._assert_completed_logs_require_flag('O_NONBLOCK')
+
+
 class RecoveredChildCancellationTests(unittest.IsolatedAsyncioTestCase):
     async def test_child_and_origin_cancellation_do_not_become_parent_failure(self):
         from contextlib import nullcontext

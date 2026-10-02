@@ -182,7 +182,7 @@ class FactoryAPI:
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
                 "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
             "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": bool({"run_experiment", "orx_experiment_run"} & set(plan["tools"]))}, "published": False, "createdAt": plan["createdAt"]}
-        delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
+        delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
             actions.append("delegate")

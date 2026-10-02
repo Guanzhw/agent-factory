@@ -314,6 +314,11 @@ class DelegationService:
                  "capabilities": plan["capabilities"], "tools": plan["tools"], "budget": plan["budget"], "sharedBudget": shared}
         scope.update(modes=[], defaultMode=None)
         try:
+            # A local exhausted ceiling is already a definitive denial. Avoid
+            # remote authority/model-mode expansion for an impossible UI action;
+            # successful previews and every create/execute still check fresh authority.
+            if depth > shared["maxDepth"] or children >= shared["childrenLimit"] or used >= shared["toolCallsLimit"]:
+                raise HTTPException(429, "Shared delegation budget exhausted")
             _, plans = self._mandate(owner, parent, creating=True)
             applications = getattr(self.store, "applications", None)
             if applications is not None and root_plan.get("applicationRef"):
