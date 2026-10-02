@@ -14,6 +14,11 @@ from .openresearch import OpenResearchError
 
 
 class TaskWindowsJob:
+    # Declared outside the platform guard so portable static checks can inspect
+    # methods without pretending Windows DLLs exist on other platforms.
+    kernel: Any
+    ntdll: Any
+
     def __init__(self, task_id: str, limits: dict[str, Any]):
         if os.name != "nt":
             raise OpenResearchError("CONTAINMENT_UNAVAILABLE", "The local ORX profile requires Windows Job Objects")

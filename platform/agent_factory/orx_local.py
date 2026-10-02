@@ -125,7 +125,7 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         process = await asyncio.create_subprocess_exec(str(self.binary), *argv,
             cwd=str(self.scope), env=self.env, stdin=asyncio.subprocess.DEVNULL,
             stdout=self._capture_stdout, stderr=self._capture_stderr,
-            close_fds=False, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4)
+            close_fds=False, creationflags=getattr(subprocess, "DETACHED_PROCESS") | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP") | 0x4)
         try:
             self._job.admit_and_resume(process.pid)
         except BaseException:

@@ -408,3 +408,23 @@ used. Source scan/remote commit/CI status and owned-service stop evidence are
 reported with the exact published checkpoint SHA. Raw local logs, databases,
 private generated auth fixtures, upstream ZIP/binary and machine caches remain
 ignored and are not transferred. OpenSession remains local.
+
+## Cloud handoff: portable setup repair
+
+Cloud ownership starts from `cbe590695f6b03aca6de9c6993a811f74990d6c9`,
+not the earlier baseline. Debian 13.6, Python 3.12.14 and Node 24.19.0 were
+observed in a container limited to 4 CPU / 16 GiB (not the production target).
+The Windows Job Object DLL attributes are explicitly typed for portable static
+checking; Windows subprocess constants are looked up only inside the existing
+Windows-only execution profile. Linux still cannot execute that profile.
+
+The lock now uses official PyPI and files.pythonhosted.org URLs with every
+version and artifact hash preserved. `uv sync --frozen --refresh` succeeded
+against those URLs. Linux Pyright reports zero errors after reproducing the
+13 handoff errors. The handoff's backup-tool variable is corrected to the
+actual `FACTORY_PG_BIN`; no startup behavior is changed.
+
+Before taking the WIP, the earlier `6793a96` passed nine actual loopback
+TCP/two-process cases plus the official PostgreSQL 17.11 dump/restore case:
+10 tests in 140.897 seconds, no skips. That result belongs to the old baseline
+and must not be attributed to this WIP or Windows ORX acceptance.

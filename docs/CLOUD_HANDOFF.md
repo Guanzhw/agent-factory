@@ -111,7 +111,7 @@ uv run python -m unittest discover -s platform/tests -v
 PostgreSQL integration is opt-in. Supply a disposable **loopback** server URL in
 `FACTORY_TEST_DATABASE_URL`, with permission to create generated test databases.
 Each fixture owns and removes only its randomly named database; it never clears
-the supplied database. `FACTORY_TEST_PG_BIN` enables existing backup/restore
+the supplied database. `FACTORY_PG_BIN` enables existing backup/restore
 tests when pinned PostgreSQL binaries are installed. Never point these commands
 at production or register real credentials. See CI configuration for its
 synthetic disposable PostgreSQL service. Ordinary CI intentionally skips actual
