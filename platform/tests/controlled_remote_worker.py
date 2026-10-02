@@ -240,7 +240,7 @@ class DropDispatchAcknowledgement:
 
     async def __call__(self, scope, receive, send):
         if (scope["type"] != "http" or scope["method"] != "POST" or not scope["path"].endswith("/dispatch")
-                or self.controls.get("fault") != "exit_after_dispatch"):
+                or self.controls.get("fault") not in {"exit_after_dispatch", "exit_after_queued_dispatch"}):
             diagnostic = {"status": 200, "body": bytearray()}
             async def traced(message):
                 if message["type"] == "http.response.start":
@@ -257,7 +257,7 @@ class DropDispatchAcknowledgement:
         await self.app(scope, receive, capture)
         status = next(message["status"] for message in buffered if message["type"] == "http.response.start")
         if status == 202:
-            self.marker.write_text(json.dumps({"pid": os.getpid(), "phase": "after-native-dispatch-before-http-ack", "status": status}), encoding="utf-8")
+            self.marker.write_text(json.dumps({"pid": os.getpid(), "phase": "after-native-dispatch-before-http-ack", "status": status, "workerStopped": self.controls.get("fault") == "exit_after_queued_dispatch"}), encoding="utf-8")
             os._exit(41)
         for message in buffered:
             await send(message)
@@ -409,8 +409,12 @@ def main():
             raise HTTPException(422, "Unsupported fixture controls")
         op = body.get("op")
         if op == "fault":
-            if body.get("fault") not in {None, "exit_after_dispatch", "exit_before_remote_dispatch"}:
+            if body.get("fault") not in {None, "exit_after_dispatch", "exit_after_queued_dispatch", "exit_before_remote_dispatch"}:
                 raise HTTPException(422, "Unsupported fixture fault")
+            if body.get("fault") == "exit_after_queued_dispatch":
+                # Fix the crash boundary before any provider attempt. Durable
+                # native admission remains live; restart starts the real worker.
+                await application.app.state.queue_worker.stop()
             controls["fault"] = body.get("fault")
         elif op in {"usage-unknown", "usage-known"}:
             controls["unknownUsage"] = op == "usage-unknown"

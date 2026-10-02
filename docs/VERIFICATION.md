@@ -562,3 +562,42 @@ Validation before publication: both ordering cases passed (4.343 s); the complet
 origin-authority, lifecycle-observer and plan-policy suites passed all 48 tests
 (87.483 s). Ruff and Linux/Windows-target Pyright passed. Full backend regression
 and both push/PR workflows are tracked separately against the resulting SHA.
+
+### Follow-up: atomic cleanup provenance and exact observation boundaries
+
+The `e8e4f6b` push workflow passed all five jobs, but its PR workflow failed two
+other PostgreSQL assertions (compute effect settlement and provider-attempt count
+after a lost dispatch acknowledgement). The local full run separately exposed
+`test_17_current_read_grant_can_observe_when_execution_grant_is_revoked` returning
+`canceled` instead of failure. These are not treated as green acceptance.
+
+Lifecycle cleanup previously committed `cancel_requested` before its failure
+provenance. A concurrent remote authority reader could interpret that partial
+state as ordinary user cancellation. `_mark_cancel` now publishes the flag and
+both events in one Store transaction; native cleanup still runs outside it.
+A deterministic PostgreSQL/actual-loopback-HTTP regression pauses the real writer
+immediately before `protected_denied`. With the old implementation it receives
+`HandoffCancellationRequested` despite revoked execution rights; with the atomic
+implementation it requires 403 both before and after commit, and checks that no
+partial flag/failure state is visible. Native read-only grants remain real, and
+no model/provider/effect is invoked.
+
+The compute test now waits for `compute_cancelled`, which follows durable effect
+settlement. `compute_stopped` is an earlier subprocess-thread acknowledgement;
+it cannot prove the async tool has already committed the effect. Strict
+`CANCELLED`, cleanup, no-artifact and bounded process-stop checks are retained.
+
+The metered lost-ack fixture now stops the actual native worker before dispatch,
+then crashes after real durable queue admission but before sending the HTTP
+acknowledgement. Restart starts the real worker. This fixes the intended boundary
+before any provider attempt; it still requires one native ticket, one metered
+attempt, and the exact original grant. The separate unrestricted lost-ack test
+remains. A crash during provider execution can produce a native retry and must
+not be conflated with this before-execution case or with exactly-once billing.
+
+Pre-publication validation: all 83 related authority, lifecycle, plan-policy,
+remote-handoff, active-compute and dual-process usage tests passed (338.166 s).
+Ruff and both Linux/Windows-target Pyright passed. The new visibility regression
+was first run against the previous production implementation and failed with the
+wrong typed cancellation outcome, then passed with the atomic transaction.
+Full backend and both exact-head workflows are recorded in PR10 after completion.

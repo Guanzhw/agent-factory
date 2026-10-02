@@ -5,6 +5,7 @@ PostgreSQL cases run the actual wired Factory origin route and managed Auth;
 they do not claim cross-process remote execution (a separate acceptance suite).
 """
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,7 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -258,6 +260,52 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
 
     def test_observed_revocation_survives_role_restoration_and_only_fresh_task_gets_authority(self):
         self._native_grant_transition(observe_revocation=True)
+
+    def test_authority_cleanup_flag_and_failure_reason_are_atomically_visible(self):
+        observer = self.state["lifecycle_observer"]
+        loop = observer._task.get_loop()
+        asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
+        self.auth.authorization.define_role("authority-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
+        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.authorization.assign("alice", "authority-reader")
+        self.auth.require("alice", "read")
+        self.assertEqual(self.auth.authorization.roles_of("alice"), ["authority-reader"])
+        with self.assertRaises(HTTPException):
+            self.auth.require("alice", "run")
+        task = self.store.task(self.placement["task_id"], "alice")
+        at_failure_event, release = threading.Event(), threading.Event()
+        original_event = self.store.event
+
+        def pause_before_failure(*args, **kwargs):
+            if args[1] == "protected_denied":
+                at_failure_event.set()
+                if not release.wait(10):
+                    raise TimeoutError("Cleanup visibility barrier was not released")
+            return original_event(*args, **kwargs)
+
+        # Pause only the writer's scheduling. A separate real HTTP/DB reader
+        # must never see failure-driven cleanup as ordinary user cancellation.
+        with patch.object(self.store, "event", side_effect=pause_before_failure), ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(observer._mark_cancel, task, "current-authority-ended")
+            try:
+                self.assertTrue(at_failure_event.wait(5))
+                with self.assertRaises(HTTPException) as denied:
+                    self.call()
+                self.assertEqual(denied.exception.status_code, 403)
+                self.assertFalse(self.store.task(task["id"], "alice")["cancel_requested"])
+                self.assertFalse(self.store.has_failures(task["id"]))
+            finally:
+                release.set()
+                pending.result(timeout=5)
+        self.assertTrue(self.store.task(task["id"], "alice")["cancel_requested"])
+        self.assertTrue(self.store.has_failures(task["id"]))
+        self.assertTrue(self.store.failure_cleanup_requested(task["id"]))
+        with self.assertRaises(HTTPException) as committed:
+            self.call()
+        self.assertEqual(committed.exception.status_code, 403)
+        self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
+        self.assertIsNone(self.store.task(task["id"], "alice")["run_id"])
+        self.assertEqual(self.provider_calls, [])
 
     def _native_grant_transition(self, *, observe_revocation):
         # Control only scheduling, on the actual service loop. Both cases still

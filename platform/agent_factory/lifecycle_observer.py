@@ -154,14 +154,17 @@ class FactoryLifecycleObserver:
         return None
 
     def _mark_cancel(self, task: dict, reason: str) -> None:
-        changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
-                                 id=task["id"], owner=task["owner_id"])
-        if changed:
-            if reason == "current-authority-ended":
-                self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
-                                 {"boundary": "lifecycle", "createsExecution": False})
-            self.store.event(task["id"], "lifecycle_cleanup_requested", "Trusted lifecycle observation requested existing task cleanup",
-                             {"reason": reason, "nativeRunId": task.get("run_id"), "createsExecution": False})
+        # Readers classify cleanup from both the flag and its failure provenance.
+        # Publish them together so authority loss cannot look like user cancel.
+        with self.store.transaction():
+            changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
+                                     id=task["id"], owner=task["owner_id"])
+            if changed:
+                if reason == "current-authority-ended":
+                    self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
+                                     {"boundary": "lifecycle", "createsExecution": False})
+                self.store.event(task["id"], "lifecycle_cleanup_requested", "Trusted lifecycle observation requested existing task cleanup",
+                                 {"reason": reason, "nativeRunId": task.get("run_id"), "createsExecution": False})
 
     async def _cancel_bound(self, task: dict) -> None:
         ticket = self._binding(self.store.task(task["id"], task["owner_id"]))
