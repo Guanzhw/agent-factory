@@ -557,7 +557,7 @@ def inspect_orx_experiment(store: Any, owner: str, task_id: str) -> dict[str, An
     return {**observation, "observationSource": "durable_factory_observation", "liveObservation": False}
 
 
-async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dict[str, Any] | None:
+def original_experiment_binding(settings: Any, store: Any, task_id: str) -> tuple[Any, ...] | None:
     """Trusted lifecycle cleanup of an existing scope after revocation/restart.
 
     No ordinary connection resolution or current run permission is required.
@@ -615,6 +615,16 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
         pin["fingerprint"], pin["revision"], tuple(pin["capabilities"]), spec["revision"],
         _experiment_anchor(store, plan, ctx) if spec["revision"] == "2" else None),
         RunContext(user_id=owner, session_id=task_id, run_id=task["run_id"]), TOOL_NAMES[1])
+    return task, plan, ctx, binding
+
+
+async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dict[str, Any] | None:
+    original = original_experiment_binding(settings, store, task_id)
+    if original is None:
+        return None
+    task, plan, ctx, binding = original
+    adapter = binding.adapter
+    owner = task["owner_id"]
     receipt = await adapter.reclaim_experiment()
     if receipt.get("state") == "NO_LAUNCH_INTENT":
         # Factory's persisted intent can precede native receipt admission.
@@ -628,7 +638,18 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
     ctx = RunContext(user_id=owner, session_id=task_id, run_id=task["run_id"])
     if fingerprint != digest(_request(plan, ctx, binding)):
         raise OpenResearchError("RECLAIM_BINDING_INVALID", "The original effect fingerprint differs from its admitted binding")
-    return _record_held_reclaim(store, ctx, plan, binding, receipt)
+    try:
+        return _record_held_reclaim(store, ctx, plan, binding, receipt)
+    except OpenResearchError as error:
+        # Corrupted source cannot become a successful result or release an
+        # UNKNOWN effect. Still retain positive kernel stop proof for operators.
+        proof = receipt.get("stop_evidence")
+        if isinstance(proof, dict) and proof.get("allStopped") is True:
+            store.event(task_id, "orx_cleanup_source_unverified", "Original process tree stopped; source/result reconciliation remains held",
+                {"nativeRunId": task["run_id"], "orxRunId": receipt.get("run_id"),
+                 "effectFingerprint": fingerprint, "stopEvidence": proof, "errorCode": error.code,
+                 "sourceVerified": False, "capacityReleased": False})
+        raise
 
 
 @dataclass

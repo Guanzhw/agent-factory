@@ -138,9 +138,11 @@ roles. Mutable reviewed research workspaces require a selected workload,
 version/approval rules and evaluator/source boundaries beyond the fixed toy and
 installed public query profile.
 
-AT10 remains an explicit integration risk: a native model failure must not
+The subsequent [bounded local AT10 stage](INFERENCE_RECOVERY.md) addresses this
+boundary for standalone Linux ORX v2; broader integration remains open: a native model failure must not
 implicitly cancel independently approved deterministic external work. The future
 provider integration needs a reviewed failure/ownership boundary and a regression
 that fails the model while observing the original external work and receipt.
-This stage does not claim that boundary has been solved. Real provider, identity,
+This literature stage did not solve that boundary; the later AT10 scope must not
+be generalized to every provider/runtime. Real provider, identity,
 workload and target-host acceptance require separate decisions and evidence.

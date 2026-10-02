@@ -110,6 +110,12 @@ class ControlCommands:
             requirement["user_input_schema"] = fields
             tool.update(user_input_schema=fields, answered=True)
         else:
+            from .inference_wait import CONTROL_NAME, validate_requirement
+            if tool.get("tool_name") == CONTROL_NAME:
+                validate_requirement(self.store, task, tool)
+                tool["result"] = canonical({"factoryControl": "resume-same-run" if decision["approved"] else "declined"})
+                return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements]),
+                    "inferenceRecovery": True, "inferenceControlId": tool["tool_call_id"], "inferenceDeclined": not decision["approved"]}
             if not tool.get("requires_confirmation") or tool.get("confirmed") is not None:
                 raise HTTPException(409, "This requirement is not an undecided approval")
             requirement["confirmation"] = decision["approved"]
@@ -206,10 +212,23 @@ class ControlCommands:
                     {"commandId": command_id, "fingerprint": row["fingerprint"], "taskRef": task_id})
                 if row["action"] == "cancel" and child is None and not prepared.get("alreadyStopped"):
                     self.store.request_cancel(task["id"])
+                if prepared.get("inferenceRecovery"):
+                    updated = self.store.sql("""UPDATE af_inference_waits SET state=:state
+                        WHERE task_id=:task AND state='WAITING' AND body->>'controlId'=:control
+                        AND CAST(body->>'deadline' AS TIMESTAMPTZ)>CURRENT_TIMESTAMP RETURNING task_id""",
+                        task=task["id"], control=prepared["inferenceControlId"],
+                        state="STOPPING" if prepared["inferenceDeclined"] else "RESUMING")
+                    if not updated:
+                        raise HTTPException(409, "INFERENCE_WAIT_CHANGED: original wait ended before dispatch")
+                    if prepared["inferenceDeclined"]:
+                        self.store.request_cancel(task["id"])
         if not claimed:
             return await self.recover(owner, task_id, command_id)
         try:
-            if row["body"]["binding"]["kind"] == "remote" and row["body"].get("remotePreparation"):
+            if prepared.get("inferenceDeclined"):
+                await self.api.delegation.cascade_cancel(owner, task["id"])
+                self._update(row, evidence={"kind": "inference-declined", "decisionRecorded": True})
+            elif row["body"]["binding"]["kind"] == "remote" and row["body"].get("remotePreparation"):
                 # A preparation can be canceled before a receiver task exists.
                 # The existing handoff CAS supplies positive no-dispatch proof;
                 # this command still owns one durable origin dispatch boundary.

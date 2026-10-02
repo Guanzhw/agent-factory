@@ -78,8 +78,9 @@ plans, receipts or receiver guards.
 
 Remaining code/integration includes real provider SDK usage/retry guards,
 production browser identity entry and mutable reviewed research workloads.
-AT10—the boundary between native model failure and already approved external
-work—remains explicitly unverified. Production TLS/identity/host authorization,
+[AT10 recovery](docs/INFERENCE_RECOVERY.md) now has a bounded standalone Linux
+ORX v2 contract; provider, Windows and delegated/receiver recovery remain separate
+integration and acceptance work. Production TLS/identity/host authorization,
 target-host load and multiple-scheduler-replica behavior also need acceptance.
 Twenty users does not imply twenty concurrent workers.
 

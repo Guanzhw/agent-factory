@@ -138,6 +138,16 @@ class FactoryAPI:
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
         status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
+        from .inference_wait import CONTROL_NAME, read as read_wait
+        inference_wait = read_wait(self.store, task["id"])
+        inference_requirement = next((r for r in native_requirements(snapshot)
+            if (r.get("tool_execution") or {}).get("tool_name") == CONTROL_NAME
+            and (r.get("tool_execution") or {}).get("external_execution_required") is True), None)
+        waiting_inference = bool(inference_wait and inference_wait["state"] == "WAITING" and inference_requirement
+                and not task["cancel_requested"] and not self.store.has_failures(task["id"])
+                and (snapshot.get("queue") or {}).get("status") == "paused")
+        if waiting_inference:
+            status = "waiting_approval"
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
@@ -159,6 +169,8 @@ class FactoryAPI:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
+            elif waiting_inference and not self.store.has_failures(task["id"]):
+                status = "waiting_approval"
         self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
@@ -187,7 +199,15 @@ class FactoryAPI:
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)
-            if tool.get("requires_user_input") and not tool.get("answered"):
+            if (tool.get("tool_name") == CONTROL_NAME and tool.get("external_execution_required")
+                    and inference_wait and tool.get("tool_call_id") == inference_wait["controlId"]):
+                scope = ("推理服务暂时不可用。已有实验仍按原批准边界运行；本次仅恢复同一推理 run，"
+                    "不会重新启动实验、增加预算或延长截止时间。截止：" + inference_wait["deadline"])
+                job.update(approvalDetail={"id": requirement["id"], "version": version, "scope": scope,
+                    "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
+                if status == "waiting_approval":
+                    actions.append("approve")
+            elif tool.get("requires_user_input") and not tool.get("answered"):
                 question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
                 job.update(questionDetail=question, question=question["text"])
                 if status == "waiting_input":
@@ -221,7 +241,7 @@ class FactoryAPI:
                          "源码和命令哈希见下方实验凭证。金额批准为零，无模型服务调用。")
                 job["approvalDetail"]["scope"] = scope
                 job["approval"]["scope"] = scope
-        return {"orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+        return {"inferenceWait": inference_wait, "orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
 
     def routes(self):

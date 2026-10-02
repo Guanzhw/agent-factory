@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agno.exceptions import InputCheckError, RunCancelledException
+from agno.exceptions import InputCheckError, RunCancelledException, ModelProviderError
 from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -53,6 +53,10 @@ class DelegatingModel(Model):
             self.bindings.recheck(latest, context)
 
         current()
+        from .inference_wait import read as read_wait, current as check_wait
+        waiting = read_wait(store, task["id"]) if getattr(store, "usage_ledger", None) is not None else None
+        if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
+            check_wait(store, task, waiting)
         model = self.bindings.model_for(plan, context)
         # Only this fresh per-response adapter is wrapped. Shared Agent/model
         # state is unchanged, and every provider retry/tool-loop call rechecks.
@@ -78,6 +82,10 @@ class DelegatingModel(Model):
             if ledger is not None:
                 ledger.finish_attempt(identity, ledger.evidence_for(plan, value))
 
+        def recovered():
+            if ledger is not None and context is not None:
+                ledger.store.sql("UPDATE af_inference_waits SET state='RECOVERED' WHERE task_id=:task AND state='RESUMING'", task=context.session_id)
+
         def guarded(*args, **kwargs):
             identity = reserve(args, kwargs)
             try:
@@ -88,6 +96,7 @@ class DelegatingModel(Model):
             # A later permission/cancellation check cannot erase incurred usage.
             finish(identity, response)
             current()
+            recovered()
             return response
 
         async def aguard(*args, **kwargs):
@@ -99,6 +108,7 @@ class DelegatingModel(Model):
                 raise
             finish(identity, response)
             current()
+            recovered()
             return response
 
         def stream(*args, **kwargs):
@@ -114,6 +124,7 @@ class DelegatingModel(Model):
                     current()
                     yield value
                 current()
+                recovered()
             finally:
                 # No final authoritative usage => UNKNOWN with the whole hold,
                 # including GeneratorExit, cancellation and partial streams.
@@ -138,6 +149,7 @@ class DelegatingModel(Model):
                     current()
                     yield value
                 current()
+                recovered()
             finally:
                 try:
                     if ledger is not None:
@@ -150,17 +162,66 @@ class DelegatingModel(Model):
         model.invoke_stream, model.ainvoke_stream = stream, astream
 
     def response(self, *args, **kwargs):
-        return self._select(args, kwargs).response(*args, **kwargs)
+        try:
+            result = self._select(args, kwargs).response(*args, **kwargs)
+            self._recovered(args, kwargs)
+            return result
+        except ModelProviderError as error:
+            result = self._pause(args, kwargs, error)
+            if result is None:
+                raise
+            return result
 
     async def aresponse(self, *args, **kwargs):
-        return await self._select(args, kwargs).aresponse(*args, **kwargs)
+        try:
+            result = await self._select(args, kwargs).aresponse(*args, **kwargs)
+            self._recovered(args, kwargs)
+            return result
+        except ModelProviderError as error:
+            result = self._pause(args, kwargs, error)
+            if result is None:
+                raise
+            return result
 
     def response_stream(self, *args, **kwargs):
-        yield from self._select(args, kwargs, streaming=True).response_stream(*args, **kwargs)
+        try:
+            yield from self._select(args, kwargs, streaming=True).response_stream(*args, **kwargs)
+            self._recovered(args, kwargs, streaming=True)
+        except ModelProviderError as error:
+            result = self._pause(args, kwargs, error, streaming=True)
+            if result is None:
+                raise
+            yield result
 
     async def aresponse_stream(self, *args, **kwargs):
-        async for value in self._select(args, kwargs, streaming=True).aresponse_stream(*args, **kwargs):
-            yield value
+        try:
+            async for value in self._select(args, kwargs, streaming=True).aresponse_stream(*args, **kwargs):
+                yield value
+            self._recovered(args, kwargs, streaming=True)
+        except ModelProviderError as error:
+            result = self._pause(args, kwargs, error, streaming=True)
+            if result is None:
+                raise
+            yield result
+
+    def _pause(self, arguments, kwargs, error, *, streaming=False):
+        from .inference_wait import pause
+        response = kwargs.get("run_response")
+        if response is None and len(arguments) > (6 if streaming else 5):
+            response = arguments[6 if streaming else 5]
+        messages = kwargs.get("messages", arguments[0] if arguments else None)
+        if not isinstance(response, RunOutput) or not isinstance(messages, list):
+            return None
+        return pause(self.bindings.store, response, messages, error, streaming=streaming)
+
+    def _recovered(self, arguments, kwargs, *, streaming=False):
+        if getattr(self.bindings.store, "usage_ledger", None) is None:
+            return
+        response = kwargs.get("run_response")
+        if response is None and len(arguments) > (6 if streaming else 5):
+            response = arguments[6 if streaming else 5]
+        if isinstance(response, RunOutput):
+            self.bindings.store.sql("UPDATE af_inference_waits SET state='RECOVERED' WHERE task_id=:task AND state='RESUMING'", task=response.session_id)
 
     def invoke(self, *args, **kwargs):
         raise InputCheckError("Use native response dispatch with its trusted run identity")

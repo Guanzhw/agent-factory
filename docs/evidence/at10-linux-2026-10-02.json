@@ -1,0 +1,481 @@
+{
+  "stage": "AT10 standalone Linux revision-2 bounded inference recovery",
+  "date": "2026-10-02",
+  "environment": {
+    "cpuQuota": 4,
+    "memoryGiB": 16,
+    "python": "3.12.14",
+    "agno": "3.1.0",
+    "postgres": "17.11",
+    "orx": "0.2.13"
+  },
+  "controlledInference": true,
+  "paidProviderCalls": 0,
+  "realResearchAcceptance": false,
+  "suite": {
+    "tests": 9,
+    "passed": 9,
+    "seconds": 814.186
+  },
+  "limits": "Original evaluator and namespace bounds unchanged; inference wait max 30 seconds, never renewed, at most two waits.",
+  "excluded": [
+    "Windows recovery",
+    "delegated/receiver recovery",
+    "real provider conformance",
+    "production identity",
+    "mutable non-toy research",
+    "production capacity acceptance"
+  ],
+  "cases": [
+    {
+      "case": "ActualInferenceBrowserTests-test_transient_fault_keeps_real_work_and_resumes_same_native_run",
+      "realORX": true,
+      "nativeRunId": "ba24d09d-17a8-4c9c-b204-f5309448e29c",
+      "orxRunId": "711633a8-9a31-4d60-b7e3-9c63a0695cda",
+      "status": "completed",
+      "launchCount": 1,
+      "processRestart": true,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "c6c6a78c279a77d66f20cc16a841b6aeb38ed81c90270d21dab86169ed165812",
+        "containerId": "5a6ee1f6a2e78f792cff5b53b3bfd42a61977b2d7156303d92314a4da025b9df",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "280f8116-3a7f-456a-9269-56652f49cf0c",
+        "schema": 1,
+        "taskId": "c41be1db-fbab-4122-9996-09c6ef8bee28",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:21:45.885461+00:00",
+        "failures": 1,
+        "orxRunId": "711633a8-9a31-4d60-b7e3-9c63a0695cda",
+        "controlId": "5ee95631-5b66-4b7d-b114-b8b51c268ffc",
+        "createdAt": "2026-10-02T16:21:15.885461+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "ba24d09d-17a8-4c9c-b204-f5309448e29c",
+        "effectFingerprint": "c9c3e60fa91c54247a916675860e53d4314aa0749829b07d2843412825bea1b1",
+        "state": "RECOVERED"
+      }
+    },
+    {
+      "case": "ActualInferenceRestartTests-test_transient_fault_keeps_real_work_and_resumes_same_native_run",
+      "realORX": true,
+      "nativeRunId": "8d760340-f39b-4df4-b53b-4ad7b5a67b99",
+      "orxRunId": "97055e0c-ad89-4ac0-9478-97e8f338bea3",
+      "status": "completed",
+      "launchCount": 1,
+      "processRestart": true,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "8679439c4bb3aa6a32e930d0c6435421c6909a81bbfcfef07dda1cf391010504",
+        "containerId": "ccad60d18454da14c8c9822d54a074f8bae540a397295b184e3303c105f918f9",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "16c111f5-4c4c-41cc-9279-9069148fe5e5",
+        "schema": 1,
+        "taskId": "e4749c94-abbf-4ae0-9ae9-430711f67e8e",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:23:39.664534+00:00",
+        "failures": 1,
+        "orxRunId": "97055e0c-ad89-4ac0-9478-97e8f338bea3",
+        "controlId": "6e08a078-1f08-468b-8f52-ef0eb607ab9b",
+        "createdAt": "2026-10-02T16:23:09.664534+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "8d760340-f39b-4df4-b53b-4ad7b5a67b99",
+        "effectFingerprint": "683980bd050ee8dddb8319e1936d9f4aeb4ed66dc560a814aad1f29729a5be38",
+        "state": "RECOVERED"
+      }
+    },
+    {
+      "case": "ActualInferenceStopTests-test_authoritative_over_budget_usage_stops_waiting_work",
+      "realORX": true,
+      "nativeRunId": null,
+      "orxRunId": "f4e26ca6-f04d-4b74-bd2b-59164dab9dea",
+      "status": "failed",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "251f0fdba868b3ae9a7275dc769b27ebbb07808a4bde82dba88a2966a9a7063e",
+        "containerId": "76d2d8555e3765c8cbfc64ab62ab6396ec2b40a739b3c147f5aee5d24505a90a",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "a1ce2721-e235-494a-9bc6-b495d5e2f8e8",
+        "schema": 1,
+        "taskId": "623a2709-43b2-49f9-bd37-a30a5112c357",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:28:19.899152+00:00",
+        "failures": 1,
+        "orxRunId": "f4e26ca6-f04d-4b74-bd2b-59164dab9dea",
+        "controlId": "a5decb75-4f66-48e3-a95c-38f31427e169",
+        "createdAt": "2026-10-02T16:27:49.899152+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "782204fd-9691-4e6a-b610-425c71432a94",
+        "effectFingerprint": "6768283e97a06c1f10ff6bce008ff07e852ca1d174deb21f9e3bb8125f0bb9e8",
+        "state": "STOPPING"
+      }
+    },
+    {
+      "case": "ActualInferenceStopTests-test_connection_revocation_during_inference_wait_stops_work",
+      "realORX": true,
+      "nativeRunId": null,
+      "orxRunId": "106b00cd-504b-40bf-8596-64835546a88e",
+      "status": "failed",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "3fee55e99fa0313935cb32a9aa310789ef97ba1bdd277a674ccf326d47c9eccf",
+        "containerId": "38a3c3745991c5cfd2109a7b20ba71365f9c3010c0b4f1e15e7f33611499abd3",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "42966e4f-628a-4874-83ce-7fb13433021f",
+        "schema": 1,
+        "taskId": "4b877f08-1c7c-480c-9856-9d6e9d6c6a18",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:40:51.853981+00:00",
+        "failures": 1,
+        "orxRunId": "106b00cd-504b-40bf-8596-64835546a88e",
+        "controlId": "d9487233-7a0c-4f38-a6c5-bfdf460eb0bf",
+        "createdAt": "2026-10-02T16:40:21.853981+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "0788443c-be55-460c-b3f5-c3b8b29c7f9f",
+        "effectFingerprint": "299fd45ab2031790bd7d5ccf8149416679f2b1b71b5d2ea3f5b0a0784c42dd2d",
+        "state": "STOPPING"
+      }
+    },
+    {
+      "case": "ActualInferenceStopTests-test_declined_recovery_stops_work_and_records_decision",
+      "realORX": true,
+      "nativeRunId": null,
+      "orxRunId": "4bcc30c6-52c6-4bd2-81c4-883e9b9caba1",
+      "status": "canceled",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "f9f1d5cfe54dcde45867acf59c0308b2a6abfe905b5769ebdd3cb6cd12ac8741",
+        "containerId": "ef943a91bc035ac4bb8ac7dde0fc3a0b4db995505aa0d90b6d41f5cd5092352b",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "77464744-2fd8-47af-93e9-68e2fcb783a6",
+        "schema": 1,
+        "taskId": "11492f26-b0ed-476e-9bcc-045212e1f916",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:28:15.133826+00:00",
+        "failures": 1,
+        "orxRunId": "4bcc30c6-52c6-4bd2-81c4-883e9b9caba1",
+        "controlId": "71638b41-12e3-4a81-8e0b-3fc4e4ced3fe",
+        "createdAt": "2026-10-02T16:27:45.133826+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "faac8d82-7ba1-432c-bc69-37f25533a58d",
+        "effectFingerprint": "0e0ac46ec1dfda27351f43b83afdfb206a69f6bce573b5ce42547bc3dfaa5a18",
+        "state": "STOPPING"
+      }
+    },
+    {
+      "case": "ActualInferenceStopTests-test_original_wait_deadline_cleans_up_without_any_resume",
+      "realORX": true,
+      "nativeRunId": null,
+      "orxRunId": "ff490b3f-aa8d-4c9f-807f-f2c65fb7f363",
+      "status": "failed",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "67b50c76147be13bbc467ec1ebf443f9b54c0a8f0cab4880c067fe22f6604cc5",
+        "containerId": "d309679846891c043b75f48abf625e1be1af6e1b459f751eab4c94a9a073a68d",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "7c01d4f4-7143-49bb-81c4-312baf042db4",
+        "schema": 1,
+        "taskId": "a2fe6f03-1b1c-4591-aee0-23cf76678300",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:42:06.564319+00:00",
+        "failures": 1,
+        "orxRunId": "ff490b3f-aa8d-4c9f-807f-f2c65fb7f363",
+        "controlId": "ff0545a3-b875-49d4-a633-ad6452aaf652",
+        "createdAt": "2026-10-02T16:41:36.564319+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "e867cdb1-7ec6-4f32-973e-d9365e7efe63",
+        "effectFingerprint": "83c51b720614bc713c3ef333abbbf0d354eeac19db8326fbca1b6c76b22416e0",
+        "state": "STOPPING"
+      }
+    },
+    {
+      "case": "ActualInferenceStopTests-test_source_drift_stops_original_tree_without_fabricating_success",
+      "realORX": true,
+      "nativeRunId": "c10d4b58-d01d-4adf-a539-3651476e0a84",
+      "orxRunId": "9eab4a6c-0d60-4801-81b8-e3de828ed8f4",
+      "status": "UNKNOWN",
+      "launchCount": null,
+      "processRestart": false,
+      "sourceDrift": true,
+      "capacityReleased": false,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "1cb971a69b8981237b70981cbb9a88581880f3bf638df1d84f5f9e58c74c2b6c",
+        "containerId": "718e390ff0ea19600e564e10cdc06e630c04037ffb4121d89ca3a1d540d85877",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": null
+    },
+    {
+      "case": "ActualInferenceStopTests-test_user_cancel_stops_waiting_external_work",
+      "realORX": true,
+      "nativeRunId": null,
+      "orxRunId": "124a7efd-2b47-4ddc-827a-4fe244490985",
+      "status": "canceled",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "aeb641aa4febf35738028f819bc0370d44598a7b0976f0f34ab680509b0fb4b5",
+        "containerId": "d445401eb9983b574b62004976f5fc37c7564dfda5541360b1e76fe11297409c",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "d97c29f1-0ac7-4ef7-ad86-1fe2b37f8801",
+        "schema": 1,
+        "taskId": "58e69173-fabb-4aed-bf8e-cdf39da2fd99",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:32:14.296185+00:00",
+        "failures": 1,
+        "orxRunId": "124a7efd-2b47-4ddc-827a-4fe244490985",
+        "controlId": "74ebdf36-311e-433d-9104-3bf1a21bf3f3",
+        "createdAt": "2026-10-02T16:31:44.296185+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "b59617c8-1c61-4063-8eb1-07a1d46b52c1",
+        "effectFingerprint": "e5697c8117401da27c5b2b5ff256a7218cd8cf1e8b85848f9a234c2bdf319d90",
+        "state": "STOPPING"
+      }
+    },
+    {
+      "case": "ActualInferenceWaitTests-test_transient_fault_keeps_real_work_and_resumes_same_native_run",
+      "realORX": true,
+      "nativeRunId": "9bffb6e6-a70d-4ef0-bac2-ba307d351706",
+      "orxRunId": "9544b981-5d7b-4fd5-870d-c4d1dd47dbc4",
+      "status": "completed",
+      "launchCount": 1,
+      "processRestart": false,
+      "sourceDrift": false,
+      "capacityReleased": null,
+      "stopEvidence": {
+        "kind": "linux_task_container",
+        "limits": {
+          "cpuPercent": 25,
+          "cpuSeconds": 8,
+          "memoryBytes": 536870912,
+          "outputBytes": 61440,
+          "maxProcesses": 64,
+          "timeoutSeconds": 30.0
+        },
+        "network": "none",
+        "enforced": [
+          "aggregate_memory",
+          "aggregate_cpu_time_guardian",
+          "cpu_rate",
+          "kernel_tasks"
+        ],
+        "allStopped": true,
+        "specSha256": "c774afbd89bd83ace171f7ea109adbc20445288006167e487058786a3e5065f0",
+        "containerId": "8de82dc5821392c75669315c8c8c922571208f54146e09cc31ee35bdb137be67",
+        "activeProcesses": 0,
+        "securitySandbox": false,
+        "pidLimitIncludesThreads": true
+      },
+      "inferenceWait": {
+        "planId": "281fb174-b201-4494-9188-a8bf66d6ca1b",
+        "schema": 1,
+        "taskId": "654674ab-cc67-4c67-9289-5263e25788df",
+        "ownerId": "alice",
+        "deadline": "2026-10-02T16:33:31.707030+00:00",
+        "failures": 1,
+        "orxRunId": "9544b981-5d7b-4fd5-870d-c4d1dd47dbc4",
+        "controlId": "0edab5d8-9088-45b5-87b1-5cae107e05b7",
+        "createdAt": "2026-10-02T16:33:01.707030+00:00",
+        "errorStatus": 503,
+        "nativeRunId": "9bffb6e6-a70d-4ef0-bac2-ba307d351706",
+        "effectFingerprint": "9723ab978f0733670bb878e9bb11bb9f08059c45dc9237912843426af055ef56",
+        "state": "RECOVERED"
+      }
+    }
+  ],
+  "additionalVerification": {
+    "authoritativeBudget": {
+      "passed": 1,
+      "seconds": 67.823
+    },
+    "revocationAndExpiry": {
+      "passed": 2,
+      "seconds": 162.315
+    },
+    "recoveryControlLifecycle": {
+      "passed": 30,
+      "seconds": 93.378
+    }
+  }
+}

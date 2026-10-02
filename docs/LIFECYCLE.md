@@ -6,6 +6,11 @@ every 500 ms, at most 24 root groups per tick, rotating across roots so old UNKN
 groups cannot starve later observations. It neither submits, resumes, retries,
 claims a ticket nor creates another scheduler/model loop.
 
+Qualifying temporary inference failures after an acknowledged standalone Linux
+ORX v2 launch become a bounded native pause before terminal failure; the observer
+checks the existing workload during that pause. It never retries inference. See
+[AT10 recovery and its explicit limits](INFERENCE_RECOVERY.md).
+
 Confirmed protected failure, native failure/cancellation or current authority loss
 requests cleanup of that existing task and descendants. Current grants, plan
 policy, governed materials and remote origin/receiver guards are checked.

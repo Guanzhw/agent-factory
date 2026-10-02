@@ -682,3 +682,46 @@ calling Factory cleanup. The independent wall guardian exits 124 and the kernel
 PID becomes zero within the bound. The actual public query was repeated under
 this final shared boundary; it still produced zero sources, an explicit endpoint
 failure and positive stop. The experiment guardian source/hash remains unchanged.
+
+## Bounded inference recovery / AT10 (2026-10-02)
+
+The standalone Linux revision-2 contract and native lifecycle decision are in
+[INFERENCE_RECOVERY.md](INFERENCE_RECOVERY.md). Qualifying temporary inference
+failure pauses the same native ticket while the acknowledged external ORX run
+continues within its original bounds. This is not provider, delegated/receiver,
+Windows or production-wide AT10 acceptance.
+
+- Actual Linux ORX/native PostgreSQL acceptance: **9 passed in 814.186 s**.
+  The controlled local model fails once with 503; no provider request is made.
+  Evidence covers background external completion, same-run recovery, duplicate
+  decisions, a separately owned Factory process killed and restarted, Chromium
+  desktop/mobile recovery, cancellation, declined recovery, connection revocation,
+  deadline expiry, authoritative over-budget usage and source drift. All original
+  process trees have positive stop evidence. Source drift deliberately retains
+  UNKNOWN/capacity hold rather than fabricating a verified result.
+- The budget assertion was strengthened to exceed the actual admitted token
+  limit and require `USAGE_BUDGET_EXCEEDED`; the updated actual case passed in
+  **67.823 s**. The earlier test could have passed on ordinary timeout and is not
+  used as evidence of budget enforcement.
+- Updated actual revocation/expiry cases passed together in **162.315 s**:
+  revocation denial precedes the deadline, and expiry explicitly records
+  `INFERENCE_WAIT_EXPIRED`. Final recovery/control/lifecycle regression passed
+  **30 tests in 93.378 s**.
+- An initial full local run collected 447 tests in 1566.499 s, with 45 skips,
+  11 failures and 7 errors. All failures were in the two in-memory native model
+  contract suites: the new SQL wait lookup was incorrectly unconditional for
+  stores without an installed usage ledger. Dispatch now gates that optional
+  feature on the ledger; all **32 compatibility and recovery contract tests
+  passed in 4.072 s** after the fix. The initial run remains a failed run, not
+  final full-suite acceptance.
+- Frontend lint/typecheck/build and **61 tests** passed. Official npm production
+  audit reported **zero vulnerabilities**. Ruff and Pyright passed. Positive
+  Linux admission unit cases explicitly control the platform predicate, so
+  Windows CI tests the protocol without claiming Windows runtime support.
+
+Synthetic acceptance receipts are summarized in
+[AT10 evidence](evidence/at10-linux-2026-10-02.json). The actual host has 4 CPU /
+16 GiB cgroup limits; this does not certify the 32/64 or 54/192 production targets.
+Final exact-head push and PR full CI results are recorded on Draft PR10 after
+completion, separately from these local runs and prior-stage CI. No paid model,
+real credential, production access, merge or deployment is part of this stage.

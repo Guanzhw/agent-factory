@@ -4,8 +4,8 @@ The target is complete factory/v0.3 functionality. This is a verified stage; pro
 
 ## Current matrix
 
-Current cloud stage: Linux literature evidence and immutable least-capability
-experiment contracts, based on accepted `54720e7`. Historical stage sections below
+Current cloud stage: bounded local AT10 inference recovery, following accepted
+Linux literature/least-capability stage `89891d4`. Historical stage sections below
 retain their original evidence; superseded “pending” statements are not current.
 
 | Capability | Current evidence | Remaining boundary |
@@ -17,7 +17,7 @@ retain their original evidence; superseded “pending” statements are not curr
 | Identity | Native managed roles, current revocation checks, scoped jobs/artifacts and demo browser sessions | Production browser identity entry and provider/session integration are still code work |
 | Model costs | Immutable reviewed prices, durable per-attempt ledger/reservations, controlled retry/streaming/remote allocation tests; explicit zero-provider local contracts | Actual provider SDK integration and usage/retry guards are not implemented merely by supplying credentials |
 | Research workloads | Fixed reviewed toy recipe and immutable installed public-query profile | Mutable reviewed research inputs/workspaces, evaluators and approval/version rules need a selected workload contract |
-| AT10 external-work ownership | Exact external launch/effect identity and cleanup receipts exist | Native model failure must not implicitly cancel separately approved deterministic work; provider integration and a dedicated regression remain required |
+| AT10 external-work ownership | Bounded native inference pause over an acknowledged standalone Linux ORX v2 launch; durable same-run recovery and background original-work checks; actual local process-restart and safety cases | Narrow local contract; provider SDKs, Windows and delegated/receiver-owned recovery require separate integration/acceptance; see [AT10 scope](INFERENCE_RECOVERY.md) |
 | Storage and recovery | Scoped disk admission/observation, dry-run/quarantine/restore/reclaim; finite 20-user pressure; official online pg_dump with concurrent artifact writes and independent restore | Actual 4 CPU/16 GiB; not target-host load, PITR, external-workspace consistency, production RPO/RTO or unbounded admission fairness |
 | Remote execution | Approved mappings/current-origin authority, child ownership, UNKNOWN reconciliation and actual two-process controlled HTTP tests | Production remote endpoints, TLS and host authorization are not connected |
 | Frontend | Chinese composition/review/progress/receipts, evidence downloads and storage views; prior actual Chromium evidence | No production identity login or live model research claim |

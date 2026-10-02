@@ -435,6 +435,25 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             self._save_receipt(result)
         return result
 
+    def observe_existing(self) -> dict[str, Any]:
+        """Read the original Linux workload; never provision, execute or wake it.
+
+        SQLite is upstream-owned status evidence, paired with kernel evidence.
+        No CLI process or new container is started by this observation path.
+        """
+        if os.name != "posix" or not self.cleanup_only:
+            raise OpenResearchError("OBSERVATION_UNSUPPORTED", "Existing Linux scope required")
+        self._verify_source()
+        self._verify_hash()
+        value = self._validate_owned_source()
+        self.binding = ExperimentBinding(self.owner_id, self.task_id, value["projectId"], value["experimentId"],
+            value["commandSha256"], value["sourceCommit"], "task-local-reviewed-toy")
+        row, receipt = self._native_run(), self._load_receipt()
+        if not row or not receipt or row["id"] != receipt.get("run_id"):
+            raise OpenResearchError("UNKNOWN_RUN", "Original launch acknowledgement required")
+        self._job = TaskLinuxContainer(self.task_id, self.owner_id, self.scope, self.binary, self.limits, cleanup_only=True)
+        return {**receipt, "state": row["status"], "stop_evidence": self._job.evidence()}
+
     def evaluation_result(self) -> dict[str, Any] | None:
         row = self._native_run()
         if not row or row["status"] not in {"done", "failed"}:

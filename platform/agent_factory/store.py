@@ -100,6 +100,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_storage_objects (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,task_id TEXT NOT NULL REFERENCES af_tasks(id),root_id TEXT NOT NULL,evidence BOOLEAN NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL,identity JSONB NOT NULL DEFAULT '{}'::jsonb)",
             "CREATE TABLE IF NOT EXISTS af_retention_plans (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,object_id TEXT NOT NULL REFERENCES af_storage_objects(id),request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,body JSONB NOT NULL,UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
+            "CREATE TABLE IF NOT EXISTS af_inference_waits (task_id TEXT PRIMARY KEY REFERENCES af_tasks(id), body JSONB NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_resources (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL)",
@@ -345,8 +346,10 @@ class Store:
             self.sql("UPDATE af_tasks SET terminal=:terminal WHERE id=:id", id=task["id"], terminal=terminal)
 
     def request_cancel(self, task_id):
-        self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
-        self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
+        with self.transaction():
+            self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
+            self.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:id AND state IN ('WAITING','RESUMING')", id=task_id)
+            self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):
         return self.task(identifier)["cancel_requested"]
