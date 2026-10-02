@@ -98,7 +98,13 @@ class OwnedServer:
         headers = {"Authorization": "Bearer " + token(self.configuration["jwtKey"], actor)}
         if fixture:
             headers["X-Fixture-Control"] = self.configuration["controlKey"]
-        with httpx.Client(timeout=12, trust_env=False, follow_redirects=False) as client:
+        # One public instance request may await prepare, dispatch and detail,
+        # each with the production handoff client's 20-second read deadline.
+        # The outer fixture must allow those phases and current-authority checks
+        # to finish; bounded state waits and all admission/effect proofs remain.
+        read_seconds = 75 if method.upper() == "POST" and path == "/api/factory/instances" else 30
+        timeout = httpx.Timeout(connect=3, read=read_seconds, write=5, pool=3)
+        with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
             return client.request(method, self.url + path, headers=headers, **kwargs)
 
     def facts(self, task=None):

@@ -364,3 +364,11 @@ the remote replay claim comes from the later explicit same-target check, not tha
 mistaken submission. All fixture tasks were terminal before owned-service cleanup.
 Only generated native fixture users/roles were used; credential-bearing browser
 helpers were removed. There were no production grants or provider requests.
+
+The two-process HTTP fixture now uses explicit finite connect/write/pool deadlines
+of 3/5/3 seconds, a 75-second read deadline for instance submission and 30 seconds
+for other reads. This allows the existing sequential 20-second prepare, dispatch
+and detail phases to finish under loaded CI. The first PR run timed out in the
+outer fixture before assertions; the same-source push workflow passed. No runtime
+timeout, retry, state wait or admission/effect assertion changed. After correction,
+all nine actual-process acceptance cases passed again in 85.518 seconds.
