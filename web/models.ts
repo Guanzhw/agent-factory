@@ -218,3 +218,27 @@ export interface AssemblyProposal {
   fingerprint: string; state: 'pending' | 'revised' | 'rejected' | 'accepted'; planId: string | null;
   allowedActions: ('revise' | 'reject' | 'accept')[];
 }
+
+export interface ControlReceipt {
+  commandId: string;
+  ownerId: string;
+  taskId: string;
+  action: 'answer' | 'approve' | 'cancel';
+  fingerprint: string;
+  decisionSha256: string;
+  binding: Record<string, unknown>;
+  requirementId: string | null;
+  version: number | null;
+  approved: boolean | null;
+  state: 'INTENT_RECORDED' | 'UNKNOWN' | 'REJECTED' | 'DECISION_RECORDED' | 'EXECUTION_CONTINUING' | 'STOP_CONFIRMED';
+  intentRecorded: boolean;
+  decisionRecorded: boolean;
+  executionContinuing: boolean;
+  stopConfirmed: boolean;
+  canDispatch: boolean;
+  acknowledged: boolean;
+  createdAt: string;
+  updatedAt: string;
+  evidence: Record<string, unknown>;
+  error: Record<string, unknown> | null;
+}

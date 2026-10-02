@@ -1,10 +1,10 @@
 import asyncio
-import copy
 import hashlib
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from .control_commands import ControlCommand, ControlCommands, legacy_command, COMMAND_ID
 from .catalog import create_plan
 from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
@@ -56,13 +56,17 @@ class PublicationRequest(Body):
     requestId: str = Field(min_length=1, max_length=200)
 
 
-class Answer(Body):
+class Cancel(Body):
+    commandId: str | None = Field(default=None, pattern=COMMAND_ID)
+
+
+class Answer(Cancel):
     questionId: str
     version: int
     answer: str = Field(min_length=1, max_length=2000)
 
 
-class Approval(Body):
+class Approval(Cancel):
     requirementId: str
     version: int
     approved: bool
@@ -112,6 +116,7 @@ class FactoryAPI:
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
         self.remote = getattr(store, "remote_execution", None)
+        self.commands = ControlCommands(self)
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
@@ -406,67 +411,52 @@ class FactoryAPI:
                 return (await self.remote.detail(task, child))["snapshot"].get("delegation")
             return await self.delegation.inspect_group(user["id"], task_id)
 
-        @router.post("/jobs/{task_id}/cancel")
-        async def cancel(task_id: str, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return await self.remote.cancel(task, child)
-            before = await self.detail(task)
-            if self.delegation:
-                if before["job"]["status"] in {"completed", "failed", "canceled"} and before["snapshot"]["delegation"]["allStopped"]:
-                    return before["job"]
-                await self.delegation.cascade_cancel(user["id"], task_id)
-                return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
-            if before["job"]["status"] in {"completed", "failed", "canceled"}:
-                return before["job"]
-            self.store.request_cancel(task_id)
-            if task.get("run_id"):
-                await self.bridge.cancel_run(task["run_id"], task["id"], user["id"])
-            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+        @router.get("/commands")
+        async def outstanding_commands(request: Request, taskId: str | None = None,
+                                       limit: int = Query(default=50, ge=1, le=100),
+                                       after: str | None = Query(default=None, max_length=100), outstanding: bool = True):
+            user = self.user(request, "read")
+            return await self.commands.list(user["id"], taskId, limit=limit, after=after, outstanding=outstanding)
 
-        async def continue_requirement(task_id, request, requirement_id, version, approved=None, answer=None):
+        @router.get("/jobs/{task_id}/commands/{command_id}")
+        async def command_receipt(task_id: str, command_id: str, request: Request):
+            user = self.user(request, "read")
+            return await self.commands.recover(user["id"], task_id, command_id)
+
+        @router.post("/jobs/{task_id}/commands", status_code=202)
+        async def submit_command(task_id: str, body: ControlCommand, request: Request):
             user = self.user(request)
+            return await self.commands.submit(user["id"], task_id, body)
+
+        @router.post("/jobs/{task_id}/commands/{command_id}/acknowledge")
+        async def acknowledge_command(task_id: str, command_id: str, request: Request):
+            user = self.user(request, "read")
+            return await self.commands.acknowledge(user["id"], task_id, command_id)
+
+        @router.post("/jobs/{task_id}/commands/{command_id}/dispatch", status_code=202)
+        async def dispatch_prepared(task_id: str, command_id: str, request: Request):
+            user = self.user(request)
+            return await self.commands.dispatch(user["id"], task_id, command_id)
+
+        async def compatibility_command(task_id, request, action, decision, command_id):
+            user = self.user(request)
+            receipt = await self.commands.submit(user["id"], task_id, legacy_command(task_id, action, decision, command_id))
             task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                body = {"questionId": requirement_id, "version": version, "answer": answer} if answer is not None else {"requirementId": requirement_id, "version": version, "approved": approved}
-                return await self.remote.action(task, "answer" if answer is not None else "approve", body, child)
-            detail = await self.detail(task)
-            expected = "waiting_input" if answer is not None else "waiting_approval"
-            if detail["job"]["status"] != expected or task["cancel_requested"]:
-                raise HTTPException(409, "Task is no longer waiting for this action")
-            requirements = copy.deepcopy(native_requirements(detail["snapshot"]))
-            requirement = next((r for r in requirements if r.get("id") == requirement_id), None)
-            if requirement is None or requirement_version(requirement) != version:
-                raise HTTPException(409, "STALE_REQUIREMENT: refresh the task before deciding")
-            tool = requirement["tool_execution"]
-            if answer is not None:
-                if not tool.get("requires_user_input"):
-                    raise HTTPException(409, "This requirement is not a question")
-                fields = requirement.get("user_input_schema") or tool.get("user_input_schema") or []
-                unanswered = [field for field in fields if field.get("value") is None]
-                if len(unanswered) != 1 or unanswered[0].get("name") != "scope":
-                    raise HTTPException(409, "Unsupported question schema")
-                unanswered[0]["value"] = answer
-                requirement["user_input_schema"] = fields
-                tool["user_input_schema"] = fields
-                tool["answered"] = True
-            else:
-                if not tool.get("requires_confirmation"):
-                    raise HTTPException(409, "This requirement is not an approval")
-                requirement["confirmation"] = approved
-                tool["confirmed"] = approved
-            await self.bridge.continue_run(task["run_id"], task["id"], user["id"], requirements)
-            self.store.event(task_id, "question_answered" if answer is not None else "approval_decided", "Scoped native continuation submitted", {"requirementId": requirement_id, "version": version, "approved": approved})
-            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+            return {**(await self.detail(task, child))["job"], "commandReceipt": receipt}
+
+        @router.post("/jobs/{task_id}/cancel")
+        async def cancel(task_id: str, request: Request, body: Cancel | None = None):
+            return await compatibility_command(task_id, request, "cancel", {}, body.commandId if body else None)
 
         @router.post("/jobs/{task_id}/answer")
         async def answer(task_id: str, body: Answer, request: Request):
-            return await continue_requirement(task_id, request, body.questionId, body.version, answer=body.answer)
+            return await compatibility_command(task_id, request, "answer",
+                {"requirementId": body.questionId, "version": body.version, "answer": body.answer}, body.commandId)
 
         @router.post("/jobs/{task_id}/approve")
         async def approve(task_id: str, body: Approval, request: Request):
-            return await continue_requirement(task_id, request, body.requirementId, body.version, approved=body.approved)
+            return await compatibility_command(task_id, request, "approve",
+                {"requirementId": body.requirementId, "version": body.version, "approved": body.approved}, body.commandId)
 
         @router.post("/jobs/{task_id}/reconcile")
         async def reconcile(task_id: str, request: Request):

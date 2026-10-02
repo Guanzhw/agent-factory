@@ -147,7 +147,7 @@ class NativeBridge:
             raise HTTPException(503, "Native admission reconciliation is unavailable") from error
 
     async def continue_run(self, run_id: str, session_id: str, user_id: str,
-                           requirements: list[Any]) -> dict[str, Any]:
+                           requirements: list[Any], *, command_proof: dict[str, str] | None = None) -> dict[str, Any]:
         # The public native route accepts serialized ToolExecution objects, while
         # detail returns RunRequirement wrappers. Keep the original execution IDs.
         tools = []
@@ -159,8 +159,10 @@ class NativeBridge:
             if not isinstance(execution, dict) or not execution.get("tool_call_id"):
                 raise HTTPException(400, "A native tool execution ID is required")
             tools.append(execution)
-        return await self._request("POST", self._run_path(run_id) + "/continue", user_id,
-            data={"session_id": session_id, "background": "true", "stream": "false", "tools": json.dumps(tools)})
+        data = {"session_id": session_id, "background": "true", "stream": "false", "tools": json.dumps(tools)}
+        if command_proof is not None:
+            data["metadata"] = json.dumps({"factoryControlCommand": command_proof})
+        return await self._request("POST", self._run_path(run_id) + "/continue", user_id, data=data)
 
     async def cancel_run(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
         return await self._request("POST", self._run_path(run_id) + "/cancel", user_id,

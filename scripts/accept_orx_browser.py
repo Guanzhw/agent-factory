@@ -40,7 +40,7 @@ async def main():
         def observed(request):
             if request.method == "POST" and "/api/factory/" in request.url:
                 body = request.post_data_json or {}
-                requests.append({"path": urlparse(request.url).path, "requestId": body.get("requestId"), "planId": body.get("planId"), "approved": body.get("approved")})
+                requests.append({"path": urlparse(request.url).path, "requestId": body.get("requestId"), "planId": body.get("planId"), "approved": body.get("approved"), "action": body.get("action")})
         page.on("request", observed)
         await page.goto(origin)
         await page.get_by_role("heading", name="研究工作台", exact=True).wait_for()
@@ -114,12 +114,12 @@ async def main():
         try:
             goal = "Actual ORX browser owned success"
             job, before = await build("success", goal, lose_ack=True)
-            approve_before = len([r for r in requests if r["path"].endswith("/approve")])
+            approve_before = len([r for r in requests if r["path"].endswith("/commands") and r["action"] == "approve"])
             await page.get_by_role("button", name="同意本次请求", exact=True).dblclick()
             result = await terminal(job["id"], "completed")
             assert result["orxExperiment"]["status"] == "done" and result["orxExperiment"]["evaluation"]["zeroModelCalls"] is True
             assert result["orxExperiment"]["evaluation"]["baseline"]["value"] == 16 and result["orxExperiment"]["evaluation"]["candidate"]["value"] == 0
-            assert len([r for r in requests if r["path"].endswith("/approve")]) == approve_before + 1
+            assert len([r for r in requests if r["path"].endswith("/commands") and r["action"] == "approve"]) == approve_before + 1
             await page.get_by_text("基线 MSE（toy）", exact=True).wait_for()
             assert await page.get_by_role("alert").count() == 0
             downloads = []

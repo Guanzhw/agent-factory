@@ -118,6 +118,7 @@ def create_app(settings=None):
     handoff_client.install_guard()
     store.remote_execution = RemoteExecution(store, handoff_client)
     receiver = PreparedHandoffService(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
+    store.handoff_receiver = receiver
     if receiver:
         receiver.install_guard()
     schedules = SchedulingService(settings, store, native_db, auth, bridge)

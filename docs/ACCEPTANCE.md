@@ -88,13 +88,42 @@ until a verified receiver task exists. Exact parent-application child modes are
 projected from current immutable scope. Supported browser evidence and complete
 test counts are recorded in VERIFICATION.md.
 
-## WIP actual ORX / usage-ledger cloud checkpoint
+## Actual Linux ORX / usage ledger: accepted bounded evidence
 
-This stage is preserved for cloud continuation, **not accepted**. Actual CLI
-adapter and focused native Factory success/failure/cancel/drift checks passed,
-but connection-revocation observation still fails. Real ledger and remote usage
-focused suites pass; the final complete suite has not been rerun. Native Factory
-hard interruption, actual profile startup and browser workflow remain unrun.
-Terminal process-stop proof and historical receiver-effective cleanup require
-correction before completion. See [CLOUD_HANDOFF.md](CLOUD_HANDOFF.md) and
-[VERIFICATION.md](VERIFICATION.md). Prior milestone evidence remains historical.
+The earlier local WIP handoff is superseded by the cloud evidence recorded in
+[VERIFICATION.md](VERIFICATION.md), [LINUX_ORX.md](LINUX_ORX.md) and
+[Linux ORX evidence](evidence/linux-orx-2026-10-02.json). The pinned Linux binary
+was independently reproduced; 10 actual local adapter and 6 actual native Factory
+cases have separate focused evidence. Actual Factory hard interruption/restart,
+original-run recovery and the seven-phase Chromium workflow were also exercised.
+The usage-ledger implementation and dual-process accounting have native
+PostgreSQL evidence. These are bounded local toy experiments and synthetic
+provider usage, not live research or production tenancy acceptance.
+
+At exact commit `2b738ac5377115be122e3b512992a9b2a6471860`, both push and PR CI
+passed all five jobs. Each PostgreSQL run executed 387 tests, with 352 passes and
+35 explicit opt-in skips. The 35 are exactly:
+
+| Category | Count | Missing CI opt-in / boundary |
+|---|---:|---|
+| Actual Linux local ORX adapter | 10 | Pinned binary/source and task-owned Docker containment |
+| Actual Linux ORX native Factory | 6 | Same toolchain/container plus actual PG integration opt-in |
+| Actual Windows local ORX adapter | 10 | Pinned Windows binary/source and Windows containment |
+| Actual Windows ORX native Factory | 6 | Windows containment, pinned toolchain and native PG opt-in |
+| Exact-binary ORX preflight | 2 | Explicit binary and digest |
+| Official clean PostgreSQL dump/restore | 1 | Opt-in `FACTORY_PG_BIN` tools |
+
+A skip is neither a failure nor evidence of runtime success. The 16 Linux actual
+cases have separate evidence; they do not certify the 16 Windows cases. In
+particular, the historical Windows native connection-revocation acceptance was
+not passed and remains unverified on Windows. Cross-platform static/unit CI does
+not replace that runtime acceptance. The clean-stop dump/restore case has separate
+local evidence; it is not live-write recovery acceptance.
+
+[The original cloud handoff](CLOUD_HANDOFF.md) is preserved as a superseded
+historical checkpoint. Durable control-command receipts/recovery are described in
+[CONTROL_COMMANDS.md](CONTROL_COMMANDS.md), with native/remote fault tests, actual
+service exits, four Chromium restart/identity cases and actual Linux ORX
+approval/cancel receipt recovery. Final CI for this milestone is tracked in the
+draft PR; the exact-head counts above describe the earlier completed checkpoint. Disk admission/retention/monitoring, fair-load acceptance,
+live-write restore and remote actual ORX remain separate pending work.

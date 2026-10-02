@@ -55,6 +55,7 @@ class Store:
         self.composition: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
+        self.handoff_receiver: Any = None
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
@@ -92,6 +93,8 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS af_control_commands (owner_id TEXT NOT NULL, command_id TEXT NOT NULL, task_ref TEXT NOT NULL, root_task_id TEXT NOT NULL REFERENCES af_tasks(id), action TEXT NOT NULL, fingerprint TEXT NOT NULL, requirement_slot TEXT, state TEXT NOT NULL, body JSONB NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner_id,command_id), UNIQUE(owner_id,requirement_slot))",
+            "CREATE INDEX IF NOT EXISTS af_control_commands_owner_task ON af_control_commands(owner_id,task_ref)",
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",

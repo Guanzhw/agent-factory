@@ -30,3 +30,11 @@
 .reviewed-configuration{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:0}.plan-usage-commitment{border:1px solid var(--line);border-radius:5px;padding:12px;margin:12px 0}.plan-usage-commitment h3{font-size:13px}.review-row .plan-usage-commitment pre{font-size:11px}
 
 .ledger-overage{color:#934b3c;background:#fbeeea;padding:8px;border-radius:4px;font-size:11px;margin:8px 0;overflow-wrap:anywhere}
+
+.control-recovery { margin-bottom: 24px; padding: 20px; border: 1px solid var(--border, #dce3df); border-radius: 12px; background: #f5f8f6; }
+.control-recovery ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.control-recovery li { padding: 14px 0; border-top: 1px solid #dce3df; }
+.control-recovery li p { margin: 6px 0 12px; }
+.control-recovery .button-row { flex-wrap: wrap; }
+.control-recovery .technical-detail span { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .control-recovery { padding: 14px; } .control-recovery .section-heading { align-items: flex-start; gap: 10px; } }

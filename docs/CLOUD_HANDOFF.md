@@ -1,3 +1,5 @@
+> Historical handoff — superseded by the cloud acceptance in [ACCEPTANCE.md](ACCEPTANCE.md), [VERIFICATION.md](VERIFICATION.md) and [LINUX_ORX.md](LINUX_ORX.md). Original observations below are retained unchanged; they are not the current implementation/acceptance status.
+
 # Cloud Codex handoff checkpoint — WIP
 
 This checkpoint preserves the actual-ORX/usage-ledger work on

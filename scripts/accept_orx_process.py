@@ -78,7 +78,12 @@ def main():
         def detail(): return api('GET', '/jobs/' + task_id)
         paused = wait_for(lambda: (d if (d := detail())['job']['status'] == 'waiting_approval' else None))
         approval = paused['job']['approvalDetail']
-        api('POST', '/jobs/' + task_id + '/approve', {'requirementId': approval['id'], 'version': approval['version'], 'approved': True})
+        approval_command = {'commandId': str(uuid4()), 'action': 'approve', 'requirementId': approval['id'], 'version': approval['version'], 'approved': True}
+        # The actual HTTP request commits, then the owned caller discards the
+        # response before retaining any receipt. Recovery below only uses GET.
+        response = client.post('/api/factory/jobs/' + task_id + '/commands', json=approval_command, headers=fixture['ownerHeaders'])
+        assert response.status_code == 202
+        del response
         running = wait_for(lambda: (d if (d := detail()).get('orxExperiment', {}).get('status') == 'running' else None))
         original = running['orxExperiment']
         assert original['orxRunId'] and original['nativeRunId'] and not original['stopEvidence']['allStopped']
@@ -92,7 +97,15 @@ def main():
         start(resume=True)
         restored = detail()['orxExperiment']
         assert restored['orxRunId'] == original['orxRunId'] and restored['nativeRunId'] == original['nativeRunId']
-        api('POST', '/jobs/' + task_id + '/cancel')
+        approval_receipt = api('GET', '/jobs/' + task_id + '/commands/' + approval_command['commandId'])
+        assert approval_receipt['decisionRecorded'] and approval_receipt['approved'] is True
+        cancel_command = {'commandId': str(uuid4()), 'action': 'cancel'}
+        response = client.post('/api/factory/jobs/' + task_id + '/commands', json=cancel_command, headers=fixture['ownerHeaders'])
+        assert response.status_code == 202
+        del response
+        process.kill(); process.wait(timeout=10)
+        start(resume=True)
+        cancel_receipt = wait_for(lambda: (r if (r := api('GET', '/jobs/' + task_id + '/commands/' + cancel_command['commandId']))['stopConfirmed'] else None))
         stopped = wait_for(lambda: (d if (d := detail()).get('orxExperiment', {}).get('stopEvidence', {}).get('allStopped') is True else None))
         current = stopped['orxExperiment']
         assert current['orxRunId'] == original['orxRunId'] and current['nativeRunId'] == original['nativeRunId']
@@ -104,7 +117,8 @@ def main():
         assert runs == [(original['orxRunId'],)]
         evidence = {'kind': 'actual_linux_factory_native_queue_sigkill', 'taskId': task_id,
                     'before': original, 'after': current, 'factoryStatus': stopped['job']['status'],
-                    'nativeAdmissions': 1, 'nativeORXRuns': 1, 'detachedSurvivorsAfterSIGKILL': len(survivors) - 1,
+                    'nativeAdmissions': 1, 'nativeORXRuns': 1, 'approvalCommand': approval_receipt, 'cancelCommand': cancel_receipt,
+                    'discardedControlResponses': 2, 'recoveryControlPOSTs': 0, 'detachedSurvivorsAfterSIGKILL': len(survivors) - 1,
                     'paidProviderCalls': 0}
         (root / 'process-evidence.json').write_text(json.dumps(evidence, indent=2))
         print(json.dumps({'ok': True, 'evidence': str(root / 'process-evidence.json')}))

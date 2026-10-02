@@ -24,6 +24,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
+from .control_commands import ControlCommand
 from .store import effect_unresolved, canonical, digest, now
 from .native_bridge import INTERNAL_NATIVE
 from .plan_policy import ToolContract, tools_for_contract
@@ -62,6 +63,10 @@ def _usage_commitment(value: Any, *, bindings: Mapping[str, Any] | None = None) 
         raise HTTPException(409, "USAGE_BINDING_INTEGRITY: usage differs from its original model binding")
     return copy.deepcopy(value)
 REQUEST = re.compile(r"^[a-zA-Z0-9_.:-]{8,100}$")
+
+
+class RemoteControlCommand(ControlCommand):
+    sourceFingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class HandoffCancellationRequested(RunCancelledException):
@@ -597,6 +602,30 @@ class PreparedHandoffService:
             raise HTTPException(502, "Scoped receiver action returned an invalid receipt")
         return value
 
+    async def control_command(self, remote_owner, identifier, body: RemoteControlCommand, remote_task_id=None):
+        row = self._row(identifier, remote_owner)
+        self._check_row(row, remote_owner, execution=body.action != "cancel")
+        self.auth.require(remote_owner, "run")
+        task = self._task(row, remote_task_id)
+        from .factory_api import FactoryAPI
+        command = ControlCommand.model_validate(body.model_dump(exclude={"sourceFingerprint"}, exclude_none=True))
+        upstream = {"sourceFingerprint": body.sourceFingerprint, "originRef": row["origin_ref"],
+            "originTaskId": row["origin_task"], "manifestSha256": row["manifest_hash"], "handoffId": identifier,
+            "remoteTaskId": task["id"], "remoteRootTaskId": row["body"]["remoteTaskId"],
+            "bindingProofSha256": row["body"]["remotePlan"]["remoteHandoff"]["bindingProofSha256"]}
+        return await FactoryAPI(self.store.settings, self.store, self.auth, self.bridge).commands.submit(
+            remote_owner, task["id"], command, upstream=upstream)
+
+    async def control_receipt(self, remote_owner, identifier, command_id, remote_task_id=None):
+        row = self._row(identifier, remote_owner)
+        self._check_row(row, remote_owner, execution=False)
+        task = self._task(row, remote_task_id)
+        from .factory_api import FactoryAPI
+        result = await FactoryAPI(self.store.settings, self.store, self.auth, self.bridge).commands.recover(remote_owner, task["id"], command_id)
+        if result["binding"].get("upstream", {}).get("handoffId") != identifier:
+            raise HTTPException(404, "Command is outside this receiver handoff")
+        return result
+
     async def children(self, remote_owner: str, identifier: str, remote_task_id: str | None = None) -> list[dict[str, Any]]:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner, execution=False)
@@ -741,6 +770,14 @@ class PreparedHandoffService:
                    cursor: str | None = Query(default=None, max_length=4096),
                    limit: int = Query(default=100, ge=1, le=1000)):
             return self.events(owner(request), identifier, remoteTaskId, cursor=cursor, limit=limit)
+
+        @self.router.post("/{identifier}/commands", status_code=202)
+        async def control_command(identifier: str, body: RemoteControlCommand, request: Request, remoteTaskId: str | None = None):
+            return await self.control_command(owner(request, True), identifier, body, remoteTaskId)
+
+        @self.router.get("/{identifier}/commands/{command_id}")
+        async def control_receipt(identifier: str, command_id: str, request: Request, remoteTaskId: str | None = None):
+            return await self.control_receipt(owner(request), identifier, command_id, remoteTaskId)
 
         @self.router.post("/{identifier}/cancel")
         async def cancel(identifier: str, request: Request, remoteTaskId: str | None = None):
@@ -1111,6 +1148,30 @@ class TrustedHandoffClient:
             raise HTTPException(502, "Remote cancellation has no scoped receipt")
         self._save_receipt(self._row(owner, task_id), target, result["receipt"])
         return result
+
+    def _control_result(self, owner, row, target, value, remote_task_id):
+        receipt = row["body"].get("receipt") or {}
+        expected_task = remote_task_id or receipt.get("remoteTaskId")
+        upstream = value.get("binding", {}).get("upstream", {}) if isinstance(value, dict) else {}
+        if (not isinstance(value, dict) or value.get("ownerId") != target.identity_map[owner]
+                or not expected_task or value.get("taskId") != expected_task
+                or upstream.get("handoffId") != receipt.get("id") or upstream.get("originTaskId") != row["task_id"]
+                or upstream.get("manifestSha256") != row["manifest_hash"]
+                or upstream.get("remoteRootTaskId") != receipt.get("remoteTaskId")):
+            raise HTTPException(409, "COMMAND_REMOTE_PROOF: current receiver scope differs")
+        return value
+
+    async def control_command(self, owner, task_id, body, remote_task_id=None):
+        row, target, identifier = await self._binding(owner, task_id, execution=body["action"] != "cancel")
+        value = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/" + identifier + "/commands",
+            json=body, params={"remoteTaskId": remote_task_id} if remote_task_id else {})
+        return self._control_result(owner, row, target, value, remote_task_id)
+
+    async def control_receipt(self, owner, task_id, command_id, remote_task_id=None):
+        row, target, identifier = await self._binding(owner, task_id, execution=False)
+        value = await self._request(owner, target, "GET", "/api/factory/remote-handoffs/" + identifier + "/commands/" + quote(command_id, safe=""),
+            params={"remoteTaskId": remote_task_id} if remote_task_id else {})
+        return self._control_result(owner, row, target, value, remote_task_id)
 
     async def action(self, owner: str, task_id: str, action: str, body: dict[str, Any],
                      remote_task_id: str | None = None) -> dict[str, Any]:
