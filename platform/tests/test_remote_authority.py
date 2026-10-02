@@ -212,12 +212,19 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.transport = OriginAuthorityTransport(base_url=self.loopback.url, origin_ref=self.target.origin_ref,
             target_ref=self.target.reference, target_revision=self.target.configuration_revision,
             target_fingerprint=self.target.fingerprint, receiver_identity_map=self.target.identity_map,
+            # Full-suite DB/GC scheduling is outside this authorization test.
+            # Transport timeout behavior has separate bounded adverse tests.
+            timeout_seconds=10,
             credential_provider=lambda _: self.auth._issue_native_token("bob"))
         self.plan = self.state["composition"].create_plan("alice", "Checksum controlled authority fixture", "literature", "checksum")
         self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
 
     def call(self, tool="checksum"):
-        return self.transport("alice", self.placement["task_id"], self.placement["manifest_hash"], tool)
+        try:
+            return self.transport("alice", self.placement["task_id"], self.placement["manifest_hash"], tool)
+        except HTTPException as error:
+            error.add_note(f"Actual authority failure: {error.detail}; transport cause: {type(error.__cause__).__name__}")
+            raise
 
     def body(self, **changes):
         return {"schema": 1, "originRef": self.target.origin_ref, "targetRef": self.target.reference, "originOwner": "alice",
@@ -320,7 +327,8 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.auth.authorization.unassign("alice", "factory-user")
         with self.assertRaises(HTTPException) as withdrawn:
             self.call()
-        self.assertEqual(withdrawn.exception.status_code, 403)
+        self.assertEqual(withdrawn.exception.status_code, 403,
+                         f"{withdrawn.exception.detail}; cause={withdrawn.exception.__cause__!r}")
         self.assertFalse(self.store.task(original["task_id"], "alice")["cancel_requested"],
                          "The authority read alone must not commit lifecycle cleanup")
         if observe_revocation:

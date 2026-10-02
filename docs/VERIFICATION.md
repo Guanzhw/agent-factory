@@ -601,3 +601,13 @@ Ruff and both Linux/Windows-target Pyright passed. The new visibility regression
 was first run against the previous production implementation and failed with the
 wrong typed cancellation outcome, then passed with the atomic transaction.
 Full backend and both exact-head workflows are recorded in PR10 after completion.
+
+The first full local run of `dec8046` ran 387 tests (928.366 s), with 34 explicit
+skips and one failure: the source-role withdrawal check received 503 rather than
+403. Its server log completed the correct read denial after the client assertion,
+consistent with the default two-second transport deadline expiring during full
+suite scheduling/connection GC. This is recorded as a failed run, not hidden by
+the passing 83-case focused run. The native PostgreSQL/loopback fixture now uses
+a bounded ten-second request budget and includes transport-cause diagnostics;
+production keeps its two-second default, and the adversarial timeout tests still
+require bounded 503 with no retry. All exact authorization assertions remain.
