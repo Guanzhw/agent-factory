@@ -198,6 +198,12 @@ class ControlCommandPostgresTests(unittest.TestCase):
         self.assertEqual(self.receipt(task, command)["state"], "INTENT_RECORDED")
         auth.unassign("alice", "command-reader")
         auth.assign("alice", "factory-user")
+        # Revocation may already have stopped the first native task. Restoring
+        # a role cannot resurrect it; use a fresh task for requirement drift.
+        task, command = self.waiting()
+        with patch("agent_factory.control_commands.ControlCommands.dispatch", retain):
+            self.assertEqual(self.post(task, command).json()["state"], "INTENT_RECORDED")
+        path = f'/api/factory/jobs/{task}/commands/{command["commandId"]}/dispatch'
         row = self.api.commands.row("alice", task, command["commandId"])
         native = self.state["store"].task(task)
         # A separate authorized native interaction changes the paused target.
