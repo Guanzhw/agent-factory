@@ -25,10 +25,11 @@ TOOLS = {"orx_discover": ORX_ADAPTER_ID, "orx_paper": "openresearch-paper-v1",
          "orx_text": "openresearch-text-v1", "orx_sources_report": "openresearch-sources-report-v1"}
 PUBLIC_QUERIES = {"public-rag-v1": "retrieval augmented generation"}
 ARXIV = re.compile(r"\d{4}\.\d{4,5}(?:v\d+)?\Z")
+LEGACY_ARXIV = re.compile(r"[a-z-]+/\d{7}(?:v\d+)?\Z")
 
 
 def source_url(identifier: str) -> str:
-    if ARXIV.fullmatch(identifier) or re.fullmatch(r"[a-z-]+/\d{7}(?:v\d+)?", identifier):
+    if ARXIV.fullmatch(identifier) or LEGACY_ARXIV.fullmatch(identifier):
         return "https://arxiv.org/abs/" + identifier
     if re.fullmatch(r"(?:pmid:)?\d{1,20}", identifier):
         return "https://pubmed.ncbi.nlm.nih.gov/" + identifier.removeprefix("pmid:") + "/"
@@ -226,7 +227,11 @@ def register_literature_adapters(bindings):
                         # alphaXiv overview is a generated report, not primary-source
                         # text. For arXiv, both tools request extracted text only.
                         full = bool(ARXIV.fullmatch(identifier))
-                        if selected == "orx_text" and not full:
+                        # The pinned adapter cannot explicitly request full
+                        # text for legacy arXiv IDs. Its default paper route
+                        # would return a generated overview: never use that as
+                        # a primary-source abstract/excerpt.
+                        if LEGACY_ARXIV.fullmatch(identifier) or (selected == "orx_text" and not full):
                             return [evidence_record(identifier, "", status="full_text_unsupported", field="stdout")]
                         try:
                             command = await current_adapter.paper(identifier, full=full)

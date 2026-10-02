@@ -49,7 +49,8 @@ end-to-end source package on this Linux host.
 - `orx_paper` and `orx_text` accept canonical IDs only from this task's persisted
   discovery evidence. No arbitrary URLs/files/commands are accepted. They reuse
   `OpenResearchAdapter.paper`. For supported arXiv IDs they request extracted
-  full text explicitly; alphaXiv's generated overview is never presented as
+  full text explicitly. Legacy arXiv IDs remain explicitly unsupported because
+  the pinned adapter cannot force their full-text route; alphaXiv's generated overview is never presented as
   primary-source text. Other sources remain abstract-only or explicitly
   `full_text_unsupported`; fetch failures are distinct from confirmed absence.
 - Each record contains source ID, canonical URL, SHA-256, hash scope, a bounded

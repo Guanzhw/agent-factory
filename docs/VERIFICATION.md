@@ -668,3 +668,9 @@ real credentials, host networking/security changes, merge or deployment occurred
 AT10 provider-failure/external-work independence, real model SDK attempt guards,
 production browser identity and mutable reviewed workloads remain explicit
 implementation/integration work, not simply missing credentials.
+
+A final primary-source review found that legacy arXiv IDs would otherwise select
+the upstream generated-overview default. The evidence contract now reports
+unsupported full text without calling that route. A native PostgreSQL regression
+passed in 10.289 s, preserving the original controlled discovery abstract and
+verifying that the overview-fetch method is never called.

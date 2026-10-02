@@ -188,3 +188,31 @@ class FailedLiteraturePostgresTests(LiteraturePostgresTests):
             self.assertIn('未取得来源'.encode(), archive.read('report.md'))
             self.assertIn(b'COMMAND_FAILED', archive.read('report.md'))
         self.assertEqual(len(self.store.effects(task)), 2, 'Exactly one query and one report; no automatic repeated requests')
+
+
+class LegacyArxivProvider:
+    def create_retrieval_adapter(self, **kwargs):
+        class LegacyArxiv(ControlledRetrieval):
+            async def discover(self, query, *, corpus, limit):
+                return [{'id': 'math/0211159', 'title': 'Invented legacy-ID fixture',
+                         'abstract': 'Original controlled abstract; not a generated overview.'}]
+            async def paper(self, paper_id, *, full=False):
+                raise AssertionError('Legacy arXiv default overview must never be fetched as source text')
+        return LegacyArxiv(**kwargs)
+
+
+@unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires isolated loopback PostgreSQL')
+class LegacyArxivLiteraturePostgresTests(LiteraturePostgresTests):
+    def provider(self): return LegacyArxivProvider()
+
+    def test_native_review_queue_sources_report_and_owner_download(self):
+        task, detail = self.run_evidence()
+        bundle = next(a for a in detail['artifacts'] if a['name'].endswith('.zip'))
+        _, raw = self.store.artifact(task, bundle['id'])
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            source = json.loads(archive.read('sources.json'))['sources'][0]
+            self.assertEqual(source['sourceId'], 'math/0211159')
+            self.assertEqual(source['textStatus'], 'abstract_only')
+            self.assertEqual(source['missingFullTextReason'], 'full_text_unsupported')
+            self.assertFalse(source['fullTextAvailable'])
+            self.assertIn('Original controlled abstract', source['excerpt'])
