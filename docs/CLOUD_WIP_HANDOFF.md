@@ -74,6 +74,21 @@ precise run counts and final exact-head CI. A bare slim-image substitution was
 rejected: it lacks ORX's required git/ps/kill dependencies. No image, resource
 ceiling or native deadline was changed. Go remains entirely offline.
 
+### Latest terminal-publication correction
+
+CI at `2e68725` found a failure arriving between the observer's cleanup-request
+and terminal-publication phases. Before publishing terminal, the observer now
+rechecks strict binding/reason, records cancellation provenance and refreshes
+positive-stop/failure facts. UNKNOWN/queued changes and check failures keep the
+root unreclaimed. Five deterministic contracts reproduce the old defect; all
+19 PostgreSQL lifecycle/lock cases passed in 43.985 seconds after the fix.
+
+The real safety batch at `2e68725` passed 7/8 (1111.150 seconds); the remaining
+receiver-overrun case failed before fault injection and has an earlier passing
+run. Separate passing runs do not establish a combined green acceptance matrix.
+Final corrected-head CI and receiver-parent reliability remain the gates. The
+reported cloud disconnect did not block shell/Git or interrupt the active test.
+
 ## Preserved pre-resumption checkpoint
 
 This is preservation of incomplete project work, not an acceptance release.

@@ -82,3 +82,24 @@ container setup remains a measured bottleneck on this 4 CPU/16 GiB Docker-vfs
 host. No timeout, authority check or UNKNOWN hold was relaxed. Bare Python slim
 was investigated but rejected because ORX also needs git, ps and external kill;
 no runtime image was changed. Final exact-head CI is reported on Draft PR11.
+
+## Terminal-publication race follow-up
+
+Exact-head CI at `2e68725` exposed lifecycle case 01: a protected failure could
+arrive after the cleanup-request phase, while the next phase published a stopped
+root as terminal without recording its cancellation cause. Terminal publication
+now repeats the strict binding/reason check, records required cleanup provenance,
+and refreshes positive-stop/failure facts. Changed UNKNOWN/queued facts or check
+errors retain capacity; normal completed work remains uncanceled. Five new
+deterministic contracts fail against the old implementation and pass with the
+fix. All 14 real PostgreSQL lifecycle cases plus five lock cases passed together:
+19 tests in 43.985 seconds. Independent review passed.
+
+The final safety batch at `2e68725` passed 7/8 in 1111.150 seconds. Receiver
+overrun failed in inspect preparation before its fault was injected; it passed
+in the earlier resumed matrix. All eight safety scenarios now have current
+container passing evidence across separate runs, but this is not a green combined
+run. Remaining receiver-parent reliability and final corrected-SHA CI are open.
+Shell and Git were rechecked after a reported cloud disconnect at 20:33 UTC:
+both remained available; the existing PostgreSQL process was preserved without
+starting duplicate tests.

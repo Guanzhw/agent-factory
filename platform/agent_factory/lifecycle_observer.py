@@ -296,8 +296,23 @@ class FactoryLifecycleObserver:
                 facts[task["id"]]["groupFailed"] = facts[task["id"]].get("failed", False) or any(
                     link["child_id"] and facts[link["child_id"]].get("groupFailed") for link in direct)
                 if stopped:
-                    status = "failed" if facts[task["id"]]["groupFailed"] else "canceled" if task["cancel_requested"] or facts[task["id"]].get("nativeStatus") == "cancelled" else "completed"
-                    self.store.observed(task, status, True)
+                    # A protected failure can appear after the cleanup-request
+                    # phase. Record its cancellation provenance before making
+                    # the root terminal (and therefore absent from future ticks).
+                    task = self.store.task(task["id"], task["owner_id"])
+                    reason = self._reason(task, self._binding(task))
+                    if reason:
+                        self._mark_cancel(task, reason)
+                    task = self.store.task(task["id"], task["owner_id"])
+                    facts[task["id"]].update(self._facts(task))
+                    stopped = facts[task["id"]]["stopped"] and all(
+                        link["child_id"] and facts[link["child_id"]].get("groupStopped") for link in direct)
+                    facts[task["id"]]["groupStopped"] = bool(stopped)
+                    facts[task["id"]]["groupFailed"] = facts[task["id"]].get("failed", False) or any(
+                        link["child_id"] and facts[link["child_id"]].get("groupFailed") for link in direct)
+                    if stopped:
+                        status = "failed" if facts[task["id"]]["groupFailed"] else "canceled" if task["cancel_requested"] or facts[task["id"]].get("nativeStatus") == "cancelled" else "completed"
+                        self.store.observed(task, status, True)
             if facts[root["id"]]["groupStopped"]:
                 self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner", id=root["id"], owner=root["owner_id"])
         return facts

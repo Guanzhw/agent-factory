@@ -115,3 +115,8 @@ The subsequent selected-closure optimization retains fresh material governance
 and removes unrelated catalog checks; its actual receiver-parent rerun still
 failed at inspect (98.289 seconds). These outcomes supersede any inference of
 a green current receiver matrix from earlier passing runs in the table.
+
+The eight safety cases at `2e68725` completed in 1111.150 seconds: 7 passed;
+receiver overrun failed during inspect preparation before fault injection. That
+case had passed in the prior resumed matrix. Every safety scenario therefore has
+a passing current-container run, but the combined batch is still not green.
