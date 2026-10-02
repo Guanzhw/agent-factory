@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "snapshot": "exported repeatable-read snapshot",
+  "confirmedBeforeCutRestored": 2,
+  "confirmedAfterCutExcluded": 4,
+  "commitsDuringDump": 3,
+  "unknownAdmissionHeld": true,
+  "duplicateRunCreated": false,
+  "externalWorkspaceRestored": false,
+  "PITRProven": false,
+  "productionRPOOrRTOProven": false
+}

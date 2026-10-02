@@ -127,3 +127,40 @@ service exits, four Chromium restart/identity cases and actual Linux ORX
 approval/cancel receipt recovery. Final CI for this milestone is tracked in the
 draft PR; the exact-head counts above describe the earlier completed checkpoint. Disk admission/retention/monitoring, fair-load acceptance,
 live-write restore and remote actual ORX remain separate pending work.
+
+## Single-host storage and recoverable operations (cloud, 2026-10-02)
+
+This stage adds conservative disk admission, owner-scoped observations and an
+explicit dry-run/quarantine/restore/manifest-reclaim protocol. Default permanent
+reclamation is disabled. The [operations guide](STORAGE_OPERATIONS.md) documents
+protected active/UNKNOWN/evidence/lease boundaries, bounded inventory, original
+container attribution, process-crash recovery and remaining production limits.
+
+Local PostgreSQL evidence: ten storage safety/upgrade tests plus two affected
+native/shared-budget tests passed (12 total); one actual service-exit/rename recovery
+test passed; one scoped runtime-attribution unit test passed. Chromium verified
+original-plan recovery after browser restart with zero automatic mutation POSTs,
+exact restored synthetic bytes, Bob/Alice isolation and a 390-pixel viewport.
+Only newly generated reconstructible fixture files were deleted.
+
+The final bounded pressure and online restore cases passed together (2 tests).
+[Configuration and measured limits](evidence/storage-pressure-2026-10-02.json),
+[occupancy/CPU/RSS curves](evidence/storage-pressure-2026-10-02.svg), and
+[raw bounded observations](evidence/storage-pressure-2026-10-02.csv) describe the
+actual 4-CPU/16-GiB cloud cgroup, not the two target host profiles. All twenty finite
+requests reached native progress; one deliberate UNKNOWN remained held after
+cleanup. Low water was injected, never produced by filling the filesystem.
+The finite retry workload is not a guarantee of fair admission under unbounded
+hot-user refills or mixed long-running production work.
+
+The [online snapshot receipt](evidence/online-restore-2026-10-02.json) records
+actual artifact commits overlapping official pg_dump and recovery into a different
+generated database. Confirmed-before artifacts survived, confirmed-after writes
+were excluded, and UNKNOWN was retained without a new ticket. This is not PITR,
+a production RPO/RTO claim, or consistency proof for external mutable workspaces.
+
+A read-only measurement of the previous owned stopped ORX container verified
+original ID/spec/name/image/scope attribution: writable layer 0 bytes, root filesystem
+logical size 1,107,740,089 bytes. Logical container size is not vfs physical allocation;
+no historical container, image cache or evidence directory was removed. Exact-head
+CI status is tracked on the draft pull request separately from these local proofs.
