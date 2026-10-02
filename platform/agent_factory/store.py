@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
 from contextvars import ContextVar
+from contextlib import contextmanager
 
 from agno.exceptions import InputCheckError
 from fastapi import HTTPException
@@ -36,12 +37,30 @@ class Store:
         self.native_db: Any = None
         self.plan_policy: Any = None
         self.material_governance: Any = None
+        self.connections: Any = None
+        self.execution_bindings: Any = None
+        self.applications: Any = None
+        self.composition: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
         self.remote_execution: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
+
+    @contextmanager
+    def transaction(self):
+        """Share admission transactions with nested metadata/descendant reads."""
+        borrowed = self._connection.get()
+        if borrowed is not None:
+            yield borrowed
+            return
+        with self.engine.begin() as conn:
+            token = self._connection.set(conn)
+            try:
+                yield conn
+            finally:
+                self._connection.reset(token)
 
     def sql(self, statement, **params):
         connection = self._connection.get()
@@ -110,7 +129,7 @@ class Store:
 
     def admit_plan(self, owner, request_id, request, builder):
         fp = digest(request)
-        with self.engine.begin() as conn:
+        with self.transaction() as conn:
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": "plan:" + owner + ":" + request_id})
             row = conn.execute(text("SELECT * FROM af_plan_requests WHERE owner_id=:owner AND request_id=:key"), {"owner": owner, "key": request_id}).mappings().first()
             if row:
@@ -136,7 +155,7 @@ class Store:
 
     def reserve_task(self, plan, request_id):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
-        with self.engine.begin() as conn:
+        with self.transaction() as conn:
             # Serialize admission globally so simultaneous users cannot evade total quotas.
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             if self.native_db is not None:

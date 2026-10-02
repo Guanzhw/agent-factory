@@ -368,11 +368,16 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(detail["snapshot"]["effects"], [])
         self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="policy-revoked"), expected_revision="plan-policy-v1")
         approval = detail["job"]["approvalDetail"]
-        with patch("subprocess.Popen") as no_compute:
+        with patch("subprocess.Popen") as no_compute, patch.object(self.state["bridge"], "continue_run", wraps=self.state["bridge"].continue_run) as continuation:
             result = self.client.post("/api/factory/jobs/" + job["id"] + "/approve", json={"requirementId": approval["id"], "version": approval["version"], "approved": True})
-            self.assertEqual(result.status_code, 200, result.text)
+            # The live observer can stop the paused task before this request.
+            # Either HTTP denial or accepted continuation must still deny at
+            # the native boundary; confirmation cannot renew withdrawn policy.
+            self.assertIn(result.status_code, {200, 409}, result.text)
+            self.assertEqual(continuation.call_count, 1 if result.status_code == 200 else 0)
             stopped = self.wait(job["id"], {"failed", "unknown"})
             self.assertEqual(no_compute.call_count, 0)
+        self.assertTrue(any(event["type"] == "protected_denied" for event in stopped["events"]), stopped)
         self.assertFalse(any(event["type"] == "compute_started" for event in stopped["events"]))
         self.assertEqual(stopped["artifacts"], detail["artifacts"])
         self.assertEqual(stopped["snapshot"]["effects"], detail["snapshot"]["effects"])

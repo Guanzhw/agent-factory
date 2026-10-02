@@ -11,11 +11,13 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
@@ -299,7 +301,20 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.wait(root["id"], {"waiting_input"})
         body = {"goal": "sort", "mode": "literature", "requestId": str(uuid4())}
         path = f'/jobs/{root["id"]}/children'
-        child = self.request("POST", path, expected=202, json=body).json()
+        store = self.receiver["store"]
+        observer = self.receiver["lifecycle_observer"]
+        pending = []
+        original_submit = self.receiver["bridge"].submit
+
+        async def capture_pending_child(plan, owner, request_id):
+            if plan.get("delegation"):
+                reservation = store.task(plan["task_id"], owner)
+                self.assertIsNone(reservation["run_id"])
+                pending.append(reservation)
+            return await original_submit(plan, owner, request_id)
+
+        with mock.patch.object(self.receiver["bridge"], "submit", side_effect=capture_pending_child):
+            child = self.request("POST", path, expected=202, json=body).json()
         duplicate = self.request("POST", path, expected=202, json=body).json()
         child_id = child["job"]["id"]
         self.assertEqual(duplicate["job"]["id"], child_id)
@@ -310,6 +325,64 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(child["link"]["root_id"], root["id"])
         self.assertEqual(child["link"]["child_id"], child_id)
         self.wait(child_id, {"waiting_input"})
+        remote_root_id = self.placement(root["id"])["body"]["receipt"]["remoteTaskId"]
+        remote_child_id = child_id.split("~", 1)[1]
+        self.assertEqual(len(pending), 1)
+        stale = pending[0]
+        self.assertEqual(stale["id"], remote_child_id)
+        self.assertIsNotNone(store.task(remote_child_id)["run_id"])
+        original_group = observer._group
+        observations = []
+
+        def stale_first_read(current_root):
+            tasks, links = original_group(current_root)
+            if current_root["id"] == remote_root_id and not observations:
+                # Reproduce an authentic reservation read captured before the
+                # actual native admission completed, within one observer pass.
+                tasks = [stale if task["id"] == remote_child_id else task for task in tasks]
+                observations.append(True)
+            return tasks, links
+
+        with mock.patch.object(observer, "_group", side_effect=stale_first_read):
+            observed = self.receiver_client.portal.call(observer.observe_root, remote_root_id)
+        self.assertEqual(observations, [True])
+        self.assertEqual(observed["requested"], [], observed)
+        self.assertEqual(observed["errors"], [], observed)
+        self.assertFalse(store.task(remote_child_id)["cancel_requested"])
+        self.assertEqual(self.wait(child_id, {"waiting_input", "failed", "canceled"})["job"]["status"], "waiting_input")
+        self.assertEqual(self.ticket_count(self.receiver, remote_child_id), 1)
+        # The metadata observation must not weaken acknowledged native identity.
+        child_plan = store.plan(stale["plan_id"], "bob")
+        forged = SimpleNamespace(user_id="bob", session_id=remote_child_id, run_id=None, session_state={})
+        with self.assertRaises(HTTPException) as identity:
+            self.receiver["execution_bindings"].recheck(child_plan, forged)
+        self.assertEqual(identity.exception.status_code, 403)
+        # Hold this owned group against background observation while replacing
+        # its native SQL role; current owner denial still applies to reservation
+        # metadata and the exact old grant is restored before releasing the lock.
+        authorization = self.receiver["auth"].authorization
+        authorization.define_role("fixture-product-reader", ["agents:factory-executor:read", "sessions:read", "components:read"])
+        with store.delegation._root_lock(remote_root_id):
+            try:
+                authorization.set_role("bob", "fixture-product-reader")
+                self.assertEqual(observer._reason(stale, None), "current-authority-ended")
+            finally:
+                authorization.set_role("bob", "factory-user")
+        # A current SQL material withdrawal is visible in the same trusted read
+        # transaction. Rollback preserves other fixtures and immutable evidence.
+        governance = self.receiver["material_governance"]
+        pin = child_plan["materialRefs"][0]
+        with store.engine.connect() as connection:
+            transaction = connection.begin()
+            token = store._connection.set(connection)
+            try:
+                connection.execute(governance.versions.update().where(governance.versions.c.material_id == pin["id"],
+                    governance.versions.c.version == pin["version"]).values(state="withdrawn"))
+                self.assertEqual(observer._reason(stale, None), "current-authority-ended")
+            finally:
+                store._connection.reset(token)
+                transaction.rollback()
+        self.assertIsNone(observer._reason(stale, None))
         children = self.request("GET", path).json()
         self.assertEqual([fact["taskId"] for fact in children], [child_id])
         self.assertEqual(children[0]["link"]["parent_id"], root["id"])

@@ -30,8 +30,16 @@ class Settings:
     remote_targets: dict = field(default_factory=dict)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
+    # Same-process operator registrations; never populated from user JSON/env secrets.
+    trusted_connections: dict = field(default_factory=dict)
+    runtime_adapters: list = field(default_factory=list)
+    runtime_tool_contract: str = "legacy-v1"
 
     def __post_init__(self):
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1"}:
+            raise ValueError("Unsupported runtime tool contract")
+        if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
+            raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")
         if not self.demo and len(self.jwt_key) < 32:
             raise ValueError("Production requires an explicitly configured JWT key")
         if self.demo and not self.jwt_key:
@@ -75,5 +83,6 @@ class Settings:
                    plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
+                   runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

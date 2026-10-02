@@ -11,7 +11,7 @@ flowchart LR
   P --> B[User/task binding + fingerprint]
   B --> Q[Agno durable PostgreSQL queue]
   Q --> E[Registered factory executor]
-  E --> T[Current authority + fixed tools]
+  E --> T[Current authority + trusted material bindings]
   T --> A[Evidence / metrics / artifacts]
   API --> R[Remote reference / lease service]
   R --> RA[Agno runtime attachment]
@@ -27,7 +27,7 @@ Admission serializes semantic fingerprints and shared task budgets transactional
 
 Questions and confirmations are distinct native requirements. UI actions carry actual requirement IDs plus a canonical version token. Stale, cross-owner, canceled or wrong-type decisions are rejected. Continuation sends native tool execution objects, preserving their IDs. A canceled ticket is not proof remote/experiment work stopped; bounded local tools settle cancellation only after owned compute cleanup.
 
-The demo model replaces only provider responses. Literature sources are invented fixture records. Experiments execute one reviewed fixed Python program; user/model text cannot become executable code. The same executor runs checksum plans without core changes. Live models and ORX tool registration remain disabled pending budget, provenance and isolation acceptance.
+Approved immutable application definitions drive bounded composition and exact permitted material choices. One stable native model dispatcher creates a fresh registered Model per response context; model, tool, knowledge and environment bindings come from the persisted plan, with current owner connections and authority rechecked. No shared executor Model mutation, application-ID branch, installer or fallback grants execution. Demo adapters replace only provider responses and use invented literature. Experiments execute one reviewed fixed Python program; user/model text cannot become executable code. ORX discovery is registered through an operator-provided task adapter; controlled native integration passes, while real model/ORX research, experiment wiring and production isolation remain unverified. See MATERIAL_ASSEMBLY.md.
 
 Remote attachment does not allocate a machine. Resource references resolve through operator configuration and current owner grants, with target fingerprints, lease heartbeats, remote IDs and snapshot reconciliation. No native durable cursor/boot epoch is invented. A2A is a future interoperability adapter, not environment provisioning. The remote lease and trusted prepare/dispatch APIs are implemented. A selected receiver owns the entire task tree and one native ticket; the origin holds metadata only. Separate local native services and databases verify routing/cancellation/evidence. Production provider/TLS/identity/endpoint acceptance remains open.
 

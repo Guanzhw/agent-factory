@@ -45,8 +45,12 @@ class _ChildPlannerStore:
         for parent in self.ancestors:
             if not set(plan["capabilities"]) <= set(parent["capabilities"]) or not set(plan["tools"]) <= set(parent["tools"]):
                 raise HTTPException(403, "Child authority exceeds an ancestor's immutable mandate")
+        budget = dict(plan["budget"])
+        for parent in self.ancestors:
+            for key in ("toolCalls", "maxDepth", "maxChildren", "experimentSeconds", "outputBytes"):
+                budget[key] = min(budget[key], parent["budget"][key])
         plan = {**plan, "delegation": self.binding,
-                "budget": {**plan["budget"], "depth": self.binding["depth"]}}
+                "budget": {**budget, "depth": self.binding["depth"]}}
         plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})
         return self.store.save_plan(plan)
 
@@ -182,7 +186,11 @@ class DelegationService:
         self.auth.require(run_context.user_id, "run")
         self.store.require_current_policy()
         root_id, ancestors = self._ancestry(task)
-        with self._root_lock(root_id) as conn:
+        with self.store.transaction() as conn:
+            # One-phase budget accounting shares its connection with every
+            # nested mandate read. The key conflicts with the multi-phase
+            # session root lock, preserving serialization across both paths.
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": "delegation:" + root_id})
             self._mandate(run_context.user_id, self.store.task(task["id"], run_context.user_id))
             plan = self.store.plan(task["plan_id"], run_context.user_id)
             if name not in plan["tools"]:
@@ -199,9 +207,8 @@ class DelegationService:
                 if used >= limit:
                     self.store.event(task["id"], "protected_denied", "Shared ancestor tool execution budget exhausted", {"ancestorTaskId": ancestor["id"], "used": used, "limit": limit})
                     raise PermissionError("Shared ancestor tool execution budget exhausted")
-            with conn.begin():
-                conn.execute(text("INSERT INTO af_delegation_roots(root_id,owner_id) VALUES(:root,:owner) ON CONFLICT DO NOTHING"), {"root": root_id, "owner": task["owner_id"]})
-                conn.execute(text("INSERT INTO af_delegation_tool_calls VALUES(:task,:call,:root,:name,:at)"), {"task": task["id"], "call": call_id, "root": root_id, "name": name, "at": now()})
+            conn.execute(text("INSERT INTO af_delegation_roots(root_id,owner_id) VALUES(:root,:owner) ON CONFLICT DO NOTHING"), {"root": root_id, "owner": task["owner_id"]})
+            conn.execute(text("INSERT INTO af_delegation_tool_calls VALUES(:task,:call,:root,:name,:at)"), {"task": task["id"], "call": call_id, "root": root_id, "name": name, "at": now()})
             return {"charged": True, "rootTaskId": root_id}
 
     def has_pending_children(self, task_id: str) -> bool:
@@ -252,7 +259,7 @@ class DelegationService:
     async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str) -> dict[str, Any]:
         if not isinstance(requestId, str) or not 8 <= len(requestId) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in requestId):
             raise HTTPException(422, "A bounded delegation request ID is required")
-        if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or mode not in {"literature", "experiment"}:
+        if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
             raise HTTPException(422, "Unsupported bounded child goal or mode")
         self.auth.require(owner, "run")
         self.store.require_current_policy()

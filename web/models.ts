@@ -28,6 +28,9 @@ export interface Plan {
   status: 'ready' | 'blocked';
   createdAt: string;
   authorization?: PlanAuthorization;
+  applicationRef?: MaterialReference;
+  executionBindings?: Record<string, unknown>;
+  bindingManifest?: Record<string, unknown>;
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
@@ -167,4 +170,46 @@ export interface EventPage {
   highWatermark: number; highWatermarkSequence: number; afterSequence: number;
   startSequence: number | null; endSequence: number | null;
   payloadSha256: string; payloadBytes: number; executionTargetRef?: string;
+}
+
+export type { UserConnection, ConnectionRegistration, ConnectionKind, ConnectionStatus } from '../shared/types.js';
+
+export interface ApplicationBudget { toolCalls: number; maxDepth: number; maxChildren: number; experimentSeconds: number; outputBytes: number }
+export interface ApplicationMode {
+  materialRefs: MaterialReference[];
+  materialChoices: Record<string, { kind: Material['kind']; defaultRef: MaterialReference; allowedRefs: MaterialReference[] }>;
+  capabilities: string[]; budget: ApplicationBudget; config: Record<string, unknown>; toolOrder: string[];
+  connectionRequirements: { name: string; kind: import('../shared/types.js').ConnectionKind; requiredCapabilities: string[]; required: boolean }[];
+}
+export interface FactoryApplication {
+  id: string; version: number; sha256: string; name: string; description: string;
+  discoveryKeywords: string[]; defaultForDiscovery: boolean; defaultMode: string; modes: Record<string, ApplicationMode>;
+}
+export interface ApplicationVersion {
+  application: FactoryApplication;
+  governance: { author_id: string; state: 'draft' | 'published' | 'withdrawn' | 'archived'; bootstrap: boolean; review_id: string | null; reason: string | null };
+  immutableBodyPreserved: boolean;
+}
+export interface ApplicationReview {
+  id: string; applicationRef: MaterialReference; authorId: string; decision: 'pending' | 'approved' | 'denied';
+  reviewerId: string | null; application: FactoryApplication; state: 'draft' | 'published' | 'withdrawn' | 'archived';
+  separateAdministratorRequired: true; taskApprovalSeparate: true;
+}
+export interface CompositionInput {
+  goal: string; mode?: string; application?: string; applicationRef?: MaterialReference;
+  materialChoices?: Record<string, MaterialReference>; connectionRefs?: Record<string, string>;
+}
+export interface AssemblyCandidate {
+  application: string; applicationRef: MaterialReference; mode: string; normalizedGoal: string;
+  materialRefs: MaterialReference[]; materials: FactoryMaterial[]; tools: string[]; capabilities: string[];
+  budget: ApplicationBudget; config: Record<string, unknown>; instructions: string;
+  status: 'ready' | 'blocked'; missing: string[]; policy: Record<string, unknown>;
+  syntheticFixture: boolean; executionBindings: Record<string, unknown> | null; bindingManifest: Record<string, unknown>; fingerprint: string;
+}
+export interface AssemblyProposal {
+  id: string; ownerId: string; createdAt: string; parentId: string | null; input: CompositionInput;
+  candidate: AssemblyCandidate; selection: { method: 'approved-keyword-selection-v1' | 'explicit-application'; matchedKeywords: string[] };
+  revisedBy?: string | null;
+  fingerprint: string; state: 'pending' | 'revised' | 'rejected' | 'accepted'; planId: string | null;
+  allowedActions: ('revise' | 'reject' | 'accept')[];
 }

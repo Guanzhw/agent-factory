@@ -114,3 +114,71 @@ describe('bounded owner-scoped Factory event replay', () => {
     expect(fetch.mock.calls[0][1].method).toBe('GET');
   });
 });
+
+describe('trusted user connection lifecycle boundary', () => {
+  const connection = () => ({ ref: 'owned-reference', ownerId: 'alice', version: 1, fingerprint: 'a'.repeat(64), kind: 'tool', revision: 'test-1', capabilities: ['research:read'], taskId: null, registrationRef: 'operator-installed', expiresAt: null, createdAt: '2026-10-02T00:00:00Z', revokedAt: null, status: 'active', available: true, allowedActions: ['inspect', 'revoke'] });
+  it('binds only a trusted registration with an explicit narrowed scope and retained request ID', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(connection()), { status: 201 })));
+    vi.stubGlobal('fetch', fetch);
+    await api.bindConnection('operator-installed', 'same-key', ['research:read']);
+    await api.bindConnection('operator-installed', 'same-key', ['research:read']);
+    expect(fetch.mock.calls.map(call => JSON.parse(call[1].body))).toEqual([{ registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['research:read'] }, { registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['research:read'] }]);
+  });
+  it('rejects changed registration or task confirmation and contradictory availability', async () => {
+    for (const changed of [{ ...connection(), registrationRef: 'other' }, { ...connection(), taskId: 'other-task' }, { ...connection(), status: 'revoked' }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(changed))));
+      await expect(api.bindConnection('operator-installed', 'key', ['research:read'])).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
+  it('does not turn a foreign or unconfirmed revoke acknowledgement into success', async () => {
+    for (const changed of [connection(), { ...connection(), ref: 'foreign', status: 'revoked', available: false }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(changed))));
+      await expect(api.revokeConnection('owned-reference', 'key')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+    const fetch = vi.fn().mockRejectedValue(new TypeError('offline'));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.revokeConnection('owned-reference', 'key')).rejects.toMatchObject({ code: 'OFFLINE' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('fails closed on unrecognized registration metadata without accepting credential contents', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([{ registrationRef: 'operator-installed', kind: 'tool', revision: 'test-1', capabilities: [], available: true, status: 'changed', expiresAt: null, allowedActions: ['bind'] }]))));
+    await expect(api.connectionRegistrations()).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+});
+
+describe('governed application and immutable proposal boundary', () => {
+  const pin = { id: 'application', version: 1, sha256: 'a'.repeat(64) };
+  const material = { id: 'prompt', version: 1, sha256: 'b'.repeat(64) };
+  const budget = { toolCalls: 8, maxDepth: 2, maxChildren: 4, experimentSeconds: 8, outputBytes: 65536 };
+  const application = () => ({ ...pin, name: 'Synthetic application', description: 'Synthetic fixture', discoveryKeywords: ['fixture'], defaultForDiscovery: false, defaultMode: 'literature', modes: { literature: { materialRefs: [material], materialChoices: {}, capabilities: ['research:read'], budget, config: {}, toolOrder: ['literature_search'], connectionRequirements: [] } } });
+  const proposal = () => ({ id: 'proposal', ownerId: 'alice', createdAt: '2026-10-02T00:00:00Z', parentId: null, input: { goal: 'Bounded fixture' }, candidate: { ownerId: 'alice', application: 'application', applicationRef: pin, mode: 'literature', normalizedGoal: 'Bounded fixture', materialRefs: [material], materials: [material], tools: ['literature_search'], capabilities: ['research:read'], budget, config: {}, instructions: 'Synthetic', status: 'ready', missing: [], policy: {}, syntheticFixture: true, executionBindings: {}, bindingManifest: {}, fingerprint: 'c'.repeat(64) }, selection: { method: 'explicit-application', matchedKeywords: [] }, fingerprint: 'd'.repeat(64), state: 'pending', planId: null, allowedActions: ['revise', 'reject', 'accept'] });
+  it('sends bounded exact choices and connection references; revision has a distinct immutable parent', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(proposal()), { status: 201 })));
+    vi.stubGlobal('fetch', fetch);
+    const input = { goal: 'Bounded fixture', applicationRef: pin, materialChoices: { prompt: material }, connectionRefs: { research: 'owned-reference' } };
+    await api.propose(input, 'propose-key'); await api.reviseProposal('old/proposal', input, 'revision-key');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ ...input, requestId: 'propose-key' });
+    expect(fetch.mock.calls[1][0]).toBe('/api/factory/compositions/proposals/old%2Fproposal/revise');
+  });
+  it('rejects material pin substitution, incomplete candidates, and a foreign inspected proposal', async () => {
+    for (const changed of [{ ...proposal(), candidate: { ...proposal().candidate, materials: [{ ...material, sha256: 'f'.repeat(64) }] } }, { ...proposal(), candidate: { ...proposal().candidate, bindingManifest: null } }, { ...proposal(), id: 'foreign' }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(changed))));
+      await expect(api.inspectProposal('proposal')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
+  it('requires distinct-administrator publication evidence bound to the same immutable body', async () => {
+    const review = { id: 'review', applicationRef: pin, authorId: 'manager', reviewerId: null, decision: 'pending', application: application(), state: 'draft', separateAdministratorRequired: true, taskApprovalSeparate: true };
+    for (const changed of [{ ...review, separateAdministratorRequired: false }, { ...review, applicationRef: { ...pin, sha256: 'f'.repeat(64) } }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([changed]))));
+      await expect(api.applicationReviews()).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
+  it('retains conflict codes and sends one acceptance mutation on offline or stale approval', async () => {
+    const fetch = vi.fn().mockRejectedValue(new TypeError('offline'));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.acceptProposal('proposal', 'stable-key')).rejects.toMatchObject({ code: 'OFFLINE' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({detail:'APPLICATION_WITHDRAWN'}), {status:409})));
+    await expect(api.acceptProposal('proposal', 'stable-key')).rejects.toMatchObject({status:409, message:'APPLICATION_WITHDRAWN'});
+  });
+});

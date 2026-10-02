@@ -9,3 +9,19 @@ Auto-Research currently uses a labeled deterministic model and invented literatu
 [OpenResearch](OPENRESEARCH.md) uses exact source/CLI contracts and task-scoped adapter hygiene. Factory session ownership is retained. ORX's own OpenCode chat adapter, spawn/wake session ownership, provisioning and service startup are omitted. Installed ORX is not automatically updated or trusted by matching version text.
 
 [Remote resources](REMOTE_RESOURCES.md) separates compute allocation, Agno HTTP runtime attachment and optional A2A. No arbitrary endpoint/credential is accepted from prompts or request bodies. Actual native metadata tests and explicit synthetic lifecycle tests are distinguished. Live remote runtime execution and provisioned compute are not yet accepted.
+
+
+Material-driven execution is documented in [MATERIAL_ASSEMBLY.md](MATERIAL_ASSEMBLY.md).
+Operators register native Model/tool/knowledge/environment factories through
+`Settings.runtime_adapters` and trusted owner handles through
+`Settings.trusted_connections` before `create_app`. The authenticated
+`/api/factory/runtime-adapters` endpoint returns only installed descriptors; it
+cannot register or construct a factory. The CLI's default registrations are
+explicit demo adapters and safe native primitives. No provider SDK, API key or
+paid-model path is silently configured.
+
+`test_execution_bindings.py` shows controlled native factory contracts;
+`test_orx_factory_postgres.py` shows governed ORX discovery through a controlled
+task provider. These are synthetic integration examples, not production provider
+recipes. Missing items are reported per exact selected material and owner pin.
+Live configuration and scientific acceptance remain separate authorized work.

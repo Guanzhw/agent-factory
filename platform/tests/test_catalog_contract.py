@@ -1,72 +1,76 @@
+"""Catalog delegates to governed composition; native Auth is an owned fixture.
+
+These portable metadata tests are not PostgreSQL queue evidence. New application
+and native execution acceptance lives in test_applications_composition.py.
+"""
 import copy
-from types import SimpleNamespace
 import unittest
-from agent_factory.catalog import create_plan, seed_catalog
+
+from fastapi import HTTPException
+
+from agent_factory.catalog import create_plan
 from agent_factory.config import Settings
-from agent_factory.store import digest
+from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
 
-class CatalogFixture:
-    def __init__(self):
-        self.settings = SimpleNamespace(demo=True, temporary_policy="bounded-synthetic", max_tool_calls=8, experiment_timeout_seconds=8, experiment_output_bytes=65536)
-        self.items = []
-
-    def materials(self, published_only=False):
-        return copy.deepcopy(self.items)
-
-    def add_material(self, body, actor, seed=False):
-        body = {**body, "version": 1}
-        body["sha256"] = digest(body)
-        self.items.append({**body, "published": True})
-
-    def save_plan(self, body):
-        return body
-
-    def edit(self, material_id, **changes):
-        item = next(item for item in self.items if item["id"] == material_id)
-        item.update(changes)
-        item["sha256"] = digest({key: value for key, value in item.items() if key not in {"sha256", "published", "createdAt"}})
-        return {key: item[key] for key in ["id", "version", "sha256"]}
-
-
-class CatalogContractTests(unittest.TestCase):
-    def setUp(self):
-        self.store = CatalogFixture()
-        seed_catalog(self.store)
-
+class CatalogContractTests(ApplicationCompositionFixture):
     def plan(self):
         return create_plan(self.store, "alice", "Compare synthetic candidates", "literature")
 
     def test_transitive_permission_and_archived_dependency_fail_closed(self):
-        self.store.add_material({"id": "foreign", "kind": "knowledge", "name": "Foreign", "content": "Fixture", "dependencies": [], "permissions": ["admin:write"], "compatibility": ["agno:99"], "archived": True}, "manager")
-        foreign = self.store.edit("foreign")
-        self.store.edit("research-prompt", dependencies=[foreign])
-        plan = self.plan()
-        self.assertEqual(plan["status"], "blocked")
-        self.assertIn("admin:write", plan["capabilities"])
-        self.assertTrue(any(ref["id"] == "foreign" for ref in plan["materialRefs"]))
+        with self.assertRaises(HTTPException):
+            self.material(kind="knowledge", permissions=["agent_os:admin"])
+        original = self.plan()
+        self.store.material_governance.archive("manager", "synthetic-knowledge", 1, "archive-fixture", "Controlled inactive dependency")
+        blocked = self.plan()
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertTrue(blocked["missing"])
+        self.assertNotIn("agent_os:admin", blocked["capabilities"])
+        self.assertEqual(self.store.plan(original["id"], "alice"), original)
+        with self.assertRaises(HTTPException):
+            self.applications.require_plan_current(original)
 
     def test_tool_kind_and_registered_binding_cannot_be_replaced(self):
-        self.store.edit("literature-tool", content="ask_scope")
-        self.assertEqual(self.plan()["status"], "blocked")
-        self.store.edit("literature-tool", content="literature_search", kind="prompt")
-        self.assertEqual(self.plan()["status"], "blocked")
+        for changes in ({"kind": "tool", "content": "arbitrary_shell", "permissions": ["checksum:read"]},
+                        {"id": "literature-tool", "kind": "prompt"},
+                        {"id": "literature-tool", "kind": "tool", "content": "ask_scope", "permissions": ["question:ask"]}):
+            with self.subTest(changes=changes), self.assertRaises(HTTPException):
+                self.material(**changes)
+        self.assertEqual(self.plan()["status"], "ready")
 
-    def test_cycles_and_deep_chains_are_bounded(self):
-        ref = None
-        for index in range(40):
-            self.store.add_material({"id": f"dependency-{index}", "kind": "knowledge", "name": "Fixture", "content": "Fixture", "dependencies": [ref] if ref else [], "permissions": [], "compatibility": ["agno:3.1.0"], "archived": False}, "manager")
-            ref = self.store.edit(f"dependency-{index}")
-        self.store.edit("research-prompt", dependencies=[ref])
-        plan = self.plan()
-        self.assertEqual(plan["status"], "blocked")
-        self.assertLessEqual(len(plan["materialRefs"]), 30)
+    def test_forward_cycles_deep_chains_and_closure_count_are_bounded(self):
+        absent = {"id": "self-cycle", "version": 1, "sha256": "0" * 64}
+        with self.assertRaises(HTTPException):
+            self.material(id="self-cycle", dependencies=[absent])
+        previous = None
+        for index in range(8):
+            previous = self.material(kind="knowledge", id=f"bounded-depth-{index}", dependencies=[pin(previous)] if previous else [])
+        ninth = self.material(kind="knowledge", dependencies=[pin(previous)])
+        with self.assertRaises(HTTPException):
+            self.applications.closure([pin(ninth)])
+        with self.assertRaises(HTTPException):
+            self.material(kind="knowledge", dependencies=[pin(ninth)])
+        refs = [pin(self.material(kind="knowledge", id=f"bounded-count-{index}")) for index in range(31)]
+        with self.assertRaises(HTTPException):
+            self.applications.closure(refs)
+        self.assertEqual(len(self.applications.closure(refs[:30])), 30)
 
-    def test_snapshot_is_independent_of_later_material_edits(self):
-        old = self.plan()
-        self.store.edit("research-prompt", content="Changed after planning")
-        self.assertNotIn("Changed after planning", old["instructions"])
-        self.assertNotEqual(old["fingerprint"], self.plan()["fingerprint"])
+    def test_snapshot_remains_exact_after_material_and_application_revisions(self):
+        application = self.publish()
+        old = create_plan(self.store, "alice", "Original governed synthetic plan", "literature", application_ref=pin(application))
+        alternate = self.material(content="Changed approved instructions in a new immutable version.")
+        revised_definition = app_definition(self.store)
+        refs = revised_definition["modes"]["literature"]["materialRefs"]
+        refs[refs.index(next(ref for ref in refs if ref["id"] == "research-prompt"))] = pin(alternate)
+        revised = self.applications.revise("manager", application["id"], 1, revised_definition, "revise-config")
+        review = self.applications.request_publication("manager", revised["id"], 2, "review-config")
+        self.applications.decide_publication("bob", review["id"], True, "approve-config")
+        current = create_plan(self.store, "alice", "Original governed synthetic plan", "literature", application_ref=pin(revised))
+        self.assertNotIn(alternate["content"], old["instructions"])
+        self.assertIn(alternate["content"], current["instructions"])
+        self.assertNotEqual(old["fingerprint"], current["fingerprint"])
+        self.assertEqual(self.store.plan(old["id"], "alice"), copy.deepcopy(old))
+        self.applications.require_plan_current(old)
 
     def test_policy_typos_and_implicit_production_keys_are_rejected(self):
         with self.assertRaises(ValueError):

@@ -20,10 +20,21 @@ from sqlalchemy import Column, ForeignKey, Integer, JSON, MetaData, String, Tabl
 from .store import digest
 
 PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
-KNOWN_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
+LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
                "checksum": "checksum:read", "run_experiment": "experiment:synthetic"}
-READ_ONLY_TOOLS = frozenset({"literature_search", "ask_scope", "checksum"})
+KNOWN_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
+LEGACY_READ_ONLY_TOOLS = frozenset({"literature_search", "ask_scope", "checksum"})
+READ_ONLY_TOOLS = LEGACY_READ_ONLY_TOOLS | {"orx_discover"}
 READ_ONLY_CAPABILITIES = frozenset({"research:read", "question:ask", "checksum:read"})
+ToolContract = Literal["legacy-v1", "registered-runtime-v1"]
+
+
+def tools_for_contract(contract: ToolContract) -> dict[str, str]:
+    if contract == "legacy-v1":
+        return dict(LEGACY_TOOLS)
+    if contract == "registered-runtime-v1":
+        return dict(KNOWN_TOOLS)
+    raise ValueError("Unsupported registered tool contract")
 
 
 @dataclass(frozen=True)
@@ -31,8 +42,12 @@ class PlanPolicyConfig:
     name: PolicyName = "admin-review"
     revision: str = "plan-policy-v1"
     review_ttl_seconds: int = 3600
+    tool_contract: ToolContract = "legacy-v1"
 
     def __post_init__(self):
+        tools_for_contract(self.tool_contract)
+        if self.tool_contract != "legacy-v1" and self.revision == "plan-policy-v1":
+            raise ValueError("Registered runtime tools require a distinct plan policy revision")
         if self.name not in {"unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
             raise ValueError("Unsupported plan approval policy")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
@@ -42,9 +57,20 @@ class PlanPolicyConfig:
 
     @property
     def fingerprint(self) -> str:
-        return digest({**asdict(self), "knownTools": KNOWN_TOOLS,
-                       "readOnlyTools": sorted(READ_ONLY_TOOLS),
+        body = asdict(self)
+        if self.tool_contract == "legacy-v1":
+            del body["tool_contract"]
+        return digest({**body, "knownTools": self.known_tools,
+                       "readOnlyTools": sorted(self.read_only_tools),
                        "readOnlyCapabilities": sorted(READ_ONLY_CAPABILITIES)})
+
+    @property
+    def known_tools(self) -> dict[str, str]:
+        return tools_for_contract(self.tool_contract)
+
+    @property
+    def read_only_tools(self) -> frozenset[str]:
+        return LEGACY_READ_ONLY_TOOLS if self.tool_contract == "legacy-v1" else READ_ONLY_TOOLS
 
 
 def persisted_ancestor_guard(store: Any):
@@ -171,8 +197,15 @@ class PlanPolicyService:
         return config
 
     def current(self) -> dict:
-        with self.store.engine.connect() as conn:
-            config = self._current(conn)
+        # Composition/admission may already own this Store transaction. Reuse
+        # its connection instead of opening a second pool slot under its lock.
+        shared = getattr(self.store, "_connection", None)
+        existing = shared.get() if shared is not None else None
+        if existing is not None:
+            config = self._current(existing)
+        else:
+            with self.store.engine.connect() as conn:
+                config = self._current(conn)
         return {**asdict(config), "fingerprint": config.fingerprint,
                 "nativeToolConfirmationSeparate": True}
 
@@ -180,7 +213,7 @@ class PlanPolicyService:
         self.auth.require(owner, "run")
         stored = self._plan(owner, plan)
         policy = self.current()
-        read_only = (set(stored.get("tools", [])) <= READ_ONLY_TOOLS and
+        read_only = (set(stored.get("tools", [])) <= (LEGACY_READ_ONLY_TOOLS if policy["tool_contract"] == "legacy-v1" else READ_ONLY_TOOLS) and
                      set(stored.get("capabilities", [])) <= READ_ONLY_CAPABILITIES and
                      stored.get("mode") != "experiment")
         review_required = policy["name"] == "admin-review" or policy["name"] == "read-only-auto" and not read_only
@@ -233,13 +266,14 @@ class PlanPolicyService:
         return stored
 
     @staticmethod
-    def _scope(plan):
+    def _scope(plan, config: PlanPolicyConfig | None = None):
+        known = (config or PlanPolicyConfig()).known_tools
         tools, caps = plan.get("tools"), plan.get("capabilities")
-        if not isinstance(tools, list) or not tools or any(not isinstance(t, str) or t not in KNOWN_TOOLS for t in tools):
+        if not isinstance(tools, list) or not tools or any(not isinstance(t, str) or t not in known for t in tools):
             raise HTTPException(409, "PLAN_SCOPE_INVALID: plan contains an unregistered tool")
-        if not isinstance(caps, list) or any(not isinstance(c, str) or c not in KNOWN_TOOLS.values() for c in caps):
+        if not isinstance(caps, list) or any(not isinstance(c, str) or c not in known.values() for c in caps):
             raise HTTPException(409, "PLAN_SCOPE_INVALID: plan contains an unregistered capability")
-        if not {KNOWN_TOOLS[t] for t in tools} <= set(caps):
+        if not {known[t] for t in tools} <= set(caps):
             raise HTTPException(409, "PLAN_SCOPE_INVALID: tool authority is missing")
         if plan.get("status") != "ready" or plan.get("missing"):
             raise HTTPException(409, "PLAN_PREFLIGHT_BLOCKED: review cannot approve missing prerequisites")
@@ -290,12 +324,12 @@ class PlanPolicyService:
         self.auth.require(owner, "run")
         self._key(request_id)
         plan = self._plan(owner, plan_id)
-        self._scope(plan)
         if plan.get("delegation"):
             raise HTTPException(409, "DELEGATION_POLICY_UNBOUND: child approval requires its root mandate")
         with self.store.engine.begin() as conn:
             self._lock(conn)
             config = self._current(conn)
+            self._scope(plan, config)
             if config.name in {"unset", "bounded-synthetic"}:
                 raise HTTPException(409, "This policy does not accept administrator plan reviews")
             intent = digest({"ownerId": owner, "planId": plan["id"], "planDigest": digest(plan),
@@ -357,7 +391,7 @@ class PlanPolicyService:
             if approved:
                 self.auth.require(row["owner_id"], "run")
                 plan = self._plan(row["owner_id"], row["plan_id"], connection=conn)
-                self._scope(plan)
+                self._scope(plan, self._current(conn))
                 if digest(plan) != row["plan_hash"] or plan["fingerprint"] != row["plan_fingerprint"]:
                     raise HTTPException(409, "Immutable plan differs from the requested review")
             self.auth.require(actor, "agent_os:admin")
@@ -374,7 +408,9 @@ class PlanPolicyService:
             # into require_execution. It preserves operator emergency denial.
             configuration_guard()
         current_plan = self._plan(owner, plan)
-        self._scope(current_plan)
+        with self.store.engine.connect() as scope_connection:
+            scope_config = self._current(scope_connection)
+        self._scope(current_plan, scope_config)
         review_plan = current_plan
         inherited = False
         if current_plan.get("delegation"):
@@ -385,7 +421,7 @@ class PlanPolicyService:
                 raise HTTPException(403, "Delegation approval root is unavailable")
             for ancestor in ancestors:
                 ancestor = self._plan(owner, ancestor)
-                self._scope(ancestor)
+                self._scope(ancestor, scope_config)
                 if not set(current_plan["tools"]) <= set(ancestor["tools"]) or not set(current_plan["capabilities"]) <= set(ancestor["capabilities"]):
                     raise HTTPException(403, "Child exceeds ancestor approval scope")
                 for key in ("toolCalls", "experimentSeconds", "outputBytes", "maxDepth", "maxChildren"):
@@ -395,13 +431,16 @@ class PlanPolicyService:
             review_plan, inherited = ancestors[-1], True
         with self.store.engine.connect() as conn:
             config = self._current(conn)
+            # A concurrent operator change cannot widen admission between checks.
+            self._scope(current_plan, config)
+            self._scope(review_plan, config)
             if config.name == "unset":
                 raise HTTPException(409, "POLICY_UNSET: plan execution has no selected approval policy")
             if config.name == "bounded-synthetic":
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")
                 approval = {"source": "bounded-synthetic", "reviewId": None}
-            elif config.name == "read-only-auto" and set(review_plan["tools"]) <= READ_ONLY_TOOLS and set(review_plan["capabilities"]) <= READ_ONLY_CAPABILITIES and review_plan.get("mode") != "experiment":
+            elif config.name == "read-only-auto" and set(review_plan["tools"]) <= config.read_only_tools and set(review_plan["capabilities"]) <= READ_ONLY_CAPABILITIES and review_plan.get("mode") != "experiment":
                 approval = {"source": "read-only-auto", "reviewId": None}
             else:
                 row = conn.execute(select(self.reviews, self.decisions.c.decision).join(

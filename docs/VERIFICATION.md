@@ -204,3 +204,82 @@ capacity and has no effects/artifacts; starting the real worker then pauses it,
 and repeated dispatch still has exactly one native submission. Frontend lint,
 typecheck, thirteen client tests and build were rerun successfully; npm audit
 found zero vulnerabilities. The local services bind only to loopback.
+
+
+## Material-driven application assembly and actual native bindings
+
+Verified on 2026-10-02 on the same Windows/Agno3.1.0/PostgreSQL17.11 host.
+The final complete backend suite passed **all 266 tests in 287.580 seconds**,
+with actual PostgreSQL, official clean-stop dump/restore and exact ORX0.2.13 binary
+opt-ins enabled; **no tests were skipped**. Ruff and Pyright passed with zero
+errors. Frontend lint/typecheck, **21 client tests** and production build passed;
+official npm audit found **zero vulnerabilities**. The final API-focused subset
+also passed all23 cases after production evidence/status metadata was corrected.
+CI's portable jobs explicitly skip unavailable PostgreSQL/ORX/restore fixtures;
+its dedicated PostgreSQL job runs the actual native cases. Exact commit and both
+CI runs are verified after publication and linked in the draft PR.
+
+New backend coverage includes18 application/composition cases,12 connection cases,
+13 execution-binding cases,10 runtime-binding governance cases,8 ORX callable
+contracts and1 actual PostgreSQL/native ORX success case. A new approved six-kind
+application executes actual native checksum without a core application-ID branch.
+Concurrent native responses select separate Models/knowledge/owners; streamed
+native metadata records the selected Model. Exact pin drift, unavailable factories,
+retained callable identity, current authority loss during provider response and
+owner connection handles are tested without a paid/live provider request.
+
+Production-shaped preflight identifies one specific unavailable model revision
+while healthy materials remain healthy, creates no task and constructs no factory.
+Connection tests cover immutable owner metadata, scope narrowing, atomic repeated
+bind/revoke, expiry, revision/handle rotation, task/owner mismatch, SQL role loss,
+tamper and restart. One-slot pool tests exercise shared transactional reads and
+native standalone admission/budget accounting; they do not certify every
+multi-phase delegation/observer operation with a one-slot pool.
+
+Actual supported Edge browser acceptance uses generated loopback native stores.
+Alpha-to-Beta model selection and a tighter environment are sealed into a revised
+plan; the actual native snapshot records `controlled-beta` and checksum bytes.
+Double click makes one admission POST. Persisted revision/accept/bind responses
+are intentionally lost; exact-key retries produce one successor/plan/reference.
+Reload follows the authentic owner-scoped `revisedBy` chain with exact parent,
+application/material refs and fingerprint, making **zero mutations**. Explicit
+rejection then makes one POST. A revoked connection rejects admission409 without
+increasing native ticket count. Separate current administrator approval passes;
+author self-review returns403. Malformed application/registration and foreign-owner
+responses disable actions; verified refresh recovers. Desktop and390px captures
+are retained as ignored evidence; document width is390px. Reviewer roles exist
+only in the generated fixture databases, which were removed after browser work.
+
+The registered ORX tool uses the exact approved contract and narrow research read
+capability. Its actual native test goes through separate exact material/application
+reviews, trusted Alice connection, composition, queue, DONE effect and a hash-checked
+artifact. The transport is explicitly `controlled_transport_fixture` and records
+`configuredBinarySha256`; it does not claim CLI execution or live retrieval.
+Callable tests cover replay/UNKNOWN, revoke/cancel/timeout and operator/plan/selected
+environment time/output limits. ORX hard CPU/memory/PID containment and ORX experiment
+launch/status/cancel are not wired or accepted. Earlier actual exact-source binary
+preflight and narrow public metadata lookup remain separate evidence.
+
+The first full266-case run exposed one real lifecycle race: a pending child read
+became bound during guard checks, so a stale None native ID was misclassified as
+authority revocation. An authentic pre-submit reservation plus one actual paused
+native ticket reproduces the failure before the fix. Pending observations now use
+metadata checks; acknowledged native work still requires its exact context. The
+same deterministic case retains strict wrong-native-ID403, current SQL owner denial
+and transactional material withdrawal denial. Remote product/lifecycle22 cases
+passed in54.806 seconds before the final complete run. No observer delay, skipped
+guard or changed cleanup/UNKNOWN capacity rule was used.
+
+The second full run exposed a timing-dependent old policy test expectation:
+withdrawal cleanup can finish before the approval POST, correctly returning409
+instead of accepted continuation200. The corrected assertion preserves both
+legitimate orderings, checks zero continuation calls after HTTP denial, records
+actual protected denial, and retains zero compute/new effects/artifacts. All18
+policy cases passed before the final complete run; production guards are unchanged.
+
+Public FR/AC/AT mapping is in ACCEPTANCE.md and operator/compatibility rules are in
+MATERIAL_ASSEMBLY.md. Registered factories and owner connection lifecycle are now
+implemented; real model/ORX scientific acceptance, provider credentials, production
+identity/isolation, receiver-side connection mapping, sustained target throughput,
+monitoring/retention and multi-replica scheduler recovery remain open. No paid API,
+cloud provisioning, deployment exposure, production grant or merge was performed.

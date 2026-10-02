@@ -1,10 +1,7 @@
 # OpenResearch tool adapter
 
 `platform/agent_factory/openresearch.py` implements a bounded CLI adapter for
-the selected AgentOS runtime. It is **disabled by default and not registered as
-a production tool**. Synthetic contract tests exercise OS subprocesses; one actual bounded public
-OpenAlex discovery is verified below. Integrated model-driven literature tasks
-and experiment execution remain unverified.
+the selected AgentOS runtime. A narrow `orx_discover` factory is registered by the core, but execution requires an explicitly reviewed runtime-tool contract, approved material/application, owner connection and trusted operator adapter provider. The default startup configures none of those live ORX handles. Synthetic contract tests exercise OS subprocesses; one actual bounded public OpenAlex discovery is verified below. Registered native integration uses labeled controlled transport. Real integrated model-driven literature tasks and ORX experiment execution remain unverified.
 
 ## Fixed source and binary admission
 
@@ -141,7 +138,7 @@ Live acceptance still requires an approved exact-revision binary/build manifest,
 captured real output, provisioning and worktree/archive provenance, actual
 no-cost retrieval/citation checks, approved experiment execution/evaluation,
 supervisor hard-restart recovery/cancellation, model budget authorization and
-tool registration in the plan-aware executor. No provider/model request, remote
+real integration through the now-registered plan-aware executor tool. No provider/model request, remote
 compute or live research success is claimed by these tests.
 
 ## Exact-source native build checkpoint
@@ -185,3 +182,32 @@ GET. A separate raw CLI diagnostic also succeeded; it is not substituted for the
 Python adapter result. This proves that narrow retrieval path only. It does not
 enable production registration, verify literature synthesis/scientific outcomes,
 or resolve actual experiment/supervisor/isolation/model-budget acceptance.
+
+
+## Registered native discovery stage
+
+`orx_tools.py` installs `openresearch-discover-v1@1`, named `orx_discover`, with
+the narrow `research:read` capability. Material config is inert. A trusted
+`TaskORXAdapterProvider` connection handle constructs a task-scoped adapter;
+HTTP accepts neither binaries, commands, paths, credentials nor provider code.
+Current exact owner/task/connection pins are resolved before invocation and while
+the owned operation runs. The adapter scope uses separate homes/config/cache and
+workspace under the operator root; that path hygiene is not tenant security.
+
+The command/output deadline is the minimum of operator, immutable plan and
+selected trusted environment limits. Timeout/cancel/revocation cancels and awaits
+the owned operation; uncertain results retain UNKNOWN effects and capacity.
+CPU, memory and process-count containment for the real ORX CLI is **not** supplied
+by this registered adapter. It must be provided and accepted by deployment
+isolation before production research. Fixed synthetic experiments have their own
+tested native process bounds; those do not certify ORX isolation.
+
+One actual PostgreSQL/native test publishes exact tool/application definitions
+through distinct reviewers, binds Alice's opaque connection, composes a plan and
+runs the native queue to a durable DONE effect and hash-checked artifact. Its
+adapter is explicitly `controlled_transport_fixture`: `configuredBinarySha256`
+records the configured contract, not executed binary proof. Eight callable tests
+cover replay, UNKNOWN, cancellation, current authority loss and resource failure.
+They make no CLI, retrieval, provider/model or compute-provisioning request. Real
+integrated cancellation and ORX experiment launch/status/cancel are not tested or
+wired. ORX's own OpenCode/session spawn/wake paths remain omitted.

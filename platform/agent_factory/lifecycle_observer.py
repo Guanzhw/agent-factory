@@ -128,9 +128,14 @@ class FactoryLifecycleObserver:
                 # this same traversal, and any ancestor failure cascades here.
                 # Current owner/config/material/receiver denials still apply;
                 # native execution itself retains its full admission guards.
+                # This reservation snapshot may become accepted while these
+                # metadata checks run. Do not invent a native context carrying
+                # its old None run ID: a current strict binding guard would
+                # mistake admission progress for authority revocation. Exact
+                # contexts remain mandatory for observed acknowledged tickets.
                 self.store.require_current_policy()
                 for guard in self.store.execution_guards.values():
-                    guard(task["owner_id"], plan, context, None)
+                    guard(task["owner_id"], plan, None, None)
             else:
                 self.store.require_plan_execution(task["owner_id"], plan, run_context=context if ticket else None)
         except HandoffCancellationRequested:

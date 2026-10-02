@@ -19,6 +19,9 @@ from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.run.base import RunStatus
 from agent_factory.runtime import build_runtime
+from agent_factory.catalog import SEEDS
+from agent_factory.store import digest
+from agent_factory.execution_bindings import default_bindings
 from agent_factory.tools import _WindowsJob
 
 
@@ -46,7 +49,8 @@ def process_running(pid):
 class ContractStore:
     """Only persistence/authority is a fixture here; the Agno loop is actual."""
     def __init__(self, application='research', mode='literature', config=None, tools=None):
-        self.plan = {'id':'synthetic-plan@1','ownerId':'test-user','fingerprint':'synthetic-plan-sha', 'application':application,'mode':mode,'normalizedGoal':'bounded synthetic method comparison','instructions':['PINNED ORIGINAL PLAN'], 'tools':tools or (['checksum'] if application == 'checksum' else ['literature_search','run_experiment','ask_scope']), 'config':config or {}}
+        self.plan = {'id':'synthetic-plan@1','ownerId':'test-user','fingerprint':'synthetic-plan-sha', 'application':application,'mode':mode,'normalizedGoal':'bounded synthetic method comparison','instructions':['PINNED ORIGINAL PLAN'], 'tools':tools or (['checksum'] if application == 'checksum' else ['literature_search','ask_scope'] + (['run_experiment'] if mode == 'experiment' else [])), 'config':config or {}}
+        self.tasks = {}
         self.bindings = {}; self.events = []; self.artifacts = []; self.effects = {}; self.revoked = False; self.cancelled = False
         self.lock = threading.RLock()
         self.revoke_after_compute = False
@@ -54,12 +58,25 @@ class ContractStore:
     def bind_run(self, ctx):
         if ctx.user_id != self.plan['ownerId']: raise PermissionError('Owner mismatch')
         self.bindings.setdefault(ctx.run_id, copy.deepcopy(self.plan))
+        self.tasks[ctx.session_id] = {'id':ctx.session_id,'owner_id':ctx.user_id,'plan_id':self.plan['id'],'request_id':'synthetic-request-'+ctx.session_id,'run_id':ctx.run_id,'cancel_requested':False}
+        ctx.session_state = ctx.session_state or {}
+        ctx.session_state['factory_envelope'] = {'plan_ref':self.plan['id'],'user_id':ctx.user_id,'task_id':ctx.session_id,'request_id':'synthetic-request-'+ctx.session_id}
         return self.resolve_run(ctx)
 
     def resolve_run(self, ctx):
         plan = self.bindings[ctx.run_id]
         if ctx.user_id != plan['ownerId']: raise PermissionError('Owner mismatch')
         return copy.deepcopy(plan)
+
+    def task(self, identifier, owner=None):
+        value = self.tasks.get(identifier) or next(item for item in self.tasks.values() if item['run_id'] == identifier)
+        if owner is not None and value['owner_id'] != owner: raise PermissionError('Owner mismatch')
+        return {**value,'cancel_requested':self.cancelled}
+
+    def require_plan_execution(self, owner, plan, *, run_context=None):
+        # Fixture has a fixed explicit model grant; revoked below is the
+        # protected-tool policy tested by the original domain-loop contracts.
+        if owner != plan['ownerId']: raise PermissionError('Owner mismatch')
 
     def authorize_tool(self, ctx, name):
         plan = self.resolve_run(ctx)
@@ -85,10 +102,24 @@ class ContractStore:
     def cancellation_requested(self, run_id): return self.cancelled
 
 
+def attach_fixture_bindings(settings, store, plan):
+    selected = []
+    for mid, kind, name, content, permissions in SEEDS:
+        if kind == 'tool' and content not in plan['tools']: continue
+        if kind in {'skill','prompt','knowledge'} and plan['application'] == 'checksum': continue
+        material = {'id':mid,'kind':kind,'name':name,'content':content,'permissions':permissions,'version':1}
+        material['sha256'] = digest(material)
+        selected.append(material)
+    plan['materials'] = selected
+    bindings = default_bindings(settings, store)
+    plan['executionBindings'] = bindings.build(selected, plan['ownerId'])
+    store.execution_bindings = bindings
+
+
 class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.settings = SimpleNamespace(runtime_directory=Path(self.directory.name)/'runtime', max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)
+        self.settings = SimpleNamespace(demo=True, runtime_directory=Path(self.directory.name)/'runtime', max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)
         self.db = SqliteDb(db_file=str(Path(self.directory.name)/'native.sqlite'), id='native-contract-db')
 
     async def asyncTearDown(self):
@@ -96,6 +127,7 @@ class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
         self.directory.cleanup()
 
     async def run_agent(self, store):
+        attach_fixture_bindings(self.settings, store, store.plan)
         agent, registry = build_runtime(self.settings, store, self.db)
         output = await agent.arun('Run the bounded fixture', user_id='test-user', session_id='test-session')
         return agent, output
@@ -109,7 +141,7 @@ class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.status, RunStatus.completed)
         content = json.loads(output.content)
         self.assertEqual(content['results']['checksum']['sha256'], hashlib.sha256('actual UTF-8 input 雪'.encode()).hexdigest())
-        ctx = RunContext(run_id=output.run_id, session_id='test-session', user_id='test-user')
+        ctx = RunContext(run_id=output.run_id, session_id='test-session', user_id='test-user', session_state={'factory_envelope':{'plan_ref':store.plan['id'],'user_id':'test-user','task_id':'test-session','request_id':'synthetic-request-test-session'}})
         self.assertEqual([tool.name for tool in agent.tools(ctx)], ['checksum'])
         self.assertEqual(len(store.artifacts), 1)
         self.assertEqual(agent.id, 'factory-executor')
@@ -264,6 +296,7 @@ class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
                     raise AssertionError('Native call ID absent')
                 raise PermissionError('Shared durable execution budget exhausted')
         store.delegation = DenyBudget()
+        attach_fixture_bindings(self.settings, store, store.plan)
         agent, _ = build_runtime(self.settings, store, self.db)
         await agent.arun('synthetic checksum', user_id='test-user', session_id='synthetic-budget-denial')
         self.assertEqual(store.delegation.calls, 1)
@@ -289,12 +322,13 @@ class FullStoreRuntimeContractTests(unittest.IsolatedAsyncioTestCase):
         store = Store(settings.db_url, settings)
         auth = AuthService(settings, native_db); auth.initialize_demo(); store.auth = auth
         plan = {'id':str(uuid4()), 'ownerId':'alice','fingerprint':'synthetic-full-store-plan','application':'research','mode':'experiment','normalizedGoal':'bounded synthetic method comparison','instructions':['PINNED FULL STORE PLAN'],'tools':['literature_search','run_experiment'],'config':{'experimentDurationSeconds':3},'materialRefs':[],'capabilities':['run'],'status':'ready'}
+        attach_fixture_bindings(settings, store, plan)
         store.save_plan(plan)
         task, _ = store.reserve_task(plan, str(uuid4()))
         agent, _ = build_runtime(settings, store, native_db)
         pending = None
         try:
-            output = await agent.arun('Persisted plan', user_id='alice', session_id=task['id'], session_state={'factory_envelope':{'plan_ref':plan['id']}})
+            output = await agent.arun('Persisted plan', user_id='alice', session_id=task['id'], session_state={'factory_envelope':{'plan_ref':plan['id'],'user_id':'alice','task_id':task['id'],'request_id':task['request_id']}})
             self.assertEqual(output.status, RunStatus.paused)
             output.requirements[0].confirm()
             pending = asyncio.create_task(agent.acontinue_run(run_id=output.run_id, session_id=task['id'], user_id='alice', requirements=output.requirements))

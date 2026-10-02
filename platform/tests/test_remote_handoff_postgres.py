@@ -207,7 +207,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                                       data={"message": "Bypass attempt", "session_id": receipt["remoteTaskId"], "background": "true"})
         self.assertEqual(raw.status_code, 403, raw.text)
         ctx = SimpleNamespace(session_id=row["task_id"], user_id="alice", run_id="synthetic-unsubmitted", session_state={})
-        with self.assertRaises(PermissionError):
+        with self.assertRaises((HTTPException, PermissionError)):
             self.origin["store"].require_plan_execution("alice", row["body"]["manifest"]["plan"], run_context=ctx)
 
     def test_03_lost_native_ack_recovers_by_exact_read_without_replay(self):
@@ -277,7 +277,9 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         changed = copy.deepcopy(row["body"]["manifest"]["plan"])
         changed["normalizedGoal"] = "Changed synthetic task"
         changed["fingerprint"] = digest({k: v for k, v in changed.items() if k not in {"id", "createdAt", "fingerprint"}})
-        self.denied(409, self.receiver.prepare, "bob", self.body(row).model_copy(update={"manifest": plan_manifest(changed)}))
+        # A forged goal cannot replace the governed sample/config snapshot,
+        # even when the caller recomputes the outer transport digest.
+        self.denied(403, self.receiver.prepare, "bob", self.body(row).model_copy(update={"manifest": plan_manifest(changed)}))
         changed_manifest = copy.deepcopy(row["body"]["manifest"])
         changed_manifest["plan"]["materials"][0]["content"] = "Altered material content"
         self.denied(409, self.receiver.prepare, "bob", self.body(row).model_copy(update={"manifest": changed_manifest}))

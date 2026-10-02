@@ -32,6 +32,7 @@ BUDGET_KEYS = {"toolCalls", "maxDepth", "maxChildren", "experimentSeconds", "out
 PLAN_KEYS = {"id", "ownerId", "normalizedGoal", "mode", "application", "instructions", "tools", "config",
              "materialRefs", "materials", "capabilities", "missing", "status", "createdAt", "policy", "budget",
              "syntheticFixture", "fingerprint"}
+ASSEMBLY_KEYS = {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}
 REQUEST = re.compile(r"^[a-zA-Z0-9_.:-]{8,100}$")
 
 
@@ -112,7 +113,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
     plan = copy.deepcopy(manifest["plan"])
     if len(canonical(manifest).encode()) > 524288 or digest(plan) != manifest.get("sha256"):
         raise HTTPException(409, "Immutable manifest integrity mismatch")
-    if set(plan) != PLAN_KEYS or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
+    if set(plan) not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
         raise HTTPException(409, "Remote handoff requires a complete ready root plan owned by the origin user")
     if plan.get("fingerprint") != digest({key: value for key, value in plan.items()
                                          if key not in {"id", "createdAt", "fingerprint"}}):
@@ -121,7 +122,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
         UUID(plan["id"])
     except (ValueError, TypeError, KeyError) as error:
         raise HTTPException(422, "Origin plan identity is invalid") from error
-    if plan.get("application") not in {"research", "checksum"} or plan.get("mode") not in {"literature", "experiment"}:
+    if any(not isinstance(plan.get(key), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", plan[key]) for key in ("application", "mode")):
         raise HTTPException(422, "Remote application or mode is unsupported")
     tools, caps, budget = plan.get("tools"), plan.get("capabilities"), plan.get("budget")
     if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in KNOWN_TOOLS for name in tools):
@@ -134,12 +135,23 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
     if not isinstance(plan.get("instructions"), list) or any(type(item) is not str or len(item) > 16000 for item in plan["instructions"]):
         raise HTTPException(422, "Bounded immutable instructions are required")
     config = plan.get("config")
-    if not isinstance(config, dict) or set(config) != {"askScope", "sample", "experimentDurationSeconds"}:
+    if not isinstance(config, dict) or set(config) not in ({"askScope", "sample", "experimentDurationSeconds"}, {"askScope", "sample", "experimentDurationSeconds", "toolOrder"}):
         raise HTTPException(422, "Unsupported remote executor configuration")
     if type(config["askScope"]) is not bool or type(config["sample"]) is not str or not 2 <= len(config["sample"]) <= 2000:
         raise HTTPException(422, "Remote executor input is invalid")
     if type(config["experimentDurationSeconds"]) is not int or not 0 < config["experimentDurationSeconds"] <= budget["experimentSeconds"]:
         raise HTTPException(422, "Remote experiment duration exceeds the immutable budget")
+    if "toolOrder" in config and (not isinstance(config["toolOrder"], list) or config["toolOrder"] != tools):
+        raise HTTPException(422, "Remote tool order differs from the immutable tool scope")
+    if set(plan) == PLAN_KEYS | ASSEMBLY_KEYS:
+        applications = getattr(store, "applications", None)
+        bindings = getattr(store, "execution_bindings", None)
+        if applications is None or bindings is None:
+            raise HTTPException(409, "Receiver governed assembly bindings are unavailable")
+        applications.require_plan_current(plan)
+        bindings.inspect(plan)
+        if plan["bindingManifest"].get("connections"):
+            raise HTTPException(409, "Remote owner connections require an explicit receiver mapping; this transport carries no handles")
     materials, refs = plan.get("materials"), plan.get("materialRefs")
     if not isinstance(materials, list) or not 1 <= len(materials) <= 30 or not isinstance(refs, list) or len(refs) != len(materials):
         raise HTTPException(422, "Bounded complete material manifest is required")
@@ -451,7 +463,9 @@ class PreparedHandoffService:
         task = self._task(row, remote_task_id)
         # Root approval does not skip current receiver policy; children use its
         # actual persisted ancestor/native mandate, never a caller's parent ID.
-        context = SimpleNamespace(session_id=task["id"], run_id=task["run_id"], user_id=remote_owner)
+        context = SimpleNamespace(session_id=task["id"], run_id=task["run_id"], user_id=remote_owner,
+            session_state={"factory_envelope": {"plan_ref": task["plan_id"], "user_id": remote_owner,
+                "task_id": task["id"], "request_id": task["request_id"]}})
         self.store.require_plan_execution(remote_owner, self.store.plan(task["plan_id"], remote_owner), run_context=context)
         native_context = INTERNAL_NATIVE.set(False)
         try:

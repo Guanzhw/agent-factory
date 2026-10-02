@@ -27,3 +27,26 @@ Commit only original safe code, public docs and synthetic samples. Ignore `.env`
 Signed owner-bound Factory event cursors are application metadata, not native Agno stream claims. Large events fail explicitly; late lower-ID commits require replay. Historical protected failures are queried independently of the bounded display window. Active fixed compute rechecks current authority and cleans up on loss; cancellation intent still requires positive native/effect/group stop evidence before release.
 
 Trusted lifecycle cleanup uses exact persisted native owner/session/run/executor/envelope/idempotency bindings and public native cancellation APIs. It creates no work, JWT or grant after authority loss. Missing tickets, unknown effects and stale running-ticket evidence retain capacity. Default in-memory native signals are limited to the single application process.
+
+
+## Governed execution registration
+
+Approved definitions and inert material `runtimeBinding` descriptors do not
+install code. Operators register trusted same-process factories; a fresh Model
+is selected per native response context, with current exact user/task/run and
+connection pins checked before and after provider responses. Scoped tools recheck
+authority even when a callable is retained. Concurrent owners never mutate one
+shared Model or receive another owner's knowledge/handle.
+
+The public connection API lists redacted registrations and binds/revokes only
+the caller's narrowed references. It cannot set a secret, URL, subject, adapter or
+grant. Current expiry, role loss, registration removal, revision or handle identity
+change invalidate old references. Rotation requires new explicit binding and plan
+pins; revoked history stays inspectable. Registrations are operator memory/config
+objects, not a production secrets manager or credential-rotation service.
+
+Connection-bearing remote manifests currently fail closed until an explicit
+receiver-side mapping is implemented; no private handle is serialized or sent.
+The ORX registered discovery tool enforces time/output bounds and cancellation
+observation but supplies no hard CPU/memory/PID tenant containment. Do not infer
+that isolation from a selected environment descriptor or isolated directories.

@@ -100,6 +100,18 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
     memory_cap = min(1024 * 1024 * 1024, max(64 * 1024 * 1024, int(getattr(settings, 'experiment_memory_bytes', 256 * 1024 * 1024))))
     process_cap = min(8, max(1, int(getattr(settings, 'experiment_process_limit', 4))))
     cpu_percent = min(100, max(1, int(getattr(settings, 'experiment_cpu_percent', 10))))
+    timeout = min(timeout, plan.get('budget', {}).get('experimentSeconds', timeout))
+    output_cap = min(output_cap, plan.get('budget', {}).get('outputBytes', output_cap))
+    bindings = getattr(store, 'execution_bindings', None)
+    selected_runtime = 'local-python-bounded-v1'
+    if bindings is not None:
+        limits = bindings.environment_limits(plan, ctx)
+        selected_runtime = limits.runtime_id
+        timeout = min(timeout, limits.timeout_seconds)
+        output_cap = min(output_cap, limits.output_bytes)
+        memory_cap = min(memory_cap, limits.memory_bytes)
+        process_cap = min(process_cap, limits.process_limit)
+        cpu_percent = min(cpu_percent, limits.cpu_percent)
     proc = job = None
     failure = None
     started = time.monotonic()
@@ -110,7 +122,7 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
                                     cwd=runtime_root, creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0,
                                     start_new_session=os.name != 'nt', env={k: v for k, v in os.environ.items() if k in ['SystemRoot','WINDIR','TEMP','TMP','PATH','LANG','LC_ALL']})
             if os.name == 'nt': job = _WindowsJob(proc.pid, memory_cap, process_cap, cpu_percent)
-            store.event(ctx.run_id, 'compute_started', 'Bounded synthetic subprocess started', {'pid': proc.pid, 'runtimeId': 'local-python-bounded-v1', 'descendantIsolation': 'windows-job-kill-on-close' if job else 'posix-process-group', 'evaluatorId': 'synthetic-sort-inversions', 'evaluatorVersion': '1', 'datasetHash': DATASET_HASH, 'memoryLimitBytes':memory_cap,'processLimit':process_cap,'cpuLimit':{'percent':cpu_percent} if job else {'seconds':int(timeout)+1},'wallClockLimitSeconds':timeout,'outputLimitBytes':output_cap})
+            store.event(ctx.run_id, 'compute_started', 'Bounded synthetic subprocess started', {'pid': proc.pid, 'runtimeId': selected_runtime, 'descendantIsolation': 'windows-job-kill-on-close' if job else 'posix-process-group', 'evaluatorId': 'synthetic-sort-inversions', 'evaluatorVersion': '1', 'datasetHash': DATASET_HASH, 'memoryLimitBytes':memory_cap,'processLimit':process_cap,'cpuLimit':{'percent':cpu_percent} if job else {'seconds':int(timeout)+1},'wallClockLimitSeconds':timeout,'outputLimitBytes':output_cap})
             while proc.poll() is None:
                 if stop_signal.is_set() or store.cancellation_requested(ctx.run_id):
                     raise RunCancelledException('Factory cancellation requested during local compute')
@@ -135,7 +147,7 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
             if len(raw) > output_cap or proc.returncode != 0:
                 raise RuntimeError('Bounded experiment failed or exceeded output limit')
             metric = json.loads(raw)
-            return {**metric, 'evidenceKind': 'synthetic', 'datasetHash': DATASET_HASH, 'evaluatorId': 'synthetic-sort-inversions', 'evaluatorVersion': '1', 'runtimeId': 'local-python-bounded-v1', 'modelId': 'factory-synthetic-v1', 'pid': proc.pid, 'elapsedSeconds': round(time.monotonic() - started, 4), 'outputHash': hashlib.sha256(raw).hexdigest()}
+            return {**metric, 'evidenceKind': 'synthetic', 'datasetHash': DATASET_HASH, 'evaluatorId': 'synthetic-sort-inversions', 'evaluatorVersion': '1', 'runtimeId': selected_runtime, 'modelAdapterId': (plan.get('executionBindings') or {}).get('model', {}).get('adapterId', 'local-synthetic-model-v1'), 'pid': proc.pid, 'elapsedSeconds': round(time.monotonic() - started, 4), 'outputHash': hashlib.sha256(raw).hexdigest()}
     except BaseException as error:
         failure = error
         raise
@@ -179,7 +191,16 @@ def build_tools(settings, store):
 
     def artifact(ctx, name, result):
         encoded = json.dumps(result, sort_keys=True)
-        store.artifact_write(ctx.run_id, name, encoded, 'application/json', {'evidenceKind': 'synthetic', 'modelId': 'factory-synthetic-v1', 'runtimeId': 'local-python-bounded-v1', 'sha256': hashlib.sha256(encoded.encode()).hexdigest()})
+        plan = store.resolve_run(ctx)
+        manifest = plan.get('executionBindings') or {}
+        environment = manifest.get('environment', {})
+        metadata = {'evidenceKind': result.get('evidenceKind', 'synthetic'),
+                    'modelAdapterId': manifest.get('model', {}).get('adapterId', 'local-synthetic-model-v1'),
+                    'environmentAdapterId': environment.get('adapterId', 'local-bounded-environment-v1'),
+                    'executionBindingsSha256': manifest.get('sha256'),
+                    'runtimeId': result.get('runtimeId', environment.get('config', {}).get('runtimeId', 'local-bounded-v1')),
+                    'sha256': hashlib.sha256(encoded.encode()).hexdigest()}
+        store.artifact_write(ctx.run_id, name, encoded, 'application/json', metadata)
 
     @tool(requires_user_input=True, user_input_fields=['scope'])
     def ask_scope(question: str, scope: str, run_context: RunContext) -> str:

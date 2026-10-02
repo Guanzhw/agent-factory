@@ -5,3 +5,15 @@
 .plan-review-gate{border:1px solid var(--line);border-radius:5px;padding:12px;margin:12px 0}.plan-review-gate p{font-size:12px;margin:8px 0}.review-nav{margin-top:8px;background:#355573;color:#fff;border-color:#6586a5;text-align:left}.review-row{align-items:start}.review-row pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}.review-row .material-actions{flex-wrap:wrap}
 
 .review-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;background:#fff;border:1px solid var(--line);border-radius:6px;margin-bottom:16px}.review-row h2{overflow-wrap:anywhere}.review-row .material-info{min-width:0}.review-row .material-actions{align-self:start}@media(max-width:620px){.review-row{grid-template-columns:minmax(0,1fr);gap:14px}}
+
+/* Governed applications and user-owned trusted connection references. */
+.application-material-group { margin-bottom: .6rem; }
+.application-material-group > strong { display: block; margin-bottom: .25rem; font-size: .8rem; }
+.application-mode-evidence { margin-bottom: .7rem; }
+.application-admin-toggle { display: flex; align-items: center; gap: .5rem; font-size: .8rem; }
+.application-admin-toggle input { width: auto; }
+.retire-reason { display: block; margin-bottom: 1rem; }
+.code-input { font-family: ui-monospace, monospace; font-size: .8rem; }
+.composer select { margin-bottom: .6rem; }
+.connections-page > h2 { margin-top: 2rem; }
+@media (max-width: 620px) { .application-admin-toggle { flex-wrap: wrap; } .application-mode-evidence pre { max-width: 100%; overflow-wrap: anywhere; } }

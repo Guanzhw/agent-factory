@@ -39,18 +39,28 @@ class DemoModel(Model):
             return ModelResponse(role='assistant', tool_calls=[{'id': 'synthetic-' + name, 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(arguments)}}])
 
         config = plan.get('config', {})
-        if config.get('askScope') and 'ask_scope' not in results:
+        if config.get('askScope') and 'ask_scope' in plan.get('tools', []) and 'ask_scope' not in results:
             return call('ask_scope', {'question': 'What specific question or scope should this synthetic research task investigate?'})
         if 'ask_scope' in results:
             goal = str(results['ask_scope'].get('scope', goal))
-        if plan.get('application') == 'checksum':
-            if 'checksum' not in results:
-                return call('checksum', {'text': str(config.get('sample', goal))})
-        else:
-            if 'literature_search' not in results:
-                return call('literature_search', {'query': goal})
-            if plan.get('mode') == 'experiment' and 'run_experiment' not in results:
-                return call('run_experiment', {'experiment': 'bounded-sort-v1'})
+        # Only the immutable, approved tool set drives this explicit test adapter.
+        # New applications need no application-ID branch in the executor/model.
+        approved = plan.get('tools', [])
+        order = config.get('toolOrder', approved)
+        arguments = {
+            'checksum': {'text': str(config.get('sample', goal))},
+            'literature_search': {'query': goal},
+            'orx_discover': {'query': goal},
+            'run_experiment': {'experiment': 'bounded-sort-v1'},
+        }
+        for name in order:
+            if name not in approved or name in results or name == 'ask_scope':
+                continue
+            if name not in arguments:
+                return ModelResponse(role='assistant', content=json.dumps({
+                    'status': 'failed', 'evidenceKind': 'synthetic',
+                    'errors': ['Explicit test model has no fixture arguments for approved tool: ' + str(name)]}))
+            return call(name, arguments[name])
         return ModelResponse(role='assistant', content=json.dumps({'status': 'synthetic-complete', 'evidenceKind': 'synthetic', 'modelId': self.id, 'results': results, 'notice': 'Synthetic integration evidence; no real literature search or research improvement has been established.'}))
 
     def invoke(self, messages, **kwargs):

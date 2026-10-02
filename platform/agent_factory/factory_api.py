@@ -21,8 +21,11 @@ class Login(Body):
 
 class PlanRequest(Body):
     topic: str = Field(min_length=2, max_length=2000)
-    mode: Literal["literature", "experiment"] = "literature"
-    application: Literal["research", "checksum"] = "research"
+    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    application: str = Field(default="research", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    applicationRef: dict | None = None
+    materialChoices: dict = Field(default_factory=dict, max_length=30)
+    connectionRefs: dict = Field(default_factory=dict, max_length=30)
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
 
 
@@ -34,7 +37,7 @@ class InstanceRequest(Body):
 
 class ChildRequest(Body):
     goal: str = Field(min_length=2, max_length=2000)
-    mode: Literal["literature", "experiment"] = "literature"
+    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
 
 
@@ -148,11 +151,15 @@ class FactoryAPI:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
         self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
         plan = self.store.plan(task["plan_id"], task["owner_id"])
-        definition = {"id": plan["application"], "version": 1, "name": "Auto-Research" if plan["application"] == "research" else "Checksum",
-            "description": "Scoped synthetic application over native Agno", "instructions": "\n".join(plan["instructions"]),
+        application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
+        model_binding = (plan.get("executionBindings") or {}).get("model", {})
+        selected_model = next((event["data"] for event in reversed(events) if event["type"] == "model_binding_selected"), {})
+        definition = {"id": application_ref["id"], "version": application_ref["version"], "name": plan["application"],
+            "description": "Governed immutable application over native Agno", "instructions": "\n".join(plan["instructions"]),
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
-            "modelPolicy": {"providerId": "local-synthetic", "modelId": "factory-synthetic-v1", "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": plan["mode"] == "experiment"}, "published": False, "createdAt": plan["createdAt"]}
+            "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
+                "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": "run_experiment" in plan["tools"]}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -161,11 +168,12 @@ class FactoryAPI:
             actions.append("cancel")
         if status == "unknown":
             actions.append("reconcile")
-        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": 1,
-            "definition": definition, "binding": {}, "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
+        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": definition["version"],
+            "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
             "runtime": "demo" if self.settings.demo else "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
-            "allowedActions": actions, "validationStatus": "执行链路已验证；研究数据为合成示例", "evidenceKind": "合成示例"}
+            "allowedActions": actions, "validationStatus": "执行链路已验证；研究数据为合成示例" if self.settings.demo else "注册适配器执行记录；研究结论需按产物证据验证",
+            "evidenceKind": "合成示例" if self.settings.demo else "按产物来源分别验证"}
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)
@@ -198,7 +206,8 @@ class FactoryAPI:
             counts = {row["state"]: row["n"] for row in rows}
             return {"mode": "demo" if self.settings.demo else "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
                     "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
-                    "liveEnabled": False, "observedMetrics": True}
+                    "liveEnabled": not self.settings.demo, "liveIntegrationVerified": False,
+                    "admissionMode": "per-plan-preflight", "observedMetrics": True}
 
         @router.post("/demo/login")
         def login(body: Login, response: Response):
@@ -257,8 +266,18 @@ class FactoryAPI:
         @router.get("/connections")
         def connections(request: Request):
             user = self.user(request, "read")
-            return [{"id": "synthetic-model", "ownerId": user["id"], "name": "Synthetic fixture (no account credentials)", "providerId": "synthetic", "status": "configured"},
-                    {"id": "orx-live", "ownerId": user["id"], "name": "OpenResearch live adapter — not configured", "providerId": "openresearch", "status": "unavailable"}]
+            service = getattr(self.store, "connections", None)
+            if service is None:
+                raise HTTPException(503, "Trusted connection service is unavailable")
+            return service.list(user["id"])
+
+        @router.get("/runtime-adapters")
+        def runtime_adapters(request: Request):
+            self.user(request, "components:read")
+            service = getattr(self.store, "execution_bindings", None)
+            if service is None:
+                raise HTTPException(503, "Trusted runtime adapter registry is unavailable")
+            return service.describe()
 
         @router.get("/execution-targets")
         def execution_targets(request: Request):
@@ -270,7 +289,7 @@ class FactoryAPI:
         def plan_create(body: PlanRequest, request: Request):
             user = self.user(request)
             fields = body.model_dump(exclude={"requestId"})
-            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application))
+            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application, application_ref=body.applicationRef, material_choices=body.materialChoices, connection_refs=body.connectionRefs))
             return {**plan, "authorization": self.store.plan_policy.status(user["id"], plan)}
 
         @router.post("/instances", status_code=202)

@@ -16,17 +16,94 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
 from .catalog import SEEDS
-from .plan_policy import KNOWN_TOOLS
+from .plan_policy import ToolContract, tools_for_contract
 from .store import digest, now
 
 KINDS = Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
 LICENSES = ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "CC-BY-4.0")
 SECRET_KEYS = re.compile(r"^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|client[_-]?secret|credentials|private[_-]?key|authorization|cookie)$", re.I)
 SECRET_TEXT = re.compile(r"(?:\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}|\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{16,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9_.-]{16,}|\bhttps?://[^/\s:@]+:[^/\s@]+@|\b(?:api[_-]?key|password|client[_-]?secret)\s*[:=]\s*['\"]?[^\s'\"]{8,})", re.I)
+
+
+def _inert_runtime_config(value: Any, *, depth: int = 0, count: list[int] | None = None) -> Any:
+    """Data only; installed descriptors still validate their own exact schema.
+
+    Binding config contains no executable resolution hints or user connection
+    references. In particular, importing a material never imports Python from
+    its content/config, opens a path/URL, or selects a credential.
+    """
+    count = count if count is not None else [0]
+    count[0] += 1
+    if depth > 6 or count[0] > 256:
+        raise ValueError("Runtime config exceeds bounded JSON complexity")
+    if isinstance(value, dict):
+        if len(value) > 32:
+            raise ValueError("Runtime config object exceeds field budget")
+        result = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key):
+                raise ValueError("Runtime config keys must be bounded identifiers")
+            compact = re.sub(r"[^a-z0-9]", "", key.lower())
+            forbidden = {"factory", "callable", "module", "class", "python", "pythonpath", "command", "cmd",
+                         "shell", "script", "executable", "binary", "path", "directory", "cwd", "home", "url",
+                         "uri", "endpoint", "host", "port", "env", "environment", "headers", "connectionref", "token", "key"}
+            sensitive = ("credential", "secret", "password", "apikey", "accesstoken", "refreshtoken",
+                         "privatekey", "authorization", "cookie", "clientsecret", "connection")
+            execution_suffixes = ("factory", "callable", "module", "class", "command", "shell", "script", "executable",
+                                  "path", "directory", "url", "uri", "endpoint")
+            if compact in forbidden or compact.endswith(execution_suffixes) or (compact.startswith(sensitive) and key != "connectionName") or SECRET_KEYS.fullmatch(key):
+                raise ValueError("Runtime config cannot carry execution or connection authority")
+            if key == "connectionName" and (not isinstance(item, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,99}", item)):
+                raise ValueError("connectionName must be a bounded symbolic application dependency")
+            result[key] = _inert_runtime_config(item, depth=depth + 1, count=count)
+        return result
+    if isinstance(value, list):
+        if len(value) > 32:
+            raise ValueError("Runtime config list exceeds item budget")
+        return [_inert_runtime_config(item, depth=depth + 1, count=count) for item in value]
+    if isinstance(value, str):
+        if SECRET_TEXT.search(value) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@+-]{0,255}", value):
+            raise ValueError("Runtime config strings must be inert identifiers, never paths, URLs or code")
+        return value
+    if value is None or type(value) is bool:
+        return value
+    if type(value) in {int, float} and abs(value) <= 10**12 and math.isfinite(value):
+        return value
+    raise ValueError("Runtime config requires bounded finite JSON scalars")
+
+
+class RuntimeBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    adapterId: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+    revision: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+    config: dict[str, Any]
+
+    @field_validator("adapterId", "revision")
+    @classmethod
+    def credential_free_identifier(cls, value: str) -> str:
+        if SECRET_TEXT.search(value):
+            raise ValueError("Runtime identifiers cannot carry credentials")
+        return value
+
+    @field_validator("config")
+    @classmethod
+    def inert_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _inert_runtime_config(value)
+        if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode()) > 8192:
+            raise ValueError("Runtime binding config exceeds 8 KiB")
+        return result
+
+
+def normalize_runtime_binding(value: Any) -> dict[str, Any]:
+    """Normalize inert data only; this does not establish adapter availability."""
+    try:
+        return RuntimeBinding.model_validate(value).model_dump()
+    except ValidationError as error:
+        raise HTTPException(422, "Invalid inert runtime binding") from error
 
 
 class PinnedRef(BaseModel):
@@ -58,14 +135,19 @@ class MaterialDefinition(BaseModel):
     outputSchema: dict[str, Any] = Field(default_factory=dict)
     license: str = "MIT"
     provenance: Provenance = Field(default_factory=Provenance)
+    runtimeBinding: RuntimeBinding | None = None
 
 
 @dataclass(frozen=True)
 class GovernanceConfig:
     review_mode: Literal["separate-admin", "demo-self-review"] = "separate-admin"
     revision: str = "material-governance-v1"
+    tool_contract: ToolContract = "legacy-v1"
 
     def __post_init__(self):
+        tools_for_contract(self.tool_contract)
+        if self.tool_contract != "legacy-v1" and self.revision == "material-governance-v1":
+            raise ValueError("Registered runtime tools require a distinct governance revision")
         if self.review_mode not in {"separate-admin", "demo-self-review"}:
             raise ValueError("Unsupported material publication review mode")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
@@ -73,8 +155,15 @@ class GovernanceConfig:
 
     @property
     def fingerprint(self):
-        return digest({**asdict(self), "licenses": LICENSES, "toolBindings": KNOWN_TOOLS,
+        body = asdict(self)
+        if self.tool_contract == "legacy-v1":
+            del body["tool_contract"]
+        return digest({**body, "licenses": LICENSES, "toolBindings": self.known_tools,
                        "schemaVersion": "structured-material/v1"})
+
+    @property
+    def known_tools(self) -> dict[str, str]:
+        return tools_for_contract(self.tool_contract)
 
 
 class MaterialGovernance:
@@ -232,13 +321,17 @@ class MaterialGovernance:
                 raise HTTPException(422, "Provenance source is malformed") from error
             if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
                 raise HTTPException(422, "Provenance source must be a credential-free HTTPS reference")
-        if not set(value["permissions"]) <= set(KNOWN_TOOLS.values()):
+        with self._read() as conn:
+            known_tools = self._config(conn).known_tools
+        if "runtimeBinding" in value and value["kind"] not in {"tool", "model", "knowledge", "environment"}:
+            raise HTTPException(422, "Runtime bindings are limited to tool, model, knowledge and environment materials")
+        if not set(value["permissions"]) <= set(known_tools.values()):
             raise HTTPException(422, "Material requests authority outside registered capabilities")
         reserved = next((seed for seed in SEEDS if seed[0] == value.get("id")), None)
         if reserved and reserved[1] != value["kind"]:
             raise HTTPException(422, "Reserved material kind cannot change")
         if value["kind"] == "tool":
-            if value["content"] not in KNOWN_TOOLS or set(value["permissions"]) != {KNOWN_TOOLS[value["content"]]}:
+            if value["content"] not in known_tools or set(value["permissions"]) != {known_tools[value["content"]]}:
                 raise HTTPException(422, "Tool material must bind exactly one registered tool and capability")
             if reserved and reserved[3] != value["content"]:
                 raise HTTPException(422, "Reserved tool binding cannot change")
@@ -280,6 +373,9 @@ class MaterialGovernance:
 
     def _active(self, conn, material, config):
         body = material["body"]
+        if body.get("kind") == "tool" and (body.get("content") not in config.known_tools or
+                set(body.get("permissions", [])) != {config.known_tools.get(body.get("content"))}):
+            raise HTTPException(409, "Tool binding is outside the current registered contract")
         version = self._version(conn, body["id"], body["version"])
         if version["material_sha"] != body["sha256"] or version["immutable_digest"] != self._immutable(body):
             raise HTTPException(409, "Material differs from reviewed immutable version")
@@ -355,6 +451,9 @@ class MaterialGovernance:
             config = self._config(conn)
             results = []
             for value in values:
+                if value["kind"] == "tool" and (value["content"] not in config.known_tools or
+                        set(value["permissions"]) != {config.known_tools.get(value["content"])}):
+                    raise HTTPException(422, "Tool contract changed before material creation")
                 mid = value.get("id") or str(uuid4())
                 self._lock(conn, "material:" + mid)
                 latest = conn.execute(select(func.max(self.materials.c.version)).where(self.materials.c.id == mid)).scalar() or 0
