@@ -1,6 +1,7 @@
 """Owned Linux AT10 services, with real authority HTTP and controlled model faults."""
 from dataclasses import replace
 from contextlib import contextmanager
+from contextvars import ContextVar
 import asyncio
 import cProfile
 import pstats
@@ -149,12 +150,130 @@ class OneShotAuthorityProfile:
             temporary.replace(self.path)
 
 
+class RecoveryRecorder:
+    """Bounded synthetic recovery phases; no arguments, identifiers or exception text."""
+    stages = frozenset({'eligibility', 'proof', 'completed-launch', 'root-lock-wait', 'root-lock-held',
+                        'prepare-pause', 'publish-pause', 'observe-wait', 'validate-requirement',
+                        'command-prepare', 'command-dispatch', 'service-start'})
+    codes = frozenset({'APPROVED_RECOVERY_' + suffix for suffix in (
+        'CANCELED', 'MISSING', 'PROOF', 'STALE', 'SCOPE', 'TOOLS', 'ALREADY_RECORDED',
+        'CURRENT', 'PLATFORM', 'STOPPING', 'EFFECT', 'STOP')} | {'INFERENCE_WAIT_EXPIRED'})
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.events = []
+        self.started = time.monotonic()
+        self.started_unix = time.time()
+        self.active = ContextVar('at10_recovery_active', default=False)
+
+    @contextmanager
+    def measure(self, stage, *, identity=None):
+        if stage not in self.stages:
+            raise ValueError('Only fixed recovery stages are allowed')
+        started = time.monotonic()
+        outcome = 'OK'
+        try:
+            yield
+        except BaseException as error:
+            from agno.exceptions import RunCancelledException
+            from fastapi import HTTPException
+            if isinstance(error, asyncio.CancelledError):
+                outcome = 'CANCELLED'
+            elif isinstance(error, RunCancelledException):
+                outcome = 'RUN_CANCELLED'
+            elif isinstance(error, HTTPException):
+                candidate = error.detail.split(':', 1)[0] if isinstance(error.detail, str) else ''
+                outcome = candidate if candidate in self.codes else 'HTTP_OTHER'
+            else:
+                outcome = 'OTHER'
+            raise
+        finally:
+            ended = time.monotonic()
+            event = {'stage': stage, 'startSeconds': started - self.started,
+                     'endSeconds': ended - self.started, 'seconds': ended - started, 'outcome': outcome}
+            if identity is not None:
+                event['identity'] = {key: value for key, value in identity.items()
+                    if key in {'proofPresent', 'queueRunMatches', 'queueOwnerMatches', 'queueTaskMatches'}
+                    and type(value) is bool}
+            with self.lock:
+                self.events.append(event)
+                self.events = self.events[-256:]
+                temporary = self.path.with_suffix('.tmp')
+                temporary.write_text(json.dumps({'schema': 1, 'startedUnixSeconds': self.started_unix, 'events': self.events}))
+                temporary.replace(self.path)
+
+
+def install_recovery_timing(path):
+    from agent_factory.control_commands import ControlCommands
+    from agent_factory.delegation import DelegationService
+    recorder = RecoveryRecorder(path)
+    from agent_factory import inference_wait
+    def timed_sync(original, stage):
+        def wrapped(*args, **kwargs):
+            with recorder.measure(stage):
+                return original(*args, **kwargs)
+        return wrapped
+    def timed_async(original, stage):
+        async def wrapped(*args, **kwargs):
+            with recorder.measure(stage):
+                return await original(*args, **kwargs)
+        return wrapped
+    for method, stage in (('prepare_pause', 'prepare-pause'), ('publish_pause', 'publish-pause'),
+                          ('observe', 'observe-wait'), ('validate_requirement', 'validate-requirement')):
+        setattr(inference_wait, method, timed_sync(getattr(inference_wait, method), stage))
+    for method, stage in (('_prepare', 'command-prepare'), ('dispatch', 'command-dispatch')):
+        setattr(ControlCommands, method, timed_async(getattr(ControlCommands, method), stage))
+    original_eligibility = ControlCommands.approved_recovery
+    async def eligibility(self, task, snapshot, **kwargs):
+        queue = snapshot.get('queue') or {}
+        proof = ((queue.get('payload') or {}).get('continue') or {}).get('kwargs', {}).get('metadata', {}).get('factoryControlCommand')
+        identity = {'proofPresent': isinstance(proof, dict) and bool(proof),
+                    'queueRunMatches': queue.get('id') == task.get('run_id'),
+                    'queueOwnerMatches': queue.get('user_id') == task.get('owner_id'),
+                    'queueTaskMatches': queue.get('session_id') == task.get('id')}
+        token = recorder.active.set(True)
+        try:
+            with recorder.measure('eligibility', identity=identity):
+                return await original_eligibility(self, task, snapshot, **kwargs)
+        finally:
+            recorder.active.reset(token)
+    ControlCommands.approved_recovery = eligibility
+    original_proof = ControlCommands._approval_payload
+    def proof(*args, **kwargs):
+        with recorder.measure('proof'):
+            return original_proof(*args, **kwargs)
+    ControlCommands._approval_payload = staticmethod(proof)
+    original_completed = ControlCommands._completed_launch
+    def completed(self, *args, **kwargs):
+        with recorder.measure('completed-launch'):
+            return original_completed(self, *args, **kwargs)
+    ControlCommands._completed_launch = completed
+    original_lock = DelegationService._root_lock
+    @contextmanager
+    def root_lock(self, *args, **kwargs):
+        if not recorder.active.get():
+            with original_lock(self, *args, **kwargs) as value:
+                yield value
+            return
+        # ExitStack preserves the original context manager's exception/unlock semantics.
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            with recorder.measure('root-lock-wait'):
+                value = stack.enter_context(original_lock(self, *args, **kwargs))
+            with recorder.measure('root-lock-held'):
+                yield value
+    DelegationService._root_lock = root_lock
+    return recorder
+
+
 def install_timing(path):
     from agent_factory.orx_local import TaskLocalORXAdapter
     from agent_factory.lifecycle_observer import FactoryLifecycleObserver
     from agent_factory.orx_linux import TaskLinuxContainer
     from agent_factory.model_dispatch import DelegatingModel
     recorder = TimingRecorder(path)
+    install_recovery_timing(path.with_suffix('.recovery.json'))
     from agent_factory.remote_handoff import TrustedHandoffClient
     authority_profile = OneShotAuthorityProfile(path.with_suffix('.profile.json'))
     original_callback = TrustedHandoffClient.authority_callback

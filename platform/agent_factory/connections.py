@@ -278,6 +278,12 @@ class ConnectionService:
             status = {"CONNECTION_REVOKED": "revoked", "CONNECTION_EXPIRED": "expired",
                 "CONNECTION_UNAVAILABLE": "unavailable", "CONNECTION_NOT_CONFIGURED": "missing",
                 "CONNECTION_CHANGED": "changed", "CONNECTION_TASK_ENDED": "task_ended"}.get(code, "unavailable")
+        return self._projection(row, status)
+
+    @staticmethod
+    def _projection(row, status):
+        """Public metadata only; callers own the current-check boundary."""
+        body = row["body"]
         return {key: body[key] for key in ("ref", "ownerId", "version", "kind", "revision", "capabilities", "taskId", "registrationRef", "expiresAt")} | {
             "fingerprint": row["fingerprint"], "status": status, "available": status == "active",
             "createdAt": row["created_at"], "revokedAt": row["revoked_at"],
@@ -416,7 +422,10 @@ class ConnectionService:
                 expected_revision=expected_revision, expected_fingerprint=expected_fingerprint,
                 expected_version=expected_version, expected_adapter_ref=expected_adapter_ref,
                 required_capabilities=required_capabilities, task_id=task_id)
-            return self._project(conn, owner, row)
+            # _check just verified the exact owner/task/pin and current binding.
+            # Project that result without repeating the same SQL check inside
+            # this boundary. Every later preflight/resolve checks afresh.
+            return self._projection(row, "active")
 
     def resolve(self, owner, reference, expected_kind, *, expected_revision=None,
                 expected_fingerprint=None, expected_version=None, expected_adapter_ref=None,

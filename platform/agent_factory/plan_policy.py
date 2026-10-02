@@ -92,6 +92,14 @@ class PlanPolicyConfig:
         return LOCAL_ORX_READ_ONLY_TOOLS if self.tool_contract == "local-orx-v1" else READ_ONLY_TOOLS
 
 
+class NativeMandateCompleted(HTTPException):
+    """Execution denied because this exact child ticket completed normally."""
+
+    def __init__(self, task_id: str, run_id: str):
+        super().__init__(409, "Current native delegation mandate is completed")
+        self.task_id, self.run_id = task_id, run_id
+
+
 def persisted_ancestor_guard(store: Any):
     """Trusted integration callback; checks existing native/persisted mandates.
 
@@ -117,6 +125,7 @@ def persisted_ancestor_guard(store: Any):
         roots = store.sql("SELECT * FROM af_delegation_roots WHERE root_id=:id", id=root_id)
         if not roots or roots[0]["owner_id"] != owner or roots[0]["reclaimed"]:
             raise HTTPException(409, "Delegation approval root is unavailable or reclaimed")
+        own_completed = False
         for current in [task, *ancestors]:
             if current["owner_id"] != owner or current["cancel_requested"] or current["admission"] == "rejected":
                 raise HTTPException(403, "Current delegation mandate is revoked")
@@ -128,6 +137,11 @@ def persisted_ancestor_guard(store: Any):
             native = store.native_db.get_job(run_id) or {}
             if native.get("session_id") != current["id"] or native.get("user_id") != owner or native.get("component_id") != "factory-executor":
                 raise HTTPException(403, "Native delegation ticket differs from owner/task/executor")
+            if current["id"] == task["id"] and str(native.get("status", "")).lower() == "completed":
+                # Finish validating ancestors before exposing the narrow normal
+                # completion reason; genuine revocation/failure takes precedence.
+                own_completed = True
+                continue
             allowed = {"queued", "running", "paused"} | ({"completed"} if current["id"] != task["id"] else set())
             if str(native.get("status", "")).lower() not in allowed:
                 raise HTTPException(409, "Current native delegation mandate is unavailable")
@@ -135,6 +149,8 @@ def persisted_ancestor_guard(store: Any):
         for child, parent in zip([plan, *plans], plans):
             if not set(child["tools"]) <= set(parent["tools"]) or not set(child["capabilities"]) <= set(parent["capabilities"]):
                 raise HTTPException(403, "Child exceeds a persisted ancestor mandate")
+        if own_completed:
+            raise NativeMandateCompleted(task["id"], context.run_id)
         return plans
     return guard
 

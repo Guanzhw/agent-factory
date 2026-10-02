@@ -4,9 +4,13 @@ The target is complete factory/v0.3 functionality. This is a verified stage; pro
 
 ## Current matrix
 
-Current cloud stage: bounded local AT10 inference recovery, following accepted
-Linux literature/least-capability stage `89891d4`. Historical stage sections below
-retain their original evidence; superseded “pending” statements are not current.
+Current cloud checkpoint: `c374293bd93ec4759f235a340ca264978d9747b3`, with push/PR
+CI all ten jobs passed and two terminal observations more than 60 seconds apart.
+Both PostgreSQL suites ran 575 tests with 63 explicit skips. The following receiver-parent continuation now has diagnostic and uninstrumented
+actual success; final continuation SHA/CI and combined safety results are recorded
+in its draft PR. CI alone does not establish actual recovery acceptance.
+Historical stage sections retain their original evidence; superseded pending
+statements and counts must not be treated as current results.
 
 | Capability | Current evidence | Remaining boundary |
 |---|---|---|
@@ -16,8 +20,9 @@ retain their original evidence; superseded “pending” statements are not curr
 | ORX receiver capabilities | Revision 1 preserved; revision 2 has per-tool read/compute pins and a common admitted experiment identity; receiver intersection guard unchanged | Actual two-app receiver composition passed (117.686 s), including one real toy run, common identity and reclaim; controlled ASGI is not deployed-host/TLS acceptance |
 | Identity | Native managed roles, current revocation checks, scoped jobs/artifacts and demo browser sessions | Production browser identity entry and provider/session integration are still code work |
 | Model costs | Immutable reviewed prices, durable per-attempt ledger/reservations, controlled retry/streaming/remote allocation tests; explicit zero-provider local contracts | Actual provider SDK integration and usage/retry guards are not implemented merely by supplying credentials |
+| Go development adapter | Separate Chat/Responses parsers and native Agno calls tested with mock HTTP; bounded request/stream/usage contracts | Unregistered: no Go-specific model/binding/credential profile, pricing/request guard, or real PostgreSQL ledger product-path test. No live call; account subscription-only billing proof is missing. See [Go boundary](OPENCODE_GO.md) |
 | Research workloads | Fixed reviewed toy recipe and immutable installed public-query profile | Mutable reviewed research inputs/workspaces, evaluators and approval/version rules need a selected workload contract |
-| AT10 external-work ownership | Bounded native inference pause over an acknowledged standalone Linux ORX v2 launch; durable same-run recovery and background original-work checks; actual local process-restart and safety cases | Narrow local contract; provider SDKs, Windows and delegated/receiver-owned recovery require separate integration/acceptance; see [AT10 scope](INFERENCE_RECOVERY.md) |
+| AT10 external-work ownership | Standalone, local parent/browser, local/receiver child, and receiver-root recovery have actual same-identity evidence; eight safety scenarios have separate passing runs | Receiver-parent now passed diagnostic (203.020s) and uninstrumented (190.857s) actual recovery with unchanged original wait and one launch. Earlier cold-start/expiry failures are retained; combined safety and final exact CI remain stage-PR evidence. See [tree evidence](AT10_TREE_ACCEPTANCE.md). Production/target-host reliability remains open |
 | Storage and recovery | Scoped disk admission/observation, dry-run/quarantine/restore/reclaim; finite 20-user pressure; official online pg_dump with concurrent artifact writes and independent restore | Actual 4 CPU/16 GiB; not target-host load, PITR, external-workspace consistency, production RPO/RTO or unbounded admission fairness |
 | Remote execution | Approved mappings/current-origin authority, child ownership, UNKNOWN reconciliation and actual two-process controlled HTTP tests | Production remote endpoints, TLS and host authorization are not connected |
 | Frontend | Chinese composition/review/progress/receipts, evidence downloads and storage views; prior actual Chromium evidence | No production identity login or live model research claim |

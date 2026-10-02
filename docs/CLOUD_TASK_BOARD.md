@@ -121,3 +121,65 @@ The uninstrumented actual-runtime batch at `9beef4a` ran three cases in 391.023s
 receiver-root pause/restart/recovery passed; receiver-parent recovery and receiver
 overrun failed in inspect preparation before the intended fault. This is separate
 from earlier timing artifacts and does not establish complete AT10 acceptance.
+
+## Receiver-parent recovery continuation (after c374293)
+
+New review branch: `coord/receiver-parent-recovery-20261002`, based on the preserved
+exact checkpoint `c374293bd93ec4759f235a340ca264978d9747b3` (both
+push/PR CI passed; actual receiver-parent recovery remains unaccepted).
+
+| Work | Owner / exclusive scope | Dependency | Acceptance / state |
+|---|---|---|---|
+| Recovery stage diagnostics and deterministic fixture contracts | `/root/at10`; inference_tree_worker.py, test_actual_inference_tree.py, new test_at10_recovery_timing files | Existing failure logs; root owns shared core | Delivered: bounded secret-free phase/lock/identity evidence and transparent wrapper contracts; root runs actual acceptance |
+| Full acceptance and Go integration gap audit | `/root/go_adapter`; read-only | Current source, PR11 evidence | Complete: Go remains unregistered; pricing/binding and real PG-ledger integration missing; no secret/live access |
+| Authority / UNKNOWN / ledger review | `/root/reviewer`; read-only | Core recovery and observer paths | Complete for guard-scope change: ABA replacement regression fixed; actual successful-check identities only; no cross-call cache |
+| Shared recovery implementation and final integration | `/root`; core, documentation, actual runs, commit/PR/CI | Worker evidence and review | In progress; heavy tests serial; exact final CI follows actual acceptance |
+
+The 30-second bound is persisted production control metadata created by
+`inference_wait.prepare_pause`, capped by original external-work timeouts. It is
+not the fixture's 60/90-second observation polling limit and must not be widened
+to pass the test. Separate evidence must distinguish service reconstruction,
+read projections, fresh authority, lock wait/hold, and native continuation.
+
+
+Recovery follow-up outcome: diagnostic receiver-parent passed in 203.020s;
+final uninstrumented receiver-parent passed in 190.857s. Original 30s deadline,
+native/ORX identity, single launch, explicit origin repair receipt, duplicate
+receipt idempotency and parent/child completion were verified. Root integrated
+same-call declared guard deduplication (including ABA protection) and pure
+connection preflight projection; 13 real PostgreSQL connection tests passed in
+30.336s. Independent review passed. Diagnostic wrapper failures and the
+intermediate uninstrumented inspect timeout remain in AT10_TREE_ACCEPTANCE.md.
+Final combined safety/CI results are recorded in the stage draft PR so that a
+new documentation-only commit cannot silently invalidate its exact-head checks.
+
+### Normal child completion versus authority loss
+
+The first continuation head `42341646` passed PR CI but failed push CI: the
+remote shared-grant child reached native completion with settled usage, while
+lifecycle observation classified it as `current-authority-ended`. A stale
+running snapshot followed by a fresh completed self-mandate reproduces that
+classification deterministically; the original CI log did not retain the caught
+exception, so the precise exception in that run remains an inference.
+
+Root owns the narrow integration fix in plan policy and lifecycle observation;
+`/root/at10` owns deterministic regression tests, `/root/reviewer` independently
+reviews authority and UNKNOWN behavior, and `/root/go_adapter` verifies exact CI.
+Execution still denies completed mandates. Only a typed same-task completion
+reason, after ancestor checks, permits strict fresh terminal reclassification.
+Ordinary authority denials remain failures; missing/mismatched/nonterminal proof
+holds capacity. The failing real PostgreSQL scenario now passes in 39.976s.
+The preceding head's complete actual receiver safety matrix passed all 8 tests
+in 1149.785s. Final-head runtime and CI evidence follows in draft PR12.
+
+Final-core runtime verification at `ee0e5ca` passed: uninstrumented actual
+receiver-parent 1/1 in 199.900s; original 30s wait, identities, single launch,
+UNKNOWN retention and duplicate receipt checks independently verified. Offline
+597 tests passed (290 skips); real PostgreSQL lifecycle 14/14 passed (43.740s).
+Push CI passed 597 tests (63 skips), but PR CI exposed a fixture-only exception
+race in remote handoff test08: real binding recheck correctly raised native
+`RunCancelledException` after cancellation, while the test accepted HTTP denial
+only. `/root/at10` owns its deterministic two-boundary regression; `/root/reviewer`
+reviews the denial and no-new-effect assertions. Root retains integration and
+exact CI ownership. The follow-up changes tests/documentation only; runtime
+source remains exactly the verified `ee0e5ca` version. Final CI is recorded in PR12.

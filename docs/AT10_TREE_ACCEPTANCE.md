@@ -12,7 +12,7 @@ The integration owner maintains exact final commit/CI evidence when available.
 | Receiver root inference pause and hard restart | Passed: same native/ORX IDs, one launch, completed, positive kernel stop, two independent services/DBs |
 | Receiver child inference pause and hard restart | Passed: original receiver receipt/root ownership plus child native/ORX identity preserved |
 | Parent inference fault over live approved child, hard restart | Passed again in the resumed container: explicit separate recovery receipt; original native/ORX identity and one launch; parent and child completed. Actual Chromium Chinese recovery action produced one command POST and no browser errors |
-| Receiver parent fault over approved child, hard restart | Still unaccepted in resumed container: inspect can reach approval and parent can reach inference pause, but child native 60-second timeout during inspect/wait invalidates recovery; final combined matrix pending |
+| Receiver parent fault over approved child, hard restart | Passed diagnostic run (203.020s) and final uninstrumented run (190.857s): original 30s wait unchanged, original native/ORX identity, one launch, origin approval/repair, duplicate repair receipt, parent and child completed. Earlier inspect/expiry failures remain recorded below; combined safety regression is tracked in the current draft PR |
 | Parent cancellation of waiting child | Passed in the resumed container; original unresolved usage retained |
 | Child authoritative overrun under shared ancestor budget | Passed in the resumed container; current usage denial triggered cleanup before the original deadline |
 | Current source account overrun | Passed controlled accounting fault; no provider bill is claimed |
@@ -120,3 +120,56 @@ The eight safety cases at `2e68725` completed in 1111.150 seconds: 7 passed;
 receiver overrun failed during inspect preparation before fault injection. That
 case had passed in the prior resumed matrix. Every safety scenario therefore has
 a passing current-container run, but the combined batch is still not green.
+
+## Receiver-parent recovery continuation after c374293
+
+The 30-second interval is the persisted business wait constructed by
+`inference_wait.prepare_pause` as `min(30, external-work timeout)`. It is not the
+fixture's 60/90-second observation window. This continuation changes neither
+that interval, its immutable original deadline, native run timeout, approved
+experiment limits, nor polling criteria.
+
+The former actual failure reached parent inference fault and receiver hard
+restart: approval dispatch occurred at +25.858s and expiry cleanup at +31.600s.
+Read-only analysis found three tool-independent governance/binding guards each
+executing three times per `current()` call. Explicit trusted scope declarations
+now avoid only same-call duplicates. The actual successfully executed callable
+identity is recorded, preventing replacement/ABA from inheriting a prior check.
+Unknown guards still get per-tool checks, and observation endpoints still check
+fresh authority. No check result is cached across observations or execution.
+
+With that change, the diagnostic actual receiver-parent case passed in 203.020s.
+Relative to wait creation: publication ended at +5.450s; restart health check
+ended at +9.953s (4.099s duration); original recovery approval dispatched at
++19.561s; first child repair eligibility succeeded at +23.639s; the new inference
+usage settled at +28.953s. Final parent wait is RECOVERED, but no exact timestamp
+for that state update was recorded. Nested timings must not be added. No measured
+root-lock events means this eligibility chain did not enter the wrapped lock;
+it does not establish zero lock cost elsewhere.
+
+The child kept its original native/ORX identities with exactly one launch, both
+parent and child completed, origin owned no native run, and duplicate repair
+commands returned the same acknowledged receipt. The original failed provider
+attempt remained UNKNOWN; the subsequent attempt settled separately. Exported
+lifecycle evidence lacks hold amounts and cannot independently quantify them.
+
+A subsequent uninstrumented run failed in initial inspect preparation (97.198s),
+before parent fault injection. This is retained separately; one successful
+recovery does not certify stable cold-container startup. The earlier 29.752s
+instrumented failure was caused by a diagnostic wrapper dropping its yielded
+connection; wrapper transparency and staticmethod semantics were corrected and
+tested before the passing run. Neither failure is erased or recast as success.
+
+A second optimization removes one duplicate `_current` query inside connection
+preflight after its complete `_check`; public inspect/list and every later
+preflight/resolve remain fresh. Thirteen real PostgreSQL connection tests passed
+(30.336s), including expiry between independent calls. Its actual rerun and final
+exact-head CI are recorded in the current draft PR.
+
+The final core with connection-preflight deduplication passed the same receiver-parent
+case without timing instrumentation in 190.857s. Both native tasks completed;
+original native/ORX identity, one launch, origin approval/repair, positive stop,
+and duplicate repair receipt assertions passed. This closes the demonstrated
+receiver-parent recovery failure without changing any business or test timeout.
+It is not target-host reliability or production acceptance; all earlier failures
+remain documented. Final combined safety results and exact CI are in the stage PR.

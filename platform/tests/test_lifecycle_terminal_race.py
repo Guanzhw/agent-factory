@@ -4,7 +4,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
+from fastapi import HTTPException
+
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
+from agent_factory.plan_policy import NativeMandateCompleted
 
 
 class LifecycleTerminalRaceTests(unittest.TestCase):
@@ -105,6 +108,88 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
             ('terminal', 'failed', True), 'release-root'])
         store.require_plan_execution.assert_called_once()
         self.assertEqual(store.event.call_args.args[3]['reason'], 'current-authority-ended')
+
+    def test_exact_completion_during_each_phase_is_observed_without_cancellation(self):
+        for phase in ('request', 'observe'):
+            with self.subTest(phase=phase):
+                observer, store, task, _, actions = self.fixture()
+                sequence = [{'status': 'running'}, {'status': 'completed'}]
+                if phase == 'observe':
+                    sequence = [{'status': 'completed'}, *sequence, {'status': 'completed'}]
+                observer._binding.side_effect = sequence
+                store.require_plan_execution.side_effect = NativeMandateCompleted(task['id'], task['run_id'])
+                if phase == 'request':
+                    self.assertEqual(observer._request_cleanup(task), ({}, []))
+                    self.assertEqual(actions, [])
+                else:
+                    result = observer._observe_stopped(task)
+                    self.assertTrue(result[task['id']]['groupStopped'])
+                    self.assertFalse(result[task['id']]['groupFailed'])
+                    self.assertEqual(actions, [('terminal', 'completed', False), 'release-root'])
+                store.event.assert_not_called()
+                self.assertFalse(task['cancel_requested'])
+
+    def test_typed_completion_rechecks_fresh_failure_cancel_and_unresolved_effect(self):
+        for fault, reason in (('failure', 'protected-failure'), ('cancel', 'cancel-requested'),
+                              ('unresolved', 'native-ended-unresolved-experiment')):
+            with self.subTest(fault=fault):
+                observer, store, task, failure, _ = self.fixture()
+                observer._binding.side_effect = [{'status': 'running'}, {'status': 'completed'}]
+                def deny(*args, **kwargs):
+                    if fault == 'failure': failure['present'] = True
+                    elif fault == 'cancel': task['cancel_requested'] = True
+                    else:
+                        store.effects.return_value = [{'effect_key': task['run_id'] + ':orx-experiment-launch-v1',
+                                                       'status': 'UNKNOWN'}]
+                    raise NativeMandateCompleted(task['id'], task['run_id'])
+                store.require_plan_execution.side_effect = deny
+                requested, errors = observer._request_cleanup(task)
+                self.assertEqual(errors, [])
+                self.assertIn(task['id'], requested)
+                self.assertTrue(task['cancel_requested'])
+                if fault != 'cancel':
+                    self.assertEqual(store.event.call_args.args[3]['reason'], reason)
+
+    def test_completion_without_exact_fresh_terminal_binding_never_releases(self):
+        cases = ('missing', 'nonterminal', 'binding-error', 'error-task', 'error-run',
+                 'fresh-id', 'fresh-owner_id', 'fresh-plan_id', 'fresh-run_id', 'fresh-request_id')
+        for phase in ('request', 'observe'):
+            for fault in cases:
+                with self.subTest(phase=phase, fault=fault):
+                    observer, store, task, _, actions = self.fixture()
+                    sequence = [{'status': 'running'},
+                        None if fault == 'missing' else {'status': 'queued'} if fault == 'nonterminal'
+                        else ValueError('Synthetic mismatch') if fault == 'binding-error' else {'status': 'completed'}]
+                    if phase == 'observe': sequence.insert(0, {'status': 'completed'})
+                    observer._binding.side_effect = sequence
+                    def deny(*args, **kwargs):
+                        original = task.copy()
+                        if fault.startswith('fresh-'):
+                            task[fault.removeprefix('fresh-')] = 'changed'
+                        raise NativeMandateCompleted('foreign' if fault == 'error-task' else original['id'],
+                            'foreign' if fault == 'error-run' else original['run_id'])
+                    store.require_plan_execution.side_effect = deny
+                    if phase == 'request':
+                        requested, errors = observer._request_cleanup(task)
+                        self.assertEqual(requested, {})
+                        self.assertEqual(len(errors), 1)
+                    else:
+                        with self.assertRaises(ValueError): observer._observe_stopped(task)
+                    store.observed.assert_not_called()
+                    self.assertNotIn('release-root', actions)
+                    self.assertFalse(task['cancel_requested'])
+
+    def test_generic_denials_cannot_be_reclassified_as_normal_completion(self):
+        for error in (HTTPException(403, 'Synthetic revoked'), HTTPException(409, 'Current native delegation mandate is completed'),
+                      PermissionError('Synthetic permission denied')):
+            with self.subTest(error=type(error).__name__, status=getattr(error, 'status_code', None)):
+                observer, store, task, _, actions = self.fixture()
+                observer._binding.side_effect = [{'status': 'completed'}, {'status': 'running'}, {'status': 'completed'}]
+                store.require_plan_execution.side_effect = error
+                result = observer._observe_stopped(task)
+                self.assertTrue(result[task['id']]['groupFailed'])
+                self.assertIn(('terminal', 'failed', True), actions)
+                self.assertIn('protected_denied', actions)
 
     def test_normal_completed_work_is_not_cancelled(self):
         observer, store, task, _, actions = self.fixture()
