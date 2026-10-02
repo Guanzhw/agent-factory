@@ -1,5 +1,28 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Current Go product phase
+
+Continue from exact completed `37f889e5cc157206868c60c00230bd3b8aef23a5`
+([Draft PR12](https://github.com/Guanzhw/agent-factory/pull/12)) on
+`coord/go-development-product-path-20261002`. The prior receiver-parent stage
+passed unchanged 30-second business-bound actual recovery and two exact-SHA CI
+observations; it is not being rewritten.
+
+Current changes integrate exact Go models into an explicitly enabled development
+profile, governed application/material selection and owner bindings, native queued
+tool execution, actual controlled loopback SSE, receipt/artifact and durable usage.
+Subscription mode is unconditionally denied before callbacks. No real key is read
+in this phase. See [current profile](GO_DEVELOPMENT_PROFILE.md),
+[board](CLOUD_TASK_BOARD.md) and [decisions](PRODUCTION_DECISIONS.md).
+
+Local failures remain evidence: initial 6 setup failures revealed an application
+capability declaration mismatch; corrected without widening schema. Next run
+passed 5/6; quota revealed native queue replay outside model retry limits. A
+Go-only durable protected failure now prevents further model admission, including
+queue/restart replay after native 503 budget exhaustion. Final acceptance/CI is
+recorded in the new draft PR; do not reuse historical test counts below.
+
+
 ## Resumed coordinator snapshot
 
 The dedicated coordinator has resumed from exact checkpoint

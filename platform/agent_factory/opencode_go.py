@@ -25,6 +25,55 @@ MODELS = {"deepseek-v4-flash": "chat/completions", "deepseek-v4.1-flash": "chat/
 MAX_BYTES = 1_048_576
 
 
+class _LoopbackResponseStream(httpx.AsyncByteStream):
+    def __init__(self, response, transport):
+        self.response, self.transport = response, transport
+
+    async def __aiter__(self):
+        async for chunk in self.response.aiter_raw():
+            yield chunk
+
+    async def aclose(self):
+        try:
+            await self.response.aclose()
+        finally:
+            await self.transport.aclose()
+
+
+class GoLoopbackTransport(httpx.AsyncBaseTransport):
+    """Explicit synthetic wire fixture, incapable of routing to the Go host.
+
+    Only literal loopback HTTP origins are accepted, with no proxy, redirect,
+    credentials, or hidden HTTP retry. Authorization is never forwarded.
+    """
+
+    def __init__(self, base_url: str):
+        url = httpx.URL(base_url)
+        if (url.scheme != "http" or url.host not in {"127.0.0.1", "::1"} or url.port is None
+                or not 1 <= url.port <= 65535 or url.userinfo or url.query or url.fragment
+                or url.path not in {"", "/"}):
+            raise ValueError("Go fixture requires an explicit literal loopback HTTP origin")
+        self._origin = url
+
+    async def handle_async_request(self, request):
+        if (request.method != "POST" or str(request.url) not in {BASE_URL + "/chat/completions", BASE_URL + "/responses"}
+                or request.headers.get("user-agent") != USER_AGENT
+                or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", request.headers.get("x-opencode-session", ""))):
+            raise ValueError("Go fixture request differs from the reviewed wire contract")
+        transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+        try:
+            forwarded = httpx.Request("POST", self._origin.copy_with(path=request.url.path),
+                content=await request.aread(), headers={"content-type": "application/json",
+                    "user-agent": USER_AGENT, "x-opencode-session": request.headers["x-opencode-session"]},
+                extensions=request.extensions)
+            response = await transport.handle_async_request(forwarded)
+            return httpx.Response(response.status_code, headers=response.headers,
+                stream=_LoopbackResponseStream(response, transport), request=request)
+        except BaseException:
+            await transport.aclose()
+            raise
+
+
 def _unknown(message="Go protocol response is invalid", status=400):
     # Never interpolate server bodies, request headers, credentials or SDK errors.
     return ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
@@ -70,6 +119,7 @@ class GoDevelopmentModel(Model):
     def __init__(self, *, model_id: str, session_id: str, credential: Callable[[], str],
                  billing_verified: Callable[[str, str], bool] | None = None,
                  max_output_tokens: int = 256, timeout_seconds: float = 30,
+                 wire_stream: bool = False, native_retries: int = 0,
                  transport: httpx.BaseTransport | None = None,
                  async_transport: httpx.AsyncBaseTransport | None = None):
         if model_id not in MODELS:
@@ -80,7 +130,14 @@ class GoDevelopmentModel(Model):
             raise ValueError("Development output budget must be 1..512 tokens")
         if not 0 < timeout_seconds <= 60:
             raise ValueError("Development timeout must be at most 60 seconds")
-        super().__init__(id=model_id, name="OpenCode Go development", provider="opencode-go-development")
+        if type(wire_stream) is not bool or type(native_retries) is not int or not 0 <= native_retries <= 1:
+            raise ValueError("Development wire mode/retry limit is invalid")
+        if native_retries and transport is None and async_transport is None:
+            raise ValueError("Native retry verification is restricted to an explicit fixture transport")
+        super().__init__(id=model_id, name="OpenCode Go development", provider="opencode-go-development",
+                         retries=native_retries)
+        self.factory_wire_stream = wire_stream
+        self._native_retry_limit = native_retries
         self._session = session_id
         self._credential = credential
         self._billing = billing_verified
@@ -89,6 +146,11 @@ class GoDevelopmentModel(Model):
         if transport is not None and not isinstance(transport, httpx.AsyncBaseTransport):
             raise ValueError("Test transport must support asynchronous deadline cancellation")
         self._async_transport = async_transport or transport
+
+    def _is_retryable_error(self, error: ModelProviderError) -> bool:
+        # Only explicit fixture retries may retry a transient service failure.
+        # Quota/auth, incomplete protocol and unknown usage always stop.
+        return error.status_code == 503
 
     def _headers(self):
         try:
@@ -184,6 +246,8 @@ class GoDevelopmentModel(Model):
             if len({call["id"] for call in calls}) != len(calls):
                 raise _unknown("Go response contains duplicate tool identities")
             result.response_usage = _usage(response.get("usage"), responses)
+            if result.response_usage is None:
+                raise _unknown("GO_USAGE_UNKNOWN")
             return result
         except (KeyError, TypeError, IndexError, AttributeError):
             raise _unknown() from None
@@ -201,10 +265,10 @@ class GoDevelopmentModel(Model):
         # Public methods are separately wrapped by the Factory usage ledger.
         # Never bridge through another public method: that reserves twice.
         with ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(lambda: asyncio.run(self._ainvoke_http(messages, **kwargs))).result()
+            return executor.submit(lambda: asyncio.run(self._ainvoke_http(messages, stream=self.factory_wire_stream, **kwargs))).result()
 
     async def ainvoke(self, messages, **kwargs):
-        return await self._ainvoke_http(messages, **kwargs)
+        return await self._ainvoke_http(messages, stream=self.factory_wire_stream, **kwargs)
 
     def invoke_stream(self, messages, **kwargs):
         # Bounded buffering deliberately avoids executing partial tool arguments.

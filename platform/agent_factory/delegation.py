@@ -205,6 +205,9 @@ class DelegationService:
             if plan["status"] != "ready":
                 raise HTTPException(409, "Ancestor plan is blocked")
             if creating:
+                from .go_development import is_go_plan
+                if is_go_plan(plan):
+                    raise HTTPException(409, "GO_DEVELOPMENT_DELEGATION_UNAVAILABLE: development checks are standalone")
                 ids = [current["id"], *(link["child_id"] for link in self._descendants(current["id"]) if link["child_id"])]
                 used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=ANY(:ids)", ids=ids)[0]["n"]
                 if used >= int(plan["budget"]["toolCalls"]):

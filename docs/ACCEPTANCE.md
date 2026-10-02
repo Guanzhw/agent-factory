@@ -1,5 +1,23 @@
 # Acceptance ledger
 
+## Current Go development product phase
+
+Base receiver-parent stage: `37f889e5cc157206868c60c00230bd3b8aef23a5`,
+[Draft PR12](https://github.com/Guanzhw/agent-factory/pull/12), both exact-SHA CI
+runs green with two terminal observations >60 seconds apart. Its actual recovery
+uses original native/ORX identities and the unchanged business wait.
+
+The explicit Go fixture profile now connects governed model/application selection,
+owner bindings, native queue, independent Chat/Responses protocols, controlled
+HTTP SSE tool roundtrip, receipt/artifact and durable per-attempt accounting.
+Subscription execution remains denied before any credential or billing callback;
+no live compatibility or subscription-only billing success is claimed. See
+[product profile](GO_DEVELOPMENT_PROFILE.md). Final measured tests and exact-SHA
+CI belong to the new draft PR. Older matrix cells claiming the fixture profile
+is unregistered are superseded by this section; production identity, research
+source success and target-machine acceptance remain open.
+
+
 The target is complete factory/v0.3 functionality. This is a verified stage; production/scientific acceptance remains open. Tests exercise actual Agno/PostgreSQL/FastAPI behavior; model output alone is deterministic.
 
 ## Current matrix

@@ -46,11 +46,17 @@ class Settings:
     trusted_connections: dict = field(default_factory=dict)
     runtime_adapters: list = field(default_factory=list)
     runtime_tool_contract: str = "legacy-v1"
+    # Explicit coding-development profile; never credential discovery or production default.
+    development_profile: str = "disabled"
     # Frozen operator price/policy registrations, never loaded from model input.
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if self.development_profile not in {"disabled", "opencode-go"}:
+            raise ValueError("Unsupported development profile")
+        if self.development_profile != "disabled" and not self.demo:
+            raise ValueError("Go development profile cannot enable a production provider")
         if min(self.storage_task_reserve_bytes, self.storage_low_water_bytes, self.storage_scan_entries, self.storage_hash_bytes) < 1:
             raise ValueError("Storage budgets must be positive")
         if self.storage_retention_grace_seconds < (0 if self.demo else 60):
@@ -103,6 +109,7 @@ class Settings:
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
+                   development_profile=os.getenv("FACTORY_DEVELOPMENT_PROFILE", "disabled"),
                    storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),
                    storage_low_water_bytes=int(os.getenv("FACTORY_STORAGE_LOW_WATER_BYTES", str(1024 * 1024 * 1024))),
                    storage_monitor_paths=tuple(Path(path).resolve() for path in os.getenv("FACTORY_STORAGE_MONITOR_PATHS", "").split(os.pathsep) if path),
