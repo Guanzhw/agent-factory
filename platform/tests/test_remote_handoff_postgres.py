@@ -309,47 +309,57 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
 
     def test_06_current_origin_and_remote_revocation_block_native_and_direct_effects(self):
-        for scenario in ("origin", "receiver"):
-            with self.subTest(scenario=scenario):
-                row = self.reserve("Controlled sorting experiment fixture", "experiment")
-                self.call(self.handoff.prepare, "alice", row["task_id"])
-                receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
-                self.wait_native(receipt, {"paused"})
-                task = self.remote["store"].task(receipt["remoteTaskId"])
-                native = self.call_remote(self.remote["bridge"].detail, task["run_id"], task["id"], "bob")
-                requirements = native.get("requirements") or native.get("run", {}).get("requirements") or []
-                self.assertTrue(requirements)
-                for requirement in requirements:
-                    requirement["tool_execution"]["confirmed"] = True
-                artifacts = self.remote["store"].artifacts(task["id"])
-                effects = self.remote["store"].effects(task["id"])
-                original = self.remote["store"].authorize_tool
-                revoked = []
-                def revoke_at_boundary(ctx, name):
-                    if name == "run_experiment" and not revoked:
-                        revoked.append(scenario)
-                        state, owner = (self.origin, "alice") if scenario == "origin" else (self.remote, "bob")
-                        state["auth"].authorization.unassign(owner, "factory-user")
-                    return original(ctx, name)
-                try:
-                    with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
-                        with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
-                            self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
-                            self.wait_native(receipt, {"completed", "failed"})
-                        self.assertEqual(revoked, [scenario])
-                        registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
-                        ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
-                        async def entrypoint():
-                            return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
-                        with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
-                            self.call_remote(entrypoint)
-                        spawn.assert_not_called()
-                        self.assertEqual(self.remote["store"].effects(task["id"]), effects)
-                        self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
-                        self.assertFalse(any(event["type"] == "compute_started" for event in self.remote["store"].events(task["id"])))
-                finally:
-                    self.origin["auth"].authorization.assign("alice", "factory-user")
-                    self.remote["auth"].authorization.assign("bob", "factory-user")
+        # Isolate the real tool-entry guard from autonomous native cancellation.
+        # An observer tick can correctly cancel the ticket before the runner
+        # records the tool denial. Test 17 separately requires observer cleanup
+        # and failure provenance while retaining read-only native grants.
+        self.call(self.origin["lifecycle_observer"].stop)
+        self.call_remote(self.remote["lifecycle_observer"].stop)
+        try:
+            for scenario in ("origin", "receiver"):
+                with self.subTest(scenario=scenario):
+                    row = self.reserve("Controlled sorting experiment fixture", "experiment")
+                    self.call(self.handoff.prepare, "alice", row["task_id"])
+                    receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+                    self.wait_native(receipt, {"paused"})
+                    task = self.remote["store"].task(receipt["remoteTaskId"])
+                    native = self.call_remote(self.remote["bridge"].detail, task["run_id"], task["id"], "bob")
+                    requirements = native.get("requirements") or native.get("run", {}).get("requirements") or []
+                    self.assertTrue(requirements)
+                    for requirement in requirements:
+                        requirement["tool_execution"]["confirmed"] = True
+                    artifacts = self.remote["store"].artifacts(task["id"])
+                    effects = self.remote["store"].effects(task["id"])
+                    original = self.remote["store"].authorize_tool
+                    revoked = []
+                    def revoke_at_boundary(ctx, name):
+                        if name == "run_experiment" and not revoked:
+                            revoked.append(scenario)
+                            state, owner = (self.origin, "alice") if scenario == "origin" else (self.remote, "bob")
+                            state["auth"].authorization.unassign(owner, "factory-user")
+                        return original(ctx, name)
+                    try:
+                        with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
+                            with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
+                                self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
+                                self.wait_native(receipt, {"completed", "failed"})
+                            self.assertEqual(revoked, [scenario])
+                            registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
+                            ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
+                            async def entrypoint():
+                                return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
+                            with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
+                                self.call_remote(entrypoint)
+                            spawn.assert_not_called()
+                            self.assertEqual(self.remote["store"].effects(task["id"]), effects)
+                            self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
+                            self.assertFalse(any(event["type"] == "compute_started" for event in self.remote["store"].events(task["id"])))
+                    finally:
+                        self.origin["auth"].authorization.assign("alice", "factory-user")
+                        self.remote["auth"].authorization.assign("bob", "factory-user")
+        finally:
+            self.call(self.origin["lifecycle_observer"].start)
+            self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_07_unknown_without_ticket_never_replays_or_frees_capacity(self):
         row = self.reserve()

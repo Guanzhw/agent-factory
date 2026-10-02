@@ -611,3 +611,20 @@ the passing 83-case focused run. The native PostgreSQL/loopback fixture now uses
 a bounded ten-second request budget and includes transport-cause diagnostics;
 production keeps its two-second default, and the adversarial timeout tests still
 require bounded 503 with no retry. All exact authorization assertions remain.
+
+The `f66f469` local full run ran 387 tests (961.758 s), with 34 explicit skips
+and one different ordering failure in remote-handoff test 06. The exact native
+ticket was `cancelled`: the real lifecycle observer raced the tool-entry denial,
+while this guard test waited only for `completed`/`failed`. The guard test now
+stops both actual observer timers for its two source/receiver cases and restores
+them afterwards, preserving real native continuation, current grant withdrawal,
+direct registered-tool checks, no subprocess, unchanged effects/artifacts, and
+the original terminal assertions. Test 17 and the lifecycle suites separately
+retain automatic cleanup and strict failure-provenance coverage. No additional
+native status is accepted and no production behavior is changed for this case.
+
+After the test-06 scheduling correction, all 53 remote-handoff, actual origin
+HTTP authority and lifecycle-observer tests passed (176.847 s); Ruff and Pyright
+passed. The immediately preceding `f66f469` push and PR workflows both finished
+5/5 green, but the final test-only commit receives its own separate full push/PR
+CI validation. Local full-run failures above remain part of the record.
