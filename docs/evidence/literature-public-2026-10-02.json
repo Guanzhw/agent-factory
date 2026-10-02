@@ -5,8 +5,8 @@
   "errors": [
     "COMMAND_FAILED"
   ],
-  "taskId": "0f8e484d-9341-4388-99aa-505a786e4976",
-  "bundleSha256": "40db90b76229984c717707a1805f322d5d1f730224a39bed04bc55aec565d770",
+  "taskId": "659b348e-a36c-4909-ae39-335d4bd37f27",
+  "bundleSha256": "f5c0ec37ef4d09b86127104ea282d0a34e06d9f50fd4eab797a25416e1df1805",
   "containment": [
     {
       "kind": "linux_task_container",
@@ -23,15 +23,16 @@
         "aggregate_memory",
         "aggregate_cpu_time_guardian",
         "cpu_rate",
-        "kernel_tasks"
+        "kernel_tasks",
+        "wall_time_guardian"
       ],
       "allStopped": true,
-      "specSha256": "855815eebd9c95c9df125580a9a48d8fe56523569f083298914f2d382e31afba",
-      "containerId": "97a646b31b6c556b4b15000b270aeafc9a386f3a8d338443e276accd284dd5e2",
+      "specSha256": "8bc2aa553b4c749d270ddb7d09e6cffa38fb8a665c249d62dd0592d69d39a0a9",
+      "containerId": "a76e9258286c2918dc80125b8be859de0a2817e6a662199a7073a7944e588ecc",
       "activeProcesses": 0,
       "securitySandbox": false,
       "pidLimitIncludesThreads": true
     }
   ],
-  "scope": "Actual Linux bounded CLI + governed native queue; public endpoint unreachable; no source success"
+  "scope": "Actual Linux shared task resource boundary + governed native queue; endpoint unreachable; no source success"
 }

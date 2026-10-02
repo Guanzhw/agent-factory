@@ -201,7 +201,7 @@ def register_literature_adapters(bindings):
                         # The existing storage inventory owns the immutable
                         # scope; evidence and container receipts cannot enter
                         # the reclaimable-scratch retention flow.
-                        scope = context.store.storage.directory(task_id, "orx-literature-v2:" + selected, evidence=True)
+                        scope = context.store.storage.directory(task_id, "orx-literature-v2", evidence=True)
                         adapter = handle.create_retrieval_adapter(owner_id=owner, task_id=task_id, scope=scope,
                             authorize=lambda _: authorize(ctx), pin=approved_pin(), max_output_bytes=output,
                             command_timeout=min(timeout, 15), environment=bounds)

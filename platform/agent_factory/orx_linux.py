@@ -43,7 +43,10 @@ class TaskLinuxContainer:
         if not docker or ',' in str(self.scope) or ',' in str(binary):
             raise OpenResearchError('CONTAINMENT_UNAVAILABLE', 'A local Docker daemon and exact task paths are required')
         self.docker = docker
-        guardian = Path(__file__).with_name('orx_linux_guardian.py').resolve()
+        guardian = Path(__file__).with_name('orx_linux_guardian.py' if profile == 'experiment-v1' else 'orx_retrieval_guardian.py').resolve()
+        self.guardian_command = [PYTHON_BINARY, '-I', '/opt/factory-guardian.py', str(limits['cpuSeconds'])]
+        if profile != 'experiment-v1':
+            self.guardian_command.append(str(limits['timeoutSeconds']))
         self.mounts = [(str(self.scope), str(self.scope), False),
                        (str(binary), '/opt/factory-orx', True),
                        (str(guardian), '/opt/factory-guardian.py', True)]
@@ -78,7 +81,7 @@ class TaskLinuxContainer:
                     '--cpus', str(limits['cpuPercent'] / 100)]
             for source, target, readonly in self.mounts:
                 args.extend(['--mount', f'type=bind,source={source},target={target}' + (',readonly' if readonly else '')])
-            args += [RUNTIME_IMAGE, PYTHON_BINARY, '-I', '/opt/factory-guardian.py', str(limits['cpuSeconds'])]
+            args += [RUNTIME_IMAGE, *self.guardian_command]
             self._command(args, allow_failure=True)  # A same-task competing creator is validated below.
         value = self._inspect()
         self.cid = value['Id']
@@ -127,7 +130,7 @@ class TaskLinuxContainer:
                 or host['PidsLimit'] != self.limits['maxProcesses']
                 or host['NanoCpus'] != self.limits['cpuPercent'] * 10_000_000
                 or mounts != sorted(self.mounts)
-                or config['Cmd'] != [PYTHON_BINARY, '-I', '/opt/factory-guardian.py', str(self.limits['cpuSeconds'])]):
+                or config['Cmd'] != self.guardian_command):
             raise OpenResearchError('CONTAINMENT_CHANGED', 'Task container identity, mounts or resource boundary changed')
 
     def exec_argv(self, argv, env):
@@ -153,7 +156,8 @@ class TaskLinuxContainer:
         pids = self.process_ids()
         return {'kind': 'linux_task_container', 'containerId': self.cid, 'specSha256': self.spec_sha,
                 'activeProcesses': len(pids), 'allStopped': not pids, 'limits': self.limits,
-                'enforced': ['aggregate_memory', 'aggregate_cpu_time_guardian', 'cpu_rate', 'kernel_tasks'],
+                'enforced': ['aggregate_memory', 'aggregate_cpu_time_guardian', 'cpu_rate', 'kernel_tasks',
+                             *(['wall_time_guardian'] if self.network == 'bridge' else [])],
                 'pidLimitIncludesThreads': True, 'network': self.network, 'securitySandbox': False}
 
     def terminate(self):

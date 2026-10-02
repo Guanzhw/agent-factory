@@ -33,8 +33,12 @@ end-to-end source package on this Linux host.
   `f336b121525d99364e2dee4fe90b2784894a54e6`.
 - Revision 2 requires `TaskLinuxRetrievalProvider`, not the old unrestricted
   host subprocess provider. The selected environment bounds aggregate memory,
-  CPU rate, aggregate CPU time and cgroup task/thread count; commands also have
-  wall-time and combined stdout/stderr bounds. The pinned image/guardian and
+  CPU rate, aggregate CPU time and cgroup task/thread count. All retrieval tool
+  handles share one task cgroup and serialized command lease; selecting more
+  tools does not multiply those resources. Commands also have wall-time and
+  combined stdout/stderr bounds. A separate retrieval PID-1 guardian enforces
+  wall time even if the Factory worker dies while a low-CPU network request waits;
+  the original experiment guardian and its hash are unchanged. The pinned image/guardian and
   exact task container identity are inspected. Retrieval scopes use the existing managed storage inventory with evidence protection; their receipts are not reclaimable scratch. Exit of the Docker client alone
   is insufficient: namespace/process stop must be positively confirmed.
 - Only this explicitly installed retrieval profile uses the daemon's existing

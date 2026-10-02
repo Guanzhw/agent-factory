@@ -97,7 +97,7 @@ class RetrievalStartupCancellationTests(unittest.IsolatedAsyncioTestCase):
             adapter = object.__new__(LinuxRetrievalAdapter)
             adapter.scope = Path(directory)
             adapter.env = {'HOME': directory}
-            adapter.container = SimpleNamespace(exec_argv=argv, terminate=lambda: stopped.append(True))
+            adapter.container = SimpleNamespace(exec_argv=argv, process_ids=lambda: [], terminate=lambda: stopped.append(True))
             actual_spawn = asyncio.create_subprocess_exec
             children = []
             async def tracked(*args, **kwargs):

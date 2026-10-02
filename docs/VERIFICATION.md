@@ -674,3 +674,11 @@ the upstream generated-overview default. The evidence contract now reports
 unsupported full text without calling that route. A native PostgreSQL regression
 passed in 10.289 s, preserving the original controlled discovery abstract and
 verifying that the overview-fetch method is never called.
+
+Final containment checks: 12 evidence/native/boundary tests passed together in
+82.528 s. The actual Linux namespace test verifies that two adapter handles share
+one cgroup and lease, then starts a fixed harmless sleeping descendant without
+calling Factory cleanup. The independent wall guardian exits 124 and the kernel
+PID becomes zero within the bound. The actual public query was repeated under
+this final shared boundary; it still produced zero sources, an explicit endpoint
+failure and positive stop. The experiment guardian source/hash remains unchanged.
