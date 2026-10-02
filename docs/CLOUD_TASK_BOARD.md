@@ -152,3 +152,22 @@ connection preflight projection; 13 real PostgreSQL connection tests passed in
 intermediate uninstrumented inspect timeout remain in AT10_TREE_ACCEPTANCE.md.
 Final combined safety/CI results are recorded in the stage draft PR so that a
 new documentation-only commit cannot silently invalidate its exact-head checks.
+
+### Normal child completion versus authority loss
+
+The first continuation head `42341646` passed PR CI but failed push CI: the
+remote shared-grant child reached native completion with settled usage, while
+lifecycle observation classified it as `current-authority-ended`. A stale
+running snapshot followed by a fresh completed self-mandate reproduces that
+classification deterministically; the original CI log did not retain the caught
+exception, so the precise exception in that run remains an inference.
+
+Root owns the narrow integration fix in plan policy and lifecycle observation;
+`/root/at10` owns deterministic regression tests, `/root/reviewer` independently
+reviews authority and UNKNOWN behavior, and `/root/go_adapter` verifies exact CI.
+Execution still denies completed mandates. Only a typed same-task completion
+reason, after ancestor checks, permits strict fresh terminal reclassification.
+Ordinary authority denials remain failures; missing/mismatched/nonterminal proof
+holds capacity. The failing real PostgreSQL scenario now passes in 39.976s.
+The preceding head's complete actual receiver safety matrix passed all 8 tests
+in 1149.785s. Final-head runtime and CI evidence follows in draft PR12.

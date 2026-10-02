@@ -21,6 +21,7 @@ from agno.exceptions import RunCancelledException
 from agno.db.base import SessionType
 from fastapi import HTTPException
 
+from .plan_policy import NativeMandateCompleted
 from .remote_handoff import HandoffCancellationRequested
 from .store import effect_unresolved
 
@@ -146,6 +147,19 @@ class FactoryLifecycleObserver:
                 self.store.require_plan_execution(task["owner_id"], plan, run_context=context if ticket else None)
         except HandoffCancellationRequested:
             return "cancel-requested"
+        except NativeMandateCompleted as error:
+            # A running snapshot can complete during the mandate check. Only
+            # this typed, exact-ticket transition is observation, never a new
+            # grant. Other authority denials remain sticky failures below.
+            fresh = self.store.task(task["id"], task["owner_id"])
+            if (error.task_id != task["id"] or error.run_id != task.get("run_id")
+                    or any(fresh.get(key) != task.get(key) for key in
+                           ("id", "owner_id", "plan_id", "run_id", "request_id"))):
+                raise ValueError("Completed mandate differs from the original execution binding") from error
+            latest = self._binding(fresh)
+            if not latest or latest["status"] not in TERMINAL:
+                raise ValueError("Completed mandate lacks a current terminal binding") from error
+            return self._reason(fresh, latest)
         except HTTPException as error:
             if error.status_code in {403, 409}:
                 return "current-authority-ended"

@@ -258,3 +258,14 @@ subscription-only billing proof. OPENCODE_GO presence/nonempty was already true;
 workers never access it, no live calls or account changes were made. Production
 identity/TLS, live research, selected mutable scientific workload, Windows actual
 containment, and target-host capacity remain separate open acceptance gates.
+
+### Lifecycle completion race follow-up
+
+Do not treat `42341646` as green: PR CI passed, push CI failed the remote
+shared-grant child completion assertion. A native-completion/authority-check
+race can incorrectly cancel normal completed child work. The follow-up uses a
+specific completed-self-mandate exception and strict fresh binding in the
+observer; generic authority loss and unresolved effects keep their previous
+semantics. Independent review passed. Actual safety at the preceding head was
+8/8 passing (1149.785s); the targeted real PostgreSQL failure now passes
+(39.976s). Final follow-up evidence and exact SHA are in draft PR12.
