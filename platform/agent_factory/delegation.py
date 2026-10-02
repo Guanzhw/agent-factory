@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from .catalog import create_plan
-from .store import digest, now
+from .store import effect_unresolved, digest, now
 
 ACTIVE = {"queued", "pending", "running", "paused"}
 TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
@@ -286,7 +286,7 @@ class DelegationService:
             if not link["child_id"]:
                 return True
             task = self.store.task(link["child_id"], link["owner_id"])
-            if any(effect["status"] == "UNKNOWN" for effect in self.store.effects(task["id"])):
+            if any(effect_unresolved(effect) for effect in self.store.effects(task["id"])):
                 return True
             if task["admission"] == "rejected" and not task.get("run_id"):
                 continue
@@ -470,7 +470,7 @@ class DelegationService:
         native = snapshot.get("queue") or snapshot.get("job") or {}
         raw = str(native.get("status") or (snapshot.get("run") or snapshot).get("status") or "").lower().removeprefix("runstatus.")
         effects = self.store.effects(task["id"])
-        unresolved_effect = any(effect["status"] == "UNKNOWN" for effect in effects)
+        unresolved_effect = any(effect_unresolved(effect) for effect in effects)
         # A reserved effect during known native computation is in flight. It
         # retains capacity, but becomes externally UNKNOWN after native work
         # stops without a confirmed result/cleanup.

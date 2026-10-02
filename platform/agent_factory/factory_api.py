@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .catalog import create_plan
 from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
-from .store import canonical
+from .store import effect_unresolved, canonical
 
 
 class Body(BaseModel):
@@ -86,7 +86,7 @@ def status_of(task, snapshot, effects, events):
     queue = snapshot.get("queue") or snapshot.get("job") or {}
     run = snapshot.get("run", snapshot)
     raw = str(queue.get("status") or run.get("status") or "queued").lower()
-    if any(effect["status"] == "UNKNOWN" for effect in effects) and raw not in {"running", "runstatus.running"}:
+    if any(effect_unresolved(effect) for effect in effects) and raw not in {"running", "runstatus.running"}:
         return "unknown"
     if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
         return "canceling"

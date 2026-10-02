@@ -386,6 +386,39 @@ class RemoteBindingService:
             seen.add(cursor["id"])
         return root
 
+    def historical_spec(self, plan, kind, source, context=None):
+        """Immutable receiver-local metadata for trusted cleanup, never execution.
+
+        No current mapping/connection/run grant is renewed. The caller must
+        independently prove its admitted effect and resolve only the originally
+        recorded cleanup handle. Retired mappings remain evidence, not access.
+        """
+        root = self._root(plan, context)
+        if root is None:
+            return copy.deepcopy(source)
+        manifest = self.validate_source(plan)
+        if not any(item_kind == kind and item == source for item_kind, item in self.bindings._items(manifest)):
+            raise HTTPException(409, "REMOTE_BINDING_SCOPE: cleanup source is outside the original plan")
+        with self._read() as conn:
+            proof = self._proof(conn, root)
+            self._material_subset(plan["materials"], proof["sourcePlan"])
+            entries = [entry for entry in proof["entries"] if entry["kind"] == kind and entry["sourceSpec"] == source]
+            if len(entries) != 1:
+                raise HTTPException(409, "REMOTE_BINDING_SCOPE: cleanup requires one exact admitted receiver specification")
+            return copy.deepcopy(entries[0]["effectiveSpec"])
+
+    def historical_manifest(self, plan, context=None):
+        """Provenance-only manifest; resolves no executable handle or grant."""
+        manifest = self.validate_source(plan)
+        result = {"schema": 1, "tools": [], "knowledge": []}
+        for kind, source in self.bindings._items(manifest):
+            effective = self.historical_spec(plan, kind, source, context)
+            if kind in {"tool", "knowledge"}:
+                result[kind + ("s" if kind == "tool" else "")].append(effective)
+            else:
+                result[kind] = effective
+        return {**result, "sha256": digest(result)}
+
     def effective(self, plan, source_manifest, context=None):
         root = self._root(plan, context)
         if root is None:

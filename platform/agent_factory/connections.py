@@ -460,7 +460,8 @@ class ConnectionService:
         recorded_pin = binding.get("connection", {})
         if any(recorded_pin.get(key) != pin.get(key) for key in ("ref", "version", "fingerprint", "revision", "capabilities")):
             raise HTTPException(409, "CLEANUP_BINDING_INVALID: requested handle differs from original execution")
-        intent = self.store.effects(task_id)
+        intent = self.store.sql("SELECT effect_key,fingerprint FROM af_effects WHERE task_id=:task AND run_id=:run",
+                                task=task_id, run=task["run_id"])
         expected_key = task["run_id"] + ":orx-experiment-launch-v1"
         request_hash = digest({key: value for key, value in binding.items() if key not in {"projectId", "experimentId"}})
         if not any(effect.get("effect_key") == expected_key and effect.get("fingerprint") == request_hash for effect in intent):

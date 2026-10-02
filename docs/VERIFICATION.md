@@ -428,3 +428,39 @@ Before taking the WIP, the earlier `6793a96` passed nine actual loopback
 TCP/two-process cases plus the official PostgreSQL 17.11 dump/restore case:
 10 tests in 140.897 seconds, no skips. That result belongs to the old baseline
 and must not be attributed to this WIP or Windows ORX acceptance.
+
+## Cloud ORX cleanup contract repair
+
+Portable PostgreSQL regressions reproduce a cleanup defect: the public
+`Store.effects()` projection omits the launch fingerprint, so using that
+projection to authorize cleanup rejects even an exact originally admitted
+launch. Cleanup now reads the task/run-bound private fingerprint directly.
+A real native ticket plus controlled experiment metadata proves revoked
+connections permit only exact historical cleanup, and a changed launch hash
+still fails closed. This is not Windows process-stop acceptance.
+
+Every terminal ORX effect now requires `stopEvidence.allStopped=true`, including
+done/failed outcomes. Admission, group/delegation, HTTP status, remote stop
+statements and the lifecycle observer also keep historical terminal effects
+without that proof held. Startup re-holds pre-fix task rows without rewriting
+immutable effect fingerprints or inventing a native outcome. Positive reclaim
+observations refresh the effect's stop proof, preserving original result facts.
+
+Receiver cleanup selects its original effective specification from the exact
+immutable root/child proof, rather than resolving a source-side connection pin
+or requiring current run permission. Artifact provenance reads the same
+historical manifest; it does not acquire an execution handle. Current execution
+mapping and connection checks remain separate and still deny revoked access.
+
+Three focused PostgreSQL/native metadata regressions passed (5.205 seconds).
+An additional post-revocation artifact-persistence assertion passed separately
+(1.662 seconds). The complete cloud suite and exact-commit CI are run separately;
+these focused passes alone are not complete ORX or production acceptance.
+
+The Windows-only actual ORX adapter/Factory suites, real orphan/supervisor stop,
+Factory-queue hard-interruption recovery, startup/resume and actual browser
+workflow remain unverified in this Linux environment. In particular, correcting
+the reproducible fingerprint defect does not establish that the previously
+failing Windows revocation case now passes. No new binary hash is approved and
+the platform guard remains unchanged. No paid provider, production access,
+external service or deployment is enabled.

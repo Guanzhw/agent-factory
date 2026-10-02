@@ -21,6 +21,7 @@ from agno.db.base import SessionType
 from fastapi import HTTPException
 
 from .remote_handoff import HandoffCancellationRequested
+from .store import effect_unresolved
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -110,7 +111,7 @@ class FactoryLifecycleObserver:
             return "native-ended"
         if ticket and ticket["status"] == "completed":
             exact = task.get("run_id", "") + ":orx-experiment-launch-v1"
-            if any(effect.get("effect_key") == exact and effect["status"] == "UNKNOWN"
+            if any(effect.get("effect_key") == exact and effect_unresolved(effect)
                    for effect in self.store.effects(task["id"])):
                 return "native-ended-unresolved-experiment"
             # Native completion does not renew an execution grant. Its pending
@@ -189,7 +190,7 @@ class FactoryLifecycleObserver:
             ticket = self._binding(task)
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
-        effects_unknown = any(effect["status"] not in {"DONE", "CANCELLED"} for effect in self.store.effects(task["id"]))
+        effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",

@@ -202,6 +202,37 @@ class RemoteBindingPostgresTests(unittest.TestCase):
             self.service._effective_check("tool", source_spec, widened, material, "bob")
         self.assertIn("material permissions", str(denied.exception.detail))
 
+    def test_historic_receiver_spec_survives_revocation_without_authorizing_execution(self):
+        proof = self.prepare()
+        plan = self.imported(proof)
+        self.store.save_plan(plan)
+        source = plan["executionBindings"]["model"]
+        self.connections.revoke("bob", self.local_pin["ref"], str(uuid4()))
+        self.service.mappings = {}
+        self.auth.authorization.unassign("bob", "factory-user")
+        with self.assertRaises(HTTPException):
+            self.service.effective(plan, plan["executionBindings"])
+        self.assertEqual(self.service.historical_spec(plan, "model", source), self.effective_spec)
+        historical = self.service.historical_manifest(plan)
+        self.assertEqual(historical["model"], self.effective_spec)
+        self.assertEqual(historical["sha256"], digest({key: value for key, value in historical.items() if key != "sha256"}))
+        # Trusted evidence persistence must not resolve a revoked execution
+        # handle. This controlled metadata fixture does not execute a provider.
+        task = self.store.reserve_task(plan, str(uuid4()))[0]
+        run_id = str(uuid4())
+        self.store.accept(task["id"], run_id)
+        artifact = self.store.artifact_write(run_id, "cleanup-evidence.json", "{}", "application/json")
+        provenance = artifact["provenance"]["bindingProvenance"]
+        self.assertEqual(provenance["receiverBindingProofSha256"], proof["sha256"])
+        self.assertEqual(provenance["effectiveExecutionBindingsSha256"], historical["sha256"])
+        self.assertNotEqual(self.effective_spec["connection"], source["connection"])
+        with self.assertRaises(HTTPException):
+            self.service.historical_spec(plan, "model", {**source, "revision": "forged"})
+        tampered = {**plan, "remoteHandoff": {**plan["remoteHandoff"], "bindingProofSha256": "0" * 64}}
+        with self.assertRaises(HTTPException):
+            self.service.historical_spec(tampered, "model", source)
+        self.assertEqual(self.creations, [])
+
     def test_04_current_mapping_rotation_or_removal_denies_execution_preserves_reads(self):
         proof = self.prepare()
         plan = self.imported(proof)

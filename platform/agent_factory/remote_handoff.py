@@ -24,7 +24,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from .store import canonical, digest, now
+from .store import effect_unresolved, canonical, digest, now
 from .native_bridge import INTERNAL_NATIVE
 from .plan_policy import ToolContract, tools_for_contract
 
@@ -504,7 +504,7 @@ class PreparedHandoffService:
         result.update(effects=effects, artifacts=self.store.artifacts(task["id"]), group=group,
                       applicationStatus=application_status,
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
-                                      and not any(effect["status"] == "UNKNOWN" for effect in effects)
+                                      and not any(effect_unresolved(effect) for effect in effects)
                                       and (group is None or group["allStopped"])))
         if row["body"].get("usageGrant") is not None:
             result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,

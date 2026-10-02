@@ -29,6 +29,17 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def effect_unresolved(effect):
+    """Native terminal state does not prove an ORX process tree has stopped."""
+    if effect.get("status") not in {"DONE", "CANCELLED"}:
+        return True
+    if str(effect.get("effect_key", "")).endswith(":orx-experiment-launch-v1"):
+        result = effect.get("result")
+        proof = result.get("stopEvidence") if isinstance(result, dict) else None
+        return not isinstance(proof, dict) or proof.get("allStopped") is not True
+    return False
+
+
 class Store:
     def __init__(self, url, settings):
         self.engine = create_engine(url, pool_pre_ping=True)
@@ -90,6 +101,14 @@ class Store:
         ]
         for statement in statements:
             self.sql(statement)
+        # Upgrade safety: a pre-fix DONE row without kernel stop proof must not
+        # retain a released slot merely because the application was restarted.
+        # Preserve immutable effect/result hashes; only re-hold task capacity.
+        self.sql("""UPDATE af_tasks task SET terminal=FALSE WHERE task.terminal AND EXISTS(
+            SELECT 1 FROM af_effects effect WHERE effect.task_id=task.id
+            AND effect.effect_key=task.run_id || :suffix
+            AND effect.result->'stopEvidence'->'allStopped' IS DISTINCT FROM 'true'::jsonb)""",
+            suffix=":orx-experiment-launch-v1")
         mode = "demo" if self.settings.demo else "production"
         self.sql("INSERT INTO af_bootstrap VALUES('mode',:mode) ON CONFLICT DO NOTHING", mode=mode)
         if self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")[0]["mode"] != mode:
@@ -165,7 +184,9 @@ class Store:
                 active = conn.execute(text("SELECT id,run_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL")).mappings().all()
                 for candidate in active:
                     native = self.native_db.get_job(candidate["run_id"]) or {}
-                    uncertain = conn.execute(text("SELECT 1 FROM af_effects WHERE task_id=:id AND status='UNKNOWN' LIMIT 1"), {"id": candidate["id"]}).first()
+                    uncertain = any(effect_unresolved(effect) for effect in conn.execute(
+                        text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
+                        {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
                     if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending:
                         conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
@@ -330,6 +351,8 @@ class Store:
 
     def effect_complete(self, run_id, key, result):
         status = "CANCELLED" if isinstance(result, dict) and result.get("cancelled") else "DONE"
+        if effect_unresolved({"effect_key": run_id + ":" + key, "status": status, "result": result}):
+            raise ValueError("ORX terminal effect requires positive process-stop evidence")
         self.sql("UPDATE af_effects SET status=:status,result=CAST(:result AS JSONB) WHERE effect_key=:key", key=run_id + ":" + key, status=status, result=canonical(result))
 
     def effects(self, task_id):
@@ -351,7 +374,7 @@ class Store:
             root = self.remote_bindings._root(plan, context)
             if root is not None:
                 source = plan["executionBindings"]
-                effective = self.execution_bindings.manifest(plan, context=context)
+                effective = self.remote_bindings.historical_manifest(plan, context=context)
                 def descriptor(spec):
                     return {key: spec[key] for key in ("adapterId", "revision")}
                 provenance.update(modelAdapterId=effective["model"]["adapterId"],

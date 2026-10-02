@@ -269,7 +269,7 @@ def _record_held_reclaim(store: Any, ctx: RunContext, plan: dict[str, Any],
         result = {**old, "stopEvidence": result["stopEvidence"]}
     else:
         result = _persist_result(store, ctx, result, binding)
-        store.effect_complete(ctx.run_id, LAUNCH_EFFECT_KEY, result)
+    store.effect_complete(ctx.run_id, LAUNCH_EFFECT_KEY, result)
     _observe(store, ctx, result)
     store.event(ctx.run_id, "orx_experiment_reclaimed", "Trusted cleanup confirmed only the original task-owned native process tree", result)
     return result
@@ -319,9 +319,10 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable) -> 
         request = _request(plan, ctx, binding)
         result = _public_result(plan, ctx, binding, receipt, digest(request))
         if result["status"] in _TERMINAL:
+            if not isinstance(result.get("stopEvidence"), dict) or result["stopEvidence"].get("allStopped") is not True:
+                _observe(store, ctx, result)
+                raise OpenResearchError("CLEANUP_UNCONFIRMED", "Native terminal outcome lacks positive process-stop evidence")
             if result["status"] == "cancelled":
-                if not isinstance(result.get("stopEvidence"), dict) or result["stopEvidence"].get("allStopped") is not True:
-                    raise OpenResearchError("CLEANUP_UNCONFIRMED", "Native cancellation lacks positive process-stop evidence")
                 result["cancelled"] = True
             result = _persist_result(store, ctx, result, binding)
             _observe(store, ctx, result)
@@ -528,6 +529,13 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
     if len(specs) != 1:
         raise OpenResearchError("RECLAIM_BINDING_INVALID", "No exact immutable native experiment launch binding exists")
     spec = specs[0]
+    ctx = RunContext(user_id=task["owner_id"], session_id=task_id, run_id=task["run_id"])
+    if store.remote_bindings is not None:
+        spec = store.remote_bindings.historical_spec(plan, "tool", spec, ctx)
+    elif plan.get("remoteHandoff"):
+        raise OpenResearchError("RECLAIM_BINDING_INVALID", "The original receiver proof registry is unavailable")
+    if spec.get("adapterId") != ADAPTER_ID + "-run" or spec.get("revision") != ADAPTER_REVISION:
+        raise OpenResearchError("RECLAIM_BINDING_INVALID", "The admitted receiver adapter cannot reclaim this experiment")
     pin = spec.get("connection", {})
     service = store.connections
     if service is None:
