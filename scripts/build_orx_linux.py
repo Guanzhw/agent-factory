@@ -49,11 +49,14 @@ def main():
         if sha(source / name) != digest:
             raise RuntimeError('Reviewed Cargo input changed')
     cache = root / 'cargo-cache'; cache.mkdir()
+    # rust-embed honors this epoch for both creation and modification metadata.
+    # Match the embedded asset timestamps in the original reviewed Linux build.
     command = ['docker', '--host', 'unix:///var/run/docker.sock', 'run', '--rm', '--cpus', '3', '--memory', '8g',
-               '--user', f'{os.getuid()}:{os.getgid()}', '--workdir', '/src',
-               '--mount', f'type=bind,source={source},target=/src',
+               '--user', f'{os.getuid()}:{os.getgid()}', '--workdir', '/source',
+               '--mount', f'type=bind,source={source},target=/source',
                '--mount', f'type=bind,source={cache},target=/cargo-cache',
-               '--env', 'CARGO_HOME=/cargo-cache', '--env', 'CARGO_BUILD_JOBS=3']
+               '--env', 'CARGO_HOME=/cargo-cache', '--env', 'CARGO_BUILD_JOBS=3',
+               '--env', 'SOURCE_DATE_EPOCH=1790924288']
     if args.ca_bundle:
         command += ['--mount', f'type=bind,source={args.ca_bundle.resolve()},target=/cloud-ca.pem,readonly',
                     '--env', 'CARGO_HTTP_CAINFO=/cloud-ca.pem']
@@ -61,7 +64,7 @@ def main():
     subprocess.run(command, check=True)
     binary = source / 'target/release/orx'
     observed = sha(binary)
-    result = {'revision': REVISION, 'archiveSha256': ARCHIVE_SHA, 'rustImage': RUST,
+    result = {'revision': REVISION, 'archiveSha256': ARCHIVE_SHA, 'rustImage': RUST, 'workingDirectory': '/source', 'sourceDateEpoch': 1790924288,
               'binarySha256': observed, 'binaryBytes': binary.stat().st_size, 'matchesReviewedPin': observed == BINARY_SHA}
     (root / 'build-receipt.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result))

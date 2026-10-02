@@ -20,8 +20,11 @@ docker pull python:3.12.14-trixie@sha256:4d1caded1f729ae443eb803f26ffde7b61e696a
 ```
 
 The build script verifies the fixed public source archive and Cargo inputs,
-uses official digest-pinned Rust 1.93.1, and runs `cargo build --locked --release
---bin orx`. TLS verification stays enabled. Its receipt must match the reviewed
+uses official digest-pinned Rust 1.93.1 with working directory `/source`, and
+runs `cargo build --locked --release --bin orx`. `SOURCE_DATE_EPOCH=1790924288`
+reproduces the initial reviewed build's embedded asset timestamps. The locked
+`rust-embed` dependency otherwise embeds extraction-time creation/modification
+times, so a fresh extraction can change the binary without source changes. TLS verification stays enabled. Its receipt must match the reviewed
 Linux binary hash in `ORX_BUILD_PROVENANCE.json`; a different build fails closed
 and needs provenance review. The existing Windows binary pin remains separate.
 

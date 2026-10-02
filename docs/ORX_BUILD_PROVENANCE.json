@@ -36,6 +36,9 @@
     "pythonSha256": "479e8cf2dd15299ec38ebb17ac195b44b94beb82530dd7873fb663013a5ba4ee",
     "buildCommand": "cargo build --locked --release --bin orx",
     "providerCalls": false,
-    "productionApproved": false
+    "productionApproved": false,
+    "buildWorkingDirectory": "/source",
+    "sourceDateEpoch": 1790924288,
+    "embeddedTimestampReason": "Matches creation and modification seconds of the embedded demo/UI assets in the reviewed initial Linux build; rust-embed supports SOURCE_DATE_EPOCH without source changes."
   }
 }
