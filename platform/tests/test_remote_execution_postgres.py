@@ -195,7 +195,8 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         observations = []
 
         async def observe_before_delivery(owner, target, method, path, **kwargs):
-            if method == "POST" and path.endswith("/cancel") and not observations:
+            if method == "POST" and (path.endswith("/cancel") or path.endswith("/commands")
+                    and kwargs.get("json", {}).get("action") == "cancel") and not observations:
                 self.assertTrue(self.origin["store"].task(origin_id, owner)["cancel_requested"])
                 # Native cleanup runs on the receiver's actual lifespan loop,
                 # before this controlled ASGI request reaches its cancel route.

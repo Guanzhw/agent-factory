@@ -18,6 +18,9 @@ from .config import Settings
 from .connections import ConnectionService, connection_router
 from .execution_bindings import default_bindings
 from .orx_tools import register_orx_adapter
+from .orx_literature_tools import register_literature_adapters, LiteratureEvidenceModel, MODEL_ID as LITERATURE_MODEL_ID
+from .orx_experiment_tools import (LocalORXWorkflowModel, initialize_orx_experiments,
+                                   register_orx_experiment_adapters, MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION)
 from .applications import ApplicationService, application_router
 from .composition import CompositionService, composition_router
 from .delegation import DelegationService
@@ -30,6 +33,7 @@ from .runtime import build_runtime
 from .resources import PersistentResourceService
 from .resource_api import resource_router
 from .store import Store
+from .usage_ledger import UsageLedger, default_zero_prices
 from .plan_policy import ToolContract, PolicyName, PlanPolicyConfig, PlanPolicyService, persisted_ancestor_guard, plan_policy_router
 from .scheduling import SchedulingService
 from .remote_handoff import PreparedHandoffService, TrustedHandoffClient
@@ -61,10 +65,14 @@ def create_app(settings=None):
     settings.runtime_directory.mkdir(parents=True, exist_ok=True)
     native_db = PostgresDb(db_url=settings.db_url, id="factory-native-postgres")
     store = Store(settings.db_url, settings)
+    initialize_orx_experiments(store)
     store.native_db = native_db
     auth = AuthService(settings, native_db)
     auth.initialize_demo()
     store.auth = auth
+    from .storage_governance import StorageGovernance
+    from .storage_api import storage_router
+    store.storage = StorageGovernance(store, auth)
     replay = EventReplay(store, auth, signing_key=auth._key)
     store.event_replay = replay
     if settings.demo:
@@ -79,12 +87,20 @@ def create_app(settings=None):
     store.connections = connections
     bindings = default_bindings(settings, store, connections)
     register_orx_adapter(bindings)
+    register_literature_adapters(bindings)
+    bindings.register("model", LITERATURE_MODEL_ID, "1", lambda context: LiteratureEvidenceModel())
+    register_orx_experiment_adapters(bindings)
+    bindings.register("model", MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION, lambda context: LocalORXWorkflowModel())
     for entry in settings.runtime_adapters:
         bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-            demo_only=entry.demo_only, validator=entry.validator)
+            demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
     store.execution_bindings = bindings
+    prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
+    for price in settings.usage_pricing:
+        prices[(price.adapter_id, price.adapter_revision)] = price
+    store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
     remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
     store.remote_bindings = remote_bindings
     applications = ApplicationService(store, auth)
@@ -108,6 +124,7 @@ def create_app(settings=None):
     handoff_client.install_guard()
     store.remote_execution = RemoteExecution(store, handoff_client)
     receiver = PreparedHandoffService(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
+    store.handoff_receiver = receiver
     if receiver:
         receiver.install_guard()
     schedules = SchedulingService(settings, store, native_db, auth, bridge)
@@ -126,6 +143,7 @@ def create_app(settings=None):
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     base.include_router(resource_router(auth, resources))
+    base.include_router(storage_router(auth, store.storage))
 
     @base.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException):

@@ -32,7 +32,7 @@ from agent_factory.remote_handoff import (
     HandoffCancellationRequested, HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
 )
 from agent_factory.runtime import build_runtime
-from agent_factory.store import digest
+from agent_factory.store import canonical, digest
 
 
 class LostReplyTransport(httpx.AsyncBaseTransport):
@@ -138,6 +138,20 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def body(self, row):
         return PrepareBody(originRef="origin-fixture", originOwnerId="alice", originTaskId=row["task_id"],
                            requestId=row["request_id"], manifest=row["body"]["manifest"])
+
+    def receiver_grant(self, row, prepared):
+        # This receiver concurrency/native-recheck fixture deliberately starts
+        # at the receiver CAS. First persist the real origin ledger allocation,
+        # exactly as TrustedHandoffClient does before its HTTP dispatch call.
+        target = self.handoff.targets[row["target_ref"]]
+        grant = self.origin["store"].usage_ledger.allocate_remote("alice", row["task_id"], prepared["id"],
+            origin_ref=target.origin_ref, target_ref=target.reference,
+            receiver_owner=target.identity_map["alice"], receiver_task_id=prepared["remoteTaskId"],
+            receiver_plan_sha256=prepared["receiverPlanSha256"], receiver_commitment=prepared["receiverUsageCommitment"])
+        current = self.handoff._row("alice", row["task_id"])
+        self.origin["store"].sql("UPDATE af_remote_placements SET body=CAST(:body AS JSONB) WHERE task_id=:id AND state='PREPARED'",
+            id=row["task_id"], body=canonical({**current["body"], "usageGrant": grant}))
+        return grant
 
     def ticket_count(self, state, task_id=None):
         db = state["store"].native_db
@@ -295,47 +309,57 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
 
     def test_06_current_origin_and_remote_revocation_block_native_and_direct_effects(self):
-        for scenario in ("origin", "receiver"):
-            with self.subTest(scenario=scenario):
-                row = self.reserve("Controlled sorting experiment fixture", "experiment")
-                self.call(self.handoff.prepare, "alice", row["task_id"])
-                receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
-                self.wait_native(receipt, {"paused"})
-                task = self.remote["store"].task(receipt["remoteTaskId"])
-                native = self.call_remote(self.remote["bridge"].detail, task["run_id"], task["id"], "bob")
-                requirements = native.get("requirements") or native.get("run", {}).get("requirements") or []
-                self.assertTrue(requirements)
-                for requirement in requirements:
-                    requirement["tool_execution"]["confirmed"] = True
-                artifacts = self.remote["store"].artifacts(task["id"])
-                effects = self.remote["store"].effects(task["id"])
-                original = self.remote["store"].authorize_tool
-                revoked = []
-                def revoke_at_boundary(ctx, name):
-                    if name == "run_experiment" and not revoked:
-                        revoked.append(scenario)
-                        state, owner = (self.origin, "alice") if scenario == "origin" else (self.remote, "bob")
-                        state["auth"].authorization.unassign(owner, "factory-user")
-                    return original(ctx, name)
-                try:
-                    with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
-                        with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
-                            self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
-                            self.wait_native(receipt, {"completed", "failed"})
-                        self.assertEqual(revoked, [scenario])
-                        registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
-                        ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
-                        async def entrypoint():
-                            return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
-                        with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
-                            self.call_remote(entrypoint)
-                        spawn.assert_not_called()
-                        self.assertEqual(self.remote["store"].effects(task["id"]), effects)
-                        self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
-                        self.assertFalse(any(event["type"] == "compute_started" for event in self.remote["store"].events(task["id"])))
-                finally:
-                    self.origin["auth"].authorization.assign("alice", "factory-user")
-                    self.remote["auth"].authorization.assign("bob", "factory-user")
+        # Isolate the real tool-entry guard from autonomous native cancellation.
+        # An observer tick can correctly cancel the ticket before the runner
+        # records the tool denial. Test 17 separately requires observer cleanup
+        # and failure provenance while retaining read-only native grants.
+        self.call(self.origin["lifecycle_observer"].stop)
+        self.call_remote(self.remote["lifecycle_observer"].stop)
+        try:
+            for scenario in ("origin", "receiver"):
+                with self.subTest(scenario=scenario):
+                    row = self.reserve("Controlled sorting experiment fixture", "experiment")
+                    self.call(self.handoff.prepare, "alice", row["task_id"])
+                    receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+                    self.wait_native(receipt, {"paused"})
+                    task = self.remote["store"].task(receipt["remoteTaskId"])
+                    native = self.call_remote(self.remote["bridge"].detail, task["run_id"], task["id"], "bob")
+                    requirements = native.get("requirements") or native.get("run", {}).get("requirements") or []
+                    self.assertTrue(requirements)
+                    for requirement in requirements:
+                        requirement["tool_execution"]["confirmed"] = True
+                    artifacts = self.remote["store"].artifacts(task["id"])
+                    effects = self.remote["store"].effects(task["id"])
+                    original = self.remote["store"].authorize_tool
+                    revoked = []
+                    def revoke_at_boundary(ctx, name):
+                        if name == "run_experiment" and not revoked:
+                            revoked.append(scenario)
+                            state, owner = (self.origin, "alice") if scenario == "origin" else (self.remote, "bob")
+                            state["auth"].authorization.unassign(owner, "factory-user")
+                        return original(ctx, name)
+                    try:
+                        with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
+                            with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
+                                self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
+                                self.wait_native(receipt, {"completed", "failed"})
+                            self.assertEqual(revoked, [scenario])
+                            registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
+                            ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
+                            async def entrypoint():
+                                return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
+                            with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
+                                self.call_remote(entrypoint)
+                            spawn.assert_not_called()
+                            self.assertEqual(self.remote["store"].effects(task["id"]), effects)
+                            self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
+                            self.assertFalse(any(event["type"] == "compute_started" for event in self.remote["store"].events(task["id"])))
+                    finally:
+                        self.origin["auth"].authorization.assign("alice", "factory-user")
+                        self.remote["auth"].authorization.assign("bob", "factory-user")
+        finally:
+            self.call(self.origin["lifecycle_observer"].start)
+            self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_07_unknown_without_ticket_never_replays_or_frees_capacity(self):
         row = self.reserve()
@@ -377,9 +401,10 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def test_09_concurrent_dispatch_has_one_native_submission(self):
         row = self.reserve()
         prepared = self.call(self.handoff.prepare, "alice", row["task_id"])
+        grant = self.receiver_grant(row, prepared)
         async def concurrently():
-            return await asyncio.gather(self.receiver.dispatch("bob", prepared["id"]),
-                                        self.receiver.dispatch("bob", prepared["id"]))
+            return await asyncio.gather(self.receiver.dispatch("bob", prepared["id"], grant),
+                                        self.receiver.dispatch("bob", prepared["id"], grant))
         with mock.patch.object(self.remote["bridge"], "submit", wraps=self.remote["bridge"].submit) as submit:
             receipts = self.call_remote(concurrently)
             self.assertEqual(receipts[0]["id"], receipts[1]["id"])
@@ -783,6 +808,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         native = self.wait_native(receipt, {"paused"})
                         detail = self.call(self.handoff.detail, "alice", row["task_id"])
                         task = self.remote["store"].task(receipt["remoteTaskId"], "bob")
+                    grant = self.receiver_grant(row, prepared) if stage == "dispatch" else None
                     before_tickets = self.ticket_count(self.remote)
                     entered = []
                     original = self.remote["store"].require_plan_execution
@@ -810,7 +836,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         elif stage == "children":
                             body = {"goal": "sort", "mode": "literature", "requestId": str(uuid4())}
                         else:
-                            body = {}
+                            body = {"usageGrant": grant}
                     # The first public origin check succeeds. Cancellation is
                     # committed only inside the subsequent installed native
                     # plan/admission guard. The HTTP route must contain it.
@@ -940,6 +966,41 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.assertEqual(self.ticket_count(self.remote), before_tickets)
             self.assertEqual(self.ticket_count(self.origin), 0)
         finally:
+            self.call_remote(wired.start)
+
+
+    def test_24_stale_detail_input_preserves_confirmed_authority_failure(self):
+        from agent_factory.factory_api import FactoryAPI
+        row = self.reserve()
+        self.call(self.handoff.prepare, "alice", row["task_id"])
+        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+        self.wait_native(receipt, {"paused"})
+        identifier = receipt["remoteTaskId"]
+        stale = self.remote["store"].task(identifier, "bob")
+        self.assertFalse(stale["cancel_requested"])
+        wired = self.remote["lifecycle_observer"]
+        self.call_remote(wired.stop)
+        self.remote["auth"].authorization.define_role("fixture-stale-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
+        self.remote["auth"].authorization.unassign("bob", "factory-user")
+        self.remote["auth"].authorization.assign("bob", "fixture-stale-reader")
+        try:
+            deadline = time.monotonic() + 15
+            while True:
+                observed = self.call_remote(wired.observe_root, identifier)
+                if observed["allStopped"] or time.monotonic() >= deadline:
+                    break
+                time.sleep(.03)
+            self.assertTrue(observed["allStopped"], observed)
+            self.assertTrue(self.remote["store"].failure_cleanup_requested(identifier))
+            api = FactoryAPI(self.remote["store"].settings, self.remote["store"], self.remote["auth"], self.remote["bridge"])
+            detail = self.call_remote(api.detail, stale)
+            self.assertEqual(detail["job"]["status"], "failed", "A pre-await task snapshot must not erase committed failure provenance")
+            self.assertEqual(self.remote["store"].task(identifier)["body"]["lastStatus"], "failed")
+            self.assertEqual(self.ticket_count(self.remote, identifier), 1)
+            self.assertEqual(self.call(self.handoff.receipt, "alice", row["task_id"])["applicationStatus"], "failed")
+        finally:
+            self.remote["auth"].authorization.unassign("bob", "fixture-stale-reader")
+            self.remote["auth"].authorization.assign("bob", "factory-user")
             self.call_remote(wired.start)
 
 if __name__ == "__main__":

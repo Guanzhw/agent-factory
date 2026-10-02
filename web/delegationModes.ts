@@ -12,4 +12,4 @@ export function delegationModes(scope: DelegationScope | undefined, draftMode: s
   const selected = retainedRequest || raw.includes(draftMode) ? draftMode : scope?.defaultMode ?? raw[0] ?? '';
   return { modes: raw, selected, available: raw.includes(selected), legacy };
 }
-export const delegationModeName = (mode: string): string => ({ literature: '文献与证据', experiment: '实验探索' } as Record<string, string>)[mode] ?? mode;
+export const delegationModeName = (mode: string): string => ({ literature: '文献与证据', experiment: '实验探索', success: 'ORX toy 成功评估', evaluator_failure: 'ORX 评估器失败', cancellable: 'ORX 运行中取消' } as Record<string, string>)[mode] ?? mode;

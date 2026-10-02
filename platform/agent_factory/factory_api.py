@@ -1,14 +1,14 @@
 import asyncio
-import copy
 import hashlib
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from .control_commands import ControlCommand, ControlCommands, legacy_command, COMMAND_ID
 from .catalog import create_plan
 from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
-from .store import canonical
+from .store import effect_unresolved, canonical
 
 
 class Body(BaseModel):
@@ -56,13 +56,17 @@ class PublicationRequest(Body):
     requestId: str = Field(min_length=1, max_length=200)
 
 
-class Answer(Body):
+class Cancel(Body):
+    commandId: str | None = Field(default=None, pattern=COMMAND_ID)
+
+
+class Answer(Cancel):
     questionId: str
     version: int
     answer: str = Field(min_length=1, max_length=2000)
 
 
-class Approval(Body):
+class Approval(Cancel):
     requirementId: str
     version: int
     approved: bool
@@ -86,7 +90,7 @@ def status_of(task, snapshot, effects, events):
     queue = snapshot.get("queue") or snapshot.get("job") or {}
     run = snapshot.get("run", snapshot)
     raw = str(queue.get("status") or run.get("status") or "queued").lower()
-    if any(effect["status"] == "UNKNOWN" for effect in effects) and raw not in {"running", "runstatus.running"}:
+    if any(effect_unresolved(effect) for effect in effects) and raw not in {"running", "runstatus.running"}:
         return "unknown"
     if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
         return "canceling"
@@ -112,6 +116,7 @@ class FactoryAPI:
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
         self.remote = getattr(store, "remote_execution", None)
+        self.commands = ControlCommands(self)
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
@@ -129,9 +134,20 @@ class FactoryAPI:
         snapshot = {}
         if task.get("run_id"):
             snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+        task = self.store.task(task["id"], task["owner_id"])
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
         status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
+        from .inference_wait import CONTROL_NAME, read as read_wait
+        inference_wait = read_wait(self.store, task["id"])
+        inference_requirement = next((r for r in native_requirements(snapshot)
+            if (r.get("tool_execution") or {}).get("tool_name") == CONTROL_NAME
+            and (r.get("tool_execution") or {}).get("external_execution_required") is True), None)
+        waiting_inference = bool(inference_wait and inference_wait["state"] == "WAITING" and inference_requirement
+                and not task["cancel_requested"] and not self.store.has_failures(task["id"])
+                and (snapshot.get("queue") or {}).get("status") == "paused")
+        if waiting_inference:
+            status = "waiting_approval"
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
@@ -144,11 +160,17 @@ class FactoryAPI:
                 else:
                     group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
                     task = self.store.task(task["id"], task["owner_id"])
+            # Native/group reads can await a concurrent trusted cleanup. Its
+            # cancellation flag and failure provenance commit together; never
+            # overwrite that cause using the caller's pre-await task snapshot.
+            task = self.store.task(task["id"], task["owner_id"])
             status = application_group_status(status, group)
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
+            elif waiting_inference and not self.store.has_failures(task["id"]):
+                status = "waiting_approval"
         self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
@@ -159,7 +181,7 @@ class FactoryAPI:
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
                 "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": "run_experiment" in plan["tools"]}, "published": False, "createdAt": plan["createdAt"]}
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": bool({"run_experiment", "orx_experiment_run"} & set(plan["tools"]))}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -177,7 +199,15 @@ class FactoryAPI:
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)
-            if tool.get("requires_user_input") and not tool.get("answered"):
+            if (tool.get("tool_name") == CONTROL_NAME and tool.get("external_execution_required")
+                    and inference_wait and tool.get("tool_call_id") == inference_wait["controlId"]):
+                scope = ("推理服务暂时不可用。已有实验仍按原批准边界运行；本次仅恢复同一推理 run，"
+                    "不会重新启动实验、增加预算或延长截止时间。截止：" + inference_wait["deadline"])
+                job.update(approvalDetail={"id": requirement["id"], "version": version, "scope": scope,
+                    "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
+                if status == "waiting_approval":
+                    actions.append("approve")
+            elif tool.get("requires_user_input") and not tool.get("answered"):
                 question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
                 job.update(questionDetail=question, question=question["text"])
                 if status == "waiting_input":
@@ -196,7 +226,22 @@ class FactoryAPI:
                 raise
             job["allowedActions"] = ["inspect"]
         evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
-        return {"job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+        from .orx_experiment_tools import inspect_orx_experiment
+        experiment = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
+        ledger = getattr(self.store, "usage_ledger", None)
+        usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
+        if experiment is not None:
+            job.update(validationStatus="真实 ORX 本地 toy 实验；未调用模型服务", evidenceKind="toy_local_evaluation")
+            if job.get("approvalDetail", {}).get("toolName") == "orx_experiment_run":
+                provenance = experiment.get("provenance", {})
+                limits = provenance.get("environment", {})
+                scope = ("运行已封存的任务自有 ORX toy 实验："
+                         f"最长 {limits.get('timeoutSeconds', '?')} 秒，"
+                         f"输出上限 {limits.get('outputBytes', '?')} 字节；"
+                         "源码和命令哈希见下方实验凭证。金额批准为零，无模型服务调用。")
+                job["approvalDetail"]["scope"] = scope
+                job["approval"]["scope"] = scope
+        return {"inferenceWait": inference_wait, "orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
 
     def routes(self):
@@ -391,67 +436,52 @@ class FactoryAPI:
                 return (await self.remote.detail(task, child))["snapshot"].get("delegation")
             return await self.delegation.inspect_group(user["id"], task_id)
 
-        @router.post("/jobs/{task_id}/cancel")
-        async def cancel(task_id: str, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return await self.remote.cancel(task, child)
-            before = await self.detail(task)
-            if self.delegation:
-                if before["job"]["status"] in {"completed", "failed", "canceled"} and before["snapshot"]["delegation"]["allStopped"]:
-                    return before["job"]
-                await self.delegation.cascade_cancel(user["id"], task_id)
-                return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
-            if before["job"]["status"] in {"completed", "failed", "canceled"}:
-                return before["job"]
-            self.store.request_cancel(task_id)
-            if task.get("run_id"):
-                await self.bridge.cancel_run(task["run_id"], task["id"], user["id"])
-            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+        @router.get("/commands")
+        async def outstanding_commands(request: Request, taskId: str | None = None,
+                                       limit: int = Query(default=50, ge=1, le=100),
+                                       after: str | None = Query(default=None, max_length=100), outstanding: bool = True):
+            user = self.user(request, "read")
+            return await self.commands.list(user["id"], taskId, limit=limit, after=after, outstanding=outstanding)
 
-        async def continue_requirement(task_id, request, requirement_id, version, approved=None, answer=None):
+        @router.get("/jobs/{task_id}/commands/{command_id}")
+        async def command_receipt(task_id: str, command_id: str, request: Request):
+            user = self.user(request, "read")
+            return await self.commands.recover(user["id"], task_id, command_id)
+
+        @router.post("/jobs/{task_id}/commands", status_code=202)
+        async def submit_command(task_id: str, body: ControlCommand, request: Request):
             user = self.user(request)
+            return await self.commands.submit(user["id"], task_id, body)
+
+        @router.post("/jobs/{task_id}/commands/{command_id}/acknowledge")
+        async def acknowledge_command(task_id: str, command_id: str, request: Request):
+            user = self.user(request, "read")
+            return await self.commands.acknowledge(user["id"], task_id, command_id)
+
+        @router.post("/jobs/{task_id}/commands/{command_id}/dispatch", status_code=202)
+        async def dispatch_prepared(task_id: str, command_id: str, request: Request):
+            user = self.user(request)
+            return await self.commands.dispatch(user["id"], task_id, command_id)
+
+        async def compatibility_command(task_id, request, action, decision, command_id):
+            user = self.user(request)
+            receipt = await self.commands.submit(user["id"], task_id, legacy_command(task_id, action, decision, command_id))
             task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                body = {"questionId": requirement_id, "version": version, "answer": answer} if answer is not None else {"requirementId": requirement_id, "version": version, "approved": approved}
-                return await self.remote.action(task, "answer" if answer is not None else "approve", body, child)
-            detail = await self.detail(task)
-            expected = "waiting_input" if answer is not None else "waiting_approval"
-            if detail["job"]["status"] != expected or task["cancel_requested"]:
-                raise HTTPException(409, "Task is no longer waiting for this action")
-            requirements = copy.deepcopy(native_requirements(detail["snapshot"]))
-            requirement = next((r for r in requirements if r.get("id") == requirement_id), None)
-            if requirement is None or requirement_version(requirement) != version:
-                raise HTTPException(409, "STALE_REQUIREMENT: refresh the task before deciding")
-            tool = requirement["tool_execution"]
-            if answer is not None:
-                if not tool.get("requires_user_input"):
-                    raise HTTPException(409, "This requirement is not a question")
-                fields = requirement.get("user_input_schema") or tool.get("user_input_schema") or []
-                unanswered = [field for field in fields if field.get("value") is None]
-                if len(unanswered) != 1 or unanswered[0].get("name") != "scope":
-                    raise HTTPException(409, "Unsupported question schema")
-                unanswered[0]["value"] = answer
-                requirement["user_input_schema"] = fields
-                tool["user_input_schema"] = fields
-                tool["answered"] = True
-            else:
-                if not tool.get("requires_confirmation"):
-                    raise HTTPException(409, "This requirement is not an approval")
-                requirement["confirmation"] = approved
-                tool["confirmed"] = approved
-            await self.bridge.continue_run(task["run_id"], task["id"], user["id"], requirements)
-            self.store.event(task_id, "question_answered" if answer is not None else "approval_decided", "Scoped native continuation submitted", {"requirementId": requirement_id, "version": version, "approved": approved})
-            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+            return {**(await self.detail(task, child))["job"], "commandReceipt": receipt}
+
+        @router.post("/jobs/{task_id}/cancel")
+        async def cancel(task_id: str, request: Request, body: Cancel | None = None):
+            return await compatibility_command(task_id, request, "cancel", {}, body.commandId if body else None)
 
         @router.post("/jobs/{task_id}/answer")
         async def answer(task_id: str, body: Answer, request: Request):
-            return await continue_requirement(task_id, request, body.questionId, body.version, answer=body.answer)
+            return await compatibility_command(task_id, request, "answer",
+                {"requirementId": body.questionId, "version": body.version, "answer": body.answer}, body.commandId)
 
         @router.post("/jobs/{task_id}/approve")
         async def approve(task_id: str, body: Approval, request: Request):
-            return await continue_requirement(task_id, request, body.requirementId, body.version, approved=body.approved)
+            return await compatibility_command(task_id, request, "approve",
+                {"requirementId": body.requirementId, "version": body.version, "approved": body.approved}, body.commandId)
 
         @router.post("/jobs/{task_id}/reconcile")
         async def reconcile(task_id: str, request: Request):

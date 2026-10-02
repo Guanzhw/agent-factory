@@ -3,6 +3,10 @@ import os
 from pathlib import Path
 import secrets
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .usage_ledger import UsagePolicy
 
 
 @dataclass
@@ -20,6 +24,13 @@ class Settings:
     experiment_timeout_seconds: int = 8
     experiment_output_bytes: int = 65536
     workspace: Path = field(default_factory=lambda: Path(".local"))
+    storage_task_reserve_bytes: int = 64 * 1024 * 1024
+    storage_low_water_bytes: int = 1024 * 1024 * 1024
+    storage_monitor_paths: tuple[Path, ...] = ()
+    storage_scan_entries: int = 20000
+    storage_hash_bytes: int = 64 * 1024 * 1024
+    storage_retention_grace_seconds: int = 86400
+    storage_allow_purge: bool = False
     temporary_policy: str | None = None
     policy_revision: str = "plan-policy-v1"
     plan_review_ttl_seconds: int = 3600
@@ -35,9 +46,16 @@ class Settings:
     trusted_connections: dict = field(default_factory=dict)
     runtime_adapters: list = field(default_factory=list)
     runtime_tool_contract: str = "legacy-v1"
+    # Frozen operator price/policy registrations, never loaded from model input.
+    usage_pricing: tuple = field(default_factory=tuple)
+    usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
-        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1"}:
+        if min(self.storage_task_reserve_bytes, self.storage_low_water_bytes, self.storage_scan_entries, self.storage_hash_bytes) < 1:
+            raise ValueError("Storage budgets must be positive")
+        if self.storage_retention_grace_seconds < (0 if self.demo else 60):
+            raise ValueError("Production retention needs a positive recovery window")
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2"}:
             raise ValueError("Unsupported runtime tool contract")
         if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")
@@ -85,5 +103,10 @@ class Settings:
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
+                   storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),
+                   storage_low_water_bytes=int(os.getenv("FACTORY_STORAGE_LOW_WATER_BYTES", str(1024 * 1024 * 1024))),
+                   storage_monitor_paths=tuple(Path(path).resolve() for path in os.getenv("FACTORY_STORAGE_MONITOR_PATHS", "").split(os.pathsep) if path),
+                   storage_retention_grace_seconds=int(os.getenv("FACTORY_STORAGE_RETENTION_GRACE_SECONDS", "86400")),
+                   storage_allow_purge=os.getenv("FACTORY_STORAGE_ALLOW_PURGE", "false") == "true",
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

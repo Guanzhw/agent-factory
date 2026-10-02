@@ -11,8 +11,34 @@
   "binarySha256": "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7",
   "cargoTomlSha256": "e430beec668ed34b9c171bc814dfae90bd5362a0ab5c598b6cfdde00a1380dda",
   "cargoLockSha256": "5e9f1753089dcdba38ba9f750a0b8b4acc625d6e0f98e4f8f58927ede8719ee6",
-  "tested": ["locked build", "version and help", "unsupported harness rejection", "actual adapter pinned preflight", "wrong pin rejects before spawning"],
-  "unverified": ["real project/experiment status", "research retrieval", "provider/model", "detached experiment recovery", "production registration"],
+  "tested": [
+    "locked build",
+    "version and help",
+    "unsupported harness rejection",
+    "actual adapter pinned preflight",
+    "wrong pin rejects before spawning"
+  ],
+  "unverified": [
+    "real project/experiment status",
+    "research retrieval",
+    "provider/model",
+    "detached experiment recovery",
+    "production registration"
+  ],
   "providerCalls": false,
-  "productionApproved": false
+  "productionApproved": false,
+  "linuxBuild": {
+    "target": "x86_64-unknown-linux-gnu",
+    "rustImage": "rust:1.93.1-slim-trixie@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "binaryBytes": 43517896,
+    "binarySha256": "a847d07e8c4c3f2efc47c3549fd27f52c9999b46a21451d4c07ec12de292b8cd",
+    "runtimeImage": "python:3.12.14-trixie@sha256:4d1caded1f729ae443eb803f26ffde7b61e696aeaef62f099abb6dd6b14257c7",
+    "pythonSha256": "479e8cf2dd15299ec38ebb17ac195b44b94beb82530dd7873fb663013a5ba4ee",
+    "buildCommand": "cargo build --locked --release --bin orx",
+    "providerCalls": false,
+    "productionApproved": false,
+    "buildWorkingDirectory": "/source",
+    "sourceDateEpoch": 1790924288,
+    "embeddedTimestampReason": "Matches creation and modification seconds of the embedded demo/UI assets in the reviewed initial Linux build; rust-embed supports SOURCE_DATE_EPOCH without source changes."
+  }
 }

@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "users": 20,
+    "nativeWorkers": 2,
+    "globalCap": 12,
+    "perUserCap": 2,
+    "taskDiskReservationBytes": 67108864,
+    "lowWaterBytes": 1073741824,
+    "unknownHeldThroughout": 1,
+    "model": "deterministic synthetic",
+    "pressure": "injected observation; no disk filling",
+    "cpu.max": "400000 100000",
+    "memory.max": "17179869184"
+  },
+  "measurementSeconds": 72.2266,
+  "observations": 72,
+  "usersProgressed": 20,
+  "lastUserNativeProgressSeconds": 60.8108,
+  "maxHeldTasks": 12,
+  "maxHeldDiskBytes": 805306368,
+  "finalHeldTasks": 1,
+  "maxFixtureRssBytes": 142671872,
+  "fixtureCpuSeconds": 46.22,
+  "finiteWorkloadOnly": true,
+  "targetCapacityProven": false,
+  "unboundedRefillFairnessProven": false
+}

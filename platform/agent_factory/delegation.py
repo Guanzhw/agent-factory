@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from .catalog import create_plan
-from .store import digest, now
+from .store import effect_unresolved, digest, now
 
 ACTIVE = {"queued", "pending", "running", "paused"}
 TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
@@ -112,6 +112,9 @@ class _ChildPlannerStore:
                 budget[key] = min(budget[key], parent["budget"][key])
         plan = {**plan, "delegation": self.binding,
                 "budget": {**budget, "depth": self.binding["depth"]}}
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None:
+            plan["usageBudget"] = ledger.commitment_for_candidate(plan, self)
         plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})
         return self.store.save_plan(plan)
 
@@ -283,7 +286,7 @@ class DelegationService:
             if not link["child_id"]:
                 return True
             task = self.store.task(link["child_id"], link["owner_id"])
-            if any(effect["status"] == "UNKNOWN" for effect in self.store.effects(task["id"])):
+            if any(effect_unresolved(effect) for effect in self.store.effects(task["id"])):
                 return True
             if task["admission"] == "rejected" and not task.get("run_id"):
                 continue
@@ -467,7 +470,7 @@ class DelegationService:
         native = snapshot.get("queue") or snapshot.get("job") or {}
         raw = str(native.get("status") or (snapshot.get("run") or snapshot).get("status") or "").lower().removeprefix("runstatus.")
         effects = self.store.effects(task["id"])
-        unresolved_effect = any(effect["status"] == "UNKNOWN" for effect in effects)
+        unresolved_effect = any(effect_unresolved(effect) for effect in effects)
         # A reserved effect during known native computation is in flight. It
         # retains capacity, but becomes externally UNKNOWN after native work
         # stops without a confirmed result/cleanup.
@@ -520,10 +523,16 @@ class DelegationService:
                 continue  # Unacknowledged admission retains capacity/UNKNOWN.
             try:
                 native = self._native(task)
+                from .orx_experiment_tools import reclaim_orx_experiment
+                await reclaim_orx_experiment(self.settings, self.store, task["id"])
                 if str(native.get("status", "")).lower() not in TERMINAL:
                     await self.bridge.cancel_run(task["run_id"], task["id"], owner)
                     requested.append(task["id"])
             except HTTPException as error:
                 errors.append({"taskId": task["id"], "status": error.status_code})
                 self.store.event(task["id"], "cascade_cancel_pending", "Native cancellation remains unconfirmed", {"code": error.status_code})
+            except Exception as error:
+                errors.append({"taskId": task["id"], "errorType": type(error).__name__})
+                self.store.event(task["id"], "cascade_cancel_pending", "Owned experiment cleanup remains unconfirmed",
+                                 {"errorType": type(error).__name__})
         return {"requested": requested, "errors": errors, "group": await self.inspect_group(owner, parent["id"])}

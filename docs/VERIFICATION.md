@@ -372,3 +372,356 @@ and detail phases to finish under loaded CI. The first PR run timed out in the
 outer fixture before assertions; the same-source push workflow passed. No runtime
 timeout, retry, state wait or admission/effect assertion changed. After correction,
 all nine actual-process acceptance cases passed again in 85.518 seconds.
+
+## WIP cloud handoff checkpoint — 2026-10-02
+
+Local development scope is frozen for cloud handoff. The complete milestone is
+**not accepted**. [CLOUD_HANDOFF.md](CLOUD_HANDOFF.md) lists exact continuation
+commands, pinned versions, ORX build provenance and known blockers.
+
+- Final frontend check: lint/typecheck/build and 51 tests pass; official npm
+  production audit reports 0 vulnerabilities. Ruff passes and Pyright reports
+  0 errors before the final preservation-only documentation update.
+- Actual pinned Windows ORX adapter: 10 tests pass in 104.785 s. Actual Factory
+  ORX suite: 8/9 pass in 159.632 s; connection-revocation cleanup observation
+  failed. Final one-case recheck after fixing the persisted capabilities
+  omission still fails in 54.789 s. It is unresolved, not waived.
+- Real PostgreSQL ledger: 19 tests pass in 10.184 s. Actual two-service remote
+  usage: 8 pass in 105.353 s. Final legacy remote handoff: 23 pass in 73.865 s;
+  legacy remote child: 1 pass in 39.442 s. Explicit zero-price origin/receiver
+  fixtures: 14 and 9 pass respectively.
+- The first full local regression ran 364 tests in 677.116 s, with 2 failures,
+  1 error and 19 explicit opt-in skips. It imported earlier test fixtures before
+  their corrections: the stale missing-grant/dispatch-body cases were fixed and
+  pass in the subsequent 23-case suite; the unpriced source-model fixture was
+  fixed and passes in the subsequent 14-case suite. The **full final-source suite
+  was not rerun**. These focused results are not a full-suite passing claim.
+- Startup profile is unrun. The preserved Playwright 1.58.0/Edge harness passed
+  syntax and static checks only; actual browser approvals/cancel/recovery/download
+  acceptance is unrun. Factory/native durable queue hard-interruption recovery
+  remains unimplemented acceptance; adapter-only worker recovery is distinct.
+- Read-only source review found remaining terminal stop-proof/capacity release
+  and imported remote ORX effective-pin cleanup gaps. See the handoff blockers.
+
+No paid models/compute, credentials, production grants, merge or deployment were
+used. Source scan/remote commit/CI status and owned-service stop evidence are
+reported with the exact published checkpoint SHA. Raw local logs, databases,
+private generated auth fixtures, upstream ZIP/binary and machine caches remain
+ignored and are not transferred. OpenSession remains local.
+
+## Cloud handoff: portable setup repair
+
+Cloud ownership starts from `cbe590695f6b03aca6de9c6993a811f74990d6c9`,
+not the earlier baseline. Debian 13.6, Python 3.12.14 and Node 24.19.0 were
+observed in a container limited to 4 CPU / 16 GiB (not the production target).
+The Windows Job Object DLL attributes are explicitly typed for portable static
+checking; Windows subprocess constants are looked up only inside the existing
+Windows-only execution profile. Linux still cannot execute that profile.
+
+The lock now uses official PyPI and files.pythonhosted.org URLs with every
+version and artifact hash preserved. `uv sync --frozen --refresh` succeeded
+against those URLs. Linux Pyright reports zero errors after reproducing the
+13 handoff errors. The handoff's backup-tool variable is corrected to the
+actual `FACTORY_PG_BIN`; no startup behavior is changed.
+
+Before taking the WIP, the earlier `6793a96` passed nine actual loopback
+TCP/two-process cases plus the official PostgreSQL 17.11 dump/restore case:
+10 tests in 140.897 seconds, no skips. That result belongs to the old baseline
+and must not be attributed to this WIP or Windows ORX acceptance.
+
+## Cloud ORX cleanup contract repair
+
+Portable PostgreSQL regressions reproduce a cleanup defect: the public
+`Store.effects()` projection omits the launch fingerprint, so using that
+projection to authorize cleanup rejects even an exact originally admitted
+launch. Cleanup now reads the task/run-bound private fingerprint directly.
+A real native ticket plus controlled experiment metadata proves revoked
+connections permit only exact historical cleanup, and a changed launch hash
+still fails closed. This is not Windows process-stop acceptance.
+
+Every terminal ORX effect now requires `stopEvidence.allStopped=true`, including
+done/failed outcomes. Admission, group/delegation, HTTP status, remote stop
+statements and the lifecycle observer also keep historical terminal effects
+without that proof held. Startup re-holds pre-fix task rows without rewriting
+immutable effect fingerprints or inventing a native outcome. Positive reclaim
+observations refresh the effect's stop proof, preserving original result facts.
+
+Receiver cleanup selects its original effective specification from the exact
+immutable root/child proof, rather than resolving a source-side connection pin
+or requiring current run permission. Artifact provenance reads the same
+historical manifest; it does not acquire an execution handle. Current execution
+mapping and connection checks remain separate and still deny revoked access.
+
+Three focused PostgreSQL/native metadata regressions passed (5.205 seconds).
+An additional post-revocation artifact-persistence assertion passed separately
+(1.662 seconds). The complete cloud suite and exact-commit CI are run separately;
+these focused passes alone are not complete ORX or production acceptance.
+
+The Windows-only actual ORX adapter/Factory suites, real orphan/supervisor stop,
+Factory-queue hard-interruption recovery, startup/resume and actual browser
+workflow remain unverified in this Linux environment. In particular, correcting
+the reproducible fingerprint defect does not establish that the previously
+failing Windows revocation case now passes. No new binary hash is approved and
+the platform guard remains unchanged. No paid provider, production access,
+external service or deployment is enabled.
+
+## Cloud full regression and approval-race assertion
+
+The cloud PostgreSQL run covering the cleanup changes completed 368 tests in
+792.675 seconds: 350 passed and 18 explicit ORX skips, with no failures/errors.
+The skips are ten actual Windows adapter tests, two exact-binary preflight tests
+and six actual Windows Factory tests. All 19 ledger and eight remote-usage cases
+ran. An additional final assertion for post-revocation historical artifact
+provenance was checked separately after the full run had loaded its test module.
+
+CI for `a4665c2885767b24db12175b687fc4c3773925c0` passed both frontend and
+both Python platform jobs, but its PostgreSQL job exposed a pre-existing live
+observer race in the plan-policy test: HTTP 409 can come from the API before the
+bridge call, or from the real native route after one bridge call. The old test
+incorrectly inferred zero bridge calls from every 409. No compute/effect or
+artifact evidence indicated resumed execution.
+
+The corrected test retains the no-compute/no-new-effect/no-new-artifact and
+protected-denial assertions. A second deterministic case runs the real observer
+after the API's waiting-approval read and before native continuation, requiring
+one attempted bridge call, native HTTP 409 and unchanged execution evidence.
+Both cases passed in 6.754 seconds. This follow-up changes tests/documentation
+only; production authorization and continuation code are unchanged. Exact-head
+CI remains the separate final validation source.
+
+## Cloud Linux actual ORX continuation (2026-10-02)
+
+- Built unchanged upstream `f336b121525d99364e2dee4fe90b2784894a54e6`
+  with official Rust 1.93.1, locked Cargo inputs; real Linux `orx --version`
+  reports 0.2.13. Source, binary and runtime image hashes are recorded in
+  `docs/ORX_BUILD_PROVENANCE.json` and `docs/LINUX_ORX.md`.
+- Actual Linux adapter: first 9 scenarios passed in the 10-case run; the last
+  owning-worker hard-exit case hit the old 15-second cold-container setup wait.
+  Its corrected 60-second setup wait subsequently passed. Evaluator limits
+  remain unchanged. Real success/failure metrics, cancel, lost ACK, supervisor
+  SIGKILL, source/command drift, revoked execution and trusted stop are covered.
+- Actual Linux native Factory: 4/6 passed initially; 2 cases exhausted the old
+  30-second pre-approval setup wait on the cloud Docker `vfs` driver. Both passed
+  after allowing 90 seconds for cold fixture preparation. The three focused
+  rechecks together passed in 117.785 seconds. These are cumulative passes for
+  all 16 real Linux cases, not a claim of a fresh single all-green combined run.
+- Separate actual HTTP/native queue process acceptance passed: Factory SIGKILL
+  left four detached task processes alive; same database/workspace restart and
+  cancellation preserved one native admission and one original ORX run, with
+  Factory `canceled`, native ORX `cancelled`, and positive all-stopped evidence.
+- Frontend: 52 tests, lint/typecheck/build passed; official production dependency
+  audit found zero vulnerabilities. Ruff and Pyright passed.
+- The startup profile was actually run and resumed. Its previously unrun
+  application configuration used unsupported fields; the fixed profile retains
+  scenario selection in the exact reviewed tool material and uses the existing
+  closed application configuration schema.
+- Browser acceptance completed all seven phases with Playwright 1.58 / Chromium
+  145: actual success, tampered-download rejection, original-run reload,
+  evaluator failure, running cancellation with positive stop evidence, explicit
+  detail-read recovery and a 390px mobile viewport without horizontal overflow.
+  Two downloaded artifacts matched their server sizes and SHA-256 values.
+  Real lost admission acknowledgement was injected by forwarding the original
+  request then aborting its response; the UI recovered without a second POST.
+  The old harness's asynchronous `wait_for_function` callbacks were replaced
+  with awaited API polling; they had incorrectly treated a Promise as success.
+- Full cloud core regression passed: 385 tests in 1044.808 seconds, 351 passed
+  and 34 explicit opt-in skips. Actual Linux tests were run separately above;
+  no Windows Job Object test was represented as Linux evidence. Compact public synthetic
+  evidence is in `docs/evidence/linux-orx-2026-10-02.json`; private generated
+  auth fixtures and local machine logs are excluded.
+- No paid provider or paid compute was used. Production isolation, real model
+  research, remote real ORX and target-host departmental load remain unverified.
+
+- Final Windows/Linux Pyright targets both report zero errors. The platform
+  compatibility fix was followed by another real Linux success/source/log/stop
+  check: 1 pass in 25.654 seconds.
+
+## Deterministic origin-authority revocation ordering (2026-10-02)
+
+The PR-triggered PostgreSQL run for `b322d09` failed at the role-restoration
+assertion in `test_remote_authority.py`; its push-triggered run passed. Neither
+that push result nor the older green `176ef0e` runs resolve the failed assertion.
+
+The test withdrew Alice's role while the real background lifecycle observer was
+active, then assumed restoring the role must reauthorize the same task. If the
+observer ran during withdrawal, it correctly persisted `cancel_requested` and
+`protected_denied`; restoration cannot revive that task's execution mandate.
+This is a test ordering error, not permission propagation that should be relaxed.
+
+The two deterministic cases control the observer timer on the actual service
+loop and retain real native authorization and real loopback HTTP. One restores
+the grant before lifecycle observation and still requires exact checksum tools
+and capabilities. The other explicitly invokes the real observer during
+withdrawal, requires sticky 403 denial after restoration, and only permits a
+fresh task reference. Both retain receiver grant denial, reject forged request
+roles, and require zero effects, zero local native runs and zero model-provider
+construction. Missing stop acknowledgement remains held. No production grant,
+cleanup, authority transport or assertion was weakened.
+
+Validation before publication: both ordering cases passed (4.343 s); the complete
+origin-authority, lifecycle-observer and plan-policy suites passed all 48 tests
+(87.483 s). Ruff and Linux/Windows-target Pyright passed. Full backend regression
+and both push/PR workflows are tracked separately against the resulting SHA.
+
+### Follow-up: atomic cleanup provenance and exact observation boundaries
+
+The `e8e4f6b` push workflow passed all five jobs, but its PR workflow failed two
+other PostgreSQL assertions (compute effect settlement and provider-attempt count
+after a lost dispatch acknowledgement). The local full run separately exposed
+`test_17_current_read_grant_can_observe_when_execution_grant_is_revoked` returning
+`canceled` instead of failure. These are not treated as green acceptance.
+
+Lifecycle cleanup previously committed `cancel_requested` before its failure
+provenance. A concurrent remote authority reader could interpret that partial
+state as ordinary user cancellation. `_mark_cancel` now publishes the flag and
+both events in one Store transaction; native cleanup still runs outside it.
+A deterministic PostgreSQL/actual-loopback-HTTP regression pauses the real writer
+immediately before `protected_denied`. With the old implementation it receives
+`HandoffCancellationRequested` despite revoked execution rights; with the atomic
+implementation it requires 403 both before and after commit, and checks that no
+partial flag/failure state is visible. Native read-only grants remain real, and
+no model/provider/effect is invoked.
+
+The compute test now waits for `compute_cancelled`, which follows durable effect
+settlement. `compute_stopped` is an earlier subprocess-thread acknowledgement;
+it cannot prove the async tool has already committed the effect. Strict
+`CANCELLED`, cleanup, no-artifact and bounded process-stop checks are retained.
+
+The metered lost-ack fixture now stops the actual native worker before dispatch,
+then crashes after real durable queue admission but before sending the HTTP
+acknowledgement. Restart starts the real worker. This fixes the intended boundary
+before any provider attempt; it still requires one native ticket, one metered
+attempt, and the exact original grant. The separate unrestricted lost-ack test
+remains. A crash during provider execution can produce a native retry and must
+not be conflated with this before-execution case or with exactly-once billing.
+
+Pre-publication validation: all 83 related authority, lifecycle, plan-policy,
+remote-handoff, active-compute and dual-process usage tests passed (338.166 s).
+Ruff and both Linux/Windows-target Pyright passed. The new visibility regression
+was first run against the previous production implementation and failed with the
+wrong typed cancellation outcome, then passed with the atomic transaction.
+Full backend and both exact-head workflows are recorded in PR10 after completion.
+
+The first full local run of `dec8046` ran 387 tests (928.366 s), with 34 explicit
+skips and one failure: the source-role withdrawal check received 503 rather than
+403. Its server log completed the correct read denial after the client assertion,
+consistent with the default two-second transport deadline expiring during full
+suite scheduling/connection GC. This is recorded as a failed run, not hidden by
+the passing 83-case focused run. The native PostgreSQL/loopback fixture now uses
+a bounded ten-second request budget and includes transport-cause diagnostics;
+production keeps its two-second default, and the adversarial timeout tests still
+require bounded 503 with no retry. All exact authorization assertions remain.
+
+The `f66f469` local full run ran 387 tests (961.758 s), with 34 explicit skips
+and one different ordering failure in remote-handoff test 06. The exact native
+ticket was `cancelled`: the real lifecycle observer raced the tool-entry denial,
+while this guard test waited only for `completed`/`failed`. The guard test now
+stops both actual observer timers for its two source/receiver cases and restores
+them afterwards, preserving real native continuation, current grant withdrawal,
+direct registered-tool checks, no subprocess, unchanged effects/artifacts, and
+the original terminal assertions. Test 17 and the lifecycle suites separately
+retain automatic cleanup and strict failure-provenance coverage. No additional
+native status is accepted and no production behavior is changed for this case.
+
+After the test-06 scheduling correction, all 53 remote-handoff, actual origin
+HTTP authority and lifecycle-observer tests passed (176.847 s); Ruff and Pyright
+passed. The immediately preceding `f66f469` push and PR workflows both finished
+5/5 green, but the final test-only commit receives its own separate full push/PR
+CI validation. Local full-run failures above remain part of the record.
+
+## Linux literature evidence and least-capability contracts (2026-10-02)
+
+Based on accepted `54720e7`, the new contract preserves legacy revisions and
+registers Linux-bounded discovery/paper/text/report tools plus experiment revision
+2 with distinct read/compute connections. The current consolidated matrix is in
+[ACCEPTANCE.md](ACCEPTANCE.md#current-matrix); reproduction and remaining code
+seams are in [LITERATURE_EVIDENCE.md](LITERATURE_EVIDENCE.md).
+
+- Seven evidence/contract/startup-cancellation unit cases passed. The cancellation
+  regression cancels during a thread-backed container start, then verifies that
+  the late-created real local subprocess is retained and killed; the container
+  boundary itself is explicitly controlled in that test.
+- Three native PostgreSQL evidence cases passed together in 53.762 s: controlled
+  successful excerpts/download integrity, controlled unavailable endpoint, and
+  opt-in real Linux public transport. The real query returned `COMMAND_FAILED`
+  (endpoint unreachable), zero sources, a readable failure report/ZIP and positive
+  namespace stop. This is not successful live source retrieval. The public
+  receipt preserves `liveSourceSuccess=false`.
+- Earlier focused legacy ORX tools/native discovery/receiver mappings plus new
+  evidence regressions: 28 collected, 27 passed, one explicit public-network
+  opt-in skip (53.601 s). The later startup-cancellation test is separate.
+- Actual Linux receiver composition passed in 117.686 s: two native apps and
+  independent databases, controlled ASGI transport, distinct publication/plan
+  reviews, least-capability receiver pins, native confirmation, one real ORX toy
+  run, baseline MSE 16 / candidate 0 and positive original-pin reclaim evidence.
+  Initial acceptance exposed a multi-command operation deadline shorter than
+  its admitted 30-second environment; revision 2 now uses that environment
+  window while preserving individual CLI caps and revision-1 behavior. The
+  failed attempt is not promoted to acceptance merely because it had metrics.
+- Frontend lint/typecheck/build and all 61 tests passed; official npm production
+  audit reported zero vulnerabilities. Ruff and Pyright passed.
+
+Exact-head push and pull-request CI are recorded on Draft PR10 after completion;
+previous stage workflow success is not substituted. Default CI skips actual
+binary/container/public-network/official-restore opt-ins. No paid model/compute,
+real credentials, host networking/security changes, merge or deployment occurred.
+AT10 provider-failure/external-work independence, real model SDK attempt guards,
+production browser identity and mutable reviewed workloads remain explicit
+implementation/integration work, not simply missing credentials.
+
+A final primary-source review found that legacy arXiv IDs would otherwise select
+the upstream generated-overview default. The evidence contract now reports
+unsupported full text without calling that route. A native PostgreSQL regression
+passed in 10.289 s, preserving the original controlled discovery abstract and
+verifying that the overview-fetch method is never called.
+
+Final containment checks: 12 evidence/native/boundary tests passed together in
+82.528 s. The actual Linux namespace test verifies that two adapter handles share
+one cgroup and lease, then starts a fixed harmless sleeping descendant without
+calling Factory cleanup. The independent wall guardian exits 124 and the kernel
+PID becomes zero within the bound. The actual public query was repeated under
+this final shared boundary; it still produced zero sources, an explicit endpoint
+failure and positive stop. The experiment guardian source/hash remains unchanged.
+
+## Bounded inference recovery / AT10 (2026-10-02)
+
+The standalone Linux revision-2 contract and native lifecycle decision are in
+[INFERENCE_RECOVERY.md](INFERENCE_RECOVERY.md). Qualifying temporary inference
+failure pauses the same native ticket while the acknowledged external ORX run
+continues within its original bounds. This is not provider, delegated/receiver,
+Windows or production-wide AT10 acceptance.
+
+- Actual Linux ORX/native PostgreSQL acceptance: **9 passed in 814.186 s**.
+  The controlled local model fails once with 503; no provider request is made.
+  Evidence covers background external completion, same-run recovery, duplicate
+  decisions, a separately owned Factory process killed and restarted, Chromium
+  desktop/mobile recovery, cancellation, declined recovery, connection revocation,
+  deadline expiry, authoritative over-budget usage and source drift. All original
+  process trees have positive stop evidence. Source drift deliberately retains
+  UNKNOWN/capacity hold rather than fabricating a verified result.
+- The budget assertion was strengthened to exceed the actual admitted token
+  limit and require `USAGE_BUDGET_EXCEEDED`; the updated actual case passed in
+  **67.823 s**. The earlier test could have passed on ordinary timeout and is not
+  used as evidence of budget enforcement.
+- Updated actual revocation/expiry cases passed together in **162.315 s**:
+  revocation denial precedes the deadline, and expiry explicitly records
+  `INFERENCE_WAIT_EXPIRED`. Final recovery/control/lifecycle regression passed
+  **30 tests in 93.378 s**.
+- An initial full local run collected 447 tests in 1566.499 s, with 45 skips,
+  11 failures and 7 errors. All failures were in the two in-memory native model
+  contract suites: the new SQL wait lookup was incorrectly unconditional for
+  stores without an installed usage ledger. Dispatch now gates that optional
+  feature on the ledger; all **32 compatibility and recovery contract tests
+  passed in 4.072 s** after the fix. The initial run remains a failed run, not
+  final full-suite acceptance.
+- Frontend lint/typecheck/build and **61 tests** passed. Official npm production
+  audit reported **zero vulnerabilities**. Ruff and Pyright passed. Positive
+  Linux admission unit cases explicitly control the platform predicate, so
+  Windows CI tests the protocol without claiming Windows runtime support.
+
+Synthetic acceptance receipts are summarized in
+[AT10 evidence](evidence/at10-linux-2026-10-02.json). The actual host has 4 CPU /
+16 GiB cgroup limits; this does not certify the 32/64 or 54/192 production targets.
+Final exact-head push and PR full CI results are recorded on Draft PR10 after
+completion, separately from these local runs and prior-stage CI. No paid model,
+real credential, production access, merge or deployment is part of this stage.

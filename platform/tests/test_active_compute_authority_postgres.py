@@ -145,6 +145,10 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
         self.assertFalse(any(item["name"] == "synthetic-experiment.json" for item in self.store.artifacts(self.task_id)))
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=:id", id=self.task_id)[0]["n"], effects_before,
                          "periodic authority checks must not charge native tool-call budget again")
+        # compute_stopped is the subprocess-thread acknowledgement; the async
+        # tool commits its durable effect only afterwards. Wait for that exact
+        # settlement event, retaining all strict CANCELLED/result assertions.
+        self._wait_for_event(self.task_id, "compute_cancelled", timeout=3)
         effects = self.store.effects(self.task_id)
         self.assertEqual(len(effects), 1, effects)
         self.assertEqual(effects[0]["status"], "CANCELLED", effects)

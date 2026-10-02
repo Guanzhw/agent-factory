@@ -14,11 +14,11 @@ export function useCommandKeys(ownerId: string) {
     const storage = `factory-command-v2:${encodeURIComponent(ownerId)}:${operation}:${hash}`;
     let requestId = memory.current.get(storage);
     if (!requestId) {
-      try { requestId = window.sessionStorage.getItem(storage) ?? undefined; } catch { /* Keep current-page retries available when storage is disabled. */ }
+      try { requestId = window.localStorage.getItem(storage) ?? undefined; } catch { /* Keep current-page retries available when storage is disabled. */ }
       if (!requestId || !/^[0-9a-f-]{36}$/.test(requestId)) requestId = crypto.randomUUID();
       memory.current.set(storage, requestId);
-      try { window.sessionStorage.setItem(storage, requestId); } catch { /* Store no material, credential or connection contents. */ }
+      try { window.localStorage.setItem(storage, requestId); } catch { /* Store no material, credential or connection contents. */ }
     }
-    return { requestId, acknowledged() { memory.current.delete(storage); try { window.sessionStorage.removeItem(storage); } catch { /* A later explicit intent can still use a new key. */ } } };
+    return { requestId, acknowledged() { memory.current.delete(storage); try { window.localStorage.removeItem(storage); } catch { /* A later explicit intent can still use a new key. */ } } };
   };
 }

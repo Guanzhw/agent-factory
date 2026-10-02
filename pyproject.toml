@@ -40,6 +40,8 @@ ignore = ["E402", "E701", "E702"]
 
 [tool.pyright]
 include = ["platform/agent_factory"]
+# Sealed standalone evaluator files are copied as a four-file experiment bundle.
+exclude = ["platform/agent_factory/orx_toy"]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 venvPath = "."

@@ -62,3 +62,29 @@ from remote errors; peer/provider details are discarded. Receiver application
 snapshot import is operator-only and does not import source approval or local
 access grants. Origin outage denies protected work while preserving receiver
 native facts and scoped local cleanup; uncertainty alone never releases capacity.
+
+## Actual ORX toy profile and money holds
+
+The optional local profile runs only a sealed four-file original evaluator under
+a pinned upstream binary/source archive. It creates only a fresh task-owned
+home/config/store/repository and registers a local project with GitHub sync
+false; dashboard warm-up, agent spawn/wake and arbitrary commands are excluded.
+The actual Windows Job Object retains detached descendants after a Factory
+process exit. Cleanup requires the original exact task/plan/native/connection
+binding and records positive process-tree stop facts. File or command drift
+denies new execution; cleanup does not renew revoked authority.
+
+Resource containment under one Windows account does not deny network access or
+establish filesystem/identity isolation against hostile code. Production needs
+reviewed distinct identities/ACLs or equivalent OS containment. This application
+has no model/provider/network implementation and is explicitly a toy evaluator.
+
+Ledger holds are durable integer token and currency-micro balances, admitted
+transactionally before provider attempts. Unpriced adapters and changed models,
+rates or currencies cannot reuse approval. Unknown billing retains reservations
+after cancel/restart; a process-stop receipt is not an authoritative usage bill.
+Trusted usage parsers and request guards are required for a future paid adapter;
+synthetic prices and controlled providers verify only the accounting mechanics.
+No paid call, production credential, access grant or deployment is authorized
+or performed by this milestone. The isolated opt-in demo creates only its own
+generated native principals and distinct publication reviewer.

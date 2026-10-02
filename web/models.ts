@@ -32,6 +32,7 @@ export interface Plan {
   applicationRef?: MaterialReference;
   executionBindings?: Record<string, unknown>;
   bindingManifest?: Record<string, unknown>;
+  usageBudget?: unknown;
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
@@ -49,7 +50,7 @@ export type FactoryJob = Omit<Job, 'input'> & {
   questionDetail?: PendingQuestion & { fields?: { name: string; type: string; description?: string; value?: unknown }[] };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
-export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown> }
+export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; usageLedger?: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;
   failed: boolean; pending: boolean; stopped: boolean;
@@ -162,7 +163,7 @@ export interface PlanReview {
   planIntegrityMatches?: boolean;
   decision: 'pending' | 'approved' | 'denied'; approvalEffective: boolean; reviewerId: string | null;
   planSummary?: { normalizedGoal?: string; application?: string; mode?: string; tools?: string[];
-    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[] };
+    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[]; usageBudget?: unknown; config?: Record<string, unknown> };
 }
 
 export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }
@@ -216,4 +217,28 @@ export interface AssemblyProposal {
   revisedBy?: string | null;
   fingerprint: string; state: 'pending' | 'revised' | 'rejected' | 'accepted'; planId: string | null;
   allowedActions: ('revise' | 'reject' | 'accept')[];
+}
+
+export interface ControlReceipt {
+  commandId: string;
+  ownerId: string;
+  taskId: string;
+  action: 'answer' | 'approve' | 'cancel';
+  fingerprint: string;
+  decisionSha256: string;
+  binding: Record<string, unknown>;
+  requirementId: string | null;
+  version: number | null;
+  approved: boolean | null;
+  state: 'INTENT_RECORDED' | 'UNKNOWN' | 'REJECTED' | 'DECISION_RECORDED' | 'EXECUTION_CONTINUING' | 'STOP_CONFIRMED';
+  intentRecorded: boolean;
+  decisionRecorded: boolean;
+  executionContinuing: boolean;
+  stopConfirmed: boolean;
+  canDispatch: boolean;
+  acknowledged: boolean;
+  createdAt: string;
+  updatedAt: string;
+  evidence: Record<string, unknown>;
+  error: Record<string, unknown> | null;
 }

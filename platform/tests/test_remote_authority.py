@@ -4,6 +4,8 @@ Portable cases exercise denial against adversarial HTTP replies. Opt-in native
 PostgreSQL cases run the actual wired Factory origin route and managed Auth;
 they do not claim cross-process remote execution (a separate acceptance suite).
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +17,7 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -24,7 +27,9 @@ import uvicorn
 
 from agent_factory.config import Settings
 from agent_factory.connections import TrustedConnectionBinding
+from agent_factory.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
+from agent_factory.usage_ledger import PricingRevision
 from agent_factory.main import create_app
 from agent_factory.remote_authority import AuthorityCheck, AuthorityReply, OriginAuthorityTransport, PATH
 from agent_factory.remote_handoff import HandoffCancellationRequested, HandoffTarget, TrustedOrigin
@@ -191,7 +196,9 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         adapter = AdapterRegistration("model", "owned-authority-model-v1", "1", forbidden_factory, connection_kind="model")
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
                                  handoff_targets={self.target.reference: self.target},
-                                 trusted_connections={"owned-source-model": connection}, runtime_adapters=[adapter])
+                                 trusted_connections={"owned-source-model": connection}, runtime_adapters=[adapter],
+                                 usage_pricing=(PricingRevision("owned-authority-model-v1", "1", "local-synthetic",
+                                     "factory-synthetic-v1", "owned-authority-zero-v1", local_model_type=DemoModel),))
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
@@ -205,12 +212,19 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.transport = OriginAuthorityTransport(base_url=self.loopback.url, origin_ref=self.target.origin_ref,
             target_ref=self.target.reference, target_revision=self.target.configuration_revision,
             target_fingerprint=self.target.fingerprint, receiver_identity_map=self.target.identity_map,
+            # Full-suite DB/GC scheduling is outside this authorization test.
+            # Transport timeout behavior has separate bounded adverse tests.
+            timeout_seconds=10,
             credential_provider=lambda _: self.auth._issue_native_token("bob"))
         self.plan = self.state["composition"].create_plan("alice", "Checksum controlled authority fixture", "literature", "checksum")
         self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
 
     def call(self, tool="checksum"):
-        return self.transport("alice", self.placement["task_id"], self.placement["manifest_hash"], tool)
+        try:
+            return self.transport("alice", self.placement["task_id"], self.placement["manifest_hash"], tool)
+        except HTTPException as error:
+            error.add_note(f"Actual authority failure: {error.detail}; transport cause: {type(error.__cause__).__name__}")
+            raise
 
     def body(self, **changes):
         return {"schema": 1, "originRef": self.target.origin_ref, "targetRef": self.target.reference, "originOwner": "alice",
@@ -249,15 +263,105 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
 
     def test_actual_current_source_and_receiver_native_grants_cannot_be_replaced_by_request(self):
+        self._native_grant_transition(observe_revocation=False)
+
+    def test_observed_revocation_survives_role_restoration_and_only_fresh_task_gets_authority(self):
+        self._native_grant_transition(observe_revocation=True)
+
+    def test_authority_cleanup_flag_and_failure_reason_are_atomically_visible(self):
+        observer = self.state["lifecycle_observer"]
+        loop = observer._task.get_loop()
+        asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
+        self.auth.authorization.define_role("authority-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
         self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.authorization.assign("alice", "authority-reader")
+        self.auth.require("alice", "read")
+        self.assertEqual(self.auth.authorization.roles_of("alice"), ["authority-reader"])
         with self.assertRaises(HTTPException):
+            self.auth.require("alice", "run")
+        task = self.store.task(self.placement["task_id"], "alice")
+        at_failure_event, release = threading.Event(), threading.Event()
+        original_event = self.store.event
+
+        def pause_before_failure(*args, **kwargs):
+            if args[1] == "protected_denied":
+                at_failure_event.set()
+                if not release.wait(10):
+                    raise TimeoutError("Cleanup visibility barrier was not released")
+            return original_event(*args, **kwargs)
+
+        # Pause only the writer's scheduling. A separate real HTTP/DB reader
+        # must never see failure-driven cleanup as ordinary user cancellation.
+        with patch.object(self.store, "event", side_effect=pause_before_failure), ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(observer._mark_cancel, task, "current-authority-ended")
+            try:
+                self.assertTrue(at_failure_event.wait(5))
+                with self.assertRaises(HTTPException) as denied:
+                    self.call()
+                self.assertEqual(denied.exception.status_code, 403)
+                self.assertFalse(self.store.task(task["id"], "alice")["cancel_requested"])
+                self.assertFalse(self.store.has_failures(task["id"]))
+            finally:
+                release.set()
+                pending.result(timeout=5)
+        self.assertTrue(self.store.task(task["id"], "alice")["cancel_requested"])
+        self.assertTrue(self.store.has_failures(task["id"]))
+        self.assertTrue(self.store.failure_cleanup_requested(task["id"]))
+        with self.assertRaises(HTTPException) as committed:
             self.call()
+        self.assertEqual(committed.exception.status_code, 403)
+        self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
+        self.assertIsNone(self.store.task(task["id"], "alice")["run_id"])
+        self.assertEqual(self.provider_calls, [])
+
+    def _native_grant_transition(self, *, observe_revocation):
+        # Control only scheduling, on the actual service loop. Both cases still
+        # use real native grants, the real observer and loopback HTTP authority.
+        # A periodic tick during withdrawal commits sticky task cancellation;
+        # restoring a role must never be mistaken for reviving that mandate.
+        observer = self.state["lifecycle_observer"]
+        self.assertIsNotNone(observer._task)
+        loop = observer._task.get_loop()
+        asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
+        original = self.placement
+        self.auth.authorization.unassign("alice", "factory-user")
+        with self.assertRaises(HTTPException) as withdrawn:
+            self.call()
+        self.assertEqual(withdrawn.exception.status_code, 403,
+                         f"{withdrawn.exception.detail}; cause={withdrawn.exception.__cause__!r}")
+        self.assertFalse(self.store.task(original["task_id"], "alice")["cancel_requested"],
+                         "The authority read alone must not commit lifecycle cleanup")
+        if observe_revocation:
+            result = asyncio.run_coroutine_threadsafe(observer.observe_root(original["task_id"]), loop).result(timeout=5)
+            self.assertEqual(result["requested"], [original["task_id"]])
+            self.assertEqual(result["errors"], [])
+            self.assertFalse(result["allStopped"], "Missing receiver/native acknowledgement must retain capacity")
+            self.assertTrue(self.store.task(original["task_id"], "alice")["cancel_requested"])
+            self.assertTrue(self.store.has_failures(original["task_id"]))
+
         self.auth.authorization.assign("alice", "factory-user")
-        self.assertEqual(self.call().tools, frozenset({"checksum"}))
+        if observe_revocation:
+            # This is the previously intermittent CI outcome, now required.
+            with self.assertRaises(HTTPException) as ended:
+                self.call()
+            self.assertEqual(ended.exception.status_code, 403)
+            self.assertIn("ORIGIN_AUTHORITY_DENIED", str(ended.exception.detail))
+            self.assertTrue(self.store.task(original["task_id"], "alice")["cancel_requested"])
+            self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
+            self.assertNotEqual(self.placement["task_id"], original["task_id"])
+        authority = self.call()
+        self.assertEqual(authority.tools, frozenset({"checksum"}))
+        self.assertEqual(authority.capabilities, frozenset({"checksum:read"}))
+        self.assertFalse(self.store.task(self.placement["task_id"], "alice")["cancel_requested"])
         self.auth.authorization.unassign("bob", "factory-user")
-        with self.assertRaises(HTTPException):
+        with self.assertRaises(HTTPException) as receiver:
             self.call()
+        self.assertEqual(receiver.exception.status_code, 403)
         self.assertEqual(self.post(self.body(ownerId="manager", role="manager")).status_code, 422)
+        self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
+        self.assertIsNone(self.store.task(original["task_id"], "alice")["run_id"])
+        self.assertIsNone(self.store.task(self.placement["task_id"], "alice")["run_id"])
+        self.assertEqual(self.provider_calls, [])
 
     def test_current_material_application_adapter_and_policy_withdrawals_each_deny(self):
         # Each fixture has fresh immutable seed versions; no archive is restored.

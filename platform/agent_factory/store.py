@@ -29,12 +29,24 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def effect_unresolved(effect):
+    """Native terminal state does not prove an ORX process tree has stopped."""
+    if effect.get("status") not in {"DONE", "CANCELLED"}:
+        return True
+    if str(effect.get("effect_key", "")).endswith(":orx-experiment-launch-v1"):
+        result = effect.get("result")
+        proof = result.get("stopEvidence") if isinstance(result, dict) else None
+        return not isinstance(proof, dict) or proof.get("allStopped") is not True
+    return False
+
+
 class Store:
     def __init__(self, url, settings):
         self.engine = create_engine(url, pool_pre_ping=True)
         self.settings = settings
         self.auth: Any = None
         self.delegation: Any = None
+        self.storage: Any = None
         self.native_db: Any = None
         self.plan_policy: Any = None
         self.material_governance: Any = None
@@ -44,8 +56,10 @@ class Store:
         self.composition: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
+        self.handoff_receiver: Any = None
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
+        self.usage_ledger: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
@@ -80,7 +94,13 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS af_control_commands (owner_id TEXT NOT NULL, command_id TEXT NOT NULL, task_ref TEXT NOT NULL, root_task_id TEXT NOT NULL REFERENCES af_tasks(id), action TEXT NOT NULL, fingerprint TEXT NOT NULL, requirement_slot TEXT, state TEXT NOT NULL, body JSONB NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner_id,command_id), UNIQUE(owner_id,requirement_slot))",
+            "CREATE INDEX IF NOT EXISTS af_control_commands_owner_task ON af_control_commands(owner_id,task_ref)",
+            "CREATE TABLE IF NOT EXISTS af_disk_holds (task_id TEXT PRIMARY KEY REFERENCES af_tasks(id),owner_id TEXT NOT NULL,bytes BIGINT NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS af_storage_objects (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,task_id TEXT NOT NULL REFERENCES af_tasks(id),root_id TEXT NOT NULL,evidence BOOLEAN NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL,identity JSONB NOT NULL DEFAULT '{}'::jsonb)",
+            "CREATE TABLE IF NOT EXISTS af_retention_plans (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,object_id TEXT NOT NULL REFERENCES af_storage_objects(id),request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,body JSONB NOT NULL,UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
+            "CREATE TABLE IF NOT EXISTS af_inference_waits (task_id TEXT PRIMARY KEY REFERENCES af_tasks(id), body JSONB NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_resources (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL)",
@@ -89,6 +109,14 @@ class Store:
         ]
         for statement in statements:
             self.sql(statement)
+        # Upgrade safety: a pre-fix DONE row without kernel stop proof must not
+        # retain a released slot merely because the application was restarted.
+        # Preserve immutable effect/result hashes; only re-hold task capacity.
+        self.sql("""UPDATE af_tasks task SET terminal=FALSE WHERE task.terminal AND EXISTS(
+            SELECT 1 FROM af_effects effect WHERE effect.task_id=task.id
+            AND effect.effect_key=task.run_id || :suffix
+            AND effect.result->'stopEvidence'->'allStopped' IS DISTINCT FROM 'true'::jsonb)""",
+            suffix=":orx-experiment-launch-v1")
         mode = "demo" if self.settings.demo else "production"
         self.sql("INSERT INTO af_bootstrap VALUES('mode',:mode) ON CONFLICT DO NOTHING", mode=mode)
         if self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")[0]["mode"] != mode:
@@ -164,10 +192,14 @@ class Store:
                 active = conn.execute(text("SELECT id,run_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL")).mappings().all()
                 for candidate in active:
                     native = self.native_db.get_job(candidate["run_id"]) or {}
-                    uncertain = conn.execute(text("SELECT 1 FROM af_effects WHERE task_id=:id AND status='UNKNOWN' LIMIT 1"), {"id": candidate["id"]}).first()
+                    uncertain = any(effect_unresolved(effect) for effect in conn.execute(
+                        text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
+                        {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
                     if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending:
                         conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
+                        if self.storage is not None:
+                            self.storage.release(candidate["id"])
             old = conn.execute(text("SELECT * FROM af_tasks WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
             if old:
                 if old["fingerprint"] != fp:
@@ -183,6 +215,8 @@ class Store:
                                {"id": task_id, "owner": owner, "plan": plan["id"], "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
                 raise RuntimeError("Task reservation did not persist")
+            if self.storage is not None:
+                self.storage.reserve(task_id, owner)
         self.event(task_id, "admission_reserved", "Scoped task reserved; native queue acceptance pending", {"planId": plan["id"]})
         return dict(row), True
 
@@ -302,6 +336,8 @@ class Store:
         return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
 
     def observed(self, task, status, terminal):
+        if terminal and self.storage is not None:
+            self.storage.release(task["id"])
         if task["body"].get("lastStatus") != status:
             body = {**task["body"], "lastStatus": status, "updatedAt": now()}
             self.sql("UPDATE af_tasks SET body=CAST(:body AS JSONB),terminal=:terminal WHERE id=:id", id=task["id"], body=canonical(body), terminal=terminal)
@@ -310,8 +346,10 @@ class Store:
             self.sql("UPDATE af_tasks SET terminal=:terminal WHERE id=:id", id=task["id"], terminal=terminal)
 
     def request_cancel(self, task_id):
-        self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
-        self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
+        with self.transaction():
+            self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
+            self.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:id AND state IN ('WAITING','RESUMING')", id=task_id)
+            self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):
         return self.task(identifier)["cancel_requested"]
@@ -329,6 +367,8 @@ class Store:
 
     def effect_complete(self, run_id, key, result):
         status = "CANCELLED" if isinstance(result, dict) and result.get("cancelled") else "DONE"
+        if effect_unresolved({"effect_key": run_id + ":" + key, "status": status, "result": result}):
+            raise ValueError("ORX terminal effect requires positive process-stop evidence")
         self.sql("UPDATE af_effects SET status=:status,result=CAST(:result AS JSONB) WHERE effect_key=:key", key=run_id + ":" + key, status=status, result=canonical(result))
 
     def effects(self, task_id):
@@ -350,7 +390,7 @@ class Store:
             root = self.remote_bindings._root(plan, context)
             if root is not None:
                 source = plan["executionBindings"]
-                effective = self.execution_bindings.manifest(plan, context=context)
+                effective = self.remote_bindings.historical_manifest(plan, context=context)
                 def descriptor(spec):
                     return {key: spec[key] for key in ("adapterId", "revision")}
                 provenance.update(modelAdapterId=effective["model"]["adapterId"],

@@ -2,28 +2,35 @@
 
 The target is complete factory/v0.3 functionality. This is a verified stage; production/scientific acceptance remains open. Tests exercise actual Agno/PostgreSQL/FastAPI behavior; model output alone is deterministic.
 
-| Capability | Current evidence / limits |
-|---|---|
-| Selected native platform | Agno 3.1.0 fixed upstream revision, eight critical installed files matched; exact native HTTP/queue/auth regression passed |
-| Material library | Six kinds, immutable versions/digests, separate-admin review, archive/withdrawal, inert import and current plan/ancestor guards; 19 focused tests plus actual browser acceptance |
-| Callable factory / FR16 | Approved generic application discovery, exact material alternatives, immutable propose/revise/reject/accept, specific preflight, actual native adapter dispatch and configurable exact-plan review are implemented; conservative production admin-review default, live providers not configured or exercised |
-| Snapshot/durability | One registered executor, native queue recovery after hard kill; old plan preserved across newer publication; no upstream fork/nested loop |
-| Second application | Actual-input checksum through same factory/executor, tested; frontend prioritizes Auto-Research |
-| Identity/access | Native managed roles/directory, same-token revoke/disable, current tool checks, owner-only plan/job/artifact; production identity provisioning pending |
-| Lifecycle/HITL | Native input question, exact-version confirmation, continuation, paused/run cancellation, cleanup and artifact hashes passed actual PostgreSQL API tests |
-| Idempotency/effects | Identical replay reuses task; changed payload 409; unknown receipt/effect refuses blind retry/release; original-key read-only receipt and real TCP ACK-loss/restart checks passed |
-| Evidence | Actual synthetic subprocess metrics/evaluator/dataset/runtime/output provenance; scientific success explicitly unverified |
-| Remote resources | Persistent reference/lease service and API; actual native metadata attach, synthetic lifecycle recovery tests; trusted Factory prepare/dispatch/receipt and product routing pass controlled two-app tests; real endpoints/providers unverified |
-| OpenResearch | Exact-source CLI contract adapter and real subprocess fixture tests; exact-source 0.2.13 build and actual adapter preflight passed; one bounded actual OpenAlex discovery through the pinned adapter passed; registered discovery passes controlled native integration; real integrated research and ORX experiment execution remain unverified |
-| Frontend | Real backend polling, preflight/jobs/questions/approval/cancel/artifact and manager UI; browser evidence recorded separately |
-| Delegation | Independent native tickets, inherited current rights, depth/count/shared durable tool budget, group state/cascade, no child-plan reuse; 13 actual PostgreSQL tests including side-effect spies |
-| Schedules | One public native poller, immutable-plan/owner/occurrence admission and guarded HTTP API; 7 original plus 9 guarded hard-process/restart/takeover tests; native unconditional lease-release race remains |
-| Isolation/operations | Fixed demo child containment tested; twenty-user bounded native admission and clean-stop official PG17.11 restore passed; full hostile-code tenancy, egress, PITR/RPO/RTO, monitoring and target load acceptance pending |
-| Live acceptance | Requires explicit approved provider/model budget, real integrated ORX output, production OS/identity and authorized remote endpoints |
+## Current matrix
 
-The 32-core/64-GB and 54-core/192-GB single-server profiles are capacity targets, not measured benchmarks. The initial native concurrency cap is two. Current fact/inspection calls bypass the model queue.
+Current cloud stage: bounded local AT10 inference recovery, following accepted
+Linux literature/least-capability stage `89891d4`. Historical stage sections below
+retain their original evidence; superseded “pending” statements are not current.
 
-The mapped actual-backend contract coverage and explicit remote handoff/replay gaps are recorded in [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md). Controlled native cancellation tests prove query-schema compatibility and cancellation intent, not external process cleanup.
+| Capability | Current evidence | Remaining boundary |
+|---|---|---|
+| Native factory and governance | Agno 3.1.0/PostgreSQL; six material kinds, immutable publication/versions, generic composition, scoped plan review, native queue/HITL, delegation, replay and owner-only artifacts | Complete production/scientific acceptance is not implied |
+| Linux ORX experiments | Exact approved binary, real fixed toy evaluator, resource containment, cancellation/restart/receipts and positive stop evidence | Fixed reviewed programs, not hostile-code tenancy; Windows has separate unverified opt-ins |
+| Literature/source package | Revision-2 selected Linux resource bounds; paper/text tools; source ID/URL/hash/excerpt/locator/missing-text state; native controlled-source report/ZIP/download tests | Actual PubMed query failed connectivity; zero sources in measured report; no live source-package or model synthesis success |
+| ORX receiver capabilities | Revision 1 preserved; revision 2 has per-tool read/compute pins and a common admitted experiment identity; receiver intersection guard unchanged | Actual two-app receiver composition passed (117.686 s), including one real toy run, common identity and reclaim; controlled ASGI is not deployed-host/TLS acceptance |
+| Identity | Native managed roles, current revocation checks, scoped jobs/artifacts and demo browser sessions | Production browser identity entry and provider/session integration are still code work |
+| Model costs | Immutable reviewed prices, durable per-attempt ledger/reservations, controlled retry/streaming/remote allocation tests; explicit zero-provider local contracts | Actual provider SDK integration and usage/retry guards are not implemented merely by supplying credentials |
+| Research workloads | Fixed reviewed toy recipe and immutable installed public-query profile | Mutable reviewed research inputs/workspaces, evaluators and approval/version rules need a selected workload contract |
+| AT10 external-work ownership | Bounded native inference pause over an acknowledged standalone Linux ORX v2 launch; durable same-run recovery and background original-work checks; actual local process-restart and safety cases | Narrow local contract; provider SDKs, Windows and delegated/receiver-owned recovery require separate integration/acceptance; see [AT10 scope](INFERENCE_RECOVERY.md) |
+| Storage and recovery | Scoped disk admission/observation, dry-run/quarantine/restore/reclaim; finite 20-user pressure; official online pg_dump with concurrent artifact writes and independent restore | Actual 4 CPU/16 GiB; not target-host load, PITR, external-workspace consistency, production RPO/RTO or unbounded admission fairness |
+| Remote execution | Approved mappings/current-origin authority, child ownership, UNKNOWN reconciliation and actual two-process controlled HTTP tests | Production remote endpoints, TLS and host authorization are not connected |
+| Frontend | Chinese composition/review/progress/receipts, evidence downloads and storage views; prior actual Chromium evidence | No production identity login or live model research claim |
+| Schedules | Single poller, immutable occurrence admission and guarded recovery | Native lease-release race means multiple replicas are not certified |
+
+See [literature contract and reproduction](LITERATURE_EVIDENCE.md),
+[storage measurements](STORAGE_OPERATIONS.md), [Linux ORX](LINUX_ORX.md),
+[control receipts](CONTROL_COMMANDS.md) and [backend contracts](BACKEND_CONTRACTS.md).
+The 32-core/64-GB and 54-core/192-GB machines remain capacity targets. Inspection
+calls bypass the model queue. Historical test counts below must not be reused as
+new-head CI results.
+
+## Historical stage records
 
 ## Configurable plan-review stage
 
@@ -87,3 +94,90 @@ proof, resumes only the original plan/target/request key and hides native contro
 until a verified receiver task exists. Exact parent-application child modes are
 projected from current immutable scope. Supported browser evidence and complete
 test counts are recorded in VERIFICATION.md.
+
+## Actual Linux ORX / usage ledger: accepted bounded evidence
+
+The earlier local WIP handoff is superseded by the cloud evidence recorded in
+[VERIFICATION.md](VERIFICATION.md), [LINUX_ORX.md](LINUX_ORX.md) and
+[Linux ORX evidence](evidence/linux-orx-2026-10-02.json). The pinned Linux binary
+was independently reproduced; 10 actual local adapter and 6 actual native Factory
+cases have separate focused evidence. Actual Factory hard interruption/restart,
+original-run recovery and the seven-phase Chromium workflow were also exercised.
+The usage-ledger implementation and dual-process accounting have native
+PostgreSQL evidence. These are bounded local toy experiments and synthetic
+provider usage, not live research or production tenancy acceptance.
+
+At exact commit `2b738ac5377115be122e3b512992a9b2a6471860`, both push and PR CI
+passed all five jobs. Each PostgreSQL run executed 387 tests, with 352 passes and
+35 explicit opt-in skips. The 35 are exactly:
+
+| Category | Count | Missing CI opt-in / boundary |
+|---|---:|---|
+| Actual Linux local ORX adapter | 10 | Pinned binary/source and task-owned Docker containment |
+| Actual Linux ORX native Factory | 6 | Same toolchain/container plus actual PG integration opt-in |
+| Actual Windows local ORX adapter | 10 | Pinned Windows binary/source and Windows containment |
+| Actual Windows ORX native Factory | 6 | Windows containment, pinned toolchain and native PG opt-in |
+| Exact-binary ORX preflight | 2 | Explicit binary and digest |
+| Official clean PostgreSQL dump/restore | 1 | Opt-in `FACTORY_PG_BIN` tools |
+
+A skip is neither a failure nor evidence of runtime success. The 16 Linux actual
+cases have separate evidence; they do not certify the 16 Windows cases. In
+particular, the historical Windows native connection-revocation acceptance was
+not passed and remains unverified on Windows. Cross-platform static/unit CI does
+not replace that runtime acceptance. The clean-stop dump/restore case has separate
+local evidence; it is not live-write recovery acceptance.
+
+[The original cloud handoff](CLOUD_HANDOFF.md) is preserved as a superseded
+historical checkpoint. Durable control-command receipts/recovery are described in
+[CONTROL_COMMANDS.md](CONTROL_COMMANDS.md), with native/remote fault tests, actual
+service exits, four Chromium restart/identity cases and actual Linux ORX
+approval/cancel receipt recovery. Final CI for this milestone is tracked in the
+draft PR; the exact-head counts above describe the earlier completed checkpoint. Disk admission/retention/monitoring, fair-load acceptance,
+live-write restore and remote actual ORX remain separate pending work.
+
+## Single-host storage and recoverable operations (cloud, 2026-10-02)
+
+This stage adds conservative disk admission, owner-scoped observations and an
+explicit dry-run/quarantine/restore/manifest-reclaim protocol. Default permanent
+reclamation is disabled. The [operations guide](STORAGE_OPERATIONS.md) documents
+protected active/UNKNOWN/evidence/lease boundaries, bounded inventory, original
+container attribution, process-crash recovery and remaining production limits.
+
+Local PostgreSQL evidence: eleven storage safety/upgrade/audit tests plus two
+affected native/shared-budget tests passed (13 distinct cases); one actual service-exit/rename recovery
+test passed; one scoped runtime-attribution unit test passed. Chromium verified
+original-plan recovery after browser restart with zero automatic mutation POSTs,
+exact restored synthetic bytes, Bob/Alice isolation and a 390-pixel viewport.
+Only newly generated reconstructible fixture files were deleted.
+
+The final bounded pressure and online restore cases passed together (2 tests).
+[Configuration and measured limits](evidence/storage-pressure-2026-10-02.json),
+[occupancy/CPU/RSS curves](evidence/storage-pressure-2026-10-02.svg), and
+[raw bounded observations](evidence/storage-pressure-2026-10-02.csv) describe the
+actual 4-CPU/16-GiB cloud cgroup, not the two target host profiles. All twenty finite
+requests reached native progress; one deliberate UNKNOWN remained held after
+cleanup. Low water was injected, never produced by filling the filesystem.
+The finite retry workload is not a guarantee of fair admission under unbounded
+hot-user refills or mixed long-running production work.
+
+The [online snapshot receipt](evidence/online-restore-2026-10-02.json) records
+actual artifact commits overlapping official pg_dump and recovery into a different
+generated database. Confirmed-before artifacts survived, confirmed-after writes
+were excluded, and UNKNOWN was retained without a new ticket. This is not PITR,
+a production RPO/RTO claim, or consistency proof for external mutable workspaces.
+
+A read-only measurement of the previous owned stopped ORX container verified
+original ID/spec/name/image/scope attribution: writable layer 0 bytes, root filesystem
+logical size 1,107,740,089 bytes. Logical container size is not vfs physical allocation;
+no historical container, image cache or evidence directory was removed. Exact-head
+CI status is tracked on the draft pull request separately from these local proofs.
+
+During exact-head CI, `22efa08` passed its PR run (418 tests, 36 skipped), but its
+push run exposed one remote authority-cleanup race: a detail request used its
+pre-await task snapshot and projected a confirmed failure as ordinary cancellation.
+A deterministic stale-snapshot test reproduced the failure locally. The detail
+projection now rereads the current task after native/group awaits, preserving the
+atomically recorded failure cause. The regression and original authority-read test
+both pass locally; the original final-failure and positive-stop assertions remain
+unchanged. Neither the failed push nor the earlier passing PR is substituted for
+the corrected commit's exact-head CI.

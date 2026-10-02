@@ -1,5 +1,7 @@
+import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
+import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
 import { remoteHandoffState } from './remoteHandoffState.js';
-import type { UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
+import type { ControlReceipt, UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
@@ -33,6 +35,56 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
   return data as T;
 }
 const segment = encodeURIComponent;
+export function validateControlReceipt(value: unknown, owner: string, task?: string, commandId?: string): ControlReceipt {
+  if (!value || typeof value !== 'object') throw new ApiError('命令回执无效，请核对原请求。', 200, 'INVALID_RESPONSE');
+  const r = value as ControlReceipt;
+  const valid = r.ownerId === owner && typeof r.taskId === 'string' && (!task || r.taskId === task)
+    && typeof r.commandId === 'string' && /^[a-zA-Z0-9_.:-]{8,100}$/.test(r.commandId) && (!commandId || r.commandId === commandId)
+    && ['answer', 'approve', 'cancel'].includes(r.action) && /^[a-f0-9]{64}$/.test(r.fingerprint) && /^[a-f0-9]{64}$/.test(r.decisionSha256)
+    && ['INTENT_RECORDED', 'UNKNOWN', 'REJECTED', 'DECISION_RECORDED', 'EXECUTION_CONTINUING', 'STOP_CONFIRMED'].includes(r.state)
+    && r.intentRecorded === true && ['decisionRecorded', 'executionContinuing', 'stopConfirmed', 'canDispatch', 'acknowledged'].every(k => typeof (r as unknown as Record<string, unknown>)[k] === 'boolean')
+    && !!r.binding && r.binding.ownerId === owner && r.binding.taskId === r.taskId.split('~')[0]
+    && r.canDispatch === (r.state === 'INTENT_RECORDED')
+    && r.stopConfirmed === (r.state === 'STOP_CONFIRMED') && (!r.stopConfirmed || r.action === 'cancel' && r.decisionRecorded)
+    && r.executionContinuing === (r.state === 'EXECUTION_CONTINUING') && (!r.executionContinuing || r.decisionRecorded)
+    && r.decisionRecorded === ['DECISION_RECORDED', 'EXECUTION_CONTINUING', 'STOP_CONFIRMED'].includes(r.state)
+    && typeof r.createdAt === 'string' && typeof r.updatedAt === 'string';
+  if (!valid) throw new ApiError('回执身份、任务或决定状态不匹配，请核对原请求。', 200, 'INVALID_RESPONSE');
+  return r;
+}
+async function controlReceipt(owner: string, task: string, commandId: string, signal?: AbortSignal): Promise<ControlReceipt> {
+  return validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}`, 'GET', undefined, signal), owner, task, commandId);
+}
+async function submitControl(owner: string, task: string, command: ControlIntent): Promise<ControlReceipt> {
+  const { commandId: submittedId, ...decision } = command;
+  const expectedHash = await decisionFingerprint(decision);
+  const checked = (receipt: ControlReceipt) => {
+    if (receipt.decisionSha256 !== expectedHash || receipt.commandId !== submittedId) throw new ApiError('回执内容与原决定指纹不符。', 200, 'INVALID_RESPONSE');
+    return receipt;
+  };
+  try {
+    const receipt = validateControlReceipt(await request(`/jobs/${segment(task)}/commands`, 'POST', command), owner, task, command.commandId);
+    if (receipt.action !== command.action || (receipt.requirementId ?? undefined) !== command.requirementId
+        || (receipt.version ?? undefined) !== command.version || (receipt.approved ?? undefined) !== command.approved) throw new ApiError('回执决定与原命令不符。', 200, 'INVALID_RESPONSE');
+    return checked(receipt);
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 0 || error.status === 408 || error.status >= 500 || error.code === 'INVALID_RESPONSE')) {
+      // Only GET after a lost reply. The service alone can prove acceptance;
+      // neither a changed job status nor an empty network response permits POST.
+      try { return checked(await controlReceipt(owner, task, command.commandId)); } catch { /* Retain original durable pointer and uncertainty. */ }
+    }
+    throw error;
+  }
+}
+async function controlCommands(owner: string, task?: string, after?: string, signal?: AbortSignal): Promise<{ items: ControlReceipt[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ limit: '50', outstanding: 'true' });
+  if (task) params.set('taskId', task);
+  if (after) params.set('after', after);
+  const value = await request<{ items: unknown[]; nextCursor: string | null }>(`/commands?${params}`, 'GET', undefined, signal);
+  if (!Array.isArray(value?.items) || value.items.length > 50 || value.nextCursor !== null && typeof value.nextCursor !== 'string') throw new ApiError('待核对命令列表无效。', 200, 'INVALID_RESPONSE');
+  return { items: value.items.map(item => validateControlReceipt(item, owner, task)), nextCursor: value.nextCursor };
+}
+
 async function instantiate(planId: string, requestId: string, executionTargetRef?: string): Promise<FactoryJob> {
   try {
     const job = await request<FactoryJob>('/instances', 'POST', { planId, requestId, ...(executionTargetRef ? { executionTargetRef } : {}) });
@@ -212,6 +264,13 @@ async function inspectProposal(id: string, signal?: AbortSignal): Promise<Assemb
 }
 
 export const api = {
+  storage: async (owner: string, signal?: AbortSignal) => storageSummary(await request<StorageSummary>('/storage', 'GET', undefined, signal), owner),
+  retentionPlan: async (owner: string, objectId: string, requestId: string) => retentionReceipt(await request<RetentionReceipt>('/storage/retention/plans', 'POST', { objectId, requestId }), owner),
+  retention: async (owner: string, id: string) => retentionReceipt(await request<RetentionReceipt>(`/storage/retention/plans/${segment(id)}`), owner, id),
+  retentionAction: async (owner: string, id: string, action: 'quarantine' | 'restore' | 'purge') => retentionReceipt(await request<RetentionReceipt>(`/storage/retention/plans/${segment(id)}/${action}`, 'POST'), owner, id),
+  submitControl, controlReceipt, controlCommands,
+  dispatchControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/dispatch`, 'POST'), owner, task, commandId),
+  acknowledgeControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/acknowledge`, 'POST'), owner, task, commandId),
   applications, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal,
   draftApplication: async (definition: Record<string, unknown>, requestId: string) => application(await request('/applications/drafts', 'POST', { definition, requestId })),
   reviseApplication: async (id: string, version: number, definition: Record<string, unknown>, requestId: string) => application(await request(`${versionPath(id, version)}/revise`, 'POST', { definition, requestId })),

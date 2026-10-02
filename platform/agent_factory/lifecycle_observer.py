@@ -17,10 +17,12 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from agno.agent import Agent
+from agno.exceptions import RunCancelledException
 from agno.db.base import SessionType
 from fastapi import HTTPException
 
 from .remote_handoff import HandoffCancellationRequested
+from .store import effect_unresolved
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -109,6 +111,10 @@ class FactoryLifecycleObserver:
         if ticket and (ticket["status"] == "cancelled" or ticket.get("persistedRunStatus") == "cancelled"):
             return "native-ended"
         if ticket and ticket["status"] == "completed":
+            exact = task.get("run_id", "") + ":orx-experiment-launch-v1"
+            if any(effect.get("effect_key") == exact and effect_unresolved(effect)
+                   for effect in self.store.effects(task["id"])):
+                return "native-ended-unresolved-experiment"
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -149,17 +155,26 @@ class FactoryLifecycleObserver:
         return None
 
     def _mark_cancel(self, task: dict, reason: str) -> None:
-        changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
-                                 id=task["id"], owner=task["owner_id"])
-        if changed:
-            if reason == "current-authority-ended":
-                self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
-                                 {"boundary": "lifecycle", "createsExecution": False})
-            self.store.event(task["id"], "lifecycle_cleanup_requested", "Trusted lifecycle observation requested existing task cleanup",
-                             {"reason": reason, "nativeRunId": task.get("run_id"), "createsExecution": False})
+        # Readers classify cleanup from both the flag and its failure provenance.
+        # Publish them together so authority loss cannot look like user cancel.
+        with self.store.transaction():
+            self.store.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:task AND state IN ('WAITING','RESUMING')", task=task["id"])
+            changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
+                                     id=task["id"], owner=task["owner_id"])
+            if changed:
+                if reason == "current-authority-ended":
+                    self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
+                                     {"boundary": "lifecycle", "createsExecution": False})
+                self.store.event(task["id"], "lifecycle_cleanup_requested", "Trusted lifecycle observation requested existing task cleanup",
+                                 {"reason": reason, "nativeRunId": task.get("run_id"), "createsExecution": False})
 
     async def _cancel_bound(self, task: dict) -> None:
         ticket = self._binding(self.store.task(task["id"], task["owner_id"]))
+        # Detached experiment supervision belongs to the same persisted task.
+        # Cleanup validates its original handle/source/limits even after grants
+        # end. Native completion alone cannot prove that tree stopped.
+        from .orx_experiment_tools import reclaim_orx_experiment
+        await reclaim_orx_experiment(self.store.settings, self.store, task["id"])
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()
@@ -180,7 +195,7 @@ class FactoryLifecycleObserver:
             ticket = self._binding(task)
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
-        effects_unknown = any(effect["status"] not in {"DONE", "CANCELLED"} for effect in self.store.effects(task["id"]))
+        effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
@@ -195,6 +210,28 @@ class FactoryLifecycleObserver:
             raise ValueError("Trusted lifecycle cleanup requires persisted delegation bindings")
         requested: dict[str, dict] = {}
         errors = []
+        from .inference_wait import read as read_wait, observe as observe_wait
+        for current_task in self._group(root)[0]:
+            waiting = read_wait(self.store, current_task["id"])
+            if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
+                try:
+                    await asyncio.to_thread(observe_wait, self.store, current_task, waiting)
+                except Exception as error:
+                    if isinstance(error, RunCancelledException):
+                        continue
+                    latest = read_wait(self.store, current_task["id"])
+                    if not latest or latest["state"] not in {"WAITING", "RESUMING"} or latest["controlId"] != waiting["controlId"]:
+                        continue
+                    with self.store.transaction():
+                        changed = self.store.sql("""UPDATE af_inference_waits SET state='STOPPING'
+                            WHERE task_id=:task AND body->>'controlId'=:control AND state IN ('WAITING','RESUMING') RETURNING task_id""",
+                            task=current_task["id"], control=waiting["controlId"])
+                        if changed:
+                            self.store.event(current_task["id"], "protected_denied", "Bounded inference wait requires original-work cleanup",
+                                {"boundary": "inference-wait", "errorType": type(error).__name__,
+                                 "code": (str(error.detail).split(":", 1)[0] if isinstance(error, HTTPException)
+                                          and isinstance(error.detail, str) and error.detail.startswith(("INFERENCE_WAIT_", "USAGE_BUDGET_"))
+                                          else getattr(error, "code", None))})
         with service._root_lock(root["id"]):
             root = self.store.task(root["id"], root["owner_id"])
             tasks, links = self._group(root)

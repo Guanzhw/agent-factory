@@ -523,5 +523,79 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         finally:
             self.call(worker.start)
 
+
+    def test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection(self):
+        from agent_factory.factory_api import status_of
+        from agent_factory.orx_experiment_tools import LAUNCH_EFFECT_KEY
+        from agent_factory.store import canonical
+        root = self.task("Controlled terminal ORX metadata fault", application="checksum")
+        self.wait_native(root, {"completed"})
+        task = self.store.task(root)
+        run_id = task["run_id"]
+        self.store.effect_reserve(run_id, LAUNCH_EFFECT_KEY, {"syntheticFault": True})
+        for state in ("done", "failed", "cancelled"):
+            with self.subTest(state=state):
+                result = {"status": state, "cancelled": state == "cancelled",
+                          "stopEvidence": {"allStopped": False, "activeProcesses": 1}}
+                with self.assertRaisesRegex(ValueError, "positive process-stop"):
+                    self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY, result)
+                # Reproduce pre-fix persisted DONE, rather than claiming a real
+                # Windows orphan on this portable controlled-metadata fixture.
+                self.store.sql("UPDATE af_effects SET status='DONE',result=CAST(:body AS JSONB) WHERE effect_key=:key",
+                    body=canonical(result), key=run_id + ":" + LAUNCH_EFFECT_KEY)
+                self.store.sql("UPDATE af_tasks SET terminal=TRUE WHERE id=:id", id=root)
+                self.store.initialize()  # Pre-fix terminal capacity is re-held on upgrade.
+                self.assertFalse(self.store.task(root)["terminal"])
+                self.assertFalse(self.observer._facts(task)["stopped"])
+                self.assertIn("unresolved", self.observer._reason(task, self.observer._binding(task)))
+                group = self.call(self.store.delegation.inspect_group, "alice", root)
+                self.assertFalse(group["allStopped"])
+                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), []), "unknown")
+                self.store.reserve_task(self.store.plan(task["plan_id"], "alice"), task["request_id"])
+                self.assertFalse(self.store.task(root)["terminal"])
+        self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY,
+            {"status": "done", "stopEvidence": {"allStopped": True, "activeProcesses": 0}})
+        self.assertTrue(self.observer._facts(task)["stopped"])
+        self.assertTrue(self.call(self.store.delegation.inspect_group, "alice", root)["allStopped"])
+
+    def test_14_revoked_cleanup_checks_actual_persisted_launch_fingerprint(self):
+        from types import SimpleNamespace
+        from agent_factory.connections import ConnectionService, TrustedConnectionBinding
+        from agent_factory.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
+        from agent_factory.store import canonical, digest
+        root = self.task("Controlled cleanup-binding admission", application="checksum")
+        self.wait_native(root, {"completed"})
+        task = self.store.task(root)
+        handle = SimpleNamespace(create_experiment_adapter=lambda **kwargs: None)
+        registration = "cleanup-fixture-" + uuid4().hex
+        registry = {registration: TrustedConnectionBinding("alice", "orx", ADAPTER_ID,
+            frozenset({"research:read", "compute:local"}), "cleanup-fixture-v1", available=True,
+            opaque_handle=handle, handle_ref="inert-cleanup-handle")}
+        service = ConnectionService(self.store, self.auth, registry)
+        bound = service.bind("alice", registration, uuid4().hex)
+        pin = {key: bound[key] for key in ("ref", "version", "fingerprint", "revision", "capabilities", "taskId")}
+        request = {"ownerId": "alice", "taskId": root, "planId": task["plan_id"],
+                   "nativeRunId": task["run_id"], "connection": pin}
+        binding = {**request, "projectId": "controlled-project", "experimentId": "controlled-experiment"}
+        initialize_orx_experiments(self.store)
+        self.store.sql("INSERT INTO af_orx_task_experiments VALUES(:task,:owner,:plan,:run,CAST(:binding AS JSONB),:hash,CAST(:observation AS JSONB),:ohash)",
+            task=root, owner="alice", plan=task["plan_id"], run=task["run_id"], binding=canonical(binding), hash=digest(binding),
+            observation=canonical({}), ohash=digest({}))
+        self.store.effect_reserve(task["run_id"], LAUNCH_EFFECT_KEY, request)
+        self.assertNotIn("fingerprint", self.store.effects(root)[-1])  # Public projection deliberately omits it.
+        service.revoke("alice", pin["ref"], uuid4().hex)
+        with self.assertRaises(HTTPException):
+            service.resolve("alice", pin["ref"], "orx")
+        self.auth.authorization.unassign("alice", "factory-user")
+        self.assertIs(service.cleanup_handle("alice", pin, adapter_ref=ADAPTER_ID, task_id=root), handle)
+        self.store.sql("UPDATE af_effects SET fingerprint=:hash WHERE effect_key=:key",
+            hash="0" * 64, key=task["run_id"] + ":" + LAUNCH_EFFECT_KEY)
+        with self.assertRaises(HTTPException) as changed:
+            service.cleanup_handle("alice", pin, adapter_ref=ADAPTER_ID, task_id=root)
+        self.assertIn("durable launch intent", str(changed.exception.detail))
+        # Restore only this synthetic fixture so ordinary test teardown can run.
+        self.store.sql("UPDATE af_effects SET fingerprint=:hash WHERE effect_key=:key",
+            hash=digest(request), key=task["run_id"] + ":" + LAUNCH_EFFECT_KEY)
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useCommandKeys } from './commandKeys.js';
 import { PlanReviewGate } from './PlanReviews.js';
+import { UsageCommitmentSummary } from './UsageLedger.js';
+import { usageCommitment } from './usageLedgerState.js';
 import { kindNames, materialKey, type AssemblyProposal, type CompositionInput, type ExecutionTarget, type FactoryApplication, type FactoryMaterial, type MaterialReference, type Plan, type User, type UserConnection } from './models.js';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const message = (e: unknown) => e instanceof Error ? e.message : '装配状态无法确认。';
 const refKey = (ref: MaterialReference) => `${materialKey(ref)}:${ref.sha256}`;
-const modeName = (value: string) => ({ literature: '文献与证据', experiment: '实验探索' } as Record<string, string>)[value] ?? value;
+const modeName = (value: string) => ({ literature: '文献与证据', experiment: '实验探索', success: '真实 ORX toy 成功评估', evaluator_failure: '真实 ORX 评估器失败验收', cancellable: '真实 ORX 运行中取消验收' } as Record<string, string>)[value] ?? value;
 const budgetNames: Record<string, string> = { toolCalls: '工具调用', maxDepth: '最大委派深度', maxChildren: '累计子任务', experimentSeconds: '实验秒数', outputBytes: '产物字节' };
 
 function adapterNames(bindings: Record<string, unknown> | null): string[] {
@@ -99,11 +101,12 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     });
   }
   async function instantiate() {
-    if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent) return;
+    if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
     await act('instantiate', async () => { const key = await keys('instantiate', { planId: plan.id, executionTargetRef: target || null }); try { const job = await api.instantiate(plan.id, key.requestId, target || undefined); onCreated(job.id); } catch (e) { setRefresh(n => n + 1); throw e; } });
   }
   function startAgain() { rememberProposal(); setRestored(true); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setChoices({}); setConnectionRefs({}); uncertainRevision.current = undefined; }
   const candidate = proposal?.candidate;
+  const usageVerified = plan?.usageBudget === undefined || !!usageCommitment(plan.usageBudget);
   const bound = plan?.bindingManifest?.connections;
   const bindingsCurrent = !bound || typeof bound === 'object' && Object.values(bound).every(pin => pin && typeof pin === 'object' && typeof pin.ref === 'string' && connections.some(item => item.ref === pin.ref && item.available && item.fingerprint === pin.fingerprint));
   const choiceSignature = (value: Record<string, MaterialReference>) => Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([slot, ref]) => `${slot}:${refKey(ref)}`).join('|');
@@ -120,7 +123,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     </form>
     {candidate && <div className="preflight"><div className="section-heading"><h3>装配提案</h3><span className={`badge ${candidate.status === 'ready' ? 'status-ready' : 'status-blocked'}`}>{candidate.status === 'ready' ? '预检通过' : '预检存在缺项'}</span></div><p className="normalized-goal">{candidate.normalizedGoal}</p><p className="quiet">应用 {applications.find(item => item.id === candidate.application)?.name ?? candidate.application} · v{candidate.applicationRef.version} · {modeName(candidate.mode)} · {({ pending: '等待你的决定', revised: '已被新提案修订', rejected: '已拒绝', accepted: '已固定为方案' })[proposal!.state]}</p>
       {candidate.syntheticFixture && <div className="state-note">合成演示适配器：装配与生命周期可验证，文献和实验结果不能作为真实研究证据；不会调用付费模型。</div>}
-      <dl className="plan-details"><dt>六类固定材料</dt><dd>{Object.entries(kindNames).map(([kind, name]) => <div className="application-material-group" key={kind}><strong>{name}</strong>{candidate.materialRefs.filter(ref => candidate.materials.find(item => refKey(item) === refKey(ref))?.kind === kind).map(ref => <span className="material-chip" key={refKey(ref)}>{candidate.materials.find(item => refKey(item) === refKey(ref))?.name ?? ref.id} <small>v{ref.version}</small></span>)}{!candidate.materials.some(item => item.kind === kind) && <span className="quiet">此方式未选择</span>}</div>)}</dd><dt>注册适配器</dt><dd>{adapterNames(candidate.executionBindings).map(name => <span className="material-chip" key={name}>{name}</span>)}{!candidate.executionBindings && '绑定尚未通过预检'}</dd><dt>工具</dt><dd>{candidate.tools.join('、') || '无工具'}</dd><dt>能力边界</dt><dd>{candidate.capabilities.join('、')}</dd><dt>固定预算</dt><dd>{Object.entries(candidate.budget).map(([key, value]) => <span className="material-chip" key={key}>{budgetNames[key] ?? key} {value}</span>)}</dd></dl>
+      <dl className="plan-details"><dt>六类固定材料</dt><dd>{Object.entries(kindNames).map(([kind, name]) => <div className="application-material-group" key={kind}><strong>{name}</strong>{candidate.materialRefs.filter(ref => candidate.materials.find(item => refKey(item) === refKey(ref))?.kind === kind).map(ref => <span className="material-chip" key={refKey(ref)}>{candidate.materials.find(item => refKey(item) === refKey(ref))?.name ?? ref.id} <small>v{ref.version}</small></span>)}{!candidate.materials.some(item => item.kind === kind) && <span className="quiet">此方式未选择</span>}</div>)}</dd><dt>注册适配器</dt><dd>{adapterNames(candidate.executionBindings).map(name => <span className="material-chip" key={name}>{name}</span>)}{!candidate.executionBindings && '绑定尚未通过预检'}</dd><dt>工具</dt><dd>{candidate.tools.join('、') || '无工具'}</dd><dt>能力边界</dt><dd>{candidate.capabilities.join('、')}</dd><dt>固定配置</dt><dd><pre className="reviewed-configuration">{JSON.stringify(candidate.config, null, 2)}</pre></dd><dt>固定预算</dt><dd>{Object.entries(candidate.budget).map(([key, value]) => <span className="material-chip" key={key}>{budgetNames[key] ?? key} {value}</span>)}</dd></dl>
       {candidate.missing.length > 0 && <ul className="missing-list">{candidate.missing.map((item, i) => <li key={i}>{item}</li>)}</ul>}
       <details className="technical-detail"><summary>准确版本、适配器与绑定依据</summary><span>提案 {proposal!.id}</span><span>指纹 {proposal!.fingerprint}</span><span>应用 {refKey(candidate.applicationRef)}</span><span>选择依据 {proposal!.selection.method} · {proposal!.selection.matchedKeywords.join('、') || '明确选择'}</span><pre>{JSON.stringify({ materialRefs: candidate.materialRefs, executionBindings: candidate.executionBindings, bindingManifest: candidate.bindingManifest }, null, 2)}</pre></details>
       {!accepted && pending && dirty && <p className="policy-note">当前修改尚未生成新提案；请先按当前选择修订，再接受新提案。</p>}
@@ -128,7 +131,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       <p className="policy-note">接受只固定方案，不会开始执行。修改会生成新的提案并保留原记录。能力、预算和适配器范围由已批准定义与后端检查决定。</p>
     </div>}
     {proposal?.state === 'accepted' && !plan && <div className="state-note"><p>服务端已接受此提案，但本页尚未收到最终方案。请核对原接受请求。</p><button className="secondary" disabled={!!busy || !ready} onClick={() => void accept()}>核对原接受请求</button></div>}
-    {plan && <div className="preflight"><h3>已固定的执行方案</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '通过当前授权检查后可创建临时实例。'}</p><PlanReviewGate key={plan.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{targets.length > 0 && <label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{targets.map(item => <option key={item.id} value={item.id}>{item.name} · 远程 Factory</option>)}</select></label>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待实例确认…' : '确认方案并创建任务'}</button><details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
+    {plan && <div className="preflight"><h3>已固定的执行方案</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '通过当前授权检查后可创建临时实例。'}</p><UsageCommitmentSummary value={plan.usageBudget}/><PlanReviewGate key={plan.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{targets.length > 0 && <label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{targets.map(item => <option key={item.id} value={item.id}>{item.name} · 远程 Factory</option>)}</select></label>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待实例确认…' : '确认方案并创建任务'}</button><details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
     {proposal && (!pending || accepted) && <button className="secondary wide" disabled={!!busy} onClick={startAgain}>开始新的装配</button>}
   </section>;
 }

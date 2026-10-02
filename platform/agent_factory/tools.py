@@ -93,6 +93,8 @@ class _WindowsJob:
 
 def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
     runtime_root = Path(getattr(settings, 'runtime_directory', '.local/runtime')).resolve()
+    if getattr(store, 'storage', None) is not None:
+        runtime_root = store.storage.directory(ctx.run_id, "synthetic-runtime")
     runtime_root.mkdir(parents=True, exist_ok=True)
     timeout = min(30.0, max(.1, float(getattr(settings, 'experiment_timeout_seconds', 5))))
     output_cap = min(1024 * 1024, max(1024, int(getattr(settings, 'experiment_output_bytes', 65536))))

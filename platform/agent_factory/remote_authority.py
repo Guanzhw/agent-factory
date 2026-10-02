@@ -57,6 +57,7 @@ class AuthorityScope(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=30)
     tools: list[str] = Field(min_length=1, max_length=30)
     budget: AuthorityBudget
+    usageGrantSha256: str | None = Field(default=None, pattern=HASH)
 
     @model_validator(mode="after")
     def identifiers(self):
@@ -136,7 +137,8 @@ the selected per-owner receiver mapping authorize only this read-only mandate.
             proof = (authority.origin_ref, authority.target_ref, authority.receiver_identity, authority.target_revision, authority.target_fingerprint)
             if proof != (body.originRef, body.targetRef, actor, body.targetRevision, body.targetFingerprint):
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: current source configuration proof differs")
-            scope = AuthorityScope.model_validate({"capabilities": sorted(authority.capabilities), "tools": sorted(authority.tools), "budget": dict(authority.budget)})
+            scope = AuthorityScope.model_validate({"capabilities": sorted(authority.capabilities), "tools": sorted(authority.tools), "budget": dict(authority.budget),
+                "usageGrantSha256": authority.usage_grant_sha256})
         except HandoffCancellationRequested as signal:
             if (signal.owner, signal.task_id, signal.manifest_hash) != (body.originOwner, body.originTaskId, body.manifestSha256):
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: cleanup signal differs") from signal
@@ -264,4 +266,5 @@ bearer, callback implementation, credential handle or secret digest.
             raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: no current execution mandate")
         return HandoffAuthority(frozenset(reply.authority.capabilities), frozenset(reply.authority.tools),
             reply.authority.budget.model_dump(), origin_ref=self.origin_ref, target_ref=self.target_ref,
-            receiver_identity=receiver, target_revision=self.target_revision, target_fingerprint=self.target_fingerprint)
+            receiver_identity=receiver, target_revision=self.target_revision, target_fingerprint=self.target_fingerprint,
+            usage_grant_sha256=reply.authority.usageGrantSha256)
