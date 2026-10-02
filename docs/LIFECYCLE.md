@@ -35,7 +35,7 @@ UNKNOWN effect, incomplete descendant binding or unavailable authorization store
 retains capacity. Remote-origin metadata has no local native ticket; it cannot
 be mistaken for locally stopped execution.
 
-Eleven actual PostgreSQL/native tests cover paused/queued/running cleanup without
+Twelve actual PostgreSQL/native tests cover paused/queued/running cleanup without
 UI detail polling, role revocation, no impersonation, exact-binding negatives,
 UNKNOWN preservation, stale ticket disagreement, historical failure beyond the
 display window, bounded rotation and real reviewed delegation before/after native
@@ -61,3 +61,16 @@ native hooks preserve cancellation without creating false failure events.
 Arbitrary permission denials, actual revocation and expiry retain failure reasons.
 Deterministic native tests force observation before receiver request delivery for
 both a paused descendant tree and an active experiment.
+
+Factory admission rejection can occur after an exact native ticket has already
+been acknowledged. That metadata decision does not erase the owned native work:
+the observer records `admission-rejected`, stops its existing tree and retains
+failure provenance. A delegation test separates denial before cleanup from
+positive whole-tree stop afterward. A deliberately mismatched ticket binding
+stays UNKNOWN with capacity held until the original binding is restored.
+The trusted callback reads origin state again during its execution target check.
+Cancellation can arrive between the first read and that later check. The trusted
+callback explicitly preserves the same exact cancellation signal on that second
+read after current owner, policy, target/configuration and immutable manifest
+validation. Other target callers retain their ordinary HTTP conflict; earlier
+failure-driven cleanup and arbitrary denials are not converted to cancellation.

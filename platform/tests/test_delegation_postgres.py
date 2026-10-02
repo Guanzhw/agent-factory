@@ -245,21 +245,76 @@ class DelegationPostgresTests(unittest.TestCase):
         self.wait_group(root["id"])
 
     def test_07_failed_parent_mandate_denies_protected_child(self):
-        root = self.parent()
-        child = self.child(root)["childTask"]
-        self.store.admission_failed(root["id"], "Known synthetic parent failure")
-        with self.assertRaises(PermissionError):
-            self.service.authorize_child(SimpleNamespace(run_id=child["run_id"], session_id=child["id"], user_id="alice"))
-        self.denied(409, self.service.create, "alice", child["id"], "sort", "literature", str(uuid4()))
-        # Metadata rejection cannot erase an actual acknowledged native ticket.
-        self.store.admission_failed(child["id"], "Controlled metadata/ticket race fixture")
-        self.assertFalse(self.store.task(root["id"])["terminal"])
-        self.assertFalse(self.store.task(child["id"])["terminal"])
-        group = self.call(self.service.inspect_group, "alice", root["id"])
-        self.assertEqual(group["parent"]["nativeStatus"], "paused")
-        self.assertFalse(group["parent"]["stopped"])
-        self.assertFalse(group["children"][0]["stopped"])
-        self.assertTrue(self.service.has_pending_children(root["id"]))
+        observer = self.state["lifecycle_observer"]
+        # Isolate metadata/native disagreement before positive cleanup. The
+        # actual autonomous observer is exercised explicitly in the second
+        # phase and has independent production-wired acceptance coverage.
+        self.call(observer.stop)
+        try:
+            root = self.parent()
+            child = self.child(root)["childTask"]
+            self.store.admission_failed(root["id"], "Known synthetic parent failure")
+            with self.assertRaises(PermissionError):
+                self.service.authorize_child(SimpleNamespace(run_id=child["run_id"], session_id=child["id"], user_id="alice"))
+            before_tasks = self.store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"]
+            before_links = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links")[0]["n"]
+            before_artifacts = {identifier: self.store.artifacts(identifier) for identifier in (root["id"], child["id"])}
+            before_effects = {identifier: self.store.effects(identifier) for identifier in (root["id"], child["id"])}
+            with mock.patch.object(self.bridge, "submit") as submit:
+                self.denied(409, self.service.create, "alice", child["id"], "sort", "literature", str(uuid4()))
+                submit.assert_not_called()
+            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"], before_tasks)
+            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links")[0]["n"], before_links)
+            # Metadata rejection cannot erase an actual acknowledged native
+            # ticket or release held capacity before authoritative stop.
+            self.store.admission_failed(child["id"], "Controlled metadata/ticket race fixture")
+            self.assertFalse(self.store.task(root["id"])["terminal"])
+            self.assertFalse(self.store.task(child["id"])["terminal"])
+            group = self.call(self.service.inspect_group, "alice", root["id"])
+            self.assertEqual(group["parent"]["nativeStatus"], "paused")
+            self.assertFalse(group["parent"]["stopped"])
+            self.assertFalse(group["children"][0]["stopped"])
+            self.assertTrue(self.service.has_pending_children(root["id"]))
+            # Rejected metadata still cannot authorize cancellation or stop
+            # proof for a mismatched native owner. Only the exactly bound child
+            # may settle; this parent ticket and its capacity remain held.
+            original_native = self.store.native_db.get_job
+            def mismatched_parent(identifier, *args, **kwargs):
+                ticket = copy.deepcopy(original_native(identifier, *args, **kwargs))
+                if identifier == root["run_id"]:
+                    ticket["user_id"] = "bob"
+                return ticket
+            with mock.patch.object(self.store.native_db, "get_job", side_effect=mismatched_parent):
+                held = self.call(observer.observe_root, root["id"])
+                parent_fact = next(fact for fact in held["facts"] if fact["taskId"] == root["id"])
+                self.assertTrue(parent_fact["unknown"])
+                self.assertFalse(parent_fact["stopped"])
+                self.assertFalse(held["allStopped"])
+                self.assertFalse(self.store.task(root["id"], "alice")["terminal"])
+                self.assertEqual(original_native(root["run_id"], strict=True)["status"], "paused")
+            # Cleanup is now driven through the same trusted wired observer,
+            # without owner detail polling or an execution grant change.
+            observed = self.call(observer.observe_root, root["id"])
+            self.assertEqual(observed["errors"], [], observed)
+            stopped = self.wait_group(root["id"])
+            self.assertTrue(stopped["allStopped"])
+            self.assertTrue(stopped["parent"]["failed"])
+            self.assertTrue(stopped["children"][0]["failed"])
+            self.assertTrue(any(event["type"] == "lifecycle_cleanup_requested" and event["data"].get("reason") == "admission-rejected"
+                                for event in self.store.events(root["id"])))
+            for identifier in (root["id"], child["id"]):
+                current = self.store.task(identifier, "alice")
+                self.assertTrue(current["cancel_requested"])
+                self.assertTrue(current["terminal"])
+                self.assertEqual(self.store.native_db.get_job(current["run_id"], strict=True)["status"], "cancelled")
+                self.assertEqual(self.store.artifacts(identifier), before_artifacts[identifier])
+                self.assertEqual(self.store.effects(identifier), before_effects[identifier])
+                self.assertTrue(self.store.failure_cleanup_requested(identifier))
+                self.assertTrue(self.store.has_failures(identifier))
+                self.assertEqual(current["body"]["lastStatus"], "failed")
+            self.assertTrue(self.store.has_failures(child["id"]))
+        finally:
+            self.call(observer.start)
 
     def test_08_running_experiment_cascade_confirms_cleanup(self):
         root = self.parent("experiment")

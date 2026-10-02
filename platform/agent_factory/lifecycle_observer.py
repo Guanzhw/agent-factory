@@ -97,6 +97,11 @@ class FactoryLifecycleObserver:
     def _reason(self, task: dict, ticket: dict | None) -> str | None:
         if task["cancel_requested"]:
             return "cancel-requested"
+        if task["admission"] == "rejected":
+            # A later metadata rejection does not erase an acknowledged native
+            # ticket. Its exact binding was checked before this observation;
+            # only native cleanup and positive stop proof can free capacity.
+            return "admission-rejected"
         if self.store.has_failures(task["id"]):
             return "protected-failure"
         if ticket and (ticket["status"] == "failed" or ticket.get("persistedRunStatus") == "error"):

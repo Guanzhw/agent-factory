@@ -151,3 +151,56 @@ Read-only downgraded owners retain exact facts while positive cleanup converges;
 new execution remains denied. Eleven observer regressions also passed. Earlier
 failed publication logs remain ignored local diagnostic evidence. Exact final
 remote SHA and its CI are checked after publication and recorded in the draft PR.
+
+## Deterministic metadata and cleanup phases
+
+A subsequent Linux CI exposed a timing-dependent old delegation assertion: the observer could cancel a failed child between its failure check and a new delegation request. The metadata/ticket-disagreement test now pauses only its generated fixture observer for the before-cleanup assertions, then invokes that same wired observer and proves positive native/group stop. It retains exact failure denial, no native submit/new task/link, no effects/artifacts and no capacity release before stop. The two acceptance phases also exposed missing background cleanup for a rejected Factory admission with an exactly acknowledged native ticket. An explicit admission-rejection cleanup cause now preserves failure provenance and stops that owned tree; uncertainty and mismatched bindings retain capacity.
+
+## Admission rejection publication checkpoint
+
+After the metadata/cleanup fix, the complete backend suite passed **all 204
+tests in 183.924 seconds** with actual PostgreSQL, official clean-stop
+dump/restore and exact ORX binary opt-ins enabled, with no skips. Complete Ruff
+and Pyright passed. Frontend code was unchanged from its thirteen client tests,
+lint/typecheck, production build and actual browser acceptance. The reviewed
+publication patch contained only project source, synthetic tests and documentation;
+the staged scan found no known credentials, private paths or runtime files.
+
+The deterministic rejection test retains the pre-cleanup denial and mismatched
+binding negative, then invokes the wired observer to establish positive native,
+effect and descendant stop. It also checks failure provenance, unchanged effects
+and artifacts, and no new native submission/task/link. Exact remote commit and
+both CI runs are verified after publication and recorded in the draft PR.
+
+One earlier complete run failed the active remote experiment cancellation check.
+Persisted diagnostics showed accepted admission and no prior failure: cancellation
+arrived between the trusted callback's first task read and its later target
+execution recheck. That later check must preserve the exact owner/task/manifest
+cancellation signal as well. Deterministic tests force this second read window;
+arbitrary denials and earlier genuine failures retain their failure provenance.
+A separate public paused-HITL case injects a clearly labeled prior protected
+failure at the second-check boundary and proves denial without continuation or
+new effects/artifacts. Policy-withdrawal acceptance first waits for actual native
+denial/cleanup evidence, then cancels and strictly retains the failed outcome.
+Those negatives exposed a receipt-projection defect: stopped canceled native
+work unconditionally replaced the Factory group failure with canceled. Receiver
+receipts now preserve full-history parent/descendant failure facts after positive
+stop; clean user cancellation remains canceled. Origin and frontend read the
+same retained outcome. No authority or stop-proof requirement was relaxed.
+Receiver read reconciliation no longer re-accepts an already-bound native run;
+repeated reads preserve terminal/admission decisions and reject a different
+observed native ID. The shared binding transition is also idempotent for the
+original run. A first late acknowledgement after rejection retains rejection
+and holds capacity until positive stop; execution-only resolution denies that
+rejected root before continuation or protected effects. Actual native acceptance
+covers both same-binding reads and this late-binding cleanup boundary.
+
+After the Windows execution transport recovered, all staged/unstaged changes were
+preserved in a private patch snapshot. The outstanding first-ACK status refresh
+passed a deterministic actual native queue test: the generated fixture worker is
+stopped until the committed ticket is found, so no input hook can bind it first.
+The same first receipt returns accepted/queued with the exact native ID, holds
+capacity and has no effects/artifacts; starting the real worker then pauses it,
+and repeated dispatch still has exactly one native submission. Frontend lint,
+typecheck, thirteen client tests and build were rerun successfully; npm audit
+found zero vulnerabilities. The local services bind only to loopback.

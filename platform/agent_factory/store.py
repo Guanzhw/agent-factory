@@ -185,7 +185,13 @@ class Store:
         return self.sql("SELECT * FROM af_tasks WHERE owner_id=:owner ORDER BY body->>'createdAt' DESC LIMIT 100", owner=owner)
 
     def accept(self, task_id, run_id):
-        rows = self.sql("UPDATE af_tasks SET run_id=:run,admission='accepted',terminal=FALSE WHERE id=:id AND (run_id IS NULL OR run_id=:run) RETURNING id", id=task_id, run=run_id)
+        # A repeated exact acknowledgment cannot renew admission or re-hold a
+        # positively stopped task. A first late binding still records native
+        # ownership and holds capacity, including after metadata rejection.
+        rows = self.sql("""UPDATE af_tasks SET run_id=:run,
+            admission=CASE WHEN run_id IS NULL AND admission!='rejected' THEN 'accepted' ELSE admission END,
+            terminal=CASE WHEN run_id IS NULL THEN FALSE ELSE terminal END
+            WHERE id=:id AND (run_id IS NULL OR run_id=:run) RETURNING id""", id=task_id, run=run_id)
         if not rows:
             raise InputCheckError("Task already bound to another native run")
 
@@ -211,6 +217,8 @@ class Store:
         task = self.task(ctx.run_id)
         if task["owner_id"] != ctx.user_id or task["id"] != ctx.session_id:
             raise InputCheckError("Run owner or session mismatch")
+        if task["admission"] == "rejected":
+            raise InputCheckError("Current task admission is rejected; execution denied")
         plan = self.plan(task["plan_id"], ctx.user_id)
         return {**plan, "taskId": task["id"], "runId": ctx.run_id}
 
@@ -261,11 +269,16 @@ class Store:
                 for row in self.sql("SELECT * FROM (SELECT * FROM af_events WHERE task_id=:id ORDER BY id DESC LIMIT 1000) AS recent ORDER BY id", id=task_id)]
 
     def has_failures(self, task_id):
-        # A bounded display window cannot erase an earlier protected failure.
-        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type IN ('tool_failed','protected_denied','experiment_failed')) AS failed", id=task_id)[0]["failed"])
+        # A bounded display window cannot erase an earlier protected failure
+        # or a persisted failure-driven cleanup cause. Explicit user/native
+        # cancellation is excluded, including known no-dispatch rejection.
+        return bool(self.sql("""SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND (
+            type IN ('tool_failed','protected_denied','experiment_failed') OR
+            type='lifecycle_cleanup_requested' AND data->>'reason' IN
+            ('protected-failure','current-authority-ended','native-failure','admission-rejected'))) AS failed""", id=task_id)[0]["failed"])
 
     def failure_cleanup_requested(self, task_id):
-        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure')) AS failed", id=task_id)[0]["failed"])
+        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
 
     def observed(self, task, status, terminal):
         if task["body"].get("lastStatus") != status:

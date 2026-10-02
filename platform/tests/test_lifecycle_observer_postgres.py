@@ -13,6 +13,8 @@ from unittest import mock
 from uuid import uuid4
 
 from agno.db.base import SessionType
+from agno.exceptions import InputCheckError
+from agno.run import RunContext
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -21,6 +23,7 @@ from agent_factory.config import Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
+from agent_factory.tools import build_tools
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -439,6 +442,86 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.call(self.wired.stop)
             policy.replace_configuration(PlanPolicyConfig(name=original["name"], revision=original["revision"]),
                                          expected_revision="lifecycle-reviewed-child")
+
+    def test_12_exact_native_ack_preserves_rejection_and_stop_and_denies_resumed_or_direct_effects(self):
+        """Controlled rejection/late-ACK phases; native queues/HITL are real."""
+        root = self.task()
+        native = self.wait_native(root, {"paused"})
+        original_task = self.store.task(root, "alice")
+        before_effects, before_artifacts = self.store.effects(root), self.store.artifacts(root)
+        before_bound_events = sum(event["type"] == "plan_bound" for event in self.store.events(root))
+        self.store.admission_failed(root, "Controlled metadata rejection after actual native pause")
+        self.store.accept(root, original_task["run_id"])
+        self.assertEqual(self.store.task(root)["admission"], "rejected")
+        self.assertFalse(self.store.task(root)["terminal"])
+        context = RunContext(run_id=original_task["run_id"], session_id=root, user_id="alice",
+            session_state={"factory_envelope": {"plan_ref": original_task["plan_id"], "user_id": "alice",
+                "task_id": root, "request_id": original_task["request_id"]}})
+        with self.assertRaisesRegex(InputCheckError, "admission is rejected"):
+            self.store.bind_run(context)
+        with self.assertRaisesRegex(InputCheckError, "admission is rejected"):
+            build_tools(self.settings, self.store)["literature_search"]("Denied controlled direct research", run_context=context)
+        self.assertEqual(self.native(root)["status"], "paused")
+        self.assertEqual(self.native(root)["attempt"], native["attempt"])
+        self.assertEqual(self.store.effects(root), before_effects)
+        self.assertEqual(self.store.artifacts(root), before_artifacts)
+        # Resume the real persisted HITL requirement through native HTTP. The
+        # execution-only current-admission guard must deny before domain work.
+        self.continue_native(root, answer="Controlled denied native continuation")
+        self.wait_native(root, {"completed", "failed", "cancelled"})
+        self.assertEqual(self.store.task(root)["admission"], "rejected")
+        self.assertEqual(self.store.effects(root), before_effects)
+        self.assertEqual(self.store.artifacts(root), before_artifacts)
+        self.assertFalse(any(event["type"] in {"scope_answered", "literature_fixture", "compute_started"}
+                             for event in self.store.events(root)))
+        self.assertEqual(sum(event["type"] == "plan_bound" for event in self.store.events(root)), before_bound_events)
+        observed = self.call(self.observer.observe_root, root)
+        self.assertEqual(observed["errors"], [], observed)
+        self.assertTrue(observed["allStopped"], observed)
+        self.assertTrue(self.store.failure_cleanup_requested(root))
+        settled_task, settled_events = self.store.task(root), self.store.events(root)
+        for _ in range(3):
+            self.store.accept(root, original_task["run_id"])
+            self.assertEqual(self.store.task(root), settled_task)
+        with self.assertRaises(InputCheckError):
+            self.store.accept(root, str(uuid4()))
+        self.assertEqual(self.store.task(root), settled_task)
+        self.assertEqual(self.store.events(root), settled_events)
+
+        worker = self.app.app.state.queue_worker
+        self.call(worker.stop)
+        try:
+            plan = self.request("POST", "/plans", 201,
+                json={"topic": "sort", "mode": "literature", "application": "research", "requestId": str(uuid4())})
+            request_id = str(uuid4())
+            waiting, fresh = self.store.reserve_task(plan, request_id)
+            self.assertTrue(fresh)
+            self.owned.append(waiting["id"])
+            receipt = self.call(self.bridge.submit, {**plan, "task_id": waiting["id"]}, "alice", request_id)
+            self.assertIsNone(self.store.task(waiting["id"])["run_id"])
+            # Inject metadata rejection after actual queue commit, before its
+            # delayed acknowledgment is bound. No worker executes this phase.
+            self.store.admission_failed(waiting["id"], "Controlled rejection before delayed exact native acknowledgment")
+            self.store.accept(waiting["id"], receipt["run_id"])
+            bound = self.store.task(waiting["id"], "alice")
+            self.assertEqual(bound["admission"], "rejected")
+            self.assertFalse(bound["terminal"], "Known queued native work must keep capacity held")
+            self.assertEqual(self.native(waiting["id"])["status"], "queued")
+            self.assertEqual(self.native(waiting["id"])["attempt"], 0)
+            observed = self.call(self.observer.observe_root, waiting["id"])
+            self.assertEqual(observed["errors"], [], observed)
+            self.assertTrue(observed["allStopped"], observed)
+            settled = self.store.task(waiting["id"])
+            self.assertTrue(settled["terminal"])
+            self.assertEqual(settled["admission"], "rejected")
+            self.assertEqual(self.native(waiting["id"])["status"], "cancelled")
+            self.store.accept(waiting["id"], receipt["run_id"])
+            self.assertEqual(self.store.task(waiting["id"]), settled)
+            self.assertEqual(self.store.effects(waiting["id"]), [])
+            self.assertEqual(self.store.artifacts(waiting["id"]), [])
+            self.assertFalse(any(event["type"] == "plan_bound" for event in self.store.events(waiting["id"])))
+        finally:
+            self.call(worker.start)
 
 if __name__ == "__main__":
     unittest.main()

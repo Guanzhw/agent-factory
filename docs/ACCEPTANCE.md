@@ -39,4 +39,4 @@ levels. Exact-source ORX build provenance does not certify a live research flow.
 
 Material governance, durable event replay, active-compute authority loss, capacity and clean-stop restore are documented separately in MATERIAL_GOVERNANCE.md, EVENT_REPLAY.md and OPERATIONS.md. Production scientific/external-host acceptance is still distinct from these actual native synthetic-provider checks.
 
-The main-wired lifecycle observer has eleven actual native tests, including pre-ACK and completed-child healthy-tree regressions. It reclaims only positively stopped groups and does not impersonate revoked users; cross-replica running signals remain unverified.
+The main-wired lifecycle observer has twelve actual native tests, including pre-ACK and completed-child healthy-tree regressions. It reclaims only positively stopped groups and does not impersonate revoked users; cross-replica running signals remain unverified.

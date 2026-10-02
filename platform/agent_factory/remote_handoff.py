@@ -342,7 +342,12 @@ class PreparedHandoffService:
         if row["state"] in {"UNKNOWN", "ACCEPTED"}:
             native = await self.bridge.find_run(task["id"], remote_owner)
             if native:
-                self.store.accept(task["id"], native["run_id"])
+                if not task.get("run_id"):
+                    self.store.accept(task["id"], native["run_id"])
+                elif task["run_id"] != native["run_id"]:
+                    raise HTTPException(409, "Receiver native ticket differs from the original task binding")
+                # Read recovery of an already-bound ticket must preserve its
+                # observed terminal state and any rejected-admission cause.
                 self.store.sql("UPDATE af_remote_handoffs SET state='ACCEPTED' WHERE id=:id AND state IN ('UNKNOWN','ACCEPTED')", id=identifier)
                 try:
                     native = await self.bridge.detail(native["run_id"], task["id"], remote_owner)
@@ -353,6 +358,9 @@ class PreparedHandoffService:
                     # read never erases a positively identified admission ticket.
                     native = {**native, "detailUnavailable": True}
             # No matching ticket is not proof that admission/effects did not run.
+        # A first recovered acknowledgement can change the persisted binding;
+        # project its current admission/cancellation facts in this same read.
+        task = self.store.task(task["id"], remote_owner)
         result = self._public(self._row(identifier, remote_owner), native)
         effects = self.store.effects(task["id"])
         group = await self.store.delegation.inspect_group(remote_owner, task["id"]) if getattr(self.store, "delegation", None) and native else None
@@ -363,7 +371,11 @@ class PreparedHandoffService:
         if group:
             application_status = application_group_status(application_status, group)
             if task["cancel_requested"]:
-                application_status = "canceled" if group["allStopped"] else "unknown" if group["unknown"] else "canceling"
+                # Native cancellation establishes stop, not success or cause.
+                # Preserve the group's full-history protected/native failure
+                # facts when trusted cleanup follows an earlier failure.
+                failed = group["parent"]["failed"] or any(child["failed"] for child in group["children"])
+                application_status = ("failed" if failed else "canceled") if group["allStopped"] else "unknown" if group["unknown"] else "canceling"
         result.update(effects=effects, artifacts=self.store.artifacts(task["id"]), group=group,
                       applicationStatus=application_status,
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
@@ -672,7 +684,8 @@ class TrustedHandoffClient:
             raise HTTPException(404, "Owner-bound remote placement not found")
         return rows[0]
 
-    def _target(self, owner: str, row: Mapping[str, Any], *, execution: bool = True) -> HandoffTarget:
+    def _target(self, owner: str, row: Mapping[str, Any], *, execution: bool = True,
+                native_cancellation: bool = False) -> HandoffTarget:
         self.auth.require(owner, "run" if execution else "read")
         if execution:
             self.store.require_current_policy()
@@ -681,7 +694,14 @@ class TrustedHandoffClient:
             raise HTTPException(409, "Trusted target identity/configuration is no longer valid")
         task = self.store.task(row["task_id"], owner)
         plan = self.store.plan(task["plan_id"], owner)
-        if task["run_id"] or execution and task["cancel_requested"] or digest(plan) != row["manifest_hash"]:
+        if task["run_id"] or digest(plan) != row["manifest_hash"]:
+            raise HTTPException(409, "Origin task/manifest authority is unavailable")
+        if execution and task["cancel_requested"]:
+            # The trusted authority callback may observe cancellation only on
+            # this second read. Preserve its exact verified cleanup signal;
+            # other target callers continue to receive an HTTP conflict.
+            if native_cancellation and not self.store.failure_cleanup_requested(task["id"]) and not self.store.has_failures(task["id"]):
+                raise HandoffCancellationRequested(owner, task["id"], row["manifest_hash"])
             raise HTTPException(409, "Origin task/manifest authority is unavailable")
         if execution and self.admission_guard:
             self.admission_guard(owner, plan)
@@ -896,7 +916,7 @@ class TrustedHandoffClient:
         task = self.store.task(task_id, owner)
         if task["cancel_requested"] and not self.store.failure_cleanup_requested(task_id) and not self.store.has_failures(task_id):
             raise HandoffCancellationRequested(owner, task_id, manifest_hash)
-        self._target(owner, row)
+        self._target(owner, row, native_cancellation=True)
         plan = self.store.plan(task["plan_id"], owner)
         if tool is not None and tool not in plan["tools"]:
             raise PermissionError("Origin plan denies this protected tool")

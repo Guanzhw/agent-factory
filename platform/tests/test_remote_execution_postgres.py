@@ -4,10 +4,12 @@ Only provider output and inter-app transport are synthetic: authenticated routes
 durable native admission, HITL, scoped delegation and fixed experiments are real.
 Controlled ASGI does not establish deployed-host, TLS or production identity proof.
 """
+from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -21,6 +23,7 @@ from pg_fixture import IsolatedPostgres
 from agent_factory.config import Settings
 from agent_factory.main import create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
+from agent_factory import tools as factory_tools
 
 
 class ControlledDispatchLoss(httpx.AsyncBaseTransport):
@@ -155,6 +158,35 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                                                             old.identity_map, old.headers, transport,
                                                             configuration_revision=old.configuration_revision)
 
+    @contextmanager
+    def pause_owned_native_origin_authority_recheck(self, origin_id, remote_id):
+        """Pause only this actual compute thread after its first cancel read."""
+        reached, release = threading.Event(), threading.Event()
+        owned_thread = []
+        original_outcome = factory_tools._experiment_outcome
+        original_target = self.handoff._target
+
+        def capture_owned_thread(settings, store, context, plan, stop_signal, authority_check=None):
+            if context.session_id == remote_id:
+                owned_thread.append(threading.get_ident())
+            return original_outcome(settings, store, context, plan, stop_signal, authority_check)
+
+        def pause_second_target_read(owner, row, *, execution=True, native_cancellation=False):
+            if (execution and native_cancellation and row["task_id"] == origin_id and
+                    threading.get_ident() in owned_thread and not reached.is_set()):
+                self.assertFalse(self.origin["store"].task(origin_id, owner)["cancel_requested"])
+                reached.set()
+                if not release.wait(10):
+                    raise AssertionError("Controlled native authority recheck was not released")
+            return original_target(owner, row, execution=execution, native_cancellation=native_cancellation)
+
+        with mock.patch.object(factory_tools, "_experiment_outcome", side_effect=capture_owned_thread), \
+             mock.patch.object(self.handoff, "_target", side_effect=pause_second_target_read):
+            try:
+                yield reached
+            finally:
+                release.set()
+
     def cancel_with_observation_before_receiver_delivery(self, origin_id, remote_id, descendants=()):
         """Force the real origin-intent/receiver-delivery race on every host."""
         original = self.handoff._request
@@ -170,7 +202,11 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                 self.assertEqual(observed["errors"], [], observed)
                 for identifier in (remote_id, *descendants):
                     self.assertTrue(self.receiver["store"].task(identifier)["cancel_requested"])
-                    self.assertFalse(self.receiver["store"].failure_cleanup_requested(identifier))
+                    self.assertFalse(self.receiver["store"].failure_cleanup_requested(identifier),
+                        {"receiverTask": self.receiver["store"].task(identifier),
+                         "receiverEvents": self.receiver["store"].events(identifier),
+                         "originTask": self.origin["store"].task(origin_id),
+                         "originEvents": self.origin["store"].events(origin_id), "observation": observed})
                 self.assertFalse(self.receiver["store"].has_failures(remote_id))
             return await original(owner, target, method, path, **kwargs)
 
@@ -368,16 +404,15 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         approval = detail["job"]["approvalDetail"]
         body = {"requirementId": approval["id"], "version": approval["version"], "approved": True}
         self.request("POST", f'/jobs/{job["id"]}/approve', expected=409, json={**body, "version": body["version"] + 1})
-        self.request("POST", f'/jobs/{job["id"]}/approve', json=body)
         remote_id = self.placement(job["id"])["body"]["receipt"]["remoteTaskId"]
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if any(event["type"] == "compute_started" for event in self.receiver["store"].events(remote_id)):
-                break
-            time.sleep(.02)
-        else:
-            self.fail("Actual fixed receiver experiment process did not start")
-        self.cancel_with_observation_before_receiver_delivery(job["id"], remote_id)
+        # Force cancellation after the trusted callback's initial false read,
+        # before its execution-target recheck, on the real compute thread.
+        # The receiver loop remains free to observe and issue native cleanup.
+        with self.pause_owned_native_origin_authority_recheck(job["id"], remote_id) as reached:
+            self.request("POST", f'/jobs/{job["id"]}/approve', json=body)
+            self.assertTrue(reached.wait(10), "Actual owned native authority recheck did not reach the controlled boundary")
+            self.assertTrue(any(event["type"] == "compute_started" for event in self.receiver["store"].events(remote_id)))
+            self.cancel_with_observation_before_receiver_delivery(job["id"], remote_id)
         stopped = self.wait(job["id"], {"canceled", "failed", "unknown"})
         self.assertEqual(stopped["job"]["status"], "canceled", stopped)
         self.assertTrue(stopped["snapshot"]["delegation"]["allStopped"])
@@ -387,6 +422,25 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertFalse(any(event["type"] == "experiment_completed" for event in stopped["events"]))
         self.assertFalse(self.receiver["store"].has_failures(remote_id), "Explicit trusted cancellation must not create failure provenance")
         self.assertFalse(self.receiver["store"].failure_cleanup_requested(remote_id))
+        self.assertEqual(self.ticket_count(self.origin), 0)
+        settled_tasks = (self.receiver["store"].task(remote_id, "bob"), self.origin["store"].task(job["id"], "alice"))
+        settled_events = (self.receiver["store"].events(remote_id), self.origin["store"].events(job["id"]))
+        settled_effects, settled_artifacts = self.receiver["store"].effects(remote_id), self.receiver["store"].artifacts(remote_id)
+        settled_tickets = self.ticket_count(self.receiver, remote_id)
+        self.assertTrue(all(task["terminal"] for task in settled_tasks))
+        with mock.patch.object(self.receiver["store"], "accept", wraps=self.receiver["store"].accept) as acceptance:
+            for _ in range(3):
+                repeated = self.origin_client.portal.call(self.handoff.receipt, "alice", job["id"])
+                self.assertTrue(repeated["allStopped"])
+                self.assertEqual(repeated["applicationStatus"], "canceled")
+                self.assertEqual(self.receiver["store"].task(remote_id, "bob"), settled_tasks[0])
+                self.assertEqual(self.origin["store"].task(job["id"], "alice"), settled_tasks[1])
+            acceptance.assert_not_called()
+        self.assertEqual(self.receiver["store"].events(remote_id), settled_events[0])
+        self.assertEqual(self.origin["store"].events(job["id"]), settled_events[1])
+        self.assertEqual(self.receiver["store"].effects(remote_id), settled_effects)
+        self.assertEqual(self.receiver["store"].artifacts(remote_id), settled_artifacts)
+        self.assertEqual(self.ticket_count(self.receiver, remote_id), settled_tickets)
         self.assertEqual(self.ticket_count(self.origin), 0)
 
     def test_09_remote_event_pages_preserve_receiver_stream_and_current_read_scope(self):

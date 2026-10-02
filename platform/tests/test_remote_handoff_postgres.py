@@ -214,24 +214,43 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         row = self.reserve()
         prepared = self.call(self.handoff.prepare, "alice", row["task_id"])
         original = self.remote["bridge"].submit
-        async def lose_ack(*args):
-            await original(*args)
-            raise httpx.ReadTimeout("Synthetic reply loss after actual native commit")
-        with mock.patch.object(self.remote["bridge"], "submit", side_effect=lose_ack) as submit:
-            with self.assertRaises(HTTPException) as caught:
+        worker = self.remote_app.app.state.queue_worker
+        # Keep the actual committed native ticket queued until its first read
+        # recovery. No native input hook can bind the task on our behalf.
+        self.call_remote(worker.stop)
+        try:
+            async def lose_ack(*args):
+                await original(*args)
+                raise httpx.ReadTimeout("Synthetic reply loss after actual native commit")
+            with mock.patch.object(self.remote["bridge"], "submit", side_effect=lose_ack) as submit:
+                with self.assertRaises(HTTPException) as caught:
+                    self.call(self.handoff.dispatch, "alice", row["task_id"])
+                self.assertEqual(caught.exception.status_code, 503)
+                self.assertEqual(self.handoff._row("alice", row["task_id"])["state"], "DISPATCH_UNKNOWN")
+                uncertain = self.remote["store"].task(prepared["remoteTaskId"], "bob")
+                self.assertIsNone(uncertain["run_id"])
+                self.assertEqual(uncertain["admission"], "unknown")
+                recovered = self.call(self.handoff.receipt, "alice", row["task_id"])
+                self.assertEqual(recovered["state"], "ACCEPTED")
+                self.assertTrue(recovered["remoteRunId"])
+                self.assertEqual(recovered["applicationStatus"], "queued", recovered)
+                bound = self.remote["store"].task(prepared["remoteTaskId"], "bob")
+                self.assertEqual(bound["run_id"], recovered["remoteRunId"])
+                self.assertEqual(bound["admission"], "accepted")
+                self.assertFalse(bound["terminal"])
+                self.assertFalse(recovered["allStopped"])
+                self.assertEqual(self.remote["store"].effects(bound["id"]), [])
+                self.assertEqual(self.remote["store"].artifacts(bound["id"]), [])
+                self.call_remote(worker.start)
+                self.wait_native(recovered, {"paused"})
                 self.call(self.handoff.dispatch, "alice", row["task_id"])
-            self.assertEqual(caught.exception.status_code, 503)
-            self.assertEqual(self.handoff._row("alice", row["task_id"])["state"], "DISPATCH_UNKNOWN")
-            recovered = self.call(self.handoff.receipt, "alice", row["task_id"])
-            self.assertEqual(recovered["state"], "ACCEPTED")
-            self.assertTrue(recovered["remoteRunId"])
-            self.wait_native(recovered, {"paused"})
-            self.call(self.handoff.dispatch, "alice", row["task_id"])
-            self.call_remote(self.receiver.dispatch, "bob", prepared["id"])
-            self.assertEqual(submit.await_count, 1)
-        self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), 1)
-        self.assertFalse(self.remote["store"].task(prepared["remoteTaskId"])["terminal"])
-        self.assertFalse(self.origin["store"].task(row["task_id"])["terminal"])
+                self.call_remote(self.receiver.dispatch, "bob", prepared["id"])
+                self.assertEqual(submit.await_count, 1)
+            self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), 1)
+            self.assertFalse(self.remote["store"].task(prepared["remoteTaskId"])["terminal"])
+            self.assertFalse(self.origin["store"].task(row["task_id"])["terminal"])
+        finally:
+            self.call_remote(worker.start)
 
     def test_04_lost_prepare_reply_owner_request_lookup_has_no_execution(self):
         row = self.reserve()
@@ -474,7 +493,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertEqual(self.ticket_count(self.origin), 0)
         self.assertTrue(self.call(self.handoff.receipt, "alice", row["task_id"])["allStopped"])
 
-    def test_14_cancel_after_origin_cancellation_and_policy_expiry_still_reconciles(self):
+    def test_14_cancel_after_established_policy_failure_preserves_failure_and_reconciles(self):
         row = self.reserve("Controlled remote experimental sorting fixture", "experiment")
         self.call(self.handoff.prepare, "alice", row["task_id"])
         receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
@@ -493,6 +512,19 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.fail("Actual receiver experiment did not start")
         self.origin_settings.temporary_policy = "unset"
         self.remote_settings.temporary_policy = "unset"
+        # Establish actual persisted authority failure before user cancellation.
+        # Both native compute and the trusted observer can notice policy expiry;
+        # cancellation must preserve that genuine earlier failure provenance.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if (self.remote["store"].has_failures(receipt["remoteTaskId"]) and
+                    self.remote["store"].failure_cleanup_requested(receipt["remoteTaskId"])):
+                break
+            time.sleep(.02)
+        self.assertTrue(self.remote["store"].has_failures(receipt["remoteTaskId"]))
+        self.assertTrue(self.remote["store"].failure_cleanup_requested(receipt["remoteTaskId"]))
+        self.assertTrue(any(event["type"] == "protected_denied"
+                            for event in self.remote["store"].events(receipt["remoteTaskId"])))
         result = self.call(self.handoff.cancel, "alice", row["task_id"])
         self.assertTrue(self.origin["store"].task(row["task_id"])["cancel_requested"])
         # The autonomous observer may already have issued the child's native
@@ -510,7 +542,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                 break
             time.sleep(.03)
         self.assertTrue(observed["allStopped"], observed)
-        self.assertEqual(observed["applicationStatus"], "canceled")
+        self.assertEqual(observed["applicationStatus"], "failed")
         for identifier in (receipt["remoteTaskId"], child["childTask"]["id"]):
             task = self.remote["store"].task(identifier, "bob")
             self.assertTrue(task["cancel_requested"])
@@ -798,6 +830,108 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         self.assertEqual(self.remote["store"].effects(task["id"]), [])
                         self.assertEqual(self.remote["store"].artifacts(task["id"]), [])
                         self.assertEqual(self.remote["store"].sql("SELECT * FROM af_delegation_links WHERE root_id=:id", id=task["id"]), [])
+        finally:
+            self.call_remote(wired.start)
+
+    def test_23_prior_origin_failure_at_second_target_check_denies_continuation_and_stops_owned_tree(self):
+        """Injected prior-failure evidence; actual HTTP, HITL and native cleanup."""
+        row = self.reserve()
+        self.call(self.handoff.prepare, "alice", row["task_id"])
+        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+        native = self.wait_native(receipt, {"paused"})
+        detail = self.call(self.handoff.detail, "alice", row["task_id"])
+        question = detail["job"]["questionDetail"]
+        identifier = receipt["remoteTaskId"]
+        before_effects = self.remote["store"].effects(identifier)
+        before_artifacts = self.remote["store"].artifacts(identifier)
+        before_tickets = self.ticket_count(self.remote)
+        wired = self.remote["lifecycle_observer"]
+        original = self.handoff._target
+        entered = []
+
+        def fail_then_cancel_at_second_read(owner, placement, *, execution=True, native_cancellation=False):
+            if execution and native_cancellation and placement["task_id"] == row["task_id"] and not entered:
+                self.assertFalse(self.origin["store"].task(row["task_id"], owner)["cancel_requested"])
+                self.assertFalse(self.origin["store"].has_failures(row["task_id"]))
+                # This event represents an explicitly injected earlier failure,
+                # not a real model or production authority incident.
+                self.origin["store"].event(row["task_id"], "protected_denied",
+                    "Controlled injected prior failure before origin cancellation",
+                    {"syntheticFixture": True, "boundary": "second-target-check", "createsExecution": False})
+                self.origin["store"].request_cancel(row["task_id"])
+                entered.append(placement["task_id"])
+            return original(owner, placement, execution=execution, native_cancellation=native_cancellation)
+
+        self.call_remote(wired.stop)
+        try:
+            with mock.patch.object(self.handoff, "_target", side_effect=fail_then_cancel_at_second_read), \
+                 mock.patch.object(self.remote["bridge"], "continue_run", wraps=self.remote["bridge"].continue_run) as continuation:
+                response = self.remote_client.post(
+                    f'/api/factory/remote-handoffs/{receipt["id"]}/answer',
+                    headers=self.headers(self.remote, "bob"),
+                    json={"questionId": question["id"], "version": question["version"], "answer": "Denied controlled continuation"})
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn("Origin task/manifest authority", response.json()["message"])
+                continuation.assert_not_awaited()
+            self.assertEqual(entered, [row["task_id"]])
+            task = self.remote["store"].task(identifier, "bob")
+            unchanged = self.remote["store"].native_db.get_job(task["run_id"], strict=True)
+            self.assertEqual(unchanged["status"], "paused")
+            self.assertEqual(unchanged["attempt"], native["attempt"])
+            self.assertFalse(task["cancel_requested"])
+            self.assertFalse(task["terminal"])
+            self.assertEqual(self.ticket_count(self.remote), before_tickets)
+            self.assertEqual(self.remote["store"].effects(identifier), before_effects)
+            self.assertEqual(self.remote["store"].artifacts(identifier), before_artifacts)
+
+            observed = self.call_remote(wired.observe_root, identifier)
+            self.assertEqual(observed["errors"], [], observed)
+            self.assertTrue(observed["allStopped"], observed)
+            self.assertTrue(self.remote["store"].has_failures(identifier))
+            self.assertTrue(self.remote["store"].failure_cleanup_requested(identifier))
+            receipt_after = self.call(self.handoff.receipt, "alice", row["task_id"])
+            self.assertTrue(receipt_after["allStopped"], receipt_after)
+            self.assertEqual(receipt_after["applicationStatus"], "failed")
+            task = self.remote["store"].task(identifier, "bob")
+            self.assertTrue(task["cancel_requested"])
+            self.assertTrue(task["terminal"])
+            self.assertEqual(self.remote["store"].native_db.get_job(task["run_id"], strict=True)["status"], "cancelled")
+            self.assertTrue(self.origin["store"].task(row["task_id"], "alice")["terminal"])
+            self.assertTrue(self.origin["store"].has_failures(row["task_id"]))
+            settled_tasks = (self.remote["store"].task(identifier, "bob"),
+                             self.origin["store"].task(row["task_id"], "alice"))
+            settled_events = (self.remote["store"].events(identifier), self.origin["store"].events(row["task_id"]))
+            with mock.patch.object(self.remote["store"], "accept", wraps=self.remote["store"].accept) as acceptance:
+                for _ in range(3):
+                    repeated = self.call(self.handoff.receipt, "alice", row["task_id"])
+                    self.assertTrue(repeated["allStopped"])
+                    self.assertEqual(repeated["applicationStatus"], "failed")
+                    self.assertEqual(repeated["remoteRunId"], receipt["remoteRunId"])
+                    self.assertEqual(self.remote["store"].task(identifier, "bob"), settled_tasks[0])
+                    self.assertEqual(self.origin["store"].task(row["task_id"], "alice"), settled_tasks[1])
+                acceptance.assert_not_called()
+            self.assertEqual(self.remote["store"].events(identifier), settled_events[0])
+            self.assertEqual(self.origin["store"].events(row["task_id"]), settled_events[1])
+            actual = self.call_remote(self.remote["bridge"].find_run, identifier, "bob")
+            # Inject only the observed lookup identity; no foreign ticket or
+            # native execution is created. A read must reject the replacement.
+            with mock.patch.object(self.remote["bridge"], "find_run", return_value={**actual, "run_id": str(uuid4())}), \
+                 mock.patch.object(self.remote["bridge"], "detail", wraps=self.remote["bridge"].detail) as native_detail, \
+                 mock.patch.object(self.remote["store"], "accept", wraps=self.remote["store"].accept) as acceptance:
+                denied = self.remote_client.get(f'/api/factory/remote-handoffs/{receipt["id"]}',
+                                                headers=self.headers(self.remote, "bob"))
+                self.assertEqual(denied.status_code, 409, denied.text)
+                self.assertIn("original task binding", denied.json()["message"])
+                acceptance.assert_not_called()
+                native_detail.assert_not_awaited()
+            self.assertEqual(self.remote["store"].task(identifier, "bob"), settled_tasks[0])
+            self.assertEqual(self.origin["store"].task(row["task_id"], "alice"), settled_tasks[1])
+            self.assertEqual(self.remote["store"].events(identifier), settled_events[0])
+            self.assertEqual(self.origin["store"].events(row["task_id"]), settled_events[1])
+            self.assertEqual(self.remote["store"].effects(identifier), before_effects)
+            self.assertEqual(self.remote["store"].artifacts(identifier), before_artifacts)
+            self.assertEqual(self.ticket_count(self.remote), before_tickets)
+            self.assertEqual(self.ticket_count(self.origin), 0)
         finally:
             self.call_remote(wired.start)
 
