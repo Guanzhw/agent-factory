@@ -185,6 +185,8 @@ class ApprovedRecoveryEffectTests(unittest.TestCase):
         commands = ControlCommands(SimpleNamespace(store=store, auth=None, bridge=None, settings=None))
         ctx = SimpleNamespace(user_id=task["owner_id"], session_id=task["id"], run_id=task["run_id"], session_state={})
         stack = ExitStack()
+        # These are mocked Linux effect contracts, independent of runner OS.
+        stack.enter_context(patch("agent_factory.control_commands.sys.platform", "linux"))
         current = stack.enter_context(patch("agent_factory.inference_wait.current", return_value=({}, ctx)))
         stack.enter_context(patch("agent_factory.inference_wait.read", return_value=None))
         stack.enter_context(patch("agent_factory.inference_wait.execution_owner", return_value={}))
@@ -193,6 +195,16 @@ class ApprovedRecoveryEffectTests(unittest.TestCase):
         stack.enter_context(patch("agent_factory.orx_experiment_tools._request", return_value={}))
         stack.enter_context(patch("agent_factory.orx_experiment_tools.inspect_orx_experiment", return_value=copy.deepcopy(result)))
         return stack, commands, task, effect, result, adapter, current
+
+    def test_nonlinux_recovery_is_rejected_before_effect_observation(self):
+        stack, commands, task, _, _, adapter, current = self.completed_fixture()
+        with stack, patch("agent_factory.control_commands.sys.platform", "win32"):
+            with self.assertRaises(HTTPException) as error:
+                commands._completed_launch(task)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("APPROVED_RECOVERY_PLATFORM", error.exception.detail)
+        current.assert_not_called()
+        adapter.observe_existing.assert_not_called()
 
     def test_completed_observation_checks_authority_twice_without_launch_handle(self):
         stack, commands, task, effect, result, adapter, current = self.completed_fixture()
