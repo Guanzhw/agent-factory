@@ -65,6 +65,7 @@ class Store:
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
         self.execution_guards: dict[str, Any] = {}
+        self.tool_independent_execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
 
@@ -337,14 +338,25 @@ class Store:
         elif not self.settings.demo or self.settings.temporary_policy != "bounded-synthetic":
             raise HTTPException(409, "POLICY_UNSET: plan policy service is unavailable")
 
+    def register_execution_guard(self, name, guard, *, tool_independent=False):
+        """Declare trusted guard scope without inheriting it across replacements."""
+        self.execution_guards[name] = guard
+        if tool_independent:
+            self.tool_independent_execution_guards[name] = guard
+        else:
+            self.tool_independent_execution_guards.pop(name, None)
+
     def require_plan_execution(self, owner, plan, *, run_context=None):
         self.require_current_policy()
         if self.auth is not None:
             self.auth.require(owner, "run")
         if self.plan_policy is not None:
             self.plan_policy.require_execution(owner, self.plan(plan["id"], owner), run_context=run_context)
-        for guard in self.execution_guards.values():
+        checked = {}
+        for name, guard in self.execution_guards.items():
             guard(owner, plan, run_context, None)
+            checked[name] = guard
+        return checked
 
     def event(self, identifier, event_type, message, data=None):
         task = self.task(identifier)

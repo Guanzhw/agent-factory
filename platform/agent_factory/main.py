@@ -82,7 +82,8 @@ def create_app(settings=None):
     if settings.demo:
         governance.adopt_demo_bootstrap()
     store.material_governance = governance
-    store.execution_guards["material-governance"] = lambda owner, plan, context, tool: governance.require_materials_current(plan)
+    store.register_execution_guard("material-governance",
+        lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     connections = ConnectionService(store, auth, settings.trusted_connections)
     store.connections = connections
     bindings = default_bindings(settings, store, connections)
@@ -109,8 +110,10 @@ def create_app(settings=None):
     store.applications = applications
     composition = CompositionService(store, auth, applications, bindings, connections)
     store.composition = composition
-    store.execution_guards["execution-bindings"] = lambda owner, plan, context, tool: bindings.recheck(plan, context)
-    store.execution_guards["application-governance"] = lambda owner, plan, context, tool: applications.require_plan_current(plan)
+    store.register_execution_guard("execution-bindings",
+        lambda owner, plan, context, tool: bindings.recheck(plan, context), tool_independent=True)
+    store.register_execution_guard("application-governance",
+        lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
     executor, registry = build_runtime(settings, store, native_db)
     bridge = NativeBridge(settings, native_db, auth)
     delegation = DelegationService(settings, store, auth, bridge)

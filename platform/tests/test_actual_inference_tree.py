@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 
 from pg_fixture import IsolatedPostgres
-from inference_tree_worker import build, ORIGIN, TARGET
+from inference_tree_worker import build, ORIGIN, TARGET, RecoveryRecorder
 from agent_factory.local_orx_profile import publish_local_orx_application, REGISTRATION_REF
 from agent_factory.inference_wait import CONTROL_NAME
 
@@ -80,10 +80,17 @@ class Service:
     def __init__(self, config, directory):
         self.config=config;self.path=directory/(config['role']+'.json')
         self.process=None;self.log=None
+        self.startup_timing = RecoveryRecorder(self.path.with_suffix('.startup.json')) if os.getenv('FACTORY_AT10_TIMING') == '1' else None
         self.app,self.state=build(config)
         self.url='http://127.0.0.1:'+str(config['port'])
 
     def start(self):
+        if self.startup_timing is None:
+            return self._start()
+        with self.startup_timing.measure('service-start'):
+            return self._start()
+
+    def _start(self):
         self.path.write_text(json.dumps(self.config))
         if self.log:self.log.close()
         self.log=self.path.with_suffix('.log').open('a')
@@ -104,6 +111,10 @@ class Service:
             self.process.kill() if hard else self.process.terminate()
             try:self.process.wait(timeout=8)
             except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=5)
+        if hard and self.startup_timing is not None:
+            recovery = self.path.with_suffix('.timings.recovery.json')
+            if recovery.exists():
+                self.path.with_suffix('.timings.recovery.before-restart.json').write_bytes(recovery.read_bytes())
         if self.log:self.log.close();self.log=None
 
     def close(self):
@@ -191,6 +202,12 @@ class TreeFixture(unittest.TestCase):
                     (path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.log')).write_bytes(log.read_bytes())
                 profile=server.path.with_suffix('.timings.profile.json')
                 if profile.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.profile.json')).write_bytes(profile.read_bytes())
+                startup=server.path.with_suffix('.startup.json')
+                if startup.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.startup.json')).write_bytes(startup.read_bytes())
+                prior_recovery=server.path.with_suffix('.timings.recovery.before-restart.json')
+                if prior_recovery.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.recovery.before-restart.json')).write_bytes(prior_recovery.read_bytes())
+                recovery=server.path.with_suffix('.timings.recovery.json')
+                if recovery.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.recovery.json')).write_bytes(recovery.read_bytes())
                 timing=server.path.with_suffix('.timings.json')
                 if timing.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.timings.json')).write_bytes(timing.read_bytes())
 

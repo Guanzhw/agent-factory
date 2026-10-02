@@ -83,18 +83,21 @@ def current(store, task, wait=None):
     owner = execution_owner(store, task) if wait and "executionOwner" in wait else None
     if owner is not None and wait is not None and wait["executionOwner"] != owner:
         raise PermissionError("Inference wait execution ownership differs")
-    store.require_plan_execution(task["owner_id"], plan, run_context=ctx)
+    checked_guards = store.require_plan_execution(task["owner_id"], plan, run_context=ctx) or {}
     # Observation spends no tool call. require_plan_execution already checks the
     # exact policy/review once. Receiver authorize(None) validates the *whole*
     # immutable tool/capability intersection, current origin and original grant;
-    # repeating that same HTTP proof per name adds no narrower authority. Other
-    # installed guards still receive each name, and actual tool entry remains
-    # unchanged. No proof is cached across observations or execution boundaries.
+    # repeating that same HTTP proof per name adds no narrower authority.
+    # Explicitly tool-independent guards were also fully checked above. Match
+    # callable identity so a replacement never inherits the old declaration.
+    # Unknown/tool-specific guards still receive each name; actual tool entry
+    # and fresh checks at both ends of observation remain unchanged.
+    independent = getattr(store, "tool_independent_execution_guards", {})
     for name in (TOOL_NAMES[1], TOOL_NAMES[2]):
         if name not in plan.get("tools", []):
             raise PermissionError("Original run/wait capability is unavailable")
         for key, guard in getattr(store, "execution_guards", {}).items():
-            if key != "remote_receiver":
+            if key != "remote_receiver" and not (checked_guards.get(key) is guard and independent.get(key) is guard):
                 guard(ctx.user_id, plan, ctx, name)
     if store.task(task["id"])["cancel_requested"]:
         raise RunCancelledException("Cancellation supersedes inference observation")

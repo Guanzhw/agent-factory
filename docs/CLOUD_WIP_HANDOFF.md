@@ -225,3 +225,36 @@ Actual-runtime reruns at `9beef4a` without timing instrumentation: three tests,
 391.023s, receiver-root recovery passed with original identity/one launch;
 receiver-parent and receiver-overrun failed before fault injection in inspect.
 A green CI result must not be represented as full AT10 or production acceptance.
+
+
+### Receiver-parent continuation after c374293
+
+New coordinator branch `coord/receiver-parent-recovery-20261002` preserves c374293
+and PR11. Three worker scopes covered timing/fixture contracts, read-only full
+acceptance/Go gaps, and independent authority/UNKNOWN/ledger review. Root owns
+core integration and serial heavy tests.
+
+The original 30s business recovery wait was not a test observation timeout.
+Repeated tool-independent material/binding/application guards consumed its
+window. Explicit guard declarations now skip only duplicates whose callable
+actually succeeded within that same check (including replacement/ABA defense);
+unknown guards and all later boundaries remain fresh. Connection preflight also
+projects its already checked result without a duplicate current-binding query;
+inspect/list/bind/revoke and resolve preserve their own fresh checks.
+
+Actual receiver-parent passed with phase diagnostics in 203.020s and, after the
+connection optimization, without instrumentation in 190.857s. Parent and child
+completed with original native/ORX identities, one launch, origin repair and
+idempotent duplicate receipt. The earlier failed stages remain documented in
+AT10_TREE_ACCEPTANCE.md. Timing instrumentation records bounded fixed labels,
+allowlisted denial codes and identity booleans; no credentials or raw arguments.
+Combined safety, final SHA and two-round exact CI are recorded in this stage's
+new draft PR. No merge/deployment or live Go request is authorized by this result.
+
+Go remains an unregistered development adapter, with mock HTTP/usage tests.
+Still missing: approved binding/profile, immutable pricing and request guard,
+Go-through-native-to-real-PostgreSQL-ledger coverage, and account-specific
+subscription-only billing proof. OPENCODE_GO presence/nonempty was already true;
+workers never access it, no live calls or account changes were made. Production
+identity/TLS, live research, selected mutable scientific workload, Windows actual
+containment, and target-host capacity remain separate open acceptance gates.

@@ -14,6 +14,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -320,6 +321,27 @@ class ConnectionPostgresTests(unittest.TestCase):
         self.assertEqual(service.revoke("alice", scoped["ref"], uuid4().hex)["status"], "revoked")
         self.assertEqual(bounded.engine.pool.checkedout(), 0)
         self.assertIsNone(bounded._connection.get())
+
+
+    def test_12_preflight_projects_one_check_and_later_boundaries_remain_fresh(self):
+        bound = self.bind()
+        pins = self.pins(bound)
+        with patch.object(self.service, "_current", wraps=self.service._current) as current:
+            value = self.service.preflight("alice", bound["ref"], "model", **pins)
+            self.assertEqual(value, bound)
+            self.assertEqual(current.call_count, 1)
+            self.at += timedelta(seconds=61)
+            with self.assertRaises(HTTPException) as denied:
+                self.service.preflight("alice", bound["ref"], "model", **pins)
+            self.assertIn("CONNECTION_EXPIRED", str(denied.exception.detail))
+            self.assertEqual(current.call_count, 2)
+            with self.assertRaises(HTTPException):
+                self.service.resolve("alice", bound["ref"], "model", **pins)
+            self.assertEqual(current.call_count, 3)
+            projected = self.service.inspect("alice", bound["ref"])
+            self.assertEqual(projected["status"], "expired")
+            self.assertFalse(projected["available"])
+            self.assertEqual(current.call_count, 4)
 
 
 class TrustedBindingValidationTests(unittest.TestCase):
