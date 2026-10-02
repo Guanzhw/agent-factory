@@ -209,3 +209,19 @@ full regression/audits, then obtain both exact-final-HEAD CI workflows green.
 This WIP branch push does not update, merge or certify Draft PR10. Real-model
 research, production identity/isolation, Windows coverage and target-host load
 remain distinct gates. Resume only under the parent's next coordinator task.
+
+### Final CI follow-up: cancellation in a read projection
+
+Both CI runs at `9beef4a` finished with the same first failure: GET task detail
+entered `delegation_scope` before cancellation, then its fresh binding check
+observed cancellation and raised native `RunCancelledException`, leaking HTTP
+500. The preview now returns denied availability with no modes; owner isolation,
+execution guards, and asynchronous request cancellation remain unchanged.
+The second reported subtest failure was role-state contamination, addressed by
+unconditional role restoration in that test. Independent review passed. Final
+commit and two-round exact-SHA CI evidence are maintained on Draft PR11.
+
+Actual-runtime reruns at `9beef4a` without timing instrumentation: three tests,
+391.023s, receiver-root recovery passed with original identity/one launch;
+receiver-parent and receiver-overrun failed before fault injection in inspect.
+A green CI result must not be represented as full AT10 or production acceptance.

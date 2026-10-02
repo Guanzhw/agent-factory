@@ -103,3 +103,21 @@ run. Remaining receiver-parent reliability and final corrected-SHA CI are open.
 Shell and Git were rechecked after a reported cloud disconnect at 20:33 UTC:
 both remained available; the existing PostgreSQL process was preserved without
 starting duplicate tests.
+
+## Cancellation during a readable delegation preview
+
+The corrected lifecycle head `9beef4a` completed both exact-head CI runs with
+573 tests and two reported subtest failures (63 opt-in skips). The first was a
+read race: current cancellation arose inside the fresh delegation preview's
+binding check and escaped as `RunCancelledException`, returning HTTP 500 from
+GET task details. The second subtest inherited the first scenario's revoked
+origin role. The read-only preview now denies creation with empty modes for
+native cancellation, while request cancellation and all execution guards retain
+their existing behavior. Two deterministic regressions cover the projection;
+the real process test restores its role in `finally` without changing assertions
+or deadlines. Independent review passed. Final exact-head results are in PR11.
+
+The uninstrumented actual-runtime batch at `9beef4a` ran three cases in 391.023s:
+receiver-root pause/restart/recovery passed; receiver-parent recovery and receiver
+overrun failed in inspect preparation before the intended fault. This is separate
+from earlier timing artifacts and does not establish complete AT10 acceptance.

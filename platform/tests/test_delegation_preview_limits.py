@@ -1,11 +1,14 @@
 """Impossible child previews deny locally; viable previews still recheck authority."""
+import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
+from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 
 from agent_factory.delegation import DelegationService
+from agent_factory.remote_handoff import HandoffCancellationRequested
 
 
 class DelegationPreviewLimitsTests(unittest.TestCase):
@@ -56,6 +59,29 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 404)
         service.store.task.assert_called_once_with('root', 'bob')
         authority.assert_not_called()
+
+    def test_cancellation_during_fresh_preview_denies_without_hiding_readable_facts(self):
+        for error in (RunCancelledException('late native cancellation'),
+                      HandoffCancellationRequested('alice', 'root', 'synthetic-manifest')):
+            with self.subTest(error=type(error).__name__):
+                service, authority = self.fixture()
+                self.assertTrue(service.delegation_scope('alice', 'root')['allowed'])
+                authority.side_effect = error
+                result = service.delegation_scope('alice', 'root')
+                self.assertFalse(result['allowed'])
+                self.assertEqual(result['reason'], 'Factory cancellation requested')
+                self.assertEqual(result['modes'], [])
+                self.assertIsNone(result['defaultMode'])
+                self.assertEqual(result['parentTaskId'], 'root')
+                self.assertEqual(result['sharedBudget']['childrenUsed'], 0)
+                self.assertEqual(authority.call_count, 2)
+                service.store.event.assert_not_called()
+
+    def test_read_projection_preserves_request_cancellation(self):
+        service, authority = self.fixture()
+        authority.side_effect = asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            service.delegation_scope('alice', 'root')
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ from typing import Any
 from types import SimpleNamespace
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 from sqlalchemy import text
 
@@ -344,6 +345,11 @@ class DelegationService:
             counts = self.store.sql("SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE owner_id=:owner) AS owned FROM af_tasks WHERE NOT terminal", owner=owner)[0]
             if counts["total"] >= self.settings.max_total_tasks or counts["owned"] >= self.settings.max_user_tasks:
                 raise HTTPException(429, "Active task budget exhausted")
+        except RunCancelledException:
+            # Cancellation can become current after the initial task read.
+            # This owner-scoped availability projection grants no execution;
+            # keep existing cleanup facts readable while denying new children.
+            scope.update(allowed=False, reason="Factory cancellation requested", modes=[], defaultMode=None)
         except HTTPException as error:
             if error.status_code not in {403, 409, 429, 503}:
                 raise
