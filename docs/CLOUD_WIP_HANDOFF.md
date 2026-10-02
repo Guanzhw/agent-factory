@@ -58,6 +58,22 @@ reverse-lock cycle. The metadata pool is not enlarged. A legitimate native
 cancellation in the UNKNOWN fixture is accepted while unchanged-effect,
 no-compute and retained-UNKNOWN assertions remain mandatory.
 
+### Current acceptance boundary
+
+The root-lock follow-up passed all 8 targeted PostgreSQL cases, including the
+original CI failures and lifecycle case 11. Application closure now avoids
+checking every unrelated catalog material before checking the complete selected
+closure again; the final selected governance check still runs fresh every time.
+Six new regressions cover transitive selection, revocation and malformed graphs.
+
+Actual resumed receiver acceptance remains red. The 11-case matrix had 4 passes
+and 7 preparation failures before safety fault injection. Local parent/browser
+recovery passed again after the lock fix. Receiver parent still times out after
+the selected-closure optimization. See CLOUD_TASK_BOARD.md and Draft PR11 for
+precise run counts and final exact-head CI. A bare slim-image substitution was
+rejected: it lacks ORX's required git/ps/kill dependencies. No image, resource
+ceiling or native deadline was changed. Go remains entirely offline.
+
 ## Preserved pre-resumption checkpoint
 
 This is preservation of incomplete project work, not an acceptance release.

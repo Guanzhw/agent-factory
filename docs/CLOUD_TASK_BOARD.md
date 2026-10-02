@@ -13,7 +13,7 @@ old scratch paths are not evidence in this container.
 | AT10 deterministic diagnosis | `/root/at10`; inference_tree_worker, test_actual_inference_tree, new isolated tests | Pinned checkpoint; root-owned core integration | Deterministic loop/cancellation regressions green; fixture diagnostics delivered; actual receiver tree remains blocked by native 60-second timeout |
 | Go offline hardening | `/root/go_adapter`; opencode_go.py, test_opencode_go.py, OPENCODE_GO.md | Mock transport only | 24 Go tests plus async/cancellation and version-proof tests green; independent review passed; offline only |
 | Independent review | `/root/reviewer`; read-only | Worker and root diffs | Independent review found and resolved early usage, thread cancellation, native-response publication and callback compatibility issues; final matrix still pending; lock-after-capacity ORX authority review passed |
-| Core and acceptance | `/root`; all shared APIs/schema/lifecycle, fixture, board, commits/PR | Worker handback and serial runtime fixture | Frontend64 and offline backend546 (280 opt-in skips) passed; pinned ORX rebuilt exactly; local parent/browser recovery and both delegated stop tests passed (3/3); receiver-parent still times out; remaining actual matrix running; PostgreSQL CI exposed root-lock pool starvation, being fixed in an isolated integration worktree |
+| Core and acceptance | `/root`; all shared APIs/schema/lifecycle, fixture, board, commits/PR | Worker handback and serial runtime fixture | Frontend64 and offline backend546 (280 opt-in skips) passed; pinned ORX rebuilt exactly; local parent/browser recovery and both delegated stop tests passed (3/3); receiver-parent still times out; root-lock PostgreSQL fix passed all 8 targeted cases; resumed real matrix 4/11 passed and 7 preparation failures; final exact-SHA CI pending |
 | Go live gate | `/root` only | Account-specific proof balance fallback disabled | Current credential nonempty boolean true; billing remains unverified, no live call authorized through gate |
 
 Pure offline work is parallel; heavy build/runtime tests remain bounded and serial.
@@ -59,3 +59,26 @@ adds at most one lock connection per Store and conservatively serializes its
 root-lock phases. It does not enlarge the metadata test pool or relax UNKNOWN
 resource holds. Five PostgreSQL lock contracts accompany the change; final
 results and exact-SHA CI are recorded in Draft PR11.
+
+## Final validation snapshot
+
+The root-lock correction passed five lock contracts plus the formerly failing
+application/UNKNOWN cases and lifecycle case 11: 8 tests in 33.994 seconds. Full
+offline regression at that stage passed 562 tests (289 explicit opt-in skips).
+A further selected-closure optimization avoids duplicate governance traversal
+of unrelated catalog rows; it preserves every fresh selected/transitive material
+check and has six deterministic regressions plus application/governance coverage.
+
+The resumed 11-case real matrix at `d72a857` took 1358.896 seconds: 4 passed
+(local child restart, receiver child restart, origin cancel, receiver overrun);
+7 failed during preparation, before the requested safety fault was injected.
+Six were native inspect timeouts; one was origin-authority transport timeout
+after an initial timeout/retry. They are not seven safety assertions passing.
+The original three local parent/stop cases passed, including real Chromium
+recovery. At `e0ce609`, local parent/browser recovery passed again while receiver
+root and parent remained red (3 cases, 424.478 seconds). The selected-closure
+receiver-parent rerun also failed at inspect (98.289 seconds). Full-profile cold
+container setup remains a measured bottleneck on this 4 CPU/16 GiB Docker-vfs
+host. No timeout, authority check or UNKNOWN hold was relaxed. Bare Python slim
+was investigated but rejected because ORX also needs git, ps and external kill;
+no runtime image was changed. Final exact-head CI is reported on Draft PR11.

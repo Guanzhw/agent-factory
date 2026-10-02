@@ -106,3 +106,12 @@ The initial integrated Windows CI exposed Linux-mock assumptions in recovery tes
 these now select Linux explicitly, and a separate non-Linux rejection test verifies
 fail-closed behavior. Both Windows and Ubuntu Python/frontend jobs passed at
 `8d00fbf78d0886f13080f8501516932de1f0d001`; PostgreSQL was still running at recording.
+
+Final resumed-matrix snapshot: 11 cases at `d72a857`, 4 passed/7 preparation
+failures in 1358.896 seconds. The failed safety cases never reached fault
+injection and remain unaccepted. At `e0ce609`, local parent/browser recovery
+passed again, but receiver root/parent failed (3 cases in 424.478 seconds).
+The subsequent selected-closure optimization retains fresh material governance
+and removes unrelated catalog checks; its actual receiver-parent rerun still
+failed at inspect (98.289 seconds). These outcomes supersede any inference of
+a green current receiver matrix from earlier passing runs in the table.
