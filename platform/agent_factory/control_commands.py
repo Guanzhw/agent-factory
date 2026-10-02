@@ -77,6 +77,9 @@ class ControlCommands:
 
     async def _prepare(self, task, child, action, decision):
         if action == "cancel":
+            if self.api.remote and self.api.remote.placed(task) and child is None:
+                placement = self.api.remote.client._row(task["owner_id"], task["id"])
+                return {"remotePreparation": not (placement["body"].get("receipt") or {}).get("remoteTaskId")}
             if self.api.delegation and not (self.api.remote and self.api.remote.placed(task)):
                 group = await self.api.delegation.inspect_group(task["owner_id"], task["id"])
                 return {"alreadyStopped": group["allStopped"]}
@@ -206,7 +209,12 @@ class ControlCommands:
         if not claimed:
             return await self.recover(owner, task_id, command_id)
         try:
-            if row["body"]["binding"]["kind"] == "remote":
+            if row["body"]["binding"]["kind"] == "remote" and row["body"].get("remotePreparation"):
+                # A preparation can be canceled before a receiver task exists.
+                # The existing handoff CAS supplies positive no-dispatch proof;
+                # this command still owns one durable origin dispatch boundary.
+                await self.api.remote.client.cancel(owner, task["id"])
+            elif row["body"]["binding"]["kind"] == "remote":
                 result = await self.api.remote.client.control_command(owner, task["id"],
                     {"commandId": command_id, "action": row["action"], **row["body"]["decision"], "sourceFingerprint": row["fingerprint"]}, child)
                 self._accept_remote(row, result)
@@ -251,7 +259,13 @@ class ControlCommands:
             binding = self._binding(task, child, row["body"]["binding"].get("upstream"))
             if not self._same_binding(row, binding):
                 raise HTTPException(409, "Original command binding changed")
-            if binding["kind"] == "remote":
+            if binding["kind"] == "remote" and row["body"].get("remotePreparation"):
+                receipt = await self.api.remote.client.receipt(owner, task["id"])
+                if task["cancel_requested"]:
+                    self._update(row, evidence={"kind": "receiver-handoff-cancel", "handoffId": receipt["id"],
+                        "manifestSha256": binding["manifestSha256"], "decisionRecorded": True,
+                        "stopConfirmed": receipt.get("allStopped") is True, "receiverState": receipt["state"]})
+            elif binding["kind"] == "remote":
                 result = await self.api.remote.client.control_receipt(owner, task["id"], command_id, child)
                 self._accept_remote(row, result)
             elif row["action"] == "cancel":

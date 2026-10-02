@@ -388,7 +388,9 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
                 self.assertEqual(failed["artifacts"], [])
                 self.assertFalse(any(event["type"] == "checksum_completed" for event in failed["events"]))
                 question = paused["job"]["questionDetail"]
-                self.call(self.origin, "POST", f"/jobs/{task}/answer", expected=403,
+                # Source revocation denies authentication; receiver revocation
+                # is already positively stopped at the new intent preflight.
+                self.call(self.origin, "POST", f"/jobs/{task}/answer", expected=403 if revoked is self.origin else 409,
                     json={"questionId": question["id"], "version": question["version"], "answer": "A revoked principal cannot resume this checksum"})
                 if revoked is self.origin:
                     self.call(self.origin, "POST", "/instances", expected=403, json=body)
@@ -475,6 +477,12 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         task, _, receipt = self.prepare(self.plan())
         canceled = self.call(self.origin, "POST", "/jobs/" + task + "/cancel").json()
         self.assertEqual(canceled["status"], "canceled")
+        command = canceled["commandReceipt"]
+        self.assertEqual(command["state"], "STOP_CONFIRMED")
+        self.assertEqual(command["evidence"]["kind"], "receiver-handoff-cancel")
+        recovered = self.call(self.origin, "GET", f'/jobs/{task}/commands/{command["commandId"]}').json()
+        self.assertEqual(recovered["fingerprint"], command["fingerprint"])
+        self.assertTrue(recovered["stopConfirmed"])
         for _ in range(3):
             evidence = self.call(self.receiver, "GET", "/remote-handoffs/" + receipt["id"]).json()
             self.assertEqual(evidence["state"], "CANCELLED_NO_DISPATCH")

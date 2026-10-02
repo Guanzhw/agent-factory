@@ -375,13 +375,15 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         detail = self.wait(job["id"], {"waiting_approval", "failed"})
         self.assertEqual(detail["job"]["status"], "waiting_approval", detail)
         self.assertEqual(detail["snapshot"]["effects"], [])
-        self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="policy-revoked"), expected_revision="plan-policy-v1")
+        if not cancel_at_bridge:
+            self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="policy-revoked"), expected_revision="plan-policy-v1")
         approval = detail["job"]["approvalDetail"]
         original_continue = self.state["bridge"].continue_run
         async def continue_after_observation(*args, **kwargs):
             if cancel_at_bridge:
                 # Deterministically exercise a real cancellation after the API
                 # has read waiting_approval, before native continuation reads.
+                self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="policy-revoked"), expected_revision="plan-policy-v1")
                 await observer.observe_root(job["id"])
             return await original_continue(*args, **kwargs)
         with patch("subprocess.Popen") as no_compute, patch.object(self.state["bridge"], "continue_run", side_effect=continue_after_observation) as continuation:
@@ -391,7 +393,9 @@ class PlanPolicyPostgresTests(unittest.TestCase):
             # the native boundary; confirmation cannot renew withdrawn policy.
             self.assertIn(result.status_code, {200, 409}, result.text)
             if cancel_at_bridge:
-                self.assertEqual(result.status_code, 409, result.text)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["commandReceipt"]["state"], "UNKNOWN")
+                self.assertFalse(result.json()["commandReceipt"]["decisionRecorded"])
                 self.assertEqual(continuation.call_count, 1)
             elif result.status_code == 200:
                 self.assertEqual(continuation.call_count, 1)

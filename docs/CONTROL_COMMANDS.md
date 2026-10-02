@@ -40,6 +40,12 @@ A missing or mismatched receiver receipt remains unknown, with no remote POST
 retry. Origin receipts do not substitute origin queue state for receiver proof.
 A receiver intent not yet dispatched is not automatically resumed by the origin.
 
+Before a receiver task exists, cancellation still persists an origin command and
+crosses one dispatch boundary. It uses the existing handoff cancellation CAS;
+read recovery validates that handoff's positive `CANCELLED_NO_DISPATCH`/stop proof.
+It does not require a nonexistent receiver task or infer stop from a missing run.
+Once a receiver task exists, normal dual command receipts apply.
+
 ## Reading and acknowledging
 
 - `GET /api/factory/jobs/{task}/commands/{command}` reads/reconciles one original
