@@ -187,6 +187,8 @@ class FactoryAPI:
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
+        if delegation_scope and delegation_scope.get("executionUnavailable"):
+            job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
         try:
             self.auth.require(task["owner_id"], "run")
         except HTTPException as error:

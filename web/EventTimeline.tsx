@@ -7,7 +7,7 @@ function timestamp(value: string) {
   return Number.isNaN(date.valueOf()) ? '未知' : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export function EventTimeline({ jobId, latest }: { jobId: string; latest: JobEvent[] }) {
+export function EventTimeline({ jobId, latest, replayAvailable = true }: { jobId: string; latest: JobEvent[]; replayAvailable?: boolean }) {
   const [page, setPage] = useState<EventPage>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -16,7 +16,7 @@ export function EventTimeline({ jobId, latest }: { jobId: string; latest: JobEve
   useEffect(() => () => { pending.current?.abort(); }, []);
   const events = page?.events ?? latest;
   async function load(fromStart: boolean) {
-    if (pending.current) return;
+    if (pending.current || !replayAvailable) return;
     const controller = new AbortController();
     pending.current = controller;
     setBusy(true); setError('');
@@ -38,7 +38,8 @@ export function EventTimeline({ jobId, latest }: { jobId: string; latest: JobEve
   }
   function recent() { setPage(undefined); setError(''); setPrefixChanged(false); }
   return <section aria-label="执行事件记录"><div className="section-heading"><h3>执行时间线</h3><span className="quiet">{page ? `历史 ${page.startSequence ?? 0}–${page.endSequence ?? 0} / ${page.highWatermarkSequence}` : `最近 ${events.length} 条记录`}</span></div>
-    <div className="button-row"><button className="secondary" disabled={busy} onClick={() => void load(true)}>{busy ? '读取记录…' : page ? '从头重新核对' : '查看完整历史'}</button>{page && <><button className="secondary" disabled={busy || !page.hasMore || prefixChanged} onClick={() => void load(false)}>下一页</button><button className="secondary" disabled={busy} onClick={recent}>返回最近记录</button></>}</div>
+    <div className="button-row"><button className="secondary" disabled={busy || !replayAvailable} onClick={() => void load(true)}>{busy ? '读取记录…' : page ? '从头重新核对' : '查看完整历史'}</button>{page && <><button className="secondary" disabled={busy || !page.hasMore || prefixChanged} onClick={() => void load(false)}>下一页</button><button className="secondary" disabled={busy} onClick={recent}>返回最近记录</button></>}</div>
+    {!replayAvailable && <p className="quiet">接收端执行凭据尚未就绪，当前显示已取得的请求记录。</p>}
     {error && <div role="alert" className="error-message">{error}{prefixChanged && <p>较早事件的提交顺序发生变化，请从头核对；不会重放任务。</p>}</div>}
     {page && <p className="quiet">每页最多 100 条。显示的是服务端本次读取的历史记录；新记录可从头核对，或返回最近记录。</p>}
     {events.length ? <ol className="timeline">{events.map(event => { const copy = eventCopy(event); return <li key={event.id}><time>{timestamp(event.createdAt)}</time><div><strong>{copy.title}</strong><p>{copy.message}</p><details className="technical-detail"><summary>事件记录详情</summary><span>类型：{event.type}</span><span>原始记录：{event.message}</span><span>记录标识：{event.id}</span>{'sequence' in event && <span>流内顺序：{String(event.sequence)}</span>}{event.data && <pre>{JSON.stringify(event.data, null, 2)}</pre>}</details></div></li>; })}</ol> : <p className="list-empty">暂无执行事件，等待后端记录。</p>}

@@ -63,3 +63,27 @@ PostgreSQL: model/environment revision, blocked connection preflight, repeated
 submission, lost persisted acknowledgements, owner revoke, independent review,
 malformed-response recovery and mobile fit. No external provider/model request or
 production grant occurs. Full-suite counts are in VERIFICATION.md.
+
+## Governed remote bindings: FR / AC / AT
+
+This stage preserves the original manifest while binding exact receiver-local
+connections and adapters. It does not certify production identity, cross-host
+isolation or live science. Default startup installs no remote configuration.
+
+| Requirement | Acceptance criterion | Actual evidence | Boundary |
+|---|---|---|---|
+| Remote / AC-R1 | Legal exact owner mapping produces an immutable two-configuration proof and one receiver root ticket, with zero origin native tickets | AT-R1: `test_01_real_tcp_governed_mapping_review_single_admission_and_artifact_integrity` in `test_governed_remote_process_postgres.py` | Two OS processes, independent generated PG databases/workspaces on one loopback PG server; controlled provider |
+| Remote / AC-R2 | Missing, wrong-owner, rotated and withdrawn bindings deny execution while retaining proof history | AT-R2: process cases02/03; nine `test_remote_bindings_postgres.py` cases | Exact tool material permission ceiling; explicit operator mapping only |
+| Remote / AC-R3 | Complete source application versions retain their hashes and require separate receiver publication and plan approval | AT-R3: nine `test_application_snapshots.py` cases and process case01 | Trusted in-process import; no source approval or access grant copied |
+| Remote / AC-R4 | Both current role withdrawals deny protected work and stop paused receiver work without a successful checksum/artifact | AT-R4: `test_04_both_current_role_revocations_stop_paused_native_work_without_checksum` | Current native managed Auth; generated fixture principals |
+| Remote / AC-R5 | Origin outage denies continuation, preserves readable paused facts/capacity and recovers the original receipt after restart | AT-R5: `test_05_real_origin_process_outage_fails_closed_and_restart_reads_original_receipt` | Actual stopped/restarted origin process; unreachability is not revocation or stop proof |
+| Remote / AC-R6 | Receiver children inherit narrowed exact materials/bindings; scoped cancellation preserves unrelated work | AT-R6: `test_06_descendants_inherit_mapping_narrow_scope_and_cancel_only_owned_tree` | One native ticket per child; children stay on the selected receiver |
+| Remote / AC-R7 | Receiver crash after committed native dispatch reconciles one original ticket; pre-review cancel proves no dispatch | AT-R7: process cases07/08 | Actual owned worker PID hard exit/restart, same database/keys; no blind retry |
+| Remote / AC-R8 | Extended ORX contract preserves legacy hashes, current authority and evidence provenance | AT-R8: four `test_remote_contracts.py` cases; process case09 | Actual native DONE effect and artifact; discovery transport explicitly controlled, no integrated ORX CLI experiment claim |
+| Remote / AC-R9 | Authenticated origin checks use actual current guards; transport errors cannot leak private details or read unbounded bodies | AT-R9: fourteen `test_remote_authority.py` and eight `test_remote_target_transport.py` cases | Bounded HTTP, no ambient proxy/redirect, non-loopback HTTP rejected; production host authorization still pending |
+
+The frontend shows the exact PREPARING receiver-review state and redacted binding
+proof, resumes only the original plan/target/request key and hides native controls
+until a verified receiver task exists. Exact parent-application child modes are
+projected from current immutable scope. Supported browser evidence and complete
+test counts are recorded in VERIFICATION.md.

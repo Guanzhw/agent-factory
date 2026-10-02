@@ -1,3 +1,4 @@
+import { remoteHandoffState } from './remoteHandoffState.js';
 import type { UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
@@ -51,6 +52,15 @@ async function instantiate(planId: string, requestId: string, executionTargetRef
     }
     throw error;
   }
+}
+async function resumeRemote(detail: JobDetail): Promise<FactoryJob> {
+  const state = remoteHandoffState(detail);
+  if (state.kind !== 'pending' || !detail.job.planId || !detail.job.executionPlacement || !detail.job.allowedActions?.includes('resume_remote')) {
+    throw new ApiError('当前远端准入凭据或继续权限未确认。请核对状态。', 409, 'REMOTE_REVIEW_UNVERIFIED');
+  }
+  const job = await instantiate(detail.job.planId, state.evidence.requestId, detail.job.executionPlacement.targetRef);
+  if (job.id !== detail.job.id || job.ownerId !== detail.job.ownerId) throw new ApiError('远端确认不是原任务；请保留原请求并核对。', 202, 'REMOTE_RECEIPT_MISMATCH');
+  return job;
 }
 async function events(id: string, cursor?: string, signal?: AbortSignal): Promise<EventPage> {
   const query = new URLSearchParams({ limit: '100' });
@@ -222,7 +232,7 @@ export const api = {
   createMaterial: (draft: MaterialDraft & { requestId: string }) => request<FactoryMaterial>('/materials', 'POST', draft),
   publish: (material: FactoryMaterial, requestId: string) => request<MaterialReview>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST', { requestId }),
   plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
-  instantiate,
+  instantiate, resumeRemote,
   governanceDraft: (definition: Record<string, unknown>, requestId: string) => request<FactoryMaterial>('/material-governance/drafts', 'POST', { definition, requestId }),
   importMaterials: (definitions: Record<string, unknown>[], requestId: string) => request<{ materials: FactoryMaterial[]; outcomeSource: string; executesCode: boolean }>('/material-governance/imports', 'POST', { definitions, requestId }),
   materialPolicy: (signal?: AbortSignal) => request<MaterialGovernancePolicy>('/material-governance/policy', 'GET', undefined, signal),
@@ -240,7 +250,7 @@ export const api = {
   jobs: (signal?: AbortSignal) => request<FactoryJob[]>('/jobs', 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),
   cancel: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/cancel`, 'POST'),
-  createChild: (id: string, goal: string, mode: 'literature' | 'experiment', requestId: string) => request<ChildReceipt>(`/jobs/${segment(id)}/children`, 'POST', { goal, mode, requestId }),
+  createChild: (id: string, goal: string, mode: string, requestId: string) => request<ChildReceipt>(`/jobs/${segment(id)}/children`, 'POST', { goal, mode, requestId }),
   group: (id: string) => request<DelegationGroup>(`/jobs/${segment(id)}/group`),
   answer: (id: string, questionId: string, version: number, answer: string) => request<FactoryJob>(`/jobs/${segment(id)}/answer`, 'POST', { questionId, version, answer }),
   approve: (id: string, requirementId: string, version: number, approved: boolean) => request<FactoryJob>(`/jobs/${segment(id)}/approve`, 'POST', { requirementId, version, approved }),

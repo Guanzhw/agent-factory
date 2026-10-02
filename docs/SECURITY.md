@@ -45,8 +45,20 @@ change invalidate old references. Rotation requires new explicit binding and pla
 pins; revoked history stays inspectable. Registrations are operator memory/config
 objects, not a production secrets manager or credential-rotation service.
 
-Connection-bearing remote manifests currently fail closed until an explicit
-receiver-side mapping is implemented; no private handle is serialized or sent.
+Connection-bearing remote manifests require explicit exact operator mappings to
+receiver-owned connection pins. Immutable proof hashes bind both identities and
+configuration revisions without rewriting the original manifest. Current local
+pins and authenticated current source authority are rechecked; no private handle
+is serialized or sent. Production identity/TLS/host authorization is still pending.
+See REMOTE_BINDINGS.md.
 The ORX registered discovery tool enforces time/output bounds and cancellation
 observation but supplies no hard CPU/memory/PID tenant containment. Do not infer
 that isolation from a selected environment descriptor or isolated directories.
+
+Remote target requests disable ambient proxy routing and redirects and stream
+bounded, uncompressed response bodies. Non-loopback HTTP is rejected unless an
+explicit test transport is provided. Only fixed public protocol codes propagate
+from remote errors; peer/provider details are discarded. Receiver application
+snapshot import is operator-only and does not import source approval or local
+access grants. Origin outage denies protected work while preserving receiver
+native facts and scoped local cleanup; uncertainty alone never releases capacity.

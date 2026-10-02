@@ -33,6 +33,8 @@ from .store import Store
 from .plan_policy import ToolContract, PolicyName, PlanPolicyConfig, PlanPolicyService, persisted_ancestor_guard, plan_policy_router
 from .scheduling import SchedulingService
 from .remote_handoff import PreparedHandoffService, TrustedHandoffClient
+from .remote_bindings import RemoteBindingService
+from .remote_authority import origin_authority_router
 from .remote_execution import RemoteExecution
 from .scheduling_api import scheduling_router
 
@@ -83,6 +85,8 @@ def create_app(settings=None):
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
             demo_only=entry.demo_only, validator=entry.validator)
     store.execution_bindings = bindings
+    remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
+    store.remote_bindings = remote_bindings
     applications = ApplicationService(store, auth)
     if settings.demo:
         applications.seed_demo()
@@ -111,6 +115,8 @@ def create_app(settings=None):
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
     if receiver:
         base.include_router(receiver.router)
+    if settings.handoff_targets:
+        base.include_router(origin_authority_router(auth, handoff_client))
     base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
     base.include_router(application_router(auth, applications))
@@ -174,7 +180,7 @@ def create_app(settings=None):
                 yield state or {}
 
     native.router.lifespan_context = observed_lifespan
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition}
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
     return CookieBridge(native, settings)
 
 

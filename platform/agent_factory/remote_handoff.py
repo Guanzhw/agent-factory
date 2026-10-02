@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 from dataclasses import dataclass, field
 import re
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from sqlalchemy import text
 
 from .store import canonical, digest, now
 from .native_bridge import INTERNAL_NATIVE
+from .plan_policy import ToolContract, tools_for_contract
 
 KNOWN_TOOLS = {"ask_scope": "question:ask", "literature_search": "research:read",
                "run_experiment": "experiment:synthetic", "checksum": "checksum:read"}
@@ -68,6 +70,11 @@ class HandoffAuthority:
     capabilities: frozenset[str]
     tools: frozenset[str]
     budget: Mapping[str, int]
+    origin_ref: str | None = None
+    target_ref: str | None = None
+    receiver_identity: str | None = None
+    target_revision: str | None = None
+    target_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,19 +88,31 @@ class TrustedOrigin:
     budget: Mapping[str, int] = field(default_factory=lambda: {
         "toolCalls": 8, "maxDepth": 2, "maxChildren": 4, "experimentSeconds": 8, "outputBytes": 65536})
     configuration_revision: str = "1"
+    tool_contract: ToolContract = "legacy-v1"
 
     def __post_init__(self):
         if not self.reference or not self.identity_map or not callable(self.authorize):
             raise ValueError("A trusted origin requires explicit identities and a current-authority callback")
         _check_budget(self.budget)
-        if not self.tools <= KNOWN_TOOLS.keys() or not self.capabilities <= set(KNOWN_TOOLS.values()):
+        registered = tools_for_contract(self.tool_contract)
+        if self.tool_contract != "legacy-v1" and self.configuration_revision == "1":
+            raise ValueError("Extended remote tool contracts require a distinct operator revision")
+        if not self.tools <= registered.keys() or not self.capabilities <= set(registered.values()):
             raise ValueError("Trusted origin ceiling exceeds the registered adapter contract")
 
     @property
     def fingerprint(self) -> str:
-        return digest({"reference": self.reference, "identityMap": dict(self.identity_map),
-                       "capabilities": sorted(self.capabilities), "tools": sorted(self.tools),
-                       "budget": dict(self.budget), "revision": self.configuration_revision})
+        body = {"reference": self.reference, "identityMap": dict(self.identity_map),
+                "capabilities": sorted(self.capabilities), "tools": sorted(self.tools),
+                "budget": dict(self.budget), "revision": self.configuration_revision}
+        if self.tool_contract != "legacy-v1":
+            body["toolContract"] = self.tool_contract
+        transport_hash = getattr(self.authorize, "fingerprint", None)
+        if transport_hash is not None:
+            if not isinstance(transport_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", transport_hash):
+                raise ValueError("Origin authority transport requires an exact configuration digest")
+            body["authorityTransportSha256"] = transport_hash
+        return digest(body)
 
 
 def _check_budget(budget: Mapping[str, Any]) -> None:
@@ -107,7 +126,7 @@ def plan_manifest(plan: Mapping[str, Any]) -> dict[str, Any]:
     return {"plan": body, "sha256": digest(body)}
 
 
-def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, Any]:
+def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: bool = False) -> dict[str, Any]:
     if set(manifest) != {"plan", "sha256"} or not isinstance(manifest.get("plan"), dict):
         raise HTTPException(422, "An exact immutable plan manifest is required")
     plan = copy.deepcopy(manifest["plan"])
@@ -124,10 +143,13 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
         raise HTTPException(422, "Origin plan identity is invalid") from error
     if any(not isinstance(plan.get(key), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", plan[key]) for key in ("application", "mode")):
         raise HTTPException(422, "Remote application or mode is unsupported")
+    policy_service = getattr(store, "plan_policy", None)
+    contract = policy_service.current()["tool_contract"] if policy_service else store.settings.runtime_tool_contract
+    known_tools = tools_for_contract(contract)
     tools, caps, budget = plan.get("tools"), plan.get("capabilities"), plan.get("budget")
-    if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in KNOWN_TOOLS for name in tools):
+    if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in known_tools for name in tools):
         raise HTTPException(422, "Manifest contains an unregistered remote tool")
-    if not isinstance(caps, list) or any(type(cap) is not str for cap in caps) or set(caps) != {KNOWN_TOOLS[name] for name in tools}:
+    if not isinstance(caps, list) or any(type(cap) is not str for cap in caps) or set(caps) != {known_tools[name] for name in tools}:
         raise HTTPException(422, "Manifest capability scope does not exactly match registered tools")
     if not isinstance(budget, dict) or set(budget) != BUDGET_KEYS | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != 0:
         raise HTTPException(422, "Only a root delegation tree may select an execution server")
@@ -149,9 +171,13 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
         if applications is None or bindings is None:
             raise HTTPException(409, "Receiver governed assembly bindings are unavailable")
         applications.require_plan_current(plan)
-        bindings.inspect(plan)
-        if plan["bindingManifest"].get("connections"):
-            raise HTTPException(409, "Remote owner connections require an explicit receiver mapping; this transport carries no handles")
+        if receiver:
+            service = getattr(store, "remote_bindings", None)
+            if service is None:
+                raise HTTPException(409, "Receiver binding proof service is unavailable")
+            service.validate_source(plan)
+        else:
+            bindings.inspect(plan)
     materials, refs = plan.get("materials"), plan.get("materialRefs")
     if not isinstance(materials, list) or not 1 <= len(materials) <= 30 or not isinstance(refs, list) or len(refs) != len(materials):
         raise HTTPException(422, "Bounded complete material manifest is required")
@@ -182,8 +208,10 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str) -> dict[str, 
         raise HTTPException(409, "Material reference closure is incomplete or changed")
     if set(caps) != {cap for item in materials for cap in item.get("permissions", [])}:
         raise HTTPException(422, "Material permissions do not match the immutable manifest")
-    if not store.settings.demo or plan.get("syntheticFixture") is not True or plan.get("policy") not in {"bounded-synthetic", "admin-review", "read-only-auto"}:
-        raise HTTPException(409, "This validated executor adapter currently supports explicitly synthetic plans only")
+    if type(plan.get("syntheticFixture")) is not bool or plan.get("policy") not in {"bounded-synthetic", "admin-review", "read-only-auto"}:
+        raise HTTPException(409, "Remote plan requires an explicit supported policy and provenance flag")
+    if plan.get("policy") == "bounded-synthetic" and (not store.settings.demo or plan["syntheticFixture"] is not True):
+        raise HTTPException(409, "Synthetic policy cannot authorize a production remote plan")
     return plan
 
 
@@ -224,7 +252,7 @@ class PreparedHandoffService:
         return origin
 
     def _authority(self, origin: TrustedOrigin, owner: str, task_id: str, manifest_hash: str,
-                   plan: Mapping[str, Any], tool: str | None = None, *, native: bool = False) -> None:
+                   plan: Mapping[str, Any], tool: str | None = None, *, native: bool = False) -> HandoffAuthority:
         try:
             current = origin.authorize(owner, task_id, manifest_hash, tool)
             if not isinstance(current, HandoffAuthority):
@@ -240,6 +268,7 @@ class PreparedHandoffService:
                     raise PermissionError("Current origin/receiver budget intersection denies the manifest")
             if tool is not None and tool not in current.tools & origin.tools:
                 raise PermissionError("Current origin denies this protected tool")
+            return current
         except HandoffCancellationRequested as error:
             if (error.owner, error.task_id, error.manifest_hash) != (owner, task_id, manifest_hash):
                 raise HTTPException(403, "Origin cancellation signal differs from this handoff binding") from error
@@ -285,12 +314,19 @@ class PreparedHandoffService:
             raise HTTPException(409, "Trusted origin configuration changed; handoff cannot be replayed")
         source = row["body"]["manifest"]["plan"]
         if execution:
-            self._authority(origin, row["origin_owner"], row["origin_task"], row["manifest_hash"], source, tool, native=native)
+            current = self._authority(origin, row["origin_owner"], row["origin_task"], row["manifest_hash"], source, tool, native=native)
+            proof = self.store.remote_bindings.inspect(row["id"], owner)
+            if proof["receiverConfiguration"] != {"revision": origin.configuration_revision, "sha256": origin.fingerprint}:
+                raise HTTPException(409, "Receiver binding proof configuration differs from current trust")
+            if current.target_revision is not None or current.target_fingerprint is not None:
+                if (current.origin_ref != origin.reference or current.receiver_identity != owner or
+                        proof["sourceConfiguration"] != {"revision": current.target_revision, "sha256": current.target_fingerprint}):
+                    raise HTTPException(409, "Current origin configuration differs from the immutable receiver binding proof")
         return source
 
     def prepare(self, remote_owner: str, body: PrepareBody) -> dict[str, Any]:
         origin = self._origin(remote_owner, body.originRef, body.originOwnerId)
-        source = _manifest(body.manifest, self.store, body.originOwnerId)
+        source = _manifest(body.manifest, self.store, body.originOwnerId, receiver=True)
         origin_task = str(body.originTaskId)
         key = digest({"origin": body.originRef, "owner": body.originOwnerId, "request": body.requestId})
         task_key = digest({"origin": body.originRef, "task": origin_task})
@@ -303,11 +339,25 @@ class PreparedHandoffService:
                     raise HTTPException(409, "IDEMPOTENCY_CONFLICT: original handoff identity or manifest changed")
                 self._check_row(row, remote_owner)
             else:
-                self._authority(origin, body.originOwnerId, origin_task, body.manifest["sha256"], source)
+                authority = self._authority(origin, body.originOwnerId, origin_task, body.manifest["sha256"], source)
                 identifier, plan_id = str(uuid4()), str(uuid4())
+                service = getattr(self.store, "remote_bindings", None)
+                if service is None:
+                    raise HTTPException(409, "Receiver binding proof service is unavailable")
+                if authority.target_revision is None or authority.target_fingerprint is None:
+                    if source.get("bindingManifest", {}).get("connections"):
+                        raise HTTPException(409, "Connection mappings require identity-bound current origin configuration")
+                    source_configuration = {"revision": origin.configuration_revision, "sha256": origin.fingerprint}
+                else:
+                    if authority.origin_ref != origin.reference or authority.receiver_identity != remote_owner:
+                        raise HTTPException(403, "Current source configuration identity differs from the receiver")
+                    source_configuration = {"revision": authority.target_revision, "sha256": authority.target_fingerprint}
+                proof = service.prepare(origin, remote_owner, origin_task, identifier, body.manifest,
+                    receiver_plan_id=plan_id, source_configuration=source_configuration)
                 imported = {**source, "id": plan_id, "ownerId": remote_owner, "createdAt": now(),
                             "remoteHandoff": {"receiptId": identifier, "originRef": body.originRef,
-                                              "originTaskId": origin_task, "manifestHash": body.manifest["sha256"]}}
+                                              "originTaskId": origin_task, "manifestHash": body.manifest["sha256"],
+                                              "bindingProofSha256": proof["sha256"]}}
                 imported["fingerprint"] = digest({k: v for k, v in imported.items() if k not in {"id", "createdAt", "fingerprint"}})
                 saved = {"manifest": body.manifest, "remotePlan": imported, "remoteTaskId": None, "createdAt": now()}
                 self.store.sql("INSERT INTO af_remote_handoffs VALUES(:id,:ref,:origin_owner,:origin_task,:remote_owner,:request,:manifest,:configuration,'PREPARING',CAST(:body AS JSONB))",
@@ -324,7 +374,14 @@ class PreparedHandoffService:
                 else:
                     self.store.save_plan(imported)
                 if self.admission_guard:
-                    self.admission_guard(remote_owner, imported)
+                    try:
+                        self.admission_guard(remote_owner, imported)
+                    except HTTPException as error:
+                        if error.status_code == 409 and str(error.detail).startswith("PLAN_REVIEW_REQUIRED:"):
+                            # Metadata preparation exposes the exact receiver
+                            # plan for independent approval, without a ticket.
+                            return {**self._public(row), "receiverReviewRequired": True}
+                        raise
                 task, _ = self.store.reserve_task(imported, "remote-" + row["id"])
                 if task.get("run_id"):
                     raise HTTPException(409, "Preparation encountered an unexpected execution ticket")
@@ -341,7 +398,9 @@ class PreparedHandoffService:
                 "originTaskId": row["origin_task"], "remoteOwnerId": row["remote_owner"], "requestId": row["request_id"],
                 "manifestHash": row["manifest_hash"], "remotePlanId": row["body"]["remotePlan"]["id"],
                 "remoteTaskId": task_id, "remoteRunId": task.get("run_id") if task else None,
-                "state": row["state"], "native": native, "syntheticFixture": self.store.settings.demo}
+                "state": row["state"], "native": native,
+                "receiverBindingProof": self.store.remote_bindings.inspect(row["id"], row["remote_owner"]),
+                "syntheticFixture": row["body"]["remotePlan"]["syntheticFixture"]}
 
     async def receipt(self, remote_owner: str, identifier: str) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
@@ -642,6 +701,12 @@ class HandoffTarget:
         value = urlsplit(self.base_url)
         if value.scheme not in {"http", "https"} or not value.hostname or value.username or value.password or value.query or value.fragment or not self.identity_map or not callable(self.headers):
             raise ValueError("Target requires an operator HTTP origin, identity mapping and trusted credential callback")
+        try:
+            loopback = ipaddress.ip_address(value.hostname).is_loopback
+        except ValueError:
+            loopback = value.hostname.lower() == "localhost"
+        if value.scheme == "http" and not loopback and self.transport is None:
+            raise ValueError("Non-loopback remote targets require HTTPS")
 
     @property
     def fingerprint(self):
@@ -727,14 +792,50 @@ class TrustedHandoffClient:
         native_context = INTERNAL_NATIVE.set(False)
         try:
             async with httpx.AsyncClient(base_url=target.base_url.rstrip("/") + "/", transport=target.transport,
-                                         headers=dict(target.headers(owner)), timeout=20, follow_redirects=False) as client:
-                result = await client.request(method, path.lstrip("/"), **kwargs)
+                                         headers={**dict(target.headers(owner)), "Accept-Encoding": "identity"},
+                                         timeout=20, follow_redirects=False, trust_env=False) as client:
+                async with client.stream(method, path.lstrip("/"), **kwargs) as streamed:
+                    limit = (16384 if streamed.is_redirect or streamed.status_code >= 400 else
+                             self.store.settings.experiment_output_bytes if binary else 2 * 1024 * 1024)
+                    if streamed.headers.get("Content-Encoding", "identity").lower() != "identity":
+                        raise HTTPException(502, "Remote compressed responses are unsupported")
+                    advertised = streamed.headers.get("Content-Length")
+                    if advertised is not None:
+                        try:
+                            declared = int(advertised)
+                        except ValueError as error:
+                            raise HTTPException(502, "Remote response length is invalid") from error
+                        if declared < 0 or declared > limit:
+                            raise HTTPException(502, "Remote response exceeds the operator ceiling")
+                    raw = bytearray()
+                    async for chunk in streamed.aiter_raw():
+                        if len(raw) + len(chunk) > limit:
+                            raise HTTPException(502, "Remote response exceeds the operator ceiling")
+                        raw.extend(chunk)
+                    result = httpx.Response(streamed.status_code, headers=streamed.headers, content=bytes(raw))
         except httpx.HTTPError as error:
             raise HTTPException(503, "REMOTE_ACK_UNKNOWN: read the original owner-bound receipt") from error
         finally:
             INTERNAL_NATIVE.reset(native_context)
         if result.is_redirect or result.status_code >= 400:
-            raise HTTPException(result.status_code if result.status_code >= 400 else 502, "Trusted receiver rejected the operation")
+            code = None
+            # Only fixed public protocol codes cross this error boundary.
+            # Receiver exception/provider text can contain private handles.
+            allowed = {"REMOTE_BINDING_" + name for name in ("SOURCE", "CONFIGURATION", "IDENTITY", "REQUIRED",
+                "AMBIGUOUS", "CHANGED", "INTEGRITY", "SCOPE", "ANCESTRY", "UNBOUND", "CONFLICT")} | {
+                "ORIGIN_AUTHORITY_" + name for name in ("BINDING_DENIED", "CONFIG_CHANGED", "DENIED", "UNAVAILABLE",
+                    "AUTH_UNAVAILABLE", "SCHEMA_INVALID", "RESPONSE_INVALID")} | {
+                "PLAN_REVIEW_REQUIRED", "PLAN_REVIEW_DENIED", "PLAN_REVIEW_EXPIRED", "POLICY_UNSET"}
+            if result.status_code >= 400 and len(result.content) <= 16384:
+                try:
+                    value = result.json()
+                    candidate = value.get("code") if isinstance(value, dict) else None
+                    if isinstance(candidate, str) and candidate in allowed:
+                        code = candidate
+                except ValueError:
+                    pass
+            message = (code + ": " if code else "") + "Trusted receiver rejected the operation"
+            raise HTTPException(result.status_code if result.status_code >= 400 else 502, message)
         if binary:
             if len(result.content) > self.store.settings.experiment_output_bytes:
                 raise HTTPException(502, "Remote artifact exceeds the operator output ceiling")
@@ -754,6 +855,21 @@ class TrustedHandoffClient:
                               "remoteOwnerId": target.identity_map[row["owner_id"]], "requestId": row["request_id"], "manifestHash": row["manifest_hash"]}.items():
             if receipt.get(key) != expected:
                 raise HTTPException(409, "Remote receipt identity differs from the original admission")
+        proof = receipt.get("receiverBindingProof")
+        expected_keys = {"schema", "originRef", "receiptId", "originTaskId", "originOwner", "receiverOwner", "receiverPlanId",
+                         "manifestHash", "sourceConfiguration", "receiverConfiguration", "entries", "sha256"}
+        if not isinstance(proof, dict) or set(proof) != expected_keys:
+            raise HTTPException(502, "Receiver receipt has no exact immutable local binding proof")
+        original = row["body"]["manifest"]["plan"]
+        full_proof = {key: value for key, value in proof.items() if key != "sha256"} | {
+            "sourcePlan": original, "sourceBindings": original["executionBindings"]}
+        if digest(full_proof) != proof["sha256"] or any(proof.get(key) != value for key, value in {
+                "schema": 1, "originRef": target.origin_ref, "receiptId": receipt.get("id"),
+                "originTaskId": row["task_id"], "originOwner": row["owner_id"],
+                "receiverOwner": target.identity_map[row["owner_id"]], "receiverPlanId": receipt.get("remotePlanId"),
+                "manifestHash": row["manifest_hash"],
+                "sourceConfiguration": {"revision": target.configuration_revision, "sha256": target.fingerprint}}.items()):
+            raise HTTPException(409, "Receiver binding proof integrity or source identity/configuration differs")
         try:
             UUID(str(receipt["id"]))
             UUID(str(receipt["remotePlanId"]))
@@ -767,7 +883,8 @@ class TrustedHandoffClient:
             if current is None:
                 raise HTTPException(404, "Owner-bound remote placement disappeared")
             previous = current["body"].get("receipt")
-            if previous and (any(previous.get(key) != receipt.get(key) for key in ("id", "remotePlanId"))
+            if previous and (previous.get("receiverBindingProof", {}).get("sha256") != proof["sha256"]
+                             or any(previous.get(key) != receipt.get(key) for key in ("id", "remotePlanId"))
                              or previous.get("remoteTaskId") is not None and previous["remoteTaskId"] != receipt.get("remoteTaskId")
                              or previous.get("remoteRunId") is not None and previous["remoteRunId"] != receipt.get("remoteRunId")):
                 raise HTTPException(409, "Receiver replaced the original prepared task or native ticket")
@@ -934,8 +1051,12 @@ class TrustedHandoffClient:
         plan = self.store.plan(task["plan_id"], owner)
         if tool is not None and tool not in plan["tools"]:
             raise PermissionError("Origin plan denies this protected tool")
+        target = self.targets[row["target_ref"]]
         return HandoffAuthority(frozenset(plan["capabilities"]), frozenset(plan["tools"]),
-                                {key: plan["budget"][key] for key in BUDGET_KEYS})
+                                {key: plan["budget"][key] for key in BUDGET_KEYS},
+                                origin_ref=target.origin_ref, target_ref=target.reference,
+                                receiver_identity=target.identity_map[owner],
+                                target_revision=target.configuration_revision, target_fingerprint=target.fingerprint)
 
     def install_guard(self) -> None:
         if self._installed:

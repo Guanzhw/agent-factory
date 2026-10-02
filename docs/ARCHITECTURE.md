@@ -44,3 +44,11 @@ versions; the version remains available as historical evidence after withdrawal.
 Factory event replay uses persisted task stream IDs, signed owner/task positions
 and one SQL snapshot. Late lower-ID commits explicitly invalidate the prefix;
 display history limits never erase application failure facts.
+
+Governed remote execution persists a separate receiver binding proof instead of
+rewriting source bindings or forwarding credentials. An exact operator mapping
+selects receiver-owned adapters/connections; both current policies and source
+authority over bounded authenticated HTTP gate execution. Receiver review occurs
+before native admission, and descendants narrow the same root proof. Loopback
+process/database acceptance and external-host production acceptance remain
+distinct. See REMOTE_BINDINGS.md.

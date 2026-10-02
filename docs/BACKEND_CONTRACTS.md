@@ -41,3 +41,35 @@ release race. Twenty-user admission and clean-stop official PostgreSQL restore
 are verified. Generic mutation receipts/durable journals, hostile-code tenancy,
 sustained target-host load, production monitoring/recovery and actual ORX research
 remain tracked full-scope work.
+
+## Governed remote process acceptance
+
+The next remote stage runs two actual native services in separate owned OS
+processes with independent generated PostgreSQL databases and workspaces. Both
+use administrator-reviewed, non-demo, non-synthetic plans and explicitly
+controlled Models; this does not turn fixture output into live provider evidence.
+Operator mappings bind exact source specs to receiver-local connections. Both
+configuration revisions/hashes and identities are sealed in an immutable proof;
+the original source manifest is retained unchanged.
+
+Nine process cases verify legal/missing/wrong-owner/rotated mappings, independent
+receiver review, both current role withdrawals, origin process outage/restart,
+receiver-owned descendants/scoped cancellation, crash after native commit before
+acknowledgement, pre-review cancellation and controlled registered ORX discovery.
+The origin has zero native tickets. A root dispatch owns one receiver native
+ticket; separately delegated children have their own native tickets. Restarts
+retain original identities/receipts and UNKNOWN capacity rules. Artifact bytes
+are checked against persisted SHA metadata.
+
+`GET /api/factory/requests/{requestId}` remains the read-only original-key intent
+lookup. Receiver job detail survives origin unavailability with execution and
+delegation actions disabled; protected operations still fail current authority
+checks. Local cleanup does not infer revocation or stop from a network failure.
+The transport reads bounded identity-encoded bodies and drops private error
+messages. Exact application import preserves source hashes but starts a local
+draft with separate receiver publication review; no user import route exists.
+
+Independent databases here share one loopback PostgreSQL server, not two physical
+database hosts. Production TLS/host/identity provisioning, cross-host/replica
+isolation and live ORX experiments remain separate acceptance work. See
+REMOTE_BINDINGS.md and VERIFICATION.md.

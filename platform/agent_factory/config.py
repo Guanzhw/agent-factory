@@ -30,6 +30,7 @@ class Settings:
     remote_targets: dict = field(default_factory=dict)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
+    remote_binding_mappings: dict = field(default_factory=dict)
     # Same-process operator registrations; never populated from user JSON/env secrets.
     trusted_connections: dict = field(default_factory=dict)
     runtime_adapters: list = field(default_factory=list)

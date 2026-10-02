@@ -283,3 +283,84 @@ implemented; real model/ORX scientific acceptance, provider credentials, product
 identity/isolation, receiver-side connection mapping, sustained target throughput,
 monitoring/retention and multi-replica scheduler recovery remain open. No paid API,
 cloud provisioning, deployment exposure, production grant or merge was performed.
+
+## Governed remote execution and receiver-local connection bindings
+
+Verified on 2026-10-02 on Windows / Agno 3.1.0 / PostgreSQL 17.11. The complete
+backend suite passed **319 tests in 447.161 seconds, no skips**, with disposable
+PostgreSQL, official restore tools and exact-source ORX binary opt-ins. Ruff and
+Pyright passed. Frontend lint/typecheck, **35 client tests** and production build
+passed. Official npm audit reported **zero vulnerabilities**; the configured
+mirror lacks an audit endpoint, so auditing used registry.npmjs.org without a
+persistent configuration change. Exact remote commit/CI evidence is linked in
+the draft PR after publication; portable CI skips explicitly unavailable fixtures.
+
+The complete run initially exposed a Windows test teardown failure: the old
+venv redirector PID could exit before the actual API worker released its log.
+The existing five-case TCP fixture now launches real CPython with the pinned
+venv import path and waits for its owned worker exit. Its focused five cases
+passed in 10.983 seconds, then the complete 319 run passed. Runtime guards, assertions
+and cleanup proof requirements were preserved.
+
+New coverage comprises nine exact application snapshot-import cases, nine local
+receiver-binding cases, fourteen actual/adversarial origin-HTTP authorization
+cases, four compatibility-contract cases, eight bounded target transport cases
+and nine actual two-process governed remote cases. Independent generated PG
+databases share one loopback PostgreSQL server; they are not two physical hosts.
+No in-process ASGI transport substitutes for the two-process acceptance boundary.
+
+Process acceptance runs administrator-reviewed non-demo/non-synthetic plans
+with explicitly controlled Models/connections. It tests legal, missing,
+wrong-owner and rotated mappings; both current role withdrawals; origin process
+outage and original receipt recovery; narrowed receiver-owned children and
+scoped cancellation; receiver hard exit after native commit before HTTP ACK;
+pre-review positive no-dispatch cancellation; and registered ORX discovery.
+Each remote root has zero origin native tickets and one receiver root ticket;
+separately delegated children own separate native tickets. Failure history,
+UNKNOWN capacity, original manifests and SHA-checked artifact bytes are retained.
+Current-origin HTTP is the actual authenticated Factory route, not a fixed-success
+callback. Origin outage keeps receiver native facts readable and disables
+execution/delegation actions; it does not manufacture stop or revocation proof.
+
+Final artifact provenance acceptance reran all nine process cases against the
+latest Store code: **9/9 passed in 89.459 seconds**. New remote artifacts identify
+both source and effective model/environment adapter IDs/revisions, source/effective
+execution-binding hashes and the immutable receiver proof hash. The effective
+manifest digest is independently reconstructed from exact public proof entries.
+Source manifests, artifact bytes and older stored metadata remain unchanged.
+No handles, tokens or fixture control credentials appear in public provenance.
+
+The registered remote ORX case creates an actual native DONE effect and
+hash-checked discovery artifact labeled `controlled_transport_fixture`. It is
+not integrated CLI experiment or live scientific acceptance. Exact-source binary
+preflight remains separate from controlled discovery evidence. Production
+identity issuance, TLS/host authorization, cross-host/replica isolation, sustained
+target throughput and real provider/science acceptance remain pending. There is
+no remote configuration in default startup, paid call, cloud allocation,
+deployment exposure, production grant or merge.
+
+Supported Edge browser acceptance used the actual loopback pair and latest
+production frontend bundle. Separate source/receiver administrators reviewed the
+exact plans. PREPARING showed a scoped proof, zero receiver tickets and no native
+tool/replay/delegation controls. Wrong receiver-plan responses disabled actions;
+offline reads recovered the original identity after explicit reconnect. Receiver
+approval followed by a post-commit503 continuation ACK loss recovered the original
+plan/target/request receipt, then native input. Explicit same-target replay kept
+one receiver root ticket.
+
+Custom direct/paused child modes came from the exact parent application, not
+hardcoded research labels. A paused child answered through the UI and produced
+a 171-byte native checksum artifact with authenticated byte/hash verification.
+Root cancellation proved the owned receiver group stopped; native child COMPLETED
+and its artifact remained historical evidence despite Factory cascade reclaim
+intent. A second PREPARING task was canceled with one POST under double click,
+positive CANCELLED_NO_DISPATCH/allStopped and null receiver task/run IDs, unchanged
+receiver ticket count, and no native group/event calls. Desktop and 390px captures
+are retained as ignored evidence; final document/scroll width was 390px.
+
+The browser harness once created an unrelated controlled local task after reload
+without restoring its remote-target selection. That task was explicitly canceled;
+the remote replay claim comes from the later explicit same-target check, not that
+mistaken submission. All fixture tasks were terminal before owned-service cleanup.
+Only generated native fixture users/roles were used; credential-bearing browser
+helpers were removed. There were no production grants or provider requests.

@@ -1,3 +1,4 @@
+import { nativeInteractionAvailable } from './remoteHandoffState.js';
 import type { Artifact, Connection, Job, JobEvent, Material, MaterialReference, PlatformInfo, User } from '../shared/types.js';
 
 export type { Artifact, Connection, JobEvent, MaterialReference, User };
@@ -34,9 +35,10 @@ export interface Plan {
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
-export type FactoryJob = Job & {
+export type FactoryJob = Omit<Job, 'input'> & {
+  input: Omit<Job['input'], 'mode'> & { mode: string };
   planId?: string;
-  executionPlacement?: { kind: string; targetRef: string; originTaskId: string; remoteTaskId?: string; state: string };
+  executionPlacement?: { kind: string; targetRef: string; originTaskId: string; remoteTaskId?: string; remoteRootTaskId?: string; remoteRunId?: string | null; state: string };
   allowedActions?: string[];
   validationStatus?: string;
   evidenceKind?: string;
@@ -55,6 +57,7 @@ export interface DelegationFact {
 }
 export interface DelegationGroup { parent: DelegationFact; children: DelegationFact[]; pending: boolean; unknown: boolean; allStopped: boolean }
 export interface DelegationScope {
+  modes?: string[]; defaultMode?: string | null;
   allowed: boolean; parentTaskId: string; rootTaskId: string; depth: number;
   capabilities: string[]; tools: string[]; budget: Record<string, unknown>;
   sharedBudget: { toolCallsUsed: number; toolCallsLimit: number; childrenUsed: number; childrenLimit: number; maxDepth: number };
@@ -132,6 +135,7 @@ export function pendingQuestion(detail: JobDetail): PendingQuestion | undefined 
   }
 }
 export function pendingApproval(detail: JobDetail): PendingApproval | undefined {
+  if (!nativeInteractionAvailable(detail)) return undefined;
   const { job, snapshot } = detail;
   if (job.approvalDetail) return job.approvalDetail;
   const raw = snapshot?.approval;

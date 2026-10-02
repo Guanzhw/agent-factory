@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
+from types import SimpleNamespace
 from contextvars import ContextVar
 from contextlib import contextmanager
 
@@ -44,6 +45,7 @@ class Store:
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
         self.remote_execution: Any = None
+        self.remote_bindings: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
@@ -339,7 +341,27 @@ class Store:
             raise ValueError("Artifact exceeds task output budget")
         if len(name) > 120 or any(char in name for char in "/\\\r\n"):
             raise ValueError("Artifact name must be a single safe filename")
-        body = {"id": str(uuid4()), "jobId": task["id"], "name": name, "mediaType": media_type, "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "createdAt": now(), "provenance": metadata or {"syntheticFixture": True}}
+        provenance: dict[str, Any] = dict(metadata or {"syntheticFixture": True})
+        if self.remote_bindings is not None:
+            plan = self.plan(task["plan_id"], task["owner_id"])
+            context = SimpleNamespace(session_id=task["id"], run_id=task["run_id"], user_id=task["owner_id"],
+                session_state={"factory_envelope": {"plan_ref": plan["id"], "user_id": task["owner_id"],
+                    "task_id": task["id"], "request_id": task["request_id"]}})
+            root = self.remote_bindings._root(plan, context)
+            if root is not None:
+                source = plan["executionBindings"]
+                effective = self.execution_bindings.manifest(plan, context=context)
+                def descriptor(spec):
+                    return {key: spec[key] for key in ("adapterId", "revision")}
+                provenance.update(modelAdapterId=effective["model"]["adapterId"],
+                    environmentAdapterId=effective["environment"]["adapterId"], bindingProvenance={
+                        "schema": 1, "sourceExecutionBindingsSha256": source["sha256"],
+                        "effectiveExecutionBindingsSha256": effective["sha256"],
+                        "receiverBindingProofSha256": root["remoteHandoff"]["bindingProofSha256"],
+                        "sourceModel": descriptor(source["model"]), "effectiveModel": descriptor(effective["model"]),
+                        "sourceEnvironment": descriptor(source["environment"]),
+                        "effectiveEnvironment": descriptor(effective["environment"])})
+        body = {"id": str(uuid4()), "jobId": task["id"], "name": name, "mediaType": media_type, "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "createdAt": now(), "provenance": provenance}
         self.sql("INSERT INTO af_artifacts VALUES(:id,:task,CAST(:body AS JSONB),:content)", id=body["id"], task=task["id"], body=canonical(body), content=raw)
         self.event(run_id, "artifact", "Artifact persisted with SHA-256 provenance", {"artifactId": body["id"], "sha256": body["sha256"]})
         return body

@@ -6,6 +6,9 @@ never register code, credentials, adapter factories or permissions themselves.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
+from datetime import datetime
+import re
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -301,6 +304,75 @@ class ApplicationService:
             conn.execute(self.versions.insert().values(id=identifier, version=value["version"], body=value, sha=value["sha256"]))
             conn.execute(self.states.insert().values(id=identifier, version=value["version"], author_id=actor, state="draft", bootstrap=False, updated_at=now()))
             return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.draft", value)
+
+    def import_snapshot(self, actor, snapshot, request_id):
+        """Install an exact inert snapshot for a separate local publication review.
+
+        This trusted operator method has no HTTP route. Source review decisions
+        are deliberately absent from the snapshot schema; importing does not
+        authorize execution or register runtime adapters.
+        """
+        self.auth.require(actor, "agent_os:admin")
+        self.auth.require(actor, "components:write")
+        MaterialGovernance._safe_data(snapshot)
+        fields = set(ApplicationDefinition.model_fields)
+        if not isinstance(snapshot, dict) or set(snapshot) != fields | {"version", "createdAt", "schema", "origin", "sha256"}:
+            raise HTTPException(422, "Application snapshot requires the complete immutable schema")
+        value = deepcopy(snapshot)
+        definition = {key: value[key] for key in fields}
+        try:
+            normalized = self.validate_definition(definition, check_materials=False)
+            canonical_snapshot = canonical(value)
+            canonical_definition = canonical(definition)
+            if len(canonical_snapshot.encode("utf-8")) > 131072:
+                raise HTTPException(422, "Application snapshot exceeds its bounded payload")
+            if canonical_definition != canonical(normalized):
+                raise HTTPException(422, "Application snapshot definition must be complete and canonical")
+        except (TypeError, ValueError, UnicodeError) as error:
+            raise HTTPException(422, "Application snapshot requires bounded valid JSON") from error
+        if (type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["version"]) is not int or not 1 <= value["version"] <= 2147483647
+                or value["origin"] != "manager-authored"
+                or not isinstance(value["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"])):
+            raise HTTPException(422, "Application snapshot schema, version, origin or digest is invalid")
+        timestamp = value["createdAt"]
+        if not isinstance(timestamp, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", timestamp):
+            raise HTTPException(422, "Application snapshot requires a timezone-aware source timestamp")
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("Missing source timezone")
+        except ValueError as error:
+            raise HTTPException(422, "Application snapshot source timestamp is invalid") from error
+        if value["sha256"] != digest({key: item for key, item in value.items() if key != "sha256"}):
+            raise HTTPException(422, "Application snapshot digest differs from its exact immutable body")
+        fingerprint = digest({"action": "application.import-snapshot", "snapshot": value})
+        with self.db.write() as conn:
+            old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
+            if old is not None:
+                return old
+            existing = conn.execute(select(self.versions).where(
+                self.versions.c.id == value["id"], self.versions.c.version == value["version"])).mappings().first()
+            if existing:
+                body, _ = self._row(conn, value["id"], value["version"])
+                if canonical(body) != canonical_snapshot:
+                    raise HTTPException(409, "Immutable application version conflicts with the imported snapshot")
+            else:
+                latest = conn.execute(select(func.max(self.versions.c.version)).where(self.versions.c.id == value["id"])).scalar() or 0
+                if value["version"] <= latest:
+                    raise HTTPException(409, "Application snapshot cannot insert an older immutable version")
+            # Local material approval, bindings and dependency hashes are never
+            # inherited from a source Factory's publication decision.
+            self.validate_definition(normalized)
+            self.auth.require(actor, "agent_os:admin")
+            self.auth.require(actor, "components:write")
+            if not existing:
+                conn.execute(self.versions.insert().values(id=value["id"], version=value["version"], body=value, sha=value["sha256"]))
+                conn.execute(self.states.insert().values(id=value["id"], version=value["version"],
+                    author_id=actor, state="draft", bootstrap=False, updated_at=now()))
+            # Observing an identical version never resets approval, author,
+            # archive/withdrawal metadata or an existing publication review.
+            return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.import-snapshot", value)
 
     def revise(self, actor, identifier, version, definition, request_id):
         self.auth.require(actor, "components:write")

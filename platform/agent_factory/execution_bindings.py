@@ -278,7 +278,15 @@ class ExecutionBindings:
         return [("model", manifest["model"]), ("environment", manifest["environment"]),
                 *[("tool", item) for item in manifest["tools"]], *[("knowledge", item) for item in manifest["knowledge"]]]
 
-    def manifest(self, plan: Mapping[str, Any]) -> dict[str, Any]:
+    def manifest(self, plan: Mapping[str, Any], *, context: Any = None) -> dict[str, Any]:
+        receiver = getattr(self.store, "remote_bindings", None)
+        if receiver is not None and (plan.get("remoteHandoff") or plan.get("delegation")):
+            # Preserve the original immutable source manifest. Only an exact
+            # receipt-bound receiver proof may select its effective local
+            # adapters/connections; origin pins are never resolved as local pins.
+            effective = receiver.effective(plan, plan.get("executionBindings"), context)
+            if effective is not None:
+                return effective
         manifest = plan.get("executionBindings")
         if manifest is None:
             # Old immutable plans can only use the explicit original seed map.
@@ -352,7 +360,7 @@ class ExecutionBindings:
                 raise HTTPException(403, "BINDING_NATIVE_IDENTITY: native run differs from its trusted execution binding")
             if task["cancel_requested"]:
                 raise RunCancelledException("Factory cancellation requested before adapter execution")
-        manifest = self.manifest(plan)
+        manifest = self.manifest(plan, context=context)
         for kind, spec in self._items(manifest):
             self._connection(owner, self._entry(kind, spec), spec, context, resolve=False)
         return manifest

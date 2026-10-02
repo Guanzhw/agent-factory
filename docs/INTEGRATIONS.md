@@ -25,3 +25,9 @@ paid-model path is silently configured.
 task provider. These are synthetic integration examples, not production provider
 recipes. Missing items are reported per exact selected material and owner pin.
 Live configuration and scientific acceptance remain separate authorized work.
+
+Governed Factory-to-Factory execution now uses immutable receiver-local binding
+proofs and authenticated current origin authorization over actual HTTP. It allows
+exact non-demo plans when both approved application/material/adapter/connection/
+policy preflights pass. The controlled providers used in acceptance do not prove
+live model/ORX or production TLS/host authorization. See REMOTE_BINDINGS.md.

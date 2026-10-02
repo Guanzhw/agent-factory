@@ -101,6 +101,27 @@ class RemoteExecution:
 
     async def detail(self, task: dict, child: str | None = None) -> dict:
         try:
+            if child is None:
+                placement = self.client._row(task["owner_id"], task["id"])
+                if placement["state"] in {"PREPARING", "CANCELLED_NO_DISPATCH"}:
+                    receipt = await self.client.receipt(task["owner_id"], task["id"])
+                    if receipt["state"] in {"PREPARING", "CANCELLED_NO_DISPATCH"}:
+                        pending = self.unresolved(self.store.task(task["id"], task["owner_id"]), 409)
+                        cancelled = receipt["state"] == "CANCELLED_NO_DISPATCH"
+                        actions = ["inspect", "reconcile"]
+                        try:
+                            self.client._target(task["owner_id"], placement)
+                            if not cancelled:
+                                actions += ["cancel", "resume_remote"]
+                        except HTTPException as denied:
+                            if denied.status_code not in {403, 409, 503}:
+                                raise
+                        pending["job"].update(status="canceled" if cancelled else "waiting_approval",
+                            validationStatus="接收端已确认未开始执行" if cancelled else "接收端管理员审批待完成",
+                            allowedActions=actions)
+                        pending["snapshot"].update(remoteUnavailable=False, receiverReviewRequired=not cancelled,
+                            remoteHandoff=receipt, allStopped=cancelled)
+                        return pending
             detail = await self.client.detail(task["owner_id"], task["id"], child)
         except HTTPException as error:
             if child is None and (error.status_code >= 500 or error.status_code in {404, 409}):
@@ -130,8 +151,9 @@ class RemoteExecution:
         row = self.client.reserve(owner, plan_id, target_ref, request_id)
         task = self.store.task(row["task_id"], owner)
         try:
-            await self.client.prepare(owner, task["id"])
-            await self.client.dispatch(owner, task["id"])
+            prepared = await self.client.prepare(owner, task["id"])
+            if prepared["state"] != "PREPARING":
+                await self.client.dispatch(owner, task["id"])
         except HTTPException as error:
             if error.status_code < 500:
                 raise

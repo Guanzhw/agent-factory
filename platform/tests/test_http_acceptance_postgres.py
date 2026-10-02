@@ -14,6 +14,7 @@ import signal
 import socket
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -43,7 +44,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         # Windows normalizes environment iteration to uppercase; preserve SystemRoot explicitly.
         cls.env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'LANG', 'LC_ALL')
                    if name in os.environ}
-        cls.env.update(PYTHONPATH=str(cls.root / 'platform'), PYTHONIOENCODING='utf-8',
+        cls.env.update(PYTHONPATH=os.pathsep.join([str(cls.root / 'platform'), sysconfig.get_path('purelib')]), PYTHONIOENCODING='utf-8',
                        FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE='demo',
                        FACTORY_JWT_KEY=secrets.token_urlsafe(48), FACTORY_PORT=str(cls.port),
                        FACTORY_WORKSPACE=cls.directory.name, AGNO_TELEMETRY='false')
@@ -54,7 +55,10 @@ class LiveHTTPPostgresTests(unittest.TestCase):
     @classmethod
     def _start(cls):
         cls.log = open(Path(cls.directory.name) / 'owned-api.log', 'ab')
-        cls.process = subprocess.Popen([sys.executable, '-m', 'agent_factory'], cwd=cls.root,
+        # Windows venv launchers redirect to another PID. Own the real worker
+        # and wait for its exit before releasing the log handle/workspace.
+        interpreter = sys._base_executable if os.name == 'nt' else sys.executable
+        cls.process = subprocess.Popen([interpreter, '-m', 'agent_factory'], cwd=cls.root,
             env=cls.env, stdout=cls.log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
             start_new_session=os.name != 'nt')
@@ -78,7 +82,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
     def _stop(cls):
         process = cls.process
         if process is not None and process.poll() is None:
-            # Popen supplies this owned launcher PID; never discover/kill a port owner.
+            # Popen supplies this owned actual worker PID; never discover/kill a port owner.
             if os.name == 'nt':
                 subprocess.run([str(Path(os.environ['SystemRoot']) / 'System32/taskkill.exe'),
                                 '/PID', str(process.pid), '/T', '/F'], capture_output=True, check=True)

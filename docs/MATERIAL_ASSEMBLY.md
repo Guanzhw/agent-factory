@@ -82,7 +82,8 @@ binary, connection, Model or provider on its own. Old v1 fingerprints and exact
 seed material hashes are preserved. Older demo plans can execute only after
 explicit trusted `ApplicationService.adopt_legacy_demo_plan` proof; startup never
 silently adds proof or adopts a production plan. Receiver transport rejects
-connection-bearing manifests until explicit receiver mapping exists.
+unconfigured connection-bearing manifests. Explicit immutable receiver mappings
+and current origin HTTP authorization are implemented; see REMOTE_BINDINGS.md.
 
 FR16 discovery is deterministic bounded matching of approved names/keywords,
 followed by permitted exact choices. Unrestricted model-based application design,

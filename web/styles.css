@@ -17,3 +17,8 @@
 .composer select { margin-bottom: .6rem; }
 .connections-page > h2 { margin-top: 2rem; }
 @media (max-width: 620px) { .application-admin-toggle { flex-wrap: wrap; } .application-mode-evidence pre { max-width: 100%; overflow-wrap: anywhere; } }
+
+.remote-plan-reference { display: inline-block; overflow-wrap: anywhere; max-width: 100%; font-size: .8rem; }
+.remote-binding-evidence { display: grid; gap: .25rem; margin: .6rem 0; }
+.remote-binding-evidence strong { overflow-wrap: anywhere; font-size: .8rem; }
+.remote-provenance { margin-bottom: 1rem; }

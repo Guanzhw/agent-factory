@@ -14,8 +14,10 @@ contains `TrustedOrigin` objects with the reverse binding and a current authorit
 callback. These are operator configuration, never user/model JSON. The callback
 must consult the authoritative current origin policy, grants, exact plan and
 cancellation mandate; a static success callback is unsuitable for production.
-Real distributed authority transport, TLS and production credential provisioning
-have not been accepted. No target is configured by default or discovered by URL.
+Current source authority is now implemented through `OriginAuthorityTransport`
+and an authenticated origin route, verified over controlled actual TCP.
+Production distributed identity issuance, TLS and credential provisioning remain
+unaccepted; see [receiver binding proofs](REMOTE_BINDINGS.md). No target is configured by default or discovered by URL.
 
 `GET /api/factory/execution-targets` shows only references mapped to the current
 native principal. It returns no URL/credential and reports connectivity as
@@ -33,7 +35,9 @@ inherit that persisted root; the whole tree stays at the selected receiver.
 
 ## Admission, recovery and cleanup
 
-Prepare persists the receiver plan and task reservation without executing it.
+Prepare persists the immutable receiver plan and binding proof without execution.
+Receiver administrator review exposes that exact plan in PREPARING, with no task
+or ticket; after approval, idempotent prepare reserves its original task.
 Dispatch commits an UNKNOWN boundary before its single native submission attempt.
 The origin persists `dispatchAttempted` even when a later receipt says PREPARED.
 Lost delivery, lost reply and restart lead to owner-bound receipt/native-ticket
