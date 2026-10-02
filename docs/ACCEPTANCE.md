@@ -136,8 +136,8 @@ reclamation is disabled. The [operations guide](STORAGE_OPERATIONS.md) documents
 protected active/UNKNOWN/evidence/lease boundaries, bounded inventory, original
 container attribution, process-crash recovery and remaining production limits.
 
-Local PostgreSQL evidence: ten storage safety/upgrade tests plus two affected
-native/shared-budget tests passed (12 total); one actual service-exit/rename recovery
+Local PostgreSQL evidence: eleven storage safety/upgrade/audit tests plus two
+affected native/shared-budget tests passed (13 distinct cases); one actual service-exit/rename recovery
 test passed; one scoped runtime-attribution unit test passed. Chromium verified
 original-plan recovery after browser restart with zero automatic mutation POSTs,
 exact restored synthetic bytes, Bob/Alice isolation and a 390-pixel viewport.

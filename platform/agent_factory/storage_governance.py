@@ -337,16 +337,17 @@ class StorageGovernance:
             return self.public(old[0])
         plan_id = str(uuid4())
         body = {"manifest": manifest, "createdAt": now(), "rootId": self.root_id}
-        inserted = self.store.sql("""INSERT INTO af_retention_plans(id,owner_id,object_id,request_id,fingerprint,state,body)
-            VALUES(:id,:owner,:object,:request,:fp,'PLANNED',CAST(:body AS JSONB)) ON CONFLICT(owner_id,request_id) DO NOTHING RETURNING id""", id=plan_id, owner=owner,
-            object=identifier, request=request_id, fp=fingerprint, body=canonical(body))
-        if not inserted:
-            winner = self.store.sql("SELECT * FROM af_retention_plans WHERE owner_id=:owner AND request_id=:request", owner=owner, request=request_id)[0]
-            if winner["object_id"] != identifier:
-                raise HTTPException(409, "RETENTION_CONFLICT: original object differs")
-            return self.public(winner)
-        self.store.event(row["task_id"], "retention_planned", "Owner-scoped dry-run retained; no files moved or deleted", {"planId": plan_id, "fingerprint": fingerprint, "bytes": manifest["logicalBytes"]})
-        return self.public(self._plan(owner, plan_id))
+        with self.store.transaction():
+            inserted = self.store.sql("""INSERT INTO af_retention_plans(id,owner_id,object_id,request_id,fingerprint,state,body)
+                VALUES(:id,:owner,:object,:request,:fp,'PLANNED',CAST(:body AS JSONB)) ON CONFLICT(owner_id,request_id) DO NOTHING RETURNING id""", id=plan_id, owner=owner,
+                object=identifier, request=request_id, fp=fingerprint, body=canonical(body))
+            if not inserted:
+                winner = self.store.sql("SELECT * FROM af_retention_plans WHERE owner_id=:owner AND request_id=:request", owner=owner, request=request_id)[0]
+                if winner["object_id"] != identifier:
+                    raise HTTPException(409, "RETENTION_CONFLICT: original object differs")
+                return self.public(winner)
+            self.store.event(row["task_id"], "retention_planned", "Owner-scoped dry-run retained; no files moved or deleted", {"planId": plan_id, "fingerprint": fingerprint, "bytes": manifest["logicalBytes"]})
+            return self.public(self._plan(owner, plan_id))
 
     def _plan(self, owner, identifier):
         rows = self.store.sql("SELECT * FROM af_retention_plans WHERE id=:id AND owner_id=:owner", id=identifier, owner=owner)

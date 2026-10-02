@@ -266,3 +266,23 @@ class StorageGovernancePostgresTests(unittest.TestCase):
         self.assertNotIn("unregistered-fixture", str(value))
         self.assertEqual((old / "evidence.txt").read_bytes(), b"Never adopt a historical path")
         self.assertTrue(path.exists())
+
+    def test_dry_run_receipt_and_audit_commit_together(self):
+        task, path = self.owned()
+        self.stop(task)
+        request = {"objectId": path.name, "requestId": str(uuid4())}
+        original = self.store.event
+        def reject_audit(task_id, kind, *args, **kwargs):
+            if kind == "retention_planned":
+                raise RuntimeError("Owned fixture audit transaction failure")
+            return original(task_id, kind, *args, **kwargs)
+        with patch.object(self.store, "event", side_effect=reject_audit):
+            with self.assertRaises(RuntimeError):
+                self.client.post("/api/factory/storage/retention/plans", json=request)
+        self.assertFalse(self.store.sql("SELECT id FROM af_retention_plans WHERE owner_id='alice' AND request_id=:key", key=request["requestId"]))
+        self.assertTrue(path.exists())
+        response = self.client.post("/api/factory/storage/retention/plans", json=request)
+        self.assertEqual(response.status_code, 201, response.text)
+        events = [event for event in self.store.events(task) if event["type"] == "retention_planned"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["data"]["planId"], response.json()["id"])
