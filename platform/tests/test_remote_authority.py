@@ -4,6 +4,7 @@ Portable cases exercise denial against adversarial HTTP replies. Opt-in native
 PostgreSQL cases run the actual wired Factory origin route and managed Auth;
 they do not claim cross-process remote execution (a separate acceptance suite).
 """
+import asyncio
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -253,15 +254,58 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
 
     def test_actual_current_source_and_receiver_native_grants_cannot_be_replaced_by_request(self):
+        self._native_grant_transition(observe_revocation=False)
+
+    def test_observed_revocation_survives_role_restoration_and_only_fresh_task_gets_authority(self):
+        self._native_grant_transition(observe_revocation=True)
+
+    def _native_grant_transition(self, *, observe_revocation):
+        # Control only scheduling, on the actual service loop. Both cases still
+        # use real native grants, the real observer and loopback HTTP authority.
+        # A periodic tick during withdrawal commits sticky task cancellation;
+        # restoring a role must never be mistaken for reviving that mandate.
+        observer = self.state["lifecycle_observer"]
+        self.assertIsNotNone(observer._task)
+        loop = observer._task.get_loop()
+        asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
+        original = self.placement
         self.auth.authorization.unassign("alice", "factory-user")
-        with self.assertRaises(HTTPException):
+        with self.assertRaises(HTTPException) as withdrawn:
             self.call()
+        self.assertEqual(withdrawn.exception.status_code, 403)
+        self.assertFalse(self.store.task(original["task_id"], "alice")["cancel_requested"],
+                         "The authority read alone must not commit lifecycle cleanup")
+        if observe_revocation:
+            result = asyncio.run_coroutine_threadsafe(observer.observe_root(original["task_id"]), loop).result(timeout=5)
+            self.assertEqual(result["requested"], [original["task_id"]])
+            self.assertEqual(result["errors"], [])
+            self.assertFalse(result["allStopped"], "Missing receiver/native acknowledgement must retain capacity")
+            self.assertTrue(self.store.task(original["task_id"], "alice")["cancel_requested"])
+            self.assertTrue(self.store.has_failures(original["task_id"]))
+
         self.auth.authorization.assign("alice", "factory-user")
-        self.assertEqual(self.call().tools, frozenset({"checksum"}))
+        if observe_revocation:
+            # This is the previously intermittent CI outcome, now required.
+            with self.assertRaises(HTTPException) as ended:
+                self.call()
+            self.assertEqual(ended.exception.status_code, 403)
+            self.assertIn("ORIGIN_AUTHORITY_DENIED", str(ended.exception.detail))
+            self.assertTrue(self.store.task(original["task_id"], "alice")["cancel_requested"])
+            self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
+            self.assertNotEqual(self.placement["task_id"], original["task_id"])
+        authority = self.call()
+        self.assertEqual(authority.tools, frozenset({"checksum"}))
+        self.assertEqual(authority.capabilities, frozenset({"checksum:read"}))
+        self.assertFalse(self.store.task(self.placement["task_id"], "alice")["cancel_requested"])
         self.auth.authorization.unassign("bob", "factory-user")
-        with self.assertRaises(HTTPException):
+        with self.assertRaises(HTTPException) as receiver:
             self.call()
+        self.assertEqual(receiver.exception.status_code, 403)
         self.assertEqual(self.post(self.body(ownerId="manager", role="manager")).status_code, 422)
+        self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
+        self.assertIsNone(self.store.task(original["task_id"], "alice")["run_id"])
+        self.assertIsNone(self.store.task(self.placement["task_id"], "alice")["run_id"])
+        self.assertEqual(self.provider_calls, [])
 
     def test_current_material_application_adapter_and_policy_withdrawals_each_deny(self):
         # Each fixture has fresh immutable seed versions; no archive is restored.

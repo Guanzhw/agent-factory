@@ -535,3 +535,30 @@ CI remains the separate final validation source.
 - Final Windows/Linux Pyright targets both report zero errors. The platform
   compatibility fix was followed by another real Linux success/source/log/stop
   check: 1 pass in 25.654 seconds.
+
+## Deterministic origin-authority revocation ordering (2026-10-02)
+
+The PR-triggered PostgreSQL run for `b322d09` failed at the role-restoration
+assertion in `test_remote_authority.py`; its push-triggered run passed. Neither
+that push result nor the older green `176ef0e` runs resolve the failed assertion.
+
+The test withdrew Alice's role while the real background lifecycle observer was
+active, then assumed restoring the role must reauthorize the same task. If the
+observer ran during withdrawal, it correctly persisted `cancel_requested` and
+`protected_denied`; restoration cannot revive that task's execution mandate.
+This is a test ordering error, not permission propagation that should be relaxed.
+
+The two deterministic cases control the observer timer on the actual service
+loop and retain real native authorization and real loopback HTTP. One restores
+the grant before lifecycle observation and still requires exact checksum tools
+and capabilities. The other explicitly invokes the real observer during
+withdrawal, requires sticky 403 denial after restoration, and only permits a
+fresh task reference. Both retain receiver grant denial, reject forged request
+roles, and require zero effects, zero local native runs and zero model-provider
+construction. Missing stop acknowledgement remains held. No production grant,
+cleanup, authority transport or assertion was weakened.
+
+Validation before publication: both ordering cases passed (4.343 s); the complete
+origin-authority, lifecycle-observer and plan-policy suites passed all 48 tests
+(87.483 s). Ruff and Linux/Windows-target Pyright passed. Full backend regression
+and both push/PR workflows are tracked separately against the resulting SHA.
