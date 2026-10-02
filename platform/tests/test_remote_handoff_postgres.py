@@ -968,5 +968,40 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         finally:
             self.call_remote(wired.start)
 
+
+    def test_24_stale_detail_input_preserves_confirmed_authority_failure(self):
+        from agent_factory.factory_api import FactoryAPI
+        row = self.reserve()
+        self.call(self.handoff.prepare, "alice", row["task_id"])
+        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+        self.wait_native(receipt, {"paused"})
+        identifier = receipt["remoteTaskId"]
+        stale = self.remote["store"].task(identifier, "bob")
+        self.assertFalse(stale["cancel_requested"])
+        wired = self.remote["lifecycle_observer"]
+        self.call_remote(wired.stop)
+        self.remote["auth"].authorization.define_role("fixture-stale-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
+        self.remote["auth"].authorization.unassign("bob", "factory-user")
+        self.remote["auth"].authorization.assign("bob", "fixture-stale-reader")
+        try:
+            deadline = time.monotonic() + 15
+            while True:
+                observed = self.call_remote(wired.observe_root, identifier)
+                if observed["allStopped"] or time.monotonic() >= deadline:
+                    break
+                time.sleep(.03)
+            self.assertTrue(observed["allStopped"], observed)
+            self.assertTrue(self.remote["store"].failure_cleanup_requested(identifier))
+            api = FactoryAPI(self.remote["store"].settings, self.remote["store"], self.remote["auth"], self.remote["bridge"])
+            detail = self.call_remote(api.detail, stale)
+            self.assertEqual(detail["job"]["status"], "failed", "A pre-await task snapshot must not erase committed failure provenance")
+            self.assertEqual(self.remote["store"].task(identifier)["body"]["lastStatus"], "failed")
+            self.assertEqual(self.ticket_count(self.remote, identifier), 1)
+            self.assertEqual(self.call(self.handoff.receipt, "alice", row["task_id"])["applicationStatus"], "failed")
+        finally:
+            self.remote["auth"].authorization.unassign("bob", "fixture-stale-reader")
+            self.remote["auth"].authorization.assign("bob", "factory-user")
+            self.call_remote(wired.start)
+
 if __name__ == "__main__":
     unittest.main()

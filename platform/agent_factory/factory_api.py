@@ -134,6 +134,7 @@ class FactoryAPI:
         snapshot = {}
         if task.get("run_id"):
             snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+        task = self.store.task(task["id"], task["owner_id"])
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
         status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
@@ -149,6 +150,10 @@ class FactoryAPI:
                 else:
                     group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
                     task = self.store.task(task["id"], task["owner_id"])
+            # Native/group reads can await a concurrent trusted cleanup. Its
+            # cancellation flag and failure provenance commit together; never
+            # overwrite that cause using the caller's pre-await task snapshot.
+            task = self.store.task(task["id"], task["owner_id"])
             status = application_group_status(status, group)
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"

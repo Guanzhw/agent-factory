@@ -164,3 +164,13 @@ original ID/spec/name/image/scope attribution: writable layer 0 bytes, root file
 logical size 1,107,740,089 bytes. Logical container size is not vfs physical allocation;
 no historical container, image cache or evidence directory was removed. Exact-head
 CI status is tracked on the draft pull request separately from these local proofs.
+
+During exact-head CI, `22efa08` passed its PR run (418 tests, 36 skipped), but its
+push run exposed one remote authority-cleanup race: a detail request used its
+pre-await task snapshot and projected a confirmed failure as ordinary cancellation.
+A deterministic stale-snapshot test reproduced the failure locally. The detail
+projection now rereads the current task after native/group awaits, preserving the
+atomically recorded failure cause. The regression and original authority-read test
+both pass locally; the original final-failure and positive-stop assertions remain
+unchanged. Neither the failed push nor the earlier passing PR is substituted for
+the corrected commit's exact-head CI.
