@@ -19,7 +19,9 @@ def literature_settings(*, db_url: str, workspace: Path, provider, owner="alice"
         available=True, opaque_handle=provider, handle_ref=PROFILE)
     return Settings(db_url=db_url, workspace=workspace, port=port, max_workers=1,
         max_tool_calls=8, experiment_timeout_seconds=30, experiment_output_bytes=65536,
-        storage_task_reserve_bytes=512 * 1024 * 1024,
+        # Match the reviewed ORX profile: vfs may clone the preloaded image.
+        # This is conservative admission headroom, not a hard filesystem quota.
+        storage_task_reserve_bytes=4 * 1024 * 1024 * 1024,
         temporary_policy="admin-review", policy_revision=PROFILE, material_policy_revision=PROFILE,
         material_review_mode="separate-admin", runtime_tool_contract="orx-evidence-v2",
         trusted_connections={REGISTRATION_REF: trusted}, runtime_adapters=[environment_registration()])

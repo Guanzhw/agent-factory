@@ -41,6 +41,9 @@ end-to-end source package on this Linux host.
   the original experiment guardian and its hash are unchanged. The pinned image/guardian and
   exact task container identity are inspected. Retrieval scopes use the existing managed storage inventory with evidence protection; their receipts are not reclaimable scratch. Exit of the Docker client alone
   is insufficient: namespace/process stop must be positively confirmed.
+  The opt-in installation reserves the same conservative 4 GiB disk headroom
+  as the existing ORX profile, accounting for vfs image cloning. This admission
+  hold is not a hard filesystem quota or a physical-allocation measurement.
 - Only this explicitly installed retrieval profile uses the daemon's existing
   `bridge`. It publishes no ports and does not change networks, DNS, host security
   or firewall rules. There is no host-network/proxy fallback. This fixed CLI
