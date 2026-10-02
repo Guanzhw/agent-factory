@@ -1,5 +1,53 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Resumed coordinator snapshot
+
+The dedicated coordinator has resumed from exact checkpoint
+`12c82a469e1172654ac7d57fc02ceeffb8db0bbf` on
+`coord/at10-go-integration-20261002`, with sole integration ownership.
+[Draft PR11](https://github.com/Guanzhw/agent-factory/pull/11) tracks current
+acceptance and exact-SHA CI results. The older paused snapshot below is retained
+as provenance; its credential and test status do not describe the new container.
+
+The new environment's authorized credential presence/nonempty check was **true**.
+No value, length or digest was exposed. No live Go call was made because
+subscription-only billing remains unverified. Workers use mock transports only.
+The pinned ORX binary was rebuilt from public source with an exact approved hash
+match; PostgreSQL and runtime fixtures were recreated, not assumed to exist.
+
+Integrated commits through `59fdcddef12edd44a3766f983bc8d41d69d3e0d3` add:
+
+- Off-loop fresh authority checks with loop-local cancellation fences, loop-owned
+  model construction and pause publication, and deterministic regression tests.
+- Successful exact-binary version proof reuse; authority/hash checks remain fresh.
+  ORX commands check operation authority after capacity acquisition before spawn.
+- Go terminal/usage parsing hardening and one-request/one-ledger-attempt contracts.
+- Fail-closed Windows capability checks retaining Linux no-follow/nonblocking
+  flags, portable recovery mocks, and explicit non-Linux rejection coverage.
+- Standalone SELECT autocommit with immediate connection release; explicit
+  transactions and durable denial writes retain their semantics.
+- Fixed-label timing and allowlisted lifecycle failure diagnostics.
+
+Recorded validation: frontend 64 tests/build/lint/typecheck, offline backend 546
+with 280 opt-in skips, latest focused 48 tests, Ruff/Pyright and dependency audit
+passed. Actual local parent recovery, parent cancellation and child budget overrun
+passed 3/3 in 370.921 seconds. Actual Chromium recovery issued one command POST
+with no page errors. The resumed local child restart has also passed.
+
+Receiver-parent remains **unaccepted**: the latest attempt failed after 94.946
+seconds with inspect CancelledError at the native 60-second boundary. Diagnostic
+cold-container construction took 31.710 seconds, within 43.904-second experiment
+setup; parallel authority timing cannot be added directly. No deadline increase,
+permission cache, origin-observer bypass, or native-row rewrite was used.
+
+At this snapshot, remaining actual receiver/safety tests run serially within the
+measured 4 CPU / 16 GiB environment; PostgreSQL CI is running. Windows/Ubuntu
+Python and frontend jobs passed at `59fdcdd`. Consult PR11 for final results rather
+than treating this intermediate snapshot as acceptance. Production identities,
+real research/provider evidence and target-host capacity remain open gates.
+
+## Preserved pre-resumption checkpoint
+
 This is preservation of incomplete project work, not an acceptance release.
 Parent instruction explicitly authorizes a separate WIP commit/push and then
 pauses changes until a dedicated coordinator resumes. The commit containing this
