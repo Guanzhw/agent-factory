@@ -64,7 +64,7 @@ class TaskLinuxContainer:
             self._command(['image', 'inspect', RUNTIME_IMAGE])  # Setup must preload the exact image.
             args = ['create', '--name', self.name, '--label', 'agent-factory.orx-spec=' + self.spec_sha,
                     '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                    '--user', f'{os.getuid()}:{os.getgid()}', '--pids-limit', str(limits['maxProcesses']),
+                    '--user', f'{getattr(os, "getuid")()}:{getattr(os, "getgid")()}', '--pids-limit', str(limits['maxProcesses']),
                     '--memory', str(limits['memoryBytes']), '--memory-swap', str(limits['memoryBytes']),
                     '--cpus', str(limits['cpuPercent'] / 100)]
             for source, target, readonly in self.mounts:
@@ -112,7 +112,7 @@ class TaskLinuxContainer:
                 or config['Image'] != RUNTIME_IMAGE or host['NetworkMode'] != 'none' or host['Privileged']
                 or not host['ReadonlyRootfs'] or host.get('CapAdd') or host.get('CapDrop') != ['ALL']
                 or 'no-new-privileges' not in host.get('SecurityOpt', [])
-                or config['User'] != f'{os.getuid()}:{os.getgid()}'
+                or config['User'] != f'{getattr(os, "getuid")()}:{getattr(os, "getgid")()}'
                 or host['Memory'] != self.limits['memoryBytes'] or host['MemorySwap'] != self.limits['memoryBytes']
                 or host['PidsLimit'] != self.limits['maxProcesses']
                 or host['NanoCpus'] != self.limits['cpuPercent'] * 10_000_000

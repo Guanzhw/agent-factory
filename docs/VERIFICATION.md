@@ -488,3 +488,50 @@ one attempted bridge call, native HTTP 409 and unchanged execution evidence.
 Both cases passed in 6.754 seconds. This follow-up changes tests/documentation
 only; production authorization and continuation code are unchanged. Exact-head
 CI remains the separate final validation source.
+
+## Cloud Linux actual ORX continuation (2026-10-02)
+
+- Built unchanged upstream `f336b121525d99364e2dee4fe90b2784894a54e6`
+  with official Rust 1.93.1, locked Cargo inputs; real Linux `orx --version`
+  reports 0.2.13. Source, binary and runtime image hashes are recorded in
+  `docs/ORX_BUILD_PROVENANCE.json` and `docs/LINUX_ORX.md`.
+- Actual Linux adapter: first 9 scenarios passed in the 10-case run; the last
+  owning-worker hard-exit case hit the old 15-second cold-container setup wait.
+  Its corrected 60-second setup wait subsequently passed. Evaluator limits
+  remain unchanged. Real success/failure metrics, cancel, lost ACK, supervisor
+  SIGKILL, source/command drift, revoked execution and trusted stop are covered.
+- Actual Linux native Factory: 4/6 passed initially; 2 cases exhausted the old
+  30-second pre-approval setup wait on the cloud Docker `vfs` driver. Both passed
+  after allowing 90 seconds for cold fixture preparation. The three focused
+  rechecks together passed in 117.785 seconds. These are cumulative passes for
+  all 16 real Linux cases, not a claim of a fresh single all-green combined run.
+- Separate actual HTTP/native queue process acceptance passed: Factory SIGKILL
+  left four detached task processes alive; same database/workspace restart and
+  cancellation preserved one native admission and one original ORX run, with
+  Factory `canceled`, native ORX `cancelled`, and positive all-stopped evidence.
+- Frontend: 52 tests, lint/typecheck/build passed; official production dependency
+  audit found zero vulnerabilities. Ruff and Pyright passed.
+- The startup profile was actually run and resumed. Its previously unrun
+  application configuration used unsupported fields; the fixed profile retains
+  scenario selection in the exact reviewed tool material and uses the existing
+  closed application configuration schema.
+- Browser acceptance completed all seven phases with Playwright 1.58 / Chromium
+  145: actual success, tampered-download rejection, original-run reload,
+  evaluator failure, running cancellation with positive stop evidence, explicit
+  detail-read recovery and a 390px mobile viewport without horizontal overflow.
+  Two downloaded artifacts matched their server sizes and SHA-256 values.
+  Real lost admission acknowledgement was injected by forwarding the original
+  request then aborting its response; the UI recovered without a second POST.
+  The old harness's asynchronous `wait_for_function` callbacks were replaced
+  with awaited API polling; they had incorrectly treated a Promise as success.
+- Full cloud core regression passed: 385 tests in 1044.808 seconds, 351 passed
+  and 34 explicit opt-in skips. Actual Linux tests were run separately above;
+  no Windows Job Object test was represented as Linux evidence. Compact public synthetic
+  evidence is in `docs/evidence/linux-orx-2026-10-02.json`; private generated
+  auth fixtures and local machine logs are excluded.
+- No paid provider or paid compute was used. Production isolation, real model
+  research, remote real ORX and target-host departmental load remain unverified.
+
+- Final Windows/Linux Pyright targets both report zero errors. The platform
+  compatibility fix was followed by another real Linux success/source/log/stop
+  check: 1 pass in 25.654 seconds.

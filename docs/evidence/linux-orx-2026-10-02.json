@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "date": "2026-10-02",
+  "scope": "real pinned Linux ORX; generated loopback fixtures; no paid provider",
+  "platform": {
+    "os": "Debian 13.6",
+    "cpuQuota": 4,
+    "memoryGiB": 16,
+    "dockerStorageDriver": "vfs"
+  },
+  "binarySha256": "a847d07e8c4c3f2efc47c3549fd27f52c9999b46a21451d4c07ec12de292b8cd",
+  "runtimeImage": "python:3.12.14-trixie@sha256:4d1caded1f729ae443eb803f26ffde7b61e696aeaef62f099abb6dd6b14257c7",
+  "browser": {
+    "engine": "Playwright chromium",
+    "phases": [
+      "actual_binary_success",
+      "tampered_download_rejected",
+      "reload_preserves_original_native_run",
+      "actual_evaluator_failure_preserved",
+      "actual_running_cancel_positive_stop",
+      "detail_read_error_explicit_recovery",
+      "mobile_actual_evidence"
+    ],
+    "successTaskId": "e584ef02-280a-48c6-808f-f2f43e84f9bc",
+    "orxRunId": "c133938a-db53-4201-b978-31105601ae66",
+    "metrics": {
+      "baseline": {
+        "value": 16
+      },
+      "candidate": {
+        "value": 0
+      },
+      "sampleCount": 7
+    },
+    "verifiedDownloads": [
+      {
+        "artifactId": "33578789-7788-4808-972f-089721b39bfc",
+        "name": "orx-toy-source-272e3a57f8886eaa71ff8dac.tar",
+        "bytes": 10240,
+        "sha256": "3feae56d2102a5d3ce9c1484747961013a0ab34003c450bcb201030c58460938",
+        "verified": true
+      },
+      {
+        "artifactId": "a6c0fc56-4141-4291-950b-2ac937ccd828",
+        "name": "orx-toy-evaluation-272e3a57f8886eaa71ff8dac.json",
+        "bytes": 6930,
+        "sha256": "6ec8323f9c564ded7d824be57434f03970e16a1543fec4e5039194c4199b71ed",
+        "verified": true
+      }
+    ],
+    "cancelStopEvidence": {
+      "kind": "linux_task_container",
+      "limits": {
+        "cpuPercent": 25,
+        "cpuSeconds": 8,
+        "memoryBytes": 536870912,
+        "outputBytes": 61440,
+        "maxProcesses": 64,
+        "timeoutSeconds": 30
+      },
+      "network": "none",
+      "enforced": [
+        "aggregate_memory",
+        "aggregate_cpu_time_guardian",
+        "cpu_rate",
+        "kernel_tasks"
+      ],
+      "allStopped": true,
+      "specSha256": "010b26935b2273c8de4927fbcedf14cb3a16c10b99af01e3a26eb3460fdc297f",
+      "containerId": "a67f98e631560c28e5bec4fe0b651b1086b88ba67fca102d9ef78d33db521154",
+      "activeProcesses": 0,
+      "securitySandbox": false,
+      "pidLimitIncludesThreads": true
+    },
+    "mobile": {
+      "viewport": 390,
+      "document": 390
+    }
+  },
+  "factorySIGKILL": {
+    "kind": "actual_linux_factory_native_queue_sigkill",
+    "taskId": "22e03427-f8c9-4cbb-a8d0-0ce2199d1f2f",
+    "factoryStatus": "canceled",
+    "nativeAdmissions": 1,
+    "nativeORXRuns": 1,
+    "detachedSurvivorsAfterSIGKILL": 4,
+    "nativeRunId": "1210cc51-3a8d-4c1c-9355-9da67e120989",
+    "orxRunId": "9649918a-f9b5-4e2d-bb57-b6f396bf48b0",
+    "stopEvidence": {
+      "kind": "linux_task_container",
+      "limits": {
+        "cpuPercent": 25,
+        "cpuSeconds": 8,
+        "memoryBytes": 536870912,
+        "outputBytes": 61440,
+        "maxProcesses": 64,
+        "timeoutSeconds": 30.0
+      },
+      "network": "none",
+      "enforced": [
+        "aggregate_memory",
+        "aggregate_cpu_time_guardian",
+        "cpu_rate",
+        "kernel_tasks"
+      ],
+      "allStopped": true,
+      "specSha256": "f7ce5a475205b6b711b2dec15a44a977a00d6f581a33095ef07c64c1732c9d92",
+      "containerId": "a96cef52d3f8d0ac493e8067d18f79b68aee0ee7b050c9485838d9366995ecbe",
+      "activeProcesses": 0,
+      "securitySandbox": false,
+      "pidLimitIncludesThreads": true
+    }
+  },
+  "paidProviderCalls": 0,
+  "productionAcceptance": false
+}

@@ -14,7 +14,7 @@ def main():
     idle_since = time.monotonic()
     while True:
         try:
-            while os.waitpid(-1, os.WNOHANG)[0]:
+            while os.waitpid(-1, getattr(os, "WNOHANG"))[0]:
                 pass
         except ChildProcessError:
             pass

@@ -7,8 +7,10 @@ import argparse
 import asyncio
 import hashlib
 import json
+import time
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from playwright.async_api import async_playwright
 
@@ -17,16 +19,18 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--browser-channel", default="chromium", choices=["chromium", "msedge"])
     args = parser.parse_args()
     fixture = json.loads(args.fixture.read_text(encoding="utf-8"))
     origin = fixture["baseUrl"]
     url = urlparse(origin)
     assert url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1"}
     args.output.mkdir(parents=True, exist_ok=True)
-    evidence = {"browser": "installed Playwright + Microsoft Edge", "application": fixture.get("applicationId", "orx-local-toy"), "modelCalls": "No paid provider configured", "phases": []}
+    evidence = {"browser": "Playwright " + args.browser_channel, "application": fixture.get("applicationId", "orx-local-toy"), "modelCalls": "No paid provider configured", "phases": []}
     requests = []
+    run_label = uuid4().hex[:8]
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(channel="msedge", headless=True)
+        browser = await playwright.chromium.launch(**({"channel": "msedge"} if args.browser_channel == "msedge" else {}), headless=True)
         owner = await browser.new_context(extra_http_headers=fixture["ownerHeaders"], accept_downloads=True, viewport={"width": 1440, "height": 1050})
         reviewer = await browser.new_context(extra_http_headers=fixture["reviewerHeaders"], viewport={"width": 1360, "height": 900})
         page = await owner.new_page()
@@ -47,6 +51,7 @@ async def main():
             return await page.evaluate("async path => { const r = await fetch('/api/factory'+path); if (!r.ok) throw Error('Owned fixture read failed '+r.status); return r.json(); }", path)
 
         async def build(mode, goal, lose_ack=False):
+            goal += " " + run_label
             again = page.get_by_role("button", name="开始新的装配", exact=True)
             if await again.count():
                 await again.click()
@@ -72,9 +77,8 @@ async def main():
                         await route.continue_(); return
                     response = await route.fetch()
                     assert response.ok
-                    await page.unroute("**/api/factory/instances", lose_once)
-                    await route.fulfill(status=503, content_type="application/json", body=json.dumps({"code": "CONTROLLED_ACK_LOST", "message": "Controlled admission acknowledgement lost"}))
-                await page.route("**/api/factory/instances", lose_once)
+                    await route.abort("failed")
+                await page.route("**/api/factory/instances", lose_once, times=1)
             await page.get_by_role("button", name="确认方案并创建任务", exact=True).dblclick()
             await page.get_by_role("heading", name="等待执行审批", exact=True).wait_for(timeout=90000)
             await page.wait_for_function("() => [...document.querySelectorAll('button')].some(b => b.textContent === '同意本次请求' && !b.disabled)", timeout=90000)
@@ -92,9 +96,20 @@ async def main():
             assert len([r for r in mutations if r["path"] == "/api/factory/instances"]) == 1
             return job, detail
 
+        async def read_until(job_id, predicate):
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                observed = await api("/jobs/" + job_id)
+                if predicate(observed):
+                    return observed
+                await asyncio.sleep(.2)
+            raise AssertionError("Owned browser API observation timed out")
+
         async def terminal(job_id, state):
-            await page.wait_for_function("async args => { const d = await (await fetch('/api/factory/jobs/'+args[0])).json(); return d.job.status === args[1] && d.orxExperiment && ['done','failed','cancelled'].includes(d.orxExperiment.status); }", arg=[job_id, state], timeout=90000)
-            return await api("/jobs/" + job_id)
+            expected = {"completed": "done", "failed": "failed", "canceled": "cancelled"}[state]
+            return await read_until(job_id, lambda d: d["job"]["status"] == state
+                and (d.get("orxExperiment") or {}).get("status") == expected
+                and (state == "canceled" or (d["orxExperiment"].get("evaluation") or {}).get("zeroModelCalls") is True))
 
         try:
             goal = "Actual ORX browser owned success"
@@ -138,7 +153,7 @@ async def main():
             evidence["phases"].append({"name": "tampered_download_rejected", "artifactId": first_artifact["id"], "serverArtifactUnchanged": True})
 
             await page.reload()
-            await page.locator(".task-list .task-row").filter(has_text=goal).click()
+            await page.locator(".task-list .task-row").filter(has_text=goal + " " + run_label).click()
             restored = await api("/jobs/" + job["id"])
             assert restored["orxExperiment"]["orxRunId"] == result["orxExperiment"]["orxRunId"]
             assert len([e for e in restored["events"] if e["type"] == "native_accepted"]) == 1
@@ -154,13 +169,13 @@ async def main():
 
             job, _ = await build("cancellable", "Actual ORX browser owned running cancellation")
             await page.get_by_role("button", name="同意本次请求", exact=True).click()
-            await page.wait_for_function("async id => { const d=await(await fetch('/api/factory/jobs/'+id)).json(); return d.orxExperiment && d.orxExperiment.status==='running' && !!d.orxExperiment.orxRunId; }", arg=job["id"], timeout=90000)
+            await read_until(job["id"], lambda d: (d.get("orxExperiment") or {}).get("status") == "running" and d["orxExperiment"].get("orxRunId"))
             running = await api("/jobs/" + job["id"])
             await page.get_by_text("真实本地实验运行中", exact=True).wait_for()
             await page.screenshot(path=str(args.output / "actual-running-progress.png"), full_page=True)
             await page.get_by_role("button", name="请求取消", exact=True).dblclick()
             stopped = await terminal(job["id"], "canceled")
-            await page.wait_for_function("async id => { const d=await(await fetch('/api/factory/jobs/'+id)).json(); return d.orxExperiment.stopEvidence && d.orxExperiment.stopEvidence.allStopped===true; }", arg=job["id"], timeout=90000)
+            await read_until(job["id"], lambda d: (d.get("orxExperiment", {}).get("stopEvidence") or {}).get("allStopped") is True)
             stopped = await api("/jobs/" + job["id"])
             assert stopped["orxExperiment"]["orxRunId"] == running["orxExperiment"]["orxRunId"]
             await page.get_by_text("服务端已记录实验及 detached supervisor 全部停止的正向证据。", exact=True).wait_for()
@@ -188,6 +203,10 @@ async def main():
             assert width["document"] <= width["viewport"], "Mobile page overflow"
             evidence["phases"].append({"name": "mobile_actual_evidence", **width})
             evidence["mutationReceipts"] = requests
+        except BaseException:
+            await page.screenshot(path=str(args.output / "failure.png"), full_page=True)
+            (args.output / "failure-visible-text.txt").write_text(await page.locator("body").inner_text(), encoding="utf-8")
+            raise
         finally:
             await owner.close()
             await reviewer.close()
