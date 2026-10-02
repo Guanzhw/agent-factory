@@ -30,10 +30,15 @@ def _digest(value: Any) -> str:
 
 class TaskLinuxContainer:
     def __init__(self, task_id: str, owner: str, scope: Path, binary: Path,
-                 limits: dict[str, Any], *, cleanup_only: bool = False):
+                 limits: dict[str, Any], *, cleanup_only: bool = False, profile: str = 'experiment-v1'):
         if not sys.platform.startswith('linux'):
             raise OpenResearchError('CONTAINMENT_UNAVAILABLE', 'Linux task containers require Linux')
         self.scope, self.limits = scope.resolve(), dict(limits)
+        if profile not in {'experiment-v1', 'public-retrieval-v1'}:
+            raise OpenResearchError('CONTAINMENT_UNAVAILABLE', 'Unapproved container profile')
+        # Only the explicit public retrieval profile uses the daemon's existing
+        # bridge. No ports, host networking, network creation or host changes.
+        self.network = 'bridge' if profile == 'public-retrieval-v1' else 'none'
         docker = shutil.which('docker')
         if not docker or ',' in str(self.scope) or ',' in str(binary):
             raise OpenResearchError('CONTAINMENT_UNAVAILABLE', 'A local Docker daemon and exact task paths are required')
@@ -45,8 +50,12 @@ class TaskLinuxContainer:
         spec = {'schema': 1, 'owner': owner, 'task': task_id, 'scope': str(self.scope),
                 'image': RUNTIME_IMAGE, 'binarySha256': BINARY_SHA256, 'limits': limits,
                 'guardianSha256': hashlib.sha256(guardian.read_bytes()).hexdigest(), 'mounts': self.mounts}
+        if profile != 'experiment-v1':
+            spec.update(profile=profile, network=self.network)
         self.spec_sha = _digest(spec)
         self.name = 'af-orx-' + hashlib.sha256((owner + ':' + task_id).encode()).hexdigest()[:32]
+        if profile != 'experiment-v1':
+            self.name = 'af-orx-read-' + hashlib.sha256((owner + ':' + task_id + ':' + str(self.scope)).encode()).hexdigest()[:32]
         marker = self.scope / 'factory-linux-container.json'
         saved = None
         if marker.exists():
@@ -63,7 +72,7 @@ class TaskLinuxContainer:
                 raise OpenResearchError('CLEANUP_UNCONFIRMED', 'Original container is missing; stop cannot be inferred')
             self._command(['image', 'inspect', RUNTIME_IMAGE])  # Setup must preload the exact image.
             args = ['create', '--name', self.name, '--label', 'agent-factory.orx-spec=' + self.spec_sha,
-                    '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                    '--network', self.network, '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                     '--user', f'{getattr(os, "getuid")()}:{getattr(os, "getgid")()}', '--pids-limit', str(limits['maxProcesses']),
                     '--memory', str(limits['memoryBytes']), '--memory-swap', str(limits['memoryBytes']),
                     '--cpus', str(limits['cpuPercent'] / 100)]
@@ -109,7 +118,8 @@ class TaskLinuxContainer:
         mounts = sorted((item['Source'], item['Destination'], not item['RW']) for item in value['Mounts'])
         if (getattr(self, 'cid', value['Id']) != value['Id']
                 or config.get('Labels', {}).get('agent-factory.orx-spec') != self.spec_sha
-                or config['Image'] != RUNTIME_IMAGE or host['NetworkMode'] != 'none' or host['Privileged']
+                or config['Image'] != RUNTIME_IMAGE or host['NetworkMode'] != self.network or host['Privileged']
+                or host.get('PortBindings') or host.get('Binds') or host.get('Devices')
                 or not host['ReadonlyRootfs'] or host.get('CapAdd') or host.get('CapDrop') != ['ALL']
                 or 'no-new-privileges' not in host.get('SecurityOpt', [])
                 or config['User'] != f'{getattr(os, "getuid")()}:{getattr(os, "getgid")()}'
@@ -144,7 +154,7 @@ class TaskLinuxContainer:
         return {'kind': 'linux_task_container', 'containerId': self.cid, 'specSha256': self.spec_sha,
                 'activeProcesses': len(pids), 'allStopped': not pids, 'limits': self.limits,
                 'enforced': ['aggregate_memory', 'aggregate_cpu_time_guardian', 'cpu_rate', 'kernel_tasks'],
-                'pidLimitIncludesThreads': True, 'network': 'none', 'securitySandbox': False}
+                'pidLimitIncludesThreads': True, 'network': self.network, 'securitySandbox': False}
 
     def terminate(self):
         value = self._inspect(); self._validate(value)

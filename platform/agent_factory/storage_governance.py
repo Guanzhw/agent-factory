@@ -289,7 +289,7 @@ class StorageGovernance:
             except (OSError, HTTPException):
                 pass
             protected.append(item)
-            if self.settings.runtime_tool_contract == "local-orx-v1":
+            if self.settings.runtime_tool_contract in {"local-orx-v1", "orx-evidence-v2"}:
                 from .storage_runtime import observe_container
                 containers.append(observe_container(Path(self.settings.workspace), owner, task_id))
         return {"ownerId": owner, "unconfirmedHoldTaskIds": reconciliation_errors, "plans": [self.public(plan) for plan in plans], "protectedDirectories": protected, "protectedContainers": containers,

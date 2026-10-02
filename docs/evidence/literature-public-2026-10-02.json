@@ -1,0 +1,37 @@
+{
+  "actualTransport": true,
+  "liveSourceSuccess": false,
+  "sourceCount": 0,
+  "errors": [
+    "COMMAND_FAILED"
+  ],
+  "taskId": "0f8e484d-9341-4388-99aa-505a786e4976",
+  "bundleSha256": "40db90b76229984c717707a1805f322d5d1f730224a39bed04bc55aec565d770",
+  "containment": [
+    {
+      "kind": "linux_task_container",
+      "limits": {
+        "cpuPercent": 25,
+        "cpuSeconds": 8,
+        "memoryBytes": 536870912,
+        "outputBytes": 61440,
+        "maxProcesses": 64,
+        "timeoutSeconds": 30.0
+      },
+      "network": "bridge",
+      "enforced": [
+        "aggregate_memory",
+        "aggregate_cpu_time_guardian",
+        "cpu_rate",
+        "kernel_tasks"
+      ],
+      "allStopped": true,
+      "specSha256": "855815eebd9c95c9df125580a9a48d8fe56523569f083298914f2d382e31afba",
+      "containerId": "97a646b31b6c556b4b15000b270aeafc9a386f3a8d338443e276accd284dd5e2",
+      "activeProcesses": 0,
+      "securitySandbox": false,
+      "pidLimitIncludesThreads": true
+    }
+  ],
+  "scope": "Actual Linux bounded CLI + governed native queue; public endpoint unreachable; no source success"
+}

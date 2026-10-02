@@ -55,7 +55,7 @@ class Settings:
             raise ValueError("Storage budgets must be positive")
         if self.storage_retention_grace_seconds < (0 if self.demo else 60):
             raise ValueError("Production retention needs a positive recovery window")
-        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1"}:
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2"}:
             raise ValueError("Unsupported runtime tool contract")
         if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")

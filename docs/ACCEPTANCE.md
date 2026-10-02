@@ -2,28 +2,35 @@
 
 The target is complete factory/v0.3 functionality. This is a verified stage; production/scientific acceptance remains open. Tests exercise actual Agno/PostgreSQL/FastAPI behavior; model output alone is deterministic.
 
-| Capability | Current evidence / limits |
-|---|---|
-| Selected native platform | Agno 3.1.0 fixed upstream revision, eight critical installed files matched; exact native HTTP/queue/auth regression passed |
-| Material library | Six kinds, immutable versions/digests, separate-admin review, archive/withdrawal, inert import and current plan/ancestor guards; 19 focused tests plus actual browser acceptance |
-| Callable factory / FR16 | Approved generic application discovery, exact material alternatives, immutable propose/revise/reject/accept, specific preflight, actual native adapter dispatch and configurable exact-plan review are implemented; conservative production admin-review default, live providers not configured or exercised |
-| Snapshot/durability | One registered executor, native queue recovery after hard kill; old plan preserved across newer publication; no upstream fork/nested loop |
-| Second application | Actual-input checksum through same factory/executor, tested; frontend prioritizes Auto-Research |
-| Identity/access | Native managed roles/directory, same-token revoke/disable, current tool checks, owner-only plan/job/artifact; production identity provisioning pending |
-| Lifecycle/HITL | Native input question, exact-version confirmation, continuation, paused/run cancellation, cleanup and artifact hashes passed actual PostgreSQL API tests |
-| Idempotency/effects | Identical replay reuses task; changed payload 409; unknown receipt/effect refuses blind retry/release; original-key read-only receipt and real TCP ACK-loss/restart checks passed |
-| Evidence | Actual synthetic subprocess metrics/evaluator/dataset/runtime/output provenance; scientific success explicitly unverified |
-| Remote resources | Persistent reference/lease service and API; actual native metadata attach, synthetic lifecycle recovery tests; trusted Factory prepare/dispatch/receipt and product routing pass controlled two-app tests; real endpoints/providers unverified |
-| OpenResearch | Exact-source CLI contract adapter and real subprocess fixture tests; exact-source 0.2.13 build and actual adapter preflight passed; one bounded actual OpenAlex discovery through the pinned adapter passed; registered discovery passes controlled native integration; real integrated research and ORX experiment execution remain unverified |
-| Frontend | Real backend polling, preflight/jobs/questions/approval/cancel/artifact and manager UI; browser evidence recorded separately |
-| Delegation | Independent native tickets, inherited current rights, depth/count/shared durable tool budget, group state/cascade, no child-plan reuse; 13 actual PostgreSQL tests including side-effect spies |
-| Schedules | One public native poller, immutable-plan/owner/occurrence admission and guarded HTTP API; 7 original plus 9 guarded hard-process/restart/takeover tests; native unconditional lease-release race remains |
-| Isolation/operations | Fixed demo child containment tested; twenty-user bounded native admission and clean-stop official PG17.11 restore passed; full hostile-code tenancy, egress, PITR/RPO/RTO, monitoring and target load acceptance pending |
-| Live acceptance | Requires explicit approved provider/model budget, real integrated ORX output, production OS/identity and authorized remote endpoints |
+## Current matrix
 
-The 32-core/64-GB and 54-core/192-GB single-server profiles are capacity targets, not measured benchmarks. The initial native concurrency cap is two. Current fact/inspection calls bypass the model queue.
+Current cloud stage: Linux literature evidence and immutable least-capability
+experiment contracts, based on accepted `54720e7`. Historical stage sections below
+retain their original evidence; superseded “pending” statements are not current.
 
-The mapped actual-backend contract coverage and explicit remote handoff/replay gaps are recorded in [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md). Controlled native cancellation tests prove query-schema compatibility and cancellation intent, not external process cleanup.
+| Capability | Current evidence | Remaining boundary |
+|---|---|---|
+| Native factory and governance | Agno 3.1.0/PostgreSQL; six material kinds, immutable publication/versions, generic composition, scoped plan review, native queue/HITL, delegation, replay and owner-only artifacts | Complete production/scientific acceptance is not implied |
+| Linux ORX experiments | Exact approved binary, real fixed toy evaluator, resource containment, cancellation/restart/receipts and positive stop evidence | Fixed reviewed programs, not hostile-code tenancy; Windows has separate unverified opt-ins |
+| Literature/source package | Revision-2 selected Linux resource bounds; paper/text tools; source ID/URL/hash/excerpt/locator/missing-text state; native controlled-source report/ZIP/download tests | Actual PubMed query failed connectivity; zero sources in measured report; no live source-package or model synthesis success |
+| ORX receiver capabilities | Revision 1 preserved; revision 2 has per-tool read/compute pins and a common admitted experiment identity; receiver intersection guard unchanged | Actual two-app receiver composition passed (117.686 s), including one real toy run, common identity and reclaim; controlled ASGI is not deployed-host/TLS acceptance |
+| Identity | Native managed roles, current revocation checks, scoped jobs/artifacts and demo browser sessions | Production browser identity entry and provider/session integration are still code work |
+| Model costs | Immutable reviewed prices, durable per-attempt ledger/reservations, controlled retry/streaming/remote allocation tests; explicit zero-provider local contracts | Actual provider SDK integration and usage/retry guards are not implemented merely by supplying credentials |
+| Research workloads | Fixed reviewed toy recipe and immutable installed public-query profile | Mutable reviewed research inputs/workspaces, evaluators and approval/version rules need a selected workload contract |
+| AT10 external-work ownership | Exact external launch/effect identity and cleanup receipts exist | Native model failure must not implicitly cancel separately approved deterministic work; provider integration and a dedicated regression remain required |
+| Storage and recovery | Scoped disk admission/observation, dry-run/quarantine/restore/reclaim; finite 20-user pressure; official online pg_dump with concurrent artifact writes and independent restore | Actual 4 CPU/16 GiB; not target-host load, PITR, external-workspace consistency, production RPO/RTO or unbounded admission fairness |
+| Remote execution | Approved mappings/current-origin authority, child ownership, UNKNOWN reconciliation and actual two-process controlled HTTP tests | Production remote endpoints, TLS and host authorization are not connected |
+| Frontend | Chinese composition/review/progress/receipts, evidence downloads and storage views; prior actual Chromium evidence | No production identity login or live model research claim |
+| Schedules | Single poller, immutable occurrence admission and guarded recovery | Native lease-release race means multiple replicas are not certified |
+
+See [literature contract and reproduction](LITERATURE_EVIDENCE.md),
+[storage measurements](STORAGE_OPERATIONS.md), [Linux ORX](LINUX_ORX.md),
+[control receipts](CONTROL_COMMANDS.md) and [backend contracts](BACKEND_CONTRACTS.md).
+The 32-core/64-GB and 54-core/192-GB machines remain capacity targets. Inspection
+calls bypass the model queue. Historical test counts below must not be reused as
+new-head CI results.
+
+## Historical stage records
 
 ## Configurable plan-review stage
 

@@ -28,6 +28,7 @@ from .store import canonical, digest
 
 ADAPTER_ID = "openresearch-experiment-v1"
 ADAPTER_REVISION = "1"
+LEAST_CAPABILITY_REVISION = "2"
 MODEL_ADAPTER_ID = "local-orx-workflow-model-v1"
 MODEL_ADAPTER_REVISION = "1"
 WINDOWS_BINARY_SHA256 = "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7"
@@ -95,6 +96,8 @@ class ResolvedExperimentBinding:
     fingerprint: str
     revision: str
     capabilities: tuple[str, ...]
+    contract_revision: str = "1"
+    experiment_connection: dict[str, Any] | None = None
 
 
 def validate_experiment_config(value: dict[str, Any]) -> None:
@@ -104,7 +107,7 @@ def validate_experiment_config(value: dict[str, Any]) -> None:
 
 def _scenario(plan: dict[str, Any]) -> str:
     runs = [spec for spec in plan.get("executionBindings", {}).get("tools", [])
-            if spec.get("adapterId") == ADAPTER_ID + "-run" and spec.get("revision") == ADAPTER_REVISION]
+            if spec.get("adapterId") == ADAPTER_ID + "-run" and spec.get("revision") in {ADAPTER_REVISION, LEAST_CAPABILITY_REVISION}]
     if len(runs) != 1:
         raise OpenResearchError("RECIPE_INVALID", "Exactly one reviewed experiment launch recipe is required")
     value = runs[0].get("config", {}).get("scenario", "success")
@@ -130,7 +133,7 @@ def _limits(settings: Any, plan: dict[str, Any], environment: Any) -> tuple[int,
     return output - 4096, seconds, bounds
 
 
-def _validate(binding: Any, ctx: RunContext) -> ResolvedExperimentBinding:
+def _validate(binding: Any, ctx: RunContext, tool_name: str = TOOL_NAMES[0]) -> ResolvedExperimentBinding:
     if not isinstance(binding, ResolvedExperimentBinding):
         raise OpenResearchError("CONNECTION_NOT_CONFIGURED", "No task-owned experiment provider is configured")
     adapter = binding.adapter
@@ -140,7 +143,7 @@ def _validate(binding: Any, ctx: RunContext) -> ResolvedExperimentBinding:
         raise OpenResearchError("BINDING_MISMATCH", "The actual ORX adapter belongs to another task")
     if (not binding.ref or type(binding.version) is not int or binding.version < 1
             or not _HASH.fullmatch(binding.fingerprint) or not binding.revision
-            or not {READ_CAPABILITY, RUN_CAPABILITY} <= set(binding.capabilities)):
+            or not set(_required_caps(tool_name, binding.contract_revision)) <= set(binding.capabilities)):
         raise OpenResearchError("BINDING_INVALID", "The immutable experiment connection pin is incomplete")
     if adapter.pin != BinaryPin(REVISION, VERSION, BINARY_SHA256) or not adapter.enabled:
         raise OpenResearchError("UNVERIFIED_BINARY", "The reviewed ORX binary is required")
@@ -150,8 +153,17 @@ def _validate(binding: Any, ctx: RunContext) -> ResolvedExperimentBinding:
     return binding
 
 
-def _plan_check(store: Any, ctx: RunContext, plan: dict[str, Any], tool_name: str) -> None:
-    if tool_name not in plan.get("tools", []) or READ_CAPABILITY not in plan.get("capabilities", []):
+def _required_caps(tool_name: str, revision: str) -> tuple[str, ...]:
+    if revision == "1":
+        return READ_CAPABILITY, RUN_CAPABILITY
+    if revision != "2" or tool_name not in TOOL_NAMES:
+        raise OpenResearchError("CONTRACT_INVALID", "Unknown immutable experiment contract")
+    return (RUN_CAPABILITY,) if tool_name in {TOOL_NAMES[1], TOOL_NAMES[3]} else (READ_CAPABILITY,)
+
+
+def _plan_check(store: Any, ctx: RunContext, plan: dict[str, Any], tool_name: str, revision: str = "1") -> None:
+    required = {READ_CAPABILITY} if revision == "1" else set(_required_caps(tool_name, revision))
+    if tool_name not in plan.get("tools", []) or not required <= set(plan.get("capabilities", [])):
         raise PermissionError("The experiment tool is outside the immutable plan")
     if tool_name in {TOOL_NAMES[1], TOOL_NAMES[3]} and RUN_CAPABILITY not in plan.get("capabilities", []):
         raise PermissionError("Local experiment execution is outside the immutable plan")
@@ -160,13 +172,35 @@ def _plan_check(store: Any, ctx: RunContext, plan: dict[str, Any], tool_name: st
         raise RunCancelledException("Factory cancellation requested")
 
 
-async def _resolve(resolver: Callable, ctx: RunContext, plan: dict[str, Any]) -> ResolvedExperimentBinding:
+async def _resolve(resolver: Callable, ctx: RunContext, plan: dict[str, Any], tool_name: str = TOOL_NAMES[0]) -> ResolvedExperimentBinding:
     result = resolver(ctx, plan)
-    return _validate(await result if inspect.isawaitable(result) else result, ctx)
+    return _validate(await result if inspect.isawaitable(result) else result, ctx, tool_name)
 
 
 def _identity(binding: ResolvedExperimentBinding) -> tuple[Any, ...]:
     return binding.ref, binding.version, binding.fingerprint, binding.revision, binding.capabilities
+
+
+def _experiment_anchor(store: Any, plan: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
+    """Provenance only: unify per-tool connections on the admitted launch pin.
+
+    Historical receiver proof lookup grants no execution or new handle. Every
+    tool still resolves its own current least-capability connection separately.
+    """
+    manifest = plan.get("executionBindings", {})
+    if store.remote_bindings is not None:
+        manifest = store.remote_bindings.historical_manifest(plan, context=ctx)
+    elif plan.get("remoteHandoff"):
+        raise OpenResearchError("BINDING_INVALID", "Receiver proof is unavailable")
+    runs = [spec for spec in manifest.get("tools", [])
+            if spec.get("adapterId") == ADAPTER_ID + "-run" and spec.get("revision") == "2"]
+    if len(runs) != 1:
+        raise OpenResearchError("BINDING_INVALID", "Exactly one admitted revision-2 launch pin is required")
+    pin = runs[0].get("connection", {})
+    if set(pin.get("capabilities", [])) != {RUN_CAPABILITY}:
+        raise OpenResearchError("BINDING_INVALID", "Revision-2 launch requires a compute-only connection")
+    return {key: sorted(pin[key]) if key == "capabilities" else pin[key]
+            for key in ("ref", "version", "fingerprint", "revision", "capabilities")}
 
 
 def _request(plan: dict[str, Any], ctx: RunContext, binding: ResolvedExperimentBinding) -> dict[str, Any]:
@@ -176,9 +210,10 @@ def _request(plan: dict[str, Any], ctx: RunContext, binding: ResolvedExperimentB
     return {"ownerId": ctx.user_id, "taskId": ctx.session_id, "nativeRunId": ctx.run_id,
             "planId": plan["id"], "planFingerprint": plan.get("fingerprint"),
             "materialRefs": plan.get("materialRefs", []),
-            "connection": {"ref": binding.ref, "version": binding.version,
-                           "fingerprint": binding.fingerprint, "revision": binding.revision,
-                           "capabilities": sorted(binding.capabilities)},
+            "connection": (binding.experiment_connection if binding.contract_revision == "2" else
+                           {"ref": binding.ref, "version": binding.version,
+                            "fingerprint": binding.fingerprint, "revision": binding.revision,
+                            "capabilities": sorted(binding.capabilities)}),
             "provenance": source}
 
 
@@ -287,13 +322,13 @@ async def _operation(store: Any, ctx: RunContext, plan: dict[str, Any], binding:
             done, _ = await asyncio.wait({operation}, timeout=.2)
             if done:
                 value = await operation
-                _plan_check(store, ctx, plan, tool_name)
-                current = await _resolve(resolver, ctx, plan)
+                _plan_check(store, ctx, plan, tool_name, binding.contract_revision)
+                current = await _resolve(resolver, ctx, plan, tool_name)
                 if _identity(current) != _identity(binding):
                     raise PermissionError("The task experiment connection changed during execution")
                 return value
-            _plan_check(store, ctx, plan, tool_name)
-            current = await _resolve(resolver, ctx, plan)
+            _plan_check(store, ctx, plan, tool_name, binding.contract_revision)
+            current = await _resolve(resolver, ctx, plan, tool_name)
             if _identity(current) != _identity(binding):
                 raise PermissionError("The task experiment connection changed during execution")
             if asyncio.get_running_loop().time() - started > deadline:
@@ -308,11 +343,11 @@ async def _operation(store: Any, ctx: RunContext, plan: dict[str, Any], binding:
         raise
 
 
-def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable) -> dict[str, Any]:
+def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, contract_revision: str = "1") -> dict[str, Any]:
     async def prepare(ctx: RunContext, tool_name: str) -> tuple[dict[str, Any], ResolvedExperimentBinding]:
         plan = store.resolve_run(ctx)
-        _plan_check(store, ctx, plan, tool_name)
-        binding = await _resolve(resolver, ctx, plan)
+        _plan_check(store, ctx, plan, tool_name, contract_revision)
+        binding = await _resolve(resolver, ctx, plan, tool_name)
         await binding.adapter.ensure_experiment()
         _record_binding(store, plan, ctx, binding)
         return plan, binding
@@ -369,8 +404,14 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable) -> 
             except OpenResearchError as error:
                 raise OpenResearchError("UNKNOWN_EFFECT", "Persisted experiment launch requires reconciliation; automatic replay refused") from error
         else:
+            # Revision 2 contains multiple bounded CLI commands plus current
+            # origin/receiver checks. Use the admitted environment's total
+            # window, not one command's timeout; revision 1 is unchanged.
+            deadline = float(binding.adapter.command_timeout) + 5
+            if binding.contract_revision == "2":
+                deadline = float(request["provenance"]["environment"]["timeoutSeconds"])
             receipt = await _operation(store, run_context, plan, binding, resolver, TOOL_NAMES[1],
-                binding.adapter.launch_experiment(), deadline=float(binding.adapter.command_timeout) + 5)
+                binding.adapter.launch_experiment(), deadline=deadline)
         return json.dumps(await settle(run_context, plan, binding, receipt), sort_keys=True)
 
     async def orx_experiment_wait(run_context: RunContext, timeout_seconds: int = 10) -> str:
@@ -401,8 +442,10 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable) -> 
 
 def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
     registrations = []
-    for tool_name in TOOL_NAMES:
-        def factory(context: Any, selected=tool_name):
+    for contract_revision, tool_name in ((revision, name) for revision in ("1", "2") for name in TOOL_NAMES):
+        required = _required_caps(tool_name, contract_revision)
+
+        def factory(context: Any, selected=tool_name, revision=contract_revision, required=required):
             pin = context.spec.get("connection")
             handle = context.connection
             if not isinstance(pin, dict) or not callable(getattr(handle, "create_experiment_adapter", None)):
@@ -411,6 +454,8 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
             scope = (Path(context.settings.workspace).resolve() / "orx-tasks" /
                      hashlib.sha256(owner.encode()).hexdigest()[:24] / task_id)
             initial = {key: pin[key] for key in ("ref", "version", "fingerprint", "revision", "capabilities")}
+            if revision == "2" and set(initial["capabilities"]) != set(required):
+                raise OpenResearchError("BINDING_INVALID", "Revision-2 tools require an exact least-capability connection")
             adapter = None
 
             def resolve(ctx: RunContext, plan: dict[str, Any]) -> ResolvedExperimentBinding:
@@ -421,18 +466,18 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                 current = context.store.connections.resolve(owner, initial["ref"], "orx",
                     expected_revision=initial["revision"], expected_fingerprint=initial["fingerprint"],
                     expected_version=initial["version"], expected_adapter_ref=ADAPTER_ID,
-                    required_capabilities=(READ_CAPABILITY, RUN_CAPABILITY), task_id=task_id)
+                    required_capabilities=required, task_id=task_id)
                 if current is not handle:
                     raise OpenResearchError("CONNECTION_CHANGED", "The exact task experiment provider changed")
                 environment = bindings.environment_limits(plan, ctx)
                 output, timeout, bounds = _limits(context.settings, plan, environment)
 
                 def authorize(_operation: str):
-                    _plan_check(context.store, ctx, plan, selected)
+                    _plan_check(context.store, ctx, plan, selected, revision)
                     latest = context.store.connections.resolve(owner, initial["ref"], "orx",
                         expected_revision=initial["revision"], expected_fingerprint=initial["fingerprint"],
                         expected_version=initial["version"], expected_adapter_ref=ADAPTER_ID,
-                        required_capabilities=(READ_CAPABILITY, RUN_CAPABILITY), task_id=task_id)
+                        required_capabilities=required, task_id=task_id)
                     if latest is not handle:
                         raise OpenResearchError("CONNECTION_CHANGED", "The exact task experiment provider changed")
 
@@ -446,16 +491,17 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                         scenario=scenario)
                 if adapter.max_output_bytes > output or adapter.command_timeout > timeout:
                     raise OpenResearchError("RESOURCE_LIMIT_EXCEEDED", "The task experiment adapter exceeds its current selected environment")
+                anchor = _experiment_anchor(context.store, plan, ctx) if revision == "2" else None
                 return ResolvedExperimentBinding(adapter, owner, task_id, initial["ref"], initial["version"],
-                    initial["fingerprint"], initial["revision"], tuple(initial["capabilities"]))
+                    initial["fingerprint"], initial["revision"], tuple(initial["capabilities"]), revision, anchor)
 
-            function = make_orx_experiment_tools(context.settings, context.store, resolve)[selected]
+            function = make_orx_experiment_tools(context.settings, context.store, resolve, revision)[selected]
             return tool(requires_confirmation=True)(function) if selected == TOOL_NAMES[1] else function
 
         registrations.append(bindings.register("tool", ADAPTER_ID + "-" + tool_name.rsplit("_", 1)[1],
-            ADAPTER_REVISION, factory, tool_name=tool_name, connection_kind="orx",
+            contract_revision, factory, tool_name=tool_name, connection_kind="orx",
             connection_adapter_ref=ADAPTER_ID,
-            required_capabilities=(READ_CAPABILITY, RUN_CAPABILITY),
+            required_capabilities=required,
             permissions=(RUN_CAPABILITY,) if tool_name in {TOOL_NAMES[1], TOOL_NAMES[3]} else (READ_CAPABILITY,),
             validator=validate_experiment_config))
     return registrations
@@ -528,7 +574,7 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
         return None
     plan = store.plan(task["plan_id"], task["owner_id"])
     specs = [spec for spec in plan.get("executionBindings", {}).get("tools", [])
-             if spec.get("adapterId") == ADAPTER_ID + "-run" and spec.get("revision") == ADAPTER_REVISION]
+             if spec.get("adapterId") == ADAPTER_ID + "-run" and spec.get("revision") in {ADAPTER_REVISION, LEAST_CAPABILITY_REVISION}]
     if len(specs) != 1:
         raise OpenResearchError("RECLAIM_BINDING_INVALID", "No exact immutable native experiment launch binding exists")
     spec = specs[0]
@@ -537,7 +583,7 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
         spec = store.remote_bindings.historical_spec(plan, "tool", spec, ctx)
     elif plan.get("remoteHandoff"):
         raise OpenResearchError("RECLAIM_BINDING_INVALID", "The original receiver proof registry is unavailable")
-    if spec.get("adapterId") != ADAPTER_ID + "-run" or spec.get("revision") != ADAPTER_REVISION:
+    if spec.get("adapterId") != ADAPTER_ID + "-run" or spec.get("revision") not in {ADAPTER_REVISION, LEAST_CAPABILITY_REVISION}:
         raise OpenResearchError("RECLAIM_BINDING_INVALID", "The admitted receiver adapter cannot reclaim this experiment")
     pin = spec.get("connection", {})
     service = store.connections
@@ -566,8 +612,9 @@ async def reclaim_orx_experiment(settings: Any, store: Any, task_id: str) -> dic
         max_output_bytes=environment["outputBytes"], command_timeout=min(environment["timeoutSeconds"], 15),
         environment=environment, scenario=spec.get("config", {}).get("scenario", "success"), cleanup_only=True)
     binding = _validate(ResolvedExperimentBinding(adapter, owner, task_id, pin["ref"], pin["version"],
-        pin["fingerprint"], pin["revision"], tuple(pin["capabilities"])),
-        RunContext(user_id=owner, session_id=task_id, run_id=task["run_id"]))
+        pin["fingerprint"], pin["revision"], tuple(pin["capabilities"]), spec["revision"],
+        _experiment_anchor(store, plan, ctx) if spec["revision"] == "2" else None),
+        RunContext(user_id=owner, session_id=task_id, run_id=task["run_id"]), TOOL_NAMES[1])
     receipt = await adapter.reclaim_experiment()
     if receipt.get("state") == "NO_LAUNCH_INTENT":
         # Factory's persisted intent can precede native receipt admission.

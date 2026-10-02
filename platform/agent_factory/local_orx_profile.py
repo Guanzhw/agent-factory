@@ -34,26 +34,33 @@ def environment_registration() -> AdapterRegistration:
 
 
 def local_profile_settings(*, db_url: str, workspace: Path, provider: TaskLocalORXProvider,
-                           owner: str = "alice", port: int = 3104) -> Settings:
+                           owner: str = "alice", port: int = 3104, contract_revision: str = "1") -> Settings:
     """Local demo-identity settings; caller must supply a dedicated generated store."""
+    if contract_revision not in {"1", "2"}:
+        raise ValueError("Unsupported immutable ORX contract")
+    profile_revision = PROFILE_REVISION if contract_revision == "1" else PROFILE_REVISION + "-capabilities-v2"
     trusted = TrustedConnectionBinding(owner, "orx", ADAPTER_ID,
         frozenset({READ_CAPABILITY, RUN_CAPABILITY}), PROFILE_REVISION,
         available=True, opaque_handle=provider, handle_ref=PROFILE_REVISION)
     return Settings(db_url=db_url, workspace=workspace, port=port, max_workers=1,
         max_tool_calls=8, experiment_timeout_seconds=30, experiment_output_bytes=65536,
         storage_task_reserve_bytes=4 * 1024 * 1024 * 1024,
-        temporary_policy="admin-review", policy_revision=PROFILE_REVISION,
-        material_policy_revision=PROFILE_REVISION, material_review_mode="separate-admin",
-        runtime_tool_contract="local-orx-v1", trusted_connections={REGISTRATION_REF: trusted},
+        temporary_policy="admin-review", policy_revision=profile_revision,
+        material_policy_revision=profile_revision, material_review_mode="separate-admin",
+        runtime_tool_contract="local-orx-v1" if contract_revision == "1" else "orx-evidence-v2", trusted_connections={REGISTRATION_REF: trusted},
         runtime_adapters=[environment_registration()])
 
 
-def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewer: str) -> dict[str, Any]:
+def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewer: str, contract_revision: str = "1", source_application: dict[str, Any] | None = None) -> dict[str, Any]:
     """Trusted operator action using current distinct admins and native review history.
 
     Reusing this exact profile is idempotent. A conflicting prior version fails;
     the installer never silently rewrites a previously published definition.
     """
+    if contract_revision not in {"1", "2"}:
+        raise ValueError("Unsupported immutable ORX contract")
+    suffix = "" if contract_revision == "1" else "-capabilities-v2"
+    profile_revision = PROFILE_REVISION + suffix
     if author == reviewer:
         raise ValueError("The local toy profile requires a distinct publication reviewer")
     store, auth = state["store"], state["auth"]
@@ -62,7 +69,9 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
     governance, applications = state["material_governance"], state["applications"]
 
     def publish(identifier, kind, adapter, *, tool_name=None, scenario=None):
-        config = {"connectionName": CONNECTION_NAME} if kind == "tool" else {}
+        identifier += suffix
+        connection_name = CONNECTION_NAME if contract_revision == "1" else ("localExperimentRun" if tool_name in {TOOL_NAMES[1], TOOL_NAMES[3]} else "localExperimentRead")
+        config = {"connectionName": connection_name} if kind == "tool" else {}
         if scenario is not None:
             config["scenario"] = scenario
         permissions = ([RUN_CAPABILITY] if tool_name in {TOOL_NAMES[1], TOOL_NAMES[3]}
@@ -72,11 +81,11 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
             "description": "Original reviewed deterministic local evaluator; no model provider is called.",
             "content": tool_name or "Reviewed task-owned ORX toy workflow",
             "license": "MIT", "compatibility": ["agno:3.1.0"], "dependencies": [],
-            "permissions": permissions, "runtimeBinding": {"adapterId": adapter, "revision": "1", "config": config},
+            "permissions": permissions, "runtimeBinding": {"adapterId": adapter, "revision": contract_revision if kind == "tool" else "1", "config": config},
             "provenance": {"kind": "original", "notice": "Original Agent Factory no-provider toy recipe."},
-        }, PROFILE_REVISION + ":draft:" + identifier)
-        review = governance.request_publication(author, identifier, material["version"], PROFILE_REVISION + ":review:" + identifier)
-        governance.decide_publication(reviewer, review["id"], True, PROFILE_REVISION + ":approve:" + identifier)
+        }, profile_revision + ":draft:" + identifier)
+        review = governance.request_publication(author, identifier, material["version"], profile_revision + ":review:" + identifier)
+        governance.decide_publication(reviewer, review["id"], True, profile_revision + ":approve:" + identifier)
         return next(row for row in store.materials(published_only=True)
                     if row["id"] == identifier and row["version"] == material["version"])
 
@@ -94,12 +103,15 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
         modes[mode] = {"materialRefs": [pin(model), pin(environment), *[pin(value) for value in common], pin(launch)],
             "capabilities": [READ_CAPABILITY, RUN_CAPABILITY], "toolOrder": list(TOOL_NAMES),
             "config": {},
-            "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [READ_CAPABILITY, RUN_CAPABILITY], "required": True}],
+            "connectionRequirements": ([{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [READ_CAPABILITY, RUN_CAPABILITY], "required": True}] if contract_revision == "1" else
+                [{"name": "localExperimentRead", "kind": "orx", "requiredCapabilities": [READ_CAPABILITY], "required": True},
+                 {"name": "localExperimentRun", "kind": "orx", "requiredCapabilities": [RUN_CAPABILITY], "required": True}]),
             "budget": {"toolCalls": 8, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 30, "outputBytes": 65536}}
-    application = applications.create_draft(author, {"id": APPLICATION_ID, "name": "ORX 本地 toy 实验",
+    definition = {"id": APPLICATION_ID + suffix, "name": "ORX 本地 toy 实验",
         "description": "真实固定版本 CLI 的确定性基线/候选评估，无付费模型调用；toy 结果不等于真实模型科研。",
-        "defaultMode": "success", "modes": modes, "discoveryKeywords": ["orx toy", "local toy experiment"]},
-        PROFILE_REVISION + ":application")
-    review = applications.request_publication(author, application["id"], application["version"], PROFILE_REVISION + ":application-review")
-    applications.decide_publication(reviewer, review["id"], True, PROFILE_REVISION + ":application-approve")
+        "defaultMode": "success", "modes": modes, "discoveryKeywords": ["orx toy", "local toy experiment"]}
+    application = (applications.create_draft(author, definition, profile_revision + ":application")
+                   if source_application is None else applications.import_snapshot(author, source_application, profile_revision + ":import"))
+    review = applications.request_publication(author, application["id"], application["version"], profile_revision + ":application-review")
+    applications.decide_publication(reviewer, review["id"], True, profile_revision + ":application-approve")
     return application

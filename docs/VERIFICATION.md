@@ -628,3 +628,43 @@ HTTP authority and lifecycle-observer tests passed (176.847 s); Ruff and Pyright
 passed. The immediately preceding `f66f469` push and PR workflows both finished
 5/5 green, but the final test-only commit receives its own separate full push/PR
 CI validation. Local full-run failures above remain part of the record.
+
+## Linux literature evidence and least-capability contracts (2026-10-02)
+
+Based on accepted `54720e7`, the new contract preserves legacy revisions and
+registers Linux-bounded discovery/paper/text/report tools plus experiment revision
+2 with distinct read/compute connections. The current consolidated matrix is in
+[ACCEPTANCE.md](ACCEPTANCE.md#current-matrix); reproduction and remaining code
+seams are in [LITERATURE_EVIDENCE.md](LITERATURE_EVIDENCE.md).
+
+- Seven evidence/contract/startup-cancellation unit cases passed. The cancellation
+  regression cancels during a thread-backed container start, then verifies that
+  the late-created real local subprocess is retained and killed; the container
+  boundary itself is explicitly controlled in that test.
+- Three native PostgreSQL evidence cases passed together in 53.762 s: controlled
+  successful excerpts/download integrity, controlled unavailable endpoint, and
+  opt-in real Linux public transport. The real query returned `COMMAND_FAILED`
+  (endpoint unreachable), zero sources, a readable failure report/ZIP and positive
+  namespace stop. This is not successful live source retrieval. The public
+  receipt preserves `liveSourceSuccess=false`.
+- Earlier focused legacy ORX tools/native discovery/receiver mappings plus new
+  evidence regressions: 28 collected, 27 passed, one explicit public-network
+  opt-in skip (53.601 s). The later startup-cancellation test is separate.
+- Actual Linux receiver composition passed in 117.686 s: two native apps and
+  independent databases, controlled ASGI transport, distinct publication/plan
+  reviews, least-capability receiver pins, native confirmation, one real ORX toy
+  run, baseline MSE 16 / candidate 0 and positive original-pin reclaim evidence.
+  Initial acceptance exposed a multi-command operation deadline shorter than
+  its admitted 30-second environment; revision 2 now uses that environment
+  window while preserving individual CLI caps and revision-1 behavior. The
+  failed attempt is not promoted to acceptance merely because it had metrics.
+- Frontend lint/typecheck/build and all 61 tests passed; official npm production
+  audit reported zero vulnerabilities. Ruff and Pyright passed.
+
+Exact-head push and pull-request CI are recorded on Draft PR10 after completion;
+previous stage workflow success is not substituted. Default CI skips actual
+binary/container/public-network/official-restore opt-ins. No paid model/compute,
+real credentials, host networking/security changes, merge or deployment occurred.
+AT10 provider-failure/external-work independence, real model SDK attempt guards,
+production browser identity and mutable reviewed workloads remain explicit
+implementation/integration work, not simply missing credentials.

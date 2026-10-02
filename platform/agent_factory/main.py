@@ -18,6 +18,7 @@ from .config import Settings
 from .connections import ConnectionService, connection_router
 from .execution_bindings import default_bindings
 from .orx_tools import register_orx_adapter
+from .orx_literature_tools import register_literature_adapters, LiteratureEvidenceModel, MODEL_ID as LITERATURE_MODEL_ID
 from .orx_experiment_tools import (LocalORXWorkflowModel, initialize_orx_experiments,
                                    register_orx_experiment_adapters, MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION)
 from .applications import ApplicationService, application_router
@@ -86,6 +87,8 @@ def create_app(settings=None):
     store.connections = connections
     bindings = default_bindings(settings, store, connections)
     register_orx_adapter(bindings)
+    register_literature_adapters(bindings)
+    bindings.register("model", LITERATURE_MODEL_ID, "1", lambda context: LiteratureEvidenceModel())
     register_orx_experiment_adapters(bindings)
     bindings.register("model", MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION, lambda context: LocalORXWorkflowModel())
     for entry in settings.runtime_adapters:
