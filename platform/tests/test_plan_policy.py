@@ -358,6 +358,15 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(restarted.inspect("manager", receipts[0]["id"])["decision"], "approved")
 
     def test_native_tool_confirmation_does_not_replace_review_or_current_policy(self):
+        self._confirmation_after_policy_withdrawal()
+
+    def test_observer_cancels_between_api_check_and_native_continuation(self):
+        self._confirmation_after_policy_withdrawal(cancel_at_bridge=True)
+
+    def _confirmation_after_policy_withdrawal(self, *, cancel_at_bridge=False):
+        observer = self.state["lifecycle_observer"]
+        if cancel_at_bridge:
+            self.client.portal.call(observer.stop)
         plan = self.plan(mode="experiment")
         with self.assertRaises(HTTPException):
             self.service.require_execution("alice", plan["id"])
@@ -368,13 +377,30 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(detail["snapshot"]["effects"], [])
         self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="policy-revoked"), expected_revision="plan-policy-v1")
         approval = detail["job"]["approvalDetail"]
-        with patch("subprocess.Popen") as no_compute, patch.object(self.state["bridge"], "continue_run", wraps=self.state["bridge"].continue_run) as continuation:
+        original_continue = self.state["bridge"].continue_run
+        async def continue_after_observation(*args, **kwargs):
+            if cancel_at_bridge:
+                # Deterministically exercise a real cancellation after the API
+                # has read waiting_approval, before native continuation reads.
+                await observer.observe_root(job["id"])
+            return await original_continue(*args, **kwargs)
+        with patch("subprocess.Popen") as no_compute, patch.object(self.state["bridge"], "continue_run", side_effect=continue_after_observation) as continuation:
             result = self.client.post("/api/factory/jobs/" + job["id"] + "/approve", json={"requirementId": approval["id"], "version": approval["version"], "approved": True})
             # The live observer can stop the paused task before this request.
             # Either HTTP denial or accepted continuation must still deny at
             # the native boundary; confirmation cannot renew withdrawn policy.
             self.assertIn(result.status_code, {200, 409}, result.text)
-            self.assertEqual(continuation.call_count, 1 if result.status_code == 200 else 0)
+            if cancel_at_bridge:
+                self.assertEqual(result.status_code, 409, result.text)
+                self.assertEqual(continuation.call_count, 1)
+            elif result.status_code == 200:
+                self.assertEqual(continuation.call_count, 1)
+            else:
+                # A 409 may originate in the API (zero bridge calls) or in the
+                # real native route (one attempted bridge call). Neither is
+                # evidence of resumed execution; the assertions below require
+                # no subprocess, no effect, no artifact and protected denial.
+                self.assertIn(continuation.call_count, {0, 1})
             stopped = self.wait(job["id"], {"failed", "unknown"})
             self.assertEqual(no_compute.call_count, 0)
         self.assertTrue(any(event["type"] == "protected_denied" for event in stopped["events"]), stopped)

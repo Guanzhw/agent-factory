@@ -464,3 +464,27 @@ the reproducible fingerprint defect does not establish that the previously
 failing Windows revocation case now passes. No new binary hash is approved and
 the platform guard remains unchanged. No paid provider, production access,
 external service or deployment is enabled.
+
+## Cloud full regression and approval-race assertion
+
+The cloud PostgreSQL run covering the cleanup changes completed 368 tests in
+792.675 seconds: 350 passed and 18 explicit ORX skips, with no failures/errors.
+The skips are ten actual Windows adapter tests, two exact-binary preflight tests
+and six actual Windows Factory tests. All 19 ledger and eight remote-usage cases
+ran. An additional final assertion for post-revocation historical artifact
+provenance was checked separately after the full run had loaded its test module.
+
+CI for `a4665c2885767b24db12175b687fc4c3773925c0` passed both frontend and
+both Python platform jobs, but its PostgreSQL job exposed a pre-existing live
+observer race in the plan-policy test: HTTP 409 can come from the API before the
+bridge call, or from the real native route after one bridge call. The old test
+incorrectly inferred zero bridge calls from every 409. No compute/effect or
+artifact evidence indicated resumed execution.
+
+The corrected test retains the no-compute/no-new-effect/no-new-artifact and
+protected-denial assertions. A second deterministic case runs the real observer
+after the API's waiting-approval read and before native continuation, requiring
+one attempted bridge call, native HTTP 409 and unchanged execution evidence.
+Both cases passed in 6.754 seconds. This follow-up changes tests/documentation
+only; production authorization and continuation code are unchanged. Exact-head
+CI remains the separate final validation source.
