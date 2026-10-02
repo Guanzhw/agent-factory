@@ -20,6 +20,62 @@ from agent_factory.local_orx_profile import publish_local_orx_application, REGIS
 from agent_factory.inference_wait import CONTROL_NAME
 
 
+def lifecycle_evidence(store):
+    """Public synthetic fixture facts only; never configs, payloads or error text."""
+    from agent_factory.inference_wait import read as read_wait
+    def select(value, fields):
+        return {key: value[key] for key in fields if key in value and isinstance(value[key], (str, int, float, bool, type(None)))}
+    tasks = store.sql('SELECT id,owner_id,plan_id,run_id,admission,terminal,cancel_requested FROM af_tasks ORDER BY id')
+    result = {'schema': 1, 'tasks': []}
+    for task in tasks:
+        saved = {'task': select(task, ('id','owner_id','plan_id','run_id','admission','terminal','cancel_requested'))}
+        saved['events'] = [
+            {**select(event, ('id','type','createdAt')), 'data': select(event.get('data', {}),
+                ('status','reason','boundary','errorType','code','attemptId','action','commandId','tool','newIntent','createsExecution'))}
+            for event in store.events(task['id'])]
+        try:
+            waiting = read_wait(store, task['id'])
+            saved['inferenceWait'] = None if waiting is None else select(waiting,
+                ('state','controlId','taskId','nativeRunId','orxRunId','deadline','createdAt','failures','errorStatus'))
+        except Exception as error:
+            saved['inferenceWait'] = {'errorType': type(error).__name__}
+        try:
+            ticket = store.native_db.get_job(task['run_id'], strict=True) if task.get('run_id') else None
+            saved['nativeQueue'] = None if ticket is None else select(ticket,
+                ('id','session_id','user_id','component_id','status','attempt','max_attempts','created_at','updated_at','started_at','completed_at'))
+            if ticket:
+                # Native stores freeform diagnostics in last_error; classify it
+                # without exporting a message that might contain request input.
+                error = ticket.get('last_error') or ticket.get('error')
+                if error:
+                    saved['nativeQueue']['errorKind'] = ('timeout' if 'timeout' in str(error).lower()
+                        else 'cancelled' if 'cancel' in str(error).lower() else 'present')
+        except Exception as error:
+            saved['nativeQueue'] = {'errorType': type(error).__name__}
+        try:
+            from agno.db.base import SessionType
+            session = store.native_db.get_session(task['id'], session_type=SessionType.AGENT, user_id=task.get('owner_id'))
+            saved['nativeRuns'] = []
+            for run in (session.runs or []) if session is not None else []:
+                if run.run_id != task.get('run_id'):
+                    continue
+                run_fact = {'runId': run.run_id, 'status': str(getattr(run.status, 'value', run.status)),
+                    'cancellationStage': str(getattr(getattr(run, 'cancellation_stage', None), 'value', None))}
+                content = getattr(run, 'content', None)
+                reasons = {'Existing cancellation denies inference recovery': 'inference-recovery-cancelled',
+                    'Cancellation supersedes inference observation': 'inference-observation-cancelled',
+                    'Factory cancellation requested before model invocation': 'model-entry-cancelled',
+                    'Run cancelled by user': 'native-user-cancelled', 'Run interrupted': 'native-interrupted'}
+                run_fact['contentKind'] = reasons.get(str(content), 'present' if content else 'absent')
+                saved['nativeRuns'].append(run_fact)
+        except Exception as error:
+            saved['nativeRuns'] = {'errorType': type(error).__name__}
+        saved['usageAttempts'] = [select(row, ('id','state','created_at','updated_at')) for row in store.sql(
+            'SELECT id,state,created_at,updated_at FROM af_usage_attempts WHERE task_id=:task ORDER BY created_at', task=task['id'])]
+        result['tasks'].append(saved)
+    return result
+
+
 class Service:
     def __init__(self, config, directory):
         self.config=config;self.path=directory/(config['role']+'.json')
@@ -121,10 +177,20 @@ class TreeFixture(unittest.TestCase):
         if out:
             path=Path(out);path.mkdir(parents=True,exist_ok=True)
             for server in self.services:
+                # Capture before shutdown can alter native cancellation/queue facts.
+                # Each service owns an isolated synthetic database, not user data.
+                try:
+                    evidence = lifecycle_evidence(server.state['store'])
+                except Exception as error:
+                    evidence = {'schema': 1, 'errorType': type(error).__name__}
+                (path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.lifecycle.json')).write_text(
+                    json.dumps(evidence, sort_keys=True))
                 server.stop()
                 log=server.path.with_suffix('.log')
                 if log.exists():
                     (path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.log')).write_bytes(log.read_bytes())
+                profile=server.path.with_suffix('.timings.profile.json')
+                if profile.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.profile.json')).write_bytes(profile.read_bytes())
                 timing=server.path.with_suffix('.timings.json')
                 if timing.exists():(path/(type(self).__name__+'-'+self._testMethodName+'-'+server.config['role']+'.timings.json')).write_bytes(timing.read_bytes())
 

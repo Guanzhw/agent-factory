@@ -78,16 +78,25 @@ PYTHONPATH=platform .venv/bin/python -m unittest discover -s platform/tests -p t
 .venv/bin/pyright platform/agent_factory/opencode_go.py platform/tests/test_opencode_go.py
 ```
 
-18 offline tests cover native Agno sync response and streaming, async transport,
+24 offline tests cover native Agno sync response and streaming, async transport,
 endpoint/header/session contracts, tool round-trip encoding, fragmented tool SSE,
 Responses completion, terminal usage, UNKNOWN evidence, total deadline
 cancellation, size bounds, unsupported alias/budget rejection, billing-before-key
 ordering, credential-error redaction, and non-retried 302/401/402/429/503 handling.
 The real `DelegatingModel._guard_provider_calls` wrapper is exercised against
-all four public invocation methods, with both successful and HTTP 503 mock
-responses (eight subcases): each performs exactly one HTTP request, one durable
+all four public invocation methods, with successful, HTTP 503, missing-usage,
+timeout, incomplete-protocol and premature-stream-usage mock responses
+(twenty-four subcases): each performs
+exactly one HTTP request, one
 admission callback, and one settlement callback. Failed attempts pass no usage
-evidence. The four methods share a private HTTP entrypoint; sync-to-async bridging
+evidence; missing usage also passes no evidence. Cancellation during actual mock
+body iteration is covered for both async methods: the transport closes, one
+settlement receives no evidence, and cancellation propagates. Parsers reject
+duplicate tool identities, ambiguous choices, premature or repeated stream usage, invalid tool
+indexes and choices after a terminal finish reason, preventing a truncated
+completion from being rewritten as successful. Chat usage is accepted only after
+the terminal choice, including a terminal choice in the same event. The four
+methods share a private HTTP entrypoint; sync-to-async bridging
 never invokes another ledger-wrapped public method. The ledger itself is a
 lightweight recorder in these tests; this is not a new PostgreSQL acceptance run.
 

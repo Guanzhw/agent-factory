@@ -1,5 +1,96 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Resumed coordinator snapshot
+
+The dedicated coordinator has resumed from exact checkpoint
+`12c82a469e1172654ac7d57fc02ceeffb8db0bbf` on
+`coord/at10-go-integration-20261002`, with sole integration ownership.
+[Draft PR11](https://github.com/Guanzhw/agent-factory/pull/11) tracks current
+acceptance and exact-SHA CI results. The older paused snapshot below is retained
+as provenance; its credential and test status do not describe the new container.
+
+The new environment's authorized credential presence/nonempty check was **true**.
+No value, length or digest was exposed. No live Go call was made because
+subscription-only billing remains unverified. Workers use mock transports only.
+The pinned ORX binary was rebuilt from public source with an exact approved hash
+match; PostgreSQL and runtime fixtures were recreated, not assumed to exist.
+
+Integrated commits through `59fdcddef12edd44a3766f983bc8d41d69d3e0d3` add:
+
+- Off-loop fresh authority checks with loop-local cancellation fences, loop-owned
+  model construction and pause publication, and deterministic regression tests.
+- Successful exact-binary version proof reuse; authority/hash checks remain fresh.
+  ORX commands check operation authority after capacity acquisition before spawn.
+- Go terminal/usage parsing hardening and one-request/one-ledger-attempt contracts.
+- Fail-closed Windows capability checks retaining Linux no-follow/nonblocking
+  flags, portable recovery mocks, and explicit non-Linux rejection coverage.
+- Standalone SELECT autocommit with immediate connection release; explicit
+  transactions and durable denial writes retain their semantics.
+- Fixed-label timing and allowlisted lifecycle failure diagnostics.
+
+Recorded validation: frontend 64 tests/build/lint/typecheck, offline backend 546
+with 280 opt-in skips, latest focused 48 tests, Ruff/Pyright and dependency audit
+passed. Actual local parent recovery, parent cancellation and child budget overrun
+passed 3/3 in 370.921 seconds. Actual Chromium recovery issued one command POST
+with no page errors. The resumed local child restart has also passed.
+
+Receiver-parent remains **unaccepted**: the latest attempt failed after 94.946
+seconds with inspect CancelledError at the native 60-second boundary. Diagnostic
+cold-container construction took 31.710 seconds, within 43.904-second experiment
+setup; parallel authority timing cannot be added directly. No deadline increase,
+permission cache, origin-observer bypass, or native-row rewrite was used.
+
+At this snapshot, remaining actual receiver/safety tests run serially within the
+measured 4 CPU / 16 GiB environment; PostgreSQL CI is running. Windows/Ubuntu
+Python and frontend jobs passed at `59fdcdd`. Consult PR11 for final results rather
+than treating this intermediate snapshot as acceptance. Production identities,
+real research/provider evidence and target-host capacity remain open gates.
+
+### Subsequent PostgreSQL correction
+
+The first full PostgreSQL CI exposed metadata-pool starvation under a one-slot
+pool: a session root lock held its only connection while nested reads needed
+another. Store now shares one separately bounded lock connection across all
+DelegationService handles. Budget charging takes the same root lock before its
+metadata transaction; reverse-order entry is rejected. Native/observer shutdown
+precedes lock-pool disposal. Independent review covered both the starvation and
+reverse-lock cycle. The metadata pool is not enlarged. A legitimate native
+cancellation in the UNKNOWN fixture is accepted while unchanged-effect,
+no-compute and retained-UNKNOWN assertions remain mandatory.
+
+### Current acceptance boundary
+
+The root-lock follow-up passed all 8 targeted PostgreSQL cases, including the
+original CI failures and lifecycle case 11. Application closure now avoids
+checking every unrelated catalog material before checking the complete selected
+closure again; the final selected governance check still runs fresh every time.
+Six new regressions cover transitive selection, revocation and malformed graphs.
+
+Actual resumed receiver acceptance remains red. The 11-case matrix had 4 passes
+and 7 preparation failures before safety fault injection. Local parent/browser
+recovery passed again after the lock fix. Receiver parent still times out after
+the selected-closure optimization. See CLOUD_TASK_BOARD.md and Draft PR11 for
+precise run counts and final exact-head CI. A bare slim-image substitution was
+rejected: it lacks ORX's required git/ps/kill dependencies. No image, resource
+ceiling or native deadline was changed. Go remains entirely offline.
+
+### Latest terminal-publication correction
+
+CI at `2e68725` found a failure arriving between the observer's cleanup-request
+and terminal-publication phases. Before publishing terminal, the observer now
+rechecks strict binding/reason, records cancellation provenance and refreshes
+positive-stop/failure facts. UNKNOWN/queued changes and check failures keep the
+root unreclaimed. Five deterministic contracts reproduce the old defect; all
+19 PostgreSQL lifecycle/lock cases passed in 43.985 seconds after the fix.
+
+The real safety batch at `2e68725` passed 7/8 (1111.150 seconds); the remaining
+receiver-overrun case failed before fault injection and has an earlier passing
+run. Separate passing runs do not establish a combined green acceptance matrix.
+Final corrected-head CI and receiver-parent reliability remain the gates. The
+reported cloud disconnect did not block shell/Git or interrupt the active test.
+
+## Preserved pre-resumption checkpoint
+
 This is preservation of incomplete project work, not an acceptance release.
 Parent instruction explicitly authorizes a separate WIP commit/push and then
 pauses changes until a dedicated coordinator resumes. The commit containing this
@@ -118,3 +209,19 @@ full regression/audits, then obtain both exact-final-HEAD CI workflows green.
 This WIP branch push does not update, merge or certify Draft PR10. Real-model
 research, production identity/isolation, Windows coverage and target-host load
 remain distinct gates. Resume only under the parent's next coordinator task.
+
+### Final CI follow-up: cancellation in a read projection
+
+Both CI runs at `9beef4a` finished with the same first failure: GET task detail
+entered `delegation_scope` before cancellation, then its fresh binding check
+observed cancellation and raised native `RunCancelledException`, leaking HTTP
+500. The preview now returns denied availability with no modes; owner isolation,
+execution guards, and asynchronous request cancellation remain unchanged.
+The second reported subtest failure was role-state contamination, addressed by
+unconditional role restoration in that test. Independent review passed. Final
+commit and two-round exact-SHA CI evidence are maintained on Draft PR11.
+
+Actual-runtime reruns at `9beef4a` without timing instrumentation: three tests,
+391.023s, receiver-root recovery passed with original identity/one launch;
+receiver-parent and receiver-overrun failed before fault injection in inspect.
+A green CI result must not be represented as full AT10 or production acceptance.

@@ -88,6 +88,7 @@ class OpenResearchAdapter:
         self.owner_id, self.task_id = owner_id, task_id
         self.authorize, self.pin, self.enabled = authorize, pin, enabled
         self.binding = binding
+        self._version_proof: BinaryPin | None = None
         self.max_output_bytes, self.command_timeout = max_output_bytes, command_timeout
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._experiment_lock = asyncio.Lock()
@@ -147,9 +148,17 @@ class OpenResearchAdapter:
     async def preflight(self) -> dict[str, str]:
         await self._allow("preflight")
         self._verify_hash()
-        result = await self._execute(("--no-telemetry", "--version"))
-        if result.stdout.strip() != f"orx {VERSION}":
-            raise OpenResearchError("VERSION_MISMATCH", "CLI version differs from pinned source")
+        # Reuse only the version fact for the same approved binary bytes.
+        # Authority and the complete on-disk hash are verified on every call;
+        # no permission, source-integrity or process-liveness proof is cached.
+        proof_pin = self.pin
+        if self._version_proof != proof_pin:
+            result = await self._execute(("--no-telemetry", "--version"))
+            if self.pin != proof_pin:
+                raise OpenResearchError("UNVERIFIED_BINARY", "Binary pin changed during version verification")
+            if result.stdout.strip() != f"orx {VERSION}":
+                raise OpenResearchError("VERSION_MISMATCH", "CLI version differs from pinned source")
+            self._version_proof = proof_pin
         assert self.pin is not None
         return {"revision": REVISION, "version": VERSION, "binary_sha256": self.pin.sha256}
 
@@ -233,7 +242,9 @@ class OpenResearchAdapter:
 
     async def _command(self, operation: str, *argv: str, **kwargs: Any) -> CommandResult:
         await self.preflight()
-        await self._allow(operation)
+        # _execute checks fresh operation authority after acquiring capacity,
+        # immediately before spawning; an earlier duplicate cannot protect that
+        # boundary and needlessly repeats remote authority round trips.
         return await self._execute(("--no-telemetry", *argv), operation=operation, **kwargs)
 
     @staticmethod

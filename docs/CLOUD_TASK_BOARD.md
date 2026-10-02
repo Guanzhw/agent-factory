@@ -1,9 +1,25 @@
 # Cloud integration task board
 
-Updated 2026-10-02. WIP preservation requested; all development workers completed and root pauses after checkpoint push. See [checkpoint handoff](CLOUD_WIP_HANDOFF.md). Product priorities and user decisions belong to the parent
-coordinator; `/root` owns this cloud checkout, integration, commits and Draft PR10.
-Accepted checkpoint: `4e1f29900080ad6004fd33f55580b9fe5ea75c37` (both CI workflows
-5/5). Current work is on `wip/orx-ledger-cloud-handoff`; no merge or deployment.
+Updated 2026-10-02. Dedicated coordinator resumed with sole integration ownership
+from exact checkpoint `12c82a469e1172654ac7d57fc02ceeffb8db0bbf` on
+`coord/at10-go-integration-20261002`. Previous workers and local Factory are stopped.
+No merge or deployment. New container fixtures are being rebuilt from public pins;
+old scratch paths are not evidence in this container.
+
+## Active ownership (supersedes preserved rows below)
+
+| Work | Owner / exclusive scope | Dependencies | Acceptance / state |
+|---|---|---|---|
+| AT10 deterministic diagnosis | `/root/at10`; inference_tree_worker, test_actual_inference_tree, new isolated tests | Pinned checkpoint; root-owned core integration | Deterministic loop/cancellation regressions green; fixture diagnostics delivered; actual receiver tree remains blocked by native 60-second timeout |
+| Go offline hardening | `/root/go_adapter`; opencode_go.py, test_opencode_go.py, OPENCODE_GO.md | Mock transport only | 24 Go tests plus async/cancellation and version-proof tests green; independent review passed; offline only |
+| Independent review | `/root/reviewer`; read-only | Worker and root diffs | Independent review found and resolved early usage, thread cancellation, native-response publication and callback compatibility issues; final matrix still pending; lock-after-capacity ORX authority review passed |
+| Core and acceptance | `/root`; all shared APIs/schema/lifecycle, fixture, board, commits/PR | Worker handback and serial runtime fixture | Frontend64 and offline backend546 (280 opt-in skips) passed; pinned ORX rebuilt exactly; local parent/browser recovery and both delegated stop tests passed (3/3); receiver-parent still times out; root-lock PostgreSQL fix passed all 8 targeted cases; resumed real matrix 4/11 passed and 7 preparation failures; final exact-SHA CI pending |
+| Go live gate | `/root` only | Account-specific proof balance fallback disabled | Current credential nonempty boolean true; billing remains unverified, no live call authorized through gate |
+
+Pure offline work is parallel; heavy build/runtime tests remain bounded and serial.
+Workers never read credentials; root alone checks the authorized variable.
+
+## Preserved checkpoint status
 
 | Work | Owner / file ownership | Dependencies | Acceptance | State / blocker |
 |---|---|---|---|---|
@@ -31,3 +47,77 @@ explicitly bounded model requests after both credential and billing gates pass.
 Production provider/identity/host decisions remain independent. No new paid
 compute, subscription-external charges, OAuth, persistent credentials, production
 access, network/security bypass, merge or deployment is authorized.
+
+## PostgreSQL CI follow-up
+
+The full PostgreSQL job at `ca12534` ran 550 tests in 1308.788 seconds and
+exposed a one-slot metadata pool timeout plus an overstrict UNKNOWN native-state
+assertion. The coordinator owns the corrective integration: a Store-shared root
+lock pool bounded to one connection, root-before-metadata ordering for budget
+charges, explicit reverse-order refusal, and disposal after worker drain. This
+adds at most one lock connection per Store and conservatively serializes its
+root-lock phases. It does not enlarge the metadata test pool or relax UNKNOWN
+resource holds. Five PostgreSQL lock contracts accompany the change; final
+results and exact-SHA CI are recorded in Draft PR11.
+
+## Final validation snapshot
+
+The root-lock correction passed five lock contracts plus the formerly failing
+application/UNKNOWN cases and lifecycle case 11: 8 tests in 33.994 seconds. Full
+offline regression at that stage passed 562 tests (289 explicit opt-in skips).
+A further selected-closure optimization avoids duplicate governance traversal
+of unrelated catalog rows; it preserves every fresh selected/transitive material
+check and has six deterministic regressions plus application/governance coverage.
+
+The resumed 11-case real matrix at `d72a857` took 1358.896 seconds: 4 passed
+(local child restart, receiver child restart, origin cancel, receiver overrun);
+7 failed during preparation, before the requested safety fault was injected.
+Six were native inspect timeouts; one was origin-authority transport timeout
+after an initial timeout/retry. They are not seven safety assertions passing.
+The original three local parent/stop cases passed, including real Chromium
+recovery. At `e0ce609`, local parent/browser recovery passed again while receiver
+root and parent remained red (3 cases, 424.478 seconds). The selected-closure
+receiver-parent rerun also failed at inspect (98.289 seconds). Full-profile cold
+container setup remains a measured bottleneck on this 4 CPU/16 GiB Docker-vfs
+host. No timeout, authority check or UNKNOWN hold was relaxed. Bare Python slim
+was investigated but rejected because ORX also needs git, ps and external kill;
+no runtime image was changed. Final exact-head CI is reported on Draft PR11.
+
+## Terminal-publication race follow-up
+
+Exact-head CI at `2e68725` exposed lifecycle case 01: a protected failure could
+arrive after the cleanup-request phase, while the next phase published a stopped
+root as terminal without recording its cancellation cause. Terminal publication
+now repeats the strict binding/reason check, records required cleanup provenance,
+and refreshes positive-stop/failure facts. Changed UNKNOWN/queued facts or check
+errors retain capacity; normal completed work remains uncanceled. Five new
+deterministic contracts fail against the old implementation and pass with the
+fix. All 14 real PostgreSQL lifecycle cases plus five lock cases passed together:
+19 tests in 43.985 seconds. Independent review passed.
+
+The final safety batch at `2e68725` passed 7/8 in 1111.150 seconds. Receiver
+overrun failed in inspect preparation before its fault was injected; it passed
+in the earlier resumed matrix. All eight safety scenarios now have current
+container passing evidence across separate runs, but this is not a green combined
+run. Remaining receiver-parent reliability and final corrected-SHA CI are open.
+Shell and Git were rechecked after a reported cloud disconnect at 20:33 UTC:
+both remained available; the existing PostgreSQL process was preserved without
+starting duplicate tests.
+
+## Cancellation during a readable delegation preview
+
+The corrected lifecycle head `9beef4a` completed both exact-head CI runs with
+573 tests and two reported subtest failures (63 opt-in skips). The first was a
+read race: current cancellation arose inside the fresh delegation preview's
+binding check and escaped as `RunCancelledException`, returning HTTP 500 from
+GET task details. The second subtest inherited the first scenario's revoked
+origin role. The read-only preview now denies creation with empty modes for
+native cancellation, while request cancellation and all execution guards retain
+their existing behavior. Two deterministic regressions cover the projection;
+the real process test restores its role in `finally` without changing assertions
+or deadlines. Independent review passed. Final exact-head results are in PR11.
+
+The uninstrumented actual-runtime batch at `9beef4a` ran three cases in 391.023s:
+receiver-root pause/restart/recovery passed; receiver-parent recovery and receiver
+overrun failed in inspect preparation before the intended fault. This is separate
+from earlier timing artifacts and does not establish complete AT10 acceptance.

@@ -379,28 +379,31 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
     def test_04_both_current_role_revocations_stop_paused_native_work_without_checksum(self):
         for revoked in (self.origin, self.receiver):
             with self.subTest(role=revoked.configuration["role"]):
-                _, task, body, _ = self.execute("paused")
-                paused = self.wait(self.origin, task, {"waiting_input"})
-                remote = paused["snapshot"]["remoteHandoff"]["remoteTaskId"]
-                revoked.control("role-revoke")
-                failed = self.stopped(self.receiver, remote, "failed")
-                self.assertTrue(failed["snapshot"]["delegation"]["allStopped"])
-                self.assertEqual(failed["artifacts"], [])
-                self.assertFalse(any(event["type"] == "checksum_completed" for event in failed["events"]))
-                question = paused["job"]["questionDetail"]
-                # Source revocation denies authentication; receiver revocation
-                # is already positively stopped at the new intent preflight.
-                self.call(self.origin, "POST", f"/jobs/{task}/answer", expected=403 if revoked is self.origin else 409,
-                    json={"questionId": question["id"], "version": question["version"], "answer": "A revoked principal cannot resume this checksum"})
-                if revoked is self.origin:
-                    self.call(self.origin, "POST", "/instances", expected=403, json=body)
-                else:
-                    # Original-key replay is an authorized source read of
-                    # the failed receipt, never another dispatch/resume.
-                    repeated = self.call(self.origin, "POST", "/instances", expected=202, json=body).json()
-                    self.assertEqual(repeated["id"], task)
-                    self.assertEqual(repeated["status"], "failed")
-                revoked.control("role-restore")
+                try:
+                    _, task, body, _ = self.execute("paused")
+                    paused = self.wait(self.origin, task, {"waiting_input"})
+                    remote = paused["snapshot"]["remoteHandoff"]["remoteTaskId"]
+                    revoked.control("role-revoke")
+                    failed = self.stopped(self.receiver, remote, "failed")
+                    self.assertTrue(failed["snapshot"]["delegation"]["allStopped"])
+                    self.assertEqual(failed["artifacts"], [])
+                    self.assertFalse(any(event["type"] == "checksum_completed" for event in failed["events"]))
+                    question = paused["job"]["questionDetail"]
+                    # Source revocation denies authentication; receiver revocation
+                    # is already positively stopped at the new intent preflight.
+                    self.call(self.origin, "POST", f"/jobs/{task}/answer", expected=403 if revoked is self.origin else 409,
+                        json={"questionId": question["id"], "version": question["version"], "answer": "A revoked principal cannot resume this checksum"})
+                    if revoked is self.origin:
+                        self.call(self.origin, "POST", "/instances", expected=403, json=body)
+                    else:
+                        # Original-key replay is an authorized source read of
+                        # the failed receipt, never another dispatch/resume.
+                        repeated = self.call(self.origin, "POST", "/instances", expected=202, json=body).json()
+                        self.assertEqual(repeated["id"], task)
+                        self.assertEqual(repeated["status"], "failed")
+                finally:
+                    # A failed origin subtest must not revoke the next case's source.
+                    revoked.control("role-restore")
                 self.assertEqual(self.receiver.facts(remote)["nativeTickets"], 1)
                 self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
 

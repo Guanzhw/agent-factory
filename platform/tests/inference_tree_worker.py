@@ -1,5 +1,10 @@
 """Owned Linux AT10 services, with real authority HTTP and controlled model faults."""
 from dataclasses import replace
+from contextlib import contextmanager
+import asyncio
+import cProfile
+import pstats
+import threading
 import json
 import os
 from pathlib import Path
@@ -36,7 +41,7 @@ def build(config):
         raise ValueError('Only generated loopback fixture databases are allowed')
     provider=TaskLocalORXProvider(binary=Path(os.environ['FACTORY_ORX_BINARY']),
         source_archive=Path(os.environ['FACTORY_ORX_SOURCE_ARCHIVE']),git_binary=Path(os.environ['FACTORY_ORX_GIT_BINARY']),
-        python_binary=Path(sys._base_executable))
+        python_binary=Path(getattr(sys, '_base_executable', sys.executable)))
     settings=local_profile_settings(db_url=config['dbUrl'],workspace=Path(config['workspace']),provider=provider,
         port=config['port'],contract_revision='2')
     settings.jwt_key=config['jwtKey'];settings.queue_poll=.1;settings.max_workers=2
@@ -83,29 +88,128 @@ def build(config):
     return app,state
 
 
+class TimingRecorder:
+    """Opt-in aggregate diagnostics: fixed labels only, never arguments or identities."""
+    def __init__(self, path):
+        self.path = path
+        self.counts = {}
+        self.lock = threading.Lock()
+
+    @contextmanager
+    def measure(self, name):
+        if name not in {'authority', 'authority:lifecycle', 'authority:execution', 'cli', 'lifecycle',
+                        'container-setup', 'experiment-setup', 'model-selection'}:
+            raise ValueError('Timing labels must be fixed and public')
+        started = time.monotonic()
+        cancelled = False
+        try:
+            yield
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            seconds = time.monotonic() - started
+            with self.lock:
+                item = self.counts.setdefault(name, {'count': 0, 'seconds': 0., 'maxSeconds': 0., 'cancelled': 0})
+                item['count'] += 1
+                item['seconds'] += seconds
+                item['maxSeconds'] = max(item['maxSeconds'], seconds)
+                item['cancelled'] += int(cancelled)
+                temporary = self.path.with_suffix('.tmp')
+                temporary.write_text(json.dumps(self.counts))
+                temporary.replace(self.path)
+
+
+class OneShotAuthorityProfile:
+    """Profile one synthetic authority callback, emitting only bounded code statistics."""
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.claimed = False
+
+    def call(self, callback, *args, **kwargs):
+        with self.lock:
+            selected = not self.claimed
+            self.claimed = True
+        if not selected:
+            return callback(*args, **kwargs)
+        profiler = cProfile.Profile()
+        try:
+            return profiler.runcall(callback, *args, **kwargs)
+        finally:
+            rows = []
+            for (filename, _line, function), (primitive, calls, _self, cumulative, _callers) in pstats.Stats(profiler).stats.items():
+                if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*|<(lambda|module|listcomp|dictcomp|setcomp|genexpr)>', function):
+                    continue
+                rows.append({'file': Path(filename).name, 'function': function,
+                    'calls': calls, 'primitiveCalls': primitive, 'cumulativeSeconds': cumulative})
+            rows.sort(key=lambda row: row['cumulativeSeconds'], reverse=True)
+            temporary = self.path.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'schema': 1, 'callback': 'origin-authority', 'functions': rows[:20]}))
+            temporary.replace(self.path)
+
+
+def install_timing(path):
+    from agent_factory.orx_local import TaskLocalORXAdapter
+    from agent_factory.lifecycle_observer import FactoryLifecycleObserver
+    from agent_factory.orx_linux import TaskLinuxContainer
+    from agent_factory.model_dispatch import DelegatingModel
+    recorder = TimingRecorder(path)
+    from agent_factory.remote_handoff import TrustedHandoffClient
+    authority_profile = OneShotAuthorityProfile(path.with_suffix('.profile.json'))
+    original_callback = TrustedHandoffClient.authority_callback
+    def origin_authority(self, *args, **kwargs):
+        return authority_profile.call(original_callback, self, *args, **kwargs)
+    TrustedHandoffClient.authority_callback = origin_authority
+    original_authority = OriginAuthorityTransport.__call__
+    def authority(self, *args, **kwargs):
+        # Examine names only; no locals, filenames, stack text or arguments are saved.
+        frame = sys._getframe(1)
+        lifecycle = False
+        for _ in range(40):
+            if frame is None:
+                break
+            if frame.f_code.co_name in {'observe_root', '_reason'}:
+                lifecycle = True
+                break
+            frame = frame.f_back
+        del frame
+        with recorder.measure('authority'), recorder.measure('authority:lifecycle' if lifecycle else 'authority:execution'):
+            return original_authority(self, *args, **kwargs)
+    OriginAuthorityTransport.__call__ = authority
+    original_execute = TaskLocalORXAdapter._execute
+    async def execute(self, argv, **kwargs):
+        with recorder.measure('cli'):
+            return await original_execute(self, argv, **kwargs)
+    TaskLocalORXAdapter._execute = execute
+    original_observe = FactoryLifecycleObserver.observe_root
+    async def observe(self, *args, **kwargs):
+        with recorder.measure('lifecycle'):
+            return await original_observe(self, *args, **kwargs)
+    FactoryLifecycleObserver.observe_root = observe
+    original_container = TaskLinuxContainer.__init__
+    def container_setup(self, *args, **kwargs):
+        with recorder.measure('container-setup'):
+            original_container(self, *args, **kwargs)
+    TaskLinuxContainer.__init__ = container_setup
+    original_experiment = TaskLocalORXAdapter.ensure_experiment
+    async def experiment_setup(self, *args, **kwargs):
+        with recorder.measure('experiment-setup'):
+            return await original_experiment(self, *args, **kwargs)
+    TaskLocalORXAdapter.ensure_experiment = experiment_setup
+    original_selection = DelegatingModel._prepare_selection
+    def model_selection(self, *args, **kwargs):
+        with recorder.measure('model-selection'):
+            return original_selection(self, *args, **kwargs)
+    DelegatingModel._prepare_selection = model_selection
+
+
 def main():
     path=Path(os.environ['FACTORY_AT10_TREE_CONFIG']).resolve();config=json.loads(path.read_text())
     if not Path(config['workspace']).resolve().is_relative_to(path.parent):
         raise ValueError('Owned workspace must stay within fixture directory')
     if os.getenv('FACTORY_AT10_TIMING')=='1':
-        from agent_factory.orx_local import TaskLocalORXAdapter
-        counts={}
-        def record(name,seconds):
-            item=counts.setdefault(name,{'count':0,'seconds':0.})
-            item['count']+=1;item['seconds']+=seconds
-            path.with_suffix('.timings.json').write_text(json.dumps(counts))
-        original_authority=OriginAuthorityTransport.__call__
-        def authority(self,*args,**kwargs):
-            start=time.monotonic()
-            try:return original_authority(self,*args,**kwargs)
-            finally:record('authority',time.monotonic()-start)
-        OriginAuthorityTransport.__call__=authority
-        original_execute=TaskLocalORXAdapter._execute
-        async def execute(self,argv,**kwargs):
-            start=time.monotonic()
-            try:return await original_execute(self,argv,**kwargs)
-            finally:record('cli:'+argv[0],time.monotonic()-start)
-        TaskLocalORXAdapter._execute=execute
+        install_timing(path.with_suffix('.timings.json'))
     app,state=build(config)
     try:uvicorn.run(app,host='127.0.0.1',port=config['port'],access_log=False)
     finally:state['store'].engine.dispose();state['store'].native_db.db_engine.dispose()

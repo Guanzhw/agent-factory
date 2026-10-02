@@ -10,6 +10,7 @@ from typing import Any
 from types import SimpleNamespace
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 from sqlalchemy import text
 
@@ -141,7 +142,7 @@ class DelegationService:
         # Session lock spans the two committed metadata phases. Store's global
         # quota lock is acquired only after this root lock; no async work occurs
         # while it is held, and no native HTTP request depends on releasing it.
-        with self.store.engine.connect() as conn:
+        with self.store.root_lock_engine().connect() as conn:
             conn.execute(text("SELECT pg_advisory_lock(hashtext(:key))"), {"key": "delegation:" + root_id})
             conn.commit()
             try:
@@ -255,11 +256,9 @@ class DelegationService:
         self.auth.require(run_context.user_id, "run")
         self.store.require_current_policy()
         root_id, ancestors = self._ancestry(task)
-        with self.store.transaction() as conn:
-            # One-phase budget accounting shares its connection with every
-            # nested mandate read. The key conflicts with the multi-phase
-            # session root lock, preserving serialization across both paths.
-            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": "delegation:" + root_id})
+        # Always acquire root authority before borrowing metadata capacity.
+        # Reversing this order deadlocks against observation on a one-slot pool.
+        with self._root_lock(root_id), self.store.transaction() as conn:
             self._mandate(run_context.user_id, self.store.task(task["id"], run_context.user_id))
             plan = self.store.plan(task["plan_id"], run_context.user_id)
             if name not in plan["tools"]:
@@ -314,6 +313,11 @@ class DelegationService:
                  "capabilities": plan["capabilities"], "tools": plan["tools"], "budget": plan["budget"], "sharedBudget": shared}
         scope.update(modes=[], defaultMode=None)
         try:
+            # A local exhausted ceiling is already a definitive denial. Avoid
+            # remote authority/model-mode expansion for an impossible UI action;
+            # successful previews and every create/execute still check fresh authority.
+            if depth > shared["maxDepth"] or children >= shared["childrenLimit"] or used >= shared["toolCallsLimit"]:
+                raise HTTPException(429, "Shared delegation budget exhausted")
             _, plans = self._mandate(owner, parent, creating=True)
             applications = getattr(self.store, "applications", None)
             if applications is not None and root_plan.get("applicationRef"):
@@ -341,6 +345,11 @@ class DelegationService:
             counts = self.store.sql("SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE owner_id=:owner) AS owned FROM af_tasks WHERE NOT terminal", owner=owner)[0]
             if counts["total"] >= self.settings.max_total_tasks or counts["owned"] >= self.settings.max_user_tasks:
                 raise HTTPException(429, "Active task budget exhausted")
+        except RunCancelledException:
+            # Cancellation can become current after the initial task read.
+            # This owner-scoped availability projection grants no execution;
+            # keep existing cleanup facts readable while denying new children.
+            scope.update(allowed=False, reason="Factory cancellation requested", modes=[], defaultMode=None)
         except HTTPException as error:
             if error.status_code not in {403, 409, 429, 503}:
                 raise

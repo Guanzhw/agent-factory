@@ -5,6 +5,7 @@ store is not a second job scheduler. Uncertain admissions/effects retain capacit
 """
 import hashlib
 import json
+from threading import Lock
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
@@ -14,7 +15,7 @@ from contextlib import contextmanager
 
 from agno.exceptions import InputCheckError
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 
 def canonical(value):
@@ -43,6 +44,9 @@ def effect_unresolved(effect):
 class Store:
     def __init__(self, url, settings):
         self.engine = create_engine(url, pool_pre_ping=True)
+        self._root_lock_engine: Any = None
+        self._root_lock_engine_mutex = Lock()
+        event.listen(self.engine, "engine_disposed", self.dispose_root_locks)
         self.settings = settings
         self.auth: Any = None
         self.delegation: Any = None
@@ -64,6 +68,26 @@ class Store:
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()
 
+    def root_lock_engine(self):
+        """One separately bounded session-lock connection per Store.
+
+        Session advisory locks span committed metadata phases, so they cannot
+        occupy the only metadata-pool connection or borrow its transaction.
+        Multiple DelegationService handles share this same bounded pool.
+        """
+        if self._connection.get() is not None:
+            raise RuntimeError("Root lock must precede the metadata transaction")
+        with self._root_lock_engine_mutex:
+            if self._root_lock_engine is None:
+                self._root_lock_engine = create_engine(self.engine.url, pool_size=1,
+                    max_overflow=0, pool_pre_ping=True)
+            return self._root_lock_engine
+
+    def dispose_root_locks(self, _metadata_engine=None):
+        with self._root_lock_engine_mutex:
+            if self._root_lock_engine is not None:
+                self._root_lock_engine.dispose()
+
     @contextmanager
     def transaction(self):
         """Share admission transactions with nested metadata/descendant reads."""
@@ -83,6 +107,14 @@ class Store:
         if connection is not None:
             result = connection.execute(text(statement), params)
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
+        # A standalone SELECT previously opened and committed its own read
+        # transaction. AUTOCOMMIT preserves that single-statement snapshot and
+        # releases the connection immediately, without BEGIN/COMMIT round trips.
+        # Explicit transaction connections above still own all locking reads.
+        if statement.lstrip().split(None, 1)[0].upper() == "SELECT":
+            with self.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                result = conn.execute(text(statement), params)
+                return [dict(row) for row in result.mappings()] if result.returns_rows else []
         with self.engine.begin() as conn:
             result = conn.execute(text(statement), params)
             return [dict(row) for row in result.mappings()] if result.returns_rows else []

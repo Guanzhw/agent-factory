@@ -466,7 +466,11 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         path = directory / (run_id + ".log")
         if root.is_symlink() or directory.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(self.scope.resolve()):
             raise OpenResearchError("INVALID_OUTPUT", "Original run log escaped task scope")
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        nonblock = getattr(os, "O_NONBLOCK", None)
+        if os.name != "posix" or not isinstance(nofollow, int) or not nofollow or not isinstance(nonblock, int) or not nonblock:
+            raise OpenResearchError("UNSUPPORTED_PLATFORM", "Completed logs require no-follow nonblocking file opens")
+        fd = os.open(path, os.O_RDONLY | nofollow | nonblock)
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise OpenResearchError("INVALID_OUTPUT", "Original run log must be a regular file")

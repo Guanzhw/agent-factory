@@ -322,12 +322,12 @@ async def _operation(store: Any, ctx: RunContext, plan: dict[str, Any], binding:
             done, _ = await asyncio.wait({operation}, timeout=.2)
             if done:
                 value = await operation
-                _plan_check(store, ctx, plan, tool_name, binding.contract_revision)
+                await asyncio.to_thread(_plan_check, store, ctx, plan, tool_name, binding.contract_revision)
                 current = await _resolve(resolver, ctx, plan, tool_name)
                 if _identity(current) != _identity(binding):
                     raise PermissionError("The task experiment connection changed during execution")
                 return value
-            _plan_check(store, ctx, plan, tool_name, binding.contract_revision)
+            await asyncio.to_thread(_plan_check, store, ctx, plan, tool_name, binding.contract_revision)
             current = await _resolve(resolver, ctx, plan, tool_name)
             if _identity(current) != _identity(binding):
                 raise PermissionError("The task experiment connection changed during execution")
@@ -346,7 +346,7 @@ async def _operation(store: Any, ctx: RunContext, plan: dict[str, Any], binding:
 def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, contract_revision: str = "1") -> dict[str, Any]:
     async def prepare(ctx: RunContext, tool_name: str, *, allow_completed=False) -> tuple[dict[str, Any], ResolvedExperimentBinding]:
         plan = store.resolve_run(ctx)
-        _plan_check(store, ctx, plan, tool_name, contract_revision)
+        await asyncio.to_thread(_plan_check, store, ctx, plan, tool_name, contract_revision)
         binding = await _resolve(resolver, ctx, plan, tool_name)
         if (allow_completed and os.name == "posix" and binding.contract_revision == "2"
                 and any(e["effect_key"] == ctx.run_id + ":" + LAUNCH_EFFECT_KEY and e["status"] == "DONE"
@@ -443,7 +443,7 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, con
                             ("taskId", "planId", "nativeRunId", "orxRunId", "effectFingerprint", "status"))
                         or result["effectFingerprint"] != digest(_request(plan, run_context, binding))):
                     raise PermissionError("Original completed experiment evidence differs")
-                _plan_check(store, run_context, plan, tool_name, binding.contract_revision)
+                await asyncio.to_thread(_plan_check, store, run_context, plan, tool_name, binding.contract_revision)
                 current_binding = await _resolve(resolver, run_context, plan, tool_name)
                 if _identity(current_binding) != _identity(binding):
                     raise PermissionError("The task experiment connection changed during observation")
@@ -499,7 +499,7 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                 raise OpenResearchError("BINDING_INVALID", "Revision-2 tools require an exact least-capability connection")
             adapter = None
 
-            def resolve(ctx: RunContext, plan: dict[str, Any]) -> ResolvedExperimentBinding:
+            def resolve_sync(ctx: RunContext, plan: dict[str, Any]) -> ResolvedExperimentBinding:
                 nonlocal adapter
                 if (ctx.user_id != owner or ctx.session_id != task_id or ctx.run_id != context.run_context.run_id
                         or plan["id"] != context.plan["id"] or plan.get("fingerprint") != context.plan.get("fingerprint")):
@@ -513,7 +513,7 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                 environment = bindings.environment_limits(plan, ctx)
                 output, timeout, bounds = _limits(context.settings, plan, environment)
 
-                def authorize(_operation: str):
+                def authorize_sync(_operation: str):
                     _plan_check(context.store, ctx, plan, selected, revision)
                     latest = context.store.connections.resolve(owner, initial["ref"], "orx",
                         expected_revision=initial["revision"], expected_fingerprint=initial["fingerprint"],
@@ -521,6 +521,11 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                         required_capabilities=required, task_id=task_id)
                     if latest is not handle:
                         raise OpenResearchError("CONNECTION_CHANGED", "The exact task experiment provider changed")
+
+                async def authorize(operation: str):
+                    await asyncio.to_thread(authorize_sync, operation)
+                    if context.store.cancellation_requested(ctx.run_id):
+                        raise RunCancelledException("Factory cancellation requested")
 
                 if adapter is None:
                     scenario = _scenario(plan)
@@ -535,6 +540,9 @@ def register_orx_experiment_adapters(bindings: Any) -> list[Any]:
                 anchor = _experiment_anchor(context.store, plan, ctx) if revision == "2" else None
                 return ResolvedExperimentBinding(adapter, owner, task_id, initial["ref"], initial["version"],
                     initial["fingerprint"], initial["revision"], tuple(initial["capabilities"]), revision, anchor)
+
+            async def resolve(ctx: RunContext, plan: dict[str, Any]) -> ResolvedExperimentBinding:
+                return await asyncio.to_thread(resolve_sync, ctx, plan)
 
             function = make_orx_experiment_tools(context.settings, context.store, resolve, revision)[selected]
             return tool(requires_confirmation=True)(function) if selected == TOOL_NAMES[1] else function

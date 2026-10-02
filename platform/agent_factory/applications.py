@@ -196,7 +196,12 @@ class ApplicationService:
         if governance is None:
             raise HTTPException(503, "Material governance is not configured")
         pins = [PinnedRef.model_validate(ref).model_dump() for ref in refs]
-        known = {(item["id"], item["version"], item["sha256"]): item for item in self.store.materials(published_only=True)}
+        # Build the candidate graph from published rows, then validate the
+        # entire selected closure below. Checking every unrelated catalog item
+        # here repeats governance work at each execution/remote boundary.
+        # The final current check remains mandatory on every invocation.
+        known = {(item["id"], item["version"], item["sha256"]): item
+                 for item in self.store.materials(published_only=False) if item.get("published")}
         chosen, visiting = {}, set()
 
         def visit(ref, depth):

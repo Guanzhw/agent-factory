@@ -248,7 +248,7 @@ class ControlCommands:
         else:
             from .inference_wait import CONTROL_NAME, validate_requirement
             if tool.get("tool_name") == CONTROL_NAME:
-                validate_requirement(self.store, task, tool)
+                await asyncio.to_thread(validate_requirement, self.store, task, tool)
                 tool["result"] = canonical({"factoryControl": "resume-same-run" if decision["approved"] else "declined"})
                 return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements]),
                     "inferenceRecovery": True, "inferenceControlId": tool["tool_call_id"], "inferenceDeclined": not decision["approved"]}

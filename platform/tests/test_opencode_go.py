@@ -193,10 +193,120 @@ class GoContractTests(unittest.TestCase):
         with self.assertRaises(ModelProviderError):
             list(model.invoke_stream([Message(role="user", content="synthetic")]))
 
+    def test_chat_stream_terminal_cannot_be_rewritten(self):
+        for first_reason in ("length", "stop", "tool_calls"):
+            model = self.stream_model([
+                {"choices": [{"delta": {"content": "partial"}, "finish_reason": first_reason}]},
+                {"choices": [{"delta": {"content": "late"}, "finish_reason": "stop"}]}])
+            with self.subTest(first_reason=first_reason), self.assertRaises(ModelProviderError):
+                list(model.invoke_stream([Message(role="user", content="synthetic")]))
+
+    def test_stream_usage_requires_terminal_choice_before_or_in_same_event(self):
+        usage = {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+        terminal = {"choices": [{"delta": {"content": "synthetic"}, "finish_reason": "stop"}]}
+        for events in (
+            [{"usage": usage}, terminal],
+            [{"choices": [{"delta": {"content": "partial"}}], "usage": usage}, terminal],
+            [{**terminal, "usage": usage}, {"choices": [{"delta": {"content": "late"}}]}],
+        ):
+            with self.subTest(events=events), self.assertRaises(ModelProviderError):
+                list(self.stream_model(events).invoke_stream([Message(role="user", content="synthetic")]))
+        for events in ([{**terminal, "usage": usage}], [terminal, {"usage": usage}]):
+            result = list(self.stream_model(events).invoke_stream([Message(role="user", content="synthetic")]))
+            evidence = native_response_usage(result[0])
+            assert evidence is not None
+            self.assertEqual(evidence.output_tokens, 2)
+
+    def test_chat_rejects_ambiguous_choices_and_content(self):
+        choice = {"finish_reason": "stop", "message": {"content": "synthetic"}}
+        for payload in (chat(choices=[choice, choice]), chat(choices=[]),
+                        chat(choices=[{"finish_reason": "stop", "message": {"content": {"unexpected": True}}}])):
+            with self.subTest(payload=payload), self.assertRaises(ModelProviderError):
+                self.invoke(self.model(lambda request: httpx.Response(200, json=payload)))
+
+    def test_duplicate_tool_identities_rejected_in_both_protocols(self):
+        call = {"id": "call-1", "type": "function", "function": {"name": "inspect", "arguments": "{}"}}
+        item = {"type": "function_call", "call_id": "call-1", "name": "inspect", "arguments": "{}"}
+        for model_id, payload in (
+            ("deepseek-v4-flash", chat(choices=[{"finish_reason": "tool_calls", "message": {"tool_calls": [call, call]}}])),
+            ("gpt-6-luna", responses(output=[item, item])),
+        ):
+            with self.subTest(model_id=model_id), self.assertRaises(ModelProviderError):
+                self.invoke(self.model(lambda request: httpx.Response(200, json=payload), model_id))
+
+    def test_stream_rejects_ambiguous_usage_choices_and_tool_indexes(self):
+        usage = {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+        choice = {"delta": {"content": "synthetic"}}
+        cases = [
+            [{"choices": [choice, choice]}],
+            [{"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": usage}, {"usage": usage}],
+        ]
+        for index in (True, -1, "0", []):
+            cases.append([{"choices": [{"delta": {"tool_calls": [{"index": index,
+                "id": "call-1", "function": {"name": "inspect", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}])
+        for events in cases:
+            with self.subTest(events=events), self.assertRaises(ModelProviderError):
+                list(self.stream_model(events).invoke_stream([Message(role="user", content="synthetic")]))
+
+    def test_cancelled_async_transport_settles_unknown_once(self):
+        from agent_factory.model_dispatch import DelegatingModel
+
+        async def exercise(streaming):
+            entered = asyncio.Event()
+            requests, reservations, settlements, closed = [], [], [], []
+
+            class Body(httpx.AsyncByteStream):
+                async def __aiter__(self):
+                    # Neither an incomplete JSON body nor partial SSE may settle usage.
+                    yield b'data: {"choices": [{"delta": {"content": "partial"}}]}\n\n' if streaming else b'{"choices": ['
+                    entered.set()
+                    await asyncio.Event().wait()
+
+                async def aclose(self):
+                    closed.append(True)
+
+            class Ledger:
+                def begin_attempt(self, *args, **kwargs):
+                    reservations.append(True)
+                    return "attempt-cancelled"
+
+                def evidence_for(self, plan, value):
+                    return native_response_usage(value)
+
+                def finish_attempt(self, identity, evidence):
+                    settlements.append((identity, evidence))
+
+            def handler(request):
+                requests.append(request)
+                return httpx.Response(200, stream=Body())
+
+            model = self.model(handler)
+            DelegatingModel._guard_provider_calls(model, lambda: None, ledger=Ledger())
+
+            async def run():
+                messages = [Message(role="user", content="synthetic")]
+                if streaming:
+                    return [value async for value in model.ainvoke_stream(messages)]
+                return await model.ainvoke(messages)
+
+            task = asyncio.create_task(run())
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(reservations, [True])
+            self.assertEqual(settlements, [("attempt-cancelled", None)])
+            self.assertEqual(closed, [True])
+
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                asyncio.run(exercise(streaming))
+
     def test_dispatcher_guard_reserves_and_settles_once_per_public_method(self):
         from agent_factory.model_dispatch import DelegatingModel
         for method in ("invoke", "ainvoke", "invoke_stream", "ainvoke_stream"):
-            for fail in (False, True):
+            for fail in (False, "http", "missing_usage", "timeout", "protocol", "early_stream_usage"):
                 with self.subTest(method=method, fail=fail):
                     requests, reservations, settlements, authority = [], [], [], []
 
@@ -211,17 +321,26 @@ class GoContractTests(unittest.TestCase):
                         def finish_attempt(self, identity, evidence):
                             settlements.append((identity, evidence))
 
-                    def handler(request):
+                    async def handler(request):
                         requests.append(request)
-                        if fail:
+                        if fail == "timeout":
+                            await asyncio.sleep(1)
+                        if fail == "http":
                             return httpx.Response(503, text="synthetic failure")
+                        usage = None if fail == "missing_usage" else {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+                        reason = "length" if fail == "protocol" else "stop"
+                        if fail == "early_stream_usage":
+                            events = [{"choices": [], "usage": usage},
+                                      {"choices": [{"delta": {"content": "later output"}, "finish_reason": "stop"}]}]
+                            content = "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
+                            # An unsolicited SSE body must also fail closed on JSON methods.
+                            return httpx.Response(200, content=content)
                         if json.loads(request.content)["stream"]:
-                            event = {"choices": [{"delta": {"content": "synthetic"}, "finish_reason": "stop"}],
-                                     "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}}
+                            event = {"choices": [{"delta": {"content": "synthetic"}, "finish_reason": reason}], "usage": usage}
                             return httpx.Response(200, content="data: " + json.dumps(event) + "\n\ndata: [DONE]\n\n")
-                        return httpx.Response(200, json=chat())
+                        return httpx.Response(200, json=chat(usage=usage, choices=[{"finish_reason": reason, "message": {"content": "synthetic"}}]))
 
-                    model = self.model(handler)
+                    model = self.model(handler, timeout_seconds=0.01 if fail == "timeout" else 30)
                     DelegatingModel._guard_provider_calls(model, lambda: authority.append(True), ledger=Ledger())
                     messages = [Message(role="user", content="synthetic coding test")]
 
@@ -236,7 +355,7 @@ class GoContractTests(unittest.TestCase):
                             return [item async for item in model.ainvoke_stream(messages)]
                         return asyncio.run(async_run())
 
-                    if fail:
+                    if fail in ("http", "timeout", "protocol", "early_stream_usage"):
                         with self.assertRaises(ModelProviderError):
                             run()
                     else:

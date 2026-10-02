@@ -6,6 +6,7 @@ loaded from a material. Legacy seed mapping is an explicit demo-only contract.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 from dataclasses import dataclass, field
 from functools import wraps
@@ -397,6 +398,10 @@ class ExecutionBindings:
     def model_for(self, plan: Mapping[str, Any], context: Any) -> Model:
         binding = self.resolve(plan, context)["model"]
         assert isinstance(binding, BindingContext)
+        return self.model_from_binding(binding)
+
+    def model_from_binding(self, binding: BindingContext) -> Model:
+        """Construct on the caller's loop after blocking binding checks finish."""
         model = self._create("model", binding)
         if not isinstance(model, Model):
             raise InputCheckError("Trusted model factory did not return a native Model")
@@ -439,18 +444,24 @@ class ExecutionBindings:
             self.store.require_plan_execution(context.user_id, binding.plan, run_context=context)
             self.recheck(binding.plan, context)
             self.store.authorize_tool(context, binding.spec["toolName"])
+        def local_current():
+            if self.store.cancellation_requested(expected.run_id):
+                raise RunCancelledException("Factory cancellation requested before tool execution")
         if inspect.isasyncgenfunction(entrypoint):
             @wraps(entrypoint)
             async def async_stream(*args, **kwargs):
-                current(args, kwargs)
+                await asyncio.to_thread(current, args, kwargs)
+                local_current()
                 async for result in entrypoint(*args, **kwargs):
-                    current(args, kwargs)
+                    await asyncio.to_thread(current, args, kwargs)
+                    local_current()
                     yield result
             return async_stream
         if inspect.iscoroutinefunction(entrypoint):
             @wraps(entrypoint)
             async def asynchronous(*args, **kwargs):
-                current(args, kwargs)
+                await asyncio.to_thread(current, args, kwargs)
+                local_current()
                 return await entrypoint(*args, **kwargs)
             return asynchronous
         if inspect.isgeneratorfunction(entrypoint):
