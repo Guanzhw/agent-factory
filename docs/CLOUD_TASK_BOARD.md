@@ -171,3 +171,15 @@ Ordinary authority denials remain failures; missing/mismatched/nonterminal proof
 holds capacity. The failing real PostgreSQL scenario now passes in 39.976s.
 The preceding head's complete actual receiver safety matrix passed all 8 tests
 in 1149.785s. Final-head runtime and CI evidence follows in draft PR12.
+
+Final-core runtime verification at `ee0e5ca` passed: uninstrumented actual
+receiver-parent 1/1 in 199.900s; original 30s wait, identities, single launch,
+UNKNOWN retention and duplicate receipt checks independently verified. Offline
+597 tests passed (290 skips); real PostgreSQL lifecycle 14/14 passed (43.740s).
+Push CI passed 597 tests (63 skips), but PR CI exposed a fixture-only exception
+race in remote handoff test08: real binding recheck correctly raised native
+`RunCancelledException` after cancellation, while the test accepted HTTP denial
+only. `/root/at10` owns its deterministic two-boundary regression; `/root/reviewer`
+reviews the denial and no-new-effect assertions. Root retains integration and
+exact CI ownership. The follow-up changes tests/documentation only; runtime
+source remains exactly the verified `ee0e5ca` version. Final CI is recorded in PR12.

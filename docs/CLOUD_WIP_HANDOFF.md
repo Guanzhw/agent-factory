@@ -269,3 +269,14 @@ observer; generic authority loss and unresolved effects keep their previous
 semantics. Independent review passed. Actual safety at the preceding head was
 8/8 passing (1149.785s); the targeted real PostgreSQL failure now passes
 (39.976s). Final follow-up evidence and exact SHA are in draft PR12.
+
+The final runtime at `ee0e5ca` additionally passed actual receiver-parent recovery
+(199.900s), 14 real PostgreSQL lifecycle tests (43.740s), and 597 offline tests
+(290 skips). Independent evidence review confirmed the original 30s wait,
+identities, one launch, positive stop, retained UNKNOWN and duplicate receipts.
+Its push CI passed; PR CI found a test expectation race: binding recheck correctly
+raised native cancellation, but remote handoff test08 accepted only HTTP denial.
+The follow-up makes both denial boundaries deterministic, verifies persistent
+cancellation and no new tickets/effects/artifacts, and restores fixture roles
+and observers in finally. No runtime source, deadline or budget changes follow
+`ee0e5ca`; exact final CI remains linked from draft PR12.

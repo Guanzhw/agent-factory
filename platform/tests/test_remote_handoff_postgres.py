@@ -388,15 +388,72 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.wait_native(child_receipt, {"paused"})
         self.assertEqual(self.ticket_count(self.origin), 0)
         self.assertEqual(self.ticket_count(self.remote, task["id"]), 1)
-        self.origin["auth"].authorization.unassign("alice", "factory-user")
         ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
-        with self.assertRaises(HTTPException):
-            self.remote["store"].authorize_tool(ctx, "literature_search")
-        self.origin["auth"].authorization.assign("alice", "factory-user")
-        # A delegated plan cannot be imported as a new root on another server.
-        delegated = self.remote["store"].plan(task["plan_id"], "bob")
-        invalid = self.body(row).model_copy(update={"manifest": plan_manifest(delegated)})
-        self.denied(409, self.receiver.prepare, "bob", invalid)
+        store = self.remote["store"]
+        artifacts, effects = store.artifacts(task["id"]), store.effects(task["id"])
+        origin_tickets, receiver_tickets = self.ticket_count(self.origin), self.ticket_count(self.remote)
+        def assert_no_execution():
+            self.assertEqual(self.ticket_count(self.origin), origin_tickets)
+            self.assertEqual(self.ticket_count(self.remote), receiver_tickets)
+            self.assertEqual(self.ticket_count(self.remote, task["id"]), 1)
+            self.assertEqual(store.effects(task["id"]), effects)
+            self.assertEqual(store.artifacts(task["id"]), artifacts)
+        # Isolate the same authorization boundary from asynchronous observer
+        # cleanup. Both observers resume below; cancellation is never cleared.
+        try:
+            self.call(self.origin["lifecycle_observer"].stop)
+            self.call_remote(self.remote["lifecycle_observer"].stop)
+            try:
+                self.origin["auth"].authorization.unassign("alice", "factory-user")
+                # stop() drained observer work, so this first boundary checks
+                # direct current-authority denial before any cleanup is written.
+                with self.assertRaises(HTTPException) as denied:
+                    store.authorize_tool(ctx, "literature_search")
+                self.assertIn(denied.exception.status_code, {403, 409})
+            finally:
+                self.origin["auth"].authorization.assign("alice", "factory-user")
+            assert_no_execution()
+            # A delegated plan cannot be imported as a new root on another server.
+            delegated = store.plan(task["plan_id"], "bob")
+            invalid = self.body(row).model_copy(update={"manifest": plan_manifest(delegated)})
+            self.denied(409, self.receiver.prepare, "bob", invalid)
+            assert_no_execution()
+
+            # Force the narrow race with real committed cancellation: policy
+            # succeeds first, then the actual binding implementation rereads
+            # cancel_requested. No fake cancellation exception is injected.
+            self.assertFalse(store.task(task["id"], "bob")["cancel_requested"])
+            original_policy = store.plan_policy.require_context_tool
+            bindings = self.remote["execution_bindings"]
+            original_recheck = bindings.recheck
+            phases = []
+            def policy_passed(*args, **kwargs):
+                result = original_policy(*args, **kwargs)
+                phases.append("policy-passed")
+                return result
+            def cancel_before_recheck(plan, context=None):
+                if context is not None and context.session_id == task["id"]:
+                    self.assertEqual(phases, ["policy-passed"])
+                    self.assertEqual(context.run_id, task["run_id"])
+                    store.request_cancel(task["id"])
+                    self.assertTrue(store.task(task["id"], "bob")["cancel_requested"])
+                    phases.append("cancel-committed")
+                return original_recheck(plan, context)
+            with mock.patch.object(store.plan_policy, "require_context_tool", side_effect=policy_passed), \
+                 mock.patch.object(bindings, "recheck", side_effect=cancel_before_recheck):
+                with self.assertRaises(RunCancelledException):
+                    store.authorize_tool(ctx, "literature_search")
+            self.assertEqual(phases, ["policy-passed", "cancel-committed"])
+            current = store.task(task["id"], "bob")
+            self.assertEqual(current["run_id"], task["run_id"])
+            self.assertTrue(current["cancel_requested"])
+            assert_no_execution()
+        finally:
+            self.origin["auth"].authorization.assign("alice", "factory-user")
+            try:
+                self.call(self.origin["lifecycle_observer"].start)
+            finally:
+                self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_09_concurrent_dispatch_has_one_native_submission(self):
         row = self.reserve()
