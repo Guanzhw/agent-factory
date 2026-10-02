@@ -242,7 +242,9 @@ class OpenResearchAdapter:
 
     async def _command(self, operation: str, *argv: str, **kwargs: Any) -> CommandResult:
         await self.preflight()
-        await self._allow(operation)
+        # _execute checks fresh operation authority after acquiring capacity,
+        # immediately before spawning; an earlier duplicate cannot protect that
+        # boundary and needlessly repeats remote authority round trips.
         return await self._execute(("--no-telemetry", *argv), operation=operation, **kwargs)
 
     @staticmethod

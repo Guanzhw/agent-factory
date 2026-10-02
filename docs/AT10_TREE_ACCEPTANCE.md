@@ -1,7 +1,7 @@
 # Linux AT10 tree and receiver acceptance
 
 Accepted standalone baseline: `4e1f29900080ad6004fd33f55580b9fe5ea75c37`.
-This extension is saved as a separate, unaccepted WIP checkpoint; Draft PR10 remains the earlier integration context. The table distinguishes actual
+This extension is under active integration in Draft PR11; PR10 remains the earlier checkpoint context. The table distinguishes actual
 observations from implementation; it is not a production or real-provider signoff.
 The integration owner maintains exact final commit/CI evidence when available.
 
@@ -11,10 +11,10 @@ The integration owner maintains exact final commit/CI evidence when available.
 | Local child inference pause and service restart | Passed earlier extension run; final regression pending |
 | Receiver root inference pause and hard restart | Passed: same native/ORX IDs, one launch, completed, positive kernel stop, two independent services/DBs |
 | Receiver child inference pause and hard restart | Passed: original receiver receipt/root ownership plus child native/ORX identity preserved |
-| Parent inference fault over live approved child, hard restart | Passed locally: explicit separate recovery receipt; original native/ORX identity and one launch; parent and child completed |
+| Parent inference fault over live approved child, hard restart | Passed again in the resumed container: explicit separate recovery receipt; original native/ORX identity and one launch; parent and child completed. Actual Chromium Chinese recovery action produced one command POST and no browser errors |
 | Receiver parent fault over approved child, hard restart | Still unaccepted in resumed container: inspect can reach approval and parent can reach inference pause, but child native 60-second timeout during inspect/wait invalidates recovery; final combined matrix pending |
-| Parent cancellation of waiting child | Implemented test; actual acceptance pending |
-| Child authoritative overrun under shared ancestor budget | Implemented test; actual acceptance pending |
+| Parent cancellation of waiting child | Passed in the resumed container; original unresolved usage retained |
+| Child authoritative overrun under shared ancestor budget | Passed in the resumed container; current usage denial triggered cleanup before the original deadline |
 | Current source account overrun | Passed controlled accounting fault; no provider bill is claimed |
 | Source cancellation | Passed, preserving cancellation classification |
 | Source connection revocation | Passed before original wait deadline |
@@ -99,3 +99,10 @@ before child failure invalidated it. None is claimed as completed recovery.
 Optional fixed-label timing and allowlisted failure snapshots distinguish native
 queue state, usage holds and cancellation from synthetic fixture assumptions.
 The final exact-commit CI and real runtime matrix are still required.
+
+The resumed local parent/recovery and delegated stop batch passed all three tests
+in 370.921 seconds. Browser receipt records one command POST and zero page errors.
+The initial integrated Windows CI exposed Linux-mock assumptions in recovery tests;
+these now select Linux explicitly, and a separate non-Linux rejection test verifies
+fail-closed behavior. Both Windows and Ubuntu Python/frontend jobs passed at
+`8d00fbf78d0886f13080f8501516932de1f0d001`; PostgreSQL was still running at recording.
