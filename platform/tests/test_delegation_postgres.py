@@ -454,6 +454,9 @@ class DelegationPostgresTests(unittest.TestCase):
                 artifacts_before = copy.deepcopy(self.store.artifacts(task["id"]))
                 if scenario == "unknown":
                     self.store.effect_reserve(task["run_id"], "experiment:bounded-sort-v1", {"experiment": "bounded-sort-v1", "datasetHash": DATASET_HASH, "evaluatorVersion": "1"})
+                    # Deliberately unresolved work cannot satisfy teardown's
+                    # positive-stop assertion, even if a later assertion fails.
+                    self.roots.remove(task["id"])
                 effects_before = copy.deepcopy(self.store.effects(task["id"]))
                 original = self.store.authorize_tool
                 changed = []
@@ -469,7 +472,7 @@ class DelegationPostgresTests(unittest.TestCase):
                     try:
                         with mock.patch.object(self.store, "authorize_tool", side_effect=change_at_protected_boundary):
                             self.call(self.bridge.continue_run, task["run_id"], task["id"], "alice", requirements)
-                            self.wait_native(task["id"], {"completed", "failed"})
+                            self.wait_native(task["id"], {"completed", "failed", "cancelled"})
                         self.assertEqual(changed, ["run_experiment"])
                         self.assertEqual(self.store.effects(task["id"]), effects_before)
                         self.assertEqual(self.store.artifacts(task["id"]), artifacts_before)
@@ -489,8 +492,6 @@ class DelegationPostgresTests(unittest.TestCase):
                 response = self.client.get("/api/factory/jobs/" + task["id"])
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()["job"]["status"], "unknown" if scenario == "unknown" else "failed")
-                if scenario == "unknown":
-                    self.roots.remove(task["id"])  # Deliberately unresolved in isolated fixture.
 
 
 if __name__ == "__main__":

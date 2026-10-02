@@ -46,6 +46,18 @@ Python and frontend jobs passed at `59fdcdd`. Consult PR11 for final results rat
 than treating this intermediate snapshot as acceptance. Production identities,
 real research/provider evidence and target-host capacity remain open gates.
 
+### Subsequent PostgreSQL correction
+
+The first full PostgreSQL CI exposed metadata-pool starvation under a one-slot
+pool: a session root lock held its only connection while nested reads needed
+another. Store now shares one separately bounded lock connection across all
+DelegationService handles. Budget charging takes the same root lock before its
+metadata transaction; reverse-order entry is rejected. Native/observer shutdown
+precedes lock-pool disposal. Independent review covered both the starvation and
+reverse-lock cycle. The metadata pool is not enlarged. A legitimate native
+cancellation in the UNKNOWN fixture is accepted while unchanged-effect,
+no-compute and retained-UNKNOWN assertions remain mandatory.
+
 ## Preserved pre-resumption checkpoint
 
 This is preservation of incomplete project work, not an acceptance release.

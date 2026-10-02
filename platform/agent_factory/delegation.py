@@ -141,7 +141,7 @@ class DelegationService:
         # Session lock spans the two committed metadata phases. Store's global
         # quota lock is acquired only after this root lock; no async work occurs
         # while it is held, and no native HTTP request depends on releasing it.
-        with self.store.engine.connect() as conn:
+        with self.store.root_lock_engine().connect() as conn:
             conn.execute(text("SELECT pg_advisory_lock(hashtext(:key))"), {"key": "delegation:" + root_id})
             conn.commit()
             try:
@@ -255,11 +255,9 @@ class DelegationService:
         self.auth.require(run_context.user_id, "run")
         self.store.require_current_policy()
         root_id, ancestors = self._ancestry(task)
-        with self.store.transaction() as conn:
-            # One-phase budget accounting shares its connection with every
-            # nested mandate read. The key conflicts with the multi-phase
-            # session root lock, preserving serialization across both paths.
-            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": "delegation:" + root_id})
+        # Always acquire root authority before borrowing metadata capacity.
+        # Reversing this order deadlocks against observation on a one-slot pool.
+        with self._root_lock(root_id), self.store.transaction() as conn:
             self._mandate(run_context.user_id, self.store.task(task["id"], run_context.user_id))
             plan = self.store.plan(task["plan_id"], run_context.user_id)
             if name not in plan["tools"]:

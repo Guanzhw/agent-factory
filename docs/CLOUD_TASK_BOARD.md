@@ -13,7 +13,7 @@ old scratch paths are not evidence in this container.
 | AT10 deterministic diagnosis | `/root/at10`; inference_tree_worker, test_actual_inference_tree, new isolated tests | Pinned checkpoint; root-owned core integration | Deterministic loop/cancellation regressions green; fixture diagnostics delivered; actual receiver tree remains blocked by native 60-second timeout |
 | Go offline hardening | `/root/go_adapter`; opencode_go.py, test_opencode_go.py, OPENCODE_GO.md | Mock transport only | 24 Go tests plus async/cancellation and version-proof tests green; independent review passed; offline only |
 | Independent review | `/root/reviewer`; read-only | Worker and root diffs | Independent review found and resolved early usage, thread cancellation, native-response publication and callback compatibility issues; final matrix still pending; lock-after-capacity ORX authority review passed |
-| Core and acceptance | `/root`; all shared APIs/schema/lifecycle, fixture, board, commits/PR | Worker handback and serial runtime fixture | Frontend64 and offline backend546 (280 opt-in skips) passed; pinned ORX rebuilt exactly; local parent/browser recovery and both delegated stop tests passed (3/3); receiver-parent still times out; remaining actual matrix and PostgreSQL CI running |
+| Core and acceptance | `/root`; all shared APIs/schema/lifecycle, fixture, board, commits/PR | Worker handback and serial runtime fixture | Frontend64 and offline backend546 (280 opt-in skips) passed; pinned ORX rebuilt exactly; local parent/browser recovery and both delegated stop tests passed (3/3); receiver-parent still times out; remaining actual matrix running; PostgreSQL CI exposed root-lock pool starvation, being fixed in an isolated integration worktree |
 | Go live gate | `/root` only | Account-specific proof balance fallback disabled | Current credential nonempty boolean true; billing remains unverified, no live call authorized through gate |
 
 Pure offline work is parallel; heavy build/runtime tests remain bounded and serial.
@@ -47,3 +47,15 @@ explicitly bounded model requests after both credential and billing gates pass.
 Production provider/identity/host decisions remain independent. No new paid
 compute, subscription-external charges, OAuth, persistent credentials, production
 access, network/security bypass, merge or deployment is authorized.
+
+## PostgreSQL CI follow-up
+
+The full PostgreSQL job at `ca12534` ran 550 tests in 1308.788 seconds and
+exposed a one-slot metadata pool timeout plus an overstrict UNKNOWN native-state
+assertion. The coordinator owns the corrective integration: a Store-shared root
+lock pool bounded to one connection, root-before-metadata ordering for budget
+charges, explicit reverse-order refusal, and disposal after worker drain. This
+adds at most one lock connection per Store and conservatively serializes its
+root-lock phases. It does not enlarge the metadata test pool or relax UNKNOWN
+resource holds. Five PostgreSQL lock contracts accompany the change; final
+results and exact-SHA CI are recorded in Draft PR11.

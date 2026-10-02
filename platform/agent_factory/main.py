@@ -193,9 +193,13 @@ def create_app(settings=None):
 
     @asynccontextmanager
     async def observed_lifespan(app: FastAPI):
-        async with native_lifespan(app) as state:
-            async with observer.lifespan(app):
-                yield state or {}
+        try:
+            async with native_lifespan(app) as state:
+                async with observer.lifespan(app):
+                    yield state or {}
+        finally:
+            # Observer and native worker finish before their shared lock pool.
+            store.dispose_root_locks()
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
