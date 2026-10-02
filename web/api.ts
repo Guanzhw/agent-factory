@@ -1,3 +1,4 @@
+import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
 import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
 import { remoteHandoffState } from './remoteHandoffState.js';
 import type { ControlReceipt, UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
@@ -263,6 +264,10 @@ async function inspectProposal(id: string, signal?: AbortSignal): Promise<Assemb
 }
 
 export const api = {
+  storage: async (owner: string, signal?: AbortSignal) => storageSummary(await request<StorageSummary>('/storage', 'GET', undefined, signal), owner),
+  retentionPlan: async (owner: string, objectId: string, requestId: string) => retentionReceipt(await request<RetentionReceipt>('/storage/retention/plans', 'POST', { objectId, requestId }), owner),
+  retention: async (owner: string, id: string) => retentionReceipt(await request<RetentionReceipt>(`/storage/retention/plans/${segment(id)}`), owner, id),
+  retentionAction: async (owner: string, id: string, action: 'quarantine' | 'restore' | 'purge') => retentionReceipt(await request<RetentionReceipt>(`/storage/retention/plans/${segment(id)}/${action}`, 'POST'), owner, id),
   submitControl, controlReceipt, controlCommands,
   dispatchControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/dispatch`, 'POST'), owner, task, commandId),
   acknowledgeControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/acknowledge`, 'POST'), owner, task, commandId),

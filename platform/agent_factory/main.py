@@ -69,6 +69,9 @@ def create_app(settings=None):
     auth = AuthService(settings, native_db)
     auth.initialize_demo()
     store.auth = auth
+    from .storage_governance import StorageGovernance
+    from .storage_api import storage_router
+    store.storage = StorageGovernance(store, auth)
     replay = EventReplay(store, auth, signing_key=auth._key)
     store.event_replay = replay
     if settings.demo:
@@ -137,6 +140,7 @@ def create_app(settings=None):
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     base.include_router(resource_router(auth, resources))
+    base.include_router(storage_router(auth, store.storage))
 
     @base.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException):

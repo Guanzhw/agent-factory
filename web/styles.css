@@ -38,3 +38,11 @@
 .control-recovery .button-row { flex-wrap: wrap; }
 .control-recovery .technical-detail span { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .control-recovery { padding: 14px; } .control-recovery .section-heading { align-items: flex-start; gap: 10px; } }
+.storage-panel { display: grid; gap: 20px; }
+.storage-card { background: var(--surface, #fff); border: 1px solid var(--line, #ddd); border-radius: 12px; padding: 22px; }
+.storage-metrics { display: flex; gap: 30px; flex-wrap: wrap; }
+.storage-metrics dd { font-size: 1.3rem; margin: 6px 0; font-weight: 650; }
+.storage-list { padding: 0; list-style: none; }
+.storage-list li { display: flex; align-items: start; justify-content: space-between; gap: 18px; padding: 18px 0; border-bottom: 1px solid var(--line, #ddd); overflow-wrap: anywhere; }
+.storage-list details { font-size: .8rem; }
+@media(max-width: 720px) { .storage-list li { flex-direction: column; } .storage-card { padding: 16px; } }

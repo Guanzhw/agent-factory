@@ -25,6 +25,13 @@ def main():
                 (root / "crashed.json").write_text(json.dumps(value))
                 os._exit(88)  # No lifespan/finally cleanup can manufacture proof.
 
+    # Fixture-only fault after an owned rename, before its durable receipt.
+    original_storage_state = state["store"].storage._state
+    def storage_state(plan, phase, object_state, patch=None):
+        fault("storage-before-" + phase, plan["id"])
+        return original_storage_state(plan, phase, object_state, patch)
+    state["store"].storage._state = storage_state
+
     original_dispatch = ControlCommands.dispatch
     async def dispatch(self, owner, task, command):
         fault("prepared", command)
