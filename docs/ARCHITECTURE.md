@@ -27,7 +27,7 @@ Admission serializes semantic fingerprints and shared task budgets transactional
 
 Questions and confirmations are distinct native requirements. UI actions carry actual requirement IDs plus a canonical version token. Stale, cross-owner, canceled or wrong-type decisions are rejected. Continuation sends native tool execution objects, preserving their IDs. A canceled ticket is not proof remote/experiment work stopped; bounded local tools settle cancellation only after owned compute cleanup.
 
-Approved immutable application definitions drive bounded composition and exact permitted material choices. One stable native model dispatcher creates a fresh registered Model per response context; model, tool, knowledge and environment bindings come from the persisted plan, with current owner connections and authority rechecked. No shared executor Model mutation, application-ID branch, installer or fallback grants execution. Demo adapters replace only provider responses and use invented literature. Experiments execute one reviewed fixed Python program; user/model text cannot become executable code. ORX discovery is registered through an operator-provided task adapter; controlled native integration passes, while real model/ORX research, experiment wiring and production isolation remain unverified. See MATERIAL_ASSEMBLY.md.
+Approved immutable application definitions drive bounded composition and exact permitted material choices. One stable native model dispatcher creates a fresh registered Model per response context; model, tool, knowledge and environment bindings come from the persisted plan, with current owner connections and authority rechecked. No shared executor Model mutation, application-ID branch, installer or fallback grants execution. Demo adapters replace only provider responses and use invented literature. Experiments execute one reviewed fixed Python program; user/model text cannot become executable code. ORX discovery is registered through an operator-provided task adapter; controlled native integration passes, while live model research and production isolation remain unverified. The opt-in actual ORX application uses the real pinned CLI with a task-exclusive local project/store, four sealed original toy files and a persistent single-launch intent; see ORX_LOCAL_EXPERIMENTS.md. See MATERIAL_ASSEMBLY.md.
 
 Remote attachment does not allocate a machine. Resource references resolve through operator configuration and current owner grants, with target fingerprints, lease heartbeats, remote IDs and snapshot reconciliation. No native durable cursor/boot epoch is invented. A2A is a future interoperability adapter, not environment provisioning. The remote lease and trusted prepare/dispatch APIs are implemented. A selected receiver owns the entire task tree and one native ticket; the origin holds metadata only. Separate local native services and databases verify routing/cancellation/evidence. Production provider/TLS/identity/endpoint acceptance remains open.
 
@@ -52,3 +52,31 @@ authority over bounded authenticated HTTP gate execution. Receiver review occurs
 before native admission, and descendants narrow the same root proof. Loopback
 process/database acceptance and external-host production acceptance remain
 distinct. See REMOTE_BINDINGS.md.
+
+## Actual local experiment and usage accounting
+
+The `local-orx-v1` contract adds five narrow registered tools for inspect, run,
+wait, cancel and logs. One operator connection group resolves their exact
+owner-bound handle; materials never contain paths, commands or credentials.
+The no-provider workflow model selects only these approved native Functions.
+After plan review, inspect binds the actual task/project/experiment/source and
+native run intent. Native HITL separately confirms the sealed experiment launch.
+Only real CLI operations create experiment/run records. Missing launch replies
+reconcile the old run instead of submitting again. Downloaded result JSON and
+the four-file recipe archive are integrity checked by the browser.
+
+Lifecycle cleanup validates the original native ticket, immutable effect,
+operator handle and environment limits even after a current execution grant
+ends. It calls only reclaim, never provisioning or launch. Native terminal
+state plus a Windows Job Object active-process count of zero establish stop;
+unknown outcomes retain capacity. The selected profile applies job CPU,
+memory, time and process limits, but is not hostile-code tenant isolation.
+
+The usage ledger serializes admission across task/root/ancestor/user accounts
+before each provider primitive. Approved currency, token/amount ceiling,
+provider/model and price revision remain immutable. Actual trusted usage settles
+even when authority ends after the response; partial/error/unknown usage keeps
+its hold. Remote execution allocates the same original cap before dispatch and
+requires authenticated original-grant attestation; cumulative authoritative
+statements reclaim only proven unused allocation. Separate migrations preserve
+legacy/source plan hashes. No paid adapter or real credentials are configured.

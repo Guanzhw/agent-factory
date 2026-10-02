@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from agno.db.postgres import PostgresDb
+from agno.metrics import MessageMetrics
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import MetaData, Table, func, inspect, select
@@ -35,6 +36,7 @@ from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 from agent_factory.store import Store
+from agent_factory.usage_ledger import PricingRevision, UsagePolicy, native_response_usage
 
 ORIGIN_OWNER = "fixture-origin-user"
 RECEIVER_OWNER = "fixture-receiver-user"
@@ -94,6 +96,28 @@ class ControlledModel(DemoModel):
     """Native model API; deterministic fixture output, no provider request."""
     async def ainvoke(self, messages, **kwargs):
         return self._response(messages)
+
+
+def controlled_request_guard(model, arguments, keywords, commitment):
+    # Only this reviewed deterministic class, with no underlying SDK/network,
+    # can satisfy these synthetic attempt caps and no-hidden-retry contract.
+    if not isinstance(model, ControlledMeteredModel) or commitment["perAttemptInputTokens"] != 8 or commitment["perAttemptOutputTokens"] != 4:
+        raise PermissionError("Explicit fixture request cap differs")
+
+
+class ControlledMeteredModel(ControlledModel):
+    id: str = "factory-controlled-metered-v1"
+    provider: str = "controlled-fixture"
+
+    def __init__(self, controls):
+        super().__init__(id="factory-controlled-metered-v1", provider="controlled-fixture")
+        self.fixture_controls = controls
+
+    async def ainvoke(self, messages, **kwargs):
+        value = self._response(messages)
+        if not self.fixture_controls.get("unknownUsage"):
+            value.response_usage = MessageMetrics(input_tokens=3, output_tokens=2, total_tokens=5)
+        return value
 
 
 def provision_owned_subjects(settings):
@@ -270,13 +294,26 @@ def main():
             frozenset({"research:read"}), "fixture-orx-provider-v1", available=True, opaque_handle=ControlledORXProvider(),
             handle_ref=role + "-stable-owned-orx-provider")
     connection_pin = provision_owned_subjects(settings)
+    controls = {"fault": None, "unknownUsage": False}
+    if configuration.get("usageProfile") == "metered":
+        settings.usage_policy = UsagePolicy("fixture-metered-policy-v1", task_token_limit=40, task_amount_micros=64,
+            user_token_limit=400, user_amount_micros=640)
+        settings.usage_pricing = tuple(PricingRevision(identifier, "1", "controlled-fixture", "factory-controlled-metered-v1",
+            "fixture-tariff-v1", input_micros_per_million=1_000_000, output_micros_per_million=2_000_000,
+            per_attempt_input_tokens=8, per_attempt_output_tokens=4, usage_reader=native_response_usage,
+            request_guard=controlled_request_guard) for identifier in (MODEL_SOURCE, MODEL_RECEIVER))
+    else:
+        # Existing remote fixtures explicitly install this exact no-provider
+        # native class; missing/unregistered adapters are never free by default.
+        settings.usage_pricing = tuple(PricingRevision(identifier, "1", "local-synthetic", identifier,
+            "fixture-zero-local-v1", local_model_type=ControlledModel) for identifier in (MODEL_SOURCE, MODEL_RECEIVER))
     def model(context):
         if context.connection is not provider or context.run_context.user_id != owner:
             raise PermissionError("Controlled provider handle is outside its exact selected owner")
         provider.created.append({"ownerId": owner, "taskId": context.run_context.session_id, "runId": context.run_context.run_id})
         context.store.event(context.run_context.run_id, "controlled_provider_selected", "Explicit test provider; no network request",
             {"fixtureOnly": True, "ownerId": owner, "adapterId": adapter, "pid": os.getpid(), "workspace": str(workspace)})
-        return ControlledModel(id=adapter)
+        return ControlledMeteredModel(controls) if configuration.get("usageProfile") == "metered" else ControlledModel(id=adapter)
     settings.runtime_adapters = [AdapterRegistration("model", adapter, "1", model, connection_kind="model", required_capabilities=("checksum:read",)),
         AdapterRegistration("knowledge", "fixture-knowledge-v1", "1", lambda context: KnowledgeContext("Original scoped fixture checksum context.", {"evidenceKind": "controlled-adapter"}))]
     target = HandoffTarget(TARGET_REF, ORIGIN_REF, configuration["receiverUrl"], {ORIGIN_OWNER: RECEIVER_OWNER},
@@ -306,8 +343,23 @@ def main():
     application = create_app(settings)
     state = application.app.state.factory
     application_ref, materials, snapshot = publish_fixture(state, configuration.get("sourceApplication"))
-    controls = {"fault": None}
     marker = directory / (role + "-fault.json")
+    if role == "origin":
+        client = state["handoff_client"]
+        request_remote = client._request
+
+        async def interrupted_request(source_owner, target, method, path, **kwargs):
+            if controls.get("fault") == "exit_before_remote_dispatch" and method == "POST" and path.endswith("/dispatch"):
+                grant = kwargs.get("json", {}).get("usageGrant")
+                row = client._row(source_owner, grant["originTaskId"])
+                if row["state"] != "DISPATCH_UNKNOWN" or row["body"].get("usageGrant") != grant:
+                    raise RuntimeError("Fault injection requires a positively committed original allocation")
+                marker.write_text(json.dumps({"pid": os.getpid(), "phase": "after-origin-allocation-before-transport",
+                    "grantId": grant["id"], "grantSha256": grant["sha256"]}), encoding="utf-8")
+                os._exit(42)
+            return await request_remote(source_owner, target, method, path, **kwargs)
+
+        client._request = interrupted_request
 
     def authenticated(request):
         if not hmac.compare_digest(request.headers.get("X-Fixture-Control", ""), configuration["controlKey"]):
@@ -344,6 +396,9 @@ def main():
             "plan": store.plan(store.task(taskId, owner)["plan_id"], owner) if taskId else None,
             "placements": store.sql("SELECT * FROM af_remote_placements") if role == "origin" else [],
             "handoffs": store.sql("SELECT * FROM af_remote_handoffs") if role == "receiver" else [],
+            "usageLedger": store.usage_ledger.inspect(owner, taskId) if taskId else None,
+            "usageGrants": store.sql("SELECT * FROM af_usage_remote_grants"),
+            "usageAccounts": store.sql("SELECT * FROM af_usage_accounts"),
             "bindingProofs": store.sql("SELECT * FROM af_remote_binding_proofs WHERE receiver_owner=:owner", owner=owner) if role == "receiver" else []}
 
     @application.app.post("/__fixture/control")
@@ -354,9 +409,16 @@ def main():
             raise HTTPException(422, "Unsupported fixture controls")
         op = body.get("op")
         if op == "fault":
-            if body.get("fault") not in {None, "exit_after_dispatch"}:
+            if body.get("fault") not in {None, "exit_after_dispatch", "exit_before_remote_dispatch"}:
                 raise HTTPException(422, "Unsupported fixture fault")
             controls["fault"] = body.get("fault")
+        elif op in {"usage-unknown", "usage-known"}:
+            controls["unknownUsage"] = op == "usage-unknown"
+        elif op in {"usage-price-change", "usage-model-change", "usage-price-restore"}:
+            ledger = state["store"].usage_ledger
+            ledger.by_adapter = {(price.adapter_id, price.adapter_revision): price if op == "usage-price-restore" else
+                replace(price, revision="fixture-tariff-v2", input_micros_per_million=2_000_000) if op == "usage-price-change" else
+                replace(price, model="changed-controlled-model-v2") for price in settings.usage_pricing}
         elif op in {"role-revoke", "role-restore"}:
             state["auth"].authorization.unassign(owner, "fixture-user" if op == "role-revoke" else "fixture-reader")
             state["auth"].authorization.assign(owner, "fixture-reader" if op == "role-revoke" else "fixture-user")

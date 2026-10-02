@@ -3,6 +3,10 @@ import os
 from pathlib import Path
 import secrets
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .usage_ledger import UsagePolicy
 
 
 @dataclass
@@ -35,9 +39,12 @@ class Settings:
     trusted_connections: dict = field(default_factory=dict)
     runtime_adapters: list = field(default_factory=list)
     runtime_tool_contract: str = "legacy-v1"
+    # Frozen operator price/policy registrations, never loaded from model input.
+    usage_pricing: tuple = field(default_factory=tuple)
+    usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
-        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1"}:
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1"}:
             raise ValueError("Unsupported runtime tool contract")
         if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")

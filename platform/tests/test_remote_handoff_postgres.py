@@ -32,7 +32,7 @@ from agent_factory.remote_handoff import (
     HandoffCancellationRequested, HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
 )
 from agent_factory.runtime import build_runtime
-from agent_factory.store import digest
+from agent_factory.store import canonical, digest
 
 
 class LostReplyTransport(httpx.AsyncBaseTransport):
@@ -138,6 +138,20 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def body(self, row):
         return PrepareBody(originRef="origin-fixture", originOwnerId="alice", originTaskId=row["task_id"],
                            requestId=row["request_id"], manifest=row["body"]["manifest"])
+
+    def receiver_grant(self, row, prepared):
+        # This receiver concurrency/native-recheck fixture deliberately starts
+        # at the receiver CAS. First persist the real origin ledger allocation,
+        # exactly as TrustedHandoffClient does before its HTTP dispatch call.
+        target = self.handoff.targets[row["target_ref"]]
+        grant = self.origin["store"].usage_ledger.allocate_remote("alice", row["task_id"], prepared["id"],
+            origin_ref=target.origin_ref, target_ref=target.reference,
+            receiver_owner=target.identity_map["alice"], receiver_task_id=prepared["remoteTaskId"],
+            receiver_plan_sha256=prepared["receiverPlanSha256"], receiver_commitment=prepared["receiverUsageCommitment"])
+        current = self.handoff._row("alice", row["task_id"])
+        self.origin["store"].sql("UPDATE af_remote_placements SET body=CAST(:body AS JSONB) WHERE task_id=:id AND state='PREPARED'",
+            id=row["task_id"], body=canonical({**current["body"], "usageGrant": grant}))
+        return grant
 
     def ticket_count(self, state, task_id=None):
         db = state["store"].native_db
@@ -377,9 +391,10 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def test_09_concurrent_dispatch_has_one_native_submission(self):
         row = self.reserve()
         prepared = self.call(self.handoff.prepare, "alice", row["task_id"])
+        grant = self.receiver_grant(row, prepared)
         async def concurrently():
-            return await asyncio.gather(self.receiver.dispatch("bob", prepared["id"]),
-                                        self.receiver.dispatch("bob", prepared["id"]))
+            return await asyncio.gather(self.receiver.dispatch("bob", prepared["id"], grant),
+                                        self.receiver.dispatch("bob", prepared["id"], grant))
         with mock.patch.object(self.remote["bridge"], "submit", wraps=self.remote["bridge"].submit) as submit:
             receipts = self.call_remote(concurrently)
             self.assertEqual(receipts[0]["id"], receipts[1]["id"])
@@ -783,6 +798,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         native = self.wait_native(receipt, {"paused"})
                         detail = self.call(self.handoff.detail, "alice", row["task_id"])
                         task = self.remote["store"].task(receipt["remoteTaskId"], "bob")
+                    grant = self.receiver_grant(row, prepared) if stage == "dispatch" else None
                     before_tickets = self.ticket_count(self.remote)
                     entered = []
                     original = self.remote["store"].require_plan_execution
@@ -810,7 +826,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                         elif stage == "children":
                             body = {"goal": "sort", "mode": "literature", "requestId": str(uuid4())}
                         else:
-                            body = {}
+                            body = {"usageGrant": grant}
                     # The first public origin check succeeds. Cancellation is
                     # committed only inside the subsequent installed native
                     # plan/admission guard. The HTTP route must contain it.

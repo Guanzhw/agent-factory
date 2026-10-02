@@ -22,17 +22,28 @@ from .store import digest
 PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
 LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
                "checksum": "checksum:read", "run_experiment": "experiment:synthetic"}
-KNOWN_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
+REGISTERED_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
+ORX_EXPERIMENT_TOOLS = {
+    "orx_experiment_inspect": "research:read",
+    "orx_experiment_run": "compute:local",
+    "orx_experiment_wait": "research:read",
+    "orx_experiment_cancel": "compute:local",
+    "orx_experiment_logs": "research:read",
+}
+KNOWN_TOOLS = {**REGISTERED_TOOLS, **ORX_EXPERIMENT_TOOLS}
 LEGACY_READ_ONLY_TOOLS = frozenset({"literature_search", "ask_scope", "checksum"})
 READ_ONLY_TOOLS = LEGACY_READ_ONLY_TOOLS | {"orx_discover"}
 READ_ONLY_CAPABILITIES = frozenset({"research:read", "question:ask", "checksum:read"})
-ToolContract = Literal["legacy-v1", "registered-runtime-v1"]
+LOCAL_ORX_READ_ONLY_TOOLS = READ_ONLY_TOOLS | {"orx_experiment_inspect", "orx_experiment_wait", "orx_experiment_logs"}
+ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1"]
 
 
 def tools_for_contract(contract: ToolContract) -> dict[str, str]:
     if contract == "legacy-v1":
         return dict(LEGACY_TOOLS)
     if contract == "registered-runtime-v1":
+        return dict(REGISTERED_TOOLS)
+    if contract == "local-orx-v1":
         return dict(KNOWN_TOOLS)
     raise ValueError("Unsupported registered tool contract")
 
@@ -70,7 +81,9 @@ class PlanPolicyConfig:
 
     @property
     def read_only_tools(self) -> frozenset[str]:
-        return LEGACY_READ_ONLY_TOOLS if self.tool_contract == "legacy-v1" else READ_ONLY_TOOLS
+        if self.tool_contract == "legacy-v1":
+            return LEGACY_READ_ONLY_TOOLS
+        return LOCAL_ORX_READ_ONLY_TOOLS if self.tool_contract == "local-orx-v1" else READ_ONLY_TOOLS
 
 
 def persisted_ancestor_guard(store: Any):
@@ -304,7 +317,7 @@ class PlanPolicyService:
             plan = self._plan(row["owner_id"], row["plan_id"], connection=conn)
             integrity = digest(plan) == row["plan_hash"] and plan["fingerprint"] == row["plan_fingerprint"]
             if integrity:
-                summary = {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs")}
+                summary = {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs", "config", "usageBudget")}
         except Exception:
             # A persisted review remains inspectable for diagnosis; a corrupt or
             # unavailable plan cannot become an effective execution approval.

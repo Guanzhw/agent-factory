@@ -159,7 +159,7 @@ class FactoryAPI:
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
                 "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": "run_experiment" in plan["tools"]}, "published": False, "createdAt": plan["createdAt"]}
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": bool({"run_experiment", "orx_experiment_run"} & set(plan["tools"]))}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -196,7 +196,22 @@ class FactoryAPI:
                 raise
             job["allowedActions"] = ["inspect"]
         evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
-        return {"job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+        from .orx_experiment_tools import inspect_orx_experiment
+        experiment = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
+        ledger = getattr(self.store, "usage_ledger", None)
+        usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
+        if experiment is not None:
+            job.update(validationStatus="真实 ORX 本地 toy 实验；未调用模型服务", evidenceKind="toy_local_evaluation")
+            if job.get("approvalDetail", {}).get("toolName") == "orx_experiment_run":
+                provenance = experiment.get("provenance", {})
+                limits = provenance.get("environment", {})
+                scope = ("运行已封存的任务自有 ORX toy 实验："
+                         f"最长 {limits.get('timeoutSeconds', '?')} 秒，"
+                         f"输出上限 {limits.get('outputBytes', '?')} 字节；"
+                         "源码和命令哈希见下方实验凭证。金额批准为零，无模型服务调用。")
+                job["approvalDetail"]["scope"] = scope
+                job["approval"]["scope"] = scope
+        return {"orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
 
     def routes(self):

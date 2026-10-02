@@ -75,7 +75,7 @@ class OpenResearchAdapter:
                  authorize: Callable[[str], Any], pin: BinaryPin | None = None,
                  enabled: bool = False, binding: ExperimentBinding | None = None,
                  search_path: str | None = None, max_output_bytes: int = 1_048_576,
-                 command_timeout: float = 30, max_concurrency: int = 1):
+                 command_timeout: float = 30, max_concurrency: int = 1, create_scope: bool = True):
         if not owner_id or str(UUID(task_id)) != task_id:
             raise ValueError("An owned canonical task UUID is required")
         if not scope.is_absolute() or not binary.is_absolute():
@@ -92,7 +92,10 @@ class OpenResearchAdapter:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._experiment_lock = asyncio.Lock()
         self._processes: set[asyncio.subprocess.Process] = set()
-        self.scope.mkdir(parents=True, exist_ok=True)
+        if create_scope:
+            self.scope.mkdir(parents=True, exist_ok=True)
+        elif not self.scope.is_dir():
+            raise ValueError("Cleanup requires an existing task scope")
         self.env: dict[str, str] = {}
         # Deliberately do not inherit provider tokens, proxy credentials, SSH
         # agents, agent session variables, or user credential/config directories.
@@ -113,7 +116,10 @@ class OpenResearchAdapter:
             path = (self.scope / relative).resolve()
             if not path.is_relative_to(self.scope):
                 raise ValueError("Task directory escapes scope")
-            path.mkdir(parents=True, exist_ok=True)
+            if create_scope:
+                path.mkdir(parents=True, exist_ok=True)
+            elif not path.is_dir() or path.is_symlink():
+                raise ValueError("Cleanup requires existing unlinked task directories")
             self.env[name] = str(path)
         self.env.update(ORX_NO_UPDATE_CHECK="1", NO_UPDATE_NOTIFIER="1", GIT_TERMINAL_PROMPT="0")
         self._receipt_path = self.scope / "factory-orx-receipt.json"
@@ -152,7 +158,7 @@ class OpenResearchAdapter:
                                   "stdin": asyncio.subprocess.DEVNULL,
                                   "stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE}
         if os.name == "nt":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
         else:
             kwargs["start_new_session"] = True
         return await asyncio.create_subprocess_exec(str(self.binary), *argv, **kwargs)

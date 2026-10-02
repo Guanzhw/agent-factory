@@ -87,3 +87,14 @@ proof, resumes only the original plan/target/request key and hides native contro
 until a verified receiver task exists. Exact parent-application child modes are
 projected from current immutable scope. Supported browser evidence and complete
 test counts are recorded in VERIFICATION.md.
+
+## WIP actual ORX / usage-ledger cloud checkpoint
+
+This stage is preserved for cloud continuation, **not accepted**. Actual CLI
+adapter and focused native Factory success/failure/cancel/drift checks passed,
+but connection-revocation observation still fails. Real ledger and remote usage
+focused suites pass; the final complete suite has not been rerun. Native Factory
+hard interruption, actual profile startup and browser workflow remain unrun.
+Terminal process-stop proof and historical receiver-effective cleanup require
+correction before completion. See [CLOUD_HANDOFF.md](CLOUD_HANDOFF.md) and
+[VERIFICATION.md](VERIFICATION.md). Prior milestone evidence remains historical.

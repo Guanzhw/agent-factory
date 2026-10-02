@@ -59,6 +59,22 @@ class RemoteExecution:
         snapshot = value.setdefault("snapshot", {})
         snapshot["remoteHandoff"] = receipt
         snapshot["originEvents"] = self.store.events(task["id"])
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None:
+            origin_usage = ledger.inspect(task["owner_id"], task["id"])
+            receiver_usage = value.get("usageLedger")
+            snapshot["originUsageLedger"] = origin_usage
+            if receiver_usage is not None:
+                snapshot["receiverUsageLedger"] = copy.deepcopy(receiver_usage)
+            if remote_id == remote_root:
+                value["usageLedger"] = origin_usage
+            elif receiver_usage is not None:
+                # Display IDs follow the existing scoped proxy. Commitments,
+                # tariff/evidence hashes and actual receiver facts stay intact.
+                receiver_usage.update(ownerId=task["owner_id"], taskId=mapped,
+                    rootTaskId=self.identifier(task, receiver_usage["rootTaskId"], remote_root))
+                for usage_scope in receiver_usage["scopes"]:
+                    usage_scope["id"] = task["owner_id"] if usage_scope["scope"] == "user" else self.identifier(task, usage_scope["id"], remote_root)
         group = snapshot.get("delegation")
         if group:
             for fact in [group["parent"], *group["children"]]:

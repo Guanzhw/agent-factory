@@ -211,3 +211,7 @@ cover replay, UNKNOWN, cancellation, current authority loss and resource failure
 They make no CLI, retrieval, provider/model or compute-provisioning request. Real
 integrated cancellation and ORX experiment launch/status/cancel are not tested or
 wired. ORX's own OpenCode/session spawn/wake paths remain omitted.
+
+## Actual local experiment checkpoint (2026-10-02)
+
+The earlier status timeout above was traced to the pinned Windows blocking error dialog and fixed with detached-console startup. Actual local experiments now have focused adapter and Factory evidence, separately recorded in [ORX_LOCAL_EXPERIMENTS.md](ORX_LOCAL_EXPERIMENTS.md). The cloud checkpoint remains WIP with known cleanup/recovery/browser gaps; [CLOUD_HANDOFF.md](CLOUD_HANDOFF.md) is authoritative for current acceptance limits. Live model research and production isolation remain unverified.

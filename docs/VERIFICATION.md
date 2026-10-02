@@ -372,3 +372,39 @@ and detail phases to finish under loaded CI. The first PR run timed out in the
 outer fixture before assertions; the same-source push workflow passed. No runtime
 timeout, retry, state wait or admission/effect assertion changed. After correction,
 all nine actual-process acceptance cases passed again in 85.518 seconds.
+
+## WIP cloud handoff checkpoint — 2026-10-02
+
+Local development scope is frozen for cloud handoff. The complete milestone is
+**not accepted**. [CLOUD_HANDOFF.md](CLOUD_HANDOFF.md) lists exact continuation
+commands, pinned versions, ORX build provenance and known blockers.
+
+- Final frontend check: lint/typecheck/build and 51 tests pass; official npm
+  production audit reports 0 vulnerabilities. Ruff passes and Pyright reports
+  0 errors before the final preservation-only documentation update.
+- Actual pinned Windows ORX adapter: 10 tests pass in 104.785 s. Actual Factory
+  ORX suite: 8/9 pass in 159.632 s; connection-revocation cleanup observation
+  failed. Final one-case recheck after fixing the persisted capabilities
+  omission still fails in 54.789 s. It is unresolved, not waived.
+- Real PostgreSQL ledger: 19 tests pass in 10.184 s. Actual two-service remote
+  usage: 8 pass in 105.353 s. Final legacy remote handoff: 23 pass in 73.865 s;
+  legacy remote child: 1 pass in 39.442 s. Explicit zero-price origin/receiver
+  fixtures: 14 and 9 pass respectively.
+- The first full local regression ran 364 tests in 677.116 s, with 2 failures,
+  1 error and 19 explicit opt-in skips. It imported earlier test fixtures before
+  their corrections: the stale missing-grant/dispatch-body cases were fixed and
+  pass in the subsequent 23-case suite; the unpriced source-model fixture was
+  fixed and passes in the subsequent 14-case suite. The **full final-source suite
+  was not rerun**. These focused results are not a full-suite passing claim.
+- Startup profile is unrun. The preserved Playwright 1.58.0/Edge harness passed
+  syntax and static checks only; actual browser approvals/cancel/recovery/download
+  acceptance is unrun. Factory/native durable queue hard-interruption recovery
+  remains unimplemented acceptance; adapter-only worker recovery is distinct.
+- Read-only source review found remaining terminal stop-proof/capacity release
+  and imported remote ORX effective-pin cleanup gaps. See the handoff blockers.
+
+No paid models/compute, credentials, production grants, merge or deployment were
+used. Source scan/remote commit/CI status and owned-service stop evidence are
+reported with the exact published checkpoint SHA. Raw local logs, databases,
+private generated auth fixtures, upstream ZIP/binary and machine caches remain
+ignored and are not transferred. OpenSession remains local.

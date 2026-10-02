@@ -86,6 +86,9 @@ class AdapterRegistration:
     permissions: tuple[str, ...] = ()
     demo_only: bool = False
     validator: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False)
+    # Optional operator-selected shared handle identity for a narrow tool family.
+    # It never changes a material's exact adapter/tool identity or capabilities.
+    connection_adapter_ref: str | None = None
 
 
 class ExecutionBindings:
@@ -97,15 +100,17 @@ class ExecutionBindings:
 
     def register(self, kind: str, adapter_id: str, revision: str, factory: Callable[[BindingContext], Any], *,
                  tool_name: str | None = None, connection_kind: str | None = None, required_capabilities=(),
-                 permissions=(), demo_only: bool = False, validator=None) -> AdapterRegistration:
+                 permissions=(), demo_only: bool = False, validator=None, connection_adapter_ref: str | None = None) -> AdapterRegistration:
         if kind not in KINDS or not _IDENTIFIER.fullmatch(adapter_id) or not _IDENTIFIER.fullmatch(revision) or not callable(factory):
             raise ValueError("Invalid trusted adapter registration")
         if kind == "tool" and (not isinstance(tool_name, str) or not _IDENTIFIER.fullmatch(tool_name)):
             raise ValueError("A tool adapter requires its exact native name")
         if kind != "tool" and tool_name is not None:
             raise ValueError("Only tool registrations declare native tool names")
+        if connection_adapter_ref is not None and (connection_kind is None or not _IDENTIFIER.fullmatch(connection_adapter_ref)):
+            raise ValueError("A shared connection identity must be an exact operator registration")
         entry = AdapterRegistration(kind, adapter_id, revision, factory, tool_name, connection_kind,
-                                    tuple(required_capabilities), tuple(permissions), demo_only, validator)
+                                    tuple(required_capabilities), tuple(permissions), demo_only, validator, connection_adapter_ref)
         with self._lock:
             key = (kind, adapter_id, revision)
             if key in self._adapters:
@@ -343,7 +348,7 @@ class ExecutionBindings:
         action = self.connections.resolve if resolve else self.connections.preflight
         return action(owner, pin.get("ref"), expected_kind=entry.connection_kind,
             expected_revision=pin.get("revision"), expected_fingerprint=pin.get("fingerprint"), expected_version=pin.get("version"),
-            required_capabilities=entry.required_capabilities, task_id=getattr(context, "session_id", None), expected_adapter_ref=spec["adapterId"])
+            required_capabilities=entry.required_capabilities, task_id=getattr(context, "session_id", None), expected_adapter_ref=entry.connection_adapter_ref or spec["adapterId"])
 
     def recheck(self, plan: Mapping[str, Any], context: Any = None) -> dict[str, Any]:
         owner = plan["ownerId"]

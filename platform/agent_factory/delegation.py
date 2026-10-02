@@ -112,6 +112,9 @@ class _ChildPlannerStore:
                 budget[key] = min(budget[key], parent["budget"][key])
         plan = {**plan, "delegation": self.binding,
                 "budget": {**budget, "depth": self.binding["depth"]}}
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None:
+            plan["usageBudget"] = ledger.commitment_for_candidate(plan, self)
         plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})
         return self.store.save_plan(plan)
 
@@ -520,10 +523,16 @@ class DelegationService:
                 continue  # Unacknowledged admission retains capacity/UNKNOWN.
             try:
                 native = self._native(task)
+                from .orx_experiment_tools import reclaim_orx_experiment
+                await reclaim_orx_experiment(self.settings, self.store, task["id"])
                 if str(native.get("status", "")).lower() not in TERMINAL:
                     await self.bridge.cancel_run(task["run_id"], task["id"], owner)
                     requested.append(task["id"])
             except HTTPException as error:
                 errors.append({"taskId": task["id"], "status": error.status_code})
                 self.store.event(task["id"], "cascade_cancel_pending", "Native cancellation remains unconfirmed", {"code": error.status_code})
+            except Exception as error:
+                errors.append({"taskId": task["id"], "errorType": type(error).__name__})
+                self.store.event(task["id"], "cascade_cancel_pending", "Owned experiment cleanup remains unconfirmed",
+                                 {"errorType": type(error).__name__})
         return {"requested": requested, "errors": errors, "group": await self.inspect_group(owner, parent["id"])}

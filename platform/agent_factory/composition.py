@@ -203,6 +203,13 @@ class CompositionService:
             except (HTTPException, ValueError, PermissionError):
                 candidate["missing"].append("Current registered execution binding inspection denied")
                 candidate["status"] = "blocked"
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None and execution is not None and not candidate["missing"]:
+            try:
+                candidate["usageBudget"] = ledger.commitment_for(candidate)
+            except (HTTPException, ValueError):
+                candidate["missing"].append("USAGE_APPROVAL_REQUIRED: exact model/pricing budget is unavailable")
+                candidate["status"] = "blocked"
         candidate["fingerprint"] = digest(candidate)
         return candidate
 
@@ -296,6 +303,9 @@ class CompositionService:
                     configured_guard()
                 self.applications.require_plan_current(candidate)
                 self.bindings.inspect(candidate)
+                ledger = getattr(self.store, "usage_ledger", None)
+                if ledger is not None:
+                    ledger.validate_commitment(candidate, candidate.get("usageBudget"))
             self.auth.require(owner, "run")
             plan = {**candidate, "id": str(uuid4()), "createdAt": now(), "compositionProposalId": proposal_id}
             plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})

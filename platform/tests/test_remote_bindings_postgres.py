@@ -21,7 +21,9 @@ from fastapi.testclient import TestClient
 from agent_factory.catalog import create_plan
 from agent_factory.config import Settings
 from agent_factory.connections import TrustedConnectionBinding
+from agent_factory.demo_model import DemoModel
 from agent_factory.execution_bindings import default_bindings
+from agent_factory.usage_ledger import PricingRevision, UsageLedger
 from agent_factory.main import create_app
 from agent_factory.remote_bindings import RemoteBindingService, TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import TrustedOrigin, plan_manifest
@@ -87,6 +89,15 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         self.source["bindingManifest"].update(materialRefs=self.source["materialRefs"], connections={"provider": self.source_pin},
             executionBindingsSha256=self.source["executionBindings"]["sha256"])
         self.source["bindingManifest"]["sha256"] = digest({key: value for key, value in self.source["bindingManifest"].items() if key != "sha256"})
+        # These service-contract descriptors are explicit zero-cost local
+        # fixture profiles; neither price registration constructs a provider.
+        ledger = self.store.usage_ledger
+        self.store.usage_ledger = UsageLedger(self.store, (*ledger.prices,
+            PricingRevision("origin-fixture-model", "origin-adapter-v1", "local-synthetic",
+                "origin-proof-fixture-model", "owned-proof-zero-v1", local_model_type=DemoModel),
+            PricingRevision("receiver-fixture-model", "receiver-adapter-v2", "local-synthetic",
+                "receiver-proof-fixture-model", "owned-proof-zero-v1", local_model_type=DemoModel)), ledger.policy)
+        self.source["usageBudget"] = self.store.usage_ledger.commitment_for(self.source)
         self.source["fingerprint"] = digest({key: value for key, value in self.source.items() if key not in {"id", "createdAt", "fingerprint"}})
         self.source_spec = self.source["executionBindings"]["model"]
         self.effective_spec = {**copy.deepcopy(self.source_spec), "adapterId": "receiver-fixture-model",

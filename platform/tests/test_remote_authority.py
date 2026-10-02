@@ -24,7 +24,9 @@ import uvicorn
 
 from agent_factory.config import Settings
 from agent_factory.connections import TrustedConnectionBinding
+from agent_factory.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
+from agent_factory.usage_ledger import PricingRevision
 from agent_factory.main import create_app
 from agent_factory.remote_authority import AuthorityCheck, AuthorityReply, OriginAuthorityTransport, PATH
 from agent_factory.remote_handoff import HandoffCancellationRequested, HandoffTarget, TrustedOrigin
@@ -191,7 +193,9 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         adapter = AdapterRegistration("model", "owned-authority-model-v1", "1", forbidden_factory, connection_kind="model")
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
                                  handoff_targets={self.target.reference: self.target},
-                                 trusted_connections={"owned-source-model": connection}, runtime_adapters=[adapter])
+                                 trusted_connections={"owned-source-model": connection}, runtime_adapters=[adapter],
+                                 usage_pricing=(PricingRevision("owned-authority-model-v1", "1", "local-synthetic",
+                                     "factory-synthetic-v1", "owned-authority-zero-v1", local_model_type=DemoModel),))
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]

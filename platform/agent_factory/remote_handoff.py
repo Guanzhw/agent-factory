@@ -35,6 +35,32 @@ PLAN_KEYS = {"id", "ownerId", "normalizedGoal", "mode", "application", "instruct
              "materialRefs", "materials", "capabilities", "missing", "status", "createdAt", "policy", "budget",
              "syntheticFixture", "fingerprint"}
 ASSEMBLY_KEYS = {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}
+USAGE_KEYS = {"schema", "currency", "amountMicros", "tokenLimit", "provider", "model", "adapterId", "adapterRevision",
+              "pricingRevision", "pricingSha256", "inputMicrosPerMillion", "outputMicrosPerMillion",
+              "perAttemptInputTokens", "perAttemptOutputTokens", "bindingSha256", "policyRevision", "sha256"}
+
+
+def _usage_commitment(value: Any, *, bindings: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    # Structural validation is independent of installed receiver prices. The
+    # receiver separately approves its effective local quote without rewriting
+    # any source manifest field or historical fingerprint.
+    if not isinstance(value, dict) or set(value) != USAGE_KEYS or type(value.get("schema")) is not int or value["schema"] != 1:
+        raise HTTPException(422, "USAGE_COMMITMENT_SCHEMA: exact immutable usage fields required")
+    hashes = ("pricingSha256", "bindingSha256", "sha256")
+    names = ("provider", "model", "adapterId", "adapterRevision", "pricingRevision", "policyRevision")
+    counters = ("amountMicros", "tokenLimit", "inputMicrosPerMillion", "outputMicrosPerMillion", "perAttemptInputTokens", "perAttemptOutputTokens")
+    if (value["currency"] not in {"USD", "EUR", "CNY"}
+            or any(not isinstance(value[k], str) or not re.fullmatch(r"[a-f0-9]{64}", value[k]) for k in hashes)
+            or any(not isinstance(value[k], str) or not 1 <= len(value[k]) <= 120 or any(c.isspace() for c in value[k]) for k in names)
+            or any(type(value[k]) is not int or not 0 <= value[k] <= 10**15 for k in counters)
+            or any(value[k] < 1 for k in ("tokenLimit", "perAttemptInputTokens", "perAttemptOutputTokens"))
+            or value["sha256"] != digest({k: v for k, v in value.items() if k != "sha256"})):
+        raise HTTPException(409, "USAGE_COMMITMENT_INTEGRITY: exact approved currency, limits and pricing digest required")
+    if bindings is not None and (value["bindingSha256"] != bindings.get("sha256")
+            or value["adapterId"] != bindings.get("model", {}).get("adapterId")
+            or value["adapterRevision"] != bindings.get("model", {}).get("revision")):
+        raise HTTPException(409, "USAGE_BINDING_INTEGRITY: usage differs from its original model binding")
+    return copy.deepcopy(value)
 REQUEST = re.compile(r"^[a-zA-Z0-9_.:-]{8,100}$")
 
 
@@ -75,6 +101,7 @@ class HandoffAuthority:
     receiver_identity: str | None = None
     target_revision: str | None = None
     target_fingerprint: str | None = None
+    usage_grant_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +159,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     plan = copy.deepcopy(manifest["plan"])
     if len(canonical(manifest).encode()) > 524288 or digest(plan) != manifest.get("sha256"):
         raise HTTPException(409, "Immutable manifest integrity mismatch")
-    if set(plan) not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
+    if set(plan) - {"usageBudget"} not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
         raise HTTPException(409, "Remote handoff requires a complete ready root plan owned by the origin user")
     if plan.get("fingerprint") != digest({key: value for key, value in plan.items()
                                          if key not in {"id", "createdAt", "fingerprint"}}):
@@ -165,7 +192,9 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(422, "Remote experiment duration exceeds the immutable budget")
     if "toolOrder" in config and (not isinstance(config["toolOrder"], list) or config["toolOrder"] != tools):
         raise HTTPException(422, "Remote tool order differs from the immutable tool scope")
-    if set(plan) == PLAN_KEYS | ASSEMBLY_KEYS:
+    if "usageBudget" in plan:
+        _usage_commitment(plan["usageBudget"], bindings=plan.get("executionBindings"))
+    if set(plan) - {"usageBudget"} == PLAN_KEYS | ASSEMBLY_KEYS:
         applications = getattr(store, "applications", None)
         bindings = getattr(store, "execution_bindings", None)
         if applications is None or bindings is None:
@@ -222,6 +251,11 @@ class PrepareBody(BaseModel):
     originTaskId: UUID
     requestId: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{8,100}$")
     manifest: dict[str, Any]
+
+
+class DispatchBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    usageGrant: dict[str, Any]
 
 
 class PreparedHandoffService:
@@ -322,6 +356,15 @@ class PreparedHandoffService:
                 if (current.origin_ref != origin.reference or current.receiver_identity != owner or
                         proof["sourceConfiguration"] != {"revision": current.target_revision, "sha256": current.target_fingerprint}):
                     raise HTTPException(409, "Current origin configuration differs from the immutable receiver binding proof")
+            grant = row["body"].get("usageGrant")
+            if grant is not None and current.usage_grant_sha256 != grant.get("sha256"):
+                raise HTTPException(403, "USAGE_REMOTE_ATTESTATION: current origin has no exact durable reservation")
+            ledger = getattr(self.store, "usage_ledger", None)
+            quote = row["body"].get("receiverUsageCommitment")
+            if ledger is not None and quote is not None:
+                imported = row["body"]["remotePlan"]
+                effective = self.store.execution_bindings.manifest(imported)
+                ledger.validate_commitment(imported, quote, effective_bindings=effective)
         return source
 
     def prepare(self, remote_owner: str, body: PrepareBody) -> dict[str, Any]:
@@ -360,6 +403,12 @@ class PreparedHandoffService:
                                               "bindingProofSha256": proof["sha256"]}}
                 imported["fingerprint"] = digest({k: v for k, v in imported.items() if k not in {"id", "createdAt", "fingerprint"}})
                 saved = {"manifest": body.manifest, "remotePlan": imported, "remoteTaskId": None, "createdAt": now()}
+                ledger = getattr(self.store, "usage_ledger", None)
+                if ledger is not None:
+                    effective = self.store.execution_bindings.manifest(imported)
+                    saved["receiverUsageCommitment"] = ledger.prepare_remote_commitment(imported, effective)
+                elif "usageBudget" in source:
+                    raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: receiver must install durable accounting")
                 self.store.sql("INSERT INTO af_remote_handoffs VALUES(:id,:ref,:origin_owner,:origin_task,:remote_owner,:request,:manifest,:configuration,'PREPARING',CAST(:body AS JSONB))",
                                id=identifier, ref=body.originRef, origin_owner=body.originOwnerId, origin_task=origin_task,
                                remote_owner=remote_owner, request=body.requestId, manifest=body.manifest["sha256"],
@@ -400,7 +449,12 @@ class PreparedHandoffService:
                 "remoteTaskId": task_id, "remoteRunId": task.get("run_id") if task else None,
                 "state": row["state"], "native": native,
                 "receiverBindingProof": self.store.remote_bindings.inspect(row["id"], row["remote_owner"]),
-                "syntheticFixture": row["body"]["remotePlan"]["syntheticFixture"]}
+                "syntheticFixture": row["body"]["remotePlan"]["syntheticFixture"],
+                **({"receiverPlanSha256": digest(row["body"]["remotePlan"]),
+                    "receiverUsageCommitment": copy.deepcopy(row["body"]["receiverUsageCommitment"])}
+                   if "receiverUsageCommitment" in row["body"] else {}),
+                **({"usageGrant": {"id": row["body"]["usageGrant"]["id"], "sha256": row["body"]["usageGrant"]["sha256"]}}
+                   if "usageGrant" in row["body"] else {})}
 
     async def receipt(self, remote_owner: str, identifier: str) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
@@ -452,6 +506,9 @@ class PreparedHandoffService:
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
                                       and not any(effect["status"] == "UNKNOWN" for effect in effects)
                                       and (group is None or group["allStopped"])))
+        if row["body"].get("usageGrant") is not None:
+            result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
+                all_stopped=result["allStopped"])
         return result
 
     async def by_request(self, remote_owner: str, origin_ref: str, origin_owner: str, request_id: str) -> dict[str, Any]:
@@ -552,7 +609,7 @@ class PreparedHandoffService:
         task = self._task(row, remote_task_id)
         return self.store.artifact(task["id"], artifact_id)
 
-    async def dispatch(self, remote_owner: str, identifier: str) -> dict[str, Any]:
+    async def dispatch(self, remote_owner: str, identifier: str, usage_grant: dict[str, Any] | None = None) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner)
         if row["state"] in {"UNKNOWN", "ACCEPTED"}:
@@ -565,6 +622,32 @@ class PreparedHandoffService:
         task = self.store.task(row["body"]["remoteTaskId"], remote_owner) if row["body"].get("remoteTaskId") else None
         if task is None or task["cancel_requested"] or task["terminal"]:
             raise HTTPException(409, "Prepared task is unavailable or canceled")
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None:
+            source = row["body"]["manifest"]["plan"]
+            quote = row["body"].get("receiverUsageCommitment")
+            if quote is None or not isinstance(usage_grant, dict) or len(canonical(usage_grant).encode()) > 16384:
+                raise HTTPException(409, "USAGE_REMOTE_GRANT_REQUIRED: exact attested source allocation required")
+            origin = self._origin(remote_owner, row["origin_ref"], row["origin_owner"])
+            authority = self._authority(origin, row["origin_owner"], row["origin_task"], row["manifest_hash"], source)
+            if (authority.usage_grant_sha256 != usage_grant.get("sha256")
+                    or usage_grant.get("id") != identifier or authority.target_ref is None):
+                raise HTTPException(403, "USAGE_REMOTE_ATTESTATION: current origin has no exact durable reservation")
+            source_budget = source.get("usageBudget")
+            ledger.import_remote_grant(remote_owner, task["id"], usage_grant,
+                expected_origin_ref=row["origin_ref"], expected_target_ref=authority.target_ref,
+                expected_origin_task_id=row["origin_task"], expected_origin_owner=row["origin_owner"],
+                expected_source_plan_sha256=row["manifest_hash"],
+                expected_source_commitment_sha256=source_budget.get("sha256") if source_budget else None)
+            old_grant = row["body"].get("usageGrant")
+            if old_grant is not None and old_grant != usage_grant:
+                raise HTTPException(409, "USAGE_REMOTE_GRANT_CONFLICT: immutable dispatch allocation changed")
+            saved = {**row["body"], "usageGrant": copy.deepcopy(usage_grant)}
+            self.store.sql("UPDATE af_remote_handoffs SET body=CAST(:body AS JSONB) WHERE id=:id AND state='PREPARED'",
+                id=identifier, body=canonical(saved))
+            row = self._row(identifier, remote_owner)
+        elif usage_grant is not None:
+            raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: receiver accounting unavailable")
         # CAS commits BEFORE any native HTTP call. Concurrent/restarted callers
         # read the receipt and cannot reacquire a submission attempt.
         changed = self.store.sql("UPDATE af_remote_handoffs SET state='UNKNOWN' WHERE id=:id AND state='PREPARED' RETURNING id", id=identifier)
@@ -646,8 +729,8 @@ class PreparedHandoffService:
             return await self.receipt(owner(request), identifier)
 
         @self.router.post("/{identifier}/dispatch", status_code=202)
-        async def dispatch(identifier: str, request: Request):
-            return await self.dispatch(owner(request, True), identifier)
+        async def dispatch(identifier: str, request: Request, body: DispatchBody | None = None):
+            return await self.dispatch(owner(request, True), identifier, body.usageGrant if body else None)
 
         @self.router.get("/{identifier}/detail")
         async def detail(identifier: str, request: Request, remoteTaskId: str | None = None):
@@ -825,7 +908,12 @@ class TrustedHandoffClient:
                 "AMBIGUOUS", "CHANGED", "INTEGRITY", "SCOPE", "ANCESTRY", "UNBOUND", "CONFLICT")} | {
                 "ORIGIN_AUTHORITY_" + name for name in ("BINDING_DENIED", "CONFIG_CHANGED", "DENIED", "UNAVAILABLE",
                     "AUTH_UNAVAILABLE", "SCHEMA_INVALID", "RESPONSE_INVALID")} | {
-                "PLAN_REVIEW_REQUIRED", "PLAN_REVIEW_DENIED", "PLAN_REVIEW_EXPIRED", "POLICY_UNSET"}
+                "PLAN_REVIEW_REQUIRED", "PLAN_REVIEW_DENIED", "PLAN_REVIEW_EXPIRED", "POLICY_UNSET"} | {
+                "USAGE_" + name for name in ("COMMITMENT_SCHEMA", "COMMITMENT_INTEGRITY", "BINDING_INTEGRITY",
+                    "PRICE_UNAVAILABLE", "CURRENCY_MISMATCH", "APPROVAL_CEILING", "PRICING_DRIFT", "BUDGET_EXHAUSTED",
+                    "REMOTE_LEDGER_REQUIRED", "REMOTE_QUOTE_REQUIRED", "REMOTE_QUOTE_INTEGRITY", "REMOTE_PRICE_MISMATCH",
+                    "REMOTE_MODEL_MISMATCH", "REMOTE_SCOPE", "REMOTE_GRANT_REQUIRED", "REMOTE_ATTESTATION",
+                    "REMOTE_COMMITMENT_CONFLICT", "REMOTE_GRANT_INTEGRITY", "REMOTE_GRANT_IDENTITY", "REMOTE_GRANT_SOURCE")}
             if result.status_code >= 400 and len(result.content) <= 16384:
                 try:
                     value = result.json()
@@ -877,6 +965,20 @@ class TrustedHandoffClient:
                 UUID(str(receipt["remoteTaskId"]))
         except (ValueError, KeyError) as error:
             raise HTTPException(502, "Remote receipt identities are invalid") from error
+        quote = receipt.get("receiverUsageCommitment")
+        if quote is not None:
+            _usage_commitment(quote)
+            if not isinstance(receipt.get("receiverPlanSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", receipt["receiverPlanSha256"]):
+                raise HTTPException(409, "USAGE_REMOTE_PLAN_INTEGRITY: receiver quote requires exact prepared plan hash")
+            effective = {"schema": 1, "tools": [], "knowledge": []}
+            for entry in proof["entries"]:
+                kind = entry["kind"]
+                if kind in {"tool", "knowledge"}:
+                    effective[kind + ("s" if kind == "tool" else "")].append(entry["effectiveSpec"])
+                else:
+                    effective[kind] = entry["effectiveSpec"]
+            effective["sha256"] = digest(effective)
+            _usage_commitment(quote, bindings=effective)
         with self.store.engine.begin() as connection:
             current = connection.execute(text("SELECT * FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner FOR UPDATE"),
                                          {"id": row["task_id"], "owner": row["owner_id"]}).mappings().first()
@@ -888,12 +990,39 @@ class TrustedHandoffClient:
                              or previous.get("remoteTaskId") is not None and previous["remoteTaskId"] != receipt.get("remoteTaskId")
                              or previous.get("remoteRunId") is not None and previous["remoteRunId"] != receipt.get("remoteRunId")):
                 raise HTTPException(409, "Receiver replaced the original prepared task or native ticket")
+            if previous and any(previous.get(key) != receipt.get(key) for key in ("receiverUsageCommitment", "receiverPlanSha256")):
+                raise HTTPException(409, "USAGE_REMOTE_QUOTE_CHANGED: receiver replaced its original immutable quote")
+            grant = current["body"].get("usageGrant")
+            reported_grant = receipt.get("usageGrant")
+            if reported_grant is not None and (not grant or reported_grant != {"id": grant["id"], "sha256": grant["sha256"]}):
+                raise HTTPException(409, "USAGE_REMOTE_GRANT_IDENTITY: receipt differs from original source allocation")
+            statement = receipt.get("usageStatement")
+            if statement is not None:
+                if not isinstance(statement, dict) or grant is None or reported_grant is None or statement.get("grantId") != receipt["id"]:
+                    raise HTTPException(409, "USAGE_REMOTE_STATEMENT_IDENTITY: accounting has no attested original grant")
+                old_statement = previous.get("usageStatement") if previous else None
+                if old_statement and statement.get("sequence", 0) < old_statement["sequence"]:
+                    raise HTTPException(409, "USAGE_REMOTE_STATEMENT_STALE: cached cumulative accounting cannot regress")
+                if statement.get("allStopped") is True and receipt.get("allStopped") is not True:
+                    raise HTTPException(409, "USAGE_REMOTE_STATEMENT_STOP: accounting requires positive native/effect/tree stop")
             body = {**current["body"], "receipt": dict(receipt)}
             local_state = receipt.get("state", "UNKNOWN")
             if body.get("dispatchAttempted") and local_state in {"PREPARING", "PREPARED"}:
                 local_state = "DISPATCH_UNKNOWN"
             connection.execute(text("UPDATE af_remote_placements SET state=:state,body=CAST(:body AS JSONB) WHERE task_id=:id"),
                                {"id": row["task_id"], "state": local_state, "body": canonical(body)})
+        if receipt.get("usageStatement") is not None:
+            ledger = getattr(self.store, "usage_ledger", None)
+            if ledger is None:
+                raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: origin settlement unavailable")
+            ledger.apply_remote_statement(row["owner_id"], row["task_id"], receipt["usageStatement"])
+        elif receipt.get("state") == "CANCELLED_NO_DISPATCH" and grant is not None:
+            ledger = getattr(self.store, "usage_ledger", None)
+            if ledger is None:
+                raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: origin reclaim unavailable")
+            # This exact receiver CAS is positive no-admission evidence; missing
+            # tickets, generic cancellation or UNKNOWN never release money.
+            ledger.reclaim_remote_no_dispatch(row["owner_id"], row["task_id"], receipt["id"], dict(receipt))
         raw = str(((receipt.get("native") or {}).get("queue") or {}).get("status") or (receipt.get("native") or {}).get("status", "unknown")).lower()
         # Origin capacity is released only by positive receiver stop evidence,
         # including descendants/effects; no origin native ticket is fabricated.
@@ -929,11 +1058,24 @@ class TrustedHandoffClient:
         previous = row["body"].get("receipt")
         if row["body"].get("dispatchAttempted") or not previous or row["state"] in {"UNKNOWN", "DISPATCH_UNKNOWN", "ACCEPTED"}:
             return await self.receipt(owner, task_id)
-        body = {**row["body"], "dispatchAttempted": True}
+        ledger = getattr(self.store, "usage_ledger", None)
+        grant = None
+        if ledger is not None:
+            receiver_quote = previous.get("receiverUsageCommitment")
+            if previous.get("state") != "PREPARED" or not previous.get("remoteTaskId") or receiver_quote is None:
+                raise HTTPException(409, "USAGE_REMOTE_QUOTE_REQUIRED: exact prepared receiver identity and quote required")
+            grant = ledger.allocate_remote(owner, task_id, previous["id"], origin_ref=target.origin_ref,
+                target_ref=target.reference, receiver_owner=target.identity_map[owner],
+                receiver_task_id=previous["remoteTaskId"], receiver_plan_sha256=previous["receiverPlanSha256"],
+                receiver_commitment=receiver_quote)
+            row = self._row(owner, task_id)
+        body = {**row["body"], "dispatchAttempted": True, **({"usageGrant": grant} if grant else {})}
         changed = self.store.sql("UPDATE af_remote_placements SET state='DISPATCH_UNKNOWN',body=CAST(:body AS JSONB) WHERE task_id=:id AND state='PREPARED' RETURNING task_id", id=task_id, body=canonical(body))
         if not changed:
             raise HTTPException(409, "Origin placement is not prepared for dispatch")
-        receipt = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/" + quote(previous["id"], safe="") + "/dispatch")
+        dispatch_options: dict[str, Any] = {"json": {"usageGrant": grant}} if grant else {}
+        receipt = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/" + quote(previous["id"], safe="") + "/dispatch",
+            **dispatch_options)
         return self._save_receipt(self._row(owner, task_id), target, receipt)
 
     async def detail(self, owner: str, task_id: str, remote_task_id: str | None = None) -> dict[str, Any]:
@@ -1049,6 +1191,11 @@ class TrustedHandoffClient:
             raise HandoffCancellationRequested(owner, task_id, manifest_hash)
         self._target(owner, row, native_cancellation=True)
         plan = self.store.plan(task["plan_id"], owner)
+        ledger = getattr(self.store, "usage_ledger", None)
+        if ledger is not None:
+            # Origin has no native model attempt. Its current pricing/budget
+            # mandate must still fence every receiver provider/tool entry.
+            ledger.require_current_commitment(plan)
         if tool is not None and tool not in plan["tools"]:
             raise PermissionError("Origin plan denies this protected tool")
         target = self.targets[row["target_ref"]]
@@ -1056,7 +1203,8 @@ class TrustedHandoffClient:
                                 {key: plan["budget"][key] for key in BUDGET_KEYS},
                                 origin_ref=target.origin_ref, target_ref=target.reference,
                                 receiver_identity=target.identity_map[owner],
-                                target_revision=target.configuration_revision, target_fingerprint=target.fingerprint)
+                                target_revision=target.configuration_revision, target_fingerprint=target.fingerprint,
+                                usage_grant_sha256=row["body"].get("usageGrant", {}).get("sha256"))
 
     def install_guard(self) -> None:
         if self._installed:

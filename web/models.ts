@@ -32,6 +32,7 @@ export interface Plan {
   applicationRef?: MaterialReference;
   executionBindings?: Record<string, unknown>;
   bindingManifest?: Record<string, unknown>;
+  usageBudget?: unknown;
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
@@ -49,7 +50,7 @@ export type FactoryJob = Omit<Job, 'input'> & {
   questionDetail?: PendingQuestion & { fields?: { name: string; type: string; description?: string; value?: unknown }[] };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
-export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown> }
+export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; usageLedger?: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;
   failed: boolean; pending: boolean; stopped: boolean;
@@ -162,7 +163,7 @@ export interface PlanReview {
   planIntegrityMatches?: boolean;
   decision: 'pending' | 'approved' | 'denied'; approvalEffective: boolean; reviewerId: string | null;
   planSummary?: { normalizedGoal?: string; application?: string; mode?: string; tools?: string[];
-    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[] };
+    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[]; usageBudget?: unknown; config?: Record<string, unknown> };
 }
 
 export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }

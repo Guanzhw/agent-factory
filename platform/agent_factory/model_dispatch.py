@@ -56,7 +56,8 @@ class DelegatingModel(Model):
         model = self.bindings.model_for(plan, context)
         # Only this fresh per-response adapter is wrapped. Shared Agent/model
         # state is unchanged, and every provider retry/tool-loop call rechecks.
-        self._guard_provider_calls(model, current)
+        self._guard_provider_calls(model, current,
+            ledger=getattr(store, "usage_ledger", None), plan=plan, context=context)
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -65,42 +66,86 @@ class DelegatingModel(Model):
         return model
 
     @staticmethod
-    def _guard_provider_calls(model: Model, current):
+    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None):
         invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
+
+        def reserve(args, kwargs, *, streaming=False):
+            current()
+            return ledger.begin_attempt(context, plan, model, streaming=streaming,
+                arguments=args, keyword_arguments=kwargs) if ledger is not None else None
+
+        def finish(identity, value):
+            if ledger is not None:
+                ledger.finish_attempt(identity, ledger.evidence_for(plan, value))
+
         def guarded(*args, **kwargs):
-            current()
-            response = invoke(*args, **kwargs)
+            identity = reserve(args, kwargs)
+            try:
+                response = invoke(*args, **kwargs)
+            except BaseException as error:
+                finish(identity, error)
+                raise
+            # A later permission/cancellation check cannot erase incurred usage.
+            finish(identity, response)
             current()
             return response
+
         async def aguard(*args, **kwargs):
-            current()
-            response = await ainvoke(*args, **kwargs)
+            identity = reserve(args, kwargs)
+            try:
+                response = await ainvoke(*args, **kwargs)
+            except BaseException as error:
+                finish(identity, error)
+                raise
+            finish(identity, response)
             current()
             return response
+
         def stream(*args, **kwargs):
-            current()
-            values = invoke_stream(*args, **kwargs)
+            identity = reserve(args, kwargs, streaming=True)
+            values, evidence = None, None
             try:
+                values = invoke_stream(*args, **kwargs)
                 for value in values:
+                    if ledger is not None:
+                        authoritative = ledger.evidence_for(plan, value)
+                        if authoritative is not None:
+                            evidence = authoritative
                     current()
                     yield value
                 current()
             finally:
-                close = getattr(values, "close", None)
-                if close is not None:
-                    close()
+                # No final authoritative usage => UNKNOWN with the whole hold,
+                # including GeneratorExit, cancellation and partial streams.
+                try:
+                    if ledger is not None:
+                        ledger.finish_attempt(identity, evidence)
+                finally:
+                    close = getattr(values, "close", None)
+                    if close is not None:
+                        close()
+
         async def astream(*args, **kwargs):
-            current()
-            values = ainvoke_stream(*args, **kwargs)
+            identity = reserve(args, kwargs, streaming=True)
+            values, evidence = None, None
             try:
+                values = ainvoke_stream(*args, **kwargs)
                 async for value in values:
+                    if ledger is not None:
+                        authoritative = ledger.evidence_for(plan, value)
+                        if authoritative is not None:
+                            evidence = authoritative
                     current()
                     yield value
                 current()
             finally:
-                close = getattr(values, "aclose", None)
-                if close is not None:
-                    await close()
+                try:
+                    if ledger is not None:
+                        ledger.finish_attempt(identity, evidence)
+                finally:
+                    close = getattr(values, "aclose", None)
+                    if close is not None:
+                        await close()
         model.invoke, model.ainvoke = guarded, aguard
         model.invoke_stream, model.ainvoke_stream = stream, astream
 

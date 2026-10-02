@@ -122,12 +122,12 @@ class OwnedServer:
 
 class OwnedRemotePair:
     """Also usable for explicit browser acceptance; close releases only fixtures."""
-    def __init__(self, database_url, directory=None, *, registered_tools=False):
+    def __init__(self, database_url, directory=None, *, registered_tools=False, usage_profile=None):
         self.directory = tempfile.TemporaryDirectory(prefix="factory-remote-tcp-") if directory is None else None
         self.path = Path(self.directory.name if self.directory else directory).resolve()
         self.path.mkdir(parents=True, exist_ok=True)
         self.origin_db = self.receiver_db = self.origin = self.receiver = None
-        self.database_url, self.registered_tools = database_url, registered_tools
+        self.database_url, self.registered_tools, self.usage_profile = database_url, registered_tools, usage_profile
 
     def start(self):
         try:
@@ -138,7 +138,7 @@ class OwnedRemotePair:
                 second = loopback_port()
             origin_key, receiver_key, control_key = secrets.token_urlsafe(48), secrets.token_urlsafe(48), secrets.token_urlsafe(32)
             common = {"originUrl": f"http://127.0.0.1:{first}", "receiverUrl": f"http://127.0.0.1:{second}",
-                      "originJwtKey": origin_key, "receiverJwtKey": receiver_key, "controlKey": control_key, "registeredTools": self.registered_tools}
+                      "originJwtKey": origin_key, "receiverJwtKey": receiver_key, "controlKey": control_key, "registeredTools": self.registered_tools, "usageProfile": self.usage_profile}
             self.origin = OwnedServer({**common, "role": "origin", "dbUrl": self.origin_db.url, "jwtKey": origin_key,
                 "port": first, "workspace": str(self.path / "origin-workspace")}, self.path)
             self.origin.start()

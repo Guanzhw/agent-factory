@@ -46,6 +46,7 @@ class Store:
         self.event_replay: Any = None
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
+        self.usage_ledger: Any = None
         self.execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
         self.initialize()

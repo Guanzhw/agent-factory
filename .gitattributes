@@ -1,0 +1,2 @@
+# Reviewed toy file hashes require identical bytes on every checkout.
+platform/agent_factory/orx_toy/* text eol=lf

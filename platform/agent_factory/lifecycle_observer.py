@@ -109,6 +109,10 @@ class FactoryLifecycleObserver:
         if ticket and (ticket["status"] == "cancelled" or ticket.get("persistedRunStatus") == "cancelled"):
             return "native-ended"
         if ticket and ticket["status"] == "completed":
+            exact = task.get("run_id", "") + ":orx-experiment-launch-v1"
+            if any(effect.get("effect_key") == exact and effect["status"] == "UNKNOWN"
+                   for effect in self.store.effects(task["id"])):
+                return "native-ended-unresolved-experiment"
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -160,6 +164,11 @@ class FactoryLifecycleObserver:
 
     async def _cancel_bound(self, task: dict) -> None:
         ticket = self._binding(self.store.task(task["id"], task["owner_id"]))
+        # Detached experiment supervision belongs to the same persisted task.
+        # Cleanup validates its original handle/source/limits even after grants
+        # end. Native completion alone cannot prove that tree stopped.
+        from .orx_experiment_tools import reclaim_orx_experiment
+        await reclaim_orx_experiment(self.store.settings, self.store, task["id"])
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()
