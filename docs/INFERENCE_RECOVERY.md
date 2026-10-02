@@ -2,9 +2,12 @@
 
 The public AT10 requirement is that a temporary inference outage must not
 implicitly terminate an independently approved, lawful deterministic experiment.
-This stage implements that boundary for an acknowledged standalone Linux ORX
-revision-2 task. It does not certify all providers, Windows, delegated trees,
-receiver/origin outage combinations, or mutable research workloads.
+The accepted standalone checkpoint is `4e1f29900080ad6004fd33f55580b9fe5ea75c37`.
+The current extension implements original-owner Linux ORX revision-2 recovery
+across delegated and receiver-owned work. Its actual acceptance is tracked in
+[CLOUD_TASK_BOARD.md](CLOUD_TASK_BOARD.md); implementation and unit coverage do
+not establish every distributed fault combination. Providers, Windows and
+mutable research workloads remain outside this evidence.
 
 ## Native lifecycle decision
 
@@ -24,8 +27,10 @@ Before exposing the requirement, Factory persists the task/owner/plan/native-run
 acknowledged ORX run, original effect fingerprint, control ID, failure count and
 absolute deadline in `af_inference_waits`. It rechecks current authorization,
 plan/material/connection bindings, original source and actual kernel evidence.
-An absent or UNKNOWN launch acknowledgement never qualifies. Revision 1,
-non-Linux, delegated and received plans keep their existing fail-closed behavior.
+An absent or UNKNOWN launch acknowledgement never qualifies. Revision 1 and non-Linux plans keep their existing fail-closed behavior.
+Delegated work records its root native owner, ancestor chain and original child
+plan/native/ORX/effect identities. Received work also records its original
+receiver receipt and requires current source authority at each observation.
 
 The original wait deadline is at most 30 seconds, bounded by the admitted
 experiment environment; a second failure cannot renew it. At most two inference
@@ -72,6 +77,35 @@ original tree is positively stopped but source/result reconciliation fails,
 keeps its capacity hold. This means no live process is silently retained, but an
 operator must resolve the original UNKNOWN record before its slot is released.
 
+## Delegation, receiver and completed-result boundaries
+
+The pause owner may be a child or the parent whose inference failed after an
+independently approved child launched. Observation never approves a child,
+transfers ownership, replaces a native ticket or grants another launch. Active
+children must retain inherited current authority. A completed child can supply
+read-only evidence only after its original external run is terminal and positive
+kernel `allStopped` evidence is present; native completion alone is insufficient.
+
+Receiver observations validate the entire immutable tool/capability intersection,
+original grant and current source account budget. Actual tool invocations still
+perform their named authorization check. No source proof is cached across
+observations. Source cancellation, revocation, unavailability or overrun denies
+continued recovery; unresolved usage and grants remain held.
+
+If Agno exposes an original launch confirmation after a hard restart, an already
+acknowledged approval is not dispatched again. A separate `resume_approved`
+command verifies the original approval and stopped DONE effect, then uses the
+public native queue-only continuation path on that same ticket. It permits at
+most one recovery intent per original approval. See the exact boundary and
+current actual evidence in [AT10_TREE_ACCEPTANCE.md](AT10_TREE_ACCEPTANCE.md).
+
+After a terminal result has been persisted, stale native tool transcripts may
+still ask to run, wait or read logs. The completed revision-2 Linux path validates
+current tool authority, original source/native/ORX/effect identity and kernel stop
+evidence before returning that same result. It does not run preflight/CLI, create
+or wake a namespace, or extend a deadline. Logs come from the original bounded
+regular file; symlinks and nonregular files are rejected.
+
 ## Verification and reproduction
 
 Use the existing isolated PostgreSQL fixture and approved Linux toolchain from
@@ -99,8 +133,8 @@ recorded in the PR and verification ledger.
 ## Work remaining
 
 Independently implementable follow-ups include extending the recovery protocol
-to delegated/receiver-owned work and Windows, controlled provider-adapter usage
-and retry conformance tests, richer recovery telemetry, and governed mutable
+to Windows, completing the delegated/receiver actual acceptance matrix,
+production provider usage/retry conformance, richer recovery telemetry and governed mutable
 workspace/version/evaluator contracts. They require code and acceptance work;
 credentials alone cannot complete them.
 

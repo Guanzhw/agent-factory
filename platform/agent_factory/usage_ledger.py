@@ -281,6 +281,13 @@ class UsageLedger:
             commitment = self._commitment(conn, plan)
         return self.validate_commitment(plan, commitment, effective_bindings=effective_bindings)
 
+    def require_within_limits(self, owner, task_id):
+        """Read current shared accounting without releasing UNKNOWN holds."""
+        for scope in self.inspect(owner, task_id)["scopes"]:
+            if (scope["settledTokens"] + scope["heldTokens"] > scope["tokenLimit"]
+                    or scope["settledAmountMicros"] + scope["heldAmountMicros"] > scope["amountMicrosLimit"]):
+                raise HTTPException(429, "USAGE_BUDGET_EXCEEDED: current shared accounting exceeds approval")
+
     def _commitment(self, conn, plan):
         plan = {k: v for k, v in plan.items() if k not in {"taskId", "runId"}}
         migration = conn.execute(select(self.migrations).where(self.migrations.c.plan_id == plan["id"])).mappings().first()

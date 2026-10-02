@@ -1,4 +1,4 @@
-export type ControlAction = 'answer' | 'approve' | 'cancel';
+export type ControlAction = 'answer' | 'approve' | 'cancel' | 'resume_approved';
 export interface ControlIntent {
   commandId: string;
   action: ControlAction;
@@ -6,6 +6,7 @@ export interface ControlIntent {
   version?: number;
   answer?: string;
   approved?: boolean;
+  approvalCommandId?: string;
 }
 export interface CommandPointer {
   ownerId: string;
@@ -24,7 +25,7 @@ function pointer(value: unknown, owner: string): value is CommandPointer {
   if (!value || typeof value !== 'object') return false;
   const p = value as Partial<CommandPointer>;
   return p.ownerId === owner && typeof p.taskId === 'string' && typeof p.commandId === 'string'
-    && /^[a-zA-Z0-9_.:-]{8,100}$/.test(p.commandId) && ['answer', 'approve', 'cancel'].includes(p.action ?? '')
+    && /^[a-zA-Z0-9_.:-]{8,100}$/.test(p.commandId) && ['answer', 'approve', 'cancel', 'resume_approved'].includes(p.action ?? '')
     && typeof p.decisionSha256 === 'string' && /^[a-f0-9]{64}$/.test(p.decisionSha256)
     && typeof p.createdAt === 'string';
 }
