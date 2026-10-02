@@ -23,6 +23,8 @@ from agent_factory.orx_local import SOURCE_ARCHIVE_SHA256, TaskLocalORXProvider,
     and os.getenv("FACTORY_ORX_SOURCE_ARCHIVE") and os.getenv("FACTORY_ORX_SHA256"),
     "Requires explicitly pinned actual Windows ORX binary and source archive")
 class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
+    process_limit = 8
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="actual-orx-local-acceptance-")
         self.scope = Path(self.temp.name).resolve() / "exclusive-task"
@@ -34,7 +36,7 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
             source_archive=Path(os.environ["FACTORY_ORX_SOURCE_ARCHIVE"]),
             git_binary=Path(os.environ.get("FACTORY_ORX_GIT_BINARY", os.environ.get("FACTORY_ORX_GIT", ""))), python_binary=Path(sys._base_executable))
         self.environment = EnvironmentLimits(timeout_seconds=30, output_bytes=65536,
-            memory_bytes=512 * 1024**2, process_limit=8, cpu_percent=25)
+            memory_bytes=512 * 1024**2, process_limit=self.process_limit, cpu_percent=25)
         self.adapters = []
 
     def adapter(self, scenario="success", **overrides):
@@ -56,6 +58,9 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
                         adapter._job.terminate()
                 self.assertTrue(adapter._job.evidence()["allStopped"])
                 adapter._job.close()
+        if self.process_limit == 64:
+            for job in {a._job.cid: a._job for a in self.adapters if a._job}.values():
+                job._command(["rm", job.cid])  # Only after exact stop proof; fixture is now retired.
         self.temp.cleanup()
 
     async def test_01_original_status_error_exits_without_dialog_timeout(self):
@@ -114,7 +119,7 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(receipt["state"], {"starting", "running"})
         self.assertFalse(receipt["stop_evidence"]["allStopped"])
         self.assertGreaterEqual(receipt["stop_evidence"]["activeProcesses"], 2)
-        self.assertEqual(receipt["stop_evidence"]["limits"]["maxProcesses"], 8)
+        self.assertEqual(receipt["stop_evidence"]["limits"]["maxProcesses"], self.process_limit)
         stopped = await adapter.cancel_experiment()
         self.assertEqual(stopped["state"], "cancelled")
         self.assertTrue(stopped["stop_evidence"]["allStopped"])
@@ -225,7 +230,7 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
             "git": str(self.provider.git_binary), "python": str(self.provider.python_binary),
             "scope": str(self.scope), "taskId": self.task_id, "ownerId": self.owner,
             "binarySha256": self.pin.sha256, "marker": str(marker),
-            "platform": str(Path(__file__).resolve().parents[1]),
+            "platform": str(Path(__file__).resolve().parents[1]), "processLimit": self.process_limit,
         }
         worker.write_text("\n".join([
             "import sys,os,json,asyncio", "from pathlib import Path",
@@ -235,7 +240,7 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
             "from agent_factory.openresearch import BinaryPin,REVISION,VERSION",
             "async def main():",
             " provider=TaskLocalORXProvider(binary=Path(p['binary']),source_archive=Path(p['sourceArchive']),git_binary=Path(p['git']),python_binary=Path(p['python']))",
-            " adapter=provider.create_experiment_adapter(owner_id=p['ownerId'],task_id=p['taskId'],scope=Path(p['scope']),authorize=lambda _:True,pin=BinaryPin(REVISION,VERSION,p['binarySha256']),max_output_bytes=65536,command_timeout=10,environment={'timeoutSeconds':30,'outputBytes':65536,'memoryBytes':536870912,'maxProcesses':8,'cpuPercent':25},scenario='long_running')",
+            " adapter=provider.create_experiment_adapter(owner_id=p['ownerId'],task_id=p['taskId'],scope=Path(p['scope']),authorize=lambda _:True,pin=BinaryPin(REVISION,VERSION,p['binarySha256']),max_output_bytes=65536,command_timeout=10,environment={'timeoutSeconds':30,'outputBytes':65536,'memoryBytes':536870912,'maxProcesses':p['processLimit'],'cpuPercent':25},scenario='long_running')",
             " await adapter.ensure_experiment()",
             " result=await adapter.launch_experiment()",
             " Path(p['marker']).write_text(json.dumps(result))",
@@ -244,8 +249,8 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
         ]), encoding="utf-8")
         process = subprocess.Popen([sys._base_executable, "-I", str(worker)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.DETACHED_PROCESS)
-        self.assertEqual(await asyncio.to_thread(process.wait, 15), 31)
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        self.assertEqual(await asyncio.to_thread(process.wait, 60 if self.process_limit == 64 else 15), 31)
         old = json.loads(marker.read_text())
         replacement = self.adapter("long_running")
         await replacement.ensure_experiment()
@@ -262,3 +267,35 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and os.getenv("FACTORY_ORX_LINUX_CONTAINER") == "1"
+    and os.getenv("FACTORY_ORX_BINARY") and os.getenv("FACTORY_ORX_SOURCE_ARCHIVE") and os.getenv("FACTORY_ORX_SHA256"),
+    "Requires explicit pinned Linux ORX and a task-owned local Docker boundary")
+class ActualLinuxLocalORXTests(ActualLocalORXTests):
+    __unittest_skip__ = False
+    """Same real upstream scenarios with Linux kernel evidence, never Windows job claims."""
+    process_limit = 64
+
+    async def test_06_supervisor_hard_exit_recovered_by_native_cancel(self):
+        import signal
+        adapter = self.adapter("long_running")
+        await adapter.ensure_experiment()
+        receipt = await adapter.launch_experiment()
+        job = adapter._job
+        owned = set(job.process_ids())
+        result = job._command(["top", job.cid, "-eo", "pid,args"])
+        supervisors = [int(line.split()[0]) for line in result.stdout.splitlines()[1:]
+                       if "/opt/factory-orx" in line and "supervise" in line]
+        self.assertEqual(len(supervisors), 1)
+        self.assertIn(supervisors[0], owned)
+        os.kill(supervisors[0], signal.SIGKILL)
+        await asyncio.sleep(.1)
+        self.assertGreater(job.evidence()["activeProcesses"], 0)
+        replacement = self.adapter("long_running")
+        await replacement.ensure_experiment()
+        stopped = await replacement.cancel_experiment()
+        self.assertEqual(stopped["run_id"], receipt["run_id"])
+        self.assertEqual(stopped["state"], "cancelled")
+        self.assertEqual(stopped["stop_evidence"]["kind"], "linux_task_container")
+        self.assertTrue(stopped["stop_evidence"]["allStopped"])

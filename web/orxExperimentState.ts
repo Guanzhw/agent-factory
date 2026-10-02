@@ -1,6 +1,8 @@
 import type { JobDetail } from './models.js';
 export const reviewedOrxCommit = 'f336b121525d99364e2dee4fe90b2784894a54e6';
 export const reviewedOrxBinarySha256 = 'd602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7';
+export const reviewedLinuxOrxBinarySha256 = 'a847d07e8c4c3f2efc47c3549fd27f52c9999b46a21451d4c07ec12de292b8cd';
+export const reviewedLinuxRuntimeImage = 'python:3.12.14-trixie@sha256:4d1caded1f729ae443eb803f26ffde7b61e696aeaef62f099abb6dd6b14257c7';
 export interface OrxExperiment {
   schema: 1; evidenceKind: 'toy_local_evaluation'; taskId: string; planId?: string | null; nativeRunId?: string | null;
   effectFingerprint?: string | null; projectId?: string | null; experimentId?: string | null; orxRunId?: string | null;
@@ -32,7 +34,8 @@ export function orxExperimentState(detail: JobDetail): OrxExperimentState {
   const sourceVerified = record(p) && p.taskId === detail.job.id && p.projectId === value.projectId && p.experimentId === value.experimentId
     && p.evidenceKind === 'actual_orx_local_toy_evaluation' && p.zeroModelCalls === true && p.githubSyncEnabled === false
     && record(p.fileSha256) && ['baseline.py', 'candidate.py', 'evaluator.py', 'dataset.json'].every(key => hash(p.fileSha256 && (p.fileSha256 as Record<string, unknown>)[key]))
-    && p.upstreamSourceCommit === reviewedOrxCommit && p.binarySha256 === reviewedOrxBinarySha256
+    && p.upstreamSourceCommit === reviewedOrxCommit && ((p.runtimePlatform === undefined || p.runtimePlatform === 'windows') && p.binarySha256 === reviewedOrxBinarySha256
+      || p.runtimePlatform === 'linux' && p.binarySha256 === reviewedLinuxOrxBinarySha256 && p.runtimeImage === reviewedLinuxRuntimeImage)
     && commit(p.recipeSourceCommit) && ['upstreamArchiveSha256', 'recipeArchiveSha256', 'commandSha256', 'evaluatorSha256', 'datasetSha256'].every(key => hash(p[key]));
   const e = value.evaluation;
   if (!(e === undefined || e === null || record(e)) || !(value.stopEvidence === undefined || value.stopEvidence === null || record(value.stopEvidence))) return { kind: 'invalid' };
@@ -53,6 +56,10 @@ export function orxExperimentState(detail: JobDetail): OrxExperimentState {
     if (!identifier(value.artifactId) || !hash(value.artifactSha256) || !detail.artifacts.some(artifact => artifact.id === value.artifactId && artifact.jobId === detail.job.id && artifact.sha256 === value.artifactSha256)) return { kind: 'invalid' };
   }
   return { kind: 'verified', experiment: value as unknown as OrxExperiment, sourceVerified: !!sourceVerified, evaluationVerified,
-    stopped: record(value.stopEvidence) && value.stopEvidence.allStopped === true && value.stopEvidence.kind === 'windows_task_job'
-      && value.stopEvidence.activeProcesses === 0 && Array.isArray(value.stopEvidence.enforced) && value.stopEvidence.enforced.includes('active_processes') };
+    stopped: record(value.stopEvidence) && value.stopEvidence.allStopped === true && value.stopEvidence.activeProcesses === 0
+      && Array.isArray(value.stopEvidence.enforced) && (value.stopEvidence.kind === 'windows_task_job'
+        && (!record(p) || p.runtimePlatform === undefined || p.runtimePlatform === 'windows') && value.stopEvidence.enforced.includes('active_processes')
+        || value.stopEvidence.kind === 'linux_task_container' && record(p) && p.runtimePlatform === 'linux'
+        && hash(value.stopEvidence.containerId) && hash(value.stopEvidence.specSha256) && value.stopEvidence.network === 'none'
+        && value.stopEvidence.pidLimitIncludesThreads === true && value.stopEvidence.enforced.includes('kernel_tasks')) };
 }

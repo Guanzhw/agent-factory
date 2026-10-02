@@ -185,3 +185,11 @@ No paid provider, compute resource, new production access, merge or deployment
 was performed. Job Objects enforce resources/process membership, not hostile
 tenant filesystem/network/identity isolation. Production host identity/isolation,
 live provider usage parsers and live model research remain outside acceptance.
+
+## Linux continuation
+
+The Windows-only limitation above describes the original local checkpoint.
+Cloud continuation now has a separately pinned actual Linux build and task-owned
+container profile; see [LINUX_ORX.md](LINUX_ORX.md). Windows evidence is not reused
+as Linux evidence. Production isolation, real-model research and target-host
+load remain separate acceptance work.

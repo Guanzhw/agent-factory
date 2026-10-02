@@ -22,6 +22,7 @@ from uuid import UUID, uuid4, uuid5
 
 from .openresearch import BinaryPin, CommandResult, ExperimentBinding, OpenResearchAdapter, OpenResearchError, REVISION
 from .orx_containment import TaskWindowsJob
+from .orx_linux import TaskLinuxContainer, PROCESS_LIMIT, PYTHON_BINARY, PYTHON_SHA256, RUNTIME_IMAGE
 
 SOURCE_ARCHIVE_SHA256 = "396ef8731e8531f676171640e04b05848c00cb23c9647ccd6cadbcbda9f9a62a"
 RECIPE_SOURCE_COMMIT = "169b85d17a7faa5f15ca8bb5d7fe94ae1069b2d5"
@@ -59,8 +60,8 @@ def _limits(environment: Any) -> dict[str, Any]:
     if (type(timeout) not in {int, float} or not math.isfinite(timeout) or not 5 <= timeout <= 30
             or type(output) is not int or not 8192 <= output <= 1048576
             or type(memory) is not int or not 256 * 1024**2 <= memory <= 1024**3
-            or process != 8 or type(cpu) is not int or not 1 <= cpu <= 100):
-        raise OpenResearchError("ENVIRONMENT_UNSUPPORTED", "ORX requires timeout5..30s, output8KiB..1MiB, memory256MiB..1GiB and eight processes")
+            or process != (8 if os.name == "nt" else PROCESS_LIMIT) or type(cpu) is not int or not 1 <= cpu <= 100):
+        raise OpenResearchError("ENVIRONMENT_UNSUPPORTED", "ORX requires timeout5..30s, output8KiB..1MiB, memory256MiB..1GiB and the platform-specific process/thread limit")
     return {"timeoutSeconds": timeout, "outputBytes": output, "memoryBytes": memory,
             "maxProcesses": process, "cpuPercent": cpu, "cpuSeconds": max(5, math.ceil(timeout * cpu / 100))}
 
@@ -82,8 +83,8 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         self.git_binary, self.python_binary = git_binary.resolve(), python_binary.resolve()
         if not all(path.is_absolute() and path.is_file() for path in (source_archive, git_binary, python_binary)):
             raise OpenResearchError("UNVERIFIED_TOOLCHAIN", "Operator-pinned absolute toolchain paths are required")
-        kwargs["search_path"] = os.pathsep.join((str(self.git_binary.parent), str(self.python_binary.parent),
-                                               str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32")))
+        system_paths = [str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32")] if os.name == "nt" else ["/usr/bin", "/bin"]
+        kwargs["search_path"] = os.pathsep.join((str(self.git_binary.parent), str(self.python_binary.parent), *system_paths))
         kwargs["create_scope"] = not cleanup_only
         super().__init__(**kwargs)
         self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(self.scope / "empty.gitconfig"),
@@ -93,7 +94,7 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         self.repo = self.scope / "toy-repository"
         self._manifest_path = self.scope / "factory-orx-project.json"
         self._setup_lock = asyncio.Lock()
-        self._job: TaskWindowsJob | None = None
+        self._job: TaskWindowsJob | TaskLinuxContainer | None = None
         self._trusted_reclaim = False
         self._manifest: dict[str, Any] | None = None
 
@@ -110,7 +111,10 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         if self._manifest_path.exists():
             self._load_manifest()  # Validate original limits before reopening/reconfiguring its job.
         if self._job is None:
-            self._job = TaskWindowsJob(self.task_id, self.limits)
+            self._verify_hash()
+            self._job = (TaskWindowsJob(self.task_id, self.limits) if os.name == "nt" else
+                await asyncio.to_thread(TaskLinuxContainer, self.task_id, self.owner_id, self.scope, self.binary, self.limits,
+                                        cleanup_only=self.cleanup_only))
         return await super().preflight()
 
     async def _allow(self, operation: str) -> None:
@@ -122,6 +126,11 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         # Start suspended, attach before any user recipe or detached child can
         # execute. Detached console avoids upstream Windows MessageBoxW hangs.
         assert self._job is not None
+        if isinstance(self._job, TaskLinuxContainer):
+            command = await asyncio.to_thread(self._job.exec_argv, argv, self.env)
+            return await asyncio.create_subprocess_exec(*command,
+                cwd=str(self.scope), env=self.env, stdin=asyncio.subprocess.DEVNULL,
+                stdout=self._capture_stdout, stderr=self._capture_stderr)
         process = await asyncio.create_subprocess_exec(str(self.binary), *argv,
             cwd=str(self.scope), env=self.env, stdin=asyncio.subprocess.DEVNULL,
             stdout=self._capture_stdout, stderr=self._capture_stderr,
@@ -233,8 +242,11 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             raise OpenResearchError("SOURCE_CHANGED", "The task-owned reviewed Git source could not be verified")
         return completed.stdout
 
+    def _python_sha(self) -> str:
+        return _sha(self.python_binary) if os.name == "nt" else PYTHON_SHA256
+
     def _command_text(self) -> str:
-        python = str(self.python_binary).replace("\\", "/")
+        python = str(self.python_binary).replace("\\", "/") if os.name == "nt" else PYTHON_BINARY
         return " ".join(shlex.quote(value) for value in (python, "-I", "evaluator.py", "--task", self.task_id,
             "--owner-sha", hashlib.sha256(self.owner_id.encode()).hexdigest(), "--scenario", self.scenario,
             "--timeout", str(self.limits["timeoutSeconds"]), "--output-limit", str(self.limits["outputBytes"])))
@@ -277,7 +289,7 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
                     value.update(sourceCommit=self._git("rev-parse", "HEAD").decode().strip(),
                         sourceArchiveSha256=hashlib.sha256(self._git("archive", "--format=tar", "HEAD")).hexdigest(),
                         command=command, commandSha256=hashlib.sha256(command.encode()).hexdigest(), fileSha256=TOY_FILES,
-                        pythonSha256=_sha(self.python_binary), gitSha256=_sha(self.git_binary), phase="PROJECT_REGISTERED")
+                        pythonSha256=self._python_sha(), gitSha256=_sha(self.git_binary), phase="PROJECT_REGISTERED")
                     with self._db(writable=True) as db:
                         db.execute("BEGIN IMMEDIATE")
                         for table in ("local_projects", "local_experiments", "runs", "chat_sessions"):
@@ -317,7 +329,7 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         paths = self._git("ls-tree", "-r", "--name-only", value["sourceCommit"]).decode().splitlines()
         if (value["sourceCommit"] != RECIPE_SOURCE_COMMIT or value["sourceArchiveSha256"] != RECIPE_ARCHIVE_SHA256
                 or sorted(paths) != sorted(TOY_FILES)
-                or _sha(self.git_binary) != value["gitSha256"] or _sha(self.python_binary) != value["pythonSha256"]
+                or _sha(self.git_binary) != value["gitSha256"] or self._python_sha() != value["pythonSha256"]
                 or self._command_text() != value["command"] or self._git("status", "--porcelain").strip()
                 or self._git("rev-parse", value["branchName"]).decode().strip() != value["sourceCommit"]
                 or hashlib.sha256(self._git("archive", "--format=tar", value["sourceCommit"])).hexdigest() != value["sourceArchiveSha256"]):
@@ -359,6 +371,9 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             "projectId": value["projectId"], "experimentId": value["experimentId"], "sourceCommit": value["sourceCommit"],
             "sourceArchiveSha256": value["sourceArchiveSha256"], "commandSha256": value["commandSha256"],
             "fileSha256": value["fileSha256"], "scenario": self.scenario, "environment": self.limits,
+            "runtimePlatform": "windows" if os.name == "nt" else "linux",
+            "runtimeImage": None if os.name == "nt" else RUNTIME_IMAGE,
+            "pythonSha256": value["pythonSha256"], "provisioningGitSha256": value["gitSha256"],
             "zeroModelCalls": True, "githubSyncEnabled": False, "securitySandbox": False}
 
     def _native_run(self) -> dict[str, Any] | None:

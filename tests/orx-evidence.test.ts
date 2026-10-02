@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orxExperimentState, reviewedOrxBinarySha256, reviewedOrxCommit, type OrxExperiment } from '../web/orxExperimentState.js';
+import { orxExperimentState, reviewedOrxBinarySha256, reviewedOrxCommit, reviewedLinuxOrxBinarySha256, reviewedLinuxRuntimeImage, type OrxExperiment } from '../web/orxExperimentState.js';
 import type { JobDetail } from '../web/models.js';
 const hash = 'a'.repeat(64);
 function experiment(): OrxExperiment { return {
@@ -18,6 +18,21 @@ describe('actual ORX persisted evidence projection', () => {
     const canceled = orxExperimentState(detail(value)); expect(canceled.kind).toBe('verified');
     if (canceled.kind === 'verified') expect(canceled.stopped).toBe(false);
     value.stopEvidence = { allStopped: true }; const absentProof = orxExperimentState(detail(value)); if (absentProof.kind === 'verified') expect(absentProof.stopped).toBe(false);
+  });
+  it('requires Linux runtime identity and actual container stopping evidence', () => {
+    const value = experiment();
+    Object.assign(value.provenance!, { runtimePlatform: 'linux', binarySha256: reviewedLinuxOrxBinarySha256, runtimeImage: reviewedLinuxRuntimeImage });
+    value.stopEvidence = { allStopped: true, kind: 'linux_task_container', containerId: hash, specSha256: hash,
+      activeProcesses: 0, network: 'none', pidLimitIncludesThreads: true, enforced: ['kernel_tasks'] };
+    const state = orxExperimentState(detail(value));
+    if (state.kind === 'verified') { expect(state.sourceVerified).toBe(true); expect(state.stopped).toBe(true); }
+    else expect.fail('Expected verified Linux evidence');
+    value.stopEvidence.kind = 'windows_task_job';
+    const wrongPlatform = orxExperimentState(detail(value));
+    if (wrongPlatform.kind === 'verified') expect(wrongPlatform.stopped).toBe(false);
+    value.provenance!.runtimeImage = 'unreviewed';
+    const drift = orxExperimentState(detail(value));
+    if (drift.kind === 'verified') expect(drift.sourceVerified).toBe(false);
   });
   it('keeps unresolved original launch observable without inventing a run or score', () => {
     const value = { schema: 1, evidenceKind: 'toy_local_evaluation', taskId: 'task', status: 'UNKNOWN', nativeRunId: 'native-run', orxRunId: null, launchIntent: { state: 'UNKNOWN', acknowledgement: 'unknown' }, observationSource: 'durable_factory_intent', liveObservation: false };

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import subprocess
 import tempfile
 import tarfile
 import time
@@ -76,11 +77,15 @@ _ACTUAL_ENV = ("FACTORY_TEST_DATABASE_URL", "FACTORY_ORX_BINARY", "FACTORY_ORX_S
 @unittest.skipUnless(os.name == "nt" and all(os.getenv(key) for key in _ACTUAL_ENV),
                      "Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain")
 class ActualORXNativeFactoryTests(unittest.TestCase):
+    process_limit = 8
+
     def setUp(self):
         self.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         self.addCleanup(self.database.__exit__, None, None, None)
         self.workspace = tempfile.TemporaryDirectory(prefix="factory-actual-orx-")
         self.addCleanup(self.workspace.cleanup)
+        if self.process_limit == 64:
+            self.addCleanup(self._remove_disposable_containers)
         self.provider = TaskLocalORXProvider(binary=Path(os.environ["FACTORY_ORX_BINARY"]).resolve(),
             source_archive=Path(os.environ["FACTORY_ORX_SOURCE_ARCHIVE"]).resolve(),
             git_binary=Path(os.environ["FACTORY_ORX_GIT_BINARY"]).resolve(),
@@ -106,7 +111,7 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
             register_orx_experiment_adapters(bindings)
         bindings.register("environment", "fixture-orx-environment-v1", "1", lambda _: EnvironmentLimits(
             runtime_id="local-orx-reviewed-toy-v1", timeout_seconds=30, output_bytes=65536,
-            memory_bytes=512 * 1024 * 1024, process_limit=8, cpu_percent=25))
+            memory_bytes=512 * 1024 * 1024, process_limit=self.process_limit, cpu_percent=25))
         initialize_orx_experiments(self.store)
         # Only this generated disposable database receives a distinct fixture reviewer.
         self.auth.authorization.unassign("bob", "factory-user")
@@ -117,6 +122,18 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
         self._publish_application()
         self.connection = self.state["connections"].bind("alice", self.registration,
             "fixture-task-local-orx", capabilities=[READ_CAPABILITY, RUN_CAPABILITY])
+
+    def _remove_disposable_containers(self):
+        # Runs after the native app closes; only this generated workspace is retired.
+        for marker in Path(self.workspace.name).rglob("factory-linux-container.json"):
+            saved = json.loads(marker.read_text())
+            cid = saved["containerId"]
+            value = json.loads(subprocess.check_output(["docker", "inspect", cid], text=True))[0]
+            self.assertEqual(value["Config"]["Labels"]["agent-factory.orx-spec"], saved["specSha256"])
+            self.assertIn(str(marker.parent), [m["Source"] for m in value["Mounts"] if m["RW"]])
+            if value["State"]["Running"]:
+                subprocess.run(["docker", "kill", cid], check=True, capture_output=True)
+            subprocess.run(["docker", "rm", cid], check=True, capture_output=True)
 
     def tearDown(self):
         if self.task_id:
@@ -205,7 +222,7 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
         self.login("alice")
         job = self.request("POST", "/instances", 202, {"planId": plan["id"], "requestId": str(uuid4())})
         self.task_id = job["id"]
-        detail = self.wait({"waiting_approval", "failed", "unknown"}, 30)
+        detail = self.wait({"waiting_approval", "failed", "unknown"}, 90 if self.process_limit == 64 else 30)
         self.assertEqual(detail["job"]["status"], "waiting_approval", detail)
         self.assertEqual(self.store.effects(self.task_id), [], "Native run confirmation precedes launch intent")
         return detail
@@ -355,3 +372,11 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and os.getenv("FACTORY_ORX_LINUX_CONTAINER") == "1"
+    and all(os.getenv(key) for key in _ACTUAL_ENV),
+    "Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain")
+class ActualLinuxORXNativeFactoryTests(ActualORXNativeFactoryTests):
+    __unittest_skip__ = False
+    process_limit = 64

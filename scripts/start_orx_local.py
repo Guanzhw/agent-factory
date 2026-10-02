@@ -46,8 +46,8 @@ def main():
     parser.add_argument("--fixture-file", type=Path, help="Optional private generated browser credentials; never commit")
     parser.add_argument("--port", type=int, default=3104)
     args = parser.parse_args()
-    if os.name != "nt" or not 1024 <= args.port <= 65535:
-        parser.error("This actual toy profile requires Windows job containment and an unprivileged loopback port")
+    if (os.name != "nt" and not sys.platform.startswith("linux")) or not 1024 <= args.port <= 65535:
+        parser.error("This actual toy profile requires Windows Job Objects or the pinned Linux container runtime and an unprivileged loopback port")
     base = make_url(args.database_url)
     if base.get_backend_name() != "postgresql" or base.host not in {"127.0.0.1", "localhost", "::1"}:
         parser.error("The service creates only an owned database on an authorized loopback PostgreSQL server")

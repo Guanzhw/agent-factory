@@ -5,6 +5,7 @@ Operator handles/toolchain paths remain outside the manager-authored materials.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from .orx_experiment_tools import ADAPTER_ID, MODEL_ADAPTER_ID, TOOL_NAMES, READ
 from .orx_local import TaskLocalORXProvider
 
 APPLICATION_ID = "orx-local-toy"
-PROFILE_REVISION = "local-orx-profile-v1"
+PROFILE_REVISION = "local-orx-profile-v1" if os.name == "nt" else "local-orx-linux-profile-v1"
 ENVIRONMENT_ADAPTER_ID = "local-orx-profile-environment-v1"
 CONNECTION_NAME = "localExperiment"
 REGISTRATION_REF = "local-orx-reviewed-toy"
@@ -29,7 +30,7 @@ def _environment_config(value: dict[str, Any]) -> None:
 def environment_registration() -> AdapterRegistration:
     return AdapterRegistration("environment", ENVIRONMENT_ADAPTER_ID, "1", lambda _: EnvironmentLimits(
         runtime_id="local-orx-reviewed-toy-v1", timeout_seconds=30, output_bytes=65536,
-        memory_bytes=512 * 1024 * 1024, process_limit=8, cpu_percent=25), validator=_environment_config)
+        memory_bytes=512 * 1024 * 1024, process_limit=8 if os.name == "nt" else 64, cpu_percent=25), validator=_environment_config)
 
 
 def local_profile_settings(*, db_url: str, workspace: Path, provider: TaskLocalORXProvider,
@@ -91,7 +92,7 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
         launch = publish("orx-toy-run-" + mode, "tool", ADAPTER_ID + "-run", tool_name=TOOL_NAMES[1], scenario=scenario)
         modes[mode] = {"materialRefs": [pin(model), pin(environment), *[pin(value) for value in common], pin(launch)],
             "capabilities": [READ_CAPABILITY, RUN_CAPABILITY], "toolOrder": list(TOOL_NAMES),
-            "config": {"scenario": scenario, "recipe": "original-mean-squared-error-v1", "zeroPaidProviders": True},
+            "config": {},
             "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [READ_CAPABILITY, RUN_CAPABILITY], "required": True}],
             "budget": {"toolCalls": 8, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 30, "outputBytes": 65536}}
     application = applications.create_draft(author, {"id": APPLICATION_ID, "name": "ORX 本地 toy 实验",

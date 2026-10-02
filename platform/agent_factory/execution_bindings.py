@@ -53,7 +53,7 @@ class EnvironmentLimits:
         if type(self.timeout_seconds) not in {int, float} or not math.isfinite(self.timeout_seconds) or not .1 <= self.timeout_seconds <= 30:
             raise ValueError("Environment timeout must be between 0.1 and 30 seconds")
         for value, lower, upper in ((self.output_bytes, 1024, 1024 * 1024),
-                (self.memory_bytes, 64 * 1024 * 1024, 1024 * 1024 * 1024), (self.process_limit, 1, 8), (self.cpu_percent, 1, 100)):
+                (self.memory_bytes, 64 * 1024 * 1024, 1024 * 1024 * 1024), (self.process_limit, 1, 64), (self.cpu_percent, 1, 100)):
             if type(value) is not int or not lower <= value <= upper:
                 raise ValueError("Environment limit is outside the bounded native profile")
 

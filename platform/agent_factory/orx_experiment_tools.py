@@ -11,6 +11,7 @@ import hashlib
 import inspect
 import json
 import math
+import os
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -29,7 +30,9 @@ ADAPTER_ID = "openresearch-experiment-v1"
 ADAPTER_REVISION = "1"
 MODEL_ADAPTER_ID = "local-orx-workflow-model-v1"
 MODEL_ADAPTER_REVISION = "1"
-BINARY_SHA256 = "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7"
+WINDOWS_BINARY_SHA256 = "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7"
+from .orx_linux import BINARY_SHA256 as LINUX_BINARY_SHA256
+BINARY_SHA256 = WINDOWS_BINARY_SHA256 if os.name == "nt" else LINUX_BINARY_SHA256
 TOOL_NAMES = tuple("orx_experiment_" + name for name in ("inspect", "run", "wait", "cancel", "logs"))
 SCENARIOS = frozenset({"success", "evaluator_failure", "long_running"})
 READ_CAPABILITY = "research:read"
