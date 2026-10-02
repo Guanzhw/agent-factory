@@ -1,0 +1,479 @@
+import asyncio
+import copy
+import hashlib
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
+from .catalog import create_plan
+from .delegation import application_group_status
+from .remote_handoff import FactoryPublicRoute
+from .store import canonical
+
+
+class Body(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Login(Body):
+    persona: Literal["manager", "alice", "bob"]
+
+
+class PlanRequest(Body):
+    topic: str = Field(min_length=2, max_length=2000)
+    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    application: str = Field(default="research", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    applicationRef: dict | None = None
+    materialChoices: dict = Field(default_factory=dict, max_length=30)
+    connectionRefs: dict = Field(default_factory=dict, max_length=30)
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+
+
+class InstanceRequest(Body):
+    planId: str = Field(max_length=100)
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    executionTargetRef: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class ChildRequest(Body):
+    goal: str = Field(min_length=2, max_length=2000)
+    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+
+
+class MaterialRequest(Body):
+    requestId: str | None = Field(default=None, min_length=1, max_length=200)
+    id: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(max_length=2000)
+    content: str = Field(max_length=16000)
+    dependencies: list[dict] = Field(default_factory=list, max_length=30)
+    permissions: list[str] = Field(default_factory=list, max_length=30)
+
+
+class PublicationRequest(Body):
+    requestId: str = Field(min_length=1, max_length=200)
+
+
+class Answer(Body):
+    questionId: str
+    version: int
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+class Approval(Body):
+    requirementId: str
+    version: int
+    approved: bool
+
+
+def requirement_version(requirement):
+    # A native requirement ID plus canonical contents form a stable stale-action token.
+    return int(hashlib.sha256(canonical(requirement).encode()).hexdigest()[:12], 16)
+
+
+def native_requirements(snapshot):
+    run = snapshot.get("run", snapshot)
+    return run.get("requirements") or []
+
+
+def status_of(task, snapshot, effects, events):
+    if task["admission"] == "rejected":
+        return "failed"
+    if task["admission"] in {"unknown", "reserved"} and not task.get("run_id"):
+        return "unknown"
+    queue = snapshot.get("queue") or snapshot.get("job") or {}
+    run = snapshot.get("run", snapshot)
+    raw = str(queue.get("status") or run.get("status") or "queued").lower()
+    if any(effect["status"] == "UNKNOWN" for effect in effects) and raw not in {"running", "runstatus.running"}:
+        return "unknown"
+    if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
+        return "canceling"
+    if raw in {"paused", "runstatus.paused"}:
+        requirements = native_requirements(snapshot)
+        if any((r.get("tool_execution") or {}).get("requires_user_input") for r in requirements):
+            return "waiting_input"
+        return "waiting_approval"
+    if raw in {"cancelled", "canceled", "runstatus.cancelled"}:
+        return "canceled"
+    if raw in {"failed", "error", "runstatus.error"}:
+        return "failed"
+    if raw in {"completed", "runstatus.completed"}:
+        # A model's completed response is not evidence that a protected tool succeeded.
+        if task.get("protected_failed") or any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
+            return "failed"
+        return "completed"
+    return "running" if raw in {"running", "runstatus.running"} else "queued"
+
+
+class FactoryAPI:
+    def __init__(self, settings, store, auth, bridge):
+        self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
+        self.delegation = getattr(store, "delegation", None)
+        self.remote = getattr(store, "remote_execution", None)
+        self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
+        self.routes()
+
+    def user(self, request, action="run"):
+        user = self.auth.user(request)
+        self.auth.require(user["id"], "components:write" if action == "write" else action)
+        return user
+
+    def scoped_task(self, identifier, owner):
+        return self.remote.resolve(identifier, owner) if self.remote else (self.store.task(identifier, owner), None)
+
+    async def detail(self, task, remote_child=None):
+        if self.remote and self.remote.placed(task):
+            return await self.remote.detail(task, remote_child)
+        snapshot = {}
+        if task.get("run_id"):
+            snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+        effects = self.store.effects(task["id"])
+        events = self.store.events(task["id"])
+        status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
+        group = None
+        if self.delegation:
+            group = await self.delegation.inspect_group(task["owner_id"], task["id"])
+            if status in {"failed", "canceled"} and not group["allStopped"]:
+                try:
+                    self.auth.require(task["owner_id"], "run")
+                except HTTPException as error:
+                    if error.status_code != 403:
+                        raise
+                else:
+                    group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
+                    task = self.store.task(task["id"], task["owner_id"])
+            status = application_group_status(status, group)
+            if task["cancel_requested"] and not group["allStopped"]:
+                status = "unknown" if group["unknown"] else "canceling"
+            elif task["cancel_requested"] and group["allStopped"]:
+                status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
+        self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
+        plan = self.store.plan(task["plan_id"], task["owner_id"])
+        application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
+        model_binding = (plan.get("executionBindings") or {}).get("model", {})
+        selected_model = next((event["data"] for event in reversed(events) if event["type"] == "model_binding_selected"), {})
+        definition = {"id": application_ref["id"], "version": application_ref["version"], "name": plan["application"],
+            "description": "Governed immutable application over native Agno", "instructions": "\n".join(plan["instructions"]),
+            "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
+            "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
+                "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": "run_experiment" in plan["tools"]}, "published": False, "createdAt": plan["createdAt"]}
+        delegation_scope = self.delegation.delegation_scope(task["owner_id"], task["id"]) if self.delegation else None
+        actions = ["inspect"]
+        if delegation_scope and delegation_scope["allowed"]:
+            actions.append("delegate")
+        if status in {"queued", "running", "waiting_input", "waiting_approval", "unknown", "canceling", "waiting_children"}:
+            actions.append("cancel")
+        if status == "unknown":
+            actions.append("reconcile")
+        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": definition["version"],
+            "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
+            "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
+            "runtime": "demo" if self.settings.demo else "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
+            "allowedActions": actions, "validationStatus": "执行链路已验证；研究数据为合成示例" if self.settings.demo else "注册适配器执行记录；研究结论需按产物证据验证",
+            "evidenceKind": "合成示例" if self.settings.demo else "按产物来源分别验证"}
+        for requirement in native_requirements(snapshot):
+            tool = requirement.get("tool_execution") or {}
+            version = requirement_version(requirement)
+            if tool.get("requires_user_input") and not tool.get("answered"):
+                question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
+                job.update(questionDetail=question, question=question["text"])
+                if status == "waiting_input":
+                    actions.append("answer")
+            elif tool.get("requires_confirmation") and tool.get("confirmed") is None:
+                approval = {"id": requirement["id"], "version": version, "scope": f"运行本任务的固定本地合成实验：最长 {self.settings.experiment_timeout_seconds} 秒，输出最多 {self.settings.experiment_output_bytes // 1024} KB；不调用付费模型。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
+                job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
+                if status == "waiting_approval":
+                    actions.append("approve")
+        if delegation_scope and delegation_scope.get("executionUnavailable"):
+            job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
+        try:
+            self.auth.require(task["owner_id"], "run")
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+            job["allowedActions"] = ["inspect"]
+        evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
+        return {"job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+                "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
+
+    def routes(self):
+        router = self.router
+
+        @router.get("/status")
+        def status():
+            rows = self.store.sql("SELECT body->>'lastStatus' AS state,COUNT(*) AS n FROM af_tasks WHERE NOT terminal GROUP BY state")
+            counts = {row["state"]: row["n"] for row in rows}
+            return {"mode": "demo" if self.settings.demo else "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
+                    "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
+                    "liveEnabled": not self.settings.demo, "liveIntegrationVerified": False,
+                    "admissionMode": "per-plan-preflight", "observedMetrics": True}
+
+        @router.post("/demo/login")
+        def login(body: Login, response: Response):
+            if not self.settings.demo:
+                raise HTTPException(404, "Demo login is disabled")
+            token = self.auth.issue_demo_token(body.persona)
+            response.set_cookie("factory_demo_session", token, httponly=True, samesite="strict", secure=False, max_age=3600)
+            return self.auth.identity(body.persona)
+
+        @router.post("/logout", status_code=204)
+        def logout(request: Request, response: Response):
+            self.auth.user(request)
+            response.delete_cookie("factory_demo_session", httponly=True, samesite="strict")
+
+        @router.get("/session")
+        def session(request: Request):
+            return self.auth.user(request)
+
+        @router.get("/materials")
+        def materials(request: Request):
+            user = self.user(request, "read")
+            service = self.store.material_governance
+            values = self.store.materials(published_only=user["role"] != "manager")
+            if service is None:
+                raise HTTPException(503, "Material governance is unavailable")
+            projected = []
+            for material in values:
+                try:
+                    version = service.inspect_version(user["id"], material["id"], material["version"])
+                except HTTPException as error:
+                    if error.status_code not in {403, 404, 409}:
+                        raise
+                    continue
+                state = version["governance"]
+                projected.append({**version["material"], "archived": state["state"] == "archived",
+                    "published": state["state"] == "published" and version["material"]["published"],
+                    "governance": {"state": state["state"], "authorId": state["author_id"],
+                                   "reason": state["reason"], "reviewId": state["review_id"]}})
+            return projected
+
+        @router.post("/materials", status_code=201)
+        def material_create(body: MaterialRequest, request: Request):
+            user = self.user(request, "write")
+            if not body.requestId:
+                raise HTTPException(400, "Material drafts require a stable requestId")
+            definition = {**body.model_dump(exclude_none=True, exclude={"requestId"}), "license": "MIT",
+                          "compatibility": ["agno:3.1.0"], "provenance": {"kind": "original", "notice": "Original manager-authored material."}}
+            return self.store.material_governance.create_draft(user["id"], definition, body.requestId)
+
+        @router.post("/materials/{material_id}/{version}/publish", status_code=202)
+        def material_publish(material_id: str, version: int, body: PublicationRequest, request: Request):
+            user = self.user(request, "write")
+            # Compatibility route requests review; it cannot bypass distinct admin.
+            return self.store.material_governance.request_publication(user["id"], material_id, version, body.requestId)
+
+        @router.get("/connections")
+        def connections(request: Request):
+            user = self.user(request, "read")
+            service = getattr(self.store, "connections", None)
+            if service is None:
+                raise HTTPException(503, "Trusted connection service is unavailable")
+            return service.list(user["id"])
+
+        @router.get("/runtime-adapters")
+        def runtime_adapters(request: Request):
+            self.user(request, "components:read")
+            service = getattr(self.store, "execution_bindings", None)
+            if service is None:
+                raise HTTPException(503, "Trusted runtime adapter registry is unavailable")
+            return service.describe()
+
+        @router.get("/execution-targets")
+        def execution_targets(request: Request):
+            user = self.user(request, "read")
+            return [{"id": ref, "name": ref, "kind": "remote-factory", "connectivityVerified": False}
+                    for ref, target in self.remote.client.targets.items() if user["id"] in target.identity_map] if self.remote else []
+
+        @router.post("/plans", status_code=201)
+        def plan_create(body: PlanRequest, request: Request):
+            user = self.user(request)
+            fields = body.model_dump(exclude={"requestId"})
+            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application, application_ref=body.applicationRef, material_choices=body.materialChoices, connection_refs=body.connectionRefs))
+            return {**plan, "authorization": self.store.plan_policy.status(user["id"], plan)}
+
+        @router.post("/instances", status_code=202)
+        async def instantiate(body: InstanceRequest, request: Request):
+            user = self.user(request)
+            self.store.require_current_policy()
+            plan = self.store.plan(body.planId, user["id"])
+            if plan.get("delegation") or plan.get("remoteHandoff"):
+                raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
+            if plan["status"] != "ready":
+                raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
+            self.store.require_plan_execution(user["id"], plan)
+            if body.executionTargetRef:
+                if self.remote is None:
+                    raise HTTPException(503, "Trusted remote execution is unavailable")
+                return await self.remote.instantiate(user["id"], plan["id"], body.executionTargetRef, body.requestId)
+            task, fresh = self.store.reserve_task(plan, body.requestId)
+            if self.remote and self.remote.placed(task):
+                raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
+            if fresh:
+                try:
+                    receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, user["id"], body.requestId)
+                    self.store.accept(task["id"], receipt["run_id"])
+                    self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
+                except HTTPException as error:
+                    if error.status_code >= 500:
+                        self.store.admission_unknown(task["id"])
+                    else:
+                        self.store.admission_failed(task["id"], "Native admission rejected")
+                        raise error
+                except Exception:
+                    self.store.admission_unknown(task["id"])
+            return (await self.detail(self.store.task(task["id"], user["id"]))) ["job"]
+
+        @router.get("/requests/{request_id}")
+        def request_receipt(request_id: str, request: Request):
+            user = self.user(request, "read")
+            task = self.store.task_for_request(request_id, user["id"])
+            # Do not invoke detail/reconciliation: this lookup cannot submit,
+            # continue, cancel, emit events or release a reservation.
+            placement = self.store.sql("SELECT target_ref FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner",
+                                       id=task["id"], owner=user["id"])
+            return {"requestId": request_id, "taskId": task["id"], "planId": task["plan_id"],
+                    "executionTargetRef": placement[0]["target_ref"] if placement else None,
+                    "runId": task["run_id"], "admission": task["admission"],
+                    "outcomeSource": "persisted_factory_intent"}
+
+        @router.get("/jobs")
+        async def jobs(request: Request):
+            user = self.user(request, "read")
+            details = await asyncio.gather(*(self.detail(task) for task in self.store.tasks(user["id"])))
+            return [detail["job"] for detail in details]
+
+        @router.get("/jobs/{task_id}")
+        async def task_detail(task_id: str, request: Request):
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            return await self.detail(task, child)
+
+        @router.get("/jobs/{task_id}/events")
+        async def event_page(task_id: str, request: Request, cursor: str | None = Query(default=None, max_length=4096),
+                             limit: int = Query(default=100, ge=1, le=1000)):
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.events(task, child, cursor=cursor, limit=limit)
+            return self.store.event_replay.page(user["id"], task["id"], cursor=cursor, limit=limit)
+
+        @router.post("/jobs/{task_id}/children", status_code=202)
+        async def delegate(task_id: str, body: ChildRequest, request: Request):
+            user = self.user(request)
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.delegate(task, body.goal, body.mode, body.requestId, child)
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            result = await self.delegation.create(user["id"], task_id, body.goal, body.mode, body.requestId)
+            return {**result, "job": (await self.detail(result["childTask"]))["job"]}
+
+        @router.get("/jobs/{task_id}/children")
+        async def children(task_id: str, request: Request):
+            user = self.user(request, "read")
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.children(task, child)
+            return await self.delegation.children(user["id"], task_id)
+
+        @router.get("/jobs/{task_id}/group")
+        async def group(task_id: str, request: Request):
+            user = self.user(request, "read")
+            if self.delegation is None:
+                raise HTTPException(503, "Delegation service is unavailable")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return (await self.remote.detail(task, child))["snapshot"].get("delegation")
+            return await self.delegation.inspect_group(user["id"], task_id)
+
+        @router.post("/jobs/{task_id}/cancel")
+        async def cancel(task_id: str, request: Request):
+            user = self.user(request)
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return await self.remote.cancel(task, child)
+            before = await self.detail(task)
+            if self.delegation:
+                if before["job"]["status"] in {"completed", "failed", "canceled"} and before["snapshot"]["delegation"]["allStopped"]:
+                    return before["job"]
+                await self.delegation.cascade_cancel(user["id"], task_id)
+                return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+            if before["job"]["status"] in {"completed", "failed", "canceled"}:
+                return before["job"]
+            self.store.request_cancel(task_id)
+            if task.get("run_id"):
+                await self.bridge.cancel_run(task["run_id"], task["id"], user["id"])
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        async def continue_requirement(task_id, request, requirement_id, version, approved=None, answer=None):
+            user = self.user(request)
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                body = {"questionId": requirement_id, "version": version, "answer": answer} if answer is not None else {"requirementId": requirement_id, "version": version, "approved": approved}
+                return await self.remote.action(task, "answer" if answer is not None else "approve", body, child)
+            detail = await self.detail(task)
+            expected = "waiting_input" if answer is not None else "waiting_approval"
+            if detail["job"]["status"] != expected or task["cancel_requested"]:
+                raise HTTPException(409, "Task is no longer waiting for this action")
+            requirements = copy.deepcopy(native_requirements(detail["snapshot"]))
+            requirement = next((r for r in requirements if r.get("id") == requirement_id), None)
+            if requirement is None or requirement_version(requirement) != version:
+                raise HTTPException(409, "STALE_REQUIREMENT: refresh the task before deciding")
+            tool = requirement["tool_execution"]
+            if answer is not None:
+                if not tool.get("requires_user_input"):
+                    raise HTTPException(409, "This requirement is not a question")
+                fields = requirement.get("user_input_schema") or tool.get("user_input_schema") or []
+                unanswered = [field for field in fields if field.get("value") is None]
+                if len(unanswered) != 1 or unanswered[0].get("name") != "scope":
+                    raise HTTPException(409, "Unsupported question schema")
+                unanswered[0]["value"] = answer
+                requirement["user_input_schema"] = fields
+                tool["user_input_schema"] = fields
+                tool["answered"] = True
+            else:
+                if not tool.get("requires_confirmation"):
+                    raise HTTPException(409, "This requirement is not an approval")
+                requirement["confirmation"] = approved
+                tool["confirmed"] = approved
+            await self.bridge.continue_run(task["run_id"], task["id"], user["id"], requirements)
+            self.store.event(task_id, "question_answered" if answer is not None else "approval_decided", "Scoped native continuation submitted", {"requirementId": requirement_id, "version": version, "approved": approved})
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        @router.post("/jobs/{task_id}/answer")
+        async def answer(task_id: str, body: Answer, request: Request):
+            return await continue_requirement(task_id, request, body.questionId, body.version, answer=body.answer)
+
+        @router.post("/jobs/{task_id}/approve")
+        async def approve(task_id: str, body: Approval, request: Request):
+            return await continue_requirement(task_id, request, body.requirementId, body.version, approved=body.approved)
+
+        @router.post("/jobs/{task_id}/reconcile")
+        async def reconcile(task_id: str, request: Request):
+            user = self.user(request)
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                return (await self.remote.detail(task, child))["job"]
+            # Snapshot/receipt lookup only; no replay and no timeout-based capacity release.
+            if not task.get("run_id"):
+                finder = getattr(self.bridge, "find_run", None)
+                receipt = await finder(task["id"], user["id"]) if finder else None
+                if receipt:
+                    self.store.accept(task_id, receipt["run_id"])
+            self.store.event(task_id, "reconciliation", "Queried native state; unresolved effects remain UNKNOWN", {})
+            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
+
+        @router.get("/jobs/{task_id}/artifacts/{artifact_id}")
+        async def download(task_id: str, artifact_id: str, request: Request):
+            user = self.user(request, "read")
+            task, child = self.scoped_task(task_id, user["id"])
+            if self.remote and self.remote.placed(task):
+                meta, raw = await self.remote.client.artifact(user["id"], task["id"], artifact_id, child)
+            else:
+                meta, raw = self.store.artifact(task_id, artifact_id)
+            return Response(raw, media_type=meta["mediaType"], headers={"Content-Disposition": "attachment; filename*=UTF-8''" + __import__("urllib.parse", fromlist=["quote"]).quote(meta["name"]), "X-Content-SHA256": meta["sha256"], "Cache-Control": "private, no-store"})

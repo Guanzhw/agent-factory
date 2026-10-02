@@ -1,0 +1,18 @@
+{
+  "sourceRepository": "https://github.com/alphaXiv/OpenResearch",
+  "sourceRevision": "f336b121525d99364e2dee4fe90b2784894a54e6",
+  "sourceArchiveBytes": 7317108,
+  "sourceArchiveSha256": "396ef8731e8531f676171640e04b05848c00cb23c9647ccd6cadbcbda9f9a62a",
+  "version": "0.2.13",
+  "toolchain": "Rust and Cargo 1.93.1",
+  "target": "x86_64-pc-windows-msvc",
+  "buildCommand": "cargo build --locked --release --bin orx",
+  "binaryBytes": 42894336,
+  "binarySha256": "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7",
+  "cargoTomlSha256": "e430beec668ed34b9c171bc814dfae90bd5362a0ab5c598b6cfdde00a1380dda",
+  "cargoLockSha256": "5e9f1753089dcdba38ba9f750a0b8b4acc625d6e0f98e4f8f58927ede8719ee6",
+  "tested": ["locked build", "version and help", "unsupported harness rejection", "actual adapter pinned preflight", "wrong pin rejects before spawning"],
+  "unverified": ["real project/experiment status", "research retrieval", "provider/model", "detached experiment recovery", "production registration"],
+  "providerCalls": false,
+  "productionApproved": false
+}

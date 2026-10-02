@@ -1,0 +1,467 @@
+"""Trusted remote references and persistent leases; never a second scheduler.
+
+Native runtime attachment, provider allocation and optional A2A are separate axes.
+UNKNOWN acknowledgements are reconciled with reads, never replayed or freed.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+import json
+import re
+from typing import Any, Callable, Mapping, Protocol
+from urllib.parse import quote, urlsplit
+from uuid import uuid4
+
+from fastapi import HTTPException
+import httpx
+from sqlalchemy import text
+
+from .store import canonical, digest, now
+
+TERMINAL = {"COMPLETED", "FAILED", "CANCEL_CONFIRMED"}
+NATIVE_STATES = {"PENDING": "ACCEPTED", "RUNNING": "RUNNING", "PAUSED": "PAUSED",
+                 "COMPLETED": "COMPLETED", "ERROR": "FAILED", "CANCELLED": "CANCEL_CONFIRMED"}
+
+
+class ResourceProvider(Protocol):
+    """Operator adapter contract. No native Agno environment allocator is assumed."""
+    async def allocate(self, lease_id: str, owner: str, fingerprint: str, limits: dict) -> dict: ...
+    async def inspect(self, lease_id: str, owner: str) -> dict: ...
+    async def cancel(self, lease_id: str, owner: str) -> dict: ...
+    async def reclaim(self, lease_id: str, owner: str) -> dict: ...
+
+
+@dataclass(frozen=True)
+class RemoteTarget:
+    """Constructed by operator code, never deserialized from a user's request."""
+    name: str
+    axis: str
+    owners: frozenset[str]
+    base_url: str | None = None
+    executor_id: str = "factory-executor"
+    headers: Callable[[str], Mapping[str, str]] | None = field(default=None, repr=False)
+    transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
+    provider: ResourceProvider | None = field(default=None, repr=False)
+    max_leases: int = 2
+    max_cpu: int = 2
+    max_memory_mb: int = 2048
+    max_disk_mb: int = 1024
+    max_seconds: int = 300
+    synthetic_fixture: bool = False
+    expected_version: str = "3.1.0"
+    configuration_revision: str = "1"
+
+    def __post_init__(self):
+        if self.axis not in {"runtime", "compute", "a2a"} or not self.owners:
+            raise ValueError("A target needs a distinct axis and explicit owner grants")
+        if self.base_url:
+            url = urlsplit(self.base_url)
+            if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
+                raise ValueError("Operator URL must be an HTTP origin/base path without credentials, query or fragment")
+        if self.axis == "runtime" and not self.base_url:
+            raise ValueError("Native runtime target requires an operator-configured URL")
+        if self.axis == "runtime" and not self.synthetic_fixture and self.headers is None:
+            raise ValueError("Production runtime requires a trusted per-user credential callback")
+        if self.max_leases < 1 or min(self.max_cpu, self.max_memory_mb, self.max_disk_mb, self.max_seconds) < 1:
+            raise ValueError("Positive operator resource ceilings are required")
+
+
+class NativeAgnoHTTP:
+    """Selected 3.1.x public routes. Snapshot reads; no durable cursor promise."""
+    def __init__(self, target: RemoteTarget):
+        self.target = target
+
+    async def request(self, owner: str, method: str, path: str, **kwargs):
+        base_url = self.target.base_url
+        if base_url is None:
+            raise HTTPException(409, "Native runtime target URL is not configured")
+        headers = dict(self.target.headers(owner)) if self.target.headers else {}
+        headers.update(kwargs.pop("headers", {}))
+        async with httpx.AsyncClient(base_url=base_url.rstrip("/") + "/",
+                                     transport=self.target.transport, timeout=20,
+                                     follow_redirects=False) as client:
+            response = await client.request(method, path.lstrip("/"), headers=headers, **kwargs)
+        if response.is_redirect:
+            raise HTTPException(502, "Remote redirect denied; configure the actual target origin")
+        if response.status_code >= 400:
+            # Do not echo an upstream body that might contain paths or credentials.
+            raise HTTPException(response.status_code, "Configured remote target rejected the operation")
+        try:
+            return response.json()
+        except ValueError as error:
+            raise HTTPException(502, "Remote acknowledgement is not valid JSON") from error
+
+    async def handshake(self, owner: str) -> dict:
+        info = await self.request(owner, "GET", "/info")
+        config = await self.request(owner, "GET", "/config")
+        if not isinstance(info, dict) or not isinstance(config, dict):
+            raise HTTPException(502, "Remote metadata is not an object")
+        version = info.get("agno_version")
+        if version != self.target.expected_version:
+            raise HTTPException(409, "Remote runtime version differs from the operator-pinned Agno version")
+        agents = config.get("agents", [])
+        ids = [item.get("id") for item in agents if isinstance(item, dict)]
+        if self.target.executor_id not in ids:
+            raise HTTPException(409, "Configured plan-aware executor was not discovered")
+        if not self.target.synthetic_fixture and (info.get("auth_mode") != "jwt" or not info.get("user_isolation")):
+            raise HTTPException(409, "Production remote attachment requires verified JWT identity and user isolation")
+        # /info has no native boot epoch. Fixtures may explicitly provide it;
+        # ordinary native targets remain unknown and cannot claim restart fencing.
+        epoch = info.get("boot_epoch") if self.target.synthetic_fixture else None
+        return {"serverVersion": version, "serverId": info.get("os_id"), "bootEpoch": epoch,
+                "bootEpochVerified": epoch is not None and self.target.synthetic_fixture,
+                "capabilities": {"registeredExecutor": self.target.executor_id,
+                                 "reportedAgentCount": info.get("agent_count"),
+                                 "authMode": info.get("auth_mode"), "userIsolation": info.get("user_isolation"),
+                                 "allocation": False, "eventReplay": "not_verified", "reconciliation": "snapshot"},
+                "syntheticFixture": self.target.synthetic_fixture}
+
+    def run_path(self, run_id: str) -> str:
+        return f"/agents/{quote(self.target.executor_id, safe='')}/runs/{quote(run_id, safe='')}"
+
+    async def submit(self, owner: str, lease: dict) -> dict:
+        return await self.request(owner, "POST", self.run_path("").rstrip("/"),
+            headers={"Idempotency-Key": lease["id"]},
+            data={"message": "Execute the persisted factory plan.", "session_id": lease["localTaskId"],
+                  "background": "true", "stream": "false", "session_state": canonical({"factory_envelope": {
+                      "task_id": lease["localTaskId"], "user_id": owner, "plan_ref": lease["planId"],
+                      "request_id": lease["requestId"], "resource_fingerprint": lease["fingerprint"]}})})
+
+    async def snapshot(self, owner: str, lease: dict) -> dict | None:
+        params = {"session_id": lease["remoteSessionId"]}
+        if lease.get("remoteRunId"):
+            result = await self.request(owner, "GET", self.run_path(lease["remoteRunId"]), params=params)
+            if not isinstance(result, dict):
+                raise HTTPException(502, "Remote run snapshot is not an object")
+            return result
+        # Lost submit acknowledgement: inspect the unique task session. Its
+        # persisted envelope must bind the exact fingerprint before adopting a run.
+        path = f"/sessions/{quote(lease['remoteSessionId'], safe='')}"
+        session = await self.request(owner, "GET", path, params={"type": "agent"})
+        envelope = session.get("session_state", {}).get("factory_envelope", {}) if isinstance(session, dict) else {}
+        if envelope.get("resource_fingerprint") != lease["fingerprint"] or envelope.get("user_id") != owner:
+            return None
+        runs = await self.request(owner, "GET", path + "/runs", params={"type": "agent"})
+        candidates = [run for run in runs if isinstance(run, dict) and run.get("agent_id") == self.target.executor_id
+                      and run.get("user_id") == owner and isinstance(run.get("run_id"), str)] if isinstance(runs, list) else []
+        return candidates[0] if len(candidates) == 1 else None
+
+    async def cancel(self, owner: str, lease: dict) -> dict:
+        return await self.request(owner, "POST", self.run_path(lease["remoteRunId"]) + "/cancel",
+                                  params={"session_id": lease["remoteSessionId"]})
+
+
+class PersistentResourceService:
+    """Factory metadata in existing af_resources/af_leases, not remote scheduling."""
+    def __init__(self, store: Any, auth: Any, targets: Mapping[str, RemoteTarget]):
+        self.store, self.auth = store, auth
+        self.targets = dict(targets)
+        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", ref) for ref in self.targets):
+            raise ValueError("Configured connection references must be bounded identifiers")
+
+    def _authorize(self, owner: str, ref: str) -> RemoteTarget:
+        self.auth.require(owner, "run")
+        target = self.targets.get(ref)
+        if target is None or owner not in target.owners:
+            raise HTTPException(404, "Authorized resource reference not found")
+        return target
+
+    @staticmethod
+    def _target_fingerprint(target: RemoteTarget) -> str:
+        # URLs remain operator-only; persist a one-way binding fingerprint so
+        # rebinding a reference cannot redirect existing cancellation/effects.
+        return digest({"axis": target.axis, "url": target.base_url, "executor": target.executor_id,
+                       "version": target.expected_version, "revision": target.configuration_revision})
+
+    @staticmethod
+    def _provider(target: RemoteTarget) -> ResourceProvider:
+        if target.axis != "compute" or target.provider is None:
+            raise HTTPException(409, "Configured compute provider is unavailable")
+        return target.provider
+
+    @property
+    def _json_param(self):
+        return "CAST(:body AS JSONB)" if self.store.engine.dialect.name == "postgresql" else ":body"
+
+    def _body(self, value):
+        return json.loads(value) if isinstance(value, str) else value
+
+    def _lock(self, conn):
+        if self.store.engine.dialect.name == "postgresql":
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_remote_resources'))"))
+
+    def _resource(self, owner: str, ref: str, metadata: dict | None = None) -> dict:
+        target = self._authorize(owner, ref)
+        resource_id = digest({"owner": owner, "connectionRef": ref})
+        rows = self.store.sql("SELECT body FROM af_resources WHERE id=:id AND owner_id=:owner", id=resource_id, owner=owner)
+        old = self._body(rows[0]["body"]) if rows else {}
+        body = {**old, "id": resource_id, "connectionRef": ref, "ownerId": owner, "name": target.name,
+                "axis": target.axis, "updatedAt": now(), "allocationSupported": target.axis == "compute" and target.provider is not None,
+                "syntheticFixture": target.synthetic_fixture, "targetFingerprint": self._target_fingerprint(target), **(metadata or {})}
+        self.store.sql(f"INSERT INTO af_resources VALUES(:id,:owner,{self._json_param}) ON CONFLICT(id) DO UPDATE SET body={self._json_param}",
+                       id=resource_id, owner=owner, body=canonical(body))
+        return body
+
+    def discover(self, owner: str) -> list[dict]:
+        self.auth.require(owner, "run")
+        return [self._resource(owner, ref) for ref, target in self.targets.items() if owner in target.owners]
+
+    async def attach(self, owner: str, connection_ref: str, task_id: str | None = None, request_id: str | None = None) -> dict:
+        target = self._authorize(owner, connection_ref)
+        if target.axis == "a2a":
+            return self._resource(owner, connection_ref, {"interface": "a2a", "dispatchSupported": False,
+                                                        "status": "configured_not_verified"})
+        if target.axis != "runtime":
+            raise HTTPException(409, "Compute allocation is a separate provider operation")
+        adapter = NativeAgnoHTTP(target)
+        metadata = await adapter.handshake(owner)
+        resource = self._resource(owner, connection_ref, metadata)
+        if task_id is None:
+            return resource
+        lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, {}, resource)
+        if not fresh:
+            return lease  # UNKNOWN/old requests are never replayed.
+        self._authorize(owner, connection_ref)
+        try:
+            result = await adapter.submit(owner, lease)
+            return self._observe(owner, lease["id"], result)
+        except (httpx.HTTPError, HTTPException, ValueError, TypeError):
+            # Even an error response may follow a committed remote effect.
+            return self._update(owner, lease["id"], "UNKNOWN", {"acknowledgement": "unknown", "connected": False})
+
+    def _reserve(self, owner, ref, task_id, request_id, limits, resource=None):
+        target = self._authorize(owner, ref)
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 200:
+            raise HTTPException(400, "A bounded request ID is required")
+        task = self.store.task(task_id, owner)
+        if task.get("terminal"):
+            raise HTTPException(409, "A terminal local task cannot attach new execution")
+        plan = self.store.plan(task["plan_id"], owner)
+        resource = resource or self._resource(owner, ref)
+        fingerprint = digest({"connectionRef": ref, "axis": target.axis, "taskId": task_id,
+                              "targetFingerprint": self._target_fingerprint(target), "planHash": digest(plan), "limits": limits})
+        with self.store.engine.begin() as conn:
+            self._lock(conn)
+            old = conn.execute(text("SELECT * FROM af_leases WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
+            if old:
+                if old["fingerprint"] != fingerprint:
+                    raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request is bound to different immutable resource work")
+                return self._body(old["body"]), False
+            # Count references across all owner-specific registry rows; users
+            # cannot evade the configured target ceiling by changing their identity.
+            rows = conn.execute(text("SELECT l.body FROM af_leases l JOIN af_resources r ON l.target_id=r.id WHERE l.state <> 'RECLAIMED'" )).mappings().all()
+            count = sum(self._body(row["body"]).get("connectionRef") == ref for row in rows)
+            if count >= target.max_leases:
+                raise HTTPException(429, "Resource capacity is reserved; UNKNOWN acknowledgements retain capacity")
+            if target.axis == "runtime" and any(self._body(row["body"]).get("localTaskId") == task_id
+                                                and self._body(row["body"]).get("axis") == "runtime" for row in rows):
+                raise HTTPException(409, "Task already has a remote runtime attachment; reconcile its original lease")
+            lease_id = str(uuid4())
+            at = datetime.now(timezone.utc)
+            duration = limits.get("seconds", target.max_seconds)
+            body = {"id": lease_id, "ownerId": owner, "connectionRef": ref, "axis": target.axis,
+                    "localTaskId": task_id, "planId": plan["id"], "requestId": request_id,
+                    "fingerprint": fingerprint, "remoteSessionId": task_id if target.axis == "runtime" else None,
+                    "remoteRunId": None, "state": "RESERVED", "capacityHeld": True, "connected": False,
+                    "limits": limits, "bootEpoch": resource.get("bootEpoch"), "createdAt": at.isoformat(),
+                    "serverVersion": resource.get("serverVersion"), "serverId": resource.get("serverId"),
+                    "targetFingerprint": self._target_fingerprint(target),
+                    "updatedAt": at.isoformat(), "heartbeatAt": at.isoformat(),
+                    "deadlineAt": (at + timedelta(seconds=duration)).isoformat(), "cancelRequested": False,
+                    "artifacts": [], "syntheticFixture": target.synthetic_fixture, "reconciliation": "snapshot"}
+            conn.execute(text(f"INSERT INTO af_leases VALUES(:id,:owner,:target,:request,:fp,'RESERVED',{self._json_param})"),
+                         {"id": lease_id, "owner": owner, "target": resource["id"], "request": request_id, "fp": fingerprint, "body": canonical(body)})
+        self.store.audit(owner, "resource.reserve", lease_id, {"connectionRef": ref, "fingerprint": fingerprint})
+        return body, True
+
+    def inspect(self, owner: str, lease_id: str) -> dict:
+        self.auth.require(owner, "run")
+        rows = self.store.sql("SELECT * FROM af_leases WHERE id=:id AND owner_id=:owner", id=lease_id, owner=owner)
+        if not rows:
+            raise HTTPException(404, "Scoped resource lease not found")
+        body = self._body(rows[0]["body"])
+        target = self._authorize(owner, body["connectionRef"])
+        if body.get("targetFingerprint") != self._target_fingerprint(target):
+            raise HTTPException(409, "Connection reference was rebound; existing lease requires operator reconciliation")
+        body["expired"] = datetime.now(timezone.utc) >= datetime.fromisoformat(body["deadlineAt"])
+        return body
+
+    def _update(self, owner, lease_id, state, changes=None):
+        with self.store.engine.begin() as conn:
+            self._lock(conn)
+            row = conn.execute(text("SELECT * FROM af_leases WHERE id=:id AND owner_id=:owner"), {"id": lease_id, "owner": owner}).mappings().first()
+            if row is None:
+                raise HTTPException(404, "Scoped lease not found")
+            body = self._body(row["body"])
+            if body["state"] == "RECLAIMED":
+                return body
+            if body["state"] in TERMINAL and state not in TERMINAL | {"RECLAIMING", "RECLAIMED"}:
+                state = body["state"]
+            if body.get("cancelRequested") and state in {"RUNNING", "ACCEPTED", "PAUSED"}:
+                state = "CANCEL_REQUESTED"
+            if body.get("releaseAck") == "unknown" and state in TERMINAL:
+                state = "RECLAIMING"
+            body = {**body, **(changes or {}), "state": state, "updatedAt": now(), "capacityHeld": state != "RECLAIMED"}
+            conn.execute(text(f"UPDATE af_leases SET state=:state,body={self._json_param} WHERE id=:id AND owner_id=:owner"),
+                         {"id": lease_id, "owner": owner, "state": state, "body": canonical(body)})
+        return body
+
+    def _observe(self, owner, lease_id, snapshot):
+        lease = self.inspect(owner, lease_id)
+        if not isinstance(snapshot, dict):
+            raise ValueError("Remote snapshot is not an object")
+        target = self._authorize(owner, lease["connectionRef"])
+        if target.axis == "runtime":
+            remote_run = snapshot.get("run_id")
+            if not isinstance(remote_run, str) or not remote_run or len(remote_run) > 200:
+                raise ValueError("Remote run identity missing")
+            if lease.get("remoteRunId") not in {None, remote_run}:
+                raise ValueError("Remote run binding changed")
+            if snapshot.get("session_id", lease["remoteSessionId"]) != lease["remoteSessionId"]:
+                raise ValueError("Remote session binding changed")
+            if snapshot.get("user_id", owner) != owner or snapshot.get("agent_id", target.executor_id) != target.executor_id:
+                raise ValueError("Remote run owner/executor mismatch")
+            state = NATIVE_STATES.get(str(snapshot.get("status", "")).upper(), "UNKNOWN")
+            changes = {"remoteRunId": remote_run}
+        else:
+            if snapshot.get("leaseId") != lease_id or snapshot.get("ownerId") != owner or snapshot.get("fingerprint") != lease["fingerprint"]:
+                raise ValueError("Provider lease identity/fingerprint mismatch")
+            state = snapshot.get("state", "UNKNOWN")
+            if state not in TERMINAL | {"ACCEPTED", "RUNNING", "UNKNOWN", "RECLAIMED"}:
+                state = "UNKNOWN"
+            # A provider must separately prove released allocation. Completion
+            # or cancellation alone is not proof of compute capacity release.
+            if state == "RECLAIMED" and snapshot.get("released") is not True:
+                state = "UNKNOWN"
+            changes = {"providerJobId": snapshot.get("providerJobId")}
+        return self._update(owner, lease_id, state, {**changes, "connected": True,
+                            "acknowledgement": "confirmed", "observedStatus": snapshot.get("status", snapshot.get("state")),
+                            "snapshotAt": now()})
+
+    def _claim_effect(self, owner, lease_id, field, state):
+        """Compare-and-set before transmission across processes, not a Python lock."""
+        with self.store.engine.begin() as conn:
+            self._lock(conn)
+            row = conn.execute(text("SELECT body FROM af_leases WHERE id=:id AND owner_id=:owner"),
+                               {"id": lease_id, "owner": owner}).mappings().first()
+            if row is None:
+                raise HTTPException(404, "Scoped lease not found")
+            body = self._body(row["body"])
+            if body.get(field) not in {None, "not_sent"} or body["state"] == "RECLAIMED":
+                return body, False
+            if field == "cancelAck" and body["state"] in TERMINAL:
+                return body, False
+            body = {**body, field: "unknown", "state": state, "updatedAt": now(), "capacityHeld": True}
+            if field == "cancelAck":
+                body["cancelRequested"] = True
+            conn.execute(text(f"UPDATE af_leases SET state=:state,body={self._json_param} WHERE id=:id AND owner_id=:owner"),
+                         {"id": lease_id, "owner": owner, "state": state, "body": canonical(body)})
+            return body, True
+
+    async def allocate(self, owner: str, connection_ref: str, task_id: str, request_id: str, limits: dict) -> dict:
+        target = self._authorize(owner, connection_ref)
+        if target.axis != "compute" or target.provider is None:
+            raise HTTPException(409, "ALLOCATION_UNSUPPORTED: native runtime attachment does not provision environments")
+        ceilings = {"cpu": target.max_cpu, "memoryMb": target.max_memory_mb, "diskMb": target.max_disk_mb, "seconds": target.max_seconds}
+        if not isinstance(limits, dict) or set(limits) != set(ceilings) or any(type(limits[key]) is not int or not 0 < limits[key] <= ceiling for key, ceiling in ceilings.items()):
+            raise HTTPException(400, "Allocation must stay within all configured resource ceilings")
+        lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, limits)
+        if not fresh:
+            return lease
+        self._authorize(owner, connection_ref)
+        try:
+            result = await self._provider(target).allocate(lease["id"], owner, lease["fingerprint"], limits)
+            return self._observe(owner, lease["id"], result)
+        except Exception:
+            return self._update(owner, lease["id"], "UNKNOWN", {"acknowledgement": "unknown", "connected": False})
+
+    async def reconcile(self, owner: str, lease_id: str) -> dict:
+        lease = self.inspect(owner, lease_id)
+        if lease["state"] == "RECLAIMED":
+            return lease
+        target = self._authorize(owner, lease["connectionRef"])
+        try:
+            if target.axis == "runtime":
+                adapter = NativeAgnoHTTP(target)
+                info = await adapter.handshake(owner)
+                if lease.get("serverId") is not None and lease["serverId"] != info.get("serverId"):
+                    return self._update(owner, lease_id, "UNKNOWN", {"serverIdentityMismatch": True, "connected": True})
+                if lease.get("bootEpoch") is not None and lease["bootEpoch"] != info.get("bootEpoch"):
+                    return self._update(owner, lease_id, "UNKNOWN", {"epochMismatch": True, "connected": True})
+                snapshot = await adapter.snapshot(owner, lease)
+            else:
+                snapshot = await self._provider(target).inspect(lease_id, owner)
+            if snapshot is None:
+                return self._update(owner, lease_id, "UNKNOWN", {"connected": True})
+            result = self._observe(owner, lease_id, snapshot)
+            if result["state"] in TERMINAL and not result.get("artifactCaptured"):
+                # Native file/workspace transfer is not invented. Persist only
+                # the observed result snapshot as a provenance-marked artifact.
+                payload = canonical({"observedStatus": snapshot.get("status", snapshot.get("state")), "content": snapshot.get("content"), "metrics": snapshot.get("metrics")})
+                metadata = {"origin": "configured_remote_snapshot", "connectionRef": lease["connectionRef"],
+                            "remoteRunId": result.get("remoteRunId"), "remoteSessionId": lease.get("remoteSessionId"),
+                            "bootEpoch": lease.get("bootEpoch"), "syntheticFixture": target.synthetic_fixture,
+                            "researchValidated": False}
+                artifact = self.store.artifact_write(lease["localTaskId"], f"remote-{lease_id}.json", payload, "application/json", metadata)
+                result = self._update(owner, lease_id, result["state"], {"artifactCaptured": True, "artifacts": [artifact]})
+            return result
+        except Exception:
+            return self._update(owner, lease_id, "UNKNOWN", {"connected": False, "lastRead": "unconfirmed"})
+
+    async def cancel(self, owner: str, lease_id: str) -> dict:
+        lease = self.inspect(owner, lease_id)
+        if lease["state"] in TERMINAL | {"RECLAIMED"}:
+            return lease
+        target = self._authorize(owner, lease["connectionRef"])
+        if lease.get("cancelAck") in {"accepted", "unknown"}:
+            return lease  # repeated cancel is a read/reconcile, not another effect.
+        if target.axis == "runtime" and not lease.get("remoteRunId"):
+            return self._update(owner, lease_id, "UNKNOWN", {"cancelRequested": True, "cancelAck": "not_sent"})
+        # Persist uncertainty BEFORE transmission. A lost cancellation reply is
+        # never retried automatically; reconcile the original run/provider lease.
+        lease, fresh = self._claim_effect(owner, lease_id, "cancelAck", "CANCEL_REQUESTED")
+        if not fresh:
+            return lease
+        self._authorize(owner, lease["connectionRef"])
+        try:
+            if target.axis == "runtime":
+                await NativeAgnoHTTP(target).cancel(owner, lease)
+            else:
+                await self._provider(target).cancel(lease_id, owner)
+            return self._update(owner, lease_id, "CANCEL_REQUESTED", {"cancelAck": "accepted"})
+        except Exception:
+            return self._update(owner, lease_id, "UNKNOWN", {"cancelAck": "unknown", "connected": False})
+
+    def disconnect(self, owner: str, lease_id: str) -> dict:
+        lease = self.inspect(owner, lease_id)
+        return self._update(owner, lease_id, lease["state"], {"connected": False})
+
+    def heartbeat(self, owner: str, lease_id: str) -> dict:
+        lease = self.inspect(owner, lease_id)
+        if lease["state"] in TERMINAL | {"RECLAIMED"} or lease["expired"]:
+            raise HTTPException(409, "Lease cannot renew after its fixed deadline or terminal observation")
+        return self._update(owner, lease_id, lease["state"], {"heartbeatAt": now()})
+
+    async def reclaim(self, owner: str, lease_id: str) -> dict:
+        lease = self.inspect(owner, lease_id)
+        if lease["state"] == "RECLAIMED":
+            return lease
+        if lease["state"] not in TERMINAL:
+            raise HTTPException(409, "Only confirmed terminal execution can be reclaimed; UNKNOWN retains capacity")
+        if lease.get("releaseAck") == "unknown":
+            raise HTTPException(409, "Release acknowledgement unknown; inspect the existing provider lease without replay")
+        target = self._authorize(owner, lease["connectionRef"])
+        if target.axis == "runtime":
+            # Releases only our runtime attachment slot. No VM/container/files
+            # destruction and no remote compute lease release is implied.
+            return self._update(owner, lease_id, "RECLAIMED", {"reclaimedAt": now(), "releaseScope": "runtime_attachment_only"})
+        lease, fresh = self._claim_effect(owner, lease_id, "releaseAck", "RECLAIMING")
+        if not fresh:
+            return lease
+        try:
+            await self._provider(target).reclaim(lease_id, owner)
+        except Exception:
+            return self._update(owner, lease_id, "UNKNOWN", {"releaseAck": "unknown"})
+        # Provider acknowledgement is not release confirmation; inspect again.
+        return await self.reconcile(owner, lease_id)
