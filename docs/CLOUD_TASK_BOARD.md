@@ -283,3 +283,9 @@ tests passed. Full offline682/298skips passed44.056s; native PG six-mock-request
 path passed9.191s; Ruff/Pyright pass. Root verified all three old evidence files'
 bytes+mtime unchanged. No additional real request. Final commit/draft PR/exact CI
 remain root-owned; recorded in PR to avoid invalidating the verified head.
+
+First diagnostics CI found Windows Pyright rejects three direct POSIX flag
+references. AT10 worker fixed guarded lookup with unchanged fail-closed platform
+checks; five journal tests and Windows-target Pyright pass. Root requested
+cancellation of superseded runs37105481904/37105520150 to avoid duplicate heavy
+work, then advances PR16 to the corrected head for fresh exact CI.

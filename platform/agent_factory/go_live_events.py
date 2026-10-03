@@ -24,7 +24,7 @@ class GoDiagnosticJournal:
         if not isinstance(campaign_id, str) or not _ID.fullmatch(campaign_id):
             raise ValueError("Invalid diagnostic campaign")
         target = Path(path).absolute()
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(target, flags, 0o600)
         os.close(descriptor)
         with closing(sqlite3.connect(target)) as conn:
@@ -40,7 +40,7 @@ class GoDiagnosticJournal:
             """)
             conn.execute("INSERT INTO metadata VALUES (1, ?)", (campaign_id,))
             conn.commit()
-        directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        directory = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory)
         finally:
@@ -64,7 +64,7 @@ class GoDiagnosticJournal:
             conn.execute("SELECT seq, utc_time, ticket_id, diagnostic FROM events LIMIT 0")
 
     def _file_identity(self):
-        descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600:

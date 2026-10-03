@@ -89,3 +89,11 @@ protocols passed in 9.191s. Ruff/Pyright pass. Old campaign/evidence/stdout file
 bytes and modification times match the pre-change manifest; no real request,
 private API call or support contact occurred. Final exact-head CI is recorded in
 the new draft PR, separately from these local results.
+
+
+The first diagnostics head `bc77d1c` failed Windows Pyright on three direct POSIX
+flag references (`O_NOFOLLOW`, `O_DIRECTORY`). A narrow portability correction
+uses guarded attribute lookup while retaining the existing explicit POSIX and
+nonzero-capability rejection before file access. Windows-target typechecking and
+the five journal tests pass. Superseded CI runs were cancelled after this known
+failure; the final exact head is revalidated in the same draft PR.
