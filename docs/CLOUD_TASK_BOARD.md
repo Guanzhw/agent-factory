@@ -392,3 +392,24 @@ DeepSeek 3/3, Luna 0; all live execution stopped. Old two UNKNOWN records and
 historical evidence remain unchanged. No retry/product/Luna is authorized.
 See GO_FINAL_SINGLE_SMOKE.md for timestamps and scope. Final exact-head CI is
 tracked in the draft PR; no merge or deployment.
+
+### Offline diagnosis follow-up
+
+All live/external diagnostic requests are prohibited. Root owns documentation,
+integration and immutable-evidence verification; go_adapter owns only
+`test_go_stream_diagnosis.py` synthetic fixtures; reviewer independently reviews
+signatures; at10 reads exact-head GitHub CI. No runtime behavior or assertion is
+changed without a demonstrated defect. Initial PR19 head `329236cc` has passing
+frontend and Linux/Windows Python jobs; Postgres jobs are pending.
+
+Retained evidence has no exception chain or per-guard rejection code. Stage and
+finite error signatures distinguish common direct read/truncation, JSON decoding
+and EOF-without-terminal paths from the observed explicit feed rejection, but
+several feed guards remain indistinguishable. Root cause is unconfirmed; all
+three UNKNOWNs and DeepSeek 3/Luna 0 accounting remain immutable.
+
+Offline follow-up implementation complete: 11 exact-model synthetic signature
+tests, independent review 11+25 passed, full local 748 tests/298 skips passed in
+49.443s, Ruff/Windows Pyright passed. Runtime unchanged; no evidenced live root
+cause or assertion relaxation. Original and final exact CI outcomes are recorded
+in PR19. All nine protected files retain bytes and mtimes.

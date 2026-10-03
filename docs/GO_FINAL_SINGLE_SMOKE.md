@@ -54,3 +54,53 @@ Independent pre-dispatch review passed 42 offline tests in 1.257s. Root final
 runner/gate tests passed 9/9, historical single-smoke 15/15, HTTP environment
 11/11 and provider 26/26; Ruff and Windows-target Pyright passed. No claim is
 made about historical failure root cause, subscription charges or model output.
+
+## Offline diagnosis of the retained result
+
+Only the safe journal and adapter code at `329236ccf6e96bbc9b9b8755105486e97286bcac`
+are available for the third request. The journal schema stores phase, finite
+error class/category and selected HTTP metadata; it does **not** store an
+exception cause chain, parser rejection code, event count, response body or
+stream suffix. There is no additional persisted chain to inspect or recover.
+
+The recorded signature is RESPONSE_HEADERS + ModelProviderError/protocol +
+stop UNKNOWN. The client calls `_Stream.feed` during `response.aiter_bytes()`
+and only records STREAM_COMPLETED after iteration finishes. Accordingly:
+
+- A direct HTTPX truncation/read/timeout exception has its own allowlisted type,
+  unlike the recorded ModelProviderError.
+- Normal EOF without a terminal marker reaches STREAM_COMPLETED before
+  `_Stream.finish` rejects it, unlike this request.
+- JSON decoding failure during feed has JSONDecodeError/parse, unlike this
+  request. A malformed Python structure has its corresponding safe error type.
+- A model change across chunks has MODEL_MISMATCH as its stop code, unlike the
+  recorded UNKNOWN.
+- Several explicit feed guards share the observed signature: an application
+  error event (including an unknown auth/quota reason inside HTTP 200), early or
+  repeated usage, choices after a terminal choice, data after completion,
+  invalid choice/tool shape, and the total body-size guard.
+
+These distinctions narrow compatible code paths; they do not establish which
+one occurred, exclude every possible network influence, or prove a provider/SDK
+compatibility issue. The final response parser and Agno ModelResponse conversion
+were not reached. A null saved finishReason does not prove that the stream lacked
+a finish_reason: the runner only observes it after full stream assembly.
+
+No body has been reconstructed and no extra external diagnostic request was
+made. All three UNKNOWN tickets and their budget accounting remain unchanged.
+No runtime assertion or parser behavior is relaxed on the basis of hypotheses.
+
+Synthetic characterization also demonstrates a separate framing limitation:
+multiple `data:` lines containing one multiline JSON SSE event are decoded
+line-by-line and fail with JSONDecodeError/parse. That distinct signature does
+not match this retained request. This is an explicit compatibility limitation,
+not a diagnosed explanation for the live failure; this follow-up does not
+change framing semantics or claim to repair the live root cause. Normal
+fragmented chunks, CRLF and comment heartbeats succeed in the fixtures.
+
+Offline follow-up validation: the new 11-case characterization suite uses exact
+`deepseek-flash`, synthetic imported UNKNOWN history and MockTransport only.
+Independent review passed those 11 cases plus 25 related tests. Root full
+non-Postgres collection passed 748 tests in 49.443s with 298 skips; Ruff and
+Windows-target Pyright passed. Only tests/documentation changed. Final exact-head
+CI and pass/skip counts are recorded in PR19.
