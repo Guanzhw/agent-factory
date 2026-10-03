@@ -60,20 +60,21 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 
 ## Current acceptance and remaining work
 
-Latest **full-suite-verified runtime**: `68b3dc78f4df75c791a9c32a9794ba00957f57e6`
-([Draft PR13](https://github.com/Guanzhw/agent-factory/pull/13)). Its exact push/PR
-CI passed all ten jobs, confirmed twice 89 seconds apart. Both PostgreSQL suites
-ran 618 tests with 63 explicit skips. Subsequent delivery cleanup includes a narrow completed-log and browser-fixture
-boundary correction with focused checks; it does not relabel this earlier CI as
-new-head full-suite evidence. See the
-[current matrix](docs/ACCEPTANCE.md#current-matrix) and
-[delivery/review index](docs/DELIVERY_INDEX.md) for scope and the complete PR chain.
+The preceding exact-head baseline is `d760b8af63c6692d0119c5386d7a7481076f61bc`
+([Draft PR13](https://github.com/Guanzhw/agent-factory/pull/13)): workflow
+37081501616 passed five jobs, confirmed twice 90.069 seconds apart; PostgreSQL ran
+624 tests with 63 explicit skips. The bounded live-validation continuation adds
+persistent request limits and native product tests. Its first real DeepSeek smoke
+attempt stopped UNKNOWN; GPT-6-Luna was not called. See the
+[current matrix](docs/ACCEPTANCE.md#current-matrix),
+[live evidence](docs/GO_LIVE_VALIDATION.md) and
+[delivery index](docs/DELIVERY_INDEX.md). Final continuation-head CI is in its draft PR.
 
 | Available and measured | Boundary still open |
 |---|---|
 | Six-kind material governance, immutable plans/bindings, native queue, HITL, durable control receipts, cancellation, delegation, usage ledger and Chinese UI | Production/scientific acceptance is separate from controlled-provider execution |
 | Actual pinned Linux ORX toy, local and receiver AT10 recovery including receiver-parent, same native/ORX identities and one launch | Fixed toy/evaluator; Windows and target-host reliability remain separate acceptance |
-| Explicit Go development profile: exact Chat/Responses model selection through native queue, loopback HTTP SSE, tool, receipt/artifact and PostgreSQL usage | Coding checksum scope only. Subscription preflight is blocked; no real key or live inference used in this stage. Not a research provider |
+| Explicit Go development profile: exact Chat/Responses model selection through native queue, loopback HTTP SSE, tool, receipt/artifact and PostgreSQL usage | Coding checksum scope only. Bounded live campaign stopped on first UNKNOWN smoke attempt; no live product success. Not a research provider |
 | Literature source/package tools and controlled native evidence downloads | Actual PubMed attempt returned **0 sources** after connectivity failure; no successful live retrieval or scientific synthesis evidence |
 | Governed Factory receiver execution, runtime attachment and resource lifecycle contracts | No real compute allocator/environment provisioning implementation; production remote TLS/identity/host setup is absent |
 | Storage quarantine, finite twenty-user pressure and online PostgreSQL snapshot/restore | Measured **4 CPU / 16 GiB**; target **32 cores / 64 GB** or **54 cores / 192 GB** is unmeasured. Single active scheduler only |
@@ -90,8 +91,8 @@ also needs a provider implementation if that scope is selected.
 No production IdP, provider or research use case has been selected by this stage.
 See [minimum decisions](docs/PRODUCTION_DECISIONS.md) and
 [Go live gates](docs/GO_DEVELOPMENT_PROFILE.md). Existing usage authorization is
-not being re-requested; live remains blocked pending the required billing facts
-and bounded live-validation implementation.
+not being re-requested; the authorized bounded campaign is now stopped after an
+unknown outcome. A new live attempt requires a follow-up decision.
 
 Plan approval is configurable with a conservative production administrator-review default. The real UI supports review requests and administrative decisions; see [plan policy and tested boundaries](docs/PLAN_POLICY.md). Live identity/model/ORX acceptance remains separate.
 

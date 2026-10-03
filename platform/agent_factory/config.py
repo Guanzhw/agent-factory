@@ -48,6 +48,8 @@ class Settings:
     runtime_tool_contract: str = "legacy-v1"
     # Explicit coding-development profile; never credential discovery or production default.
     development_profile: str = "disabled"
+    # Operator-only dedicated validation instance; no environment/public API switch.
+    development_live_validation: bool = False
     # Frozen operator price/policy registrations, never loaded from model input.
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
@@ -57,6 +59,9 @@ class Settings:
             raise ValueError("Unsupported development profile")
         if self.development_profile != "disabled" and not self.demo:
             raise ValueError("Go development profile cannot enable a production provider")
+        if type(self.development_live_validation) is not bool or (self.development_live_validation
+                and (not self.demo or self.development_profile != "opencode-go" or self.max_workers != 1)):
+            raise ValueError("Live development validation requires an explicit single-worker development instance")
         if min(self.storage_task_reserve_bytes, self.storage_low_water_bytes, self.storage_scan_entries, self.storage_hash_bytes) < 1:
             raise ValueError("Storage budgets must be positive")
         if self.storage_retention_grace_seconds < (0 if self.demo else 60):

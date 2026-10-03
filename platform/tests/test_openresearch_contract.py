@@ -232,10 +232,61 @@ class OpenResearchContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SYNTHETIC", (await self.adapter.run_logs()).stdout)
 
     async def test_concurrent_instances_admit_one_launch_intent(self):
-        await asyncio.gather(self.adapter.launch_experiment(), self.make_adapter().launch_experiment())
+        second = self.make_adapter()
+        checked = asyncio.Barrier(2)
+        def initial_status_barrier(original):
+            first = True
+            async def status():
+                nonlocal first
+                value = await original()
+                if first:
+                    first = False
+                    self.assertEqual(value["status"], "NOT_STARTED")
+                    # Both real status subprocesses observe no launch before
+                    # either caller competes for the exclusive intent file.
+                    await checked.wait()
+                return value
+            return status
+        with patch.object(self.adapter, "experiment_status", side_effect=initial_status_barrier(self.adapter.experiment_status)), \
+             patch.object(second, "experiment_status", side_effect=initial_status_barrier(second.experiment_status)):
+            # Harness bound only; adapter command/business deadlines unchanged.
+            async with asyncio.timeout(10), asyncio.TaskGroup() as group:
+                group.create_task(self.adapter.launch_experiment())
+                group.create_task(second.launch_experiment())
         launches = [e for e in self.events() if e["args"][1:3] == ["exp", "run"]]
         self.assertEqual(len(launches), 1)
         self.assertEqual((await self.adapter.reconcile_experiment())["run_id"], "synthetic-run-1")
+
+    async def test_late_status_after_other_instance_launch_fails_closed_without_duplicate(self):
+        second = self.make_adapter()
+        entered, launched = asyncio.Event(), asyncio.Event()
+        original = second.experiment_status
+        async def delayed_status():
+            # No receipt was seen, but another instance launches before this
+            # caller's real status subprocess observes the existing run.
+            entered.set()
+            await launched.wait()
+            return await original()
+        with patch.object(second, "experiment_status", side_effect=delayed_status):
+            operation = asyncio.create_task(second.launch_experiment())
+            try:
+                async with asyncio.timeout(10):
+                    await entered.wait()
+                    first = await self.adapter.launch_experiment()
+                    self.assertEqual(first["run_id"], "synthetic-run-1")
+                    launched.set()
+                    with self.assertRaises(OpenResearchError) as caught:
+                        await operation
+                    self.assertEqual(caught.exception.code, "ALREADY_RUNNING")
+            finally:
+                if not operation.done():
+                    operation.cancel()
+                await asyncio.gather(operation, return_exceptions=True)
+        launches = [e for e in self.events() if e["args"][1:3] == ["exp", "run"]]
+        self.assertEqual(len(launches), 1)
+        # A later call sees the original receipt and reconciles, never relaunches.
+        self.assertEqual((await second.launch_experiment())["run_id"], "synthetic-run-1")
+        self.assertEqual(len([e for e in self.events() if e["args"][1:3] == ["exp", "run"]]), 1)
 
     async def test_uncertain_launch_never_retries_before_or_after_side_effect(self):
         self.mode("unknown-before-effect")

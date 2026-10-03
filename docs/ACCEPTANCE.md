@@ -2,14 +2,11 @@
 
 ## Current matrix
 
-Full-suite runtime baseline: **`68b3dc78f4df75c791a9c32a9794ba00957f57e6`**, completed
-[Draft PR13 stage](https://github.com/Guanzhw/agent-factory/pull/13). Exact push/PR
-CI passed all ten jobs; fresh observations at 2026-10-02 23:59:37.531650 UTC and
-2026-10-03 00:01:06.686233 UTC were 89.154583 seconds apart. Both PostgreSQL runs
-executed 618 tests, 63 explicit skips. These results apply to that runtime SHA;
-the subsequent narrow completed-log/browser-fixture correction uses focused
-regressions and actual browser routing evidence recorded in the delivery index.
-No new-head full-suite pass is inferred from the older runtime.
+Preceding exact-head baseline: **`d760b8af63c6692d0119c5386d7a7481076f61bc`**,
+Draft PR13 workflow 37081501616, all five jobs passed, two terminal observations
+90.069 seconds apart; PostgreSQL 624 tests / 63 skips. The current bounded Go
+continuation is detailed in [live validation](GO_LIVE_VALIDATION.md); its exact CI
+belongs to the new draft PR. No prior-head CI is relabeled as continuation proof.
 
 The delivery target remains complete factory/v0.3 plus the agreed extensions.
 This matrix separates implemented mechanisms, further code and real-environment
@@ -21,7 +18,7 @@ including the separately reviewed historical checkpoint bridge.
 |---|---|---|
 | Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
 | AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
-| Go coding development | Explicit governed profile for deepseek-v4-flash Chat and gpt-6-luna Responses; actual loopback SSE/native tool/receipt/artifact/ledger path. Seven product cases passed; quota/restart and exhausted retry cannot create extra HTTP attempts | Subscription mode blocked before callbacks. No real key read or live call in this stage. Initial live request cap, account proof and live accounting bound remain gates; not production/research selection |
+| Go coding development | Explicit governed profile for deepseek-v4-flash Chat and gpt-6-luna Responses; actual loopback SSE/native tool/receipt/artifact/ledger path. Seven product cases passed; quota/restart and exhausted retry cannot create extra HTTP attempts | Persistent bounded live gate implemented; one DeepSeek smoke attempt UNKNOWN and whole campaign stopped, Luna zero attempts. No successful live tool/product or invoice evidence; not production/research selection |
 | Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
 | Production identity | Bearer validation, managed SQL identities/roles, current revocation and owner isolation; demo-only browser session | Browser login/IdP or gateway integration, production session/logout and deployment configuration remain code/integration work |
 | Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests | Actual PubMed attempt failed connectivity: **sourceCount=0, liveSourceSuccess=false**. No live retrieval/synthesis success; new real questions need governed query/application contracts |
