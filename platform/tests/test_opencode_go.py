@@ -39,7 +39,7 @@ class GoContractTests(unittest.TestCase):
             self.invoke(model)
 
     def test_exact_models_and_limits(self):
-        for model_id in ("deepseek-flash", "gpt-6", "https://other.invalid"):
+        for model_id in ("deepseek-unknown", "gpt-6", "https://other.invalid"):
             with self.assertRaises(ValueError):
                 self.model(model_id=model_id)
         for kwargs in ({"timeout_seconds": 61}, {"max_output_tokens": 513}, {"max_output_tokens": True}):
