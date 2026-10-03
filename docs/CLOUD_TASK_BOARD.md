@@ -351,3 +351,11 @@ host settings or fall back to another route after failure/denial. After offline
 tests/review, root may perform exactly one unauthenticated ten-second bounded GET
 to the public models endpoint; no credential read, inference, or automatic probe
 retry is authorized. Safe outcome and exact CI will be recorded in the draft PR.
+
+Integrated/reviewed: 22focused tests passed; full727/298skips passed53.323s;
+native Factory/PostgreSQL synthetic path passed7.097s. Ruff/WindowsPyright pass.
+Root performed exactly one no-auth GET at08:29:24UTC through existing managed
+egress: HTTP200 in282ms. No key read, body retention, inference or second probe.
+Seven budget/history/evidence files unchanged, both UNKNOWN retained, DeepSeek2/
+Luna0. This proves public endpoint reachability only. Root owns final draft PR
+and exact CI evidence; no merge or deployment.

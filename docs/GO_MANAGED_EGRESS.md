@@ -46,3 +46,27 @@ not authorize the remaining model request. If an explicit denial is received,
 stop and report the required official hostname `opencode.ai`; do not modify or
 work around the rule. Safe outcome and final exact-head CI are recorded in the
 draft PR. No merge or deployment is authorized.
+
+## Recorded outcome
+
+On 2026-10-03, after review and offline tests, root executed exactly one
+unauthenticated GET with OPENCODE_GO removed from the child process environment.
+The shared client used existing environment proxy/CA selection without changing
+any host configuration. PREPARED, DISPATCH_STARTED and RESPONSE_HEADERS were
+recorded. HTTP 200 was received; elapsed time was 282 ms, from
+08:29:24.427351 to 08:29:24.710514 UTC. No exception/cause/errno was observed.
+Response content was not consumed or retained. No follow-up request was made.
+
+This demonstrates reachability of the unauthenticated public endpoint through
+the environment-compatible client at that time. It does not prove authenticated
+inference, subscription billing, the exact cause of the earlier direct-path
+failures, or production acceptance. Both prior UNKNOWN reservations remain held;
+DeepSeek2/Luna0. Seven budget/historical evidence files retain identical bytes
+and modification times.
+
+Independent review found no blocker; 22 focused offline tests passed in 0.115s.
+Full offline suite: 727 tests, 298 skips, 53.323s. Native Factory/PostgreSQL with
+synthetic HTTP responses passed (one test, 7.097s). Ruff and Windows-target
+Pyright pass. Nine changed files passed credential-pattern scanning. Production
+provider registration, API/schema and lifecycle permissions are unchanged;
+only the development Go client and the standalone no-auth diagnostic are affected.
