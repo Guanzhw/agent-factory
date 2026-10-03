@@ -330,3 +330,37 @@ Live stopped; no retries/native execution/Luna. Old three evidence files remain
 unchanged. Core7 + runner8 tests passed; independent44 passed; full704/298skips
 passed52.616s plus final6alias tests passed. Ruff/Windows Pyright pass. Final
 draft PR/CI evidence remains root-owned. See GO_EXACT_SINGLE_SMOKE.md.
+
+## Managed Go egress compatibility — 2026-10-03
+
+Base PR17 `4fc83fbe8bddf5e14a7f62d80f82d150de8d6aff`: ten exact CI jobs
+passed, coordinator terminal observations 108.977s apart. Branch
+`coord/go-managed-egress-20261003`. Inference remains forbidden in this stage;
+both UNKNOWN tickets and DeepSeek2/Luna0 counts are retained.
+
+| Owner | Exclusive scope | Dependency | Acceptance / blockers |
+| --- | --- | --- | --- |
+| root | Adapter integration, docs, sole one unauthenticated GET, final CI | Worker tests and independent review | In progress |
+| go_adapter | Shared fixed-origin HTTP client, environment proxy/CA and offline tests | Existing HTTPX controls | In progress; synthetic env only |
+| at10 | One-shot public GET diagnostic script, finite cause/errno and offline tests | Shared client | In progress; no real env/key/network |
+| reviewer | Independent TLS/proxy/NO_PROXY/redirect/redaction review | Integrated frozen files | In progress |
+
+Application compatibility only: honor the environment's existing proxy and CA,
+preserve TLS verification, fixed official host and zero retries, and never change
+host settings or fall back to another route after failure/denial. After offline
+tests/review, root may perform exactly one unauthenticated ten-second bounded GET
+to the public models endpoint; no credential read, inference, or automatic probe
+retry is authorized. Safe outcome and exact CI will be recorded in the draft PR.
+
+Integrated/reviewed: 22focused tests passed; full727/298skips passed53.323s;
+native Factory/PostgreSQL synthetic path passed7.097s. Ruff/WindowsPyright pass.
+Root performed exactly one no-auth GET at08:29:24UTC through existing managed
+egress: HTTP200 in282ms. No key read, body retention, inference or second probe.
+Seven budget/history/evidence files unchanged, both UNKNOWN retained, DeepSeek2/
+Luna0. This proves public endpoint reachability only. Root owns final draft PR
+and exact CI evidence; no merge or deployment.
+
+First managed-egress head CI found the Windows EAI_NONAME/EAI_NODATA numeric
+alias overwrote the canonical label. Root fixes fixed-order first-name mapping
+with a simulated Windows alias regression; sixcause tests/Ruff/WindowsPyright
+pass. Superseded CI cancelled, corrected exact CI follows. No probe rerun.
