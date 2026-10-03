@@ -364,3 +364,52 @@ First managed-egress head CI found the Windows EAI_NONAME/EAI_NODATA numeric
 alias overwrote the canonical label. Root fixes fixed-order first-name mapping
 with a simulated Windows alias regression; sixcause tests/Ruff/WindowsPyright
 pass. Superseded CI cancelled, corrected exact CI follows. No probe rerun.
+
+## Final authorized DeepSeek smoke — 2026-10-03
+
+Base `e90de8a9a7ec69e00b5be896a6888216efcc3997`; branch
+`coord/go-final-single-smoke-20261003`. User authorizes exactly one new
+`deepseek-flash` synthetic coding request after managed-egress acceptance.
+The two historical UNKNOWNs remain occupied; cumulative DeepSeek cap is three,
+Luna remains zero. No product tool roundtrip, retries, PAYG fallback or deployment.
+
+| Owner | Scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | Adapter integration, final runner/tests, sole credential access and live dispatch | Durable gate and independent review | Offline validation in progress; no live call yet |
+| go_adapter | Final authorization gate and deterministic tests | Existing original persistent budget | In progress; mock-only, no secrets |
+| reviewer | Read-only gate/runner/client review | Final files | In progress; no live access |
+
+Final authority must be consumed atomically in the original budget, preserve
+both historical tickets, and never grant dispatch when reopening. Existing
+controlled proxy/CA, verified TLS, fixed official endpoint, retry zero,
+60-second timeout and 64-token output cap remain unchanged.
+
+Outcome: independent reviewer passed 42 offline tests with no blocker; root
+executed exactly one final request. HTTP 200/event-stream was followed by a
+protocol error before STREAM_COMPLETED/PARSED. Returned model, finish and usage
+are unknown; new ticket c2c80f9d-6d4c-4571-86e8-28e8f5d0851a is UNKNOWN.
+DeepSeek 3/3, Luna 0; all live execution stopped. Old two UNKNOWN records and
+historical evidence remain unchanged. No retry/product/Luna is authorized.
+See GO_FINAL_SINGLE_SMOKE.md for timestamps and scope. Final exact-head CI is
+tracked in the draft PR; no merge or deployment.
+
+### Offline diagnosis follow-up
+
+All live/external diagnostic requests are prohibited. Root owns documentation,
+integration and immutable-evidence verification; go_adapter owns only
+`test_go_stream_diagnosis.py` synthetic fixtures; reviewer independently reviews
+signatures; at10 reads exact-head GitHub CI. No runtime behavior or assertion is
+changed without a demonstrated defect. Initial PR19 head `329236cc` has passing
+frontend and Linux/Windows Python jobs; Postgres jobs are pending.
+
+Retained evidence has no exception chain or per-guard rejection code. Stage and
+finite error signatures distinguish common direct read/truncation, JSON decoding
+and EOF-without-terminal paths from the observed explicit feed rejection, but
+several feed guards remain indistinguishable. Root cause is unconfirmed; all
+three UNKNOWNs and DeepSeek 3/Luna 0 accounting remain immutable.
+
+Offline follow-up implementation complete: 11 exact-model synthetic signature
+tests, independent review 11+25 passed, full local 748 tests/298 skips passed in
+49.443s, Ruff/Windows Pyright passed. Runtime unchanged; no evidenced live root
+cause or assertion relaxation. Original and final exact CI outcomes are recorded
+in PR19. All nine protected files retain bytes and mtimes.
