@@ -383,3 +383,12 @@ Final authority must be consumed atomically in the original budget, preserve
 both historical tickets, and never grant dispatch when reopening. Existing
 controlled proxy/CA, verified TLS, fixed official endpoint, retry zero,
 60-second timeout and 64-token output cap remain unchanged.
+
+Outcome: independent reviewer passed 42 offline tests with no blocker; root
+executed exactly one final request. HTTP 200/event-stream was followed by a
+protocol error before STREAM_COMPLETED/PARSED. Returned model, finish and usage
+are unknown; new ticket c2c80f9d-6d4c-4571-86e8-28e8f5d0851a is UNKNOWN.
+DeepSeek 3/3, Luna 0; all live execution stopped. Old two UNKNOWN records and
+historical evidence remain unchanged. No retry/product/Luna is authorized.
+See GO_FINAL_SINGLE_SMOKE.md for timestamps and scope. Final exact-head CI is
+tracked in the draft PR; no merge or deployment.

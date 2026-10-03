@@ -27,3 +27,30 @@ A successful new request would validate this path only. It would neither prove
 the historical connection-failure root cause nor constitute production identity,
 scientific workflow, target-host or billing acceptance. The prior unauthenticated
 public GET is not evidence of authenticated inference success.
+
+## Controlled result
+
+Root executed exactly one request using code commit
+`081d4de`, at 2026-10-03 09:07:16 UTC. OPENCODE_GO presence was true; no
+credential content was printed or persisted. Local request ID:
+`c2c80f9d-6d4c-4571-86e8-28e8f5d0851a`.
+
+PREPARED committed at 09:07:16.896973 UTC, DISPATCH_STARTED at
+09:07:16.965574 UTC, RESPONSE_HEADERS at 09:07:18.297248 UTC reported HTTP 200
+and allowlisted content type event-stream. At 09:07:18.599407 UTC the adapter
+recorded ModelProviderError/protocol during the response-reading phase.
+STREAM_COMPLETED and PARSED were not reached. Runner stopped at
+09:07:18.616829 UTC. No response body or exception text was retained, so a more
+specific protocol diagnosis cannot be reconstructed from this evidence.
+
+The new ticket is UNKNOWN. Returned model, finish reason and all usage token
+counts are unknown. HTTP 200 alone is not successful inference. DeepSeek is
+now 3/3 cumulative reservations; Luna remains 0. The two previous UNKNOWN ticket
+rows match their pre-run snapshots exactly; historical campaign/evidence files
+match both bytes and modification times. No retry, fallback, Luna request or
+product tool roundtrip followed. All live execution is stopped.
+
+Independent pre-dispatch review passed 42 offline tests in 1.257s. Root final
+runner/gate tests passed 9/9, historical single-smoke 15/15, HTTP environment
+11/11 and provider 26/26; Ruff and Windows-target Pyright passed. No claim is
+made about historical failure root cause, subscription charges or model output.
