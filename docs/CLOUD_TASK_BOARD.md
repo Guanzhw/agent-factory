@@ -300,3 +300,33 @@ all tests on the next final head; no production diagnostic or lifecycle change.
 
 Final integrated offline684/298skips passed46.341s; Windows-target Pyright and
 Ruff pass. Root alone owns final push/PR16 exact CI and terminal evidence.
+
+## Exact DeepSeek single-smoke continuation — 2026-10-03
+
+Base PR16 `f85b02bf7343b7b67c3b3643c922fb9a69ed22ae`, all ten CI jobs passed;
+root terminal observations 98.163s apart. Branch
+`coord/go-exact-single-smoke-20261003`.
+
+| Owner | Exclusive scope | Dependency | Acceptance / blockers |
+| --- | --- | --- | --- |
+| root | New source-bound cross-campaign budget, integration, docs, sole live credential access | Review and synthetic validation | Six budget/history/concurrency/crash tests pass; live not yet run |
+| go_adapter | Exact deepseek-flash protocol and safe returned model preservation | Official public catalog/source | In progress; mocks only |
+| at10 | Dedicated one-attempt runner and runner tests | GoSingleSmokeCampaign | In progress; mocks only |
+| reviewer | Independent budget/replay/disclosure review | Integrated files | In progress; no live or secret access |
+
+Current authorization is exactly one new independent short `deepseek-flash`
+smoke, with historical UNKNOWN permanently retained: DeepSeek total at most two
+for this step, original overall cap three. No Luna, native product execution,
+account changes, automatic replay, alias substitution or price equivalence.
+The fixed source-derived budget path prevents new campaign/evidence names from
+resetting the count. Reopening is inspection-only. Safe results and CI evidence
+will be reported in the continuation PR; old evidence stays unchanged.
+
+Implementation and independent review complete. Root ran exactly one new smoke:
+`aa945eb2-fdf5-432e-8237-c1c9f09c7bb9`, exact `deepseek-flash`, UNKNOWN after
+ConnectError at DISPATCH_STARTED (07:56:11.638040 UTC), no response headers,
+actual model or usage. Cumulative DeepSeek2/Luna0, both DeepSeek slots retained.
+Live stopped; no retries/native execution/Luna. Old three evidence files remain
+unchanged. Core7 + runner8 tests passed; independent44 passed; full704/298skips
+passed52.616s plus final6alias tests passed. Ruff/Windows Pyright pass. Final
+draft PR/CI evidence remains root-owned. See GO_EXACT_SINGLE_SMOKE.md.

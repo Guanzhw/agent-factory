@@ -22,9 +22,14 @@ from .go_diagnostics import safe_diagnostic
 
 BASE_URL = "https://opencode.ai/zen/go/v1"
 USER_AGENT = "agent-factory-dev/0.1 (+https://github.com/Guanzhw/agent-factory)"
-MODELS = {"deepseek-v4-flash": "chat/completions", "deepseek-v4.1-flash": "chat/completions",
+MODELS = {"deepseek-flash": "chat/completions", "deepseek-v4-flash": "chat/completions", "deepseek-v4.1-flash": "chat/completions",
           "gpt-6-luna": "responses"}
 MAX_BYTES = 1_048_576
+
+
+def safe_actual_model(value):
+    """Record only an allowlisted returned ID; never infer alias equivalence."""
+    return value if type(value) is str and value in MODELS else None
 
 
 class _LoopbackResponseStream(httpx.AsyncByteStream):
@@ -88,17 +93,19 @@ def _unknown(message="Go protocol response is invalid", status=400, *, original_
 
 class GoResponseRejected(ModelProviderError):
     """Only trusted, parsed usage survives a later live contract rejection."""
-    def __init__(self, code, usage):
+    def __init__(self, code, usage, *, actual_model=None):
         super().__init__(message=code, status_code=400, model_name="OpenCode Go development")
         self.response_usage = usage
+        self.actual_model = safe_actual_model(actual_model)
         self._go_code = code if code in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN"
 
 
 class GoCancelledWithUsage(asyncio.CancelledError):
     """Cancellation after a complete response retains trusted accounting."""
-    def __init__(self, usage):
+    def __init__(self, usage, *, actual_model=None):
         super().__init__("GO_LIVE_CANCELLED")
         self.response_usage = usage
+        self.actual_model = safe_actual_model(actual_model)
 
 
 def _usage(value, responses):
@@ -172,7 +179,8 @@ class GoDevelopmentModel(Model):
         self._async_transport = async_transport or transport
         if live_campaign is not None:
             from .go_live import GoLiveCampaign
-            if type(live_campaign) is not GoLiveCampaign or native_retries or not wire_stream:
+            from .go_single_smoke import GoSingleSmokeCampaign
+            if type(live_campaign) not in {GoLiveCampaign, GoSingleSmokeCampaign} or native_retries or not wire_stream:
                 raise ValueError("Live validation requires an exact bounded campaign, streaming and zero retries")
             # The public live profile forbids transport injection. Exact mock
             # transport here remains available to offline adapter contract tests.
@@ -297,7 +305,7 @@ class GoDevelopmentModel(Model):
             if result.response_usage is None:
                 raise _unknown("GO_USAGE_UNKNOWN")
             if self._live_campaign is not None and response.get("model") != self.id:
-                raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage)
+                raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage, actual_model=response.get("model"))
             return result
         except (KeyError, TypeError, IndexError, AttributeError) as error:
             raise _unknown(original_error=error) from None
@@ -372,9 +380,9 @@ class GoDevelopmentModel(Model):
                                     raise _unknown("Go response exceeds size bound")
                         record("STREAM_COMPLETED")
                         payload = state.finish() if state is not None else json.loads(data)
+                        actual_model = safe_actual_model(payload.get("model")) if isinstance(payload, dict) else None
                         result = self._parse_provider_response(payload)
                         known_usage = result.response_usage
-                        actual_model = payload.get("model")
                         record("PARSED")
                         if campaign is not None and (known_usage.input_tokens > 32768 or known_usage.output_tokens > self._cap):
                             raise GoResponseRejected("GO_USAGE_BOUND_EXCEEDED", known_usage)
@@ -387,6 +395,7 @@ class GoDevelopmentModel(Model):
             return result
         except BaseException as error:
             usage = getattr(error, "response_usage", None) or known_usage
+            actual_model = safe_actual_model(getattr(error, "actual_model", None)) or actual_model
             if campaign is not None and ticket is not None:
                 try:
                     campaign.record_event(ticket, phase, error=error)
@@ -412,11 +421,11 @@ class GoDevelopmentModel(Model):
                     # admission after restart cannot replay an uncertain dispatch.
                     pass
             if isinstance(error, asyncio.CancelledError) and campaign is not None and usage is not None:
-                raise GoCancelledWithUsage(usage) from None
+                raise GoCancelledWithUsage(usage, actual_model=actual_model) from None
             if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
                 raise
             if campaign is not None and usage is not None:
-                raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage) from None
+                raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage, actual_model=actual_model) from None
             if isinstance(error, ModelProviderError):
                 raise
             raise _unknown("Go transport or JSON failure", original_error=error) from None
