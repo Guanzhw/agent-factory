@@ -97,8 +97,20 @@ def create_app(settings=None):
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
             demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
+    if settings.development_profile == "opencode-go":
+        from .go_development import model_registrations
+        for entry in model_registrations():
+            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
+                connection_kind=entry.connection_kind, required_capabilities=entry.required_capabilities,
+                permissions=entry.permissions, demo_only=entry.demo_only, validator=entry.validator,
+                connection_adapter_ref=entry.connection_adapter_ref)
     store.execution_bindings = bindings
     prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
+    if settings.development_profile == "opencode-go":
+        from .go_development import MODEL_ADAPTER_IDS
+        from .go_usage import pricing_registrations
+        for price in pricing_registrations(MODEL_ADAPTER_IDS):
+            prices[(price.adapter_id, price.adapter_revision)] = price
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
     store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)

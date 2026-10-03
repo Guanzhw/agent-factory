@@ -97,11 +97,34 @@ class GoContractTests(unittest.TestCase):
             self.assertNotIn("sensitive-response", str(caught.exception))
             self.assertEqual(len(calls), 1)
 
+    def test_native_retries_never_repeat_quota_auth_or_unknown_usage(self):
+        from agno.agent import Agent
+        for status in (401, 402, 403, 429, None):
+            requests = []
+            def handler(request):
+                requests.append(request)
+                return httpx.Response(status, text="synthetic rejection") if status else httpx.Response(200, json=chat(usage=None))
+            model = self.model(handler, native_retries=1)
+            result = Agent(model=model, telemetry=False).run("Synthetic coding test")
+            self.assertEqual(result.status.value, "ERROR")
+            self.assertEqual(len(requests), 1)
+
+    def test_loopback_transport_rejects_nonliteral_or_credentialed_targets(self):
+        from agent_factory.opencode_go import GoLoopbackTransport
+        for target in ("https://opencode.ai", "http://localhost:8000", "http://example.invalid:8000",
+                       "http://127.0.0.1:8000/path", "http://user:pass@127.0.0.1:8000",
+                       "http://127.0.0.1:8000/?query=1"):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                GoLoopbackTransport(target)
+        GoLoopbackTransport("http://127.0.0.1:8000")
+        GoLoopbackTransport("http://[::1]:8000")
+
     def test_missing_invalid_usage_unknown(self):
         for usage in (None, {}, {"prompt_tokens": True, "completion_tokens": 0, "total_tokens": 1},
                       {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 99}):
-            result = self.invoke(self.model(lambda request: httpx.Response(200, json=chat(usage=usage))))
-            self.assertIsNone(native_response_usage(result))
+            with self.assertRaisesRegex(ModelProviderError, "GO_USAGE_UNKNOWN") as denied:
+                self.invoke(self.model(lambda request: httpx.Response(200, json=chat(usage=usage))))
+            self.assertIsNone(native_response_usage(denied.exception))
 
     def test_partial_response_fails_closed(self):
         for model_id, payload in (("gpt-6-luna", responses(status="incomplete")),
@@ -355,7 +378,7 @@ class GoContractTests(unittest.TestCase):
                             return [item async for item in model.ainvoke_stream(messages)]
                         return asyncio.run(async_run())
 
-                    if fail in ("http", "timeout", "protocol", "early_stream_usage"):
+                    if fail in ("http", "missing_usage", "timeout", "protocol", "early_stream_usage"):
                         with self.assertRaises(ModelProviderError):
                             run()
                     else:

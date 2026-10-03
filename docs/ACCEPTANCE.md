@@ -1,8 +1,65 @@
 # Acceptance ledger
 
+## Current matrix
+
+Full-suite runtime baseline: **`68b3dc78f4df75c791a9c32a9794ba00957f57e6`**, completed
+[Draft PR13 stage](https://github.com/Guanzhw/agent-factory/pull/13). Exact push/PR
+CI passed all ten jobs; fresh observations at 2026-10-02 23:59:37.531650 UTC and
+2026-10-03 00:01:06.686233 UTC were 89.154583 seconds apart. Both PostgreSQL runs
+executed 618 tests, 63 explicit skips. These results apply to that runtime SHA;
+the subsequent narrow completed-log/browser-fixture correction uses focused
+regressions and actual browser routing evidence recorded in the delivery index.
+No new-head full-suite pass is inferred from the older runtime.
+
+The delivery target remains complete factory/v0.3 plus the agreed extensions.
+This matrix separates implemented mechanisms, further code and real-environment
+acceptance. It does not certify every private original requirement. The
+[delivery index](DELIVERY_INDEX.md) records exact stacked PR dependencies,
+including the separately reviewed historical checkpoint bridge.
+
+| Capability | Implemented / evidence | Remaining code or real acceptance |
+|---|---|---|
+| Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
+| AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
+| Go coding development | Explicit governed profile for deepseek-v4-flash Chat and gpt-6-luna Responses; actual loopback SSE/native tool/receipt/artifact/ledger path. Seven product cases passed; quota/restart and exhausted retry cannot create extra HTTP attempts | Subscription mode blocked before callbacks. No real key read or live call in this stage. Initial live request cap, account proof and live accounting bound remain gates; not production/research selection |
+| Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
+| Production identity | Bearer validation, managed SQL identities/roles, current revocation and owner isolation; demo-only browser session | Browser login/IdP or gateway integration, production session/logout and deployment configuration remain code/integration work |
+| Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests | Actual PubMed attempt failed connectivity: **sourceCount=0, liveSourceSuccess=false**. No live retrieval/synthesis success; new real questions need governed query/application contracts |
+| Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
+| Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Real compute allocator/environment provisioning is not implemented. External-host TLS, identities, runtime/stop proof and target capacity require integration/acceptance |
+| Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
+| Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |
+
+Current evidence: [AT10](AT10_TREE_ACCEPTANCE.md), [Go profile](GO_DEVELOPMENT_PROFILE.md),
+[literature](LITERATURE_EVIDENCE.md), [storage](STORAGE_OPERATIONS.md),
+[control receipts](CONTROL_COMMANDS.md), [runtime/compute](REMOTE_RESOURCES.md).
+
+## Historical stage records
+
+The records below preserve what was known at each earlier checkpoint. Their old
+SHAs, pending states and “Go unregistered” wording are not the current matrix.
+
+### Historical PR13 commit-time preamble
+
+Base receiver-parent stage: `37f889e5cc157206868c60c00230bd3b8aef23a5`,
+[Draft PR12](https://github.com/Guanzhw/agent-factory/pull/12), both exact-SHA CI
+runs green with two terminal observations >60 seconds apart. Its actual recovery
+uses original native/ORX identities and the unchanged business wait.
+
+The explicit Go fixture profile now connects governed model/application selection,
+owner bindings, native queue, independent Chat/Responses protocols, controlled
+HTTP SSE tool roundtrip, receipt/artifact and durable per-attempt accounting.
+Subscription execution remains denied before any credential or billing callback;
+no live compatibility or subscription-only billing success is claimed. See
+[product profile](GO_DEVELOPMENT_PROFILE.md). Final measured tests and exact-SHA
+CI belong to the new draft PR. Older matrix cells claiming the fixture profile
+is unregistered are superseded by this section; production identity, research
+source success and target-machine acceptance remain open.
+
+
 The target is complete factory/v0.3 functionality. This is a verified stage; production/scientific acceptance remains open. Tests exercise actual Agno/PostgreSQL/FastAPI behavior; model output alone is deterministic.
 
-## Current matrix
+### Historical PR11/PR12 matrix (superseded)
 
 Current cloud checkpoint: `c374293bd93ec4759f235a340ca264978d9747b3`, with push/PR
 CI all ten jobs passed and two terminal observations more than 60 seconds apart.
@@ -35,7 +92,7 @@ The 32-core/64-GB and 54-core/192-GB machines remain capacity targets. Inspectio
 calls bypass the model queue. Historical test counts below must not be reused as
 new-head CI results.
 
-## Historical stage records
+
 
 ## Configurable plan-review stage
 

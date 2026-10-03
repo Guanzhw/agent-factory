@@ -6,17 +6,38 @@ from pathlib import Path
 import sys
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright
+def fixture_origin(url):
+    parsed = urlparse(url)
+    if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.username or parsed.password:
+        raise ValueError('Only the owned loopback fixture is supported')
+    return parsed.scheme, parsed.hostname, parsed.port or 80
+
+
+async def fixture_request(route, origin, headers):
+    try:
+        matches = fixture_origin(route.request.url) == origin
+    except ValueError:
+        matches = False
+    if not matches:
+        await route.abort()
+        return
+    scoped = {key: value for key, value in route.request.headers.items() if key.lower() != 'authorization'}
+    scoped.update(headers)
+    # Fetch only this request. Do not forward the injected header through an
+    # HTTP redirect; fulfil its response and let the next browser request pass
+    # the same exact-origin gate. No context-wide credential header is installed.
+    response = await route.fetch(headers=scoped, max_redirects=0)
+    await route.fulfill(response=response)
 
 
 async def main():
+    from playwright.async_api import async_playwright
     config=json.loads(Path(sys.argv[1]).read_text())
-    parsed=urlparse(config['baseUrl'])
-    if parsed.scheme!='http' or parsed.hostname!='127.0.0.1':
-        raise ValueError('Only the owned loopback fixture is supported')
+    origin=fixture_origin(config['baseUrl'])
     async with async_playwright() as playwright:
         browser=await playwright.chromium.launch()
-        context=await browser.new_context(extra_http_headers=config['headers'],viewport={'width':1440,'height':1100})
+        context=await browser.new_context(viewport={'width':1440,'height':1100}, service_workers='block')
+        await context.route('**/*', lambda route: fixture_request(route, origin, config['headers']))
         page=await context.new_page()
         errors=[];posts=[]
         page.on('pageerror',lambda error:errors.append(type(error).__name__))

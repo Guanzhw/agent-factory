@@ -53,6 +53,9 @@ class DelegatingModel(Model):
         def current():
             local_current()
             latest = store.resolve_run(context)
+            from .go_development import is_go_plan
+            if is_go_plan(latest) and store.has_failures(context.session_id):
+                raise InputCheckError("GO_TASK_STOPPED: prior development failure denies replay")
             store.require_plan_execution(context.user_id, latest, run_context=context)
             self.bindings.recheck(latest, context)
 
@@ -95,7 +98,7 @@ class DelegatingModel(Model):
 
         def reserve(args, kwargs, *, streaming=False):
             current()
-            return ledger.begin_attempt(context, plan, model, streaming=streaming,
+            return ledger.begin_attempt(context, plan, model, streaming=streaming or getattr(model, "factory_wire_stream", False) is True,
                 arguments=args, keyword_arguments=kwargs) if ledger is not None else None
 
         def finish(identity, value):
@@ -123,7 +126,7 @@ class DelegatingModel(Model):
             await asyncio.to_thread(current)
             if local_current is not None:
                 local_current()
-            identity = ledger.begin_attempt(context, plan, model, streaming=False, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
+            identity = ledger.begin_attempt(context, plan, model, streaming=getattr(model, "factory_wire_stream", False) is True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
             try:
                 response = await ainvoke(*args, **kwargs)
             except BaseException as error:
@@ -246,6 +249,8 @@ class DelegatingModel(Model):
         messages = kwargs.get("messages", arguments[0] if arguments else None)
         if not isinstance(response, RunOutput) or not isinstance(messages, list):
             return None
+        if await asyncio.to_thread(self._stop_development_replay, response):
+            return None
         body = await asyncio.to_thread(prepare_pause, self.bindings.store, response, error)
         return None if body is None else publish_pause(self.bindings.store, response, messages, body, streaming=streaming)
 
@@ -257,7 +262,32 @@ class DelegatingModel(Model):
         messages = kwargs.get("messages", arguments[0] if arguments else None)
         if not isinstance(response, RunOutput) or not isinstance(messages, list):
             return None
+        if self._stop_development_replay(response):
+            return None
         return pause(self.bindings.store, response, messages, error, streaming=streaming)
+
+    def _stop_development_replay(self, response):
+        """Persist final provider failure before the native queue can retry.
+
+        Model-level 503 retries have already spent their explicit attempt budget.
+        Queue restarts must not turn quota/unknown usage or an exhausted budget
+        into a fresh model retry allowance. Existing protected failures provide
+        the durable stop; no queue implementation or shared retry policy changes.
+        """
+        if response.model_provider != "opencode-go-development":
+            return False
+        from .go_development import is_go_plan
+        store = self.bindings.store
+        task = store.task(response.session_id, response.user_id)
+        if task["run_id"] != response.run_id:
+            raise InputCheckError("Native failure identity differs from task binding")
+        plan = store.plan(task["plan_id"], response.user_id)
+        if not is_go_plan(plan):
+            return False
+        if not store.has_failures(task["id"]):
+            store.event(task["id"], "protected_denied", "Development provider failure stops task replay",
+                        {"code": "GO_TASK_STOPPED", "createsExecution": False})
+        return True
 
     def _recovered(self, arguments, kwargs, *, streaming=False):
         if getattr(self.bindings.store, "usage_ledger", None) is None:

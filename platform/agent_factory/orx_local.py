@@ -7,7 +7,7 @@ ORX CLI commands. No dashboard/starter/session/cloud or arbitrary-command API.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import math
@@ -461,20 +461,34 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         if receipt["state"] not in _TERMINAL or receipt.get("stop_evidence", {}).get("allStopped") is not True:
             raise OpenResearchError("CLEANUP_UNCONFIRMED", "Completed logs require positive original stop evidence")
         run_id = self._id(receipt["run_id"])
-        root = self.scope / "orx-store"
-        directory = root / "run-logs"
-        path = directory / (run_id + ".log")
-        if root.is_symlink() or directory.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(self.scope.resolve()):
-            raise OpenResearchError("INVALID_OUTPUT", "Original run log escaped task scope")
         nofollow = getattr(os, "O_NOFOLLOW", None)
         nonblock = getattr(os, "O_NONBLOCK", None)
-        if os.name != "posix" or not isinstance(nofollow, int) or not nofollow or not isinstance(nonblock, int) or not nonblock:
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if (os.name != "posix" or not isinstance(nofollow, int) or not nofollow
+                or not isinstance(nonblock, int) or not nonblock
+                or not isinstance(directory_flag, int) or not directory_flag):
             raise OpenResearchError("UNSUPPORTED_PLATFORM", "Completed logs require no-follow nonblocking file opens")
-        fd = os.open(path, os.O_RDONLY | nofollow | nonblock)
-        with os.fdopen(fd, "rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise OpenResearchError("INVALID_OUTPUT", "Original run log must be a regular file")
-            raw = stream.read(self.max_output_bytes + 1)
+        # Pin every directory rather than checking a path and opening it later.
+        # A renamed parent cannot redirect the subsequent relative file open.
+        scope = self.scope.absolute()
+        if ".." in scope.parts:
+            raise OpenResearchError("INVALID_OUTPUT", "Original run log escaped task scope")
+        try:
+            with ExitStack() as stack:
+                flags = os.O_RDONLY | nofollow | directory_flag
+                parent = os.open(scope.anchor, flags)
+                stack.callback(os.close, parent)
+                for part in (*scope.parts[1:], "orx-store", "run-logs"):
+                    parent = os.open(part, flags, dir_fd=parent)
+                    stack.callback(os.close, parent)
+                fd = os.open(run_id + ".log", os.O_RDONLY | nofollow | nonblock, dir_fd=parent)
+                with os.fdopen(fd, "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise OpenResearchError("INVALID_OUTPUT", "Original run log must be a single-link regular file")
+                    raw = stream.read(self.max_output_bytes + 1)
+        except (OSError, NotImplementedError):
+            raise OpenResearchError("INVALID_OUTPUT", "Original run log cannot be read within task scope") from None
         if len(raw) > self.max_output_bytes:
             raise OpenResearchError("INVALID_OUTPUT", "Original run log exceeds output bound")
         return CommandResult((), raw.decode("utf-8", errors="replace"), "", 0, 0., hashlib.sha256(raw).hexdigest())

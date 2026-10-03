@@ -72,6 +72,10 @@ class CompositionService:
             if not chosen:
                 raise HTTPException(404, "Published application configuration not found")
             return chosen, {"method": "explicit-application", "matchedKeywords": []}
+        # A coding-development profile must be chosen explicitly even if an
+        # administrator republishes its discovery defaults or keywords.
+        from .go_development import APPLICATION_ID as GO_DEVELOPMENT_APPLICATION
+        latest.pop(GO_DEVELOPMENT_APPLICATION, None)
         normalized = values["goal"].casefold()
         scored = []
         for application in latest.values():
@@ -200,8 +204,10 @@ class CompositionService:
                 if isinstance(result, dict) and result.get("missing"):
                     candidate["missing"].extend(str(item) for item in result["missing"])
                     candidate["status"] = "blocked"
-            except (HTTPException, ValueError, PermissionError):
-                candidate["missing"].append("Current registered execution binding inspection denied")
+            except (HTTPException, ValueError, PermissionError) as error:
+                code = re.match(r"^(GO_[A-Z_]+):", str(error.detail)) if isinstance(error, HTTPException) else None
+                candidate["missing"].append((code.group(1) + ": " if code else "") +
+                    "Current registered execution binding inspection denied")
                 candidate["status"] = "blocked"
         ledger = getattr(self.store, "usage_ledger", None)
         if ledger is not None and execution is not None and not candidate["missing"]:

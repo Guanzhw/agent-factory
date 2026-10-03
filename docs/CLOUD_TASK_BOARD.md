@@ -1,5 +1,37 @@
 # Cloud integration task board
 
+## Delivery review cleanup — 2026-10-03
+
+Current review/integration order: **PR9 → PR10 → PR14 (checkpoint bridge) → PR11 → PR12 → PR13**.
+See [delivery index](DELIVERY_INDEX.md) and [current acceptance](ACCEPTANCE.md#current-matrix).
+The runtime `68b3dc7` passed both exact-head CI runs with two terminal observations;
+older pending-CI and unregistered-Go notes below are historical. The current
+coordinator owns documentation and the narrow completed-log scope correction
+found by independent bridge review. Reviewer owns read-only review; test worker
+owns its isolated regression file. Historical branches remain unchanged; all PRs
+remain Draft. No live key/provider access or production selection is performed.
+
+
+## Current Go product integration ownership
+
+Base: `37f889e5cc157206868c60c00230bd3b8aef23a5` (Draft PR12), branch
+`coord/go-development-product-path-20261002`. Sole coordinator writer; no merge/deploy.
+
+| Work | Owner / exclusive files | Dependencies | State |
+|---|---|---|---|
+| Explicit profile/material contract | `/root/at10`: go_development.py, test_go_development_profile.py | Existing governance and exact bindings | Frozen; 10 light tests passed; safe transport exact-type allowlist |
+| Product HTTP/native/ledger tests | `/root/go_adapter`: go_http_fixture.py, test_go_product_postgres.py | Root registration/guard/transport integration | Frozen; all 7 actual HTTP/PostgreSQL cases passed in 43.926s |
+| Independent security/retry review | `/root/reviewer`: read-only | Complete diff and measured queue behavior | Final Go-only queue replay fix reviewed; no blockers |
+| Production decisions | `/root/production_decisions`: read-only | Current identity/research implementation | Delivered; PRODUCTION_DECISIONS.md preserves minimum non-secret inputs |
+| Core, evidence and delivery | `/root`: all shared interfaces, dispatcher, safe transport, pricing, docs/PR/CI | Worker handback | 38 light tests passed. First PG run failed application scope setup; second passed 5/6 and exposed queue-level quota replay. Durable Go-only stop added; 7-case rerun passed in 43.926s. Frontend64, Ruff/Pyright and npm audit (zero vulnerabilities) passed. Exact CI pending. |
+| Live subscription gate | Root only, no key access this phase | Account-specific no-extra-charge proof and persistent request cap | Hard blocked before callbacks; live requests zero |
+
+Heavy tests remain serial on the existing bounded fixture. No worker accesses
+credentials. [Product profile](GO_DEVELOPMENT_PROFILE.md) and
+[production decision list](PRODUCTION_DECISIONS.md) define current boundaries.
+Earlier ownership/status sections below are historical.
+
+
 Updated 2026-10-02. Dedicated coordinator resumed with sole integration ownership
 from exact checkpoint `12c82a469e1172654ac7d57fc02ceeffb8db0bbf` on
 `coord/at10-go-integration-20261002`. Previous workers and local Factory are stopped.
