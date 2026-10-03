@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from .connections import TrustedConnectionBinding
 from .execution_bindings import AdapterRegistration, BindingContext
 from .opencode_go import GoDevelopmentModel, GoLoopbackTransport
+from .go_live import GoLiveCampaign, GoLiveGateError
 
 PROFILE_REVISION = "go-development-v1"
 PROVIDER_ADAPTER_ID = "go-development-provider-v1"
@@ -40,6 +41,7 @@ class GoDevelopmentHandle:
     mode: str = "subscription"
     wire_stream: bool = True
     native_retries: int = 0
+    live_campaign: GoLiveCampaign | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if type(self.wire_stream) is not bool or type(self.native_retries) is not int or self.native_retries not in {0, 1}:
@@ -51,10 +53,14 @@ class GoDevelopmentHandle:
         if self.async_transport is not None and not isinstance(self.async_transport, httpx.AsyncBaseTransport):
             raise ValueError("Development transport must support asynchronous cancellation")
         if self.mode == "fixture":
-            if type(self.async_transport) not in {httpx.MockTransport, GoLoopbackTransport} or self.credential is not None or self.billing_verified is not None:
+            if (type(self.async_transport) not in {httpx.MockTransport, GoLoopbackTransport} or self.credential is not None
+                    or self.billing_verified is not None or self.live_campaign is not None):
                 raise ValueError("Fixture mode requires exact mock or literal-loopback transport and forbids credential or billing callbacks")
         elif not callable(self.credential) or (self.billing_verified is not None and not callable(self.billing_verified)):
             raise ValueError("Trusted development callbacks are required")
+        elif self.live_campaign is not None and (type(self.live_campaign) is not GoLiveCampaign
+                or self.async_transport is not None or self.billing_verified is not None or not self.wire_stream):
+            raise ValueError("Live campaign requires real fixed transport, streaming and no alternate billing callback")
 
     def credential_callback(self) -> str:
         if self.mode == "fixture":
@@ -76,14 +82,21 @@ def stable_session(context: Any) -> str:
     return session
 
 
-def preflight(handle: GoDevelopmentHandle, *, session_id: str, model_id: str, settings: Any) -> dict[str, str]:
+def preflight(handle: GoDevelopmentHandle, *, session_id: str, model_id: str, settings: Any, owner_id: str | None = None) -> dict[str, str]:
     """Fresh billing authorization before credentials/network; default denies."""
     if getattr(settings, "development_profile", "disabled") != "opencode-go" or getattr(settings, "demo", False) is not True:
         raise HTTPException(409, "GO_DEVELOPMENT_DISABLED: explicit demo development profile is required")
     if model_id not in MODEL_ADAPTER_IDS or not isinstance(handle, GoDevelopmentHandle):
         raise HTTPException(409, "GO_DEVELOPMENT_BINDING: exact trusted development model is required")
     if handle.mode == "subscription":
-        raise HTTPException(409, "GO_LIVE_VALIDATION_PENDING: subscription billing and initial request limits require independent validation")
+        if handle.live_campaign is None or getattr(settings, "development_live_validation", False) is not True:
+            raise HTTPException(409, "GO_LIVE_VALIDATION_PENDING: explicit bounded live campaign required")
+        try:
+            handle.live_campaign.preflight(model_id, owner_id)
+        except GoLiveGateError:
+            raise HTTPException(409, "GO_LIVE_CAMPAIGN_DENIED: current bounded campaign is unavailable") from None
+        return {"profile": PROFILE_REVISION, "scope": SCOPE, "modelId": model_id,
+                "protocol": PROTOCOLS[model_id], "evidenceMode": "live-user-attested"}
     try:
         verified = handle.billing_callback(session_id, model_id)
     except Exception:
@@ -133,7 +146,7 @@ def preflight_plan(settings: Any, plan: Any, connections: Any, context: Any = No
         expected_revision=pin["revision"], expected_fingerprint=pin["fingerprint"], expected_version=pin["version"],
         required_capabilities=(CAPABILITY,), task_id=getattr(context, "session_id", None),
         expected_adapter_ref=PROVIDER_ADAPTER_ID)
-    return preflight(handle, session_id=session, model_id=model_id, settings=settings)
+    return preflight(handle, session_id=session, model_id=model_id, settings=settings, owner_id=plan["ownerId"])
 
 
 def trusted_model_binding(owner: str, handle: GoDevelopmentHandle, *, revision: str = PROFILE_REVISION,
@@ -159,10 +172,16 @@ def model_registrations() -> list[AdapterRegistration]:
             session = stable_session(context.run_context)
             handle = context.connection
             preflight(handle, session_id=session, model_id=model_id,
-                      settings=context.settings)
+                      settings=context.settings, owner_id=context.run_context.user_id)
+            if handle.live_campaign is not None:
+                try:
+                    handle.live_campaign.authorize(session, model_id, purpose="product", owner_id=context.run_context.user_id)
+                except GoLiveGateError:
+                    raise HTTPException(409, "GO_LIVE_CAMPAIGN_DENIED: exact product session is unavailable") from None
             return GoDevelopmentModel(model_id=model_id, session_id=session, credential=handle.credential_callback,
                 billing_verified=handle.billing_callback, max_output_tokens=256, timeout_seconds=60,
-                async_transport=handle.async_transport, wire_stream=handle.wire_stream, native_retries=handle.native_retries)
+                async_transport=handle.async_transport, wire_stream=handle.wire_stream, native_retries=handle.native_retries,
+                live_campaign=handle.live_campaign)
         return create
     return [AdapterRegistration("model", adapter, "1", factory(model), connection_kind="model",
         required_capabilities=(CAPABILITY,), validator=_config, demo_only=True, connection_adapter_ref=PROVIDER_ADAPTER_ID)

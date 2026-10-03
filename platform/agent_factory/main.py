@@ -194,7 +194,8 @@ def create_app(settings=None):
     native = AgentOS(id="agent-factory", agents=[executor], db=native_db, registry=registry,
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
-                         max_queue_depth=settings.max_queued, max_attempts=2, retry_delay_seconds=0,
+                         max_queue_depth=settings.max_queued,
+                         max_attempts=1 if settings.development_live_validation else 2, retry_delay_seconds=0,
                          lock_grace_seconds=6, stop_timeout_seconds=2, poll_interval=settings.queue_poll,
                          timeout_seconds=60), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()

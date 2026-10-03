@@ -153,6 +153,12 @@ class DelegatingModel(Model):
                     yield value
                 current()
                 recovered()
+            except BaseException as error:
+                if ledger is not None:
+                    authoritative = ledger.evidence_for(plan, error)
+                    if authoritative is not None:
+                        evidence = authoritative
+                raise
             finally:
                 # No final authoritative usage => UNKNOWN with the whole hold,
                 # including GeneratorExit, cancellation and partial streams.
@@ -185,6 +191,12 @@ class DelegatingModel(Model):
                 if local_current is not None:
                     local_current()
                 recovered()
+            except BaseException as error:
+                if ledger is not None:
+                    authoritative = ledger.evidence_for(plan, error)
+                    if authoritative is not None:
+                        evidence = authoritative
+                raise
             finally:
                 try:
                     if ledger is not None:

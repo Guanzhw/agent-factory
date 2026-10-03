@@ -79,6 +79,20 @@ def _unknown(message="Go protocol response is invalid", status=400):
     return ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
 
 
+class GoResponseRejected(ModelProviderError):
+    """Only trusted, parsed usage survives a later live contract rejection."""
+    def __init__(self, code, usage):
+        super().__init__(message=code, status_code=400, model_name="OpenCode Go development")
+        self.response_usage = usage
+
+
+class GoCancelledWithUsage(asyncio.CancelledError):
+    """Cancellation after a complete response retains trusted accounting."""
+    def __init__(self, usage):
+        super().__init__("GO_LIVE_CANCELLED")
+        self.response_usage = usage
+
+
 def _usage(value, responses):
     if not isinstance(value, dict):
         return None
@@ -111,15 +125,17 @@ def _call(value):
 class GoDevelopmentModel(Model):
     """Native Agno model with bounded single HTTP invocation, never a tool loop.
 
-    billing_verified(session_id, exact_model_id) must independently verify current
-    subscription-only authorization on EVERY invocation. It is not a user prompt
-    flag. Default denies before credential access. Mock transports are test-only.
+    An operator billing verifier or the explicit persistent campaign authorizes
+    EVERY invocation before credential access. Neither is a user prompt flag.
+    Default denies. Campaign account settings are user-attested, not invoice proof.
+    Mock transports are test-only.
     """
 
     def __init__(self, *, model_id: str, session_id: str, credential: Callable[[], str],
                  billing_verified: Callable[[str, str], bool] | None = None,
                  max_output_tokens: int = 256, timeout_seconds: float = 30,
                  wire_stream: bool = False, native_retries: int = 0,
+                 live_campaign=None,
                  transport: httpx.BaseTransport | None = None,
                  async_transport: httpx.AsyncBaseTransport | None = None):
         if model_id not in MODELS:
@@ -146,15 +162,28 @@ class GoDevelopmentModel(Model):
         if transport is not None and not isinstance(transport, httpx.AsyncBaseTransport):
             raise ValueError("Test transport must support asynchronous deadline cancellation")
         self._async_transport = async_transport or transport
+        if live_campaign is not None:
+            from .go_live import GoLiveCampaign
+            if type(live_campaign) is not GoLiveCampaign or native_retries or not wire_stream:
+                raise ValueError("Live validation requires an exact bounded campaign, streaming and zero retries")
+            # The public live profile forbids transport injection. Exact mock
+            # transport here remains available to offline adapter contract tests.
+            if self._async_transport is not None and type(self._async_transport) is not httpx.MockTransport:
+                raise ValueError("Campaign testing requires exact MockTransport")
+        self._live_campaign = live_campaign
 
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         # Only explicit fixture retries may retry a transient service failure.
         # Quota/auth, incomplete protocol and unknown usage always stop.
         return error.status_code == 503
 
-    def _headers(self):
+    def _headers(self, *, campaign_ticket=None):
         try:
-            allowed = self._billing is not None and self._billing(self._session, self.id) is True
+            if self._live_campaign is not None and campaign_ticket is not None:
+                self._live_campaign.verify_ticket(campaign_ticket, self._session, self.id)
+                allowed = True
+            else:
+                allowed = self._billing is not None and self._billing(self._session, self.id) is True
         except Exception:
             allowed = False
         if not allowed:
@@ -248,6 +277,8 @@ class GoDevelopmentModel(Model):
             result.response_usage = _usage(response.get("usage"), responses)
             if result.response_usage is None:
                 raise _unknown("GO_USAGE_UNKNOWN")
+            if self._live_campaign is not None and response.get("model") != self.id:
+                raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage)
             return result
         except (KeyError, TypeError, IndexError, AttributeError):
             raise _unknown() from None
@@ -281,10 +312,19 @@ class GoDevelopmentModel(Model):
 
     async def _ainvoke_http(self, messages, *, stream=False, **kwargs):
         body = self._body(messages, stream=stream, **kwargs)
-        headers = self._headers()
+        ticket = None
+        campaign = self._live_campaign
+        if campaign is not None:
+            if self.retries or self._native_retry_limit or not stream or self._timeout > 60:
+                raise _unknown("GO_LIVE_REQUEST_CONTRACT")
+            ticket = campaign.begin(self._session, self.id, body)
         started = time.monotonic()
         state = _Stream(MODELS[self.id] == "responses") if stream else None
+        known_usage = None
+        actual_model = None
+        finishing = False
         try:
+            headers = self._headers(campaign_ticket=ticket)
             async with asyncio.timeout(self._timeout):
                 async with httpx.AsyncClient(timeout=self._timeout, trust_env=False, follow_redirects=False,
                                             transport=self._async_transport) as client:
@@ -299,8 +339,45 @@ class GoDevelopmentModel(Model):
                                 if len(data) > MAX_BYTES:
                                     raise _unknown("Go response exceeds size bound")
                         payload = state.finish() if state is not None else json.loads(data)
-                        return self._parse_provider_response(payload)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError, TimeoutError):
+                        result = self._parse_provider_response(payload)
+                        known_usage = result.response_usage
+                        actual_model = payload.get("model")
+                        if campaign is not None and (known_usage.input_tokens > 32768 or known_usage.output_tokens > self._cap):
+                            raise GoResponseRejected("GO_USAGE_BOUND_EXCEEDED", known_usage)
+            # Account only after both stream and client cleanup have completed.
+            if campaign is not None:
+                finishing = True
+                campaign.finish(ticket, usage={"input_tokens": known_usage.input_tokens,
+                    "output_tokens": known_usage.output_tokens, "total_tokens": known_usage.total_tokens},
+                    actual_model=actual_model)
+            return result
+        except BaseException as error:
+            usage = getattr(error, "response_usage", None) or known_usage
+            if campaign is not None and ticket is not None:
+                status = getattr(error, "status_code", None)
+                code = ("AUTH" if status in {401, 403} else "QUOTA" if status in {402, 429} else
+                    "CANCELLED" if isinstance(error, asyncio.CancelledError) else
+                    "MODEL_MISMATCH" if str(error) == "GO_MODEL_MISMATCH" else
+                    "USAGE_BOUND" if str(error) == "GO_USAGE_BOUND_EXCEEDED" else "UNKNOWN")
+                try:
+                    if finishing:
+                        campaign.stop(code)
+                    else:
+                        campaign.finish(ticket, usage=None if usage is None else {"input_tokens": usage.input_tokens,
+                            "output_tokens": usage.output_tokens, "total_tokens": usage.total_tokens},
+                            actual_model=actual_model, error_code=code)
+                except Exception:
+                    # A failed persistence step leaves the committed slot occupied;
+                    # admission after restart cannot replay an uncertain dispatch.
+                    pass
+            if isinstance(error, asyncio.CancelledError) and campaign is not None and usage is not None:
+                raise GoCancelledWithUsage(usage) from None
+            if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                raise
+            if campaign is not None and usage is not None:
+                raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage) from None
+            if isinstance(error, ModelProviderError):
+                raise
             raise _unknown("Go transport or JSON failure") from None
 
 
@@ -315,6 +392,7 @@ class _Stream:
         self.calls = {}
         self.usage = None
         self.reason = None
+        self.model = None
 
     def feed(self, chunk):
         self.size += len(chunk)
@@ -333,6 +411,11 @@ class _Stream:
             if self.done:
                 raise _unknown("Go stream contains data after completion")
             value = json.loads(payload)
+            model = value.get("model") if not self.responses else (value.get("response") or {}).get("model")
+            if model is not None:
+                if self.model is not None and self.model != model:
+                    raise _unknown("GO_MODEL_MISMATCH")
+                self.model = model
             if self.responses:
                 kind = value.get("type", "")
                 if kind in {"error", "response.failed", "response.incomplete"}:
@@ -380,5 +463,5 @@ class _Stream:
             if self.result is None:
                 raise _unknown()
             return self.result
-        return {"choices": [{"finish_reason": self.reason, "message": {
+        return {"model": self.model, "choices": [{"finish_reason": self.reason, "message": {
             "content": self.content or None, "tool_calls": list(self.calls.values())}}], "usage": self.usage}

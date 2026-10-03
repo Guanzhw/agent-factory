@@ -90,4 +90,17 @@ Use [README](../README.md#current-acceptance-and-remaining-work) and the
 Default AutoResearch is synthetic; measured PubMed retrieval returned zero
 sources. Production browser identity, a specific research provider, non-toy
 workload contracts and a real compute allocator still need implementation and
-real configuration/acceptance. Go subscription preflight stays blocked.
+real configuration/acceptance. Default Go subscription preflight stays blocked; the explicitly attested bounded
+validation campaign stopped after its first UNKNOWN smoke attempt. See
+[separate live evidence](GO_LIVE_VALIDATION.md).
+
+
+## Bounded Go continuation
+
+Branch `coord/go-bounded-live-validation-20261003` starts exactly at PR13 head
+`d760b8af63c6692d0119c5386d7a7481076f61bc`. The predecessor's later full CI run
+37081501616 passed all five jobs, observed twice 90.069s apart. This continuation
+adds durable live admission and separate offline native-product tests; actual
+live result is UNKNOWN after one DeepSeek smoke slot, zero Luna attempts.
+See [bounded validation](GO_LIVE_VALIDATION.md). Final exact CI is maintained in
+the new draft PR, with no merge or deployment.

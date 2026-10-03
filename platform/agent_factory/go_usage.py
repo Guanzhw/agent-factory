@@ -2,7 +2,8 @@
 
 The fixture profile uses nominal, conservatively selected catalogue rates to
 exercise nonzero immutable reservations. No external payment is made by this
-module. Live profile admission remains blocked pending account-specific proof.
+module. Live admission requires a separate explicit bounded campaign; nominal
+pricing does not verify the account invoice.
 """
 from __future__ import annotations
 
@@ -10,11 +11,19 @@ import json
 
 from fastapi import HTTPException
 
-from .opencode_go import GoDevelopmentModel
+from agno.models.response import ModelResponse
+
+from .opencode_go import GoCancelledWithUsage, GoDevelopmentModel, GoResponseRejected
 from .usage_ledger import PricingRevision, native_response_usage
 
 INPUT_CEILING = 32768
 OUTPUT_CEILING = 512
+
+
+def go_response_usage(value):
+    if type(value) in {GoResponseRejected, GoCancelledWithUsage}:
+        return native_response_usage(ModelResponse(response_usage=value.response_usage))
+    return native_response_usage(value)
 
 
 def request_guard(model, arguments, keyword_arguments, commitment):
@@ -45,5 +54,5 @@ def pricing_registrations(adapter_ids):
     return tuple(PricingRevision(adapter_ids[model], "1", "opencode-go-development", model,
         "go-development-nominal-2026-10-02-v1", input_micros_per_million=incoming,
         output_micros_per_million=outgoing, per_attempt_input_tokens=INPUT_CEILING,
-        per_attempt_output_tokens=OUTPUT_CEILING, usage_reader=native_response_usage,
+        per_attempt_output_tokens=OUTPUT_CEILING, usage_reader=go_response_usage,
         request_guard=request_guard) for model, (incoming, outgoing) in rates.items())

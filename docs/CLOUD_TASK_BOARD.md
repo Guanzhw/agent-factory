@@ -215,3 +215,42 @@ only. `/root/at10` owns its deterministic two-boundary regression; `/root/review
 reviews the denial and no-new-effect assertions. Root retains integration and
 exact CI ownership. The follow-up changes tests/documentation only; runtime
 source remains exactly the verified `ee0e5ca` version. Final CI is recorded in PR12.
+
+
+## Bounded Go live validation — 2026-10-03 (in progress)
+
+Base: `d760b8af63c6692d0119c5386d7a7481076f61bc`, PR13 exact-head CI
+37081501616 passed all five jobs, with two terminal observations 90.069s apart.
+Branch: `coord/go-bounded-live-validation-20261003`.
+
+| Owner | Exclusive scope | Dependency | Acceptance / state |
+| --- | --- | --- | --- |
+| root | Core adapter/profile/queue/usage integration, live runner, real credential, final commit/CI | Independent review and offline product acceptance | In progress; no live dispatch yet |
+| go_adapter | go_live.py, gate and transport tests | Root adapter integration | Gate 14 offline tests passed; observer admission fix in progress |
+| at10 | test_go_live_product_postgres.py | Gate and adapter | Offline full native product validation in progress |
+| reviewer | Read-only integration/security review | Final integrated code | Found observer INFLIGHT and cleanup-accounting blockers; fixes underway |
+
+User attests Use balance and Auto-reload OFF and authorizes bounded genuine
+coding development requests. This is account-setting attestation, not measured
+invoice proof. Root alone owns credentials; workers use synthetic mocks only.
+Fixed order: deepseek-v4-flash then gpt-6-luna; each at most one smoke and two
+product requests, zero SDK/queue retries, 60s HTTP deadline. Any unknown outcome,
+auth/quota failure, model mismatch or usage anomaly stops the whole campaign.
+No model fallback, recharge, new credential, merge or deployment is authorized.
+
+
+Bounded stage execution update: all worker files integrated; independent review
+reports no remaining blocker. Observer/cleanup accounting regressions fixed.
+Native PG six-mock-request acceptance passed in 8.176s; full offline suite
+648/298 skips passed in 42.787s. The real campaign reserved one DeepSeek smoke
+attempt and stopped UNKNOWN (no confirmed model/usage); Luna has zero attempts.
+No retry/reset. Root owns remaining commit, draft PR and exact CI. Live compatibility
+and billing remain unverified; details in GO_LIVE_VALIDATION.md.
+
+Post-disconnect root verification found persisted SQLite/JSON identical, STOPPED,
+DeepSeek1/Luna0 and no live process; no new live attempts. AT10 worker fixed only
+the unrelated ORX concurrency fixture's two legitimate schedules; 16 focused
+tests passed and independent reviewer approved. No core lifecycle change.
+
+Final integrated offline run: 650 tests / 298 skips passed in 45.461s; existing
+actual HTTP/PG Go cases 7/7 passed in 46.958s. Ruff/Pyright and web checks pass.

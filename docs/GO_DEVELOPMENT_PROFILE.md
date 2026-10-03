@@ -1,5 +1,11 @@
 # Go development product profile
 
+Current bounded validation: [2026-10-03 live result and controls](GO_LIVE_VALIDATION.md).
+The first DeepSeek smoke attempt is UNKNOWN and the whole campaign is stopped;
+GPT-6-Luna was not attempted. No successful live product acceptance is claimed.
+
+## Historical fixture-only stage (PR13)
+
 This stage connects the prior isolated adapter to the actual Factory material,
 application, immutable-plan, native-queue, tool, receipt, artifact and PostgreSQL
 usage-ledger path. It is an explicitly selected coding-development profile.
