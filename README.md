@@ -1,8 +1,8 @@
 # Agent Factory
 
-An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Managers maintain versioned materials and approved application definitions; users compose exact, scoped task plans and inspect native runs. Auto-Research is the first application. New approved applications use the same composition API and registered executor without application-ID branches in the core.
+An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Managers maintain versioned materials and approved application definitions; users compose exact, scoped task plans and inspect native runs. Auto-Research is the first application. New approved applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
 
-This is a **verified implementation stage toward the complete factory/v0.3 scope**: real authentication, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled. The opt-in Linux public-literature evidence workflow attempted a free PubMed query, but this host could not reach the endpoint; it produced an explicit failure report. Full production acceptance remains open.
+This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: real authentication, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled. The opt-in Linux public-literature evidence workflow attempted a free PubMed query, but this host could not reach the endpoint; it produced an explicit failure report. Full production acceptance remains open.
 
 ## Start locally
 
@@ -60,29 +60,38 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 
 ## Current acceptance and remaining work
 
-The [current acceptance matrix](docs/ACCEPTANCE.md#current-matrix) is authoritative;
-older stage records and [the original handoff](docs/CLOUD_HANDOFF.md) remain history.
-Actual Linux ORX toy execution, durable control receipts, scoped storage
-retention, finite twenty-user pressure and online PostgreSQL snapshot/restore have
-separate measured evidence on a **4-CPU/16-GiB** cloud cgroup. They do not certify
-the target 32-core/64-GB or 54-core/192-GB hosts, hostile-code tenancy, PITR or
-unbounded fair admission.
+Latest **full-suite-verified runtime**: `68b3dc78f4df75c791a9c32a9794ba00957f57e6`
+([Draft PR13](https://github.com/Guanzhw/agent-factory/pull/13)). Its exact push/PR
+CI passed all ten jobs, confirmed twice 89 seconds apart. Both PostgreSQL suites
+ran 618 tests with 63 explicit skips. Subsequent delivery cleanup includes a narrow completed-log and browser-fixture
+boundary correction with focused checks; it does not relabel this earlier CI as
+new-head full-suite evidence. See the
+[current matrix](docs/ACCEPTANCE.md#current-matrix) and
+[delivery/review index](docs/DELIVERY_INDEX.md) for scope and the complete PR chain.
 
-[Public literature evidence](docs/LITERATURE_EVIDENCE.md) adds bounded Linux
-retrieval, paper/text tools and downloadable bibliography/excerpt reports with
-explicit missing-full-text states. The controlled native path passes; actual
-public retrieval is blocked by endpoint connectivity and is not scientific
-acceptance. Experiment adapter revision 2 uses separate least-capability read
-and compute connection pins; revision 1 remains available without rewriting old
-plans, receipts or receiver guards.
+| Available and measured | Boundary still open |
+|---|---|
+| Six-kind material governance, immutable plans/bindings, native queue, HITL, durable control receipts, cancellation, delegation, usage ledger and Chinese UI | Production/scientific acceptance is separate from controlled-provider execution |
+| Actual pinned Linux ORX toy, local and receiver AT10 recovery including receiver-parent, same native/ORX identities and one launch | Fixed toy/evaluator; Windows and target-host reliability remain separate acceptance |
+| Explicit Go development profile: exact Chat/Responses model selection through native queue, loopback HTTP SSE, tool, receipt/artifact and PostgreSQL usage | Coding checksum scope only. Subscription preflight is blocked; no real key or live inference used in this stage. Not a research provider |
+| Literature source/package tools and controlled native evidence downloads | Actual PubMed attempt returned **0 sources** after connectivity failure; no successful live retrieval or scientific synthesis evidence |
+| Governed Factory receiver execution, runtime attachment and resource lifecycle contracts | No real compute allocator/environment provisioning implementation; production remote TLS/identity/host setup is absent |
+| Storage quarantine, finite twenty-user pressure and online PostgreSQL snapshot/restore | Measured **4 CPU / 16 GiB**; target **32 cores / 64 GB** or **54 cores / 192 GB** is unmeasured. Single active scheduler only |
 
-Remaining code/integration includes real provider SDK usage/retry guards,
-production browser identity entry and mutable reviewed research workloads.
-[AT10 recovery](docs/INFERENCE_RECOVERY.md) now has a bounded standalone Linux
-ORX v2 contract; provider, Windows and delegated/receiver recovery remain separate
-integration and acceptance work. Production TLS/identity/host authorization,
-target-host load and multiple-scheduler-replica behavior also need acceptance.
-Twenty users does not imply twenty concurrent workers.
+The default AutoResearch application still selects **synthetic** materials and a
+deterministic model. Its successful demo output is not a real research result.
+Independent code remains for production browser identity/session integration;
+a specific production research provider's adapter, usage/retry/request/pricing
+contract and governed model selection; and a non-toy research workflow with
+reviewed query/source/dataset/evaluator/workspace and change-approval contracts.
+Credentials alone do not complete these implementations. Real compute allocation
+also needs a provider implementation if that scope is selected.
+
+No production IdP, provider or research use case has been selected by this stage.
+See [minimum decisions](docs/PRODUCTION_DECISIONS.md) and
+[Go live gates](docs/GO_DEVELOPMENT_PROFILE.md). Existing usage authorization is
+not being re-requested; live remains blocked pending the required billing facts
+and bounded live-validation implementation.
 
 Plan approval is configurable with a conservative production administrator-review default. The real UI supports review requests and administrative decisions; see [plan policy and tested boundaries](docs/PLAN_POLICY.md). Live identity/model/ORX acceptance remains separate.
 

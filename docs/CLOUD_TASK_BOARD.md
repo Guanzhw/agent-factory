@@ -1,5 +1,17 @@
 # Cloud integration task board
 
+## Delivery review cleanup — 2026-10-03
+
+Current review/integration order: **PR9 → PR10 → PR14 (checkpoint bridge) → PR11 → PR12 → PR13**.
+See [delivery index](DELIVERY_INDEX.md) and [current acceptance](ACCEPTANCE.md#current-matrix).
+The runtime `68b3dc7` passed both exact-head CI runs with two terminal observations;
+older pending-CI and unregistered-Go notes below are historical. The current
+coordinator owns documentation and the narrow completed-log scope correction
+found by independent bridge review. Reviewer owns read-only review; test worker
+owns its isolated regression file. Historical branches remain unchanged; all PRs
+remain Draft. No live key/provider access or production selection is performed.
+
+
 ## Current Go product integration ownership
 
 Base: `37f889e5cc157206868c60c00230bd3b8aef23a5` (Draft PR12), branch
