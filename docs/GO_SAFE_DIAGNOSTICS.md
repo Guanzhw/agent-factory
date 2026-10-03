@@ -97,3 +97,17 @@ uses guarded attribute lookup while retaining the existing explicit POSIX and
 nonzero-capability rejection before file access. Windows-target typechecking and
 the five journal tests pass. Superseded CI runs were cancelled after this known
 failure; the final exact head is revalidated in the same draft PR.
+
+
+The next Windows run passed typechecking but exposed malformed JSON while reading
+an older ORX concurrent subprocess fixture log. The log did not retain the bad
+bytes, so shared text-append interleaving is an inference, not a proven byte-level
+cause. The fixture now publishes one complete independent JSON event per real
+subprocess before its side effect. Readers still strictly parse every published
+record; no corruption is skipped and one-launch/deadline assertions are unchanged.
+Two regressions verify eight concurrent records and rejection of a corrupted
+published event. The affected 18 tests passed in 4.216s; independent review passed.
+Superseded runs 37105662062/37105664218 were cancelled after the known failure.
+
+Final integrated offline suite after the fixture correction: 684 tests / 298 skips,
+46.341s. Windows-target Pyright and Ruff pass. Final exact CI is recorded in PR16.

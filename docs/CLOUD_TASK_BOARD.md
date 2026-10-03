@@ -289,3 +289,14 @@ references. AT10 worker fixed guarded lookup with unchanged fail-closed platform
 checks; five journal tests and Windows-target Pyright pass. Root requested
 cancellation of superseded runs37105481904/37105520150 to avoid duplicate heavy
 work, then advances PR16 to the corrected head for fresh exact CI.
+
+Windows typechecking passed at679537e, then the ORX test fixture's shared JSONL
+reader reported malformed JSON during concurrent subprocess execution. Exact bad
+bytes were not saved; shared-append interleaving is an inference. AT10 replaced
+only fixture logging with independently published complete JSON records, preserving
+strict parsing, actual subprocesses, once-launch assertions and deadlines.18tests
+passed4.216s and reviewer approved. Root cancelled superseded CI and revalidates
+all tests on the next final head; no production diagnostic or lifecycle change.
+
+Final integrated offline684/298skips passed46.341s; Windows-target Pyright and
+Ruff pass. Root alone owns final push/PR16 exact CI and terminal evidence.

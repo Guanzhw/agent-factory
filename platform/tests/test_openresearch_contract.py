@@ -21,11 +21,18 @@ from agent_factory.openresearch import (
 )
 
 FIXTURE = r'''
-import json, os, pathlib, subprocess, sys, time
+import json, os, pathlib, subprocess, sys, time, uuid
 root = pathlib.Path.cwd()
 args = sys.argv[1:]
-with (root / 'synthetic-events.jsonl').open('a', encoding='utf-8') as f:
-    f.write(json.dumps({'synthetic': True, 'args': args, 'env': dict(os.environ)}) + '\n')
+# Every actual subprocess publishes one complete, independent record. Shared
+# text append can interleave on Windows; never infer launch count from torn JSONL.
+events = root / 'synthetic-events'
+events.mkdir(exist_ok=True)
+event_name = str(time.time_ns()) + '-' + str(uuid.uuid4())
+pending = events / (event_name + '.tmp')
+with pending.open('x', encoding='utf-8') as f:
+    f.write(json.dumps({'synthetic': True, 'args': args, 'env': dict(os.environ)}))
+os.replace(pending, events / (event_name + '.json'))
 args = [a for a in args if a != '--no-telemetry']
 state_path = root / 'synthetic-state.json'
 state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -147,11 +154,26 @@ class OpenResearchContractTests(unittest.IsolatedAsyncioTestCase):
         self.directory.cleanup()
 
     def events(self):
-        path = self.scope / "synthetic-events.jsonl"
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        path = self.scope / "synthetic-events"
+        return [json.loads(event.read_text(encoding="utf-8")) for event in sorted(path.glob("*.json"))]
 
     def mode(self, value):
         (self.scope / "synthetic-mode").write_text(value)
+
+    async def test_concurrent_subprocess_event_records_are_complete_and_unique(self):
+        adapters = [self.make_adapter() for _ in range(8)]
+        await asyncio.gather(*(adapter.preflight() for adapter in adapters))
+        events = self.events()
+        self.assertEqual(len(events), len(adapters))
+        self.assertTrue(all(event["args"] == ["--no-telemetry", "--version"] for event in events))
+        self.assertEqual(list((self.scope / "synthetic-events").glob("*.tmp")), [])
+
+    async def test_completed_event_corruption_is_not_ignored(self):
+        directory = self.scope / "synthetic-events"
+        directory.mkdir()
+        (directory / "invalid.json").write_text("", encoding="utf-8")
+        with self.assertRaises(json.JSONDecodeError):
+            self.events()
 
     async def test_disabled_and_unverified_builds_fail_before_subprocess(self):
         for kwargs, code in [({"enabled": False}, "DISABLED"), ({"pin": None}, "UNVERIFIED_BINARY"),
