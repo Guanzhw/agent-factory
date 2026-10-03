@@ -55,3 +55,28 @@ error classification, returned allowlisted model and usage are retained.
 Offline tests, independent review, safe live outcome and exact-head CI are recorded
 in the continuation PR. No success here establishes production or scientific
 workflow acceptance.
+
+## Controlled attempt outcome
+
+After independent review and offline validation, root executed the one authorized
+new exact-model smoke on 2026-10-03. The local request ID is
+`aa945eb2-fdf5-432e-8237-c1c9f09c7bb9`, distinct from the imported historical ID.
+PREPARED committed at 07:56:06.524046 UTC; DISPATCH_STARTED at
+07:56:06.565807 UTC. At 07:56:11.638040 UTC, the journal recorded ConnectError
+(connection category) at DISPATCH_STARTED, then FAILED and RUNNER_STOPPED.
+No RESPONSE_HEADERS event was observed. HTTP status, returned model and usage
+remain unknown. This establishes a local connection exception, not server
+receipt or the network/DNS/TLS cause. The exception text/body was not stored.
+
+The new attempt is UNKNOWN and permanently occupies its slot. The cumulative
+DeepSeek count is two (old versioned UNKNOWN plus new exact-ID UNKNOWN), Luna
+count zero. No retry, native execution or other model call followed. Pricing
+remains UNKNOWN; no invoice or subscription consumption was inferred. The three
+historical evidence files retain their original bytes and modification times.
+
+Validation before this attempt: independent review found no blocker, 44 targeted
+tests passed in 0.903s; full offline collection ran 704 tests with 298 skips in
+52.616s. A subsequently added missing-usage case was included in a separate
+six-case exact-ID suite (0.111s). Ruff and Windows-target Pyright passed. No
+credential patterns were found in the nine changed files. Final integrated CI
+is recorded in the draft PR, without conflating offline mocks with live success.

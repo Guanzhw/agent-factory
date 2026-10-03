@@ -321,3 +321,12 @@ account changes, automatic replay, alias substitution or price equivalence.
 The fixed source-derived budget path prevents new campaign/evidence names from
 resetting the count. Reopening is inspection-only. Safe results and CI evidence
 will be reported in the continuation PR; old evidence stays unchanged.
+
+Implementation and independent review complete. Root ran exactly one new smoke:
+`aa945eb2-fdf5-432e-8237-c1c9f09c7bb9`, exact `deepseek-flash`, UNKNOWN after
+ConnectError at DISPATCH_STARTED (07:56:11.638040 UTC), no response headers,
+actual model or usage. Cumulative DeepSeek2/Luna0, both DeepSeek slots retained.
+Live stopped; no retries/native execution/Luna. Old three evidence files remain
+unchanged. Core7 + runner8 tests passed; independent44 passed; full704/298skips
+passed52.616s plus final6alias tests passed. Ruff/Windows Pyright pass. Final
+draft PR/CI evidence remains root-owned. See GO_EXACT_SINGLE_SMOKE.md.
