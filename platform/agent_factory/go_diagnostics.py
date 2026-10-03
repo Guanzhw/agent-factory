@@ -6,6 +6,9 @@ import json
 from typing import Any
 
 import httpx
+import httpcore
+import socket
+import ssl
 from agno.exceptions import ModelProviderError
 
 PHASES = frozenset({"PREPARED", "CREDENTIAL_CHECK", "DISPATCH_STARTED", "RESPONSE_HEADERS",
@@ -57,12 +60,121 @@ _ERROR_PAIRS = frozenset((*_TYPES.values(), ("UnknownError", "unknown"),
                           ("CancelledError", "cancel"), ("ModelProviderError", "protocol")))
 
 
+
+# Stable diagnostic vocabulary, independent of human-facing exception messages.
+REJECTION_CODES = frozenset({
+    "STREAM_SIZE", "STREAM_AFTER_DONE", "STREAM_MODEL_CHANGED", "RESPONSES_ERROR",
+    "RESPONSES_FAILED", "RESPONSES_INCOMPLETE", "CHAT_ERROR", "STREAM_CHOICES_SHAPE",
+    "STREAM_CHOICES_COUNT", "STREAM_CHOICE_INDEX", "STREAM_AFTER_TERMINAL", "STREAM_TOOL_INDEX",
+    "STREAM_TOOL_TYPE", "STREAM_USAGE_EARLY", "STREAM_USAGE_REPEATED", "STREAM_INCOMPLETE_BUFFER",
+    "STREAM_MISSING_TERMINAL", "STREAM_MISSING_RESPONSE", "TOOL_SHAPE", "TOOL_FUNCTION_SHAPE",
+    "TOOL_ARGUMENTS_JSON", "TOOL_ARGUMENTS_SHAPE", "BILLING_UNVERIFIED", "CREDENTIAL_FAILURE",
+    "CREDENTIAL_INVALID", "RESPONSE_INCOMPLETE", "RESPONSE_CHOICES", "RESPONSE_FINISH_REASON",
+    "RESPONSE_CONTENT", "RESPONSE_DUPLICATE_TOOLS", "RESPONSE_USAGE_UNKNOWN", "RESPONSE_MODEL_MISMATCH",
+    "RESPONSE_SHAPE", "REQUEST_DEADLINE", "HTTP_STATUS", "LIVE_REQUEST_CONTRACT", "RESPONSE_SIZE",
+    "RESPONSE_USAGE_BOUND", "TRANSPORT_CONNECT", "TRANSPORT_READ", "TRANSPORT_WRITE",
+    "TRANSPORT_PROTOCOL", "TRANSPORT_TIMEOUT", "TRANSPORT_DECODING", "TRANSPORT_URL",
+    "JSON_DECODE", "STRUCTURE_ERROR", "CANCELLED", "UNKNOWN_ERROR",
+})
+_TYPE_REJECTIONS = {
+    httpx.ConnectError: "TRANSPORT_CONNECT", httpx.ReadError: "TRANSPORT_READ",
+    httpx.WriteError: "TRANSPORT_WRITE", httpx.RemoteProtocolError: "TRANSPORT_PROTOCOL",
+    httpx.LocalProtocolError: "TRANSPORT_PROTOCOL", httpx.ProtocolError: "TRANSPORT_PROTOCOL",
+    httpx.ConnectTimeout: "TRANSPORT_TIMEOUT", httpx.ReadTimeout: "TRANSPORT_TIMEOUT",
+    httpx.WriteTimeout: "TRANSPORT_TIMEOUT", httpx.PoolTimeout: "TRANSPORT_TIMEOUT",
+    httpx.TimeoutException: "TRANSPORT_TIMEOUT", TimeoutError: "TRANSPORT_TIMEOUT",
+    httpx.DecodingError: "TRANSPORT_DECODING", httpx.InvalidURL: "TRANSPORT_URL",
+    httpx.UnsupportedProtocol: "TRANSPORT_URL", json.JSONDecodeError: "JSON_DECODE",
+    KeyError: "STRUCTURE_ERROR", TypeError: "STRUCTURE_ERROR", AttributeError: "STRUCTURE_ERROR",
+    IndexError: "STRUCTURE_ERROR", asyncio.CancelledError: "CANCELLED",
+}
+_CHAIN_TYPES = {kind: name for kind, (name, _) in _TYPES.items()}
+_CHAIN_TYPES.update({
+    ModelProviderError: "ModelProviderError", asyncio.CancelledError: "CancelledError",
+    httpx.ProxyError: "ProxyError", httpcore.ConnectError: "ConnectError",
+    httpcore.ReadError: "ReadError", httpcore.WriteError: "WriteError",
+    httpcore.ConnectTimeout: "ConnectTimeout", httpcore.ReadTimeout: "ReadTimeout",
+    httpcore.WriteTimeout: "WriteTimeout", httpcore.PoolTimeout: "PoolTimeout",
+    httpcore.RemoteProtocolError: "RemoteProtocolError", httpcore.LocalProtocolError: "LocalProtocolError",
+    httpcore.ProxyError: "ProxyError", socket.gaierror: "gaierror",
+    ssl.SSLError: "SSLError", ssl.SSLCertVerificationError: "SSLCertVerificationError",
+    ExceptionGroup: "ExceptionGroup", BaseExceptionGroup: "BaseExceptionGroup",
+})
+EXCEPTION_CHAIN_NAMES = frozenset({*_CHAIN_TYPES.values(), "UnknownError"})
+MAX_EXCEPTION_CHAIN = 6
+
+
+def _exception_data(error):
+    # Bypass subclass properties/__getattribute__; never inspect args or text.
+    if not issubclass(type(error), BaseException):
+        return {}
+    return BaseException.__dict__["__dict__"].__get__(error, type(error))
+
+
+def _class_name(error):
+    if issubclass(type(error), ModelProviderError):
+        return "ModelProviderError"
+    if issubclass(type(error), asyncio.CancelledError):
+        return "CancelledError"
+    return _CHAIN_TYPES.get(type(error), "UnknownError")
+
+
+def _stored_chain(data):
+    value = dict.get(data, "_go_exception_chain")
+    if (type(value) is tuple and 1 <= len(value) <= MAX_EXCEPTION_CHAIN
+            and all(type(name) is str and name in EXCEPTION_CHAIN_NAMES for name in value)):
+        return value
+    return None
+
+
+def _exception_chain(error):
+    chain, seen = [], set()
+    current = error
+    while issubclass(type(current), BaseException) and len(chain) < MAX_EXCEPTION_CHAIN:
+        if id(current) in seen:
+            break
+        seen.add(id(current))
+        stored = _stored_chain(_exception_data(current))
+        if stored is not None:
+            chain.extend(stored[:MAX_EXCEPTION_CHAIN - len(chain)])
+            break
+        chain.append(_class_name(current))
+        cause = BaseException.__dict__["__cause__"].__get__(current, type(current))
+        context = BaseException.__dict__["__context__"].__get__(current, type(current))
+        # One causal spine, not exception-group children or arbitrary attributes.
+        current = cause if cause is not None else context
+    return tuple(chain) or ("UnknownError",)
+
+
+def _rejection_code(error):
+    value = dict.get(_exception_data(error), "_go_rejection_code")
+    if type(value) is str and value in REJECTION_CODES:
+        return value
+    return _TYPE_REJECTIONS.get(type(error), "UNKNOWN_ERROR")
+
+
+def annotate_go_error(error, *, rejection_code=None, original_error=None):
+    """Attach only finite diagnostic metadata; preserve the original exception."""
+    data = _exception_data(error)
+    if original_error is not None:
+        # Copy only sanitized metadata before a wrapper suppresses its context.
+        original = safe_diagnostic("FAILED", error=original_error)
+        dict.__setitem__(data, "_go_diagnostic", (original["errorType"], original["errorCategory"]))
+        dict.__setitem__(data, "_go_rejection_code", original["rejectionCode"])
+        dict.__setitem__(data, "_go_exception_chain", (_class_name(error), *original["exceptionChain"])[:MAX_EXCEPTION_CHAIN])
+    # Without a wrapper, inspect the causal spine at recording time: Python
+    # may attach __cause__/__context__ only when this exception is raised.
+    if type(rejection_code) is str and rejection_code in REJECTION_CODES:
+        dict.__setitem__(data, "_go_rejection_code", rejection_code)
+    return error
+
+
 def _error_kind(error, phase):
-    if isinstance(error, asyncio.CancelledError):
+    if issubclass(type(error), asyncio.CancelledError):
         kind, category = "CancelledError", "cancel"
-    elif isinstance(error, ModelProviderError):
+    elif issubclass(type(error), ModelProviderError):
         kind, category = "ModelProviderError", "protocol"
-        original = getattr(error, "_go_diagnostic", None)
+        original = dict.get(_exception_data(error), "_go_diagnostic")
         if (type(original) is tuple and len(original) == 2
                 and all(type(value) is str for value in original) and original in _ERROR_PAIRS):
             kind, category = original
@@ -101,4 +213,6 @@ def safe_diagnostic(phase, *, http_status=None, response_headers=None, error=Non
         result["responseHeaders"] = _headers(response_headers)
     if error is not None:
         result["errorType"], result["errorCategory"] = _error_kind(error, phase)
+        result["rejectionCode"] = _rejection_code(error)
+        result["exceptionChain"] = list(_exception_chain(error))
     return result

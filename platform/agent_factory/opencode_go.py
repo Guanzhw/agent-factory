@@ -18,7 +18,7 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
-from .go_diagnostics import safe_diagnostic
+from .go_diagnostics import annotate_go_error
 from .go_http import open_go_client
 
 BASE_URL = "https://opencode.ai/zen/go/v1"
@@ -82,29 +82,28 @@ class GoLoopbackTransport(httpx.AsyncBaseTransport):
             raise
 
 
-def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None):
+def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None, rejection_code=None):
     # Never interpolate server bodies, request headers, credentials or SDK errors.
     error = ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
     setattr(error, "_go_code", message if message in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN")
-    if original_error is not None:
-        metadata = safe_diagnostic("FAILED", error=original_error)
-        setattr(error, "_go_diagnostic", (metadata["errorType"], metadata["errorCategory"]))
-    return error
+    return annotate_go_error(error, rejection_code=rejection_code, original_error=original_error)
 
 
 class GoResponseRejected(ModelProviderError):
     """Only trusted, parsed usage survives a later live contract rejection."""
-    def __init__(self, code, usage, *, actual_model=None):
+    def __init__(self, code, usage, *, actual_model=None, original_error=None, rejection_code=None):
         super().__init__(message=code, status_code=400, model_name="OpenCode Go development")
         self.response_usage = usage
         self.actual_model = safe_actual_model(actual_model)
         self._go_code = code if code in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN"
+        annotate_go_error(self, rejection_code=rejection_code, original_error=original_error)
 
 
 class GoCancelledWithUsage(asyncio.CancelledError):
     """Cancellation after a complete response retains trusted accounting."""
-    def __init__(self, usage, *, actual_model=None):
+    def __init__(self, usage, *, actual_model=None, original_error=None):
         super().__init__("GO_LIVE_CANCELLED")
+        annotate_go_error(self, original_error=original_error)
         self.response_usage = usage
         self.actual_model = safe_actual_model(actual_model)
 
@@ -124,17 +123,17 @@ def _usage(value, responses):
 def _call(value):
     if (not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"]
             or value.get("type") != "function" or not isinstance(value.get("function"), dict)):
-        raise _unknown()
+        raise _unknown(rejection_code="TOOL_SHAPE")
     function = value["function"]
     if (not isinstance(function.get("name"), str) or not function["name"]
             or not isinstance(function.get("arguments"), str)):
-        raise _unknown()
+        raise _unknown(rejection_code="TOOL_FUNCTION_SHAPE")
     try:
         arguments = json.loads(function["arguments"])
-    except (ValueError, TypeError):
-        raise _unknown() from None
+    except (ValueError, TypeError) as error:
+        raise _unknown(rejection_code="TOOL_ARGUMENTS_JSON", original_error=error) from None
     if not isinstance(arguments, dict):
-        raise _unknown()
+        raise _unknown(rejection_code="TOOL_ARGUMENTS_SHAPE")
     return value
 
 
@@ -206,14 +205,14 @@ class GoDevelopmentModel(Model):
             self._credential_diagnostic(campaign_ticket, error)
             allowed = False
         if not allowed:
-            raise _unknown("GO_SUBSCRIPTION_ONLY_UNVERIFIED")
+            raise _unknown("GO_SUBSCRIPTION_ONLY_UNVERIFIED", rejection_code="BILLING_UNVERIFIED")
         try:
             secret = self._credential()
         except Exception as error:
             self._credential_diagnostic(campaign_ticket, error)
-            raise _unknown("GO_CREDENTIAL_UNAVAILABLE", original_error=error) from None
+            raise _unknown("GO_CREDENTIAL_UNAVAILABLE", original_error=error, rejection_code="CREDENTIAL_FAILURE") from None
         if not isinstance(secret, str) or not secret or any(c.isspace() for c in secret):
-            raise _unknown("GO_CREDENTIAL_UNAVAILABLE")
+            raise _unknown("GO_CREDENTIAL_UNAVAILABLE", rejection_code="CREDENTIAL_INVALID")
         return {"Authorization": "Bearer " + secret, "User-Agent": USER_AGENT,
                 "x-opencode-session": self._session}
 
@@ -278,7 +277,7 @@ class GoDevelopmentModel(Model):
             responses = MODELS[self.id] == "responses"
             if responses:
                 if response.get("status") != "completed":
-                    raise _unknown("Go response did not complete")
+                    raise _unknown("Go response did not complete", rejection_code="RESPONSE_INCOMPLETE")
                 content, calls = [], []
                 for item in response["output"]:
                     if item["type"] == "message":
@@ -291,35 +290,35 @@ class GoDevelopmentModel(Model):
                 result = ModelResponse(role="assistant", content="".join(content) or None, tool_calls=calls)
             else:
                 if not isinstance(response["choices"], list) or len(response["choices"]) != 1:
-                    raise _unknown("Unexpected multiple or missing choices")
+                    raise _unknown("Unexpected multiple or missing choices", rejection_code="RESPONSE_CHOICES")
                 choice = response["choices"][0]
                 if choice.get("finish_reason") not in {"stop", "tool_calls"}:
-                    raise _unknown("Go response did not complete")
+                    raise _unknown("Go response did not complete", rejection_code="RESPONSE_FINISH_REASON")
                 message = choice["message"]
                 if message.get("content") is not None and not isinstance(message["content"], str):
-                    raise _unknown()
+                    raise _unknown(rejection_code="RESPONSE_CONTENT")
                 result = ModelResponse(role="assistant", content=message.get("content"),
                                        tool_calls=[_call(call) for call in message.get("tool_calls", [])])
             calls = result.tool_calls or []
             if len({call["id"] for call in calls}) != len(calls):
-                raise _unknown("Go response contains duplicate tool identities")
+                raise _unknown("Go response contains duplicate tool identities", rejection_code="RESPONSE_DUPLICATE_TOOLS")
             result.response_usage = _usage(response.get("usage"), responses)
             if result.response_usage is None:
-                raise _unknown("GO_USAGE_UNKNOWN")
+                raise _unknown("GO_USAGE_UNKNOWN", rejection_code="RESPONSE_USAGE_UNKNOWN")
             if self._live_campaign is not None and response.get("model") != self.id:
-                raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage, actual_model=response.get("model"))
+                raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage, actual_model=response.get("model"), rejection_code="RESPONSE_MODEL_MISMATCH")
             return result
         except (KeyError, TypeError, IndexError, AttributeError) as error:
-            raise _unknown(original_error=error) from None
+            raise _unknown(original_error=error, rejection_code="RESPONSE_SHAPE") from None
 
     def _parse_provider_response_delta(self, response):
         return response
 
     def _check(self, response, started):
         if time.monotonic() - started > self._timeout:
-            raise _unknown("Go request deadline exceeded", 408)
+            raise _unknown("Go request deadline exceeded", 408, rejection_code="REQUEST_DEADLINE")
         if response.status_code != 200:
-            raise _unknown("Go request rejected", response.status_code)
+            raise _unknown("Go request rejected", response.status_code, rejection_code="HTTP_STATUS")
 
     def invoke(self, messages, **kwargs):
         # Public methods are separately wrapped by the Factory usage ledger.
@@ -345,7 +344,7 @@ class GoDevelopmentModel(Model):
         campaign = self._live_campaign
         if campaign is not None:
             if self.retries or self._native_retry_limit or not stream or self._timeout > 60:
-                raise _unknown("GO_LIVE_REQUEST_CONTRACT")
+                raise _unknown("GO_LIVE_REQUEST_CONTRACT", rejection_code="LIVE_REQUEST_CONTRACT")
             ticket = campaign.begin(self._session, self.id, body)
         started = time.monotonic()
         state = _Stream(MODELS[self.id] == "responses") if stream else None
@@ -378,7 +377,7 @@ class GoDevelopmentModel(Model):
                             else:
                                 data.extend(chunk)
                                 if len(data) > MAX_BYTES:
-                                    raise _unknown("Go response exceeds size bound")
+                                    raise _unknown("Go response exceeds size bound", rejection_code="RESPONSE_SIZE")
                         record("STREAM_COMPLETED")
                         payload = state.finish() if state is not None else json.loads(data)
                         actual_model = safe_actual_model(payload.get("model")) if isinstance(payload, dict) else None
@@ -386,7 +385,7 @@ class GoDevelopmentModel(Model):
                         known_usage = result.response_usage
                         record("PARSED")
                         if campaign is not None and (known_usage.input_tokens > 32768 or known_usage.output_tokens > self._cap):
-                            raise GoResponseRejected("GO_USAGE_BOUND_EXCEEDED", known_usage)
+                            raise GoResponseRejected("GO_USAGE_BOUND_EXCEEDED", known_usage, rejection_code="RESPONSE_USAGE_BOUND")
             # Account only after both stream and client cleanup have completed.
             if campaign is not None:
                 finishing = True
@@ -422,11 +421,11 @@ class GoDevelopmentModel(Model):
                     # admission after restart cannot replay an uncertain dispatch.
                     pass
             if isinstance(error, asyncio.CancelledError) and campaign is not None and usage is not None:
-                raise GoCancelledWithUsage(usage, actual_model=actual_model) from None
+                raise GoCancelledWithUsage(usage, actual_model=actual_model, original_error=error) from None
             if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
                 raise
             if campaign is not None and usage is not None:
-                raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage, actual_model=actual_model) from None
+                raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage, actual_model=actual_model, original_error=error) from None
             if isinstance(error, ModelProviderError):
                 raise
             raise _unknown("Go transport or JSON failure", original_error=error) from None
@@ -448,7 +447,7 @@ class _Stream:
     def feed(self, chunk):
         self.size += len(chunk)
         if self.size > MAX_BYTES:
-            raise _unknown("Go stream exceeds size bound")
+            raise _unknown("Go stream exceeds size bound", rejection_code="STREAM_SIZE")
         self.buffer += chunk
         while b"\n" in self.buffer:
             line, self.buffer = self.buffer.split(b"\n", 1)
@@ -460,40 +459,42 @@ class _Stream:
                 self.done = True
                 continue
             if self.done:
-                raise _unknown("Go stream contains data after completion")
+                raise _unknown("Go stream contains data after completion", rejection_code="STREAM_AFTER_DONE")
             value = json.loads(payload)
             model = value.get("model") if not self.responses else (value.get("response") or {}).get("model")
             if model is not None:
                 if self.model is not None and self.model != model:
-                    raise _unknown("GO_MODEL_MISMATCH")
+                    raise _unknown("GO_MODEL_MISMATCH", rejection_code="STREAM_MODEL_CHANGED")
                 self.model = model
             if self.responses:
                 kind = value.get("type", "")
                 if kind in {"error", "response.failed", "response.incomplete"}:
-                    raise _unknown("Go stream failed")
+                    raise _unknown("Go stream failed", rejection_code={"error": "RESPONSES_ERROR",
+                        "response.failed": "RESPONSES_FAILED", "response.incomplete": "RESPONSES_INCOMPLETE"}[kind])
                 if kind == "response.completed":
                     self.result = value["response"]
                     self.done = True
                 # Responses completed contains authoritative full text/tools/usage.
             else:
                 if "error" in value:
-                    raise _unknown("Go stream failed")
+                    raise _unknown("Go stream failed", rejection_code="CHAT_ERROR")
                 choices = value.get("choices", [])
                 if not isinstance(choices, list) or len(choices) > 1:
-                    raise _unknown("Unexpected multiple choices")
+                    raise _unknown("Unexpected multiple choices", rejection_code=(
+                        "STREAM_CHOICES_SHAPE" if not isinstance(choices, list) else "STREAM_CHOICES_COUNT"))
                 for choice in choices:
                     if choice.get("index", 0) != 0:
-                        raise _unknown("Unexpected multiple choices")
+                        raise _unknown("Unexpected multiple choices", rejection_code="STREAM_CHOICE_INDEX")
                     if self.reason is not None:
-                        raise _unknown("Go stream contains a choice after its terminal event")
+                        raise _unknown("Go stream contains a choice after its terminal event", rejection_code="STREAM_AFTER_TERMINAL")
                     delta = choice.get("delta", {})
                     self.content += delta.get("content") or ""
                     for tool in delta.get("tool_calls", []):
                         index = tool["index"]
                         if type(index) is not int or index < 0:
-                            raise _unknown("Invalid streamed tool index")
+                            raise _unknown("Invalid streamed tool index", rejection_code="STREAM_TOOL_INDEX")
                         if tool.get("type", "function") != "function":
-                            raise _unknown("Unsupported streamed tool type")
+                            raise _unknown("Unsupported streamed tool type", rejection_code="STREAM_TOOL_TYPE")
                         call = self.calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                         call["id"] += tool.get("id", "")
                         for key in ("name", "arguments"):
@@ -502,17 +503,18 @@ class _Stream:
                         self.reason = choice["finish_reason"]
                 if value.get("usage") is not None:
                     if self.reason is None:
-                        raise _unknown("Go stream contains usage before its terminal choice")
+                        raise _unknown("Go stream contains usage before its terminal choice", rejection_code="STREAM_USAGE_EARLY")
                     if self.usage is not None:
-                        raise _unknown("Go stream contains repeated usage")
+                        raise _unknown("Go stream contains repeated usage", rejection_code="STREAM_USAGE_REPEATED")
                     self.usage = value["usage"]
 
     def finish(self):
         if self.buffer.strip() or not self.done:
-            raise _unknown("Go stream ended without a complete terminal event")
+            raise _unknown("Go stream ended without a complete terminal event", rejection_code=(
+                "STREAM_INCOMPLETE_BUFFER" if self.buffer.strip() else "STREAM_MISSING_TERMINAL"))
         if self.responses:
             if self.result is None:
-                raise _unknown()
+                raise _unknown(rejection_code="STREAM_MISSING_RESPONSE")
             return self.result
         return {"model": self.model, "choices": [{"finish_reason": self.reason, "message": {
             "content": self.content or None, "tool_calls": list(self.calls.values())}}], "usage": self.usage}
