@@ -359,3 +359,8 @@ egress: HTTP200 in282ms. No key read, body retention, inference or second probe.
 Seven budget/history/evidence files unchanged, both UNKNOWN retained, DeepSeek2/
 Luna0. This proves public endpoint reachability only. Root owns final draft PR
 and exact CI evidence; no merge or deployment.
+
+First managed-egress head CI found the Windows EAI_NONAME/EAI_NODATA numeric
+alias overwrote the canonical label. Root fixes fixed-order first-name mapping
+with a simulated Windows alias regression; sixcause tests/Ruff/WindowsPyright
+pass. Superseded CI cancelled, corrected exact CI follows. No probe rerun.

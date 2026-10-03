@@ -12,7 +12,18 @@ import httpx
 _ERRNOS = {getattr(errno, name): name for name in (
     "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ETIMEDOUT", "ENETUNREACH",
     "EHOSTUNREACH", "EPIPE", "EACCES", "EPERM") if hasattr(errno, name)}
-_DNS_ERRNOS = {getattr(socket, name): name for name in ("EAI_AGAIN", "EAI_NONAME", "EAI_FAIL", "EAI_NODATA") if hasattr(socket, name)}
+def _dns_errno_symbols():
+    # Windows aliases EAI_NODATA to EAI_NONAME. Retain the first canonical name
+    # rather than letting a later synonym overwrite the classification.
+    symbols = {}
+    for name in ("EAI_AGAIN", "EAI_NONAME", "EAI_FAIL", "EAI_NODATA"):
+        number = getattr(socket, name, None)
+        if type(number) is int:
+            symbols.setdefault(number, name)
+    return symbols
+
+
+_DNS_ERRNOS = _dns_errno_symbols()
 _PROXY_STATUSES = {"403 Forbidden": 403, "407 Proxy Authentication Required": 407, "451 Unavailable For Legal Reasons": 451}
 _TYPES = {
     socket.gaierror: ("gaierror", "DNS"),

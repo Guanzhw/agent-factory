@@ -70,3 +70,11 @@ synthetic HTTP responses passed (one test, 7.097s). Ruff and Windows-target
 Pyright pass. Nine changed files passed credential-pattern scanning. Production
 provider registration, API/schema and lifecycle permissions are unchanged;
 only the development Go client and the standalone no-auth diagnostic are affected.
+
+The first CI head exposed a Windows constant alias: EAI_NODATA and EAI_NONAME
+share a numeric value, so a dictionary comprehension retained the later synonym.
+The diagnostic map now preserves a fixed first-name precedence. An explicit
+Windows-alias simulation passes along with the six cause tests, Ruff and
+Windows-target Pyright. This affects only the safe label, not network routing or
+request counts. Superseded CI was cancelled; the corrected exact head is checked
+in the draft PR. The successful public GET was not repeated.

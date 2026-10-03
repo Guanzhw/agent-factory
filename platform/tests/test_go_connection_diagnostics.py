@@ -3,13 +3,18 @@ import json
 import socket
 import ssl
 import unittest
+from unittest.mock import patch
 
 import httpx
 
-from agent_factory.go_connection_diagnostics import safe_connection_diagnostic
+from agent_factory.go_connection_diagnostics import _dns_errno_symbols, safe_connection_diagnostic
 
 
 class GoConnectionDiagnosticTests(unittest.TestCase):
+    def test_windows_dns_alias_preserves_canonical_noname(self):
+        with patch.object(socket, "EAI_NONAME", 11001), patch.object(socket, "EAI_NODATA", 11001, create=True):
+            self.assertEqual(_dns_errno_symbols()[11001], "EAI_NONAME")
+
     def test_nested_cause_categories_errno_and_no_text(self):
         for nested, category in ((socket.gaierror(-2, "private-host"), "DNS"),
                 (ssl.SSLCertVerificationError("private-cert"), "TLS"),
