@@ -364,3 +364,22 @@ First managed-egress head CI found the Windows EAI_NONAME/EAI_NODATA numeric
 alias overwrote the canonical label. Root fixes fixed-order first-name mapping
 with a simulated Windows alias regression; sixcause tests/Ruff/WindowsPyright
 pass. Superseded CI cancelled, corrected exact CI follows. No probe rerun.
+
+## Final authorized DeepSeek smoke — 2026-10-03
+
+Base `e90de8a9a7ec69e00b5be896a6888216efcc3997`; branch
+`coord/go-final-single-smoke-20261003`. User authorizes exactly one new
+`deepseek-flash` synthetic coding request after managed-egress acceptance.
+The two historical UNKNOWNs remain occupied; cumulative DeepSeek cap is three,
+Luna remains zero. No product tool roundtrip, retries, PAYG fallback or deployment.
+
+| Owner | Scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | Adapter integration, final runner/tests, sole credential access and live dispatch | Durable gate and independent review | Offline validation in progress; no live call yet |
+| go_adapter | Final authorization gate and deterministic tests | Existing original persistent budget | In progress; mock-only, no secrets |
+| reviewer | Read-only gate/runner/client review | Final files | In progress; no live access |
+
+Final authority must be consumed atomically in the original budget, preserve
+both historical tickets, and never grant dispatch when reopening. Existing
+controlled proxy/CA, verified TLS, fixed official endpoint, retry zero,
+60-second timeout and 64-token output cap remain unchanged.

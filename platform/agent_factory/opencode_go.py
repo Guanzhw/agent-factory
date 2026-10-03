@@ -181,7 +181,8 @@ class GoDevelopmentModel(Model):
         if live_campaign is not None:
             from .go_live import GoLiveCampaign
             from .go_single_smoke import GoSingleSmokeCampaign
-            if type(live_campaign) not in {GoLiveCampaign, GoSingleSmokeCampaign} or native_retries or not wire_stream:
+            from .go_final_smoke import GoFinalSmokeCampaign
+            if type(live_campaign) not in {GoLiveCampaign, GoSingleSmokeCampaign, GoFinalSmokeCampaign} or native_retries or not wire_stream:
                 raise ValueError("Live validation requires an exact bounded campaign, streaming and zero retries")
             # The public live profile forbids transport injection. Exact mock
             # transport here remains available to offline adapter contract tests.
