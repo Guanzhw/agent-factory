@@ -413,3 +413,27 @@ tests, independent review 11+25 passed, full local 748 tests/298 skips passed in
 49.443s, Ruff/Windows Pyright passed. Runtime unchanged; no evidenced live root
 cause or assertion relaxation. Original and final exact CI outcomes are recorded
 in PR19. All nine protected files retain bytes and mtimes.
+
+## Safe rejection categories — bounded offline step
+
+Base `b905d9ea66e1adcebb858283dc2233f247a75103`; branch
+`coord/go-rejection-diagnostics-20261003`. No live model/public diagnostic calls,
+new billing batch, environment/account/security change, merge or deployment.
+
+| Owner | Exclusive scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | go_diagnostics.py, docs, integration, full checks and exact CI | Finite shared code/chain contract | In progress |
+| go_adapter | opencode_go.py throw-site annotations, test_go_rejection_sites.py | annotate_go_error helper | In progress, mocks only |
+| at10 | test_go_rejection_redaction.py | Safe diagnostics API | 10 focused tests passed, frozen |
+| reviewer | Independent read-only review | Frozen implementation/tests | Pending |
+
+Only future errors gain bounded diagnostic metadata. All three UNKNOWN tickets,
+DeepSeek 3/Luna 0 counts and historical evidence remain unchanged. Actual throw
+sites assign stable enum codes; no message-based inference or historical backfill.
+
+Implementation/review complete: actual throw-site categories and safe bounded
+causal metadata integrated; all 18 stream guards covered. Final focused16 tests
+passed, full764/298 skipped passed in44.627s, Ruff/WindowsPyright passed; independent
+review approved. Ordinary exception metadata is read at record time to retain
+raise-attached causes; wrappers retain sanitized bounded snapshots. Final exact
+CI pending in draft PR. No historical writes or new live calls.
