@@ -19,6 +19,7 @@ from agno.models.base import Model
 from agno.models.response import ModelResponse
 
 from .go_diagnostics import safe_diagnostic
+from .go_http import open_go_client
 
 BASE_URL = "https://opencode.ai/zen/go/v1"
 USER_AGENT = "agent-factory-dev/0.1 (+https://github.com/Guanzhw/agent-factory)"
@@ -362,8 +363,7 @@ class GoDevelopmentModel(Model):
             record("CREDENTIAL_CHECK")
             headers = self._headers(campaign_ticket=ticket)
             async with asyncio.timeout(self._timeout):
-                async with httpx.AsyncClient(timeout=self._timeout, trust_env=False, follow_redirects=False,
-                                            transport=self._async_transport) as client:
+                async with open_go_client(timeout=self._timeout, transport=self._async_transport) as client:
                     # This is a local call boundary, never proof of sent bytes
                     # or receipt by a remote socket/server.
                     record("DISPATCH_STARTED")
