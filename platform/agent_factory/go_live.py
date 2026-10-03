@@ -17,6 +17,8 @@ import stat
 import time
 from uuid import uuid4
 
+from .go_live_events import GoDiagnosticJournal
+
 MODELS = ("deepseek-v4-flash", "gpt-6-luna")
 _IDENTITY = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -69,6 +71,7 @@ class GoLiveCampaign:
                 """)
                 db.execute("INSERT INTO campaign VALUES(?,?,?,?,?,'ACTIVE',0,NULL,1,1)",
                            (campaign_id, owner_id, confirmation_id, now, expires_at))
+            GoDiagnosticJournal.create(str(path) + ".events.sqlite", campaign_id=campaign_id)
             return cls(path)
         except (OSError, sqlite3.Error):
             # A failed create is never reused or overwritten. The operator must
@@ -79,10 +82,13 @@ class GoLiveCampaign:
         self.path = Path(path).absolute()
         self._owned_tickets = set()
         self._identity = self._file_identity()
+        journal_path = Path(str(self.path) + ".events.sqlite")
+        self.journal = GoDiagnosticJournal(journal_path) if journal_path.exists() else None
         with self._transaction(write=False) as db:
             row = db.execute("SELECT * FROM campaign").fetchall()
             _require(len(row) == 1 and row[0]["balance_disabled"] == 1
                      and row[0]["auto_reload_disabled"] == 1, "CAMPAIGN_INVALID")
+            _require(self.journal is None or self.journal.campaign_id == row[0]["id"], "DIAGNOSTIC_CAMPAIGN_MISMATCH")
 
     def _file_identity(self):
         try:
@@ -95,6 +101,7 @@ class GoLiveCampaign:
 
     @contextmanager
     def _transaction(self, *, write=True):
+        _require(not write or self.journal is not None, "LEGACY_READ_ONLY")
         db = None
         try:
             _require(self._file_identity() == self._identity, "CAMPAIGN_FILE_CHANGED")
@@ -238,7 +245,20 @@ class GoLiveCampaign:
                      and parameters.get("required") == ["text"], "TOOL_SCOPE")
         return cap
 
+    def record_event(self, ticket, phase, **fields):
+        """Persist only safe diagnostic metadata for an existing owned attempt."""
+        journal = self.journal
+        if journal is None:
+            raise GoLiveGateError("DIAGNOSTICS_UNAVAILABLE")
+        _require(ticket in self._owned_tickets, "TICKET_NOT_OWNED")
+        with self._transaction(write=False) as db:
+            _require(db.execute("SELECT 1 FROM tickets WHERE id=?", (ticket,)).fetchone() is not None, "TICKET_UNKNOWN")
+        return journal.record(ticket, phase, **fields)
+
     def begin(self, session_id, model_id, body):
+        # Legacy files are inspection-only; never retrofit diagnostics or reset
+        # their request budget to enable another dispatch.
+        _require(self.journal is not None, "DIAGNOSTICS_UNAVAILABLE")
         with self._transaction() as db:
             self._active(db, model_id)
             binding = db.execute("SELECT purpose FROM sessions WHERE session=? AND model=?", (session_id, model_id)).fetchone()
@@ -260,6 +280,11 @@ class GoLiveCampaign:
             # to an observer on another thread. A failed COMMIT grants nothing:
             # both verification and admission still require the durable row.
             self._owned_tickets.add(ticket)
+        try:
+            self.record_event(ticket, "PREPARED")
+        except BaseException:
+            self.stop("UNKNOWN")
+            raise GoLiveGateError("DIAGNOSTICS_UNAVAILABLE") from None
         return ticket
 
     def finish(self, ticket, usage=None, actual_model=None, error_code=None):
@@ -299,7 +324,7 @@ class GoLiveCampaign:
             index = campaign["current_model"] + 1
             db.execute("UPDATE campaign SET current_model=?,status=?", (index, "DONE" if index == len(MODELS) else "ACTIVE"))
 
-    def inspect(self):
+    def inspect(self, *, include_diagnostics=True):
         with self._transaction(write=False) as db:
             row = dict(db.execute("SELECT * FROM campaign").fetchone())
             tickets = [dict(value) for value in db.execute("SELECT * FROM tickets ORDER BY ordinal")]
@@ -309,4 +334,5 @@ class GoLiveCampaign:
                     "expiresAt": row["expires"], "status": row["status"], "stopCode": row["stop_code"],
                     "currentModel": MODELS[row["current_model"]] if row["current_model"] < len(MODELS) else None,
                     "requestCount": len(tickets), "modelCounts": {model: sum(t["model"] == model for t in tickets) for model in MODELS},
-                    "tickets": tickets, "completions": [dict(value) for value in db.execute("SELECT * FROM completions")]}
+                    "tickets": tickets, "completions": [dict(value) for value in db.execute("SELECT * FROM completions")],
+                    **({"diagnostics": self.journal.inspect()} if include_diagnostics and self.journal is not None else {})}

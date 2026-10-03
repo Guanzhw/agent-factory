@@ -60,15 +60,16 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 
 ## Current acceptance and remaining work
 
-The preceding exact-head baseline is `d760b8af63c6692d0119c5386d7a7481076f61bc`
-([Draft PR13](https://github.com/Guanzhw/agent-factory/pull/13)): workflow
-37081501616 passed five jobs, confirmed twice 90.069 seconds apart; PostgreSQL ran
-624 tests with 63 explicit skips. The bounded live-validation continuation adds
-persistent request limits and native product tests. Its first real DeepSeek smoke
-attempt stopped UNKNOWN; GPT-6-Luna was not called. See the
+The preceding exact-head baseline is `45eeb6b88046a40f8743e01e69d10353be386499`
+([Draft PR15](https://github.com/Guanzhw/agent-factory/pull/15)): push/PR CI passed
+all ten jobs, observed twice 106.515 seconds apart; each PG suite ran 650 tests
+with 63 explicit skips. Its first real DeepSeek smoke attempt stopped UNKNOWN;
+GPT-6-Luna was not called. The current offline-only continuation adds durable safe
+diagnostics and corrects the unexplained version selection for `deepseek-flash`;
+it does not change the old outcome or send another request. See
 [current matrix](docs/ACCEPTANCE.md#current-matrix),
-[live evidence](docs/GO_LIVE_VALIDATION.md) and
-[delivery index](docs/DELIVERY_INDEX.md). Final continuation-head CI is in its draft PR.
+[diagnostic boundaries](docs/GO_SAFE_DIAGNOSTICS.md) and
+[delivery index](docs/DELIVERY_INDEX.md). New-head CI is in its draft PR.
 
 | Available and measured | Boundary still open |
 |---|---|
