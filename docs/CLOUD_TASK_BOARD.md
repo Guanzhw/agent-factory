@@ -254,3 +254,49 @@ tests passed and independent reviewer approved. No core lifecycle change.
 
 Final integrated offline run: 650 tests / 298 skips passed in 45.461s; existing
 actual HTTP/PG Go cases 7/7 passed in 46.958s. Ruff/Pyright and web checks pass.
+
+
+## Safe Go diagnostics continuation — 2026-10-03
+
+Base `45eeb6b88046a40f8743e01e69d10353be386499` (PR15, all ten exact CI jobs
+passed, two terminal observations 106.515s apart). New branch:
+`coord/go-safe-diagnostics-20261003`. **Offline only; no new real request.**
+
+| Owner | Exclusive scope | Dependency | Acceptance / blockers |
+| --- | --- | --- | --- |
+| root | Campaign integration, API/schema boundary, model-selection provenance, docs, final commit/CI | Worker interfaces and independent review | In progress |
+| go_adapter | Provider diagnostic phases, safe exception/header normalization, focused tests | campaign.record_event | In progress; no secret access |
+| at10 | New append-only diagnostic journal, runner events/exact-model selection, crash tests | safe_diagnostic | In progress; no secret access |
+| reviewer | Independent read-only disclosure/crash/replay/alias review | Integrated implementation | Design constraints delivered |
+
+Historical smoke evidence and its one UNKNOWN slot are immutable for this work.
+A separate manifest snapshots the three existing evidence files outside Git;
+workers do not access them. New diagnostics cannot backfill the lost HTTP facts.
+The original user name `deepseek-flash` was not proven equivalent to the selected
+versioned model; root will document this selection discrepancy and require explicit
+exact-version selection for any future operator campaign.
+
+
+Diagnostics stage integrated/frozen: provider worker, runner/journal worker and
+root campaign boundary complete. Independent review no blockers, 82 targeted
+tests passed. Full offline682/298skips passed44.056s; native PG six-mock-request
+path passed9.191s; Ruff/Pyright pass. Root verified all three old evidence files'
+bytes+mtime unchanged. No additional real request. Final commit/draft PR/exact CI
+remain root-owned; recorded in PR to avoid invalidating the verified head.
+
+First diagnostics CI found Windows Pyright rejects three direct POSIX flag
+references. AT10 worker fixed guarded lookup with unchanged fail-closed platform
+checks; five journal tests and Windows-target Pyright pass. Root requested
+cancellation of superseded runs37105481904/37105520150 to avoid duplicate heavy
+work, then advances PR16 to the corrected head for fresh exact CI.
+
+Windows typechecking passed at679537e, then the ORX test fixture's shared JSONL
+reader reported malformed JSON during concurrent subprocess execution. Exact bad
+bytes were not saved; shared-append interleaving is an inference. AT10 replaced
+only fixture logging with independently published complete JSON records, preserving
+strict parsing, actual subprocesses, once-launch assertions and deadlines.18tests
+passed4.216s and reviewer approved. Root cancelled superseded CI and revalidates
+all tests on the next final head; no production diagnostic or lifecycle change.
+
+Final integrated offline684/298skips passed46.341s; Windows-target Pyright and
+Ruff pass. Root alone owns final push/PR16 exact CI and terminal evidence.

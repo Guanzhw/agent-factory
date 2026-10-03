@@ -18,6 +18,8 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
+from .go_diagnostics import safe_diagnostic
+
 BASE_URL = "https://opencode.ai/zen/go/v1"
 USER_AGENT = "agent-factory-dev/0.1 (+https://github.com/Guanzhw/agent-factory)"
 MODELS = {"deepseek-v4-flash": "chat/completions", "deepseek-v4.1-flash": "chat/completions",
@@ -74,9 +76,14 @@ class GoLoopbackTransport(httpx.AsyncBaseTransport):
             raise
 
 
-def _unknown(message="Go protocol response is invalid", status=400):
+def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None):
     # Never interpolate server bodies, request headers, credentials or SDK errors.
-    return ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
+    error = ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
+    setattr(error, "_go_code", message if message in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN")
+    if original_error is not None:
+        metadata = safe_diagnostic("FAILED", error=original_error)
+        setattr(error, "_go_diagnostic", (metadata["errorType"], metadata["errorCategory"]))
+    return error
 
 
 class GoResponseRejected(ModelProviderError):
@@ -84,6 +91,7 @@ class GoResponseRejected(ModelProviderError):
     def __init__(self, code, usage):
         super().__init__(message=code, status_code=400, model_name="OpenCode Go development")
         self.response_usage = usage
+        self._go_code = code if code in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN"
 
 
 class GoCancelledWithUsage(asyncio.CancelledError):
@@ -184,18 +192,29 @@ class GoDevelopmentModel(Model):
                 allowed = True
             else:
                 allowed = self._billing is not None and self._billing(self._session, self.id) is True
-        except Exception:
+        except Exception as error:
+            self._credential_diagnostic(campaign_ticket, error)
             allowed = False
         if not allowed:
             raise _unknown("GO_SUBSCRIPTION_ONLY_UNVERIFIED")
         try:
             secret = self._credential()
-        except Exception:
-            raise _unknown("GO_CREDENTIAL_UNAVAILABLE") from None
+        except Exception as error:
+            self._credential_diagnostic(campaign_ticket, error)
+            raise _unknown("GO_CREDENTIAL_UNAVAILABLE", original_error=error) from None
         if not isinstance(secret, str) or not secret or any(c.isspace() for c in secret):
             raise _unknown("GO_CREDENTIAL_UNAVAILABLE")
         return {"Authorization": "Bearer " + secret, "User-Agent": USER_AGENT,
                 "x-opencode-session": self._session}
+
+    def _credential_diagnostic(self, ticket, error):
+        if self._live_campaign is not None and ticket is not None:
+            try:
+                self._live_campaign.record_event(ticket, "CREDENTIAL_CHECK", error=error)
+            except Exception:
+                # This path already refuses credentials/HTTP. Preserve its
+                # original error; the outer handler settles/stops the slot.
+                pass
 
     def _body(self, messages, *, stream=False, tools=None, tool_choice=None, response_format=None, **kwargs):
         if response_format is not None:
@@ -280,8 +299,8 @@ class GoDevelopmentModel(Model):
             if self._live_campaign is not None and response.get("model") != self.id:
                 raise GoResponseRejected("GO_MODEL_MISMATCH", result.response_usage)
             return result
-        except (KeyError, TypeError, IndexError, AttributeError):
-            raise _unknown() from None
+        except (KeyError, TypeError, IndexError, AttributeError) as error:
+            raise _unknown(original_error=error) from None
 
     def _parse_provider_response_delta(self, response):
         return response
@@ -323,12 +342,25 @@ class GoDevelopmentModel(Model):
         known_usage = None
         actual_model = None
         finishing = False
+        phase = "CREDENTIAL_CHECK"
+
+        def record(next_phase, **fields):
+            nonlocal phase
+            phase = next_phase
+            if campaign is not None:
+                campaign.record_event(ticket, next_phase, **fields)
+
         try:
+            record("CREDENTIAL_CHECK")
             headers = self._headers(campaign_ticket=ticket)
             async with asyncio.timeout(self._timeout):
                 async with httpx.AsyncClient(timeout=self._timeout, trust_env=False, follow_redirects=False,
                                             transport=self._async_transport) as client:
+                    # This is a local call boundary, never proof of sent bytes
+                    # or receipt by a remote socket/server.
+                    record("DISPATCH_STARTED")
                     async with client.stream("POST", BASE_URL + "/" + MODELS[self.id], headers=headers, json=body) as response:
+                        record("RESPONSE_HEADERS", http_status=response.status_code, response_headers=response.headers)
                         self._check(response, started)
                         data = bytearray()
                         async for chunk in response.aiter_bytes():
@@ -338,10 +370,12 @@ class GoDevelopmentModel(Model):
                                 data.extend(chunk)
                                 if len(data) > MAX_BYTES:
                                     raise _unknown("Go response exceeds size bound")
+                        record("STREAM_COMPLETED")
                         payload = state.finish() if state is not None else json.loads(data)
                         result = self._parse_provider_response(payload)
                         known_usage = result.response_usage
                         actual_model = payload.get("model")
+                        record("PARSED")
                         if campaign is not None and (known_usage.input_tokens > 32768 or known_usage.output_tokens > self._cap):
                             raise GoResponseRejected("GO_USAGE_BOUND_EXCEEDED", known_usage)
             # Account only after both stream and client cleanup have completed.
@@ -354,11 +388,18 @@ class GoDevelopmentModel(Model):
         except BaseException as error:
             usage = getattr(error, "response_usage", None) or known_usage
             if campaign is not None and ticket is not None:
+                try:
+                    campaign.record_event(ticket, phase, error=error)
+                    campaign.record_event(ticket, "FAILED", error=error)
+                except Exception:
+                    # A failed journal must never mask the original failure or
+                    # discard parsed usage. No HTTP can continue on this path.
+                    pass
                 status = getattr(error, "status_code", None)
                 code = ("AUTH" if status in {401, 403} else "QUOTA" if status in {402, 429} else
                     "CANCELLED" if isinstance(error, asyncio.CancelledError) else
-                    "MODEL_MISMATCH" if str(error) == "GO_MODEL_MISMATCH" else
-                    "USAGE_BOUND" if str(error) == "GO_USAGE_BOUND_EXCEEDED" else "UNKNOWN")
+                    "MODEL_MISMATCH" if getattr(error, "_go_code", None) == "GO_MODEL_MISMATCH" else
+                    "USAGE_BOUND" if getattr(error, "_go_code", None) == "GO_USAGE_BOUND_EXCEEDED" else "UNKNOWN")
                 try:
                     if finishing:
                         campaign.stop(code)
@@ -378,7 +419,7 @@ class GoDevelopmentModel(Model):
                 raise GoResponseRejected("GO_LIVE_RESPONSE_REJECTED", usage) from None
             if isinstance(error, ModelProviderError):
                 raise
-            raise _unknown("Go transport or JSON failure") from None
+            raise _unknown("Go transport or JSON failure", original_error=error) from None
 
 
 class _Stream:

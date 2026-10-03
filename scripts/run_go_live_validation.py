@@ -25,6 +25,7 @@ from agent_factory.config import Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
+from agent_factory.go_diagnostics import safe_diagnostic
 from agent_factory.main import create_app
 from agent_factory.opencode_go import GoDevelopmentModel
 from agent_factory.usage_ledger import UsagePolicy
@@ -43,21 +44,42 @@ def credential():
 
 def run(args):
     root = Path(args.evidence_directory).absolute()
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = root / "campaign.sqlite"
     if path.exists():
         # Reinvocation can inspect, but cannot silently create a new budget.
         return {"execution": "inspection-only", "campaign": GoLiveCampaign(path).inspect()}
     require(args.execute_authorized_live and args.use_balance_off and args.auto_reload_off)
+    require(getattr(args, "exact_model_sequence", None) == ",".join(MODELS))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
     campaign = GoLiveCampaign.create(path, campaign_id=args.campaign_id, owner_id="alice",
         confirmation_id=args.confirmation_id, use_balance_disabled=True,
         auto_reload_disabled=True, expires_at=time.time() + 3600)
     evidence = {"execution": "live", "accountSettings": "user-attested-off",
                 "invoiceVerified": False, "models": [], "campaign": None}
+    def persistence_failure(operation, error):
+        evidence.setdefault("diagnosticPersistence", []).append({
+            "operation": operation, "status": "failed",
+            "diagnostic": safe_diagnostic("RUNNER_FAILED", error=error)})
+
+    def stop_safely(code):
+        try:
+            campaign.stop(code)
+        except BaseException as error:
+            persistence_failure("campaign-stop", error)
+
+    def record_safely(stage, error=None):
+        try:
+            require(campaign.journal is not None)
+            campaign.journal.record("runner", stage, error=error)
+        except BaseException as failure:
+            persistence_failure(stage, failure)
+
     phase = "setup"
     active_task = None
     store = None
     try:
+        require(campaign.journal is not None)
+        campaign.journal.record("runner", "RUNNER_STARTED")
         with ExitStack() as stack:
             handle = GoDevelopmentHandle(mode="subscription", credential=credential,
                 wire_stream=True, native_retries=0, live_campaign=campaign)
@@ -154,8 +176,16 @@ def run(args):
                 evidence["models"].append({"model": model, "taskId": task, "planId": plan["id"],
                     "receiptVerified": True, "artifactSha256": digest, "usage": usage,
                     "status": "completed"})
-    except BaseException:
-        campaign.stop("UNKNOWN")
+        phase = "completion-diagnostics"
+        campaign.journal.record("runner", "RUNNER_COMPLETED")
+    except BaseException as error:
+        diagnostic = safe_diagnostic("RUNNER_FAILED", error=error)
+        if phase == "completion-diagnostics":
+            persistence_failure("RUNNER_COMPLETED", error)
+        stop_safely("CANCELLED" if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt)) else "UNKNOWN")
+        record_safely("RUNNER_FAILED", error)
+        record_safely("RUNNER_STOPPED")
+        evidence["diagnostic"] = diagnostic
         evidence["status"] = "stopped"
         evidence["stoppedPhase"] = phase
         if active_task is not None and store is not None:
@@ -166,8 +196,18 @@ def run(args):
                 evidence["incompleteTask"] = {"taskId": active_task, "inspection": "unavailable"}
     else:
         evidence["status"] = "completed"
-    evidence["campaign"] = campaign.inspect()
-    (root / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    try:
+        evidence["campaign"] = campaign.inspect()
+    except BaseException as error:
+        persistence_failure("campaign-inspect", error)
+        try:
+            evidence["campaign"] = campaign.inspect(include_diagnostics=False)
+        except BaseException as failure:
+            persistence_failure("campaign-facts", failure)
+    try:
+        (root / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    except BaseException as error:
+        persistence_failure("evidence-write", error)
     return evidence
 
 
@@ -176,6 +216,7 @@ def main():
     parser.add_argument("--execute-authorized-live", action="store_true")
     parser.add_argument("--use-balance-off", action="store_true")
     parser.add_argument("--auto-reload-off", action="store_true")
+    parser.add_argument("--exact-model-sequence", help="New execution requires exactly deepseek-v4-flash,gpt-6-luna; no alias substitution")
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--confirmation-id", required=True)
     parser.add_argument("--evidence-directory", required=True)
@@ -186,8 +227,9 @@ def main():
     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
         try:
             result = run(args)
-        except BaseException:
-            result = {"status": "operator-setup-failed"}
+        except BaseException as error:
+            result = {"status": "operator-setup-failed",
+                      "diagnostic": safe_diagnostic("RUNNER_FAILED", error=error)}
     print(json.dumps(result, indent=2))
 
 

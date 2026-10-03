@@ -26,7 +26,9 @@ then explicitly select `go-development-checksum` and one exact model mode:
 - `deepseek-v4-flash`: Chat Completions.
 - `gpt-6-luna`: Responses, with its own parser and tool encoding.
 
-The unversioned `deepseek-flash` alias is not selected. The application is excluded
+The unversioned `deepseek-flash` alias is not selected. The historical runner
+selected v4 despite the user naming the alias; equivalence was not established.
+See the [model-selection correction](GO_SAFE_DIAGNOSTICS.md). The application is excluded
 from automatic discovery, including a republished definition marked as default.
 Only the checksum coding fixture tool and standalone task scope are admitted;
 delegation, substituted materials, other apps and arbitrary endpoints are denied.

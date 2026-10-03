@@ -2,11 +2,12 @@
 
 ## Current matrix
 
-Preceding exact-head baseline: **`d760b8af63c6692d0119c5386d7a7481076f61bc`**,
-Draft PR13 workflow 37081501616, all five jobs passed, two terminal observations
-90.069 seconds apart; PostgreSQL 624 tests / 63 skips. The current bounded Go
-continuation is detailed in [live validation](GO_LIVE_VALIDATION.md); its exact CI
-belongs to the new draft PR. No prior-head CI is relabeled as continuation proof.
+Preceding exact-head baseline: **`45eeb6b88046a40f8743e01e69d10353be386499`**,
+Draft PR15 push 37103072210 and PR 37103111700, all ten jobs passed, two root
+terminal observations 106.515 seconds apart; PostgreSQL 650 tests / 63 skips in
+each run. The current [safe-diagnostics correction](GO_SAFE_DIAGNOSTICS.md) is
+strictly offline; exact new-head CI belongs to its own draft PR. No prior-head
+CI or synthetic diagnostic fault is relabeled as live provider acceptance.
 
 The delivery target remains complete factory/v0.3 plus the agreed extensions.
 This matrix separates implemented mechanisms, further code and real-environment

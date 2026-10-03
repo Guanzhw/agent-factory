@@ -67,8 +67,10 @@ reopened campaign cannot replay an existing in-flight ticket.
   earlier commits.
 
 Official mapping and scope were checked at [Go documentation](https://opencode.ai/docs/go/):
-`deepseek-v4-flash` uses Chat Completions; `gpt-6-luna` uses Responses. No undocumented
-`deepseek-flash` alias, production/research traffic or coding-agent impersonation.
+`deepseek-v4-flash` uses Chat Completions; `gpt-6-luna` uses Responses. The user requested `deepseek-flash`, but this runner selected `deepseek-v4-flash`
+without proving equivalence. This selection discrepancy and the mandatory explicit
+future version choice are documented in [diagnostics correction](GO_SAFE_DIAGNOSTICS.md).
+No production/research traffic or coding-agent impersonation is claimed.
 
 
 An intermediate full-suite rerun exposed an older ORX concurrency fixture race:
@@ -81,3 +83,7 @@ review passed. The affected 16-test file passed in 3.319 seconds.
 A subsequent execution-shell disconnect did not reset this campaign. After shell
 recovery, SQLite and the saved JSON evidence matched exactly: STOPPED/UNKNOWN,
 DeepSeek 1, Luna 0. No live runner process remained; zero new requests were sent.
+
+
+The [offline diagnostics correction](GO_SAFE_DIAGNOSTICS.md) adds safe prospective
+events. It neither recovers missing historical facts nor changes this UNKNOWN slot.

@@ -104,3 +104,14 @@ adds durable live admission and separate offline native-product tests; actual
 live result is UNKNOWN after one DeepSeek smoke slot, zero Luna attempts.
 See [bounded validation](GO_LIVE_VALIDATION.md). Final exact CI is maintained in
 the new draft PR, with no merge or deployment.
+
+
+## Offline safe-diagnostics continuation
+
+Branch `coord/go-safe-diagnostics-20261003` starts at PR15 head
+`45eeb6b88046a40f8743e01e69d10353be386499`. PR15 push 37103072210 and PR run
+37103111700 passed all ten jobs; each PG suite ran 650 tests with 63 skips. Root's
+two terminal observations were 106.515 seconds apart. The following diagnostics
+stage is offline only: [scope, model-selection correction and boundaries](GO_SAFE_DIAGNOSTICS.md).
+No historical evidence is overwritten and no second real request is sent. Final
+new-head CI belongs to its draft PR, not to the preceding commit's results.
