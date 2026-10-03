@@ -217,6 +217,20 @@ class FactoryAPI:
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
+        if (str((snapshot.get("run", snapshot)).get("status")).lower() in {"paused", "runstatus.paused"}
+                and (snapshot.get("queue") or {}).get("status") == "paused"
+                and any((r.get("tool_execution") or {}).get("tool_name") == "orx_experiment_run"
+                        for r in native_requirements(snapshot))):
+            try:
+                recovery = await self.commands.approved_recovery(task, snapshot)
+            except Exception:
+                # Eligibility is advisory; absent/unverifiable original proof
+                # cannot grant a repair or erase the existing paused receipt.
+                pass
+            else:
+                job["recoveryDetail"] = recovery["recoveryDetail"]
+                actions[:] = [action for action in actions if action != "approve"]
+                actions.append("resume_approved")
         if delegation_scope and delegation_scope.get("executionUnavailable"):
             job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
         try:

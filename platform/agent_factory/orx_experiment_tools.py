@@ -344,10 +344,14 @@ async def _operation(store: Any, ctx: RunContext, plan: dict[str, Any], binding:
 
 
 def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, contract_revision: str = "1") -> dict[str, Any]:
-    async def prepare(ctx: RunContext, tool_name: str) -> tuple[dict[str, Any], ResolvedExperimentBinding]:
+    async def prepare(ctx: RunContext, tool_name: str, *, allow_completed=False) -> tuple[dict[str, Any], ResolvedExperimentBinding]:
         plan = store.resolve_run(ctx)
         _plan_check(store, ctx, plan, tool_name, contract_revision)
         binding = await _resolve(resolver, ctx, plan, tool_name)
+        if (allow_completed and os.name == "posix" and binding.contract_revision == "2"
+                and any(e["effect_key"] == ctx.run_id + ":" + LAUNCH_EFFECT_KEY and e["status"] == "DONE"
+                        for e in store.effects(ctx.session_id))):
+            return plan, binding
         await binding.adapter.ensure_experiment()
         _record_binding(store, plan, ctx, binding)
         return plan, binding
@@ -387,7 +391,10 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, con
         return json.dumps(result, sort_keys=True)
 
     async def orx_experiment_run(run_context: RunContext) -> str:
-        plan, binding = await prepare(run_context, TOOL_NAMES[1])
+        plan, binding = await prepare(run_context, TOOL_NAMES[1], allow_completed=True)
+        completed = await completed_evidence(run_context, plan, binding, TOOL_NAMES[1])
+        if completed is not None:
+            return json.dumps(completed[0], sort_keys=True)
         request = _request(plan, run_context, binding)
         with store.transaction():
             reservation = store.effect_reserve(run_context.run_id, LAUNCH_EFFECT_KEY, request)
@@ -414,10 +421,42 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, con
                 binding.adapter.launch_experiment(), deadline=deadline)
         return json.dumps(await settle(run_context, plan, binding, receipt), sort_keys=True)
 
+    async def completed_evidence(run_context, plan, binding, tool_name):
+        # A recovered native transcript may still ask to wait after the
+        # observer sealed the original outcome. Verify it read-only instead
+        # of starting a CLI in an already stopped, deadline-bound namespace.
+        if os.name == "posix" and binding.contract_revision == "2":
+            completed = next((e for e in store.effects(run_context.session_id)
+                if e["effect_key"] == run_context.run_id + ":" + LAUNCH_EFFECT_KEY
+                and e["status"] == "DONE"), None)
+            if completed is not None:
+                original = original_experiment_binding(settings, store, run_context.session_id)
+                if original is None:
+                    raise PermissionError("Original completed experiment binding is missing")
+                original_binding = original[3]
+                receipt = original_binding.adapter.observe_existing()
+                result = _public_result(plan, run_context, original_binding, receipt,
+                    digest(_request(plan, run_context, original_binding)))
+                saved = completed["result"]
+                if (result["status"] not in _TERMINAL or result.get("stopEvidence", {}).get("allStopped") is not True
+                        or any(result.get(key) != saved.get(key) for key in
+                            ("taskId", "planId", "nativeRunId", "orxRunId", "effectFingerprint", "status"))
+                        or result["effectFingerprint"] != digest(_request(plan, run_context, binding))):
+                    raise PermissionError("Original completed experiment evidence differs")
+                _plan_check(store, run_context, plan, tool_name, binding.contract_revision)
+                current_binding = await _resolve(resolver, run_context, plan, tool_name)
+                if _identity(current_binding) != _identity(binding):
+                    raise PermissionError("The task experiment connection changed during observation")
+                return saved, original_binding.adapter
+        return None
+
     async def orx_experiment_wait(run_context: RunContext, timeout_seconds: int = 10) -> str:
         if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 30:
             raise ValueError("Wait timeout must be an integer between 1 and 30 seconds")
-        plan, binding = await prepare(run_context, TOOL_NAMES[2])
+        plan, binding = await prepare(run_context, TOOL_NAMES[2], allow_completed=True)
+        completed = await completed_evidence(run_context, plan, binding, TOOL_NAMES[2])
+        if completed is not None:
+            return json.dumps(completed[0], sort_keys=True)
         receipt = await _operation(store, run_context, plan, binding, resolver, TOOL_NAMES[2],
             binding.adapter.wait_experiment(timeout_seconds=timeout_seconds), deadline=timeout_seconds + 5)
         return json.dumps(await settle(run_context, plan, binding, receipt), sort_keys=True)
@@ -428,8 +467,10 @@ def make_orx_experiment_tools(settings: Any, store: Any, resolver: Callable, con
         return json.dumps(await settle(run_context, plan, binding, receipt), sort_keys=True)
 
     async def orx_experiment_logs(run_context: RunContext) -> str:
-        plan, binding = await prepare(run_context, TOOL_NAMES[4])
-        logs = await binding.adapter.run_logs()
+        plan, binding = await prepare(run_context, TOOL_NAMES[4], allow_completed=True)
+        completed = await completed_evidence(run_context, plan, binding, TOOL_NAMES[4])
+        logs = (completed[1].read_completed_logs() if completed is not None
+                else await binding.adapter.run_logs())
         current = await _resolve(resolver, run_context, plan)
         if _identity(current) != _identity(binding):
             raise PermissionError("The task experiment connection changed during log inspection")

@@ -11,7 +11,7 @@ export function commandNotice(receipt: ControlReceipt): string {
   if (receipt.state === 'REJECTED') return '原请求未通过当前状态或权限检查，未派发。';
   return '提交结果未知。已保留原命令；只核对回执，不会自动再次执行。';
 }
-const actionName = (action: string) => ({ answer: '回答', approve: '审批决定', cancel: '取消' })[action] ?? '任务操作';
+const actionName = (action: string) => ({ answer: '回答', approve: '审批决定', cancel: '取消', resume_approved: '恢复已记录审批' })[action] ?? '任务操作';
 
 export function ControlRecovery({ ownerId, onSelect, busy, act }: {
   ownerId: string; onSelect: (task: string) => void; busy: string;

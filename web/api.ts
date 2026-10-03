@@ -40,7 +40,7 @@ export function validateControlReceipt(value: unknown, owner: string, task?: str
   const r = value as ControlReceipt;
   const valid = r.ownerId === owner && typeof r.taskId === 'string' && (!task || r.taskId === task)
     && typeof r.commandId === 'string' && /^[a-zA-Z0-9_.:-]{8,100}$/.test(r.commandId) && (!commandId || r.commandId === commandId)
-    && ['answer', 'approve', 'cancel'].includes(r.action) && /^[a-f0-9]{64}$/.test(r.fingerprint) && /^[a-f0-9]{64}$/.test(r.decisionSha256)
+    && ['answer', 'approve', 'cancel', 'resume_approved'].includes(r.action) && /^[a-f0-9]{64}$/.test(r.fingerprint) && /^[a-f0-9]{64}$/.test(r.decisionSha256)
     && ['INTENT_RECORDED', 'UNKNOWN', 'REJECTED', 'DECISION_RECORDED', 'EXECUTION_CONTINUING', 'STOP_CONFIRMED'].includes(r.state)
     && r.intentRecorded === true && ['decisionRecorded', 'executionContinuing', 'stopConfirmed', 'canDispatch', 'acknowledged'].every(k => typeof (r as unknown as Record<string, unknown>)[k] === 'boolean')
     && !!r.binding && r.binding.ownerId === owner && r.binding.taskId === r.taskId.split('~')[0]

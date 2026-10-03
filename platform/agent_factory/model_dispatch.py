@@ -53,7 +53,7 @@ class DelegatingModel(Model):
             self.bindings.recheck(latest, context)
 
         current()
-        from .inference_wait import read as read_wait, current as check_wait
+        from .inference_wait import read as read_wait, observe as check_wait
         waiting = read_wait(store, task["id"]) if getattr(store, "usage_ledger", None) is not None else None
         if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
             check_wait(store, task, waiting)

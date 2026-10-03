@@ -1,0 +1,120 @@
+# Cloud WIP checkpoint handoff — 2026-10-02
+
+This is preservation of incomplete project work, not an acceptance release.
+Parent instruction explicitly authorizes a separate WIP commit/push and then
+pauses changes until a dedicated coordinator resumes. The commit containing this
+document is the checkpoint; obtain its exact ID with `git rev-parse HEAD`.
+Base: `4e1f29900080ad6004fd33f55580b9fe5ea75c37`, descended from the original
+`6793a96c21be88f7145efc55a1312a06ab787628`. Do not reset to main or recreate work.
+No merge, deployment, live provider call or production acceptance is implied.
+
+## Ownership and saved implementation
+
+Root is the sole integration writer. Both existing workers are completed and
+frozen: `/root/go_adapter` delivered offline Go transport and then the separately
+assigned approval-recovery bridge/API/control work; `/root/at10_review` completed
+independent read-only review. Process inspection at preservation found no active
+Python unittest, inference-tree worker or recovery-browser process. No worker
+needs termination; retain test data, working tree and evidence.
+
+Saved AT10 work includes persisted tree/receiver ownership and fresh authority
+checks, ancestor/shared usage ceilings, original stopped-work proof, read-only
+completed ORX receipts/logs without namespace wake, recovered-child reconciliation,
+explicit `resume_approved` recovery with a separate durable receipt and Agno's
+public queue CAS, frontend recovery controls, and synthetic actual-runtime tests.
+The original approval is never silently dispatched again. Deadlines, UNKNOWN
+holds and resource reservations remain in force. No native failed-row rewrite.
+
+Go is an unregistered, billing-gated development adapter with bounded single
+requests, buffered SSE, strict usage parsing and offline tests. See
+[Go limits](OPENCODE_GO.md). Boolean-only `OPENCODE_GO` presence/nonempty check
+at preservation: **false**. No credential value was printed or transferred and
+no new live calls were made. Subscription-only billing verification, a proven
+input-token guard, immutable pricing and real registration remain absent.
+
+## Evidence and failure status
+
+- Latest combined `test_inference_wait`, `test_approved_recovery`,
+  `test_opencode_go`: **50 tests passed**, 0.133 seconds. Pyright: **0 errors,
+  0 warnings**. These are focused checks, not full acceptance.
+- Prior frontend check: 64 tests in 9 files plus lint/typecheck/build passed.
+  No full backend regression or exact-checkpoint CI was completed for this WIP.
+- Latest actual remote-parent test **FAILED**, 1 test in 94.036 seconds:
+  `ActualReceiverParentInferenceTests.test_parent_inference_fault_preserves_acknowledged_child_work`.
+  The receiver child reaches running, then queued/failed before launch approval.
+  `orx_experiment_inspect` emits `tool_failed.errorType=CancelledError`.
+  This is pre-recovery failure and does not prove the origin-forwarded repair.
+- Earlier local parent/child recovery passed; receiver root/child restart and all
+  eight receiver safety scenarios have passing runs across separate invocations.
+  They do not establish a green combined final matrix. Local parent cancellation
+  and child-overrun actual tests, the optional new browser helper and final full
+  regression remain pending. See [scenario matrix](AT10_TREE_ACCEPTANCE.md).
+- Independent final review and its 16 approval-recovery contracts passed; review
+  is not a substitute for the failed remote-parent run or CI.
+
+Cloud-local logs retained outside Git (do not publish raw generated configs):
+
+| Path under `/workspace/scratch/orx-linux/` | Evidence |
+|---|---|
+| `at10-tree-origin-repair.log` | Latest failing origin-forwarded remote-parent test |
+| `at10-tree-pyright.log` | Zero-error static check |
+| `at10-tree-core-contracts.log` | 50 focused passes |
+| `at10-tree-approved-recovery-first.log` | Local parent repair and source outage pass; remote parent failure |
+| `at10-tree-parent-reconcile.log` | Earlier receiver-child pass, earlier parent failures |
+| `at10-tree-evidence/` | Per-case synthetic identity/stop receipts and service logs |
+
+The optional `FACTORY_AT10_TIMING=1` diagnostic remains in the test worker.
+It records aggregate current-authority and CLI call time, not arguments/secrets.
+One in-flight sample showed 80 authority calls taking about 19.7 seconds and one
+CLI call about 3.43 seconds. Repeated synchronous authority checks/event-loop
+contention is a hypothesis, not an established cause. Native execution has a
+60-second bound; diagnose cancellation without enlarging it or caching authority.
+Remove or formalize the temporary diagnostic only during resumed development.
+
+## Preservation checks
+
+The 31 changed/new source and documentation files were scanned for private-key
+blocks, provider/GitHub/AWS key formats, literal JWTs and credential-bearing URLs;
+no matches were found. Credential-related fixture code was checked for synthetic
+values and runtime generation. This is a bounded pattern/manual scan, not a
+claim that every possible secret format can be detected. Raw logs, generated
+JWT/database configs, caches, environments and browser profiles are excluded.
+`git diff --check` passed. No business-code fixes or new acceptance runs were
+performed during checkpoint preservation.
+
+## Environment and resumption
+
+Workspace `/workspace/agent-factory`: Debian 13.6, Python 3.12.14, Agno 3.1.0,
+Node 24.19.0/npm 11.9.0, Docker 28.4; cgroup allocation 4 CPU/16 GiB.
+All 50 installed Python packages passed `uv pip check`; this is dependency
+compatibility only. Set `UV_CACHE_DIR=/workspace/.cache/uv` because the default
+home cache is read-only. PostgreSQL 17.11 fixture is loopback-only on 65432.
+Pinned real ORX source is `f336b121525d99364e2dee4fe90b2784894a54e6` (CLI 0.2.13).
+See [Linux setup](LINUX_ORX.md), [verification](VERIFICATION.md) and CI locks.
+Existing local preparation files are in
+`/workspace/scratch/agent-factory-cloud-prep/` (`reproduce.sh`, `test-env.sh`).
+Do not copy local user data, real credentials or global configuration.
+
+For focused checks:
+
+```sh
+PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest \
+  test_inference_wait test_approved_recovery test_opencode_go -v
+.venv/bin/pyright
+```
+
+Actual tests require explicit owned ORX/PG fixture opt-in from the retained
+`/workspace/scratch/orx-linux/env.sh`, sufficient workspace disk and serial heavy
+execution. `/tmp` cannot satisfy the parent/child admission reservations.
+Set `FACTORY_AT10_FIXTURE_ROOT=/workspace/scratch/orx-linux` and
+`FACTORY_AT10_TREE_EVIDENCE_DIR=/workspace/scratch/orx-linux/at10-tree-evidence`.
+Run the single failing class first after diagnosis. Optional browser execution
+uses `FACTORY_AT10_BROWSER_PYTHON` pointing at the retained browser venv and
+`PLAYWRIGHT_BROWSERS_PATH` at its owned browsers directory; not yet accepted.
+
+Next coordinator should diagnose remote inspect cancellation, verify the explicit
+origin-forwarded recovery and browser path, complete remaining actual cases and
+full regression/audits, then obtain both exact-final-HEAD CI workflows green.
+This WIP branch push does not update, merge or certify Draft PR10. Real-model
+research, production identity/isolation, Windows coverage and target-host load
+remain distinct gates. Resume only under the parent's next coordinator task.

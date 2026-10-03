@@ -82,3 +82,20 @@ describe('command acknowledgement recovery', () => {
     expect(validateControlReceipt({ ...proof, state: 'UNKNOWN', decisionRecorded: false }, 'alice', 'task')).toMatchObject({ state: 'UNKNOWN' });
   });
 });
+
+describe('separate recorded-approval recovery intent', () => {
+  it('retains its own pointer and binds the original approval in the decision digest', async () => {
+    const storage = new MemoryStorage();
+    const recovery = { action: 'resume_approved' as const, approvalCommandId: 'original-approval', requirementId: 'original-tool', version: 1 };
+    const first = await persistCommandPointer('alice', 'task', recovery, storage);
+    expect(await persistCommandPointer('alice', 'task', recovery, storage)).toEqual(first);
+    await expect(persistCommandPointer('alice', 'task', { ...recovery, approvalCommandId: 'different-approval' }, storage)).rejects.toThrow();
+    expect(pendingCommandPointers('alice', storage)[0].action).toBe('resume_approved');
+    const proof = { ...await receipt(), action: 'resume_approved' as const, requirementId: 'original-tool', version: 1,
+      decisionSha256: await decisionFingerprint(recovery), commandId: first.commandId };
+    const fetch = vi.fn().mockRejectedValueOnce(new TypeError('lost response')).mockResolvedValueOnce(new Response(JSON.stringify(proof)));
+    vi.stubGlobal('fetch', fetch);
+    expect(await api.submitControl('alice', 'task', { ...recovery, commandId: first.commandId })).toEqual(proof);
+    expect(fetch.mock.calls.map(call => call[1].method)).toEqual(['POST', 'GET']);
+  });
+});

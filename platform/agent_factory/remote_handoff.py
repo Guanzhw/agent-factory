@@ -1257,6 +1257,7 @@ class TrustedHandoffClient:
             # Origin has no native model attempt. Its current pricing/budget
             # mandate must still fence every receiver provider/tool entry.
             ledger.require_current_commitment(plan)
+            ledger.require_within_limits(owner, task_id)
         if tool is not None and tool not in plan["tools"]:
             raise PermissionError("Origin plan denies this protected tool")
         target = self.targets[row["target_ref"]]

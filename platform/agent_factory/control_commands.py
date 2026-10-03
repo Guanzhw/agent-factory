@@ -6,6 +6,8 @@ native/receiver evidence; an absent acknowledgement never authorizes replay.
 from __future__ import annotations
 
 import copy
+import asyncio
+import sys
 import re
 from typing import Any, Literal
 from types import SimpleNamespace
@@ -22,7 +24,8 @@ COMMAND_ID = r"^[a-zA-Z0-9_.:-]{8,100}$"
 class ControlCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     commandId: str = Field(pattern=COMMAND_ID)
-    action: Literal["answer", "approve", "cancel"]
+    action: Literal["answer", "approve", "cancel", "resume_approved"]
+    approvalCommandId: str | None = Field(default=None, pattern=COMMAND_ID)
     requirementId: str | None = Field(default=None, min_length=1, max_length=200)
     version: StrictInt | None = Field(default=None, ge=0)
     answer: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -30,10 +33,13 @@ class ControlCommand(BaseModel):
 
     @model_validator(mode="after")
     def exact_decision(self):
-        if self.action == "cancel":
-            valid = all(value is None for value in (self.requirementId, self.version, self.answer, self.approved))
+        if self.action == "resume_approved":
+            valid = (self.approvalCommandId is not None and self.requirementId is not None and self.version is not None
+                     and self.answer is None and self.approved is None and self.commandId != self.approvalCommandId)
+        elif self.action == "cancel":
+            valid = all(value is None for value in (self.requirementId, self.version, self.answer, self.approved, self.approvalCommandId))
         else:
-            valid = self.requirementId is not None and self.version is not None
+            valid = self.requirementId is not None and self.version is not None and self.approvalCommandId is None
             valid = valid and (self.answer is not None and self.approved is None if self.action == "answer" else self.answer is None and self.approved is not None)
         if not valid:
             raise ValueError("Command must contain exactly its selected decision")
@@ -75,7 +81,137 @@ class ControlCommands:
             current = {**current, "runId": None}
         return original == current
 
-    async def _prepare(self, task, child, action, decision):
+    @staticmethod
+    def repair_slot(task_id, approval_id):
+        return digest({"task": task_id, "approvedRecovery": approval_id})
+
+    @staticmethod
+    def _approval_payload(task, snapshot, original):
+        """Exact original approval + parked native transcript, never guessed approval."""
+        from .factory_api import native_requirements, requirement_version
+        binding = original["body"]["binding"]
+        decision = original["body"]["decision"]
+        ticket = snapshot.get("queue") or {}
+        run = snapshot.get("run", snapshot)
+        continuation = (ticket.get("payload") or {}).get("continue") or {}
+        proof = continuation.get("kwargs", {}).get("metadata", {}).get("factoryControlCommand")
+        expected = {"commandId": original["command_id"], "fingerprint": original["fingerprint"]}
+        if (original["action"] != "approve" or original["state"] != "DISPATCHING"
+                or decision.get("approved") is not True or original["task_ref"] != task["id"]
+                or original["owner_id"] != task["owner_id"] or binding.get("kind") != "native"
+                or any(binding.get(key) != task.get(column) for key, column in
+                       (("taskId", "id"), ("planId", "plan_id"), ("runId", "run_id"), ("ownerId", "owner_id")))
+                or ticket.get("status") != "paused" or str(run.get("status")).lower() not in {"paused", "runstatus.paused"}
+                or ticket.get("id") != task["run_id"] or ticket.get("session_id") != task["id"]
+                or ticket.get("user_id") != task["owner_id"] or ticket.get("component_id") != EXECUTOR_ID
+                or ticket.get("component_type") != "agent" or ticket.get("job_type", "run") != "run"
+                or proof != expected or digest(continuation.get("updated_tools")) != original["body"].get("toolsSha256")
+                or original["fingerprint"] != digest({"taskId": original["task_ref"], "action": "approve",
+                    "decision": decision, "binding": binding})):
+            raise HTTPException(409, "APPROVED_RECOVERY_PROOF: original parked approval proof is unavailable")
+        requirements = copy.deepcopy(native_requirements(snapshot))
+        requirement = next((item for item in requirements if item.get("id") == decision.get("requirementId")), None)
+        if requirement is None or requirement_version(requirement) != decision.get("version"):
+            raise HTTPException(409, "APPROVED_RECOVERY_STALE: original requirement differs")
+        tool = requirement.get("tool_execution") or {}
+        if (tool.get("tool_name") != "orx_experiment_run" or not tool.get("tool_call_id")
+                or tool.get("requires_confirmation") is not True or tool.get("confirmed") is not None
+                or tool.get("result") is not None):
+            raise HTTPException(409, "APPROVED_RECOVERY_SCOPE: only the original unexecuted launch confirmation qualifies")
+        paused_hash = digest(requirements)
+        requirement["confirmation"] = True
+        tool["confirmed"] = True
+        if (requirements != original["body"].get("requirements")
+                or digest([item.get("tool_execution", item) for item in requirements]) != original["body"].get("toolsSha256")):
+            raise HTTPException(409, "APPROVED_RECOVERY_TOOLS: original approved tool identities differ")
+        return {"requirements": requirements, "toolsSha256": original["body"]["toolsSha256"],
+                "pausedRequirementsSha256": paused_hash, "originalApprovalProof": expected}
+
+    def _completed_launch(self, task):
+        """Current authority + read-only terminal ORX proof; never ensure/wake."""
+        from .inference_wait import current, read, execution_owner
+        from .orx_experiment_tools import (LAUNCH_EFFECT_KEY, _public_result, _request,
+            original_experiment_binding, inspect_orx_experiment)
+        if sys.platform != "linux":
+            raise HTTPException(409, "APPROVED_RECOVERY_PLATFORM: Linux revision 2 is required")
+        task = self.store.task(task["id"], task["owner_id"])
+        wait = read(self.store, task["id"])
+        if wait and wait["state"] == "STOPPING":
+            raise HTTPException(409, "APPROVED_RECOVERY_STOPPING: stop intent cannot be resumed")
+        plan, context = current(self.store, task, wait if wait and wait["state"] in {"WAITING", "RESUMING"} else None)
+        from agno.run import RunContext
+        ctx = RunContext(user_id=context.user_id, session_id=context.session_id, run_id=context.run_id, session_state=context.session_state)
+        execution_owner(self.store, task)
+        self.store.execution_bindings.recheck(plan, ctx)
+        effects = [item for item in self.store.effects(task["id"])
+                   if item["effect_key"] == task["run_id"] + ":" + LAUNCH_EFFECT_KEY]
+        original = original_experiment_binding(self.api.settings, self.store, task["id"])
+        if len(effects) != 1 or effects[0]["status"] != "DONE" or original is None or original[3].contract_revision != "2":
+            raise HTTPException(409, "APPROVED_RECOVERY_EFFECT: original Linux v2 effect must be DONE")
+        binding = original[3]
+        receipt = binding.adapter.observe_existing()
+        result = _public_result(plan, ctx, binding, receipt, digest(_request(plan, ctx, binding)))
+        saved = effects[0]["result"]
+        projection = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
+        keys = ("taskId", "planId", "nativeRunId", "orxRunId", "effectFingerprint", "status")
+        if (not isinstance(saved, dict) or not isinstance(projection, dict)
+                or result.get("status") not in {"done", "failed"} or not result.get("orxRunId")
+                or result.get("stopEvidence", {}).get("allStopped") is not True
+                or saved.get("stopEvidence", {}).get("allStopped") is not True
+                or any(result.get(key) != saved.get(key) or result.get(key) != projection.get(key) for key in keys)):
+            raise HTTPException(409, "APPROVED_RECOVERY_STOP: exact terminal experiment and positive stop proof required")
+        current(self.store, self.store.task(task["id"], task["owner_id"]),
+                wait if wait and wait["state"] in {"WAITING", "RESUMING", "STOPPING"} else None)
+        self.store.execution_bindings.recheck(plan, ctx)
+        return {key: result[key] for key in keys}
+
+    async def approved_recovery(self, task, snapshot, *, approval_id=None, repair_id=None):
+        self.auth.require(task["owner_id"], "run")
+        if task["cancel_requested"] or not task.get("run_id"):
+            raise HTTPException(409, "APPROVED_RECOVERY_CANCELED: original task is unavailable")
+        ticket = snapshot.get("queue") or {}
+        proof = ((ticket.get("payload") or {}).get("continue") or {}).get("kwargs", {}).get("metadata", {}).get("factoryControlCommand") or {}
+        selected = approval_id or proof.get("commandId")
+        if not isinstance(selected, str):
+            raise HTTPException(409, "APPROVED_RECOVERY_MISSING: no original approval")
+        original = self.row(task["owner_id"], task["id"], selected)
+        prepared = self._approval_payload(task, snapshot, original)
+        existing = self.store.sql("SELECT command_id FROM af_control_commands WHERE owner_id=:owner AND requirement_slot=:slot",
+            owner=task["owner_id"], slot=self.repair_slot(task["id"], selected))
+        if existing and (len(existing) != 1 or existing[0]["command_id"] != repair_id):
+            raise HTTPException(409, "APPROVED_RECOVERY_ALREADY_RECORDED: reconcile the original repair receipt")
+        try:
+            prepared["completedLaunch"] = await asyncio.to_thread(self._completed_launch, task)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(409, "APPROVED_RECOVERY_CURRENT: current source, authority or stop evidence is unavailable") from None
+        decision = original["body"]["decision"]
+        prepared["recoveryDetail"] = {"approvalCommandId": selected, "requirementId": decision["requirementId"],
+            "version": decision["version"], "runId": task["run_id"],
+            "scope": "恢复已记录审批；仅复用已完成且停止的原实验，不新建运行"}
+        return prepared
+
+    async def _prepare(self, task, child, action, decision, *, repair_id=None):
+        if action == "resume_approved":
+            if self.api.remote and self.api.remote.placed(task):
+                detail = await self.api.detail(task, child)
+                recovery = detail["job"].get("recoveryDetail") or {}
+                if ("resume_approved" not in detail["job"].get("allowedActions", [])
+                        or any(recovery.get(key) != decision.get(key) for key in ("approvalCommandId", "requirementId", "version"))):
+                    raise HTTPException(409, "APPROVED_RECOVERY_REMOTE: receiver recovery is unavailable")
+                original = self.row(task["owner_id"], detail["job"]["id"], decision["approvalCommandId"])
+                if (original["action"] != "approve" or original["state"] != "DISPATCHING"
+                        or original["body"]["decision"].get("approved") is not True
+                        or not self._same_binding(original, self._binding(task, child, original["body"]["binding"].get("upstream")))
+                        or not self.public(original)["decisionRecorded"]):
+                    raise HTTPException(409, "APPROVED_RECOVERY_REMOTE: original approved origin command is required")
+                return {"toolsSha256": digest(recovery), "recoveryDetail": recovery}
+            snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+            prepared = await self.approved_recovery(task, snapshot, approval_id=decision["approvalCommandId"], repair_id=repair_id)
+            if any(prepared["recoveryDetail"][key] != decision[key] for key in ("requirementId", "version")):
+                raise HTTPException(409, "APPROVED_RECOVERY_STALE: original decision differs")
+            return prepared
         if action == "cancel":
             if self.api.remote and self.api.remote.placed(task) and child is None:
                 placement = self.api.remote.client._row(task["owner_id"], task["id"])
@@ -146,7 +282,8 @@ class ControlCommands:
             raise
         # One semantic requirement may have only one command, even if two tabs
         # minted different IDs or chose opposite decisions concurrently.
-        slot = digest({"task": task_id, "requirement": decision.get("requirementId"), "version": decision.get("version")}) if command.action != "cancel" else None
+        slot = (self.repair_slot(task_id, decision["approvalCommandId"]) if command.action == "resume_approved" else
+            digest({"task": task_id, "requirement": decision.get("requirementId"), "version": decision.get("version")}) if command.action != "cancel" else None)
         body = {"binding": binding, "decision": decision, **prepared, "createdAt": now()}
         with self.store.transaction():
             inserted = self.store.sql("""INSERT INTO af_control_commands
@@ -174,7 +311,7 @@ class ControlCommands:
                 WHERE owner_id=:owner AND command_id=:id""", patch=canonical(patch), at=now(),
                 owner=row["owner_id"], id=row["command_id"])
             if evidence is not None and not saved.get("evidence") and (evidence.get("decisionRecorded") or evidence.get("receipt", {}).get("decisionRecorded")):
-                kind = {"answer": "question_answered", "approve": "approval_decided", "cancel": "control_cancel_recorded"}[row["action"]]
+                kind = {"answer": "question_answered", "approve": "approval_decided", "cancel": "control_cancel_recorded", "resume_approved": "approved_recovery_recorded"}[row["action"]]
                 self.store.event(row["root_task_id"], kind, "Exact control decision confirmed by authoritative evidence",
                     {"commandId": row["command_id"], "taskRef": row["task_ref"], "fingerprint": row["fingerprint"],
                      "requirementId": saved["decision"].get("requirementId"), "version": saved["decision"].get("version"),
@@ -191,7 +328,11 @@ class ControlCommands:
         # Revalidate before the one durable dispatch CAS. A prepared intent is
         # not a permission grant, even after a service/browser restart.
         try:
-            prepared = await self._prepare(task, child, row["action"], row["body"]["decision"])
+            prepared = await self._prepare(task, child, row["action"], row["body"]["decision"], repair_id=command_id)
+            if row["action"] == "resume_approved" and row["body"]["binding"]["kind"] == "native":
+                if any(prepared.get(key) != row["body"].get(key) for key in
+                       ("originalApprovalProof", "pausedRequirementsSha256", "completedLaunch")):
+                    raise HTTPException(409, "APPROVED_RECOVERY_CHANGED: original repair identity/effect differs")
             if row["action"] != "cancel" and prepared["toolsSha256"] != row["body"]["toolsSha256"]:
                 raise HTTPException(409, "STALE_REQUIREMENT: original decision target differs")
         except HTTPException as error:
@@ -247,6 +388,11 @@ class ControlCommands:
                     await self.api.delegation.cascade_cancel(owner, task["id"])
                 elif task.get("run_id"):
                     await self.bridge.cancel_run(task["run_id"], task["id"], owner)
+            elif row["action"] == "resume_approved":
+                await self.bridge.continue_approved_run(task["run_id"], task["id"], owner, row["body"]["requirements"],
+                    command_proof={"commandId": command_id, "fingerprint": row["fingerprint"]},
+                    original_proof=row["body"]["originalApprovalProof"], tools_sha256=row["body"]["toolsSha256"],
+                    paused_requirements_sha256=row["body"]["pausedRequirementsSha256"])
             else:
                 await self.bridge.continue_run(task["run_id"], task["id"], owner, row["body"]["requirements"],
                     command_proof={"commandId": command_id, "fingerprint": row["fingerprint"]})
@@ -308,7 +454,17 @@ class ControlCommands:
                 # Immutable decision proof survives later requirements replacing
                 # the native continuation payload. Execution status is observed
                 # afresh and never attributed to the earlier decision itself.
-                if scoped and (exact or previous.get("kind") == "native-continuation"):
+                historical = previous.get("kind") == "native-continuation"
+                if row["action"] == "resume_approved":
+                    # Initial repair ACK still requires its exact native payload.
+                    # Once recorded, later legitimate continuations may replace
+                    # that payload; retain the decision, refresh this run's status.
+                    historical = (historical and previous.get("decisionRecorded") is True
+                        and previous.get("runId") == binding["runId"]
+                        and previous.get("toolsSha256") == row["body"]["toolsSha256"])
+                    if not scoped or ticket.get("component_type") != "agent":
+                        raise HTTPException(409, "APPROVED_RECOVERY_RECEIPT_SCOPE: original native ticket is unavailable")
+                if scoped and (exact or historical):
                     assert ticket is not None
                     self._update(row, evidence={"kind": "native-continuation", "runId": task["run_id"],
                         "nativeStatus": ticket["status"], "toolsSha256": row["body"]["toolsSha256"], "decisionRecorded": True,
@@ -331,7 +487,7 @@ class ControlCommands:
             "action": row["action"], "fingerprint": row["fingerprint"], "binding": body["binding"],
             "decisionSha256": digest({"action": row["action"], **body["decision"]}),
             "requirementId": body["decision"].get("requirementId"), "version": body["decision"].get("version"),
-            "approved": body["decision"].get("approved"), "state": state, "intentRecorded": True,
+            "approved": body["decision"].get("approved"), "approvalCommandId": body["decision"].get("approvalCommandId"), "state": state, "intentRecorded": True,
             "decisionRecorded": recorded, "executionContinuing": continuing, "stopConfirmed": stopped,
             "canDispatch": row["state"] == "PREPARED", "acknowledged": body.get("acknowledged") is True, "createdAt": body["createdAt"], "updatedAt": row["updated_at"],
             "evidence": {key: value for key, value in proof.items() if key != "receipt"}, "error": body.get("error")}

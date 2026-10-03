@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import shlex
 import sqlite3
+import stat
 import subprocess
 import time
 from typing import Any, Iterator
@@ -453,6 +454,26 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             raise OpenResearchError("UNKNOWN_RUN", "Original launch acknowledgement required")
         self._job = TaskLinuxContainer(self.task_id, self.owner_id, self.scope, self.binary, self.limits, cleanup_only=True)
         return {**receipt, "state": row["status"], "stop_evidence": self._job.evidence()}
+
+    def read_completed_logs(self) -> CommandResult:
+        """Bounded original upstream log bytes, without waking the namespace."""
+        receipt = self.observe_existing()
+        if receipt["state"] not in _TERMINAL or receipt.get("stop_evidence", {}).get("allStopped") is not True:
+            raise OpenResearchError("CLEANUP_UNCONFIRMED", "Completed logs require positive original stop evidence")
+        run_id = self._id(receipt["run_id"])
+        root = self.scope / "orx-store"
+        directory = root / "run-logs"
+        path = directory / (run_id + ".log")
+        if root.is_symlink() or directory.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(self.scope.resolve()):
+            raise OpenResearchError("INVALID_OUTPUT", "Original run log escaped task scope")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise OpenResearchError("INVALID_OUTPUT", "Original run log must be a regular file")
+            raw = stream.read(self.max_output_bytes + 1)
+        if len(raw) > self.max_output_bytes:
+            raise OpenResearchError("INVALID_OUTPUT", "Original run log exceeds output bound")
+        return CommandResult((), raw.decode("utf-8", errors="replace"), "", 0, 0., hashlib.sha256(raw).hexdigest())
 
     def evaluation_result(self) -> dict[str, Any] | None:
         row = self._native_run()

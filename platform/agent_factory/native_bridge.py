@@ -164,6 +164,57 @@ class NativeBridge:
             data["metadata"] = json.dumps({"factoryControlCommand": command_proof})
         return await self._request("POST", self._run_path(run_id) + "/continue", user_id, data=data)
 
+    async def continue_approved_run(self, run_id: str, session_id: str, user_id: str,
+                                    requirements: list[Any], *, command_proof: dict[str, str],
+                                    original_proof: dict[str, str], tools_sha256: str,
+                                    paused_requirements_sha256: str) -> dict[str, Any]:
+        """One repair through the public queue seam; NEVER detached HTTP fallback."""
+        from agno.agent import Agent
+        from agno.agent.factory import AgentFactory
+        from agno.agent.remote import RemoteAgent
+        from agno.os.job_queue import acontinue_via_queue, payload_is_queueable
+        from .factory_api import native_requirements
+        from .store import digest
+        self.auth.require(user_id, "run")
+        worker = getattr(getattr(self._app, "state", None), "queue_worker", None)
+        if worker is None:
+            raise HTTPException(409, "APPROVED_RECOVERY_QUEUE: original durable queue is unavailable")
+        component = worker.resolve_component("agent", EXECUTOR_ID)
+        if (not isinstance(component, Agent) or isinstance(component, (AgentFactory, RemoteAgent))
+                or component.id != EXECUTOR_ID):
+            raise HTTPException(409, "APPROVED_RECOVERY_QUEUE: exact plain executor is unavailable")
+        snapshot = await self.detail(run_id, session_id, user_id)
+        ticket = snapshot.get("queue") or {}
+        run = snapshot.get("run", snapshot)
+        prior = (ticket.get("payload") or {}).get("continue") or {}
+        if (str(run.get("status")).lower() not in {"paused", "runstatus.paused"}
+                or ticket.get("status") != "paused" or ticket.get("id") != run_id
+                or ticket.get("session_id") != session_id or ticket.get("user_id") != user_id
+                or ticket.get("component_type") != "agent" or ticket.get("component_id") != EXECUTOR_ID
+                or ticket.get("job_type", "run") != "run"
+                or prior.get("kwargs", {}).get("metadata", {}).get("factoryControlCommand") != original_proof
+                or digest(prior.get("updated_tools")) != tools_sha256
+                or digest(native_requirements(snapshot)) != paused_requirements_sha256):
+            raise HTTPException(409, "APPROVED_RECOVERY_CHANGED: original paused run/ticket/proof changed")
+        tools = [value.get("tool_execution", value) for value in requirements]
+        payload = {"updated_tools": tools, "input": None, "continue_from": None,
+                   "kwargs": {"metadata": {"factoryControlCommand": command_proof}}}
+        if digest(tools) != tools_sha256 or not payload_is_queueable(payload):
+            raise HTTPException(409, "APPROVED_RECOVERY_PAYLOAD: original tool continuation is not queueable")
+        outcome = await acontinue_via_queue(worker, run_id, payload, stream_requested=False,
+                                           component_type="agent", component_id=EXECUTOR_ID)
+        if outcome is None or outcome.get("outcome") not in {"queued", "attach"}:
+            raise HTTPException(409, "APPROVED_RECOVERY_NOT_QUEUED: reconcile without replay")
+        accepted = outcome.get("job") or {}
+        actual = (accepted.get("payload") or {}).get("continue") or {}
+        if (accepted.get("id") != run_id or accepted.get("session_id") != session_id
+                or accepted.get("user_id") != user_id or accepted.get("component_id") != EXECUTOR_ID
+                or accepted.get("component_type") != "agent"
+                or actual.get("kwargs", {}).get("metadata", {}).get("factoryControlCommand") != command_proof
+                or digest(actual.get("updated_tools")) != tools_sha256):
+            raise HTTPException(409, "APPROVED_RECOVERY_ACK_UNKNOWN: exact repair proof is unavailable")
+        return {"run_id": run_id, "session_id": session_id, "queue": jsonable_encoder(accepted)}
+
     async def cancel_run(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
         return await self._request("POST", self._run_path(run_id) + "/cancel", user_id,
                                    params={"session_id": session_id})

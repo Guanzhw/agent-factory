@@ -48,6 +48,7 @@ export type FactoryJob = Omit<Job, 'input'> & {
   requirementId?: string;
   approvalVersion?: number;
   questionDetail?: PendingQuestion & { fields?: { name: string; type: string; description?: string; value?: unknown }[] };
+  recoveryDetail?: { approvalCommandId: string; requirementId: string; version: number; runId: string; scope: string };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
 export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; usageLedger?: unknown }
@@ -223,7 +224,7 @@ export interface ControlReceipt {
   commandId: string;
   ownerId: string;
   taskId: string;
-  action: 'answer' | 'approve' | 'cancel';
+  action: 'answer' | 'approve' | 'cancel' | 'resume_approved';
   fingerprint: string;
   decisionSha256: string;
   binding: Record<string, unknown>;

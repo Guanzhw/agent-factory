@@ -101,7 +101,8 @@ def build_runtime(settings, store, native_db):
         except RunCancelledException:
             raise
         except BaseException as error:
-            store.event(run_context.run_id, 'tool_failed', 'Native protected tool did not establish successful domain evidence', {'tool':function_name,'error':str(error)})
+            store.event(run_context.run_id, 'tool_failed', 'Native protected tool did not establish successful domain evidence',
+                        {'tool':function_name,'error':str(error),'errorType':type(error).__name__})
             raise
 
     executor = Agent(id='factory-executor', name='Factory executor', model=model, db=native_db,
