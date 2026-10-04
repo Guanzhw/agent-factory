@@ -1,5 +1,12 @@
 # Production and research decisions still needed
 
+Current resource/identity continuation: [implementation and acceptance](RESOURCE_IDENTITY_INTEGRATION.md)
+adds shared compute admission, actual task-owned workspace allocation, stop-only
+maintenance and a production-mode pinned access-token bridge. Production identity
+configuration, browser login/session flows, remote provisioning and kernel quotas
+remain distinct. The preceding PR24 record below is historical stage evidence.
+Final exact-head CI is recorded on this continuation's draft PR.
+
 Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
 adds explicit Luna revision2 and governed public literature contracts on PR23 exact
 `a5173379ce7f119fdcf3540239fd82cb19ff86ab`. Live Luna coding completed with two
@@ -13,11 +20,11 @@ scientific-validity, invoice or target-host acceptance is claimed.
 Older status/gate statements below describe their original stage.
 
 This is a read-only integration assessment, not a request to change accounts or
-supply secrets. Collect the following four choices together before implementation.
+supply secrets. Collect the following choices for production integration while independent code work continues.
 
 | Decision | Minimum non-secret input | Existing boundary |
 |---|---|---|
-| Browser identity entry | Existing OIDC provider or trusted authentication gateway; public issuer/discovery URL, audience/client ID, site/callback domain, session/logout expectations. Say none if none exists. | Current operator HS256 bearer JWT and SQL directory work; no OIDC callback/JWKS integration or production browser session exists. Demo cookie bridge is not production SSO. |
+| Browser identity entry | Existing OIDC provider or trusted authentication gateway; public issuer/discovery URL, audience/client ID, site/callback domain, session/logout expectations. Say none if none exists. | Pinned public-JWKS RS256 access-token entry now maps existing SQL owners. Actual issuer/audience/public keys/subject mapping and TLS are deployment inputs; browser callback/session/logout remain unimplemented. No automatic identity provisioning. |
 | Identity and responsibilities | Stable provider subject to Factory owner mapping; pilot researcher, material author and separate reviewer IDs; who disables users; remote origin/receiver owner mapping and audience if needed. | SQL roles remain authoritative; no automatic production users/admins, no roles granted solely by JWT, and current revocation remains checked. No shared signing secrets requested. |
 | First real research question | One public non-toy question, domain/time scope, allowed sources/full-text licences, desired deliverable and minimum success criteria (source count/comparison dimensions/citations), domain reviewer. | Installed literature query IDs are immutable; a new question requires a governed query contract. Historical container retrieval returned zero sources; the new explicit host profile retrieved two public abstracts. Controlled synthesis does not establish scientific validity. |
 | Experiment or literature only | Choose literature-only, or provide public repo + pinned commit, dataset version/licence, baseline command, metric/threshold, target OS/CPU/RAM/GPU/runtime/network allowlist, mutable-file scope and approver. | Existing experiment is a fixed reviewed toy. Real workspace/evaluator/version/licence governance still needs implementation and acceptance. |

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
 import re
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol, cast
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -33,6 +33,35 @@ class ResourceProvider(Protocol):
 
 
 @dataclass(frozen=True)
+class ComputePool:
+    """Operator admission budgets; not a claim of kernel quota enforcement."""
+    pool_id: str
+    cpu: int
+    memory_mb: int
+    disk_mb: int
+    max_leases: int = 20
+    max_owner_leases: int = 2
+
+    def __post_init__(self):
+        if type(self.pool_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.pool_id):
+            raise ValueError("A bounded operator pool identity is required")
+        for value, ceiling in ((self.cpu, 65536), (self.memory_mb, 2**40), (self.disk_mb, 2**40),
+                               (self.max_leases, 10000), (self.max_owner_leases, 10000)):
+            if type(value) is not int or not 1 <= value <= ceiling:
+                raise ValueError("Pool budgets require bounded positive integers")
+        if self.max_owner_leases > self.max_leases:
+            raise ValueError("Owner slots cannot exceed pool slots")
+
+    def limits(self):
+        return {"cpu": self.cpu, "memoryMb": self.memory_mb, "diskMb": self.disk_mb,
+                "maxLeases": self.max_leases, "maxOwnerLeases": self.max_owner_leases}
+
+    @property
+    def fingerprint(self):
+        return digest({"poolId": self.pool_id, **self.limits()})
+
+
+@dataclass(frozen=True)
 class RemoteTarget:
     """Constructed by operator code, never deserialized from a user's request."""
     name: str
@@ -51,6 +80,7 @@ class RemoteTarget:
     synthetic_fixture: bool = False
     expected_version: str = "3.1.0"
     configuration_revision: str = "1"
+    capacity_pool: ComputePool | None = None
 
     def __post_init__(self):
         if self.axis not in {"runtime", "compute", "a2a"} or not self.owners:
@@ -63,8 +93,11 @@ class RemoteTarget:
             raise ValueError("Native runtime target requires an operator-configured URL")
         if self.axis == "runtime" and not self.synthetic_fixture and self.headers is None:
             raise ValueError("Production runtime requires a trusted per-user credential callback")
-        if self.max_leases < 1 or min(self.max_cpu, self.max_memory_mb, self.max_disk_mb, self.max_seconds) < 1:
+        if any(type(value) is not int or not 1 <= value <= 2**40
+               for value in (self.max_leases, self.max_cpu, self.max_memory_mb, self.max_disk_mb, self.max_seconds)):
             raise ValueError("Positive operator resource ceilings are required")
+        if self.capacity_pool is not None and (self.axis != "compute" or type(self.capacity_pool) is not ComputePool):
+            raise ValueError("Compute pools apply only to explicit compute targets")
 
 
 class NativeAgnoHTTP:
@@ -159,6 +192,20 @@ class PersistentResourceService:
         self.targets = dict(targets)
         if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", ref) for ref in self.targets):
             raise ValueError("Configured connection references must be bounded identifiers")
+        pools = {}
+        namespaces = {}
+        for target in self.targets.values():
+            pool = target.capacity_pool
+            if pool is not None:
+                if pool.pool_id in pools and pools[pool.pool_id] != pool:
+                    raise ValueError("Conflicting definitions of the same compute pool")
+                pools[pool.pool_id] = pool
+            namespace = self._provider_namespace(target)
+            if namespace is not None:
+                identity = pool.fingerprint if pool is not None else None
+                if namespace in namespaces and namespaces[namespace] != identity:
+                    raise ValueError("Aliases of one provider namespace must share one capacity pool")
+                namespaces[namespace] = identity
 
     def _authorize(self, owner: str, ref: str) -> RemoteTarget:
         self.auth.require(owner, "run")
@@ -168,11 +215,22 @@ class PersistentResourceService:
         return target
 
     @staticmethod
+    def _provider_namespace(target: RemoteTarget):
+        namespace = getattr(target.provider, "capacity_namespace", None)
+        if namespace is not None and (type(namespace) is not str or not re.fullmatch(r"[0-9a-f]{64}", namespace)):
+            raise ValueError("Provider capacity namespace must be a SHA-256 identity")
+        return namespace
+
+    @staticmethod
     def _target_fingerprint(target: RemoteTarget) -> str:
         # URLs remain operator-only; persist a one-way binding fingerprint so
         # rebinding a reference cannot redirect existing cancellation/effects.
+        provider_pin = getattr(target.provider, "configuration_fingerprint", None)
+        if provider_pin is not None and (type(provider_pin) is not str or not re.fullmatch(r"[0-9a-f]{64}", provider_pin)):
+            raise ValueError("Provider configuration fingerprint must be a SHA-256 identity")
         return digest({"axis": target.axis, "url": target.base_url, "executor": target.executor_id,
-                       "version": target.expected_version, "revision": target.configuration_revision})
+                       "version": target.expected_version, "revision": target.configuration_revision,
+                       **({"providerFingerprint": provider_pin} if provider_pin is not None else {})})
 
     @staticmethod
     def _provider(target: RemoteTarget) -> ResourceProvider:
@@ -222,7 +280,7 @@ class PersistentResourceService:
         lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, {}, resource)
         if not fresh:
             return lease  # UNKNOWN/old requests are never replayed.
-        self._authorize(owner, connection_ref)
+        self._admit_effect(owner, lease)
         try:
             result = await adapter.submit(owner, lease)
             return self._observe(owner, lease["id"], result)
@@ -230,17 +288,35 @@ class PersistentResourceService:
             # Even an error response may follow a committed remote effect.
             return self._update(owner, lease["id"], "UNKNOWN", {"acknowledgement": "unknown", "connected": False})
 
+    def _admit_effect(self, owner, lease):
+        """Current task/owner authority immediately before new external work."""
+        target = self._authorize(owner, lease["connectionRef"])
+        pool = target.capacity_pool
+        if (lease.get("targetFingerprint") != self._target_fingerprint(target)
+                or lease.get("poolFingerprint") != (pool.fingerprint if pool is not None else None)
+                or lease.get("providerNamespace") != self._provider_namespace(target)):
+            raise HTTPException(409, "Allocation configuration changed before dispatch")
+        task = self.store.task(lease["localTaskId"], owner)
+        if (task.get("terminal") or task.get("cancel_requested")
+                or datetime.now(timezone.utc) >= datetime.fromisoformat(lease["deadlineAt"])):
+            raise HTTPException(409, "Canceled, terminal or expired work cannot allocate new effects")
+
     def _reserve(self, owner, ref, task_id, request_id, limits, resource=None):
         target = self._authorize(owner, ref)
         if not isinstance(request_id, str) or not request_id or len(request_id) > 200:
             raise HTTPException(400, "A bounded request ID is required")
         task = self.store.task(task_id, owner)
-        if task.get("terminal"):
-            raise HTTPException(409, "A terminal local task cannot attach new execution")
+        if task.get("terminal") or task.get("cancel_requested"):
+            raise HTTPException(409, "A terminal or canceled local task cannot attach new execution")
         plan = self.store.plan(task["plan_id"], owner)
         resource = resource or self._resource(owner, ref)
+        pool = target.capacity_pool
+        provider_namespace = self._provider_namespace(target)
+        pool_binding = {"poolId": pool.pool_id, "poolFingerprint": pool.fingerprint,
+                        "poolLimits": pool.limits()} if pool is not None else {}
         fingerprint = digest({"connectionRef": ref, "axis": target.axis, "taskId": task_id,
-                              "targetFingerprint": self._target_fingerprint(target), "planHash": digest(plan), "limits": limits})
+                              "targetFingerprint": self._target_fingerprint(target), "planHash": digest(plan),
+                              "limits": limits, **({"poolFingerprint": pool.fingerprint} if pool is not None else {})})
         with self.store.engine.begin() as conn:
             self._lock(conn)
             old = conn.execute(text("SELECT * FROM af_leases WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
@@ -251,6 +327,33 @@ class PersistentResourceService:
             # Count references across all owner-specific registry rows; users
             # cannot evade the configured target ceiling by changing their identity.
             rows = conn.execute(text("SELECT l.body FROM af_leases l JOIN af_resources r ON l.target_id=r.id WHERE l.state <> 'RECLAIMED'" )).mappings().all()
+            held = [self._body(row["body"]) for row in rows]
+            # A restart/config change cannot hide an old pool reservation behind
+            # another pool, an unpooled alias, or a replacement provider.
+            for previous in held:
+                if (provider_namespace is not None and previous.get("providerNamespace") == provider_namespace
+                        and (previous.get("poolId") != pool_binding.get("poolId")
+                             or previous.get("poolFingerprint") != pool_binding.get("poolFingerprint"))):
+                    raise HTTPException(409, "Provider namespace still holds its original pool reservations")
+                if previous.get("connectionRef") == ref and (pool is not None or previous.get("poolId") is not None):
+                    if (previous.get("poolId") != pool_binding.get("poolId")
+                            or previous.get("poolFingerprint") != pool_binding.get("poolFingerprint")
+                            or previous.get("targetFingerprint") != self._target_fingerprint(target)):
+                        raise HTTPException(409, "Active allocation configuration changed; reconcile original leases before admission")
+            if pool is not None:
+                pooled = [item for item in held if item.get("poolId") == pool.pool_id]
+                if any(item.get("poolFingerprint") != pool.fingerprint for item in pooled):
+                    raise HTTPException(409, "Active pool configuration changed; original reservations remain held")
+                if any(item.get("localTaskId") == task_id for item in pooled):
+                    raise HTTPException(409, "Task already holds a compute allocation in this pool; reconcile its original lease")
+                if len(pooled) >= pool.max_leases or sum(item.get("ownerId") == owner for item in pooled) >= pool.max_owner_leases:
+                    raise HTTPException(429, "Compute pool or owner admission slots are reserved")
+                for key in ("cpu", "memoryMb", "diskMb"):
+                    values = [item.get("limits", {}).get(key) for item in pooled]
+                    if any(type(value) is not int or value <= 0 for value in values):
+                        raise HTTPException(409, "Held allocation has invalid resource accounting; operator reconciliation required")
+                    if sum(values) + limits[key] > pool.limits()[key]:
+                        raise HTTPException(429, "Compute pool capacity is reserved; UNKNOWN retains all resource dimensions")
             count = sum(self._body(row["body"]).get("connectionRef") == ref for row in rows)
             if count >= target.max_leases:
                 raise HTTPException(429, "Resource capacity is reserved; UNKNOWN acknowledgements retain capacity")
@@ -269,7 +372,8 @@ class PersistentResourceService:
                     "targetFingerprint": self._target_fingerprint(target),
                     "updatedAt": at.isoformat(), "heartbeatAt": at.isoformat(),
                     "deadlineAt": (at + timedelta(seconds=duration)).isoformat(), "cancelRequested": False,
-                    "artifacts": [], "syntheticFixture": target.synthetic_fixture, "reconciliation": "snapshot"}
+                    "artifacts": [], "syntheticFixture": target.synthetic_fixture, "reconciliation": "snapshot", **pool_binding,
+                    **({"providerNamespace": provider_namespace} if provider_namespace is not None else {})}
             conn.execute(text(f"INSERT INTO af_leases VALUES(:id,:owner,:target,:request,:fp,'RESERVED',{self._json_param})"),
                          {"id": lease_id, "owner": owner, "target": resource["id"], "request": request_id, "fp": fingerprint, "body": canonical(body)})
         self.store.audit(owner, "resource.reserve", lease_id, {"connectionRef": ref, "fingerprint": fingerprint})
@@ -352,6 +456,8 @@ class PersistentResourceService:
                 return body, False
             if field == "cancelAck" and body["state"] in TERMINAL:
                 return body, False
+            if field == "releaseAck" and body["state"] not in TERMINAL:
+                return body, False
             body = {**body, field: "unknown", "state": state, "updatedAt": now(), "capacityHeld": True}
             if field == "cancelAck":
                 body["cancelRequested"] = True
@@ -369,9 +475,15 @@ class PersistentResourceService:
         lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, limits)
         if not fresh:
             return lease
-        self._authorize(owner, connection_ref)
+        self._admit_effect(owner, lease)
         try:
-            result = await self._provider(target).allocate(lease["id"], owner, lease["fingerprint"], limits)
+            provider = self._provider(target)
+            guarded: Any = getattr(provider, "allocate_guarded", None)
+            if callable(guarded):
+                result = await cast(Awaitable[dict], guarded(lease["id"], owner, lease["fingerprint"], limits,
+                                       before_effect=lambda: self._admit_effect(owner, lease)))
+            else:
+                result = await provider.allocate(lease["id"], owner, lease["fingerprint"], limits)
             return self._observe(owner, lease["id"], result)
         except Exception:
             return self._update(owner, lease["id"], "UNKNOWN", {"acknowledgement": "unknown", "connected": False})

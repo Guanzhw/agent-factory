@@ -1,5 +1,30 @@
 # Cloud integration task board
 
+## Active resource and identity milestone — 2026-10-04
+
+Base PR24 `d7221e451e7f61c3b9d711788bf17486d6cb5f82`; branch
+`coord/resource-identity-integration-20261004`. Root owns shared API/schema/lifecycle
+and dependency integration. No production identities, OAuth grants, credentials,
+permissions, host security/network changes or deployments are provisioned.
+
+| Owner / exclusive files | Dependency | Acceptance / state |
+|---|---|---|
+| root: resources/main/config/store/resource API/dependencies/docs | Existing Agno/PG abstractions | Integrated; local945 total=627pass+318skip, frontend78/static passed. Final exact CI pending at commit time. |
+| factory_flow: local_compute + local compute tests | Root allocation journal schema | Actual workspace backend accepted: 12 light +3 native/PG/FS tests passed; review fixes include PG locking, serialized effects and cancellation fence. Admission-only, not kernel quotas. |
+| at10: capacity and identity tests | Root pools; go_policy verifier | 14 pool light tests and4 production-mode identity PG tests passed, including governed native queue/checksum/receipt/ledger. |
+| go_adapter: resource PG tests | Root pool service | Three pool PG tests (23.007s), admin-maintenance PG (6.680s) and6 guarded-dispatch light tests passed. |
+| go_policy: oidc_identity + verifier tests | Pinned PyJWT crypto extra | 12 offline RSA/ASGI tests passed; pinned identity, real-ASGI HTTPS requirement, SQL503 separation, no auto-provision/discovery. |
+| independent_review: resource_maintenance + tests | Root effect CAS and operator admin authorization | 16 stop-only tests passed, including keyset pagination past active prefixes; no uncertain effect replay. |
+| reviewer: independent read-only review | Frozen code and actual evidence | All identified blockers corrected; independent54 offline tests passed. Exact-head CI review pending. |
+
+Acceptance requires cross-owner/ref CPU/memory/disk/slot accounting, no oversale,
+persistent UNKNOWN holds, original lease identity through restart, positive release,
+current revocation and cancellation, actual filesystem and PostgreSQL integration,
+and strict external access-token validation delegated to existing SQL authorization.
+Target32/64 and54/192 profiles remain unmeasured. Browser OAuth login/session/logout,
+remote machine provisioning and OS quota enforcement remain distinct further work.
+
+
 ## Active continuation after PR23 — 2026-10-04
 
 Base a5173379ce7f119fdcf3540239fd82cb19ff86ab; branch coord/luna-scientific-contracts-20261004.

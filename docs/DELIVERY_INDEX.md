@@ -1,5 +1,12 @@
 # Current delivery and review index
 
+Current resource/identity continuation: [implementation and acceptance](RESOURCE_IDENTITY_INTEGRATION.md)
+adds shared compute admission, actual task-owned workspace allocation, stop-only
+maintenance and a production-mode pinned access-token bridge. Production identity
+configuration, browser login/session flows, remote provisioning and kernel quotas
+remain distinct. The preceding PR24 record below is historical stage evidence.
+Final exact-head CI is recorded on this continuation's draft PR.
+
 Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
 adds explicit Luna revision2 and governed public literature contracts on PR23 exact
 `a5173379ce7f119fdcf3540239fd82cb19ff86ab`. Live Luna coding completed with two

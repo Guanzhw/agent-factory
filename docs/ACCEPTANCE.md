@@ -1,5 +1,12 @@
 # Acceptance ledger
 
+Current resource/identity continuation: [implementation and acceptance](RESOURCE_IDENTITY_INTEGRATION.md)
+adds shared compute admission, actual task-owned workspace allocation, stop-only
+maintenance and a production-mode pinned access-token bridge. Production identity
+configuration, browser login/session flows, remote provisioning and kernel quotas
+remain distinct. The preceding PR24 record below is historical stage evidence.
+Final exact-head CI is recorded on this continuation's draft PR.
+
 ## Current matrix
 
 Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
@@ -26,10 +33,10 @@ including the separately reviewed historical checkpoint bridge.
 | AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
 | Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](LUNA_SCIENTIFIC_CONTRACTS.md) |
 | Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
-| Production identity | Bearer validation, managed SQL identities/roles, current revocation and owner isolation; demo-only browser session | Browser login/IdP or gateway integration, production session/logout and deployment configuration remain code/integration work |
+| Production identity | Bearer validation, managed SQL identities/roles, current revocation and owner isolation; demo-only browser session | Pinned RS256 access-token entry and subject mapping now pass synthetic production-mode/native-queue tests. Browser OAuth/session/logout, real IdP/TLS and deployment acceptance remain open |
 | Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Historical container attempt failed with zero sources. New explicit host PubMed native retrieval succeeded with two abstracts; governed source-bound native synthesis passed with a controlled model. No live scientific synthesis or scientific-validity claim; new questions need governed contracts |
 | Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
-| Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Real compute allocator/environment provisioning is not implemented. External-host TLS, identities, runtime/stop proof and target capacity require integration/acceptance |
+| Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Shared weighted admission, task-owned workspace allocation and stop-only maintenance are implemented. Remote machine/environment provisioning and kernel quotas remain code work; external-host TLS/runtime stop proof and target capacity remain unverified |
 | Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
 | Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |
 

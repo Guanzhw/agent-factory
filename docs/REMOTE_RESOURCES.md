@@ -1,5 +1,11 @@
 # Remote resources
 
+Current extension: [shared admission and identity milestone](RESOURCE_IDENTITY_INTEGRATION.md)
+adds ComputePool weighted admission, LocalWorkspaceProvider actual filesystem
+allocation and ResourceMaintenance stop-only cleanup. CPU/memory/disk/time are
+admission budgets; remote machine provisioning and kernel enforcement remain open.
+The older contract description below retains its original validation boundaries.
+
 Agent Factory treats remote runtime attachment, compute allocation and optional A2A as three different axes. A remote runtime executes its sessions/tools remotely; attaching it does not provision a machine. A compute provider owns allocation and release. A2A is an interoperability interface and is not a scheduler, sandbox or compute allocator.
 
 ## Implemented contract

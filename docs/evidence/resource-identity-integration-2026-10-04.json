@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "stage": "resource-identity-integration",
+  "date": "2026-10-04",
+  "baseCommit": "d7221e451e7f61c3b9d711788bf17486d6cb5f82",
+  "evidenceKind": "controlled-local-integration",
+  "productionSystemsAccessed": false,
+  "externalIdentityProvisioned": false,
+  "oauthGrantsCreated": false,
+  "goCalls": 0,
+  "deployment": false,
+  "targetCapacityCertified": false,
+  "resourceEnforcement": "admission-and-workspace-only-no-kernel-quotas",
+  "tests": {
+    "defaultPython": {
+      "total": 945,
+      "passed": 627,
+      "skipped": 318,
+      "seconds": 48.001
+    },
+    "frontend": {
+      "passed": 78
+    },
+    "resourcePoolPostgres": {
+      "passed": 3,
+      "seconds": 23.007
+    },
+    "adminMaintenancePostgres": {
+      "passed": 1,
+      "seconds": 6.68
+    },
+    "localWorkspacePostgres": {
+      "passed": 3,
+      "seconds": 14.904
+    },
+    "boundedJournalQueryPostgres": {
+      "passed": 1,
+      "seconds": 4.921
+    },
+    "productionIdentityPostgres": {
+      "passed": 4,
+      "seconds": 12.837
+    },
+    "independentOffline": {
+      "passed": 54
+    },
+    "guardedAllocationOffline": {
+      "passed": 6
+    },
+    "ruff": "passed",
+    "pyrightErrors": 0,
+    "npmKnownVulnerabilities": 0,
+    "lockedPythonAudit": {
+      "dependencies": 49,
+      "knownVulnerabilities": 0
+    }
+  },
+  "identityNativeAcceptance": {
+    "externalToken": "synthetic-RS256-access-token",
+    "configuration": "production-demo-false",
+    "nativeQueueExecuted": true,
+    "governedPlan": true,
+    "checksumArtifactVerified": true,
+    "ownerIsolationVerified": true,
+    "settledAttempts": 2,
+    "realIdpVerified": false,
+    "realTlsVerified": false
+  },
+  "reviewCorrections": [
+    "PostgreSQL advisory lock quoting",
+    "Cross-process workspace effect serialization",
+    "Cross-reference provider namespace/pool consistency",
+    "Fresh after-lock authority and cancellation fence",
+    "Bounded maintenance keyset cursor",
+    "Identity-specific allocation-journal lookup"
+  ],
+  "remaining": [
+    "Browser authorization-code/PKCE/session/logout integration",
+    "Selected real issuer/audience/public JWKS/subject map and TLS acceptance",
+    "Remote machine/environment provisioning and runtime attachment to allocations",
+    "Kernel CPU/memory/disk/process enforcement and fencing",
+    "Production cleanup cadence/monitoring and target-machine sustained capacity",
+    "Scientific provider and non-toy scientific acceptance"
+  ],
+  "ci": "Exact-head final CI is recorded on the stage draft PR; earlier green checks are not substituted."
+}

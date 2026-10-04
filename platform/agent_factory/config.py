@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .usage_ledger import UsagePolicy
+    from .oidc_identity import OIDCIdentityConfig
 
 
 @dataclass
@@ -15,6 +16,8 @@ class Settings:
     demo: bool = True
     jwt_key: str = ""
     jwt_audience: str = "agent-factory"
+    # Operator-pinned public verification keys and existing-owner mapping only.
+    oidc_identity: "OIDCIdentityConfig | None" = None
     max_workers: int = 2
     max_queued: int = 20
     max_user_tasks: int = 2
@@ -55,6 +58,10 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if self.oidc_identity is not None:
+            from .oidc_identity import OIDCIdentityConfig
+            if self.demo or type(self.oidc_identity) is not OIDCIdentityConfig:
+                raise ValueError("External access-token identity requires an explicit production configuration")
         if self.development_profile not in {"disabled", "opencode-go"}:
             raise ValueError("Unsupported development profile")
         if self.development_profile != "disabled" and not self.demo:

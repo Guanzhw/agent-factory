@@ -31,6 +31,7 @@ from .material_governance import GovernanceConfig, MaterialGovernance, material_
 from .native_bridge import INTERNAL_NATIVE, NativeBridge
 from .runtime import build_runtime
 from .resources import PersistentResourceService
+from .resource_maintenance import ResourceMaintenance
 from .resource_api import resource_router
 from .store import Store
 from .usage_ledger import UsageLedger, default_zero_prices
@@ -157,7 +158,8 @@ def create_app(settings=None):
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
-    base.include_router(resource_router(auth, resources))
+    resource_maintenance = ResourceMaintenance(resources)
+    base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))
 
     @base.exception_handler(HTTPException)
@@ -219,6 +221,10 @@ def create_app(settings=None):
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
+    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance)
+    if settings.oidc_identity is not None:
+        from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
+        return OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
     return CookieBridge(native, settings)
 
 

@@ -137,6 +137,8 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_resources (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS af_compute_allocations (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS af_compute_allocations_identity ON af_compute_allocations(owner_id,(body->>'fingerprint'))",
             "CREATE TABLE IF NOT EXISTS af_leases (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, target_id TEXT NOT NULL REFERENCES af_resources(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, state TEXT NOT NULL, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_bootstrap (id TEXT PRIMARY KEY, mode TEXT NOT NULL)",
         ]
