@@ -155,8 +155,8 @@ export function pendingApproval(detail: JobDetail): PendingApproval | undefined 
 
 export interface PlanAuthorization {
   executionAllowed: boolean; reviewRequired: boolean; code?: string; message?: string;
-  policy: { name: string; revision: string; fingerprint: string; review_ttl_seconds: number };
-  nativeToolConfirmationSeparate: boolean;
+  policy: { name: string; revision: string; fingerprint: string; review_ttl_seconds: number; nativeToolConfirmationSeparate: boolean };
+  nativeToolConfirmationRequired: boolean;
 }
 export interface PlanReview {
   id: string; ownerId: string; planId: string; planDigest: string; planFingerprint: string;

@@ -1,5 +1,51 @@
 # Acceptance ledger
 
+## Current scope — 2026-10-04
+
+See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
+and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
+remaining flows and historical evidence boundaries. Browser PKCE/session/CSRF/logout
+has controlled HTTPS acceptance; explicitly selected mock/demo login supports
+ongoing development while production identity remains fail-closed. Existing
+receiver/runtime attachment is required; machine/cloud provisioning is optional.
+Aggregate cgroup integration has fake/offline validation only: this container's
+read-only cgroup mount supplies **no real aggregate enforcement acceptance**.
+Linux is selected; target runtime/delegation, non-toy scientific acceptance and
+target-machine acceptance remain open. Older continuation summaries below are
+historical and do not certify current integration or its exact-head CI.
+
+## Current matrix
+
+The delivery target remains complete factory/v0.3 plus the agreed extensions.
+This matrix separates implemented mechanisms, further code and real-environment
+acceptance. It does not certify every private original requirement. The
+[delivery index](DELIVERY_INDEX.md) records exact stacked PR dependencies,
+including the separately reviewed historical checkpoint bridge.
+
+| Capability | Implemented / evidence | Remaining code or real acceptance |
+|---|---|---|
+| Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
+| AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
+| Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](LUNA_SCIENTIFIC_CONTRACTS.md) |
+| Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
+| Production identity | Pinned access-token validation, managed SQL identities/roles, current revocation/owner isolation and PKCE browser sessions with durable logout | Pinned RS256 access-token entry and subject mapping pass synthetic production-mode/native-queue tests; PKCE login/logout passes synthetic HTTPS desktop/mobile tests. Real IdP/TLS and production deployment acceptance remain open; explicitly authorized mock/demo login supports continued development |
+| Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Historical container attempt failed with zero sources. New explicit host PubMed native retrieval succeeded with two abstracts; governed source-bound native synthesis passed with a controlled model. No live scientific synthesis or scientific-validity claim; new questions need governed contracts |
+| Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
+| Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Shared weighted admission, task-owned workspace and cooperative process allocation, native identity binding, positive stop-only release and UNKNOWN holds are implemented. Required existing-receiver attachment is implemented. Aggregate cgroup integration has fake/offline validation only; this read-only cgroup environment provides no real enforcement acceptance. Machine/cloud provisioning is optional, outside the required baseline. Linux target runtime/delegation, external-host TLS/stop proof and target capacity remain unverified |
+| Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
+| Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |
+
+Current evidence: [AT10](AT10_TREE_ACCEPTANCE.md), [Go profile](GO_DEVELOPMENT_PROFILE.md),
+[literature](LITERATURE_EVIDENCE.md), [storage](STORAGE_OPERATIONS.md),
+[control receipts](CONTROL_COMMANDS.md), [runtime/compute](REMOTE_RESOURCES.md).
+
+## Historical stage records
+
+The records below preserve what was known at each earlier checkpoint. Their old
+SHAs, pending states and “Go unregistered” wording are not the current matrix.
+
+### Historical continuation summaries (superseded status)
+
 Latest continuation: [existing remote runtime/process integration and isolation capability](REMOTE_PROCESS_ISOLATION.md)
 reuses Factory handoff, effective receiver bindings and receiver-owned shared-pool
 process custody. Strict root process evidence reaches the origin without remapping
@@ -32,8 +78,6 @@ configuration, browser login/session flows, remote provisioning and kernel quota
 remain distinct. The preceding PR24 record below is historical stage evidence.
 Final exact-head CI is recorded on this continuation's draft PR.
 
-## Current matrix
-
 Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
 adds explicit Luna revision2 and governed public literature contracts on PR23 exact
 `a5173379ce7f119fdcf3540239fd82cb19ff86ab`. Live Luna coding completed with two
@@ -45,34 +89,6 @@ and [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md). Exact final CI bel
 to PR24; earlier green runs do not certify its head. No full-product, production,
 scientific-validity, invoice or target-host acceptance is claimed.
 Older status/gate statements below describe their original stage.
-
-The delivery target remains complete factory/v0.3 plus the agreed extensions.
-This matrix separates implemented mechanisms, further code and real-environment
-acceptance. It does not certify every private original requirement. The
-[delivery index](DELIVERY_INDEX.md) records exact stacked PR dependencies,
-including the separately reviewed historical checkpoint bridge.
-
-| Capability | Implemented / evidence | Remaining code or real acceptance |
-|---|---|---|
-| Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
-| AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
-| Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](LUNA_SCIENTIFIC_CONTRACTS.md) |
-| Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
-| Production identity | Pinned access-token validation, managed SQL identities/roles, current revocation/owner isolation and PKCE browser sessions with durable logout | Pinned RS256 access-token entry and subject mapping pass synthetic production-mode/native-queue tests; PKCE login/logout passes synthetic HTTPS desktop/mobile tests. Real IdP/TLS and deployment acceptance remain open |
-| Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Historical container attempt failed with zero sources. New explicit host PubMed native retrieval succeeded with two abstracts; governed source-bound native synthesis passed with a controlled model. No live scientific synthesis or scientific-validity claim; new questions need governed contracts |
-| Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
-| Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Shared weighted admission, task-owned workspace and cooperative process allocation, native identity binding, positive stop-only release and UNKNOWN holds are implemented. Remote provisioning and aggregate isolation remain code work; external-host TLS/runtime stop proof and target capacity remain unverified |
-| Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
-| Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |
-
-Current evidence: [AT10](AT10_TREE_ACCEPTANCE.md), [Go profile](GO_DEVELOPMENT_PROFILE.md),
-[literature](LITERATURE_EVIDENCE.md), [storage](STORAGE_OPERATIONS.md),
-[control receipts](CONTROL_COMMANDS.md), [runtime/compute](REMOTE_RESOURCES.md).
-
-## Historical stage records
-
-The records below preserve what was known at each earlier checkpoint. Their old
-SHAs, pending states and “Go unregistered” wording are not the current matrix.
 
 ### Historical PR13 commit-time preamble
 

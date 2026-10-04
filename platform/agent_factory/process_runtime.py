@@ -199,7 +199,10 @@ class ProcessRuntimeService:
         _require(lease["state"] == "RECLAIMED" and lease.get("stopEvidence", {}).get("allStopped") is True)
         result = {key: lease.get(key) for key in ("id", "localTaskId", "planId", "nativeRunId", "providerJobId",
             "state", "capacityHeld", "processBinding", "enforcement", "stopEvidence", "executionStatus", "exitCode")}
-        result.update(leaseId=lease["id"], evidenceKind="bounded_cooperative_process_receipt", researchValidated=False)
+        if lease.get("aggregateEvidence") is not None:
+            result["aggregateEvidence"] = lease["aggregateEvidence"]
+        evidence_kind = "bounded_aggregate_process_receipt" if lease.get("aggregateEvidence") is not None else "bounded_cooperative_process_receipt"
+        result.update(leaseId=lease["id"], evidenceKind=evidence_kind, researchValidated=False)
         raw = canonical(result)
         name = "process-" + lease["id"] + ".json"
         existing = [a for a in self.store.artifacts(context.session_id) if a["name"] == name]
@@ -209,7 +212,7 @@ class ProcessRuntimeService:
         else:
             self.store.authorize_tool(context, TOOL)
             artifact = self.store.artifact_write(context.run_id, name, raw, "application/json",
-                {"evidenceKind": "bounded_cooperative_process_receipt", "leaseId": lease["id"],
+                {"evidenceKind": evidence_kind, "leaseId": lease["id"],
                  "nativeRunId": context.run_id, "providerJobId": lease["providerJobId"], "researchValidated": False})
         return {**result, "artifactId": artifact["id"], "artifactSha256": artifact["sha256"]}
 
@@ -234,6 +237,10 @@ class ProcessRuntimeService:
             reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
                 "diskMb": max(1, math.ceil(limits.file_size_bytes / (1024 * 1024))),
                 "seconds": math.ceil(limits.wall_seconds)}
+            aggregate = getattr(provider, "aggregate_config", None)
+            if aggregate is not None:
+                reservation["cpu"] = max(reservation["cpu"], math.ceil(aggregate.cpu_quota_us / aggregate.cpu_period_us))
+                reservation["memoryMb"] = max(reservation["memoryMb"], math.ceil((aggregate.memory_bytes + aggregate.swap_bytes) / (1024 * 1024)))
             lease = await self.resources.allocate(context.user_id, config["targetRef"], task["id"],
                 "process-" + digest({"task": task["id"], "run": context.run_id, "effect": EFFECT}), reservation, execution=execution)
         # Bounded observation only; a later native retry can read the same binding

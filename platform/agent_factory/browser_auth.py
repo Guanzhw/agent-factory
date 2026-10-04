@@ -208,8 +208,12 @@ class BrowserSessionService:
 
 
 class BrowserAuthBridge:
-    def __init__(self, app, service: BrowserSessionService, *, bearer_app=None):
+    def __init__(self, app, service: BrowserSessionService, *, bearer_app=None, development_app=None):
+        if development_app is not None and (getattr(service.auth.settings, "development_mock_login", False) is not True
+                or service.auth.settings.demo is not True):
+            raise ValueError("Development identity routing is disabled")
         self.app, self.service, self.bearer_app = app, service, bearer_app
+        self.development_app = development_app
 
     @staticmethod
     def _cookies(scope):
@@ -243,7 +247,7 @@ class BrowserAuthBridge:
     async def _endpoint(self, request, cookies):
         path, method = request.url.path, request.method
         if path == PREFIX + "/config" and method == "GET":
-            return JSONResponse(CONFIG)
+            return JSONResponse({**CONFIG, **({"developmentOnly": True} if self.development_app is not None else {})})
         _check(request.scope.get("scheme") == "https", 403)
         if path == PREFIX + "/login" and method == "POST":
             self._origin(request.scope)
@@ -304,6 +308,13 @@ class BrowserAuthBridge:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
+        if self.development_app is not None:
+            if path.startswith("/api/factory/dev-identity/"):
+                await self.development_app(scope, receive, send)
+                return
+            if path == "/api/factory/demo/login":
+                await self._private(JSONResponse({"detail": "Use the development browser login"}, status_code=404))(scope, receive, send)
+                return
         endpoint = path.startswith(PREFIX + "/") or path == "/api/factory/logout"
         try:
             cookies = self._cookies(scope)

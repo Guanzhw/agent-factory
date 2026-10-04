@@ -411,12 +411,15 @@ class PlanPolicyService:
                 raise HTTPException(404, "Scoped plan review not found")
             return self._project(conn, row)
 
-    def list_reviews(self, actor: str, *, all_owners: bool = False) -> list[dict]:
+    def list_reviews(self, actor: str, *, all_owners: bool = False, plan_id: str | None = None) -> list[dict]:
         self.auth.require(actor, "agent_os:admin" if all_owners else "run")
         with self.store.engine.connect() as conn:
             query = select(self.reviews).order_by(self.reviews.c.created_at.desc(), self.reviews.c.id).limit(100)
             if not all_owners:
                 query = query.where(self.reviews.c.owner_id == actor)
+            if plan_id is not None:
+                self._key(plan_id)
+                query = query.where(self.reviews.c.plan_id == plan_id)
             return [self._project(conn, row) for row in conn.execute(query).mappings()]
 
     def decide(self, actor: str, review_id: str, approved: bool, request_id: str) -> dict:
@@ -554,8 +557,8 @@ def plan_policy_router(auth: Any, service: PlanPolicyService) -> APIRouter:
         return service.status(actor(request), plan_id)
 
     @router.get("/plan-reviews")
-    def list_reviews(request: Request, allOwners: bool = False):
-        return service.list_reviews(actor(request), all_owners=allOwners)
+    def list_reviews(request: Request, allOwners: bool = False, planId: str | None = None):
+        return service.list_reviews(actor(request), all_owners=allOwners, plan_id=planId)
 
     @router.get("/plan-reviews/{review_id}")
     def inspect(review_id: str, request: Request):

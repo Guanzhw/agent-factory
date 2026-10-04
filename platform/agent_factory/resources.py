@@ -502,22 +502,37 @@ class PersistentResourceService:
         expected = {"cpu": "per-process-RLIMIT_CPU", "memory": "per-process-RLIMIT_AS",
             "fileSize": "per-file-RLIMIT_FSIZE", "wall": "cooperative-process-group-guardian",
             "aggregateQuota": False, "hostileCodeSandbox": False, "networkIsolation": False}
-        if (type(enforcement) is not dict or enforcement != expected
-                or any(type(enforcement[key]) is not type(value) for key, value in expected.items())):
+        aggregate = None
+        if type(enforcement) is dict and enforcement.get("schema") == 2:
+            from .aggregate_process import validate_aggregate_evidence
+            aggregate = validate_aggregate_evidence(snapshot.get("aggregateEvidence"), binding["bindingFingerprint"],
+                enforcement, lease.get("aggregateEvidence"))
+            expected = enforcement
+        elif (type(enforcement) is not dict or enforcement != expected
+                or any(type(enforcement[key]) is not type(value) for key, value in expected.items())
+                or snapshot.get("aggregateEvidence") is not None):
             raise ValueError("Process enforcement contract changed")
+        if lease.get("enforcement") not in (None, expected):
+            raise ValueError("Original enforcement declaration changed")
         outcome, exit_code = snapshot.get("executionStatus"), snapshot.get("exitCode")
         if (outcome not in {"PREPARED", "DISPATCHING", "RUNNING", "UNKNOWN", "COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
                 or exit_code is not None and (type(exit_code) is not int or not -255 <= exit_code <= 255)):
             raise ValueError("Process outcome is invalid")
         stop = snapshot.get("stopEvidence")
         positive = (type(stop) is dict and set(stop) == {"allStopped", "kind"} and stop["allStopped"] is True
-                    and stop["kind"] in {"original-root-reaped-and-no-live-process-group-members", "never-dispatched"})
+                    and stop["kind"] in ({"original-delegated-cgroup-empty-and-removed", "never-dispatched"} if aggregate is not None
+                                           else {"original-root-reaped-and-no-live-process-group-members", "never-dispatched"}))
+        if positive and aggregate is not None and isinstance(stop, dict):
+            from .aggregate_process import aggregate_stopped
+            if not (aggregate["state"] == "NEW" if stop["kind"] == "never-dispatched" else aggregate_stopped(aggregate)):
+                raise ValueError("Original aggregate stop proof is unconfirmed")
         if snapshot.get("state") in TERMINAL | {"RECLAIMED"} and (not positive or outcome not in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}):
             raise ValueError("Terminal process lacks original stop proof")
         if snapshot.get("state") == "RECLAIMED" and snapshot.get("released") is not True:
             raise ValueError("Process allocation release is unconfirmed")
         return {"providerJobId": job, "processBinding": binding, "enforcement": expected,
-                "stopEvidence": stop if positive else None, "executionStatus": outcome, "exitCode": exit_code}
+                "stopEvidence": stop if positive else None, "executionStatus": outcome, "exitCode": exit_code,
+                **({"aggregateEvidence": aggregate} if aggregate is not None else {})}
 
     def list_leases(self, owner, *, after=None):
         self.auth.require(owner, "run")
@@ -532,7 +547,7 @@ class PersistentResourceService:
                 continue
             # Metadata visibility does not grant launch/stop/release authority.
             fields = ("id", "ownerId", "localTaskId", "planId", "nativeRunId", "state", "capacityHeld",
-                      "providerJobId", "processBinding", "enforcement", "stopEvidence", "syntheticFixture", "executionStatus", "exitCode")
+                      "providerJobId", "processBinding", "enforcement", "aggregateEvidence", "stopEvidence", "syntheticFixture", "executionStatus", "exitCode")
             leases.append({key: body.get(key) for key in fields})
         return {"leases": leases, "nextCursor": rows[-1]["id"] if len(rows) == 100 else None}
 

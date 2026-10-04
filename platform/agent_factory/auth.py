@@ -59,7 +59,9 @@ class AuthService:
             f"agents:{EXECUTOR_ID}:read", f"agents:{EXECUTOR_ID}:run",
             "components:read", "registry:read", "sessions:read", "filesystem:read",
         ])
-        for user_id, (name, role) in _PERSONAS.items():
+        personas = {**_PERSONAS, **({"manager2": ("Second manager / reviewer", "factory-manager")}
+            if getattr(self.settings, "development_mock_login", False) else {})}
+        for user_id, (name, role) in personas.items():
             # Do not restore assignments or disabled flags removed by an operator.
             if self.directory.get(user_id) is None:
                 self.directory.upsert(user_id, name=name)

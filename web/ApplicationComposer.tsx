@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useCommandKeys } from './commandKeys.js';
 import { PlanReviewGate } from './PlanReviews.js';
+import { CompositionInbox } from './CompositionInbox.js';
 import { UsageCommitmentSummary } from './UsageLedger.js';
 import { usageCommitment } from './usageLedgerState.js';
 import { kindNames, materialKey, type AssemblyProposal, type CompositionInput, type ExecutionTarget, type FactoryApplication, type FactoryMaterial, type MaterialReference, type Plan, type User, type UserConnection } from './models.js';
@@ -46,25 +47,38 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const [session, apps, refs, loaded] = await Promise.all([api.session(controller.signal), api.applications(controller.signal), api.userConnections(controller.signal), proposal?.id || !restored && storedProposal ? api.inspectProposal(proposal?.id ?? storedProposal!, controller.signal) : Promise.resolve(undefined)]);
-        let current = loaded;
+        const [session, apps, refs, loaded] = await Promise.all([api.session(controller.signal), api.applications(controller.signal), api.userConnections(controller.signal), proposal?.id || !restored && storedProposal ? api.recoverProposal(proposal?.id ?? storedProposal!, controller.signal) : Promise.resolve(undefined)]);
+        let current = loaded?.proposal;
+        let historicalPlan = loaded?.plan;
         if (!proposal && !restored) {
           const seen = new Set<string>();
           for (let depth = 0; current?.state === 'revised' && current.revisedBy && depth < 8; depth++) {
             if (current.ownerId !== user.id || seen.has(current.id) || !/^[a-f0-9-]{36}$/.test(current.revisedBy)) throw new Error('修订恢复指针无法核对。');
-            seen.add(current.id); const previous = current.id; const successor = await api.inspectProposal(current.revisedBy, controller.signal);
+            seen.add(current.id); const previous = current.id; const recovered = await api.recoverProposal(current.revisedBy, controller.signal); const successor = recovered.proposal; historicalPlan = recovered.plan;
             if (successor.parentId !== previous || successor.ownerId !== user.id) throw new Error('修订恢复范围无法核对。');
             current = successor; rememberProposal(current);
           }
         }
         if (session.id !== user.id || refs.some(item => item.ownerId !== user.id) || current && current.ownerId !== user.id) throw new Error('当前身份或提案归属无法核对；暂时禁用装配。');
         if (controller.signal.aborted) return;
-        setApplications(apps); setConnections(refs); if (current) { if (!proposal) { setGoal(current.candidate.normalizedGoal); setApplicationId(current.candidate.application); setMode(current.candidate.mode); setChoices(current.input.materialChoices ?? {}); setConnectionRefs(current.input.connectionRefs ?? {}); } setProposal(current); } setRestored(true); setReady(true); setError('');
+        setApplications(apps); setConnections(refs); if (current) { if (!proposal) { setGoal(current.candidate.normalizedGoal); setApplicationId(current.candidate.application); setMode(current.candidate.mode); setChoices(current.input.materialChoices ?? {}); setConnectionRefs(current.input.connectionRefs ?? {}); } setProposal(current); setPlan(historicalPlan ?? undefined); } setRestored(true); setReady(true); setError('');
       } catch (e) { if (!controller.signal.aborted) { setError(message(e)); setReady(false); setExecutionAllowed(false); } }
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
     }
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
   }, [user.id, proposal?.id, refresh, restored, storedProposal]);
+  async function restoreProposal(id: string) {
+    await act('recover-proposal', async () => {
+      const recovered = await api.recoverProposal(id);
+      if (recovered.proposal.ownerId !== user.id) throw new Error('提案归属无法核对。');
+      const value = recovered.proposal;
+      rememberProposal(value); uncertainRevision.current = undefined;
+      setProposal(value); setPlan(recovered.plan ?? undefined); setExecutionAllowed(false);
+      setGoal(value.candidate.normalizedGoal); setApplicationId(value.candidate.application); setMode(value.candidate.mode);
+      setChoices(value.input.materialChoices ?? {}); setConnectionRefs(value.input.connectionRefs ?? {});
+      setRestored(true); setRefresh(n => n + 1);
+    });
+  }
   function selectApplication(id: string) {
     const selected = applications.find(item => item.id === id);
     setApplicationId(id); setMode(selected?.defaultMode ?? ''); setChoices({}); setConnectionRefs({});
@@ -113,7 +127,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const connectionSignature = (value: Record<string, string>) => Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([slot, ref]) => `${slot}:${ref}`).join('|');
   const dirty = !!candidate && (goal.trim() !== candidate.normalizedGoal || application && refKey(application) !== refKey(candidate.applicationRef) || mode && mode !== candidate.mode
     || choiceSignature(choices) !== choiceSignature(proposal?.input.materialChoices ?? {}) || connectionSignature(connectionRefs) !== connectionSignature(proposal?.input.connectionRefs ?? {}));
-  return <section className="composer" aria-labelledby="composer-title"><div className="section-heading"><h2 id="composer-title">新的应用任务</h2><span className="quiet">有边界的装配</span></div>{error && <div role="alert" className="error-message">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>重新核对装配</button></div>}
+  return <><CompositionInbox ownerId={user.id} loadPage={api.proposalInbox} onSelect={id => void restoreProposal(id)} disabled={!!busy} refreshKey={`${proposal?.id ?? ''}:${proposal?.state ?? ''}`}/><section className="composer" aria-labelledby="composer-title"><div className="section-heading"><h2 id="composer-title">新的应用任务</h2><span className="quiet">有边界的装配</span></div>{error && <div role="alert" className="error-message">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>重新核对装配</button></div>}
     {!ready && storedProposal && !restored && <button className="secondary" disabled={!!busy} onClick={startAgain}>保留原记录并开始新的装配</button>}
     <form onSubmit={event => { event.preventDefault(); void createOrRevise(); }}><label htmlFor="application-selector">已批准的应用</label><select id="application-selector" value={applicationId} disabled={!!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据目标从已批准应用中选择</option>{applications.map(item => <option key={refKey(item)} value={item.id}>{item.name} · v{item.version}</option>)}</select>{application && <p className="quiet">{application.description}</p>}<label htmlFor="research-topic">任务目标</label><textarea id="research-topic" rows={4} value={goal} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="描述想调查的问题、比较范围或需要计算验证的结果。" required maxLength={2000}/>
       {application && <label>执行方式<select aria-label="应用执行方式" value={mode || application.defaultMode} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => { setMode(event.target.value); setChoices({}); setConnectionRefs({}); }}>{Object.keys(application.modes).map(value => <option key={value} value={value}>{modeName(value)}</option>)}</select></label>}
@@ -130,8 +144,8 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       {!accepted && pending && <div className="button-row"><button className="primary" disabled={!!busy || !ready || dirty || !proposal!.allowedActions.includes('accept')} onClick={() => void accept()}>{busy === 'accept-proposal' ? '等待方案确认…' : '接受提案并固定方案'}</button><button className="secondary danger" disabled={!!busy || !ready || !proposal!.allowedActions.includes('reject')} onClick={() => void reject()}>拒绝此提案</button></div>}
       <p className="policy-note">接受只固定方案，不会开始执行。修改会生成新的提案并保留原记录。能力、预算和适配器范围由已批准定义与后端检查决定。</p>
     </div>}
-    {proposal?.state === 'accepted' && !plan && <div className="state-note"><p>服务端已接受此提案，但本页尚未收到最终方案。请核对原接受请求。</p><button className="secondary" disabled={!!busy || !ready} onClick={() => void accept()}>核对原接受请求</button></div>}
-    {plan && <div className="preflight"><h3>已固定的执行方案</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '通过当前授权检查后可创建临时实例。'}</p><UsageCommitmentSummary value={plan.usageBudget}/><PlanReviewGate key={plan.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{targets.length > 0 && <label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{targets.map(item => <option key={item.id} value={item.id}>{item.name} · 远程 Factory</option>)}</select></label>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待实例确认…' : '确认方案并创建任务'}</button><details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
+    {proposal?.state === 'accepted' && !plan && <div className="state-note"><p>服务端已接受此提案，但本页尚未收到最终方案。可只读找回原方案。</p><button className="secondary" disabled={!!busy || !ready} onClick={() => void restoreProposal(proposal.id)}>读取原方案</button></div>}
+    {plan && <div className="preflight"><h3>已固定的执行方案</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '通过当前授权检查后可创建临时实例。'}</p><UsageCommitmentSummary value={plan.usageBudget}/><PlanReviewGate key={plan.id} ownerId={user.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{targets.length > 0 && <label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{targets.map(item => <option key={item.id} value={item.id}>{item.name} · 远程 Factory</option>)}</select></label>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待实例确认…' : '确认方案并创建任务'}</button><details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
     {proposal && (!pending || accepted) && <button className="secondary wide" disabled={!!busy} onClick={startAgain}>开始新的装配</button>}
-  </section>;
+  </section></>;
 }

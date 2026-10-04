@@ -1,5 +1,5 @@
 /** Browser credentials remain in the server cookie; CSRF stays in memory only. */
-export interface BrowserAuthConfig { enabled: boolean; loginPath: '/api/factory/auth/login'; logoutPath: '/api/factory/auth/logout' }
+export interface BrowserAuthConfig { enabled: boolean; developmentOnly?: boolean; loginPath: '/api/factory/auth/login'; logoutPath: '/api/factory/auth/logout' }
 export class BrowserAuthError extends Error {
   constructor(public readonly status: number) { super(status === 401 ? '登录会话已过期，请重新登录。' : '身份认证暂时不可用，请重新尝试。'); }
 }
@@ -23,6 +23,8 @@ export function expireBrowserSession() { if (enabled) clearBrowserSession(true);
 export function configureBrowserAuth(value: unknown): BrowserAuthConfig {
   if (!value || typeof value !== 'object') throw new BrowserAuthError(0);
   const config = value as Partial<BrowserAuthConfig>;
+  if (config.developmentOnly !== undefined && typeof config.developmentOnly !== 'boolean') throw new BrowserAuthError(0);
+  if (config.developmentOnly === true && config.enabled !== true) throw new BrowserAuthError(0);
   if (typeof config.enabled !== 'boolean' || config.loginPath !== '/api/factory/auth/login' || config.logoutPath !== '/api/factory/auth/logout') throw new BrowserAuthError(0);
   if (enabled !== config.enabled) clearBrowserSession();
   enabled = config.enabled;

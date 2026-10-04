@@ -233,6 +233,13 @@ def create_app(settings=None):
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
         external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
+    if settings.development_mock_login:
+        from .development_identity import DevelopmentIdentityProvider
+        from .browser_auth import BrowserAuthBridge, BrowserSessionService
+        provider = DevelopmentIdentityProvider(demo=settings.demo, public_origin=cast(str, settings.development_public_origin))
+        browser_auth = BrowserSessionService(store, auth, provider.config, exchanger=provider.exchanger)
+        native.state.factory.update(browser_auth=browser_auth, development_identity=provider)
+        return BrowserAuthBridge(native, browser_auth, development_app=provider.app)
     if settings.browser_oidc is not None:
         from .browser_auth import BrowserAuthBridge, BrowserSessionService
         browser_auth = BrowserSessionService(store, auth, settings.browser_oidc)

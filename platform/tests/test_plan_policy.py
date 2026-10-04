@@ -89,6 +89,14 @@ class PlanPolicyTests(unittest.TestCase):
         self.service = PlanPolicyService(self.store, self.auth, clock=lambda: self.at)
         self.plan = self.store.add()
 
+    def test_owner_plan_filter_keeps_review_recovery_scoped(self):
+        self.change("admin-review")
+        first = self.service.request_review("alice", self.plan["id"], "inbox-first")
+        other_plan = self.store.add()
+        self.service.request_review("alice", other_plan["id"], "inbox-other")
+        self.assertEqual([row["id"] for row in self.service.list_reviews("alice", plan_id=self.plan["id"])], [first["id"]])
+        self.assertEqual(self.service.list_reviews("bob", plan_id=self.plan["id"]), [])
+
     def tearDown(self):
         self.db.db_engine.dispose()
         self.directory.cleanup()

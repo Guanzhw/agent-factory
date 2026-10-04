@@ -270,6 +270,16 @@ async function inspectProposal(id: string, signal?: AbortSignal): Promise<Assemb
   if (value.id !== id) throw invalid('装配提案标识不一致。'); return value;
 }
 
+async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ proposal: AssemblyProposal; plan: Plan | null }> {
+  const raw = await request<unknown>(`/compositions/proposals/${segment(id)}/recovery`, 'GET', undefined, signal);
+  if (!raw || typeof raw !== 'object' || !('proposal' in raw) || !('plan' in raw)
+      || !('historical' in raw) || raw.historical !== true || !('executionAuthorized' in raw) || raw.executionAuthorized !== false) throw invalid('历史方案恢复凭据无法核对。');
+  const item = proposal(raw.proposal), plan = raw.plan === null ? null : sealedPlan(raw.plan);
+  if (item.id !== id || (item.state === 'accepted') !== (plan !== null)
+      || plan && (plan.id !== item.planId || !('ownerId' in plan) || plan.ownerId !== item.ownerId || plan.normalizedGoal !== item.candidate.normalizedGoal)) throw invalid('原提案与方案范围不一致。');
+  return { proposal: item, plan };
+}
+
 export const api = {
   storage: async (owner: string, signal?: AbortSignal) => storageSummary(await request<StorageSummary>('/storage', 'GET', undefined, signal), owner),
   retentionPlan: async (owner: string, objectId: string, requestId: string) => retentionReceipt(await request<RetentionReceipt>('/storage/retention/plans', 'POST', { objectId, requestId }), owner),
@@ -278,7 +288,8 @@ export const api = {
   submitControl, controlReceipt, controlCommands,
   dispatchControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/dispatch`, 'POST'), owner, task, commandId),
   acknowledgeControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/acknowledge`, 'POST'), owner, task, commandId),
-  applications, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal,
+  applications, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal, recoverProposal,
+  proposalInbox: (after?: string, signal?: AbortSignal) => request<unknown>(`/compositions/proposals${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
   draftApplication: async (definition: Record<string, unknown>, requestId: string) => application(await request('/applications/drafts', 'POST', { definition, requestId })),
   reviseApplication: async (id: string, version: number, definition: Record<string, unknown>, requestId: string) => application(await request(`${versionPath(id, version)}/revise`, 'POST', { definition, requestId })),
   requestApplicationPublication: async (id: string, version: number, requestId: string) => applicationReview(await request(`${versionPath(id, version)}/review`, 'POST', { requestId })),
@@ -312,7 +323,7 @@ export const api = {
   planAuthorization: (id: string, signal?: AbortSignal) => request<PlanAuthorization>(`/plans/${segment(id)}/authorization`, 'GET', undefined, signal),
   inspectPlanReview: (id: string, signal?: AbortSignal) => request<PlanReview>(`/plan-reviews/${segment(id)}`, 'GET', undefined, signal),
   requestPlanReview: (planId: string, requestId: string) => request<PlanReview>('/plan-reviews', 'POST', { planId, requestId }),
-  planReviews: (allOwners = false, signal?: AbortSignal) => request<PlanReview[]>(`/plan-reviews?allOwners=${allOwners}`, 'GET', undefined, signal),
+  planReviews: (allOwners = false, signal?: AbortSignal, planId?: string) => request<PlanReview[]>(`/plan-reviews?allOwners=${allOwners}${planId ? `&planId=${segment(planId)}` : ''}`, 'GET', undefined, signal),
   decidePlanReview: (id: string, approved: boolean, requestId: string) => request<PlanReview>(`/plan-reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
   jobs: (signal?: AbortSignal) => request<FactoryJob[]>('/jobs', 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),

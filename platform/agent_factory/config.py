@@ -20,6 +20,8 @@ class Settings:
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
     browser_oidc: "BrowserOIDCConfig | None" = None
+    development_mock_login: bool = False
+    development_public_origin: str | None = None
     max_workers: int = 2
     max_queued: int = 20
     max_user_tasks: int = 2
@@ -60,6 +62,15 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if type(self.development_mock_login) is not bool:
+            raise ValueError("Development mock login requires explicit boolean configuration")
+        if self.development_mock_login:
+            from .development_identity import validate_development_origin
+            if self.demo is not True or self.browser_oidc is not None or self.oidc_identity is not None:
+                raise ValueError("Development mock login is disabled in production")
+            validate_development_origin(self.development_public_origin)  # type: ignore[arg-type]
+        elif self.development_public_origin is not None:
+            raise ValueError("Development origin requires explicit mock login")
         if self.browser_oidc is not None:
             from .browser_oidc import BrowserOIDCConfig
             if self.demo or type(self.browser_oidc) is not BrowserOIDCConfig:

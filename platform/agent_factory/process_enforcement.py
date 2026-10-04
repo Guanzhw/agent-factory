@@ -94,14 +94,41 @@ def _root_pin(path):
 
 
 def _identity(body):
-    return {key: body[key] for key in ("schema", "id", "ownerId", "taskId", "requestId", "spec", "limits",
+    result = {key: body[key] for key in ("schema", "id", "ownerId", "taskId", "requestId", "spec", "limits",
                                       "bootId", "rootPin", "specSha256")}
+    if "aggregateConfig" in body:
+        result.update({key: body[key] for key in ("aggregateConfig", "aggregateBinding", "aggregateIdentity")})
+    return result
+
+
+def spec_contract(spec, limits, aggregate_config=None):
+    return {"spec": spec, "limits": limits, **({"aggregateConfig": aggregate_config} if aggregate_config is not None else {})}
+
+
+def aggregate_backend(body):
+    try:
+        from .delegated_cgroup import DelegatedCgroupBackend, DelegatedCgroupConfig
+    except ImportError:
+        from delegated_cgroup import DelegatedCgroupBackend, DelegatedCgroupConfig  # pyright: ignore[reportMissingImports]
+    return DelegatedCgroupBackend(DelegatedCgroupConfig.from_dict(body["aggregateConfig"]))
+
+
+def aggregate_projection(body):
+    try:
+        from .aggregate_process import project_aggregate_evidence
+    except ImportError:
+        from aggregate_process import project_aggregate_evidence  # pyright: ignore[reportMissingImports]
+    ticket = body["aggregateTicket"]
+    proof = {} if ticket["state"] == "NEW" else aggregate_backend(body).inspect(ticket)
+    return project_aggregate_evidence(ticket, proof)
+
 
 
 def stop_receipt(body, kind, exit_code=None):
     return {"kind": kind, "journalId": body["id"], "identitySha256": body["identitySha256"],
             "bootId": body["bootId"], "guardian": body["guardian"], "child": body["child"],
-            "exitCode": exit_code, "groupStopped": True}
+            "exitCode": exit_code, "groupStopped": True,
+            **({"aggregateEvidence": body.get("aggregateStopEvidence")} if kind == "original-delegated-cgroup-released" else {})}
 
 
 def valid_stop(body):
@@ -109,8 +136,20 @@ def valid_stop(body):
     if body["bootId"] != boot_id() or type(receipt) is not dict:
         return False
     if receipt.get("kind") == "never-dispatched":
-        return (body["state"] == "CANCELLED" and body["guardian"] is None and body["child"] is None
+        return (("aggregateTicket" not in body or aggregate_projection(body)["state"] == "NEW") and body["state"] == "CANCELLED" and body["guardian"] is None and body["child"] is None
                 and receipt == stop_receipt(body, "never-dispatched"))
+    if "aggregateConfig" in body:
+        try:
+            try:
+                from .aggregate_process import aggregate_stopped
+            except ImportError:
+                from aggregate_process import aggregate_stopped  # pyright: ignore[reportMissingImports]
+            evidence = aggregate_projection(body)
+            return (body["state"] in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
+                    and aggregate_stopped(evidence) and evidence == body.get("aggregateStopEvidence")
+                    and receipt == stop_receipt(body, "original-delegated-cgroup-released", body.get("exitCode")))
+        except Exception:
+            return False
     child, guardian = body.get("child"), body.get("guardian")
     return (body["state"] in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
             and same_birth(child, child) and same_birth(guardian, guardian)
@@ -126,6 +165,34 @@ def birth(pid):
         return {"bootId": boot_id(), "pid": pid, "start": fields[19], "state": fields[0], "group": int(fields[2])}
     except (OSError, ValueError, IndexError):
         return None
+
+
+def guardian_absent(guardian):
+    """Positive absence only; unreadable or malformed proc state keeps custody."""
+    if guardian is None:
+        return True
+    if not same_birth(guardian, guardian):
+        return False
+    try:
+        raw = Path(f"/proc/{guardian['pid']}/stat").read_text()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        if not raw.startswith(str(guardian["pid"]) + " (") or ") " not in raw:
+            return False
+        fields = raw[raw.rfind(")") + 2:].split()
+        if fields[0] not in {"R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I"}:
+            return False
+        actual = {"bootId": boot_id(), "pid": guardian["pid"], "start": fields[19],
+                  "state": fields[0], "group": int(fields[2])}
+        if not same_birth(actual, actual):
+            return False
+        # A group change alone is not proof that the original process died.
+        return any(actual[key] != guardian[key] for key in ("bootId", "pid", "start")) or actual["state"] == "Z"
+    except (OSError, ValueError, IndexError):
+        return False
 
 
 @contextmanager
@@ -145,8 +212,13 @@ def _read(conn):
     body = json.loads(conn.execute("SELECT body FROM custody WHERE singleton=1").fetchone()[0])
     path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
     if (body.get("identitySha256") != _digest(_identity(body)) or body.get("rootPin") != _root_pin(path)
-            or body.get("specSha256") != _digest({"spec": body["spec"], "limits": body["limits"]})):
+            or body.get("specSha256") != _digest(spec_contract(body["spec"], body["limits"], body.get("aggregateConfig")))):
         _deny()
+    if "aggregateConfig" in body:
+        ticket = body.get("aggregateTicket", {})
+        if ({key: ticket.get(key) for key in ("id", "name", "bindingSha256", "configSha256", "rootPin")}
+                != body["aggregateIdentity"] or ticket.get("bindingSha256") != _digest(body["aggregateBinding"])):
+            _deny()
     return body
 
 
@@ -155,6 +227,80 @@ def _write(conn, body):
     if _identity(original) != _identity(body) or body.get("identitySha256") != original["identitySha256"]:
         _deny()
     conn.execute("UPDATE custody SET body=? WHERE singleton=1", (json.dumps(body, sort_keys=True),))
+
+
+def aggregate_operation(path, operation, child=None, *, recovery=False):
+    """One actor, original journal, committed ticket intent before each effect.
+
+    Normal callers are the recorded guardian with its unreaped, gated child.
+    Recovery is allowed only after that original guardian is positively absent.
+    """
+    with _open_journal(path) as conn:
+        body = _read(conn)
+    backend = aggregate_backend(body)
+    expected = body["aggregateTicket"]
+
+    def actor(current):
+        guardian = current.get("guardian")
+        if recovery:
+            if not guardian_absent(guardian):
+                _deny()
+        elif not same_birth(birth(os.getpid()), guardian):
+            _deny()
+        if current["bootId"] != boot_id() or current["aggregateTicket"] != expected:
+            _deny()
+        if operation in {"prepare", "attach_before_exec"} and current["cancelRequested"]:
+            _deny()
+
+    def authorize():
+        with _open_journal(path) as conn:
+            actor(_read(conn))
+
+    def persist(ticket):
+        nonlocal expected
+        with _open_journal(path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = _read(conn)
+            actor(current)
+            current["aggregateTicket"] = ticket
+            _write(conn, current)
+        expected = ticket
+
+    authorize()
+    if operation == "prepare":
+        return backend.prepare(expected, persist=persist, before_effect=authorize)
+    if operation == "attach_before_exec":
+        return backend.attach_before_exec(expected, child, persist=persist, before_effect=authorize)
+    if operation == "kill":
+        return backend.kill(expected, persist=persist, before_effect=authorize)
+    if operation == "release":
+        return backend.release(expected, persist=persist, before_effect=authorize)
+    _deny()
+
+
+def aggregate_finish(path, *, recovery=False):
+    """Whole original cgroup emptiness and removal, never leader-only proof."""
+    with _open_journal(path) as conn:
+        body = _read(conn)
+    backend = aggregate_backend(body)
+    proof = backend.inspect(body["aggregateTicket"])
+    if proof["releasedProof"]:
+        return aggregate_projection(body)
+    if proof["populated"] is True:
+        aggregate_operation(path, "kill", recovery=recovery)
+    deadline = time.monotonic() + 1
+    while True:
+        with _open_journal(path) as conn:
+            body = _read(conn)
+        proof = backend.inspect(body["aggregateTicket"])
+        if proof["populated"] is False:
+            break
+        if time.monotonic() >= deadline:
+            _deny()
+        time.sleep(.02)
+    aggregate_operation(path, "release", recovery=recovery)
+    with _open_journal(path) as conn:
+        return aggregate_projection(_read(conn))
 
 
 class BoundedProcessAdapter:
@@ -168,7 +314,7 @@ class BoundedProcessAdapter:
             _deny()
 
     @classmethod
-    def create(cls, path, *, owner_id, task_id, request_id, spec, limits=ProcessLimits()):
+    def create(cls, path, *, owner_id, task_id, request_id, spec, limits=ProcessLimits(), aggregate_config=None, aggregate_binding=None):
         if sys.platform != "linux" or not hasattr(os, "fork") or not Path("/proc/self/stat").is_file():
             raise ProcessEnforcementError("PROCESS_ENFORCEMENT_UNAVAILABLE")
         if type(spec) is not ProcessSpec or type(limits) is not ProcessLimits:
@@ -176,6 +322,22 @@ class BoundedProcessAdapter:
         for value in (owner_id, task_id, request_id):
             if type(value) is not str or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
                 _deny()
+        aggregate_body = {}
+        if aggregate_config is not None:
+            try:
+                from .aggregate_process import aggregate_enforcement
+            except ImportError:
+                from aggregate_process import aggregate_enforcement  # pyright: ignore[reportMissingImports]
+            if (type(aggregate_binding) is not dict or aggregate_binding.get("ownerId") != owner_id
+                    or aggregate_binding.get("localTaskId") != task_id or aggregate_binding.get("requestId") != request_id):
+                _deny()
+            aggregate_body = {"aggregateConfig": aggregate_config.to_dict(), "aggregateBinding": aggregate_binding}
+            ticket = aggregate_backend(aggregate_body).new_ticket(aggregate_binding)
+            aggregate_body.update(aggregateTicket=ticket,
+                aggregateIdentity={key: ticket[key] for key in ("id", "name", "bindingSha256", "configSha256", "rootPin")},
+                enforcement=aggregate_enforcement(aggregate_config))
+        elif aggregate_binding is not None:
+            _deny()
         path = Path(path).absolute()
         # Dedicated trusted task directory; no shared-user workspace backend.
         directory = path.parent.lstat()
@@ -194,7 +356,8 @@ class BoundedProcessAdapter:
                 "enforcement": {"cpu": "per-process-RLIMIT_CPU", "memory": "per-process-RLIMIT_AS",
                     "fileSize": "per-file-RLIMIT_FSIZE", "wall": "cooperative-process-group-guardian",
                     "aggregateQuota": False, "hostileCodeSandbox": False, "networkIsolation": False}}
-            body["specSha256"] = _digest({"spec": body["spec"], "limits": body["limits"]})
+            body.update(aggregate_body)
+            body["specSha256"] = _digest(spec_contract(body["spec"], body["limits"], body.get("aggregateConfig")))
             body["identitySha256"] = _digest(_identity(body))
             conn.execute("INSERT INTO custody VALUES(1,?)", (json.dumps(body, sort_keys=True),))
         result = cls(path)
@@ -237,16 +400,18 @@ class BoundedProcessAdapter:
             raise ProcessEnforcementError("PROCESS_OWNER_DENIED")
         if self._process is not None:
             self._process.poll()  # Reap only this instance's original guardian.
+        if "aggregateConfig" in body:
+            body = {**body, "aggregateEvidence": aggregate_projection(body)}
         if body["bootId"] != boot_id() or ((body["state"] in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
                 or body.get("stoppedProof") or not body.get("capacityHeld", True)) and not valid_stop(body)):
             return {key: value for key, value in {**body, "state": "UNKNOWN", "capacityHeld": True,
-                "stoppedProof": False}.items() if key != "spec"}
+                "stoppedProof": False}.items() if key not in {"spec", "aggregateConfig", "aggregateBinding", "aggregateIdentity", "aggregateTicket"}}
         guardian = body["guardian"]
         if body["state"] not in {"PREPARED", "COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}:
             actual = birth(guardian["pid"]) if guardian else None
             if guardian and (actual is None or not same_birth(actual, guardian) or actual["state"] == "Z"):
                 body = {**body, "state": "UNKNOWN", "capacityHeld": True, "stoppedProof": False}
-        return {key: value for key, value in body.items() if key != "spec"}
+        return {key: value for key, value in body.items() if key not in {"spec", "aggregateConfig", "aggregateBinding", "aggregateIdentity", "aggregateTicket"}}
 
     def cancel(self, *, owner_id):
         with _open_journal(self.path) as conn:
@@ -259,6 +424,20 @@ class BoundedProcessAdapter:
                 body.update(state="CANCELLED", stoppedProof=True, capacityHeld=False)
                 body["stopReceipt"] = stop_receipt(body, "never-dispatched")
             _write(conn, body)
+        if "aggregateConfig" in body and not body["stoppedProof"]:
+            guardian = body.get("guardian")
+            if guardian_absent(guardian):
+                try:
+                    evidence = aggregate_finish(self.path, recovery=True)
+                    with _open_journal(self.path) as conn:
+                        conn.execute("BEGIN IMMEDIATE")
+                        current = _read(conn)
+                        current.update(state="CANCELLED", exitCode=None, stoppedProof=True, capacityHeld=False,
+                                       aggregateStopEvidence=evidence)
+                        current["stopReceipt"] = stop_receipt(current, "original-delegated-cgroup-released")
+                        _write(conn, current)
+                except Exception:
+                    pass
         return self.inspect(owner_id=owner_id)
 
     def wait(self, *, owner_id, timeout=7):

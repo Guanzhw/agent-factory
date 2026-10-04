@@ -12,7 +12,7 @@ from typing import cast
 from .resources import PersistentResourceService, TERMINAL
 
 _FIELDS = frozenset({"id", "ownerId", "localTaskId", "planId", "nativeRunId", "fingerprint",
-    "providerJobId", "processBinding", "enforcement", "stopEvidence", "state", "capacityHeld",
+    "providerJobId", "processBinding", "enforcement", "aggregateEvidence", "stopEvidence", "state", "capacityHeld",
     "executionStatus", "exitCode", "poolId", "poolFingerprint", "limits"})
 _IMMUTABLE = ("id", "ownerId", "localTaskId", "planId", "nativeRunId", "fingerprint",
               "poolId", "poolFingerprint", "limits")
@@ -44,6 +44,8 @@ is deliberately not a query or an authorization decision.
     for lease in leases:
         _require(type(lease) is dict)
         value = {key: deepcopy(lease.get(key)) for key in _FIELDS}
+        if value["aggregateEvidence"] is None:
+            value.pop("aggregateEvidence")
         if value["executionStatus"] is None:
             value["executionStatus"] = "UNKNOWN"
         validate_process_evidence({"processLeases": {"schema": 1, "complete": True, "leases": [value]},
@@ -59,9 +61,9 @@ def _validated(receipt: dict) -> dict:
     _require(type(evidence) is dict and set(evidence) == {"schema", "complete", "leases"}
              and type(evidence["schema"]) is int and evidence["schema"] == 1 and evidence["complete"] is True
              and type(evidence["leases"]) is list and len(evidence["leases"]) <= 1)
-    evidence = cast(dict, evidence)
+    evidence = deepcopy(cast(dict, evidence))
     for lease in evidence["leases"]:
-        _require(type(lease) is dict and set(lease) == _FIELDS)
+        _require(type(lease) is dict and set(lease) in (_FIELDS, _FIELDS - {"aggregateEvidence"}))
         lease = cast(dict, lease)
         _require(all(_id(lease[key]) for key in ("id", "localTaskId", "planId", "nativeRunId", "poolId")))
         _require(type(lease["ownerId"]) is str and 1 <= len(lease["ownerId"]) <= 200
@@ -83,10 +85,11 @@ def _validated(receipt: dict) -> dict:
         stop = lease["stopEvidence"]
         _require(stop is None or type(stop) is dict and set(stop) == {"allStopped", "kind"}
                  and stop["allStopped"] is True and type(stop["kind"]) is str
-                 and stop["kind"] in {"never-dispatched", "original-root-reaped-and-no-live-process-group-members"})
+                 and stop["kind"] in {"never-dispatched", "original-root-reaped-and-no-live-process-group-members", "original-delegated-cgroup-empty-and-removed"})
         if lease["providerJobId"] is None and lease["processBinding"] is None:
             _require(state in {"RESERVED", "UNKNOWN", "CANCEL_REQUESTED"} and lease["capacityHeld"] is True
-                     and outcome == "UNKNOWN" and code is None and stop is None and lease["enforcement"] is None)
+                     and outcome == "UNKNOWN" and code is None and stop is None and lease["enforcement"] is None
+                     and lease.get("aggregateEvidence") is None)
         else:
             snapshot = {**lease, "leaseId": lease["id"], "released": state == "RECLAIMED"}
             PersistentResourceService.process_snapshot(lease, snapshot)
@@ -113,6 +116,10 @@ def validate_process_evidence(receipt: dict, previous: dict | None = None) -> di
                 for key in ("providerJobId", "processBinding", "enforcement"):
                     if prior[key] is not None:
                         _require(current[key] == prior[key])
+                if prior.get("aggregateEvidence") is not None:
+                    from .aggregate_process import validate_aggregate_evidence
+                    validate_aggregate_evidence(current.get("aggregateEvidence"), current["processBinding"]["bindingFingerprint"],
+                        current["enforcement"], prior["aggregateEvidence"])
                 if prior["state"] == "RECLAIMED":
                     _require(current == prior)
                 elif prior["stopEvidence"] is not None:

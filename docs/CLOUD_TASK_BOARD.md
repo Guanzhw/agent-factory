@@ -1,5 +1,31 @@
 # Cloud integration task board
 
+## Active aggregate contracts and application recovery — 2026-10-04
+
+Base [PR28](https://github.com/Guanzhw/agent-factory/pull/28), exact
+`3afdef7c42556206910ad952b8816a5c1258f972`; branch
+`coord/aggregate-contracts-app-workflows-20261004`. Evidence-based final-gap audit
+precedes consolidated acceptance. Existing receiver attachment is required and
+implemented; optional machine/cloud provisioning is not added to this stage.
+Linux is selected. Container/runtime and delegated-subtree details remain inputs.
+The department IdP is not supplied; explicitly development-only mock login supports
+current work while production identity remains fail-closed.
+
+| Owner / exclusive scope | Dependency | State / acceptance |
+|---|---|---|
+| root: shared process custody/guardian/provider/receipt/capability/API wiring and final docs | Frozen backend and recovery contracts | Integrated; full local Python1119=774pass345skip60.294s, frontend131/static/audit clean; exact-head CI pending. No actual cgroup/host/security writes, credential access, deploy or merge. |
+| go_adapter: new delegated_cgroup + delegated_cgroup_fs and unit contracts | Explicit operator-selected delegated subtree | Implemented descriptor/boot/inode pins, aggregate cpu/memory/pids controls, original-group stop/release; 12 fake tests pass, no kernel acceptance. 3 mocked full-guardian ordering/drift tests pass. |
+| go_policy: new deployment_validation module/CLI/tests/doc | Existing identity/runtime/public configuration | Config validator 10 tests pass; development mock login/ephemeral TLS launcher added, 2 real PG cases pass4.692s. Real browser Origin failure diagnosed/fixed without weakening the guard; full desktop/mobile login rerun passes. |
+| factory_flow: V03_APP_GAP_AUDIT + new composition_inbox backend/UI/tests | Existing immutable proposals/plans | 8 SQLite + 7 frontend + 2 PG/HTTP tests pass (PG7.858s); actual interrupted-ACK desktop/mobile recovery passes, no duplicate mutations/instances/errors/overflow. |
+| independent_review: PlanReviews + new planReviewState/tests | Existing owner review list plus exact plan filter | Review recovery and aggregate UI implemented; 35 focused frontend tests pass. Current scope docs reconciled; historical evidence retained. |
+| at10: new aggregate process contract tests | Root/backend frozen interface | 11 fake/SQLite contract tests pass; original bindings, no replay, positive group proof and guardian uncertainty covered. Native reservation ceil and original-lease resume regression passes. |
+| reviewer: independent read-only scope/security/acceptance review | Combined changes | Scope corrections landed; aggregate budget/readback/guardian-absence findings fixed, 46 independent light tests pass; final code review and exact CI verification pending. |
+
+Current environment has a read-only cgroup mount. Contract and fake-filesystem
+success cannot certify kernel aggregate enforcement. Actual delegated-host tests
+remain blocked by target/facility inputs and are reported separately from code.
+Heavy tests stay serial, one local lane; no new grants/accounts/paid services.
+
 ## Active remote process / isolation capability integration — 2026-10-04
 
 Base PR27 `2e66b50fdd3ef27ca8b36b2f27b39a287d7df8eb`; branch

@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt  # type: ignore[reportMissingImports]  # noqa: E402
+from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt, aggregate_operation, aggregate_finish, aggregate_projection  # type: ignore[reportMissingImports]  # noqa: E402
 
 
 def update(path, **changes):
@@ -46,6 +46,8 @@ def main(path):
             return
         body["guardian"] = birth(os.getpid())
         _write(conn, body)
+    if "aggregateConfig" in body:
+        aggregate_operation(path, "prepare")
     spec, limits = body["spec"], body["limits"]
     binary = os.open(spec["executable"], os.O_RDONLY | getattr(os, "O_NOFOLLOW"))
     info = os.fstat(binary)
@@ -102,7 +104,14 @@ def main(path):
         os.waitpid(child, 0)
         raise ValueError("Child custody unavailable")
     CHILD_ID = identity
-    body = update(path, state="RUNNING", child=identity)
+    body = update(path, state="DISPATCHING", child=identity)
+    if "aggregateConfig" in body:
+        try:
+            aggregate_operation(path, "attach_before_exec", identity)
+        except BaseException:
+            os.close(gate_write)
+            raise
+    body = update(path, state="RUNNING")
     if body["cancelRequested"]:
         os.close(gate_write)
     else:
@@ -113,7 +122,14 @@ def main(path):
     while True:
         with _open_journal(path) as conn:
             body = _read(conn)
-        if body["cancelRequested"]:
+        if "aggregateConfig" in body and not aggregate_projection(body)["limitsReadbackVerified"]:
+            # A witnessed controls mismatch permanently fails this execution;
+            # original-group cleanup may still positively release capacity.
+            body = update(path, aggregateLimitsDrift=True)
+            cause = "FAILED"
+        if body.get("aggregateLimitsDrift"):
+            cause = "FAILED"
+        elif body["cancelRequested"]:
             cause = "CANCELLED"
         elif time.monotonic() - started >= limits["wall_seconds"]:
             cause = "LIMIT_STOPPED"
@@ -123,7 +139,11 @@ def main(path):
         if not same_birth(root, identity):
             raise ValueError("Child custody changed")
         if cause or root["state"] == "Z":
-            if members(child):
+            if "aggregateConfig" in body:
+                # Guardian stays outside the group; blocked child membership was
+                # confirmed before exec. This also stops setsid descendants.
+                aggregate_finish(path)
+            elif members(child):
                 getattr(os, "killpg")(child, getattr(signal, "SIGKILL"))
             _, status = os.waitpid(child, 0)
             break
@@ -140,9 +160,11 @@ def main(path):
         body = _read(conn)
         if not same_birth(body["child"], identity) or not same_birth(body["guardian"], birth(os.getpid())):
             raise ValueError("Stop receipt identity changed")
+        if "aggregateConfig" in body:
+            body["aggregateStopEvidence"] = aggregate_projection(body)
         body.update(state=state, exitCode=code, stoppedProof=True, capacityHeld=False,
             stopEvidence="original-root-reaped-and-no-live-process-group-members")
-        body["stopReceipt"] = stop_receipt(body, "original-group-stopped", code)
+        body["stopReceipt"] = stop_receipt(body, "original-delegated-cgroup-released" if "aggregateConfig" in body else "original-group-stopped", code)
         _write(conn, body)
 
 

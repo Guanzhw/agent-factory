@@ -22,9 +22,11 @@ from typing import cast
 
 from sqlalchemy import text
 
-from .isolation_capabilities import isolation_capabilities, require_isolation
+from .isolation_capabilities import SUPPORTED_SCOPES, IsolationCapabilityError, isolation_capabilities, require_isolation
+from .aggregate_process import aggregate_enforcement, validate_aggregate_evidence
+from .delegated_cgroup import DelegatedCgroupBackend, DelegatedCgroupConfig
 from .local_compute import LocalWorkspaceProvider
-from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec
+from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, spec_contract
 from .store import canonical, digest
 
 _BINDINGS = ("id", "ownerId", "fingerprint", "localTaskId", "planId", "nativeRunId", "requestId",
@@ -39,9 +41,16 @@ def _require(value):
 
 
 class ProcessResourceProvider:
-    def __init__(self, store, root: Path, spec: ProcessSpec, limits: ProcessLimits, *, required_isolation=()):
+    def __init__(self, store, root: Path, spec: ProcessSpec, limits: ProcessLimits, *, required_isolation=(), aggregate_config=None):
         # Operator-only requirements: fail before root creation or allocation.
-        require_isolation(required_isolation)
+        self.aggregate_config = aggregate_config
+        if aggregate_config is None:
+            require_isolation(required_isolation)
+        else:
+            _require(type(aggregate_config) is DelegatedCgroupConfig)
+            if (type(required_isolation) not in {tuple, list} or any(type(scope) is not str or scope not in
+                    {*SUPPORTED_SCOPES, "aggregate-cpu", "aggregate-memory", "aggregate-pids"} for scope in required_isolation)):
+                raise IsolationCapabilityError("ISOLATION_SCOPE_UNSUPPORTED")
         self.required_isolation = tuple(sorted(set(required_isolation)))
         _require(sys.platform == "linux")
         _require(type(spec) is ProcessSpec and type(limits) is ProcessLimits)
@@ -59,10 +68,35 @@ class ProcessResourceProvider:
     def configuration_fingerprint(self):
         return digest({"namespace": self.capacity_namespace, "spec": asdict(self.spec),
                        "limits": asdict(self.limits), "revision": "process-provider-v1",
-                       **({"requiredIsolation": list(self.required_isolation)} if self.required_isolation else {})})
+                       **({"requiredIsolation": list(self.required_isolation)} if self.required_isolation else {}),
+                       **({"aggregateConfig": self.aggregate_config.to_dict()} if self.aggregate_config is not None else {})})
 
     def isolation_capabilities(self):
-        return {**isolation_capabilities(), "requiredScopes": list(self.required_isolation)}
+        result = {**isolation_capabilities(), "requiredScopes": list(self.required_isolation)}
+        if self.aggregate_config is None:
+            return result
+        available = False
+        try:
+            DelegatedCgroupBackend(self.aggregate_config).validate()
+            available = result["cooperativeRuntimeAvailable"]
+        except Exception:
+            pass
+        return {**result, "backend": "delegated-cgroup-v2", "aggregateBackendImplemented": True,
+            "configurationSha256": self.aggregate_config.fingerprint, "configuredPrerequisitesAvailable": available,
+            "declaredAggregateScopes": ["aggregate-cpu", "aggregate-memory", "aggregate-pids"],
+            "aggregateEnforcementVerified": False, "taskOwnedBackendSupported": available,
+            "prerequisiteReasons": ["PER_TASK_KERNEL_ENFORCEMENT_REQUIRES_EXECUTION_EVIDENCE"] +
+                ([] if available else ["CONFIGURED_DELEGATION_UNAVAILABLE"]),
+            "supportedScopes": result["supportedScopes"] + (["aggregate-cpu", "aggregate-memory", "aggregate-pids"] if available else []),
+            "unsupportedScopes": ["aggregate-io", "aggregate-disk", "network-isolation", "hostile-code-isolation"]}
+
+    def _require_admission(self):
+        if self.aggregate_config is None:
+            require_isolation(self.required_isolation)
+        else:
+            require_isolation(())
+            DelegatedCgroupBackend(self.aggregate_config).validate()
+
 
     def _binding(self, lease: dict):
         _require(type(lease) is dict and all(key in lease for key in _BINDINGS))
@@ -79,6 +113,10 @@ class ProcessResourceProvider:
         _require(budgets["cpu"] >= 1 and budgets["memoryMb"] >= self.limits.address_space_mb
                  and budgets["diskMb"] >= math.ceil(self.limits.file_size_bytes / (1024 * 1024))
                  and budgets["seconds"] >= self.limits.wall_seconds)
+        if self.aggregate_config is not None:
+            config = self.aggregate_config
+            _require(config.cpu_quota_us <= budgets["cpu"] * config.cpu_period_us
+                     and config.memory_bytes + config.swap_bytes <= budgets["memoryMb"] * 1024 * 1024)
         # JSON roundtrip detaches caller-owned mutable inputs before thread work.
         return json.loads(canonical({key: lease[key] for key in _BINDINGS}))
 
@@ -138,7 +176,7 @@ class ProcessResourceProvider:
         with self._transaction() as conn:
             self._verify_mapping(conn, binding)
         # Database lock waits can outlast cancellation or authority changes.
-        require_isolation(self.required_isolation)
+        self._require_admission()
         self._authority(cancelled, callback)
 
     @staticmethod
@@ -168,7 +206,7 @@ class ProcessResourceProvider:
 
     def _allocate(self, binding, cancelled, callback):
         with self._root_guard._operation_lock():
-            require_isolation(self.required_isolation)
+            self._require_admission()
             self._authority(cancelled, callback)
             with self._transaction() as conn:
                 self._verify_mapping(conn, binding)
@@ -183,7 +221,8 @@ class ProcessResourceProvider:
                     _require(previous.get("released") is True)
                 record = {"binding": binding, "bindingHash": digest(binding),
                     "configurationFingerprint": self.configuration_fingerprint, "state": "UNKNOWN", "released": False,
-                    "allStopped": False, "stopKind": None, "executionStatus": "UNKNOWN", "exitCode": None, "directoryIdentity": None, "journalIdentity": None, "processPin": None}
+                    "allStopped": False, "stopKind": None, "executionStatus": "UNKNOWN", "exitCode": None, "directoryIdentity": None, "journalIdentity": None, "processPin": None,
+                    **({"enforcement": aggregate_enforcement(self.aggregate_config), "aggregateEvidence": None} if self.aggregate_config is not None else {})}
                 self._save(conn, record, insert=True)
             try:
                 with self._root_guard._root() as root_fd:
@@ -198,7 +237,8 @@ class ProcessResourceProvider:
                         os.close(fd)
                 path = self.root / binding["id"] / "custody.sqlite"
                 adapter = BoundedProcessAdapter.create(path, owner_id=binding["ownerId"], task_id=binding["localTaskId"],
-                    request_id=binding["requestId"], spec=self.spec, limits=self.limits)
+                    request_id=binding["requestId"], spec=self.spec, limits=self.limits,
+                    **({"aggregate_config": self.aggregate_config, "aggregate_binding": binding} if self.aggregate_config is not None else {}))
                 original = adapter.inspect(owner_id=binding["ownerId"])
                 self._validate_process(record, original, pin=False)
                 info = path.lstat()
@@ -224,8 +264,13 @@ class ProcessResourceProvider:
         _require(exit_code is None or type(exit_code) is int and -255 <= exit_code <= 255)
         _require(all(key in snapshot for key in _PINS))
         _require(snapshot["specSha256"] == hashlib.sha256(json.dumps(
-            {"spec": asdict(self.spec), "limits": asdict(self.limits)},
+            spec_contract(asdict(self.spec), asdict(self.limits), self.aggregate_config.to_dict() if self.aggregate_config is not None else None),
             sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+        if self.aggregate_config is not None:
+            expected = aggregate_enforcement(self.aggregate_config)
+            _require(snapshot.get("enforcement") == expected)
+            record["aggregateEvidence"] = validate_aggregate_evidence(snapshot.get("aggregateEvidence"),
+                record["bindingHash"], expected, record.get("aggregateEvidence"))
         if pin:
             _require(record["processPin"] == {key: snapshot[key] for key in _PINS})
 
@@ -259,7 +304,9 @@ class ProcessResourceProvider:
             "executionStatus": record["executionStatus"], "exitCode": record["exitCode"],
             "allStopped": record["allStopped"], "capacityHeld": record["released"] is not True,
             "providerJobId": (record.get("processPin") or {}).get("id"), "retainedEvidence": True,
-            "allocationKind": "bounded-cooperative-process", "enforcement": {
+            "allocationKind": "delegated-cgroup-process" if "aggregateEvidence" in record else "bounded-cooperative-process",
+            **({"aggregateEvidence": record["aggregateEvidence"]} if "aggregateEvidence" in record else {}),
+            "enforcement": record.get("enforcement") or {
                 "cpu": "per-process-RLIMIT_CPU", "memory": "per-process-RLIMIT_AS", "fileSize": "per-file-RLIMIT_FSIZE",
                 "wall": "cooperative-process-group-guardian", "aggregateQuota": False,
                 "hostileCodeSandbox": False, "networkIsolation": False}}
@@ -274,11 +321,12 @@ class ProcessResourceProvider:
                     self._validate_process(record, snapshot)
                 proof_kind = (snapshot.get("stopReceipt") or {}).get("kind")
                 stopped = (snapshot.get("stoppedProof") is True and snapshot.get("state") in _TERMINAL
-                           and proof_kind in {"original-group-stopped", "never-dispatched"})
+                           and proof_kind in {"original-group-stopped", "never-dispatched", "original-delegated-cgroup-released"})
                 record.update(executionStatus=snapshot["state"], exitCode=snapshot.get("exitCode"))
                 if snapshot["state"] in _TERMINAL and not stopped:
                     record.update(executionStatus="UNKNOWN", exitCode=None)
                 record["stopKind"] = ("never-dispatched" if proof_kind == "never-dispatched" else
+                    "original-delegated-cgroup-empty-and-removed" if proof_kind == "original-delegated-cgroup-released" else
                     "original-root-reaped-and-no-live-process-group-members") if stopped else None
                 if record["released"]:
                     _require(stopped)

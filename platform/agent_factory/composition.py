@@ -365,6 +365,8 @@ class ProposalDecision(BaseModel):
 
 
 def composition_router(auth, service):
+    from .composition_inbox import CompositionInboxService
+    inbox = CompositionInboxService(service)
     router = APIRouter(prefix="/api/factory/compositions/proposals")
     def kwargs(body):
         return {"goal": body.goal, "mode": body.mode, "application": body.application,
@@ -374,6 +376,12 @@ def composition_router(auth, service):
     @router.post("", status_code=201)
     def propose(body: ProposalRequest, request: Request):
         return service.propose(auth.user(request)["id"], **kwargs(body))
+    @router.get("")
+    def list_proposals(request: Request, after: str | None = None, limit: int = 20):
+        return inbox.list(auth.user(request)["id"], after=after, limit=limit)
+    @router.get("/{proposal_id}/recovery")
+    def recover(proposal_id: str, request: Request):
+        return inbox.read(auth.user(request)["id"], proposal_id)
     @router.get("/{proposal_id}")
     def inspect(proposal_id: str, request: Request):
         return service.inspect(auth.user(request)["id"], proposal_id)

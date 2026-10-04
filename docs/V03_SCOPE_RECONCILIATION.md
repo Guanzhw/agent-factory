@@ -1,21 +1,38 @@
 # Factory v0.3 scope reconciliation — 2026-10-04
 
-Latest continuation: [existing remote runtime/process integration and isolation capability](REMOTE_PROCESS_ISOLATION.md)
-reuses Factory handoff, effective receiver bindings and receiver-owned shared-pool
-process custody. Strict root process evidence reaches the origin without remapping
-custody IDs. The current environment lacks unprivileged aggregate delegation;
-aggregate requests are explicitly unsupported, and a real enforcement backend
-remains code work. Separate local service processes/real HTTP do not imply separate
-physical hosts or production deployment. Older stage text below is historical.
+## Current scope — 2026-10-04
 
-Latest continuation: [native process and shared-lease integration](PROCESS_LEASE_RUNTIME.md)
-connects original governed native task/run/plan identity to bounded cooperative
-process custody, shared-pool holds, stop-only lifecycle reconciliation and a
-Chinese owner-only lease view. UNKNOWN remains held; matching positive stop proof
-alone permits release, independently of execution success. Aggregate isolation,
-remote provisioning, production scientific contracts and target-host acceptance
-remain open. Older stage statements below are historical; final exact-head CI is
-recorded on this continuation's draft PR.
+The [application workflow audit](V03_APP_GAP_AUDIT.md) records the PR28 baseline
+and remaining product flows; its baseline gaps are not acceptance claims for
+later work. Proposal-history and plan-review recovery are implemented with controlled
+desktop/mobile browser acceptance; see the [stage evidence](APP_RECOVERY_AGGREGATE_ACCEPTANCE.md).
+Exact-head CI evidence belongs to the stage PR.
+
+- Browser authorization-code/PKCE, state/nonce, revocable sessions, CSRF and
+  logout are implemented and have controlled HTTPS desktop/mobile acceptance
+  ([evidence](BROWSER_AUTH_PROCESS_ENFORCEMENT.md)). The user has explicitly
+  selected mock/demo login for development now. A real IdP is not a development
+  blocker; production remains fail-closed until trusted identity/TLS configuration
+  and production onboarding are accepted.
+- Existing receiver/runtime attachment is a required baseline capability and is
+  implemented with governed native execution and receiver-owned process leases
+  ([evidence](REMOTE_PROCESS_ISOLATION.md)). Machine/cloud provisioning is an
+  optional extension, not a prerequisite for using an existing receiver.
+- The delegated cgroup v2 aggregate backend is integrated, with fake-driver
+  and offline contract/UI validation. This container's cgroup mount is read-only:
+  **no real aggregate CPU/memory/pids enforcement acceptance has occurred here**.
+  Declared configuration, readback, process attachment and release evidence are
+  separate; no aggregate disk quota, network isolation or hostile-code sandbox is
+  claimed. Existing real cooperative RLIMIT tests remain a different boundary.
+- The target OS is Linux. The actual target runtime, usable cgroup delegation and
+  receiver deployment configuration remain unknown. The 32-core/64-GB or
+  54-core/192-GB machines and sustained approximately twenty-user workloads remain
+  unaccepted. Non-toy scientific evaluation and a real scientific-provider
+  synthesis contract also remain unfinished; controlled synthesis is not a
+  verified scientific conclusion.
+
+Historical records retain their original dates, hashes, test counts and limits.
+They do not certify current uncommitted integration or supersede the scope above.
 
 The delivery target is the complete material-driven Factory, with AutoResearch as
 its first Chinese-language application, approximately twenty departmental users,
@@ -42,8 +59,8 @@ and [production inputs](PRODUCTION_DECISIONS.md).
 | Literature application and Chinese evidence UI | Source/hash/locator and missing-text provenance, report/package artifacts and owner-scoped Chinese evidence projection. New host PubMed retrieval completed through native Factory with two real abstract-only sources. [PubMed adapter](../platform/agent_factory/pubmed_retrieval.py), [governed profile](../platform/agent_factory/pubmed_profile.py), [projection](../platform/agent_factory/literature_evidence.py). | Validate the selected production question/source and permitted text coverage. The older zero-source failure remains unchanged; host-path success does not establish the old ORX container path or its failure cause. |
 | Source-bound synthesis | Governed immutable source snapshot, native knowledge injection, separate scientific capability, bounded claims/source IDs and exact-quote checks, explicit limitations, saved JSON/Markdown artifacts. Native controlled-model synthesis completed using the new real PubMed sources. [Contract](../platform/agent_factory/literature_synthesis.py), [fixture profile](../platform/agent_factory/literature_synthesis_profile.py). | Integrate a selected real scientific model/provider and its trusted accounting contract, then verify semantic/scientific quality with a domain reviewer. Current model execution is controlled-fixture; structural citation integrity is not a verified scientific conclusion. |
 | Experiments / AT10 | Pinned Linux ORX toy, actual processes, positive stop evidence and original-identity local/receiver recovery. [AT10 acceptance](AT10_TREE_ACCEPTANCE.md), [ORX tools](../platform/agent_factory/orx_experiment_tools.py). | Non-toy dataset/workspace/evaluator contracts, candidate-change review and evidence-based comparison still need implementation. Toy recovery is not arbitrary-code containment or scientific validity. |
-| Remote runtime and resources | Existing handoff now resolves exact receiver-effective bindings into receiver native execution and bounded process/shared-pool custody. Root lease evidence preserves original owner/task/run/plan/process/pool identities; origin retains holds during UNKNOWN. Real HTTP, separate local service processes and independent PG fixtures exercise replay, restart, revocation, cancellation and disconnect. [Current integration](REMOTE_PROCESS_ISOLATION.md), [resources](../platform/agent_factory/resources.py). | The process backend enforces cooperative per-process/per-file/group-wall limits, not aggregate quotas. Fresh capability reporting and unsupported-requirement rejection are implemented; an aggregate backend, remote machine provisioning and attachment to allocated environments remain code work. Cross-host TLS/identity, positive stop proof on the real receiver and target-host capacity remain unaccepted. |
-| Production identity | Managed SQL roles, bearer checks, current revocation and owner isolation; a demo browser bridge. [Auth](../platform/agent_factory/auth.py). | An opt-in RFC9068 RS256 bearer bridge now maps pinned issuer/subject identities to existing SQL owners, with offline and native-queue PG acceptance. Browser authorization-code/PKCE/state/nonce, revocable sessions, CSRF/logout and Chinese UI now pass synthetic HTTPS desktop/mobile and native SQL tests; see [browser/process milestone](BROWSER_AUTH_PROCESS_ENFORCEMENT.md). Real IdP/TLS integration, any required confidential-client/federated-logout adapter and production onboarding remain open; no identities were provisioned outside synthetic tests. |
+| Remote runtime and resources | Existing handoff now resolves exact receiver-effective bindings into receiver native execution and bounded process/shared-pool custody. Root lease evidence preserves original owner/task/run/plan/process/pool identities; origin retains holds during UNKNOWN. Real HTTP, separate local service processes and independent PG fixtures exercise replay, restart, revocation, cancellation and disconnect. [Current integration](REMOTE_PROCESS_ISOLATION.md), [resources](../platform/agent_factory/resources.py). | The process backend enforces cooperative per-process/per-file/group-wall limits, not aggregate quotas. Fresh capability reporting and unsupported-requirement rejection are implemented; the aggregate backend is now in integration with fake/offline validation only. Attaching an existing receiver is required and implemented; machine/cloud provisioning and attaching newly provisioned environments are optional extensions. The read-only cgroup mount prevents actual aggregate enforcement acceptance here. Cross-host TLS/identity, positive stop proof on the real receiver and target-host capacity remain unaccepted. |
+| Production identity | Managed SQL roles, bearer checks, current revocation and owner isolation; implemented PKCE browser login, durable sessions, CSRF/logout and controlled HTTPS browser acceptance. [Auth](../platform/agent_factory/auth.py). | An opt-in RFC9068 RS256 bearer bridge now maps pinned issuer/subject identities to existing SQL owners, with offline and native-queue PG acceptance. Browser authorization-code/PKCE/state/nonce, revocable sessions, CSRF/logout and Chinese UI now pass synthetic HTTPS desktop/mobile and native SQL tests; see [browser/process milestone](BROWSER_AUTH_PROCESS_ENFORCEMENT.md). Real IdP/TLS integration, any required confidential-client/federated-logout adapter and production onboarding remain open; no identities were provisioned outside synthetic tests. |
 | Operations and target capacity | Quarantine/restore/reclaim, bounded twenty-user pressure, official online PostgreSQL snapshot and independent restore. [Storage](../platform/agent_factory/storage_governance.py), [operations evidence](STORAGE_OPERATIONS.md). | Production monitoring, recovery objectives/PITR, sustained mixed-workload fairness and target-host capacity still require implementation/configuration and measurement. Recorded host is 4 CPU/16 GiB, not either target profile. |
 | Scheduling | Immutable occurrence admission and guarded restart, with one active native poller. [Scheduler](../platform/agent_factory/scheduling.py). | Resolve and verify the upstream atomic lease-release boundary before supporting concurrent scheduler replicas. No cluster or multi-replica claim follows from current tests. |
 
@@ -131,7 +148,7 @@ Superseded cancelled CI runs are not green runs. Exact-head checks and historica
 opt-in skips must retain their own provenance. PR21/PR22/PR23 are completed stages,
 not certification of subsequent changes or the complete v0.3 product. The new
 Luna/retrieval/controlled-synthesis results above do not close the production
-identity, real scientific-provider, compute-allocation or target-capacity gaps.
+production identity, real scientific-provider or target-capacity gaps; optional machine provisioning is a separate extension.
 
 ## External inputs for production acceptance
 
@@ -145,7 +162,31 @@ Collect non-secret choices while independent implementation continues:
 3. Scientific provider: selected model/SDK, governed owner binding, authoritative
    usage and price contract, approved execution limits. Do not substitute Go
    coding subscription access for this selection.
-4. Deployment/compute: chosen host/runtime and allocator, resource/network and
-   isolation contract, production monitoring/recovery objectives and measured
-   target workload. No merge, deployment, new payment or account change is
+4. Deployment/compute: Linux is the known target OS. Select the actual runtime,
+   existing receiver attachment and usable resource/network/isolation delegation;
+   define production monitoring/recovery objectives and measure target workload.
+   Choose a machine/cloud allocator only if the optional provisioning extension
+   is desired. No merge, deployment, new payment or account change is
    implied by this reconciliation.
+
+## Historical continuation summaries (superseded status)
+
+The following text is retained as a record of the earlier stages, not the current
+implementation status or required baseline.
+
+Latest continuation: [existing remote runtime/process integration and isolation capability](REMOTE_PROCESS_ISOLATION.md)
+reuses Factory handoff, effective receiver bindings and receiver-owned shared-pool
+process custody. Strict root process evidence reaches the origin without remapping
+custody IDs. The current environment lacks unprivileged aggregate delegation;
+aggregate requests are explicitly unsupported, and a real enforcement backend
+remains code work. Separate local service processes/real HTTP do not imply separate
+physical hosts or production deployment. Older stage text below is historical.
+
+Latest continuation: [native process and shared-lease integration](PROCESS_LEASE_RUNTIME.md)
+connects original governed native task/run/plan identity to bounded cooperative
+process custody, shared-pool holds, stop-only lifecycle reconciliation and a
+Chinese owner-only lease view. UNKNOWN remains held; matching positive stop proof
+alone permits release, independently of execution success. Aggregate isolation,
+remote provisioning, production scientific contracts and target-host acceptance
+remain open. Older stage statements below are historical; final exact-head CI is
+recorded on this continuation's draft PR.

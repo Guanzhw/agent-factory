@@ -15,14 +15,21 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
     const view = processLeaseView(value, owner);
     if (view.kind === 'invalid') return <p className="error-message" role="alert" key={index}>执行租约身份或进程回执尚未核实，不能确认停止或释放。</p>;
     const { lease, stopped, released } = view;
+    const aggregate = lease.enforcement && 'schema' in lease.enforcement ? lease.enforcement : null;
+    const evidence = lease.aggregateEvidence;
+    const cgroupStopped = lease.stopEvidence?.kind === 'original-delegated-cgroup-empty-and-removed';
     return <article className="material-row review-row" key={lease.id} data-process-lease-id={lease.id}><div className="material-info" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
       <h3>执行租约</h3><p><span className={`badge ${released ? 'status-ready' : 'status-blocked'}`}>{processLeaseState(lease.state)}</span></p>
       <p className={['FAILED', 'LIMIT_STOPPED'].includes(lease.executionStatus ?? '') ? 'error-message' : 'quiet'}>{processExecutionState(lease.executionStatus)}{lease.exitCode !== null ? ` · 退出码 ${lease.exitCode}` : ''}。租约释放不代表进程成功。</p>
-      <p role="status">{stopped ? lease.stopEvidence?.kind === 'never-dispatched' ? '服务端确认进程从未启动。' : '服务端已记录原进程组停止证据。' : '进程停止证据尚未确认。'} {released ? '租约预约容量已释放。' : '预约容量仍保留；停止或任务终态不等于资源已释放。'}</p>
+      <p role="status">{stopped ? lease.stopEvidence?.kind === 'never-dispatched' ? '服务端确认进程从未启动。' : cgroupStopped ? '服务端已记录原委派 cgroup 为空且已移除的停止证据。' : '服务端已记录原进程组停止证据。' : '进程停止证据尚未确认。'} {released ? '租约预约容量已释放。' : '预约容量仍保留；停止或任务终态不等于资源已释放。'}</p>
       {lease.state === 'UNKNOWN' && <p className="policy-note">原执行确认未知。保留原租约；页面读取不会重新启动进程或重放取消、回收。</p>}
       <dl className="plan-details"><dt>进程回执</dt><dd>{lease.providerJobId ?? '尚未取得进程回执'}</dd><dt>任务绑定</dt><dd>{lease.localTaskId}</dd><dt>原生运行</dt><dd>{lease.nativeRunId ?? '尚未确认'}</dd><dt>计划</dt><dd>{lease.planId}</dd><dt>进程与任务关联</dt><dd>{lease.processBinding ? '服务端回执中的任务、原生运行与计划已对应' : '尚未取得完整进程绑定，不能确认已集成执行'}</dd></dl>
-      {lease.enforcement ? <><h4>已记录的限额范围</h4><ul><li>CPU 与内存：每个进程的 RLIMIT 限额</li><li>文件大小：每个文件的 RLIMIT 限额</li><li>执行时长：协作式进程组守护</li></ul><p className="quiet">这些限额不是进程组总量配额，不提供不可信代码安全沙箱或网络隔离。</p></> : <p className="quiet">尚未提供可核对的进程限额回执，不宣称内核限额已生效。</p>}
-      <details className="technical-detail"><summary>租约与进程绑定依据</summary><span>租约 {lease.id}</span>{lease.processBinding && <span>绑定指纹 {lease.processBinding.bindingFingerprint}</span>}<span>停止证据 {stopped ? lease.stopEvidence?.kind === 'never-dispatched' ? '从未启动进程，不宣称发生进程回收' : '原始根进程已回收，未发现仍存活的进程组成员' : '未确认'}</span></details>
+      {aggregate ? <><h4>声明的聚合限额范围</h4><ul><li>CPU：cgroup cpu.max</li><li>内存与交换空间：cgroup memory.max / memory.swap.max</li><li>进程数：cgroup pids.max</li><li>文件大小：每个文件的 RLIMIT 限额</li><li>执行时长：原委派 cgroup 守护</li></ul><p className="quiet">配置声明不等于实际执行已受聚合限制；以下只展示服务端回读与进程附加证据。不提供磁盘总量配额、网络隔离或不可信代码安全沙箱。</p>
+        <dl className="plan-details"><dt>限额回读</dt><dd>{evidence?.limitsReadbackVerified ? '服务端已记录内核限额回读核对通过' : '尚未确认内核限额回读'}</dd><dt>进程附加</dt><dd>{evidence?.attached ? '服务端已记录进程附加到原 cgroup' : '尚未确认进程附加，不宣称实际执行已受聚合限制'}</dd><dt>聚合资源释放证据</dt><dd>{evidence?.releasedProof ? '原 cgroup 已确认为空并移除；租约容量状态仍单独核对' : '尚未取得原 cgroup 为空且已移除的完整证据'}</dd></dl>
+        {evidence?.state === 'UNKNOWN' && <p className="policy-note">聚合执行证据 UNKNOWN，不能据配置推断已限制、已停止或已释放。</p>}
+        <details className="technical-detail"><summary>聚合限额证据绑定</summary><span>配置指纹 {aggregate.configurationSha256}</span>{evidence && <><span>记录状态 {evidence.state}</span><span>票据 {evidence.ticketId}</span><span>原根目录指纹 {evidence.rootPinSha256}</span><span>原进程组指纹 {evidence.groupPinSha256 ?? '尚未确认'}</span></>}</details>
+      </> : lease.enforcement ? <><h4>已记录的限额范围</h4><ul><li>CPU 与内存：每个进程的 RLIMIT 限额</li><li>文件大小：每个文件的 RLIMIT 限额</li><li>执行时长：协作式进程组守护</li></ul><p className="quiet">这些限额不是进程组总量配额，不提供不可信代码安全沙箱或网络隔离。</p></> : <p className="quiet">尚未提供可核对的进程限额回执，不宣称内核限额已生效。</p>}
+      <details className="technical-detail"><summary>租约与进程绑定依据</summary><span>租约 {lease.id}</span>{lease.processBinding && <span>绑定指纹 {lease.processBinding.bindingFingerprint}</span>}<span>停止证据 {stopped ? lease.stopEvidence?.kind === 'never-dispatched' ? '从未启动进程，不宣称发生进程回收' : cgroupStopped ? '原委派 cgroup 已确认为空且已移除' : '原始根进程已回收，未发现仍存活的进程组成员' : '未确认'}</span></details>
     </div></article>;
   })}</div>;
 }
