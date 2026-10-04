@@ -134,8 +134,11 @@ class ExactGoAliasTests(unittest.IsolatedAsyncioTestCase):
         class NamedString(str):
             pass
         self.assertIsNone(safe_actual_model(NamedString("deepseek-flash")))
-        self.assertNotIn("deepseek-flash", MODEL_ADAPTER_IDS)
-        self.assertNotIn("deepseek-flash", {price.model for price in pricing_registrations(MODEL_ADAPTER_IDS)})
+        self.assertIn("deepseek-flash", MODEL_ADAPTER_IDS)
+        prices = {price.model: price for price in pricing_registrations(MODEL_ADAPTER_IDS)}
+        self.assertEqual(prices["deepseek-flash"].accounting_basis, "operator-nominal-not-invoice")
+        self.assertNotEqual(prices["deepseek-flash"].input_micros_per_million,
+                            prices["deepseek-v4-flash"].input_micros_per_million)
 
     def test_missing_campaign_methods_or_retry_fail_before_credentials(self):
         credential = Mock(return_value="synthetic-nonsecret-placeholder")

@@ -35,7 +35,7 @@ class GoRejectionSiteTests(unittest.TestCase):
             ("STREAM_TOOL_INDEX", False, [event({"choices": [{"delta": {"tool_calls": [{"index": -1}]}}]})], False),
             ("STREAM_TOOL_TYPE", False, [event({"choices": [{"delta": {"tool_calls": [{"index": 0, "type": "shell"}]}}]})], False),
             ("STREAM_USAGE_EARLY", False, [event({"usage": USAGE})], False),
-            ("STREAM_USAGE_REPEATED", False, [terminal(), event({"usage": USAGE}) * 2], False),
+            ("STREAM_USAGE_REPEATED", False, [terminal(), event({"usage": USAGE}), event({"usage": {**USAGE, "completion_tokens": 4, "total_tokens": 9}})], False),
             ("STREAM_INCOMPLETE_BUFFER", False, [b"data: {"], True),
             ("STREAM_MISSING_TERMINAL", False, [terminal()], True),
             ("STREAM_MISSING_RESPONSE", True, [b"data: [DONE]\n"], True),

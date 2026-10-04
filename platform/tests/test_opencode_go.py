@@ -262,7 +262,7 @@ class GoContractTests(unittest.TestCase):
         choice = {"delta": {"content": "synthetic"}}
         cases = [
             [{"choices": [choice, choice]}],
-            [{"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": usage}, {"usage": usage}],
+            [{"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": usage}, {"usage": {**usage, "completion_tokens": 3, "total_tokens": 7}}],
         ]
         for index in (True, -1, "0", []):
             cases.append([{"choices": [{"delta": {"tool_calls": [{"index": index,

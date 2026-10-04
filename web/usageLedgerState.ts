@@ -10,6 +10,7 @@ export interface UsageAttempt {
 }
 export interface UsageLedger {
   schema: 1; ownerId: string; taskId: string; rootTaskId: string; currency: string; commitment: UsageCommitment; scopes: UsageScope[]; attempts: UsageAttempt[];
+  pricingBasis?: 'operator-nominal-not-invoice'; invoiceVerified?: false; actualCostStatus?: 'UNKNOWN';
   zeroTariff: boolean; hasUnknown: boolean; migration: Record<string, unknown> | null;
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -31,6 +32,10 @@ export function usageLedgerState(detail: JobDetail): UsageLedgerState {
   if (!record(value) || value.schema !== 1 || value.ownerId !== detail.job.ownerId || value.taskId !== detail.job.id || !text(value.rootTaskId)
       || typeof value.currency !== 'string' || !/^[A-Z]{3}$/.test(value.currency) || !record(value.commitment) || !Array.isArray(value.scopes) || !Array.isArray(value.attempts)
       || typeof value.zeroTariff !== 'boolean' || typeof value.hasUnknown !== 'boolean' || !(value.migration === null || record(value.migration))) return { kind: 'invalid' };
+  const pricingFields = ['pricingBasis', 'invoiceVerified', 'actualCostStatus'];
+  if (pricingFields.some(key => Object.prototype.hasOwnProperty.call(value, key))
+      && !(value.pricingBasis === 'operator-nominal-not-invoice' && value.invoiceVerified === false
+        && value.actualCostStatus === 'UNKNOWN')) return { kind: 'invalid' };
   const c = value.commitment;
   if (c.schema !== 1 || c.currency !== value.currency || !['provider', 'model', 'adapterId', 'adapterRevision', 'pricingRevision'].every(key => text(c[key]))
       || !['pricingSha256', 'bindingSha256', 'sha256'].every(key => hash(c[key])) || !['amountMicros', 'tokenLimit', 'perAttemptInputTokens', 'perAttemptOutputTokens'].every(key => integer(c[key]))) return { kind: 'invalid' };
@@ -56,4 +61,10 @@ export function currencyMicros(value: number, currency: string): string {
   if (!integer(value) || !/^[A-Z]{3}$/.test(currency)) return '未提供';
   const whole = Math.floor(value / 1_000_000); const fraction = String(value % 1_000_000).padStart(6, '0');
   return `${currency} ${whole.toLocaleString('zh-CN')}.${fraction}`;
+}
+
+export function ledgerBudgetAmount(value: number, ledger: UsageLedger): string {
+  if (ledger.pricingBasis !== 'operator-nominal-not-invoice') return currencyMicros(value, ledger.currency);
+  if (!integer(value)) return '未提供';
+  return `名义预算单位 ${Math.floor(value / 1_000_000).toLocaleString('zh-CN')}.${String(value % 1_000_000).padStart(6, '0')}`;
 }

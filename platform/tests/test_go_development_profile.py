@@ -124,7 +124,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
                        {"scope": "coding-development", "model": "gpt-6-luna"}):
             with self.assertRaises(ValueError): entry.validator(config)
         with self.assertRaises(HTTPException):
-            preflight(self.fixture().connection, session_id="synthetic-session", model_id="deepseek-flash", settings=self.fixture().settings)
+            preflight(self.fixture().connection, session_id="synthetic-session", model_id="deepseek-unregistered", settings=self.fixture().settings)
 
     def test_plan_preflight_uses_exact_current_connection_without_factory_or_credentials(self):
         context = self.fixture()

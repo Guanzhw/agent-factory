@@ -21,11 +21,12 @@ class GoUsageTests(unittest.TestCase):
     def test_valid_envelope_and_nonzero_exact_prices(self):
         request_guard(self.model, ([Message(role="user", content="Synthetic coding test")],), {}, self.commitment)
         prices = pricing_registrations(MODEL_ADAPTER_IDS)
-        self.assertEqual(len(prices), 2)
+        self.assertEqual(len(prices), 3)
         for price in prices:
             self.assertGreater(price.input_micros_per_million, 0)
             self.assertGreater(price.output_micros_per_million, 0)
             self.assertIs(price.request_guard, request_guard)
+            self.assertEqual(price.accounting_basis, "operator-nominal-not-invoice")
 
     def test_oversized_input_and_changed_caps_fail_before_dispatch(self):
         with self.assertRaisesRegex(HTTPException, "GO_REQUEST_INPUT_BOUND"):

@@ -48,11 +48,13 @@ def request_guard(model, arguments, keyword_arguments, commitment):
 
 
 def pricing_registrations(adapter_ids):
-    # Nominal reviewed catalogue maxima for this <=32K-input development scope,
-    # not measured invoice rates or a zero-charge subscription assertion.
-    rates = {"deepseek-v4-flash": (300000, 1200000), "gpt-6-luna": (100000, 500000)}
+    # Internal conservative reservation units only. These are not an invoice or
+    # an alias-derived provider tariff. New revision IDs preserve old hashes.
+    rates = {"deepseek-flash": (1000000, 1000000),
+             "deepseek-v4-flash": (300000, 1200000), "gpt-6-luna": (100000, 500000)}
     return tuple(PricingRevision(adapter_ids[model], "1", "opencode-go-development", model,
-        "go-development-nominal-2026-10-02-v1", input_micros_per_million=incoming,
+        "go-development-operator-nominal-2026-10-04-v2", input_micros_per_million=incoming,
         output_micros_per_million=outgoing, per_attempt_input_tokens=INPUT_CEILING,
         per_attempt_output_tokens=OUTPUT_CEILING, usage_reader=go_response_usage,
-        request_guard=request_guard) for model, (incoming, outgoing) in rates.items())
+        request_guard=request_guard, accounting_basis="operator-nominal-not-invoice")
+        for model, (incoming, outgoing) in rates.items() if model in adapter_ids)

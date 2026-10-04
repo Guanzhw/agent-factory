@@ -157,8 +157,10 @@ class GoDevelopmentModel(Model):
             raise ValueError("Unsupported exact Go model; aliases require a separately verified contract")
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", session_id):
             raise ValueError("A stable opaque native conversation identity is required")
-        if type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 512:
-            raise ValueError("Development output budget must be 1..512 tokens")
+        from .go_project_campaign import GoProjectCampaign
+        output_limit = 4096 if type(live_campaign) is GoProjectCampaign else 512
+        if type(max_output_tokens) is not int or not 1 <= max_output_tokens <= output_limit:
+            raise ValueError("Development output budget exceeds the bounded profile limit")
         if not 0 < timeout_seconds <= 60:
             raise ValueError("Development timeout must be at most 60 seconds")
         if type(wire_stream) is not bool or type(native_retries) is not int or not 0 <= native_retries <= 1:
@@ -181,7 +183,7 @@ class GoDevelopmentModel(Model):
             from .go_live import GoLiveCampaign
             from .go_single_smoke import GoSingleSmokeCampaign
             from .go_final_smoke import GoFinalSmokeCampaign
-            if type(live_campaign) not in {GoLiveCampaign, GoSingleSmokeCampaign, GoFinalSmokeCampaign} or native_retries or not wire_stream:
+            if type(live_campaign) not in {GoLiveCampaign, GoSingleSmokeCampaign, GoFinalSmokeCampaign, GoProjectCampaign} or native_retries or not wire_stream:
                 raise ValueError("Live validation requires an exact bounded campaign, streaming and zero retries")
             # The public live profile forbids transport injection. Exact mock
             # transport here remains available to offline adapter contract tests.
@@ -505,8 +507,16 @@ class _Stream:
                     if self.reason is None:
                         raise _unknown("Go stream contains usage before its terminal choice", rejection_code="STREAM_USAGE_EARLY")
                     if self.usage is not None:
-                        raise _unknown("Go stream contains repeated usage", rejection_code="STREAM_USAGE_REPEATED")
-                    self.usage = value["usage"]
+                        previous, repeated = _usage(self.usage, False), _usage(value["usage"], False)
+                        if (previous is None or repeated is None or
+                                (previous.input_tokens, previous.output_tokens, previous.total_tokens) !=
+                                (repeated.input_tokens, repeated.output_tokens, repeated.total_tokens)):
+                            raise _unknown("Go stream contains repeated usage", rejection_code="STREAM_USAGE_REPEATED")
+                        # Some compatible streams repeat final counters. A validated
+                        # identical observation is idempotent, never an added charge.
+                        # Settlement still waits for terminal marker and full EOF.
+                    else:
+                        self.usage = value["usage"]
 
     def finish(self):
         if self.buffer.strip() or not self.done:

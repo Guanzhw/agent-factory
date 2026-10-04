@@ -109,12 +109,16 @@ class PricingRevision:
     # SDK retries. Native Agno retries each cross the guarded invoke boundary.
     request_guard: Callable[[Model, tuple, dict, Mapping], None] | None = field(default=None, repr=False, compare=False)
     local_model_type: type | None = field(default=None, repr=False, compare=False)
+    accounting_basis: str | None = None
 
     def __post_init__(self):
         for name in ("adapter_id", "adapter_revision", "provider", "model", "revision"):
             value = getattr(self, name)
             if not isinstance(value, str) or not 1 <= len(value) <= 120 or any(c.isspace() for c in value):
                 raise ValueError("Pricing identity must be a bounded identifier")
+        if self.accounting_basis is not None and (type(self.accounting_basis) is not str
+                or self.accounting_basis != "operator-nominal-not-invoice"):
+            raise ValueError("Unsupported accounting basis")
         if self.currency not in {"USD", "EUR", "CNY"}:
             raise ValueError("Unsupported approved currency")
         for name in ("input_micros_per_million", "output_micros_per_million"):
@@ -136,7 +140,8 @@ class PricingRevision:
             "outputMicrosPerMillion": self.output_micros_per_million,
             "perAttemptInputTokens": self.per_attempt_input_tokens,
             "perAttemptOutputTokens": self.per_attempt_output_tokens,
-            "usageContract": "local-no-provider-v1" if self.local_model_type else "operator-provider-usage-v1"}
+            "usageContract": "local-no-provider-v1" if self.local_model_type else "operator-provider-usage-v1",
+            **({"accountingBasis": self.accounting_basis} if self.accounting_basis is not None else {})}
 
     @property
     def sha256(self):
@@ -586,7 +591,12 @@ class UsageLedger:
                             + usage["output_tokens"] * row["body"]["outputMicrosPerMillion"] + 999999) // 1000000,
                         usageEvidenceSha256=digest(usage))
                 attempts.append(item)
-            return {"schema": 1, "ownerId": owner, "taskId": task["id"], "rootTaskId": root,
+            tariff = conn.execute(select(self.tariffs.c.body).where(
+                self.tariffs.c.hash == commitment["pricingSha256"])).scalar_one_or_none()
+            nominal = isinstance(tariff, dict) and tariff.get("accountingBasis") == "operator-nominal-not-invoice"
+            return {**({"pricingBasis": "operator-nominal-not-invoice", "invoiceVerified": False,
+                        "actualCostStatus": "UNKNOWN"} if nominal else {}),
+                "schema": 1, "ownerId": owner, "taskId": task["id"], "rootTaskId": root,
                 "currency": commitment["currency"], "commitment": copy.deepcopy(commitment), "scopes": scopes,
                 "attempts": attempts, "hasUnknown": any(a["state"] in {"UNKNOWN", "RESERVED"} for a in attempts),
                 "zeroTariff": commitment["inputMicrosPerMillion"] == commitment["outputMicrosPerMillion"] == 0,

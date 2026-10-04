@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { UsageLedgerPanel, UsageCommitmentSummary } from '../web/UsageLedger.js';
 import { describe, expect, it } from 'vitest';
 import { currencyMicros, usageLedgerState, type UsageLedger } from '../web/usageLedgerState.js';
 import type { JobDetail } from '../web/models.js';
@@ -39,5 +42,51 @@ describe('durable usage ledger projection', () => {
   it('formats micros without rounding away small reservations or inventing currency', () => {
     expect(currencyMicros(1, 'USD')).toBe('USD 0.000001'); expect(currencyMicros(1000001, 'USD')).toBe('USD 1.000001');
     expect(currencyMicros(-1, 'USD')).toBe('未提供'); expect(currencyMicros(0, 'unknown')).toBe('未提供');
+  });
+});
+
+describe('nominal development accounting', () => {
+  const nominal = () => ({ ...ledger(), pricingBasis: 'operator-nominal-not-invoice' as const, invoiceVerified: false as const, actualCostStatus: 'UNKNOWN' as const });
+  it('requires the complete exact annotation and rejects incomplete or contradictory billing claims', () => {
+    expect(usageLedgerState(detail(nominal())).kind).toBe('verified');
+    for (const key of ['pricingBasis', 'invoiceVerified', 'actualCostStatus']) {
+      const value: Record<string, unknown> = nominal(); delete value[key];
+      expect(usageLedgerState(detail(value)).kind).toBe('invalid');
+    }
+    for (const fields of [{ invoiceVerified: true }, { actualCostStatus: 'SETTLED' }, { pricingBasis: 'provider-invoice' }, { invoiceVerified: 0 }, { pricingBasis: undefined }]) {
+      expect(usageLedgerState(detail({ ...nominal(), ...fields })).kind).toBe('invalid');
+    }
+  });
+  it('renders nominal reservations without representing them as actual dollar charges', () => {
+    const value = nominal(); value.hasUnknown = false;
+    Object.assign(value.attempts[0], { state: 'SETTLED', inputTokens: 5, outputTokens: 10, chargedAmountMicros: 1, usageEvidenceSha256: hash });
+    const html = renderToStaticMarkup(createElement(UsageLedgerPanel, { detail: detail(value) }));
+    expect(html).toContain('实际费用未知'); expect(html).toContain('不是提供商账单');
+    expect(html).toContain('名义预算单位 0.000001'); expect(html).toContain('已记录令牌用量与名义预算');
+    expect(html).not.toContain('USD 0.'); expect(html).not.toContain('已固定的提供商费率为零');
+    expect(html).not.toContain('已按权威用量结算');
+  });
+  it('preserves legacy currency and settlement presentation when annotations are absent', () => {
+    const html = renderToStaticMarkup(createElement(UsageLedgerPanel, { detail: detail(ledger()) }));
+    expect(html).toContain('USD 0.000100'); expect(html).toContain('已固定的提供商费率为零');
+    expect(html).not.toContain('名义预算单位'); expect(html).not.toContain('实际费用未知');
+  });
+});
+
+
+describe('nominal plan commitment preview', () => {
+  it('labels only the exact reviewed provider and revision as nominal without changing the commitment', () => {
+    const value = { ...ledger().commitment, provider: 'opencode-go-development', pricingRevision: 'go-development-operator-nominal-2026-10-04-v2' };
+    const before = JSON.stringify(value);
+    const html = renderToStaticMarkup(createElement(UsageCommitmentSummary, { value }));
+    expect(html).toContain('固定令牌与内部预算承诺');
+    expect(html).toContain('名义预算单位 0.000100');
+    expect(html).toContain('不是提供商账单'); expect(html).toContain('实际费用未知');
+    expect(html).not.toContain('USD 0.');
+    expect(JSON.stringify(value)).toBe(before);
+    for (const override of [{ provider: 'other-provider' }, { pricingRevision: 'go-development-nominal-2026-10-02-v1' }, { pricingRevision: value.pricingRevision + '-unreviewed' }]) {
+      const legacy = renderToStaticMarkup(createElement(UsageCommitmentSummary, { value: { ...value, ...override } }));
+      expect(legacy).toContain('USD 0.000100'); expect(legacy).not.toContain('名义预算单位');
+    }
   });
 });

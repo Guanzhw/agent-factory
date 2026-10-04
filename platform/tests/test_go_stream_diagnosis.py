@@ -120,7 +120,7 @@ class GoStreamDiagnosisTests(unittest.IsolatedAsyncioTestCase):
             "application_error": event({"error": {"message": SYNTHETIC_TEXT}}),
             "null_error_field": event({**choice(reason="stop"), "error": None}),
             "premature_usage": event({**choice(), "usage": USAGE}),
-            "repeated_usage": terminal() + event({"choices": [], "usage": USAGE}) * 2,
+            "conflicting_repeated_usage": terminal() + event({"choices": [], "usage": USAGE}) + event({"choices": [], "usage": {**USAGE, "completion_tokens": 4, "total_tokens": 9}}),
             "choice_after_terminal": terminal() + event(choice(content="later synthetic content")),
             "data_after_done": complete() + event({"choices": []}),
             "multiple_choices": event({"choices": [choice()["choices"][0], choice(index=1)["choices"][0]]}),

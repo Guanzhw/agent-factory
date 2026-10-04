@@ -17,6 +17,7 @@ from .connections import TrustedConnectionBinding
 from .execution_bindings import AdapterRegistration, BindingContext
 from .opencode_go import GoDevelopmentModel, GoLoopbackTransport
 from .go_live import GoLiveCampaign, GoLiveGateError
+from .go_project_campaign import GoProjectCampaign
 
 PROFILE_REVISION = "go-development-v1"
 PROVIDER_ADAPTER_ID = "go-development-provider-v1"
@@ -26,10 +27,11 @@ APPLICATION_ID = "go-development-checksum"
 CAPABILITY = "model:development"
 SCOPE = "coding-development"
 MODEL_ADAPTER_IDS = {
+    "deepseek-flash": "go-development-deepseek-flash-v1",
     "deepseek-v4-flash": "go-development-deepseek-v4-flash-v1",
     "gpt-6-luna": "go-development-gpt-6-luna-v1",
 }
-PROTOCOLS = {"deepseek-v4-flash": "chat/completions", "gpt-6-luna": "responses"}
+PROTOCOLS = {"deepseek-flash": "chat/completions", "deepseek-v4-flash": "chat/completions", "gpt-6-luna": "responses"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,7 @@ class GoDevelopmentHandle:
                 raise ValueError("Fixture mode requires exact mock or literal-loopback transport and forbids credential or billing callbacks")
         elif not callable(self.credential) or (self.billing_verified is not None and not callable(self.billing_verified)):
             raise ValueError("Trusted development callbacks are required")
-        elif self.live_campaign is not None and (type(self.live_campaign) is not GoLiveCampaign
+        elif self.live_campaign is not None and (type(self.live_campaign) not in {GoLiveCampaign, GoProjectCampaign}
                 or self.async_transport is not None or self.billing_verified is not None or not self.wire_stream):
             raise ValueError("Live campaign requires real fixed transport, streaming and no alternate billing callback")
 

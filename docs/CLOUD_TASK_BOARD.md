@@ -437,3 +437,39 @@ passed, full764/298 skipped passed in44.627s, Ruff/WindowsPyright passed; indepe
 review approved. Ordinary exception metadata is read at record time to retain
 raise-attached causes; wrappers retain sanitized bounded snapshots. Final exact
 CI pending in draft PR. No historical writes or new live calls.
+
+## Ongoing authorized Go project integration — 2026-10-04
+
+Branch `coord/go-project-integration-20261004`, based on PR20 exact
+`bcede60aa6b911969d4200d83eda4ad5f2b574ab`. The user superseded artificial
+three-call and per-batch approval gates with ongoing project subscription use.
+Balance fallback and auto-reload are confirmed off; no new payment, fallback,
+account change or credential provisioning is authorized. Historical sections
+above describe their original stages, not current admission policy.
+
+| Owner | Exclusive scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | Core adapter/schema/lifecycle integration, real credential, live runners, docs, final CI | Reviewed project policy and offline tests | In progress |
+| go_policy | Project policy/repetition tests; nominal pricing regression file | Existing cumulative lineage | Policy9 and repeated-usage10 passed; pricing tests in progress |
+| factory_flow | Workflow runner initial delivery, nominal UI initial delivery, now isolated Postgres workflow test | Exact alias registration and nominal tariff | Runner4 and UI9 passed; native mocked workflow pending |
+| independent_review | Independent policy/stream/pricing review; narrow plan-summary display fix | Frozen root integration | Policy and stream approved; pricing accepted with UI fix pending |
+
+Executor usable; OPENCODE_GO presence/nonempty **true** only. Root owns all
+real-key access, workers use synthetic credentials. Original three UNKNOWN
+tickets are preserved in place. New first DeepSeek request received HTTP200
+and failed STREAM_USAGE_REPEATED, retaining a fourth UNKNOWN. Identical valid
+repeated counters are now idempotent; conflicting or malformed repeats still
+fail, with DONE and EOF required. A reviewed protocol-stop acknowledgement is
+append-only. Subsequent DeepSeek smoke settled 56/69/125 tokens; Luna settled
+31/69/100. Cumulative attempts DeepSeek5/Luna1; four UNKNOWN and two SETTLED.
+No provider invoice is verified. Internal nominal reservations are explicitly
+marked as such in persisted tariff metadata and UI. Actual Factory/Agno
+tool/receipt/artifact/ledger execution is the next acceptance gate.
+
+Native product outcome: both exact models passed real Agno/PostgreSQL with
+mocked wire protocol, then actual authorized subscription execution. DeepSeek
+1,454 tokens / Luna931, each2SETTLED, nativeattempt1, noholds, artifactverified.
+Cumulative DeepSeek7/Luna3;4UNKNOWN/6SETTLED; ACTIVE. Originalrows/sessions/
+17eventprefix/sevenimmutablefiles verified unchanged. Root fullchecks and
+exact-head draftPR CI in progress. Next AutoResearch slice selected from audit:
+owner-scoped literature evidence projection/UI and standalone report provenance.
