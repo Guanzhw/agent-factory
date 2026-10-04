@@ -22,6 +22,7 @@ from typing import cast
 
 from sqlalchemy import text
 
+from .isolation_capabilities import isolation_capabilities, require_isolation
 from .local_compute import LocalWorkspaceProvider
 from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec
 from .store import canonical, digest
@@ -38,7 +39,10 @@ def _require(value):
 
 
 class ProcessResourceProvider:
-    def __init__(self, store, root: Path, spec: ProcessSpec, limits: ProcessLimits):
+    def __init__(self, store, root: Path, spec: ProcessSpec, limits: ProcessLimits, *, required_isolation=()):
+        # Operator-only requirements: fail before root creation or allocation.
+        require_isolation(required_isolation)
+        self.required_isolation = tuple(sorted(set(required_isolation)))
         _require(sys.platform == "linux")
         _require(type(spec) is ProcessSpec and type(limits) is ProcessLimits)
         self.store, self.spec, self.limits = store, spec, limits
@@ -54,7 +58,11 @@ class ProcessResourceProvider:
     @property
     def configuration_fingerprint(self):
         return digest({"namespace": self.capacity_namespace, "spec": asdict(self.spec),
-                       "limits": asdict(self.limits), "revision": "process-provider-v1"})
+                       "limits": asdict(self.limits), "revision": "process-provider-v1",
+                       **({"requiredIsolation": list(self.required_isolation)} if self.required_isolation else {})})
+
+    def isolation_capabilities(self):
+        return {**isolation_capabilities(), "requiredScopes": list(self.required_isolation)}
 
     def _binding(self, lease: dict):
         _require(type(lease) is dict and all(key in lease for key in _BINDINGS))
@@ -130,6 +138,7 @@ class ProcessResourceProvider:
         with self._transaction() as conn:
             self._verify_mapping(conn, binding)
         # Database lock waits can outlast cancellation or authority changes.
+        require_isolation(self.required_isolation)
         self._authority(cancelled, callback)
 
     @staticmethod
@@ -159,6 +168,7 @@ class ProcessResourceProvider:
 
     def _allocate(self, binding, cancelled, callback):
         with self._root_guard._operation_lock():
+            require_isolation(self.required_isolation)
             self._authority(cancelled, callback)
             with self._transaction() as conn:
                 self._verify_mapping(conn, binding)

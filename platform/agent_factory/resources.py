@@ -254,9 +254,13 @@ class PersistentResourceService:
         resource_id = digest({"owner": owner, "connectionRef": ref})
         rows = self.store.sql("SELECT body FROM af_resources WHERE id=:id AND owner_id=:owner", id=resource_id, owner=owner)
         old = self._body(rows[0]["body"]) if rows else {}
+        capability_reader = getattr(target.provider, "isolation_capabilities", None)
+        isolation = {"isolationCapabilities": capability_reader()} if callable(capability_reader) else {}
         body = {**old, "id": resource_id, "connectionRef": ref, "ownerId": owner, "name": target.name,
                 "axis": target.axis, "updatedAt": now(), "allocationSupported": target.axis == "compute" and target.provider is not None,
-                "syntheticFixture": target.synthetic_fixture, "targetFingerprint": self._target_fingerprint(target), **(metadata or {})}
+                "syntheticFixture": target.synthetic_fixture, "targetFingerprint": self._target_fingerprint(target), **isolation, **(metadata or {})}
+        if not callable(capability_reader):
+            body.pop("isolationCapabilities", None)
         self.store.sql(f"INSERT INTO af_resources VALUES(:id,:owner,{self._json_param}) ON CONFLICT(id) DO UPDATE SET body={self._json_param}",
                        id=resource_id, owner=owner, body=canonical(body))
         return body
@@ -532,8 +536,11 @@ class PersistentResourceService:
             leases.append({key: body.get(key) for key in fields})
         return {"leases": leases, "nextCursor": rows[-1]["id"] if len(rows) == 100 else None}
 
-    def _claim_effect(self, owner, lease_id, field, state):
+    def _claim_effect(self, owner, lease_id, field, state, *, reason=None):
         """Compare-and-set before transmission across processes, not a Python lock."""
+        if reason is not None and (field != "cancelAck" or reason not in {
+                "TASK_CANCEL_REQUESTED", "NATIVE_TERMINAL", "LEASE_EXPIRED", "AUTHORITY_ENDED"}):
+            raise ValueError("Invalid original-custody cancellation reason")
         with self.store.engine.begin() as conn:
             self._lock(conn)
             row = conn.execute(text("SELECT body FROM af_leases WHERE id=:id AND owner_id=:owner"),
@@ -550,6 +557,8 @@ class PersistentResourceService:
             body = {**body, field: "unknown", "state": state, "updatedAt": now(), "capacityHeld": True}
             if field == "cancelAck":
                 body["cancelRequested"] = True
+                if reason is not None:
+                    body["cancellationReason"] = reason
             conn.execute(text(f"UPDATE af_leases SET state=:state,body={self._json_param} WHERE id=:id AND owner_id=:owner"),
                          {"id": lease_id, "owner": owner, "state": state, "body": canonical(body)})
             return body, True

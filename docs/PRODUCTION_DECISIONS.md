@@ -1,5 +1,13 @@
 # Production and research decisions still needed
 
+Latest continuation: [existing remote runtime/process integration and isolation capability](REMOTE_PROCESS_ISOLATION.md)
+reuses Factory handoff, effective receiver bindings and receiver-owned shared-pool
+process custody. Strict root process evidence reaches the origin without remapping
+custody IDs. The current environment lacks unprivileged aggregate delegation;
+aggregate requests are explicitly unsupported, and a real enforcement backend
+remains code work. Separate local service processes/real HTTP do not imply separate
+physical hosts or production deployment. Older stage text below is historical.
+
 Latest continuation: [native process and shared-lease integration](PROCESS_LEASE_RUNTIME.md)
 connects original governed native task/run/plan identity to bounded cooperative
 process custody, shared-pool holds, stop-only lifecycle reconciliation and a

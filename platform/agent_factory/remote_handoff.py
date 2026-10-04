@@ -445,10 +445,28 @@ class PreparedHandoffService:
                 self.store.event(task["id"], "remote_prepared", "Remote immutable plan reserved without native execution", {"receiptId": row["id"], "originRef": body.originRef})
             return self._public(self._row(row["id"], remote_owner))
 
+    def _process_evidence(self, row, receipt):
+        """Receiver-root evidence only; never remap custody IDs into origin IDs."""
+        if "bounded_process_run" not in row["body"]["remotePlan"].get("tools", []):
+            return {}
+        from .remote_process_evidence import project_process_evidence, validate_process_evidence
+        task_id = row["body"].get("remoteTaskId")
+        leases = []
+        if task_id:
+            rows = self.store.sql("""SELECT p.lease_id,l.body FROM af_process_runs p
+                LEFT JOIN af_leases l ON l.id=p.lease_id
+                WHERE p.task_id=:task AND p.owner_id=:owner ORDER BY p.lease_id LIMIT 2""",
+                task=task_id, owner=row["remote_owner"])
+            if any(item["body"] is None for item in rows):
+                raise HTTPException(409, "Original receiver process lease is unavailable")
+            leases = [item["body"] for item in rows]
+        evidence = project_process_evidence(leases)
+        return {"processLeases": validate_process_evidence({**receipt, "processLeases": evidence})}
+
     def _public(self, row: Mapping[str, Any], native: Mapping[str, Any] | None = None) -> dict[str, Any]:
         task_id = row["body"].get("remoteTaskId")
         task = self.store.task(task_id, row["remote_owner"]) if task_id else None
-        return {"id": row["id"], "originRef": row["origin_ref"], "originOwnerId": row["origin_owner"],
+        result = {"id": row["id"], "originRef": row["origin_ref"], "originOwnerId": row["origin_owner"],
                 "originTaskId": row["origin_task"], "remoteOwnerId": row["remote_owner"], "requestId": row["request_id"],
                 "manifestHash": row["manifest_hash"], "remotePlanId": row["body"]["remotePlan"]["id"],
                 "remoteTaskId": task_id, "remoteRunId": task.get("run_id") if task else None,
@@ -460,6 +478,8 @@ class PreparedHandoffService:
                    if "receiverUsageCommitment" in row["body"] else {}),
                 **({"usageGrant": {"id": row["body"]["usageGrant"]["id"], "sha256": row["body"]["usageGrant"]["sha256"]}}
                    if "usageGrant" in row["body"] else {})}
+        result.update(self._process_evidence(row, result))
+        return result
 
     async def receipt(self, remote_owner: str, identifier: str) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
@@ -511,6 +531,10 @@ class PreparedHandoffService:
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
                                       and not any(effect_unresolved(effect) for effect in effects)
                                       and (group is None or group["allStopped"])))
+        if "processLeases" in result and any(item["capacityHeld"] for item in result["processLeases"]["leases"]):
+            result["allStopped"] = False
+            if raw in {"completed", "failed", "cancelled", "error"}:
+                result["applicationStatus"] = "unknown"
         if row["body"].get("usageGrant") is not None:
             result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
                 all_stopped=result["allStopped"])
@@ -1022,6 +1046,17 @@ class TrustedHandoffClient:
             if current is None:
                 raise HTTPException(404, "Owner-bound remote placement disappeared")
             previous = current["body"].get("receipt")
+            if "bounded_process_run" in original.get("tools", []):
+                from .remote_process_evidence import validate_process_evidence
+                try:
+                    process_evidence = validate_process_evidence(dict(receipt), previous)
+                except (ValueError, TypeError, KeyError) as error:
+                    raise HTTPException(409, "Receiver process evidence differs from original custody") from error
+                receipt = {**receipt, "processLeases": process_evidence}
+                if receipt.get("allStopped") is True and any(item["capacityHeld"] for item in process_evidence["leases"]):
+                    raise HTTPException(409, "Receiver cannot release origin capacity while process custody remains held")
+            elif "processLeases" in receipt:
+                raise HTTPException(409, "Unexpected process evidence outside selected execution contract")
             if previous and (previous.get("receiverBindingProof", {}).get("sha256") != proof["sha256"]
                              or any(previous.get(key) != receipt.get(key) for key in ("id", "remotePlanId"))
                              or previous.get("remoteTaskId") is not None and previous["remoteTaskId"] != receipt.get("remoteTaskId")

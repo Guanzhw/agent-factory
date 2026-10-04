@@ -19,8 +19,12 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, model_validator
 
 from .remote_handoff import HandoffAuthority, HandoffCancellationRequested
-from .plan_policy import KNOWN_TOOLS
+from .plan_policy import KNOWN_TOOLS, tools_for_contract
 from .store import digest
+
+# Wire vocabulary is not a grant: both servers still check their selected
+# contract, immutable plan, exact mapping and current managed authority.
+AUTHORITY_TOOLS = {**KNOWN_TOOLS, **tools_for_contract("bounded-process-v1")}
 
 IDENTIFIER = r"^[A-Za-z0-9_.:-]{1,120}$"
 IDENTITY = r"^[^\x00-\x1f\x7f]{1,200}$"
@@ -65,7 +69,7 @@ class AuthorityScope(BaseModel):
         if len(set(self.capabilities)) != len(self.capabilities) or len(set(self.tools)) != len(self.tools) or any(
                 not re.fullmatch(IDENTIFIER, value) for value in [*self.capabilities, *self.tools]):
             raise ValueError("Authority scope requires unique bounded identifiers")
-        if not set(self.tools) <= KNOWN_TOOLS.keys() or set(self.capabilities) != {KNOWN_TOOLS[tool] for tool in self.tools}:
+        if not set(self.tools) <= AUTHORITY_TOOLS.keys() or set(self.capabilities) != {AUTHORITY_TOOLS[tool] for tool in self.tools}:
             raise ValueError("Authority scope must exactly match registered tool capabilities")
         return self
 

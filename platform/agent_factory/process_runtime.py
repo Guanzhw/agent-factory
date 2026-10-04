@@ -48,7 +48,11 @@ class ProcessRuntimeService:
         _require(type(execution) is dict and set(execution) == {"nativeRunId", "effectKey"}
             and execution["effectKey"] == EFFECT and type(task.get("run_id")) is str
             and execution["nativeRunId"] == task["run_id"] and owner == task["owner_id"])
-        specs = (plan.get("executionBindings") or {}).get("tools", [])
+        # Receiver mappings preserve the immutable source manifest. Resolve the
+        # already-verified effective target under this exact native context.
+        bindings = self.store.execution_bindings
+        _require(bindings is not None)
+        specs = bindings.manifest(plan, context=self._context(task)).get("tools", [])
         selected = [item for item in specs if item.get("toolName") == TOOL]
         _require(len(selected) == 1 and selected[0].get("config") == {"targetRef": target_ref})
         self.store.authorize_tool(self._context(task), TOOL)
@@ -136,7 +140,7 @@ class ProcessRuntimeService:
         reason = self._reason(lease, task, ticket)
         lease = await self._read(lease_id)
         if reason is not None and lease["state"] not in TERMINAL | {"RECLAIMED", "RECLAIMING"}:
-            lease, fresh = self.resources._claim_effect(lease["ownerId"], lease_id, "cancelAck", "CANCEL_REQUESTED")
+            lease, fresh = self.resources._claim_effect(lease["ownerId"], lease_id, "cancelAck", "CANCEL_REQUESTED", reason=reason)
             if fresh:
                 latest, current, current_task, current_ticket = self._custody(lease_id)
                 _require(current is target and self._reason(latest, current_task, current_ticket) is not None)
