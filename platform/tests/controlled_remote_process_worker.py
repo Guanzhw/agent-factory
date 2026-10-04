@@ -115,6 +115,34 @@ class DropControlAcknowledgement:
             await send(message)
 
 
+def custody_observations(store, custody):
+    """Read only journals whose initialization was durably pinned by the provider.
+
+    An allocation intent and even its SQLite path precede journal initialization.
+    Neither observation is positive process/stop evidence.
+    """
+    values = []
+    for row in store.sql("SELECT id,owner_id,body FROM af_process_allocations"):
+        body = row["body"]
+        if isinstance(body, str):
+            body = json.loads(body)
+        if not body.get("processPin") or not body.get("journalIdentity"):
+            values.append({"leaseId": row["id"], "state": "UNKNOWN", "stoppedProof": False,
+                           "capacityHeld": True, "observation": "custody-not-pinned"})
+            continue
+        path = custody / row["id"] / "custody.sqlite"
+        try:
+            observed = BoundedProcessAdapter(path).inspect(owner_id=row["owner_id"])
+        except Exception as error:
+            # Do not echo exception strings, private paths, SQL or server logs.
+            category = next((name for kind, name in ((OSError, "OSError"), (ValueError, "ValueError"),
+                (TypeError, "TypeError")) if isinstance(error, kind)), "UnexpectedError")
+            raise HTTPException(500, {"fixturePhase": "pinned-custody-inspect", "errorType": category}) from None
+        values.append({"leaseId": row["id"], **{key: observed.get(key) for key in
+            ("id", "taskId", "ownerId", "state", "child", "guardian", "stoppedProof", "capacityHeld")}})
+    return values
+
+
 def _provision(state, owner):
     auth = state["auth"]
     read = ["agents:factory-executor:read", "components:read", "registry:read", "sessions:read", "filesystem:read"]
@@ -311,23 +339,11 @@ def main():
         return await original_provider_cancel(lease_id, owner)
     provider.cancel = diagnostic_provider_cancel
 
-    def custody_facts():
-        values = []
-        for row in state["store"].sql("SELECT id,owner_id FROM af_process_allocations"):
-            path = custody / row["id"] / "custody.sqlite"
-            if not path.exists():
-                continue
-            observed = BoundedProcessAdapter(path).inspect(owner_id=row["owner_id"])
-            values.append({"leaseId": row["id"], **{key: observed.get(key) for key in
-                ("id", "taskId", "ownerId", "state", "child", "guardian", "stoppedProof", "capacityHeld")}})
-        return values
-
     def authenticate(request):
         if not hmac.compare_digest(request.headers.get("X-Fixture-Control", ""), configuration["controlKey"]):
             raise HTTPException(403, "Explicit fixture control required")
 
-    @app.app.get("/__fixture/state")
-    def facts(request: Request, taskId: str | None = None):
+    def _facts(request: Request, taskId: str | None = None):
         authenticate(request)
         store, db = state["store"], state["store"].native_db
         count = 0
@@ -351,7 +367,7 @@ def main():
             "processAllocations": [{"id": row["id"], "owner_id": row["owner_id"], "body": {
                 key: row["body"].get(key) for key in ("processPin", "state", "released", "allStopped", "executionStatus", "exitCode")}}
                 for row in store.sql("SELECT * FROM af_process_allocations")],
-            "custody": custody_facts(),
+            "custody": custody_observations(store, custody),
             "launchAttemptCount": store.sql("SELECT count(*) AS count FROM af_events WHERE type='fixture_process_launch_attempt'")[0]["count"],
             "disconnectDiagnostics": [row["data"] for row in store.sql(
                 "SELECT data FROM af_events WHERE type='fixture_disconnect_response' ORDER BY id LIMIT 100")],
@@ -363,6 +379,17 @@ def main():
             "bindingProofs": store.sql("SELECT * FROM af_remote_binding_proofs") if role == "receiver" else [],
             "usageLedger": store.usage_ledger.inspect(owner, taskId) if taskId else None,
             "droppedAcknowledgements": controls["droppedAcknowledgements"]}
+
+    @app.app.get("/__fixture/state")
+    def facts(request: Request, taskId: str | None = None):
+        try:
+            return _facts(request, taskId)
+        except HTTPException:
+            raise
+        except Exception as error:
+            category = next((name for kind, name in ((OSError, "OSError"), (ValueError, "ValueError"),
+                (TypeError, "TypeError"), (KeyError, "KeyError")) if isinstance(error, kind)), "UnexpectedError")
+            raise HTTPException(500, {"fixturePhase": "state-snapshot", "errorType": category}) from None
 
     @app.app.post("/__fixture/control")
     async def control(request: Request):

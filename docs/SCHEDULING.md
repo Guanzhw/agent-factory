@@ -222,3 +222,15 @@ milestone does not claim that every non-execution can be diagnosed from the UI.
 | Scheduler topology | One existing native poller, bounded separate advisory-lock pool; no second orchestrator | Atomic native conditional lease release and multi-poller acceptance |
 | Baseline/candidate comparison | Strict offline declared-data/evaluator/change-scope contract, synthetic unit tests | Actual verified bytes, governed execution, result provenance and complete comparison/review UI |
 | Scientific/host acceptance | Explicit synthetic mock-login and isolated native fixtures | Real scientific provider/domain validation, deployed IdP/TLS, target host and sustained capacity acceptance |
+
+Initial full CI at `8ce321a` passed the PR run but the push run failed two existing
+remote-process tests when their private facts endpoint returned HTTP 500. The
+original service traceback was not retained, so the precise cause of those two
+responses is not established. Separate deterministic reproduction identified a
+fixture-only readiness race: the SQLite path exists before its initialization
+commits. The fixture now reads only after the provider publishes its durable
+journal identity and process pin; prior states remain UNKNOWN/held. Pinned read
+failures remain HTTP 500 with finite safe diagnostics. The original two scenarios
+passed targeted actual PostgreSQL revalidation (54.059s). This does not weaken
+production custody checks or justify calling the failed head accepted; the draft
+PR records fresh exact-head full CI after the fixture correction.
