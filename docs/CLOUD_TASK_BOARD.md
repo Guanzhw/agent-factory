@@ -1,5 +1,29 @@
 # Cloud integration task board
 
+## Active browser authentication and process enforcement — 2026-10-04
+
+Base PR25 `a61898a5b92e1584e4adf7cf35bcdcc14b3948b5`; branch
+`coord/browser-auth-isolation-20261004`. Root owns shared auth/schema/lifecycle.
+Only synthetic IdP/users and task-owned processes/files. No real OAuth registration,
+new account access, host/cgroup/network/security changes, purchases or deployment.
+
+| Owner / exclusive scope | Dependency | Acceptance / state |
+|---|---|---|
+| root: browser_auth, auth/config/main/store, docs | Existing native SQL authority | Integrated; full local986=664pass+322skip, frontend88; exact final CI pending at commit time. |
+| go_policy: browser_oidc + verifier tests | Pinned public configuration | 9 offline tests passed; independent ID-token semantics, bounded retry0 exchange. |
+| factory_flow: App/api/browserAuth + frontend tests | Root auth endpoints | 31 targeted tests passed; Chinese login/retry/logout, memory-only CSRF, stale-session response rejection. |
+| at10: fake IdP, browser PG tests and browser QA script | Shared core and UI | 4 real PG cases passed7.659s; desktop/mobile HTTPS fixture QA passed, stable six screenshots inspected. |
+| go_adapter: process enforcement adapter/guardian/tests | Existing nonprivileged Linux facilities | 7 actual process tests passed2.265s plus async-guard regression; final8 cases pass in full suite. Per-process limits and cooperative group fencing only. |
+| independent_review: browser boundary tests | Root core | 19 tests passed, including delayed callback/logout beyond initial state TTL and GC. |
+| reviewer: read-only independent security review | Combined implementation | Identified logout race, private caching and async authority misuse; all fixed. Final evidence review and exact CI pending. |
+
+Acceptance: exact pinned OIDC code/PKCE/state/nonce; browser binding; no token replay
+or session fixation; current SQL users/grants and owner isolation; durable logout
+and restart; CSRF and interrupted navigation; desktop/mobile browser behavior.
+Resource acceptance requires measured CPU/AS/file-size/wall enforcement and
+original-process custody. No aggregate quota, hostile-code/network sandbox,
+production IdP or32/64 and54/192 host-capacity claim. Heavy local tests serialize.
+
 ## Active resource and identity milestone — 2026-10-04
 
 Base PR24 `d7221e451e7f61c3b9d711788bf17486d6cb5f82`; branch

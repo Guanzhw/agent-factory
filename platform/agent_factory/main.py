@@ -174,6 +174,11 @@ def create_app(settings=None):
     async def validation_error(request: Request, error: RequestValidationError):
         return JSONResponse({"message": "Invalid request fields", "code": "INVALID_REQUEST"}, status_code=422)
 
+    @base.get("/api/factory/auth/config")
+    def browser_auth_config():
+        from .browser_auth import CONFIG
+        return JSONResponse({**CONFIG, "enabled": False}, headers={"Cache-Control": "no-store"})
+
     @base.get("/api/health")
     def health():
         store.sql("SELECT 1")
@@ -222,10 +227,16 @@ def create_app(settings=None):
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
     native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance)
+    external = None
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
-        return OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
-    return CookieBridge(native, settings)
+        external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
+    if settings.browser_oidc is not None:
+        from .browser_auth import BrowserAuthBridge, BrowserSessionService
+        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc)
+        native.state.factory["browser_auth"] = browser_auth
+        return BrowserAuthBridge(native, browser_auth, bearer_app=external)
+    return external if external is not None else CookieBridge(native, settings)
 
 
 def main():

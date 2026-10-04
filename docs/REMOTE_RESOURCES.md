@@ -1,5 +1,11 @@
 # Remote resources
 
+A separate [bounded process adapter](BROWSER_AUTH_PROCESS_ENFORCEMENT.md#process-enforcement-contract)
+now measures real per-process RLIMIT and cooperative-group wall/cancel enforcement.
+It is not registered as a resource provider or runtime: connecting custody to pool
+leases remains further integration work. Workspace admission is still not a kernel
+quota, and this adapter is not a hostile-code or network sandbox.
+
 Current extension: [shared admission and identity milestone](RESOURCE_IDENTITY_INTEGRATION.md)
 adds ComputePool weighted admission, LocalWorkspaceProvider actual filesystem
 allocation and ResourceMaintenance stop-only cleanup. CPU/memory/disk/time are

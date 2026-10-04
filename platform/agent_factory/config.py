@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .usage_ledger import UsagePolicy
     from .oidc_identity import OIDCIdentityConfig
+    from .browser_oidc import BrowserOIDCConfig
 
 
 @dataclass
@@ -18,6 +19,7 @@ class Settings:
     jwt_audience: str = "agent-factory"
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
+    browser_oidc: "BrowserOIDCConfig | None" = None
     max_workers: int = 2
     max_queued: int = 20
     max_user_tasks: int = 2
@@ -58,6 +60,10 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if self.browser_oidc is not None:
+            from .browser_oidc import BrowserOIDCConfig
+            if self.demo or type(self.browser_oidc) is not BrowserOIDCConfig:
+                raise ValueError("Browser OIDC requires an explicit production configuration")
         if self.oidc_identity is not None:
             from .oidc_identity import OIDCIdentityConfig
             if self.demo or type(self.oidc_identity) is not OIDCIdentityConfig:

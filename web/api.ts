@@ -1,3 +1,4 @@
+import { authEpoch, assertAuthEpoch, browserCsrf, BrowserAuthError, expireBrowserSession } from './browserAuth.js';
 import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
 import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
 import { remoteHandoffState } from './remoteHandoffState.js';
@@ -8,18 +9,24 @@ export class ApiError extends Error {
 }
 const base = '/api/factory';
 async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+  const started = authEpoch();
   let response: Response;
   try {
+    const csrf = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? undefined : await browserCsrf();
+    assertAuthEpoch(started);
     response = await fetch(`${base}${path}`, {
-      method, credentials: 'same-origin', signal,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
+      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-Factory-CSRF': csrf } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (error instanceof BrowserAuthError) throw new ApiError(error.message, error.status, 'BROWSER_AUTH');
     throw new ApiError('无法连接服务。检查网络后重试；创建请求会沿用原请求标识。', 0, 'OFFLINE');
   }
   const text = await response.text();
+  assertAuthEpoch(started);
+  if (response.status === 401) expireBrowserSession();
   let data: unknown;
   try { data = text ? JSON.parse(text) : undefined; } catch { data = undefined; }
   if (!response.ok) {

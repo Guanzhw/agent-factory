@@ -19,7 +19,7 @@ EXECUTOR_ID = "factory-executor"
 AUDIENCE = "agent-factory"
 _PERSONAS = {"manager": ("Manager", "factory-manager"), "alice": ("Alice", "factory-user"), "bob": ("Bob", "factory-user")}
 _PUBLIC_PATHS = ["/", "/assets/*", "/favicon.ico", "/api/status", "/api/health",
-                 "/api/factory/status", "/api/factory/demo/login"]
+                 "/api/factory/status", "/api/factory/demo/login", "/api/factory/auth/config"]
 
 
 class AuthService:

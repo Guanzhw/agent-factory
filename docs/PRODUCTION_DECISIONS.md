@@ -1,5 +1,13 @@
 # Production and research decisions still needed
 
+Latest continuation: [browser authentication and bounded process enforcement](BROWSER_AUTH_PROCESS_ENFORCEMENT.md)
+implements code/PKCE/state/nonce, revocable browser sessions, CSRF/logout and Chinese
+login UX, verified with a synthetic HTTPS IdP on desktop/mobile. A separate trusted
+cooperative Linux adapter actually enforces per-process CPU/address-space/file-size
+and process-group wall limits. Production IdP/TLS, aggregate isolation, lease/runtime
+integration and target-host capacity remain open. Older stage statements below are
+historical; final exact-head CI belongs to this continuation's draft PR.
+
 Current resource/identity continuation: [implementation and acceptance](RESOURCE_IDENTITY_INTEGRATION.md)
 adds shared compute admission, actual task-owned workspace allocation, stop-only
 maintenance and a production-mode pinned access-token bridge. Production identity

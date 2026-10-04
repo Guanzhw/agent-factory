@@ -263,6 +263,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agno" },
     { name = "croniter" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
@@ -283,6 +284,7 @@ dev = [
 requires-dist = [
     { name = "agno", specifier = "==3.1.0" },
     { name = "croniter", specifier = "==6.2.4" },
+    { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = "==0.142.2" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },

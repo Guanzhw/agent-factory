@@ -1,3 +1,4 @@
+import { browserAuthConfig, clearBrowserSession, consumeSigninFailure, startBrowserLogin, subscribeSessionExpiry, type BrowserAuthConfig } from './browserAuth.js';
 import { ApprovedRecoveryPanel, approvedRecovery } from './ApprovedRecovery.js';
 import { StoragePanel } from './StoragePanel.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -41,7 +42,10 @@ interface ChildDraft { goal: string; mode: string; requestId: string }
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const currentUser = useRef<User | null>(null);
+  currentUser.current = user;
   const [loading, setLoading] = useState(true);
+  const [authConfig, setAuthConfig] = useState<BrowserAuthConfig>();
   const [loginMode, setLoginMode] = useState<'demo' | 'live'>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -49,15 +53,40 @@ export default function App() {
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError('');
-    api.status(controller.signal).then(value => setLoginMode(value.mode)).catch(() => { if (!controller.signal.aborted) setLoginMode(undefined); });
-    api.session(controller.signal).then(setUser).catch((e: unknown) => {
-      if (controller.signal.aborted) return;
-      if (e instanceof ApiError && e.status === 401) setUser(null);
-      else setError(describe(e));
-    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    setLoading(true); setAuthConfig(undefined); setUser(null);
+    const failed = consumeSigninFailure(window.location, url => window.history.replaceState(null, '', url));
+    if (failed) setError('登录未完成或验证失败，请重新开始登录。');
+    async function load() {
+      try {
+        const config = await browserAuthConfig(controller.signal);
+        if (controller.signal.aborted) return;
+        setAuthConfig(config);
+        if (config.enabled) setLoginMode('live');
+        else {
+          const status = await api.status(controller.signal);
+          if (controller.signal.aborted) return;
+          setLoginMode(status.mode);
+        }
+        const current = await api.session(controller.signal);
+        if (!controller.signal.aborted) { setUser(current); setError(''); }
+      } catch (e) {
+        if (controller.signal.aborted || e instanceof Error && e.name === 'AbortError') return;
+        if (!(e instanceof ApiError && e.status === 401)) setError(describe(e));
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    }
+    void load();
     return () => controller.abort();
   }, [generation]);
+  useEffect(() => subscribeSessionExpiry(() => {
+    setUser(null); setBusy(false); lock.current = false;
+    if (currentUser.current) setError('登录会话已过期，请重新登录。未确认的操作请在登录后核对记录。');
+  }), []);
+  async function ssoLogin() {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setError('');
+    try { window.location.assign(await startBrowserLogin()); }
+    catch { setError('登录暂时不可用，请重新开始登录。'); lock.current = false; setBusy(false); }
+  }
   async function login(persona: 'manager' | 'alice' | 'bob') {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError('');
@@ -67,11 +96,11 @@ export default function App() {
   async function logout() {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError('');
-    try { await api.logout(); setUser(null); } catch (e) { setError(describe(e)); }
+    try { await api.logout(); clearBrowserSession(); setUser(null); } catch (e) { setError(describe(e)); }
     finally { lock.current = false; setBusy(false); }
   }
-  if (user) return <Workspace key={user.id} user={user} logout={() => void logout()} sessionBusy={busy} sessionError={error}/>;
-  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">研</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Auto-Research 工作台</p><h1>从研究问题，<br/>到可核对的证据。</h1><p>用已发布的材料组装临时任务。先检查能力与权限，再创建执行实例。</p>{loginMode === 'demo' ? <div className="demo-notice"><strong>本地演示入口</strong><span>确定性运行与合成结果用于验证流程，不代表真实研究已完成。真实模型调用需另行启用。</span></div> : <div className="demo-notice"><strong>{loginMode === 'live' ? '真实运行环境' : '环境状态待确认'}</strong><span>{loginMode === 'live' ? '请使用服务端配置的身份认证入口。演示身份登录已关闭。' : '环境模式尚未确认，演示登录不可用。'}</span></div>}<ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{loginMode === 'demo' && <div className="login-actions">{([['alice', '研究员 Alice'], ['bob', '研究员 Bob'], ['manager', '材料管理员']] as const).map(([id, label]) => <button key={id} className={id === 'alice' ? 'primary' : 'secondary'} disabled={busy || loading} onClick={() => void login(id)}>{label}</button>)}</div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : !loginMode && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
+  if (user && authConfig) return <Workspace key={user.id} user={user} logout={() => void logout()} sessionBusy={busy} sessionError={error}/>;
+  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">研</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Auto-Research 工作台</p><h1>从研究问题，<br/>到可核对的证据。</h1><p>用已发布的材料组装临时任务。先检查能力与权限，再创建执行实例。</p>{loginMode === 'demo' ? <div className="demo-notice"><strong>本地演示入口</strong><span>确定性运行与合成结果用于验证流程，不代表真实研究已完成。真实模型调用需另行启用。</span></div> : <div className="demo-notice"><strong>{loginMode === 'live' ? '真实运行环境' : '环境状态待确认'}</strong><span>{loginMode === 'live' ? authConfig?.enabled ? '使用组织的统一身份认证登录，账号权限由服务端核对。' : '请使用服务端配置的身份认证入口。演示身份登录已关闭。' : '环境模式尚未确认，演示登录不可用。'}</span></div>}<ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{authConfig?.enabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>{busy ? '正在前往登录…' : '使用企业账号登录'}</button></div>}{authConfig?.enabled === false && loginMode === 'demo' && <div className="login-actions">{([['alice', '研究员 Alice'], ['bob', '研究员 Bob'], ['manager', '材料管理员']] as const).map(([id, label]) => <button key={id} className={id === 'alice' ? 'primary' : 'secondary'} disabled={busy || loading} onClick={() => void login(id)}>{label}</button>)}</div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : (!authConfig || !loginMode) && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
 }
 
 function Workspace({ user, logout, sessionBusy, sessionError }: { user: User; logout: () => void; sessionBusy: boolean; sessionError: string }) {
