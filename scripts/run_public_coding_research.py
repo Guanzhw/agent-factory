@@ -33,6 +33,7 @@ def main():
     for name in ("campaign", "evidence-directory", "database-url", "snapshot"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--model", choices=MODELS, required=True)
+    parser.add_argument("--luna-output-revision", choices=("1", "2"), default="1")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):

@@ -18,7 +18,7 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
-from .go_diagnostics import annotate_go_error
+from .go_diagnostics import annotate_go_error, incomplete_reason, incomplete_usage
 from .go_http import open_go_client
 
 BASE_URL = "https://opencode.ai/zen/go/v1"
@@ -82,11 +82,11 @@ class GoLoopbackTransport(httpx.AsyncBaseTransport):
             raise
 
 
-def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None, rejection_code=None):
+def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None, rejection_code=None, incomplete_reason=None, reported_usage=None):
     # Never interpolate server bodies, request headers, credentials or SDK errors.
     error = ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")
     setattr(error, "_go_code", message if message in {"GO_MODEL_MISMATCH", "GO_USAGE_BOUND_EXCEEDED"} else "UNKNOWN")
-    return annotate_go_error(error, rejection_code=rejection_code, original_error=original_error)
+    return annotate_go_error(error, rejection_code=rejection_code, original_error=original_error, incomplete_reason=incomplete_reason, reported_usage=reported_usage)
 
 
 class GoResponseRejected(ModelProviderError):
@@ -279,7 +279,9 @@ class GoDevelopmentModel(Model):
             responses = MODELS[self.id] == "responses"
             if responses:
                 if response.get("status") != "completed":
-                    raise _unknown("Go response did not complete", rejection_code="RESPONSE_INCOMPLETE")
+                    raise _unknown("Go response did not complete", rejection_code="RESPONSE_INCOMPLETE",
+                        incomplete_reason=incomplete_reason(response) if response.get("status") == "incomplete" else None,
+                        reported_usage=incomplete_usage(response, expected_model=self.id))
                 content, calls = [], []
                 for item in response["output"]:
                     if item["type"] == "message":
@@ -349,7 +351,7 @@ class GoDevelopmentModel(Model):
                 raise _unknown("GO_LIVE_REQUEST_CONTRACT", rejection_code="LIVE_REQUEST_CONTRACT")
             ticket = campaign.begin(self._session, self.id, body)
         started = time.monotonic()
-        state = _Stream(MODELS[self.id] == "responses") if stream else None
+        state = _Stream(MODELS[self.id] == "responses", expected_model=self.id) if stream else None
         known_usage = None
         actual_model = None
         finishing = False
@@ -434,8 +436,9 @@ class GoDevelopmentModel(Model):
 
 
 class _Stream:
-    def __init__(self, responses):
+    def __init__(self, responses, *, expected_model=None):
         self.responses = responses
+        self.expected_model = expected_model
         self.buffer = b""
         self.size = 0
         self.done = False
@@ -472,7 +475,10 @@ class _Stream:
                 kind = value.get("type", "")
                 if kind in {"error", "response.failed", "response.incomplete"}:
                     raise _unknown("Go stream failed", rejection_code={"error": "RESPONSES_ERROR",
-                        "response.failed": "RESPONSES_FAILED", "response.incomplete": "RESPONSES_INCOMPLETE"}[kind])
+                        "response.failed": "RESPONSES_FAILED", "response.incomplete": "RESPONSES_INCOMPLETE"}[kind],
+                        incomplete_reason=incomplete_reason(value.get("response")) if kind == "response.incomplete" else None,
+                        reported_usage=incomplete_usage(value.get("response"), expected_model=self.expected_model)
+                            if kind == "response.incomplete" else None)
                 if kind == "response.completed":
                     self.result = value["response"]
                     self.done = True

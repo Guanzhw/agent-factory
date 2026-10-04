@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from .orx_literature_tools import REVISION, source_url
 
 APPLICATION_ID = "public-literature-evidence-v2"
+APPLICATION_TOOLS = {APPLICATION_ID: "orx_sources_report", "public-literature-host-v1": "pubmed_sources_report"}
 MODE = "bibliography-excerpts-no-provider"
 KINDS = {"public_literature_excerpt", "controlled_literature_fixture"}
 STATUSES = {"extracted_text", "abstract_only", "metadata_only", "full_text_unsupported", "retrieval_failed", "empty_response"}
@@ -61,7 +62,7 @@ def inspect_literature_evidence(store, owner_id, task_id):
     # Owner lookup precedes artifact enumeration/read, including invalid evidence.
     task = store.task(task_id, owner_id)
     plan = store.plan(task["plan_id"], owner_id)
-    if plan.get("application") != APPLICATION_ID:
+    if plan.get("application") not in APPLICATION_TOOLS:
         return None
     result = {"schema": 1, "status": "pending", "evidenceKind": "unknown", "mode": MODE,
               "sourceCount": 0, "sources": [], "retrievalErrors": [], "reportArtifactId": None, "bundleArtifactId": None}
@@ -74,7 +75,7 @@ def inspect_literature_evidence(store, owner_id, task_id):
         bundle = bundles[0]
         expected = {"ownerId": owner_id, "taskId": task_id, "planId": plan["id"],
                     "planFingerprint": plan["fingerprint"], "contractRevision": REVISION,
-                    "mode": MODE, "tool": "orx_sources_report"}
+                    "mode": MODE, "tool": APPLICATION_TOOLS[plan["application"]]}
         provenance = bundle.get("provenance")
         require(type(provenance) is dict and all(provenance.get(key) == value for key, value in expected.items()))
         require(provenance.get("evidenceKind") in ("public_literature_excerpt", "controlled_literature_fixture"))
@@ -97,7 +98,11 @@ def inspect_literature_evidence(store, owner_id, task_id):
         require(type(embedded) is dict and all(embedded.get(key) == value for key, value in expected.items()))
         require(embedded.get("evidenceKind") == provenance["evidenceKind"])
         errors = embedded.get("retrievalErrors", [])
-        require(type(errors) is list and len(errors) <= 30 and all(isinstance(v, str) and v in ERRORS for v in errors))
+        allowed_errors = ERRORS
+        if plan["application"] == "public-literature-host-v1":
+            from .pubmed_retrieval import _CODES
+            allowed_errors = ERRORS | _CODES
+        require(type(errors) is list and len(errors) <= 30 and all(isinstance(v, str) and v in allowed_errors for v in errors))
         require(errors == provenance.get("retrievalErrors", []))
         sources = cast(list[dict[str, Any]], document.get("sources"))
         require(type(sources) is list and len(sources) <= 3)

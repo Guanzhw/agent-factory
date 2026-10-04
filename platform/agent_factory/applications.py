@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
 from .material_governance import MaterialGovernance, PinnedRef
-from .plan_policy import KNOWN_TOOLS
+from .plan_policy import application_tool_catalog
 from .store import canonical, digest, now
 
 APPLICATION_POLICY = digest({"schema": 1, "separateAdministrator": True, "taskApprovalSeparate": True})
@@ -246,6 +246,7 @@ class ApplicationService:
         return refs
 
     def validate_definition(self, definition, *, check_materials=True):
+        known_tools = application_tool_catalog(self.store)
         MaterialGovernance._safe_data(definition)
         try:
             body = ApplicationDefinition.model_validate(definition).model_dump(exclude_none=True)
@@ -258,7 +259,7 @@ class ApplicationService:
         for name, mode in body["modes"].items():
             if not name or len(name) > 100 or not all(char.isascii() and (char.isalnum() or char in "_.:-") for char in name):
                 raise HTTPException(422, "Application mode must be a bounded identifier")
-            if not set(mode["capabilities"]) <= set(KNOWN_TOOLS.values()):
+            if not set(mode["capabilities"]) <= set(known_tools.values()):
                 raise HTTPException(422, "Application requests authority outside registered capabilities")
             defaults = []
             for slot_name, slot in mode["materialChoices"].items():
@@ -279,7 +280,7 @@ class ApplicationService:
             materials = self.closure(mode["materialRefs"])
             caps = {cap for item in materials for cap in item["permissions"]}
             tools = [item["content"] for item in materials if item["kind"] == "tool"]
-            if not tools or caps - set(mode["capabilities"]) or any(tool not in KNOWN_TOOLS for tool in tools):
+            if not tools or caps - set(mode["capabilities"]) or any(tool not in known_tools for tool in tools):
                 raise HTTPException(422, "Application material/tool closure exceeds its approved capability scope")
             if mode["toolOrder"] and (len(set(mode["toolOrder"])) != len(mode["toolOrder"]) or set(mode["toolOrder"]) != set(tools)):
                 raise HTTPException(422, "Application tool order must exactly match approved tools")

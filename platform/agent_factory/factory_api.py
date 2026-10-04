@@ -242,9 +242,9 @@ class FactoryAPI:
         evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
         from .orx_experiment_tools import inspect_orx_experiment
         experiment = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
-        from .literature_evidence import inspect_literature_evidence
+        from .literature_evidence import APPLICATION_TOOLS, inspect_literature_evidence
         literature = (inspect_literature_evidence(self.store, task["owner_id"], task["id"])
-                      if plan.get("application") == "public-literature-evidence-v2" else None)
+                      if plan.get("application") in APPLICATION_TOOLS else None)
         ledger = getattr(self.store, "usage_ledger", None)
         usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
         if literature is not None:

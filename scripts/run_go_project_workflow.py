@@ -73,12 +73,20 @@ def execute_product(campaign, args, *, research_snapshot=None):
     evidence = {"model": args.model, "status": "stopped"}
     code = PUBLIC_CODE
     runtime_adapters = []
+    usage_pricing = ()
+    luna_revision = getattr(args, "luna_output_revision", "1")
+    require(luna_revision in {"1", "2"})
     if research_snapshot is not None:
         from agent_factory.public_code_knowledge import knowledge_registration, validate_snapshot
         from agent_factory.public_coding_research import CHECKSUM_TEXT
         validate_snapshot(research_snapshot)
         runtime_adapters = [knowledge_registration(research_snapshot)]
         code = CHECKSUM_TEXT
+    if luna_revision == "2":
+        from agent_factory.go_development import model_registrations
+        from agent_factory.go_usage import luna_512_pricing
+        runtime_adapters.extend(model_registrations(revision="2"))
+        usage_pricing = (luna_512_pricing(),)
     with ExitStack() as stack:
         handle = GoDevelopmentHandle(mode="subscription", credential=credential,
             wire_stream=True, native_retries=0, live_campaign=campaign)
@@ -89,7 +97,7 @@ def execute_product(campaign, args, *, research_snapshot=None):
             runtime_tool_contract="registered-runtime-v1",
             usage_policy=UsagePolicy(revision="go-project-nominal-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
-            runtime_adapters=runtime_adapters,
+            runtime_adapters=runtime_adapters, usage_pricing=usage_pricing,
             trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
         application = create_app(settings)
         state = application.app.state.factory
@@ -110,7 +118,7 @@ def execute_product(campaign, args, *, research_snapshot=None):
         auth = state["auth"]
         auth.authorization.unassign("bob", "factory-user")
         auth.authorization.assign("bob", "factory-manager")
-        models = publish_go_development_models(state, author="manager", reviewer="bob")
+        models = publish_go_development_models(state, author="manager", reviewer="bob", luna_output_revision=luna_revision)
         seeds = store.materials(published_only=True)
         definition = application_definition(models,
             next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum"),

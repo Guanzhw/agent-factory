@@ -16,7 +16,7 @@ from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from .applications import ApplicationService, GovernedStorage
 from .material_governance import MaterialGovernance, PinnedRef
-from .plan_policy import KNOWN_TOOLS
+from .plan_policy import application_tool_catalog
 from .store import digest, now
 
 
@@ -139,9 +139,10 @@ class CompositionService:
                 missing.append("Selected material tools differ from the approved application tool order")
             else:
                 tools = mode["toolOrder"][:]
-        if set(caps) - set(mode["capabilities"]) or any(name not in KNOWN_TOOLS for name in tools):
+        known_tools = application_tool_catalog(self.store)
+        if set(caps) - set(mode["capabilities"]) or any(name not in known_tools for name in tools):
             missing.append("Selected materials exceed the application/mode authority ceiling")
-        if set(caps) != {KNOWN_TOOLS[name] for name in tools if name in KNOWN_TOOLS}:
+        if set(caps) != {known_tools[name] for name in tools if name in known_tools}:
             missing.append("Selected capabilities do not exactly match registered tools")
         limits = {"toolCalls": self.store.settings.max_tool_calls, "maxDepth": 2, "maxChildren": 4,
                   "experimentSeconds": self.store.settings.experiment_timeout_seconds, "outputBytes": self.store.settings.experiment_output_bytes}

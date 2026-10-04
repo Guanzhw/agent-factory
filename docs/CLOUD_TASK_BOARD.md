@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Active continuation after PR23 — 2026-10-04
+
+Base a5173379ce7f119fdcf3540239fd82cb19ff86ab; branch coord/luna-scientific-contracts-20261004.
+User authorizes a reviewed new bounded Luna investigation under the existing subscription;
+no per-call permission gate, no old UNKNOWN replay/release, no guessed historical cause.
+
+| Owner / scope | Dependency | Acceptance / state |
+|---|---|---|
+| go_policy: Go diagnostics/revision tests | Existing rejection/campaign contracts | Frozen: 52 diagnostics-related checks; six revision checks; native PG revision2 test passed. |
+| factory_flow: bounded PubMed acquisition | Managed egress/fixed public query | Frozen: 12 offline tests; real host HTTP retrieval yielded two public abstracts. Browser verification tracked in the draft PR. |
+| at10: governed PubMed profile | Fetcher/root projection | Frozen: five native PG scenarios passed, including revoke/cancel/UNKNOWN and empty failure evidence. |
+| independent_review: source-bound synthesis | Trusted source projection | Frozen: eight immutable context/citation checks passed; no live scientific model. |
+| go_adapter: synthesis profile | Root explicit tool contracts/source context | Frozen: offline + native PG tests passed; root native fixture with actual retrieved sources completed. |
+| reviewer: read-only independent verification | Frozen integrations | Luna semantics/checksum, source chain, ledger and safety reviewed; exact CI pending. |
+| root: shared API/schema, caps, live owner, evidence/PR/CI | Handbacks/serialized PG lane | Luna revision2 completed (2 SETTLED/4332 tokens/held0); retrieval and fixture synthesis completed. Local874=567pass+307skip/frontend78/static/audit passed. Final exact CI pending. |
+
+PR23 completed code/CI stage, not full-product acceptance: both exact runs and all ten
+jobs succeeded twice; each PG828total=765passed+63skipped. Its Luna ordinal14 UNKNOWN
+and all prior histories remain immutable. New source retrieval is an explicit host
+adapter, never a silent Linux fallback. Scientific synthesis needs a separately
+selected provider/model/usage/price/owner-binding contract; independent offline code
+continues without that input. No merge/deploy, paid fallback or host security change.
+
 ## Active milestone — public coding research, 2026-10-04
 
 Current branch `coord/public-coding-research-20261004`, based on PR22 exact

@@ -76,6 +76,50 @@ REJECTION_CODES = frozenset({
     "TRANSPORT_PROTOCOL", "TRANSPORT_TIMEOUT", "TRANSPORT_DECODING", "TRANSPORT_URL",
     "JSON_DECODE", "STRUCTURE_ERROR", "CANCELLED", "UNKNOWN_ERROR",
 })
+INCOMPLETE_REASONS = frozenset({"MAX_OUTPUT_TOKENS", "CONTENT_FILTER", "MISSING", "MALFORMED", "OTHER"})
+_INCOMPLETE_REJECTIONS = frozenset({"RESPONSES_INCOMPLETE", "RESPONSE_INCOMPLETE"})
+
+
+def incomplete_reason(response):
+    """Classify a decoded Responses object without retaining provider strings."""
+    if type(response) is not dict:
+        return "MALFORMED"
+    details = dict.get(response, "incomplete_details")
+    if details is None:
+        return "MISSING"
+    if type(details) is not dict:
+        return "MALFORMED"
+    reason = dict.get(details, "reason")
+    if reason is None:
+        return "MISSING"
+    if type(reason) is not str:
+        return "MALFORMED"
+    return {"max_output_tokens": "MAX_OUTPUT_TOKENS", "content_filter": "CONTENT_FILTER"}.get(reason, "OTHER")
+
+
+_OBSERVATION_MODELS = frozenset({"deepseek-flash", "deepseek-v4-flash", "deepseek-v4.1-flash", "gpt-6-luna"})
+
+
+def _valid_usage_triple(value):
+    return (type(value) is tuple and len(value) == 3
+            and all(type(v) is int and 0 <= v <= 2**31 for v in value)
+            and value[0] + value[1] == value[2])
+
+
+def incomplete_usage(response, *, expected_model=None):
+    """Provider-reported observation only; never authoritative ledger usage."""
+    if (type(expected_model) is not str or expected_model not in _OBSERVATION_MODELS
+            or type(response) is not dict or type(dict.get(response, "model")) is not str
+            or dict.get(response, "model") != expected_model
+            or type(dict.get(response, "status")) is not str or dict.get(response, "status") != "incomplete"):
+        return None
+    usage = dict.get(response, "usage")
+    if type(usage) is not dict:
+        return None
+    values = tuple(dict.get(usage, key) for key in ("input_tokens", "output_tokens", "total_tokens"))
+    return values if _valid_usage_triple(values) else None
+
+
 _TYPE_REJECTIONS = {
     httpx.ConnectError: "TRANSPORT_CONNECT", httpx.ReadError: "TRANSPORT_READ",
     httpx.WriteError: "TRANSPORT_WRITE", httpx.RemoteProtocolError: "TRANSPORT_PROTOCOL",
@@ -153,7 +197,7 @@ def _rejection_code(error):
     return _TYPE_REJECTIONS.get(type(error), "UNKNOWN_ERROR")
 
 
-def annotate_go_error(error, *, rejection_code=None, original_error=None):
+def annotate_go_error(error, *, rejection_code=None, original_error=None, incomplete_reason=None, reported_usage=None):
     """Attach only finite diagnostic metadata; preserve the original exception."""
     data = _exception_data(error)
     if original_error is not None:
@@ -161,11 +205,20 @@ def annotate_go_error(error, *, rejection_code=None, original_error=None):
         original = safe_diagnostic("FAILED", error=original_error)
         dict.__setitem__(data, "_go_diagnostic", (original["errorType"], original["errorCategory"]))
         dict.__setitem__(data, "_go_rejection_code", original["rejectionCode"])
+        if "incompleteReason" in original:
+            dict.__setitem__(data, "_go_incomplete_reason", original["incompleteReason"])
+        if "reportedUsage" in original:
+            usage = original["reportedUsage"]
+            dict.__setitem__(data, "_go_reported_usage", (usage["inputTokens"], usage["outputTokens"], usage["totalTokens"]))
         dict.__setitem__(data, "_go_exception_chain", (_class_name(error), *original["exceptionChain"])[:MAX_EXCEPTION_CHAIN])
     # Without a wrapper, inspect the causal spine at recording time: Python
     # may attach __cause__/__context__ only when this exception is raised.
     if type(rejection_code) is str and rejection_code in REJECTION_CODES:
         dict.__setitem__(data, "_go_rejection_code", rejection_code)
+    if type(incomplete_reason) is str and incomplete_reason in INCOMPLETE_REASONS:
+        dict.__setitem__(data, "_go_incomplete_reason", incomplete_reason)
+    if _valid_usage_triple(reported_usage):
+        dict.__setitem__(data, "_go_reported_usage", reported_usage)
     return error
 
 
@@ -214,5 +267,13 @@ def safe_diagnostic(phase, *, http_status=None, response_headers=None, error=Non
     if error is not None:
         result["errorType"], result["errorCategory"] = _error_kind(error, phase)
         result["rejectionCode"] = _rejection_code(error)
+        reason = dict.get(_exception_data(error), "_go_incomplete_reason")
+        if (result["rejectionCode"] in _INCOMPLETE_REJECTIONS
+                and type(reason) is str and reason in INCOMPLETE_REASONS):
+            result["incompleteReason"] = reason
+        usage = dict.get(_exception_data(error), "_go_reported_usage")
+        if result["rejectionCode"] in _INCOMPLETE_REJECTIONS and usage is not None and _valid_usage_triple(usage):
+            result["reportedUsage"] = {"inputTokens": usage[0], "outputTokens": usage[1], "totalTokens": usage[2],
+                                       "observationStatus": "provider-incomplete-unsettled"}
         result["exceptionChain"] = list(_exception_chain(error))
     return result
