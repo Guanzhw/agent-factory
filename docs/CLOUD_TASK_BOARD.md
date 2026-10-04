@@ -1,5 +1,27 @@
 # Cloud integration task board
 
+## Active approved-template material-to-task journey — 2026-10-04
+
+Base accepted draft PR29, exact `57a3f2f1c44b0dc151752162a4a1a6db5354e9db`;
+branch `coord/material-template-user-journey-20261004`. Priority is the existing
+material-library / application authoring / Auto-Research journey. Reuse native
+services, current independent publication and plan review; no new orchestration.
+
+| Owner / exclusive scope | Dependencies | Acceptance / state |
+|---|---|---|
+| root: ApplicationGovernance, shared API/types/CSS, integration, requirement matrix/publication | Frozen editor/picker contracts | Integrated guided editing, exact receipt checks and uncertain-save lock; frontend154/static/audit clean; local Python1121=774pass347skip55.646s; exact CI pending. |
+| factory_flow: new applicationTemplateState + tests | Existing ApplicationDefinition schema | Frozen; immutable lossless edits and advanced-only boundary; 10 tests pass. |
+| go_adapter: new MaterialPicker/materialCatalogState + tests | Existing approved material catalog | Frozen; exact-pin picker, missing/dependency evidence; 6 tests pass, no inferred authority. |
+| independent_review: new ApplicationTemplateEditor | Pure template helpers and picker props | Frozen; Chinese guided forms, exact slots and preserved connection scope; 4 render tests pass. |
+| at10: new material_template_journey_postgres tests | Existing application/composition/native fixture | Frozen; 2 PostgreSQL cases pass in 7.548s: independent review, new-ID native execution, withdrawal/revocation/hash/owner guards; fixture cleaned. |
+| go_policy: new accept_material_template_browser script + scratch runner | Root built UI, mock login, disposable PG | Frozen; actual desktop/mobile native/lost-ACK journeys pass, artifact integrity/Bob isolation and exactly-one task verified; mobile wrapping fixed; fixtures cleaned. |
+| reviewer: independent read-only requirement/security/CI review | Combined implementation | AC16.1/3/4/6 reviewed; receipt guard finding fixed, independent 23 frontend tests pass; final browser evidence independently checked; no remaining code blocker; exact CI pending. |
+
+One heavy local lane, explicitly granted by root. No Go/provider credentials,
+paid services, host changes, real accounts, provisioning, merge or deployment.
+CLI GitHub auth is expired; use existing authorized connector publication when
+supported, never extract/renew credentials. Retain local commits if push is blocked.
+
 ## Active aggregate contracts and application recovery — 2026-10-04
 
 Base [PR28](https://github.com/Guanzhw/agent-factory/pull/28), exact
