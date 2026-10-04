@@ -143,9 +143,12 @@ class GovernanceConfig:
     review_mode: Literal["separate-admin", "demo-self-review"] = "separate-admin"
     revision: str = "material-governance-v1"
     tool_contract: ToolContract = "legacy-v1"
+    source_synthesis_enabled: bool = False
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
+        if type(self.source_synthesis_enabled) is not bool:
+            raise ValueError("Source synthesis requires an explicit boolean contract")
         if self.tool_contract != "legacy-v1" and self.revision == "material-governance-v1":
             raise ValueError("Registered runtime tools require a distinct governance revision")
         if self.review_mode not in {"separate-admin", "demo-self-review"}:
@@ -156,6 +159,8 @@ class GovernanceConfig:
     @property
     def fingerprint(self):
         body = asdict(self)
+        if not self.source_synthesis_enabled:
+            del body["source_synthesis_enabled"]
         if self.tool_contract == "legacy-v1":
             del body["tool_contract"]
         return digest({**body, "licenses": LICENSES, "toolBindings": self.known_tools,
@@ -163,7 +168,7 @@ class GovernanceConfig:
 
     @property
     def known_tools(self) -> dict[str, str]:
-        return tools_for_contract(self.tool_contract)
+        return {**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})}
 
 
 class MaterialGovernance:

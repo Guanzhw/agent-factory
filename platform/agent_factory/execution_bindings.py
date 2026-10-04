@@ -369,6 +369,8 @@ class ExecutionBindings:
         manifest = self.manifest(plan, context=context)
         for kind, spec in self._items(manifest):
             self._connection(owner, self._entry(kind, spec), spec, context, resolve=False)
+        from .synthesis_runtime import validate_plan_source
+        validate_plan_source(self.store, plan)
         from .go_development import preflight_plan
         preflight_plan(self.settings, plan, self.connections, context)
         return manifest

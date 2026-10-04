@@ -32,6 +32,7 @@ export interface Plan {
   applicationRef?: MaterialReference;
   executionBindings?: Record<string, unknown>;
   bindingManifest?: Record<string, unknown>;
+  sourceSnapshotRef?: { id: string; fingerprint: string };
   usageBudget?: unknown;
 }
 export interface PendingQuestion { id: string; version: number; text: string }
@@ -51,7 +52,7 @@ export type FactoryJob = Omit<Job, 'input'> & {
   recoveryDetail?: { approvalCommandId: string; requirementId: string; version: number; runId: string; scope: string };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
-export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; literatureEvidence?: unknown; usageLedger?: unknown }
+export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; literatureEvidence?: unknown; synthesisEvidence?: unknown; usageLedger?: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;
   failed: boolean; pending: boolean; stopped: boolean;
@@ -202,10 +203,12 @@ export interface ApplicationReview {
   separateAdministratorRequired: true; taskApprovalSeparate: true;
 }
 export interface CompositionInput {
+  sourceSnapshotRef?: { id: string; fingerprint: string };
   goal: string; mode?: string; application?: string; applicationRef?: MaterialReference;
   materialChoices?: Record<string, MaterialReference>; connectionRefs?: Record<string, string>;
 }
 export interface AssemblyCandidate {
+  sourceSnapshotRef?: { id: string; fingerprint: string };
   application: string; applicationRef: MaterialReference; mode: string; normalizedGoal: string;
   materialRefs: MaterialReference[]; materials: FactoryMaterial[]; tools: string[]; capabilities: string[];
   budget: ApplicationBudget; config: Record<string, unknown>; instructions: string;

@@ -61,7 +61,8 @@ def tools_for_contract(contract: ToolContract) -> dict[str, str]:
 def application_tool_catalog(store):
     """Preserve the existing catalog; new tools require an explicit operator contract."""
     contract = getattr(getattr(store, "settings", None), "runtime_tool_contract", "legacy-v1")
-    return {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract))}
+    return {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
+            **({"save_literature_synthesis": "research:read"} if getattr(getattr(store, "settings", None), "source_synthesis_enabled", False) else {})}
 
 
 @dataclass(frozen=True)
@@ -70,9 +71,12 @@ class PlanPolicyConfig:
     revision: str = "plan-policy-v1"
     review_ttl_seconds: int = 3600
     tool_contract: ToolContract = "legacy-v1"
+    source_synthesis_enabled: bool = False
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
+        if type(self.source_synthesis_enabled) is not bool:
+            raise ValueError("Source synthesis requires an explicit boolean contract")
         if self.tool_contract != "legacy-v1" and self.revision == "plan-policy-v1":
             raise ValueError("Registered runtime tools require a distinct plan policy revision")
         if self.name not in {"unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
@@ -85,6 +89,8 @@ class PlanPolicyConfig:
     @property
     def fingerprint(self) -> str:
         body = asdict(self)
+        if not self.source_synthesis_enabled:
+            del body["source_synthesis_enabled"]
         if self.tool_contract == "legacy-v1":
             del body["tool_contract"]
         return digest({**body, "knownTools": self.known_tools,
@@ -93,10 +99,14 @@ class PlanPolicyConfig:
 
     @property
     def known_tools(self) -> dict[str, str]:
-        return tools_for_contract(self.tool_contract)
+        return {**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})}
 
     @property
     def read_only_tools(self) -> frozenset[str]:
+        return self._base_read_only_tools | ({"save_literature_synthesis"} if self.source_synthesis_enabled else set())
+
+    @property
+    def _base_read_only_tools(self) -> frozenset[str]:
         if self.tool_contract == "legacy-v1":
             return LEGACY_READ_ONLY_TOOLS
         if self.tool_contract == "pubmed-host-evidence-v1":

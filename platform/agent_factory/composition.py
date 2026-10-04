@@ -32,11 +32,16 @@ class CompositionService:
         self.commands = self.db.command_table("af_composition_commands", metadata)
         metadata.create_all(store.engine)
 
-    def _input(self, goal, mode, application, application_ref, material_choices, connection_refs):
+    def _input(self, goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref=None):
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000:
             raise HTTPException(422, "Goal must contain 2–2000 characters")
         values = {"goal": goal.strip(), "mode": mode, "application": application, "applicationRef": application_ref,
                   "materialChoices": material_choices or {}, "connectionRefs": connection_refs or {}}
+        if source_snapshot_ref is not None:
+            try:
+                values["sourceSnapshotRef"] = SourceSnapshotRef.model_validate(source_snapshot_ref).model_dump()
+            except ValidationError as error:
+                raise HTTPException(422, "Exact source snapshot reference required") from error
         MaterialGovernance._safe_data(values)
         for field in ("mode", "application"):
             if values[field] is not None and (not isinstance(values[field], str) or not 1 <= len(values[field]) <= 100):
@@ -188,6 +193,8 @@ class CompositionService:
         manifest = {"schema": 1, "applicationRef": ApplicationService.pin(application), "mode": mode_name,
                     "materialRefs": refs, "materialChoices": {name: values["materialChoices"].get(name, slot["defaultRef"]) for name, slot in mode["materialChoices"].items()},
                     "executionBindingsSha256": execution.get("sha256") if execution else None, "connections": connection_pins}
+        if values.get("sourceSnapshotRef") is not None:
+            manifest["sourceSnapshotRef"] = copy.deepcopy(values["sourceSnapshotRef"])
         manifest["sha256"] = digest(manifest)
         config = {"askScope": "ask_scope" in tools and len(values["goal"]) < mode["config"]["askScopeBelowLength"],
                   "sample": values["goal"], "experimentDurationSeconds": min(mode["config"]["experimentDurationSeconds"], budget["experimentSeconds"]), "toolOrder": tools}
@@ -199,6 +206,8 @@ class CompositionService:
                      "budget": budget, "policy": policy, "syntheticFixture": bool(self.store.settings.demo),
                      "executionBindings": execution, "bindingManifest": manifest, "missing": missing,
                      "status": "blocked" if missing else "ready"}
+        if values.get("sourceSnapshotRef") is not None:
+            candidate["sourceSnapshotRef"] = copy.deepcopy(values["sourceSnapshotRef"])
         if execution is not None and not missing:
             try:
                 result = self.bindings.inspect(candidate)
@@ -242,9 +251,9 @@ class CompositionService:
             return self._projection(self._row(conn, owner, proposal_id), conn=conn)
 
     def propose(self, owner, goal, mode=None, application=None, application_ref=None, material_choices=None,
-                connection_refs=None, *, request_id, parent_id=None):
+                connection_refs=None, *, request_id, parent_id=None, source_snapshot_ref=None):
         self.auth.require(owner, "run")
-        values = self._input(goal, mode, application, application_ref, material_choices, connection_refs)
+        values = self._input(goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref)
         fingerprint = digest({"action": "propose", "input": values, "parentId": parent_id})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
@@ -266,9 +275,9 @@ class CompositionService:
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, "composition.propose", result)
 
     def revise(self, owner, proposal_id, goal, mode=None, application=None, application_ref=None,
-               material_choices=None, connection_refs=None, *, request_id):
+               material_choices=None, connection_refs=None, *, request_id, source_snapshot_ref=None):
         return self.propose(owner, goal, mode, application, application_ref, material_choices, connection_refs,
-                            request_id=request_id, parent_id=proposal_id)
+                            request_id=request_id, parent_id=proposal_id, source_snapshot_ref=source_snapshot_ref)
 
     def reject(self, owner, proposal_id, request_id):
         self.auth.require(owner, "run")
@@ -348,12 +357,19 @@ class CompositionService:
         return self.accept(owner, proposal["id"], digest({"key": key, "action": "direct-accept"}), plan_store=plan_store)
 
 
+class SourceSnapshotRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ProposalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     goal: str = Field(min_length=2, max_length=2000)
     mode: str | None = Field(default=None, max_length=100)
     application: str | None = Field(default=None, max_length=100)
     applicationRef: PinnedRef | None = None
+    sourceSnapshotRef: SourceSnapshotRef | None = None
     materialChoices: dict[str, PinnedRef] = Field(default_factory=dict, max_length=12)
     connectionRefs: dict[str, str] = Field(default_factory=dict, max_length=12)
     requestId: str = Field(min_length=1, max_length=200)
@@ -372,7 +388,8 @@ def composition_router(auth, service):
         return {"goal": body.goal, "mode": body.mode, "application": body.application,
                 "application_ref": body.applicationRef.model_dump() if body.applicationRef else None,
                 "material_choices": {name: ref.model_dump() for name, ref in body.materialChoices.items()},
-                "connection_refs": body.connectionRefs, "request_id": body.requestId}
+                "connection_refs": body.connectionRefs, "request_id": body.requestId,
+                "source_snapshot_ref": body.sourceSnapshotRef.model_dump() if body.sourceSnapshotRef else None}
     @router.post("", status_code=201)
     def propose(body: ProposalRequest, request: Request):
         return service.propose(auth.user(request)["id"], **kwargs(body))

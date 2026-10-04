@@ -11,8 +11,11 @@ Current continuation implements the first two audited slices: owner-visible
 proposal history with read-only original-plan recovery, and exact-plan review
 re-entry. SQLite, PostgreSQL/HTTP and frontend contract tests cover them; current
 browser and exact-head CI evidence are recorded by the stage PR. The flow table
-below retains the PR28 baseline to explain the selected changes. Remaining editor,
-source-handoff, schedule and scientific-evaluation slices are still code work.
+below retains the PR28 baseline to explain the selected changes. PR30 closes the
+guided approved-template editor and material-to-task slice. The subsequent
+[source-to-synthesis milestone](SOURCE_SYNTHESIS_JOURNEY.md) implements the bounded
+owner source handoff and controlled synthesis journey; its own draft PR records
+acceptance. Schedule and general scientific-evaluation workflows remain code work.
 
 The continuation also adds explicit development mock login, deployment declaration
 validation and an opt-in [aggregate process contract](AGGREGATE_PROCESS_CONTRACTS.md).

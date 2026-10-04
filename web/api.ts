@@ -1,3 +1,5 @@
+import { sameSourceSnapshot, sourceSnapshotReference } from './sourcePlanState.js';
+import type { SynthesisCreate } from './synthesisJourneyState.js';
 import { authEpoch, assertAuthEpoch, browserCsrf, BrowserAuthError, expireBrowserSession } from './browserAuth.js';
 import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
 import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
@@ -231,6 +233,11 @@ function proposal(value: unknown, ownerId?: string): AssemblyProposal {
       || !['pending', 'revised', 'rejected', 'accepted'].includes(String(value.state)) || typeof value.fingerprint !== 'string'
       || !value.allowedActions.every(item => ['revise', 'reject', 'accept'].includes(item))) throw invalid('装配提案无法核对。');
   const c = value.candidate;
+  const snapshot = value.input.sourceSnapshotRef;
+  if (snapshot !== undefined && (!sourceSnapshotReference(snapshot) || !sourceSnapshotReference(c.sourceSnapshotRef) || !record(c.bindingManifest)
+      || !sourceSnapshotReference(c.bindingManifest.sourceSnapshotRef) || !sameSourceSnapshot(snapshot, c.sourceSnapshotRef)
+      || !sameSourceSnapshot(snapshot, c.bindingManifest.sourceSnapshotRef))) throw invalid('来源快照与提案固定范围不一致。');
+  if (snapshot === undefined && (c.sourceSnapshotRef !== undefined || record(c.bindingManifest) && c.bindingManifest.sourceSnapshotRef !== undefined)) throw invalid('提案增加了未选择的来源。');
   if (!reference(c.applicationRef) || typeof c.application !== 'string' || c.application !== c.applicationRef.id || typeof c.mode !== 'string'
       || typeof c.normalizedGoal !== 'string' || !Array.isArray(c.materialRefs) || !c.materialRefs.every(reference)
       || !Array.isArray(c.materials) || !strings(c.tools) || !strings(c.capabilities) || !record(c.budget) || !strings(c.missing)
@@ -244,6 +251,9 @@ function sealedPlan(value: unknown): Plan {
   if (!record(value) || typeof value.id !== 'string' || typeof value.fingerprint !== 'string' || typeof value.normalizedGoal !== 'string'
       || !reference(value.applicationRef) || !Array.isArray(value.materialRefs) || !value.materialRefs.every(reference)
       || !strings(value.capabilities) || !strings(value.missing) || !['ready', 'blocked'].includes(String(value.status))) throw invalid('最终方案无法核对；暂时不能创建任务。');
+  if (value.sourceSnapshotRef !== undefined && (!sourceSnapshotReference(value.sourceSnapshotRef) || !record(value.bindingManifest)
+      || !sameSourceSnapshot(value.sourceSnapshotRef, value.bindingManifest.sourceSnapshotRef))) throw invalid('方案来源快照绑定无法核对。');
+  if (value.sourceSnapshotRef === undefined && record(value.bindingManifest) && value.bindingManifest.sourceSnapshotRef !== undefined) throw invalid('方案来源快照绑定缺失。');
   return value as unknown as Plan;
 }
 async function applications(signal?: AbortSignal): Promise<FactoryApplication[]> {
@@ -281,6 +291,13 @@ async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ prop
 }
 
 export const api = {
+  synthesis: {
+    preview: (taskId: string, signal?: AbortSignal) => request<unknown>(`/synthesis/sources/${segment(taskId)}`, 'GET', undefined, signal),
+    list: (taskId: string, after?: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots?${new URLSearchParams({ sourceTaskId: taskId, limit: '20', ...(after ? { after } : {}) })}`, 'GET', undefined, signal),
+    inspect: (id: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots/${segment(id)}`, 'GET', undefined, signal),
+    current: (id: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots/${segment(id)}/current`, 'GET', undefined, signal),
+    create: (input: SynthesisCreate) => request<unknown>('/synthesis/snapshots', 'POST', input),
+  },
   storage: async (owner: string, signal?: AbortSignal) => storageSummary(await request<StorageSummary>('/storage', 'GET', undefined, signal), owner),
   retentionPlan: async (owner: string, objectId: string, requestId: string) => retentionReceipt(await request<RetentionReceipt>('/storage/retention/plans', 'POST', { objectId, requestId }), owner),
   retention: async (owner: string, id: string) => retentionReceipt(await request<RetentionReceipt>(`/storage/retention/plans/${segment(id)}`), owner, id),

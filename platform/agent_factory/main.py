@@ -79,7 +79,7 @@ def create_app(settings=None):
     if settings.demo:
         seed_catalog(store)
     governance = MaterialGovernance(store, auth, GovernanceConfig(
-        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract)))
+        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled))
     if settings.demo:
         governance.adopt_demo_bootstrap()
     store.material_governance = governance
@@ -87,6 +87,8 @@ def create_app(settings=None):
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     connections = ConnectionService(store, auth, settings.trusted_connections)
     store.connections = connections
+    from .synthesis_sources import SynthesisSourceService
+    store.synthesis_sources = SynthesisSourceService(store, auth)
     bindings = default_bindings(settings, store, connections)
     register_orx_adapter(bindings)
     register_literature_adapters(bindings)
@@ -105,6 +107,13 @@ def create_app(settings=None):
                 connection_kind=entry.connection_kind, required_capabilities=entry.required_capabilities,
                 permissions=entry.permissions, demo_only=entry.demo_only, validator=entry.validator,
                 connection_adapter_ref=entry.connection_adapter_ref)
+    if settings.source_synthesis_enabled:
+        from .synthesis_runtime import registrations as synthesis_registrations
+        for entry in synthesis_registrations():
+            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
+                tool_name=entry.tool_name, connection_kind=entry.connection_kind,
+                required_capabilities=entry.required_capabilities, permissions=entry.permissions,
+                demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
     store.execution_bindings = bindings
     prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
     if settings.development_profile == "opencode-go":
@@ -112,6 +121,10 @@ def create_app(settings=None):
         from .go_usage import pricing_registrations
         for price in pricing_registrations(MODEL_ADAPTER_IDS):
             prices[(price.adapter_id, price.adapter_revision)] = price
+    if settings.source_synthesis_enabled:
+        from .synthesis_runtime import pricing_registration
+        price = pricing_registration()
+        prices[(price.adapter_id, price.adapter_revision)] = price
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
     store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
@@ -134,7 +147,7 @@ def create_app(settings=None):
     store.delegation = delegation
     policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract)), ancestor_guard=persisted_ancestor_guard(store))
+        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
     handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
     handoff_client.install_guard()
@@ -154,6 +167,8 @@ def create_app(settings=None):
     base.include_router(connection_router(auth, connections))
     base.include_router(application_router(auth, applications))
     base.include_router(composition_router(auth, composition))
+    from .synthesis_api import synthesis_router
+    base.include_router(synthesis_router(auth, store.synthesis_sources, settings))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
@@ -227,7 +242,7 @@ def create_app(settings=None):
             store.dispose_root_locks()
 
     native.router.lifespan_context = observed_lifespan
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
     native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime)
     external = None
     if settings.oidc_identity is not None:

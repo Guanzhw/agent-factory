@@ -20,6 +20,7 @@ class Settings:
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
     browser_oidc: "BrowserOIDCConfig | None" = None
+    source_synthesis_enabled: bool = False
     development_mock_login: bool = False
     development_public_origin: str | None = None
     max_workers: int = 2
@@ -62,6 +63,9 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if type(self.source_synthesis_enabled) is not bool or (self.source_synthesis_enabled
+                and (self.demo is not True or self.temporary_policy != "admin-review")):
+            raise ValueError("Controlled source synthesis requires explicit demo mode and independent plan review")
         if type(self.development_mock_login) is not bool:
             raise ValueError("Development mock login requires explicit boolean configuration")
         if self.development_mock_login:
@@ -137,6 +141,7 @@ class Settings:
                    plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
+                   source_synthesis_enabled=os.getenv("FACTORY_SOURCE_SYNTHESIS_ENABLED", "false") == "true",
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
                    development_profile=os.getenv("FACTORY_DEVELOPMENT_PROFILE", "disabled"),
                    storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),

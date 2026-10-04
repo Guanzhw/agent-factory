@@ -98,6 +98,62 @@ class ScientificFixtureModel(Model):
         return response
 
 
+def make_synthesis_saver(ctx, source_context, *, revalidate=None):
+    """Reuse the governed artifact effect, with fresh optional source custody checks."""
+    fingerprint = source_context.provenance["snapshotSha256"]
+    @tool
+    def save_literature_synthesis(run_context: RunContext, report: dict) -> str:
+        """Validate exact source citations and persist a controlled synthesis report."""
+        if any(getattr(run_context, key, None) != getattr(ctx.run_context, key, None)
+               for key in ("user_id", "session_id", "run_id")):
+            raise ValueError("SYNTHESIS_TOOL_CONTEXT_INVALID")
+        store = ctx.store
+        def authorize():
+            if revalidate is not None:
+                revalidate()
+            store.authorize_tool(run_context, TOOL_NAME)
+        authorize()
+        checked = _validate(report, source_context)
+        document = {**checked, "evidenceKind": "controlled_model_synthesis",
+            "citationIntegrityVerified": True, "modelExecution": "controlled-fixture"}
+        encoded = json.dumps(document, sort_keys=True, ensure_ascii=False)
+        original_hash = hashlib.sha256(encoded.encode()).hexdigest()
+        key = "literature-synthesis-report-v1"
+        reserved = store.effect_reserve(run_context.run_id, key,
+            {"snapshotSha256": fingerprint, "reportSha256": original_hash})
+        if reserved["status"] == "done":
+            authorize()
+            return json.dumps(reserved["result"])
+        if reserved["status"] != "new":
+            raise ValueError("SYNTHESIS_EFFECT_UNKNOWN_NO_REPLAY")
+        metadata = {"evidenceKind": "controlled_model_synthesis", "snapshotSha256": fingerprint,
+            "citationIntegrityVerified": True, "semanticReview": "required", "modelAdapterId": (ctx.plan.get("executionBindings") or {}).get("model", {}).get("adapterId", MODEL_ID),
+            "modelExecution": "controlled-fixture", "sourceEvidenceKind": checked["sourceEvidenceKind"]}
+        if ctx.plan.get("sourceSnapshotRef") is not None:
+            metadata.update(ownerId=ctx.plan["ownerId"], taskId=run_context.session_id,
+                planId=ctx.plan["id"], planFingerprint=ctx.plan["fingerprint"],
+                sourceSnapshotRef=ctx.plan["sourceSnapshotRef"])
+        # Fresh native authority for each individual write. No private path,
+        # owner or session comes from the untrusted model report.
+        authorize()
+        artifact = store.artifact_write(run_context.run_id, "literature-synthesis.json", encoded, metadata=metadata)
+        # Indented code text cannot turn source/model strings into active
+        # Markdown links, HTML or executable rich content.
+        markdown = "# Controlled literature synthesis fixture\n\n" + "\n".join(
+            "    " + line for line in json.dumps(report, ensure_ascii=False, indent=2).splitlines())
+        markdown += "\n\nCitation structure checked; semantic review required. Snapshot: " + fingerprint
+        authorize()
+        companion = store.artifact_write(run_context.run_id, "literature-synthesis.md", markdown,
+            media_type="text/markdown", metadata=metadata)
+        result = {"artifactId": artifact["id"], "markdownArtifactId": companion["id"],
+            "originalReportSha256": original_hash, "snapshotSha256": fingerprint,
+            "citationIntegrityVerified": True, "semanticReview": "required"}
+        authorize()
+        store.effect_complete(run_context.run_id, key, result)
+        return json.dumps(result)
+    return save_literature_synthesis
+
+
 def registrations(question, evidence_projection, *, owner="alice"):
     source_context = build_source_context(question, evidence_projection)
     fingerprint = source_context.provenance["snapshotSha256"]
@@ -124,48 +180,7 @@ def registrations(question, evidence_projection, *, owner="alice"):
 
     def saver(ctx):
         scope(ctx)
-        @tool
-        def save_literature_synthesis(run_context: RunContext, report: dict) -> str:
-            """Validate exact source citations and persist a controlled synthesis report."""
-            if any(getattr(run_context, key, None) != getattr(ctx.run_context, key, None)
-                   for key in ("user_id", "session_id", "run_id")):
-                raise ValueError("SYNTHESIS_TOOL_CONTEXT_INVALID")
-            store = ctx.store
-            store.authorize_tool(run_context, TOOL_NAME)
-            checked = _validate(report, source_context)
-            document = {**checked, "evidenceKind": "controlled_model_synthesis",
-                "citationIntegrityVerified": True, "modelExecution": "controlled-fixture"}
-            encoded = json.dumps(document, sort_keys=True, ensure_ascii=False)
-            original_hash = hashlib.sha256(encoded.encode()).hexdigest()
-            key = "literature-synthesis-report-v1"
-            reserved = store.effect_reserve(run_context.run_id, key,
-                {"snapshotSha256": fingerprint, "reportSha256": original_hash})
-            if reserved["status"] == "done":
-                return json.dumps(reserved["result"])
-            if reserved["status"] != "new":
-                raise ValueError("SYNTHESIS_EFFECT_UNKNOWN_NO_REPLAY")
-            metadata = {"evidenceKind": "controlled_model_synthesis", "snapshotSha256": fingerprint,
-                "citationIntegrityVerified": True, "semanticReview": "required", "modelAdapterId": MODEL_ID,
-                "modelExecution": "controlled-fixture", "sourceEvidenceKind": checked["sourceEvidenceKind"]}
-            # Fresh native authority for each individual write. No private path,
-            # owner or session comes from the untrusted model report.
-            store.authorize_tool(run_context, TOOL_NAME)
-            artifact = store.artifact_write(run_context.run_id, "literature-synthesis.json", encoded, metadata=metadata)
-            # Indented code text cannot turn source/model strings into active
-            # Markdown links, HTML or executable rich content.
-            markdown = "# Controlled literature synthesis fixture\n\n" + "\n".join(
-                "    " + line for line in json.dumps(report, ensure_ascii=False, indent=2).splitlines())
-            markdown += "\n\nCitation structure checked; semantic review required. Snapshot: " + fingerprint
-            store.authorize_tool(run_context, TOOL_NAME)
-            companion = store.artifact_write(run_context.run_id, "literature-synthesis.md", markdown,
-                media_type="text/markdown", metadata=metadata)
-            result = {"artifactId": artifact["id"], "markdownArtifactId": companion["id"],
-                "originalReportSha256": original_hash, "snapshotSha256": fingerprint,
-                "citationIntegrityVerified": True, "semanticReview": "required"}
-            store.authorize_tool(run_context, TOOL_NAME)
-            store.effect_complete(run_context.run_id, key, result)
-            return json.dumps(result)
-        return save_literature_synthesis
+        return make_synthesis_saver(ctx, source_context)
 
     return [knowledge_registration(question, evidence_projection, owner_id=owner),
         AdapterRegistration("model", MODEL_ID, "1", model, connection_kind="model",

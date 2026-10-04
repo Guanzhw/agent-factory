@@ -1,5 +1,29 @@
 # Cloud integration task board
 
+## Active verified-source controlled synthesis journey — 2026-10-04
+
+Base accepted draft PR30, exact `d4f5e6c0f64cc49e44561629ba6dc1e909661387`;
+branch `coord/source-grounded-synthesis-journey-20261004`. Root owns shared API,
+configuration, policy/schema/lifecycle integration and publication. Explicit mock
+login and controlled synthesis only; no Go/provider credentials or live scientific
+calls, new accounts, paid services, host changes, production schedules, merge or deployment.
+
+| Owner / exclusive scope | Dependency | Acceptance / state |
+|---|---|---|
+| root: shared composition/snapshot pins, policy/main/API/store wiring, app integration/CSS/docs | Frozen source/runtime/UI contracts | Integrated immutable sourceSnapshotRef and same native plan/review/run path; frontend167/static/audit clean; local Python1151=800pass351skip58.703s; desktop/mobile final pass; exact-head CI pending (recorded in draft PR after commit). |
+| factory_flow: new synthesis_sources + unit tests | Existing verified literature artifacts | Frozen; 9 source + 6 configuration tests pass, owner/custody/hash/stale/restart/idempotency and baseline policy fingerprint compatibility. |
+| go_adapter: new synthesis_runtime + unit tests | Root extracted existing saver; source service | Frozen; 11 tests pass. Static adapters resolve plan snapshot; verified report projection reuses saver; no per-request publication/registry mutation. |
+| independent_review: new SynthesisJourney/state/report UI and tests | Owner snapshot APIs; root Composer bridge | Frozen; 11 tests pass. Selection/provenance/limits/recovery + controlled output inspection; no new execution flow. |
+| at10: new synthesis_journey_postgres tests | Integrated API and runtime | Four real PG/native cases pass across initial run + corrected fixture rerun; legacy synthesis profile2 pass. Cancel/revoke at actual model boundary, no report; source drift/missing/owner/restart covered. Lane released. |
+| go_policy: new accept_synthesis_journey_browser script + scratch runner | Built UI, mock HTTPS/PG/source runtime | Frozen; final desktop/mobile actual mock HTTPS/PG/native journey passes. Snapshot/proposal lost ACK read recovery, exactly one source + synthesis per viewport, verified downloads/Bob404, page/console0/no overflow; fixtures cleaned. Completed-only mount fixes premature preview409. |
+| reviewer: independent read-only contracts/security/acceptance review | Combined changes | Backend and frontend reviewed, 28 Python + 23 frontend independently pass; stable ref/sealed plan correction verified; code review complete; final browser/exact CI review pending. |
+
+Heavy local tests run serially only after root grants the lane. Baseline/candidate
+execution comparison shares unresolved evaluator/dataset/approved-change and native
+review contracts; a pure validator would not complete that user workflow. Keep it
+explicitly remaining, alongside schedule management, rather than claiming those
+workflows from synthetic component tests.
+
 ## Active approved-template material-to-task journey — 2026-10-04
 
 Base accepted draft PR29, exact `57a3f2f1c44b0dc151752162a4a1a6db5354e9db`;
@@ -9,13 +33,13 @@ services, current independent publication and plan review; no new orchestration.
 
 | Owner / exclusive scope | Dependencies | Acceptance / state |
 |---|---|---|
-| root: ApplicationGovernance, shared API/types/CSS, integration, requirement matrix/publication | Frozen editor/picker contracts | Integrated guided editing, exact receipt checks and uncertain-save lock; frontend154/static/audit clean; local Python1121=774pass347skip60.182s; draft PR30 published; initial PR CI exposed old OIDC fixture clock race, fixed without production auth changes; fresh exact CI pending. |
+| root: ApplicationGovernance, shared API/types/CSS, integration, requirement matrix/publication | Frozen editor/picker contracts | Integrated guided editing, exact receipt checks and uncertain-save lock; frontend154/static/audit clean; local Python1121=774pass347skip60.182s; draft PR30 published; initial PR CI exposed old OIDC fixture clock race, fixed without production auth changes; final exact push37216580187 and PR37216583963 all10 jobs pass; root/reviewer two terminal observations >90s apart; actual PG logs1058pass63skip. |
 | factory_flow: new applicationTemplateState + tests | Existing ApplicationDefinition schema | Frozen; immutable lossless edits and advanced-only boundary; 10 tests pass. |
 | go_adapter: new MaterialPicker/materialCatalogState + tests | Existing approved material catalog | Frozen; exact-pin picker, missing/dependency evidence; 6 tests pass, no inferred authority. |
 | independent_review: new ApplicationTemplateEditor | Pure template helpers and picker props | Frozen; Chinese guided forms, exact slots and preserved connection scope; 4 render tests pass. |
 | at10: new material_template_journey_postgres tests | Existing application/composition/native fixture | Frozen; 2 PostgreSQL cases pass in 7.548s: independent review, new-ID native execution, withdrawal/revocation/hash/owner guards; fixture cleaned. |
 | go_policy: new accept_material_template_browser script + scratch runner | Root built UI, mock login, disposable PG | Frozen; actual desktop/mobile native/lost-ACK journeys pass, artifact integrity/Bob isolation and exactly-one task verified; mobile wrapping fixed; fixtures cleaned. |
-| reviewer: independent read-only requirement/security/CI review | Combined implementation | AC16.1/3/4/6 reviewed; receipt guard finding fixed, independent 23 frontend tests pass; final browser evidence independently checked; no remaining code blocker; exact CI pending. |
+| reviewer: independent read-only requirement/security/CI review | Combined implementation | AC16.1/3/4/6 reviewed; receipt guard finding fixed, independent 23 frontend tests pass; final browser and exact CI evidence independently checked; no remaining code blocker; draft PR30 accepted at d4f5e6c. |
 
 One heavy local lane, explicitly granted by root. No Go/provider credentials,
 paid services, host changes, real accounts, provisioning, merge or deployment.

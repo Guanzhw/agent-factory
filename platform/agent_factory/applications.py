@@ -471,6 +471,8 @@ class ApplicationService:
         else:
             if anchor.get("sha256") != digest({key: value for key, value in anchor.items() if key != "sha256"}) or anchor.get("applicationRef") != ref or anchor.get("mode") != plan["mode"] or anchor.get("materialRefs") != plan.get("materialRefs"):
                 raise HTTPException(409, "Composition binding anchor integrity differs")
+            if anchor.get("sourceSnapshotRef") != plan.get("sourceSnapshotRef"):
+                raise HTTPException(409, "Composition source snapshot binding differs")
             execution = plan.get("executionBindings") or {}
             if anchor.get("executionBindingsSha256") != execution.get("sha256"):
                 raise HTTPException(409, "Composition execution binding anchor differs")
