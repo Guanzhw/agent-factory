@@ -53,6 +53,9 @@
     "lockedPythonAudit": {
       "dependencies": 49,
       "knownVulnerabilities": 0
+    },
+    "workspaceCapabilitiesOffline": {
+      "passed": 13
     }
   },
   "identityNativeAcceptance": {
@@ -72,7 +75,8 @@
     "Cross-reference provider namespace/pool consistency",
     "Fresh after-lock authority and cancellation fence",
     "Bounded maintenance keyset cursor",
-    "Identity-specific allocation-journal lookup"
+    "Identity-specific allocation-journal lookup",
+    "Windows static compatibility with fail-closed POSIX flag capabilities"
   ],
   "remaining": [
     "Browser authorization-code/PKCE/session/logout integration",
@@ -82,5 +86,6 @@
     "Production cleanup cadence/monitoring and target-machine sustained capacity",
     "Scientific provider and non-toy scientific acceptance"
   ],
-  "ci": "Exact-head final CI is recorded on the stage draft PR; earlier green checks are not substituted."
+  "ci": "Exact-head final CI is recorded on the stage draft PR; earlier green checks are not substituted.",
+  "ciInitialFailure": "43704623663f819e4ef9ddaa768154b65cc1642e: Windows Pyright POSIX flag attributes; superseded runs canceled after diagnosis."
 }

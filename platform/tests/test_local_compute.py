@@ -8,7 +8,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine, text
 
@@ -34,6 +34,26 @@ class Backend:
     def reclaim(self, record):
         self.calls.append("reclaim"); self.released = True
         return self.inspect(record)
+
+
+class LocalComputeCapabilityTests(unittest.TestCase):
+    def test_missing_or_invalid_flags_fail_before_filesystem_or_journal(self):
+        for name in ("O_DIRECTORY", "O_NOFOLLOW"):
+            for value in (None, 0, -1, True, "unsupported", "missing"):
+                with self.subTest(flag=name, value=value):
+                    store = Mock()
+                    root = Path("/unopened")
+                    with patch.object(os, "name", "posix"), \
+                            patch.object(os, "O_DIRECTORY", 65536, create=True), \
+                            patch.object(os, "O_NOFOLLOW", 131072, create=True), \
+                            patch.object(os, name, value, create=True), \
+                            patch.object(os, "open") as open_file:
+                        if value == "missing":
+                            delattr(os, name)
+                        with self.assertRaisesRegex(ValueError, "LOCAL_COMPUTE_UNCONFIRMED"):
+                            LocalWorkspaceProvider(store, root)
+                    open_file.assert_not_called()
+                    self.assertEqual(store.mock_calls, [])
 
 
 @unittest.skipUnless(os.name == "posix", "Descriptor-pinned POSIX workspace backend")

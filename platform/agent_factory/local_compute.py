@@ -31,6 +31,13 @@ def _require(value):
         raise ValueError("LOCAL_COMPUTE_UNCONFIRMED")
 
 
+def _required_flag(name: str) -> int:
+    value = getattr(os, name, None)
+    if type(value) is not int or value <= 0:
+        raise ValueError("LOCAL_COMPUTE_UNCONFIRMED")
+    return value
+
+
 class WorkspaceBackend:
     """Workspace availability only; does not start or own a process."""
     revision = "workspace-only-v1"
@@ -52,6 +59,8 @@ class WorkspaceBackend:
 class LocalWorkspaceProvider:
     def __init__(self, store, root: Path, backend=None):
         _require(os.name == "posix")
+        self._directory_flag = _required_flag("O_DIRECTORY")
+        self._nofollow_flag = _required_flag("O_NOFOLLOW")
         self.store = store
         self.root = Path(root).absolute()
         _require(self.root != Path(self.root.anchor) and ".." not in self.root.parts)
@@ -132,10 +141,10 @@ class LocalWorkspaceProvider:
 
     @contextmanager
     def _root(self):
-        fd = os.open(self.root.anchor, os.O_RDONLY | os.O_DIRECTORY)
+        fd = os.open(self.root.anchor, os.O_RDONLY | self._directory_flag)
         try:
             for part in self.root.parts[1:]:
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = os.open(part, os.O_RDONLY | self._directory_flag | self._nofollow_flag, dir_fd=fd)
                 os.close(fd); fd = child
             info = os.fstat(fd)
             _require(self._identity is None or [info.st_dev, info.st_ino] == self._identity)
@@ -182,11 +191,11 @@ class LocalWorkspaceProvider:
 
     @contextmanager
     def _workspace(self, root_fd, record):
-        fd = os.open(record["leaseId"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+        fd = os.open(record["leaseId"], os.O_RDONLY | self._directory_flag | self._nofollow_flag, dir_fd=root_fd)
         try:
             info = os.fstat(fd)
             _require(record.get("workspaceIdentity") in (None, [info.st_dev, info.st_ino]))
-            marker_fd = os.open(_MARKER, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            marker_fd = os.open(_MARKER, os.O_RDONLY | self._nofollow_flag, dir_fd=fd)
             try:
                 marker = os.fstat(marker_fd)
                 _require(stat.S_ISREG(marker.st_mode) and marker.st_nlink == 1 and marker.st_size <= 4096)
@@ -230,10 +239,10 @@ class LocalWorkspaceProvider:
         try:
             with self._root() as root_fd:
                 os.mkdir(lease_id, mode=0o700, dir_fd=root_fd)
-                fd = os.open(lease_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+                fd = os.open(lease_id, os.O_RDONLY | self._directory_flag | self._nofollow_flag, dir_fd=root_fd)
                 try:
                     info = os.fstat(fd); record["workspaceIdentity"] = [info.st_dev, info.st_ino]
-                    marker_fd = os.open(_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+                    marker_fd = os.open(_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | self._nofollow_flag, 0o600, dir_fd=fd)
                     try:
                         raw = canonical(self._marker(record)).encode()
                         _require(os.write(marker_fd, raw) == len(raw)); os.fsync(marker_fd)

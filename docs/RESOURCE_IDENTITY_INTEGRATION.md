@@ -122,7 +122,10 @@ Pyright passed. npm production audit and49 locked Python dependency audit found
 no known vulnerabilities. A final identity-filtered allocation-journal query was
 verified with12 focused tests and a fresh4.921s actual PG/filesystem case. Independent review and54 focused offline checks passed; fixes
 included PG lock quoting, effect serialization, namespace aliases and scan cursor.
-Exact-head CI and any later final observations are recorded on the stage draft PR.
+The first CI head failed Windows Pyright on direct POSIX flag references. Explicit
+positive-integer capability checks now reject unsupported flags before filesystem
+or journal access; the focused workspace suite has13 tests. Exact-head CI and
+any later final observations are recorded on the stage draft PR.
 
 Still required: selected issuer/public keys/audience/subject map and real TLS/IdP
 acceptance; browser authorization-code/PKCE and session/logout integration;
