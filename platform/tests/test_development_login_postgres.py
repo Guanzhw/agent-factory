@@ -1,7 +1,9 @@
 """Real create_app/native PostgreSQL with in-process development mock OIDC.
 
 HTTPS ASGI scheme is simulated; these tests do not prove deployed TLS. No live
-IdP/provider, host changes or alternate browser session implementation.
+IdP/provider, host changes or alternate browser session implementation. A local
+synthetic HTML document supplies the static route fixture; actual React navigation
+is verified separately by the real HTTPS browser acceptance.
 """
 import json
 import os
@@ -11,6 +13,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from uuid import uuid4
 from typing import cast
+from unittest.mock import patch
 
 from starlette.types import ASGIApp
 
@@ -35,7 +38,14 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=1,
             development_mock_login=True, development_public_origin=ORIGIN,
             temporary_policy="admin-review", storage_task_reserve_bytes=8*1024*1024)
-        self.app = create_app(settings)
+        # Backend CI intentionally has no frontend build. Supply a disposable
+        # document through the real FileResponse route instead of depending on
+        # an unrelated local dist/ directory or mocking an HTTP success.
+        static_root = Path(directory.name) / "web-fixture"
+        (static_root / "dist").mkdir(parents=True)
+        (static_root / "dist" / "index.html").write_text("<!doctype html><title>Synthetic development login fixture</title>", encoding="utf-8")
+        with patch("agent_factory.main.__file__", str(static_root / "platform" / "agent_factory" / "main.py")):
+            self.app = create_app(settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.engine.dispose)
@@ -83,7 +93,9 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         csrf = self.login("alice")
         opaque = self.client.cookies.get(SESSION_COOKIE)
         for _ in range(3):
-            self.assertEqual(self.client.get("/").status_code, 200)
+            document = self.client.get("/")
+            self.assertEqual(document.status_code, 200)
+            self.assertIn("Synthetic development login fixture", document.text)
             self.assertEqual(self.client.get("/api/factory/session").json()["id"], "alice")
             self.assertEqual(self.client.cookies.get(SESSION_COOKIE), opaque)
         self.assertEqual(len(self.store.sql("SELECT id FROM af_browser_auth WHERE kind='session'")), 1)

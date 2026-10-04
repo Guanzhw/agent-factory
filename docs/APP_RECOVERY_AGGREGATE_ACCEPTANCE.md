@@ -69,6 +69,16 @@ be disposed before its temporary directory cleanup. The fixes only change tests;
 22 targeted tests pass locally. That failed head is not accepted, and its
 superseded workflows are cancelled in favor of the corrected exact-head runs.
 
+The next CI head `5159742` passed all eight frontend/Python platform jobs, but
+push PostgreSQL exposed an implicit static-file fixture dependency: the new
+backend navigation test expected repo `dist/index.html`, which the PostgreSQL
+job does not build. That run had 1119 tests, 1055 passed, 63 skipped and one
+failure (1418.216 seconds). The test now supplies a temporary synthetic HTML
+file through the real static route and asserts its marker, retaining every
+session/CSRF/owner assertion. Two actual PostgreSQL cases pass in 4.606 seconds.
+This backend document fixture does not substitute for the separate real React
+browser acceptance. The failed head is not final acceptance.
+
 ## Remaining boundaries
 
 No live provider/key calls, host/cgroup/security configuration changes, machine
