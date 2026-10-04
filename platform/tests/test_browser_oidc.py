@@ -2,9 +2,10 @@
 import copy
 import base64
 from dataclasses import FrozenInstanceError
-import time
+from types import SimpleNamespace
 import unittest
-from typing import Any
+from unittest.mock import patch
+from typing import Any, cast
 from urllib.parse import parse_qs
 
 import httpx
@@ -26,6 +27,14 @@ class Fixture:
         cls.jwk = RSAAlgorithm.to_jwk(cls.key.public_key(), as_dict=True)
         cls.jwk.update(kid="key-1")
 
+    def setUp(self):
+        # The verifier owns NumericDate checks (PyJWT temporal checks are off).
+        # Freeze both issuance and that verifier clock; signing remains real RSA.
+        self.now = 1791130640
+        clock = patch('agent_factory.browser_oidc.time', SimpleNamespace(time=lambda: self.now))
+        clock.start()
+        cast(unittest.TestCase, self).addCleanup(clock.stop)
+
     def config(self, **changes):
         values: dict[str, Any] = dict(issuer=ISSUER, authorization_endpoint="https://identity.example.test/authorize",
                       token_endpoint="https://identity.example.test/token", client_id="factory-browser",
@@ -35,7 +44,7 @@ class Fixture:
         return BrowserOIDCConfig(**values)
 
     def token(self, *, headers=None, **changes):
-        now = int(time.time())
+        now = self.now
         claims = dict(iss=ISSUER, sub="subject-1", aud="factory-browser", nonce=NONCE, iat=now, exp=now+300)
         claims.update(changes)
         return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "key-1", "typ": "JWT", **(headers or {})})
@@ -50,7 +59,7 @@ class Verification(Fixture, unittest.TestCase):
         self.assertEqual(verifier.verify(self.token(aud=["factory-browser", "other"], azp="factory-browser"), nonce=NONCE).owner_id, "alice")
 
     def test_invalid_claims_and_access_tokens(self):
-        now = int(time.time())
+        now = self.now
         changes = [dict(iss="https://wrong.test"), dict(sub="unknown"), dict(aud="other"), dict(nonce="other"),
                    dict(aud=["factory-browser", "other"]), dict(azp="other"), dict(aud=["factory-browser"]*2),
                    dict(iat=True), dict(exp=float(now+300)), dict(iat=now+90), dict(exp=now-90),
@@ -75,12 +84,12 @@ class Verification(Fixture, unittest.TestCase):
 
     def test_auth_age_and_nonce_required(self):
         verifier = BrowserIDTokenVerifier(self.config(max_auth_age_seconds=60))
-        for changes in [{}, {"auth_time": int(time.time())-100}]:
+        for changes in [{}, {"auth_time": self.now-100}]:
             with self.assertRaises(BrowserOIDCError):
                 verifier.verify(self.token(**changes), nonce=NONCE)
-        self.assertEqual(verifier.verify(self.token(auth_time=int(time.time())), nonce=NONCE).owner_id, "alice")
+        self.assertEqual(verifier.verify(self.token(auth_time=self.now), nonce=NONCE).owner_id, "alice")
         with self.assertRaises(BrowserOIDCError):
-            verifier.verify(self.token(auth_time=int(time.time())), nonce="")
+            verifier.verify(self.token(auth_time=self.now), nonce="")
 
     def test_config_pins_and_immutable_copy(self):
         jwks = {"keys": [copy.deepcopy(self.jwk)]}

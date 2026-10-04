@@ -9,7 +9,7 @@ services, current independent publication and plan review; no new orchestration.
 
 | Owner / exclusive scope | Dependencies | Acceptance / state |
 |---|---|---|
-| root: ApplicationGovernance, shared API/types/CSS, integration, requirement matrix/publication | Frozen editor/picker contracts | Integrated guided editing, exact receipt checks and uncertain-save lock; frontend154/static/audit clean; local Python1121=774pass347skip55.646s; exact CI pending. |
+| root: ApplicationGovernance, shared API/types/CSS, integration, requirement matrix/publication | Frozen editor/picker contracts | Integrated guided editing, exact receipt checks and uncertain-save lock; frontend154/static/audit clean; local Python1121=774pass347skip60.182s; draft PR30 published; initial PR CI exposed old OIDC fixture clock race, fixed without production auth changes; fresh exact CI pending. |
 | factory_flow: new applicationTemplateState + tests | Existing ApplicationDefinition schema | Frozen; immutable lossless edits and advanced-only boundary; 10 tests pass. |
 | go_adapter: new MaterialPicker/materialCatalogState + tests | Existing approved material catalog | Frozen; exact-pin picker, missing/dependency evidence; 6 tests pass, no inferred authority. |
 | independent_review: new ApplicationTemplateEditor | Pure template helpers and picker props | Frozen; Chinese guided forms, exact slots and preserved connection scope; 4 render tests pass. |

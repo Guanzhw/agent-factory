@@ -49,7 +49,14 @@ The scratch `acceptance-evidence.json` records this distinction and cleanup.
 
 Frontend: 154 tests plus lint/typecheck/build pass; production dependency audit is
 clean. Ruff and Linux/Windows Pyright pass. Independent review checked 23 focused
-frontend tests and closed the receipt-reference/null-ID issue. Full local Python: 1121 tests in 55.646 seconds, 774 pass and 347
+frontend tests and closed the receipt-reference/null-ID issue. Full local Python: 1121 tests in 60.182 seconds, 774 pass and 347
 conditional skips. New PostgreSQL cases were separately executed successfully.
 Exact-head CI results are recorded in the draft PR; pending checks are not
 acceptance evidence.
+
+The first PR CI run exposed a pre-existing OIDC fixture race: the test constructed
+`auth_time = now + 1`, then token issuance read wall time again. Crossing a second
+made that claim valid relative to the new `iat`. The fixture now shares a frozen
+issuance/verifier clock, while keeping real RSA verification, all invalid-claim
+assertions and the production `auth_time <= iat` rule. Nine focused tests and
+independent review pass; the final commit receives fresh exact-head CI.
