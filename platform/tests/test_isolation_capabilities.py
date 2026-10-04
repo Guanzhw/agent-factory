@@ -1,7 +1,7 @@
 """Synthetic read-only prerequisites never manufacture aggregate enforcement."""
 import json
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 import unittest
@@ -95,6 +95,8 @@ class IsolationCapabilityTests(unittest.TestCase):
                 return "cpu memory pids"
             return "synthetic-readable-identity"
         with patch("agent_factory.isolation_capabilities.sys.platform", "linux"), patch(
+                # The synthetic mount table is Linux even on a Windows runner.
+                "agent_factory.isolation_capabilities.Path", PurePosixPath), patch(
                 "agent_factory.isolation_capabilities._read", side_effect=read), patch(
                 "agent_factory.isolation_capabilities.os.access", return_value=True), patch(
                 "agent_factory.isolation_capabilities.os.getuid", return_value=1000, create=True), patch(
@@ -108,7 +110,7 @@ class IsolationCapabilityTests(unittest.TestCase):
         with patch("agent_factory.process_provider.LocalWorkspaceProvider") as workspace:
             with self.assertRaises(IsolationCapabilityError) as denied:
                 ProcessResourceProvider(Mock(), Path("synthetic-unused-root"),
-                    ProcessSpec("/synthetic/program", "a" * 64, ()), ProcessLimits(),
+                    ProcessSpec(str(Path("synthetic-program").resolve()), "a" * 64, ()), ProcessLimits(),
                     required_isolation=("aggregate-memory",))
             workspace.assert_not_called()
         self.assertEqual(denied.exception.code, "ISOLATION_SCOPE_UNSUPPORTED")

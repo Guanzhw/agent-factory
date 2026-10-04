@@ -174,5 +174,18 @@
     "skipped": 341,
     "seconds": 53.654,
     "postgresEnabled": false
+  },
+  "initialCiWindowsFailure": {
+    "sha": "a6e268061f0229f171f580f23fc4a3f84207f0d4",
+    "pushRun": 37205514227,
+    "pullRequestRun": 37205535203,
+    "failures": 1,
+    "errors": 1,
+    "cause": "Synthetic Linux paths were interpreted with Windows path semantics; program fixture was not native absolute.",
+    "correction": "Tests use PurePosixPath for mocked Linux probe and native resolved program path; all assertions retained, production unchanged.",
+    "localFocusedTests": 10,
+    "localFocusedPassed": 10,
+    "independentFocusedPassed": 10,
+    "supersededRunsCancelled": true
   }
 }

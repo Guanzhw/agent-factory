@@ -101,8 +101,12 @@ light checks; final causal-test and browser evidence review found no blocker.
 Local full Python validation passed1058 tests (717pass/341skip) in53.654s;
 PostgreSQL is disabled for that local full pass and is exercised by the separate
 real-service cases and the full CI PostgreSQL job. [Sanitized evidence](evidence/remote-process-isolation-2026-10-04.json)
-keeps the initial failures distinct from the causal corrections. Mock tests alone
-are not live enforcement.
+keeps the initial failures distinct from the causal corrections. Initial exact CI exposed two Windows fixture path assumptions despite clean
+Windows static checks. The simulated Linux mount probe now uses POSIX path
+semantics and the constructor fixture uses a native absolute program path. All
+assertions remain; no production code or platform skip changed. Ten focused checks
+and independent review passed; replacement exact-head CI revalidates Windows.
+Mock tests alone are not live enforcement.
 
 ## Remaining implementation and deployment inputs
 

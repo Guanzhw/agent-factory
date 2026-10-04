@@ -9,7 +9,7 @@ Do not create a second remote submission or provider transport abstraction.
 
 | Owner / exclusive scope | Dependency | Acceptance / state |
 |---|---|---|
-| root: shared authority/effective bindings/handoff receipt/provider integration/docs | Existing native handoff lifecycle | Integrated verified effective target, original root process evidence, UNKNOWN origin retention and fail-closed isolation requirements; local full1058=717pass341skip53.654s, frontend106/static/audit clean; exact CI pending at commit time. |
+| root: shared authority/effective bindings/handoff receipt/provider integration/docs | Existing native handoff lifecycle | Integrated verified effective target, original root process evidence, UNKNOWN origin retention and fail-closed isolation requirements; local full1058=717pass341skip53.654s, frontend106/static/audit clean; exact CI pending at commit time; initial Windows fixture-path errors corrected without production changes or skipped assertions. |
 | factory_flow: remote_process_evidence + pure tests | Root receipt schema1/root-only scope | Frozen; eight pure tests pass, strict original root identity/pool/limit monotonic evidence. |
 | go_policy: controlled_remote_process_worker fixture | Existing governed handoff/profile and source mapping | Frozen; separate task-owned processes and temporary synthetic auth; actual cancel/503 boundary diagnostics preserve original fixed deadlines. |
 | at10: remote_process_runtime_postgres tests/helper | Frozen worker/root contracts | Initial ten cases: eight pass; strengthened UNKNOWN case passes, final expiry/disconnect two pass57.397s after causal assertion fixes. Complete matrix reruns in exact CI; same physical host. |
