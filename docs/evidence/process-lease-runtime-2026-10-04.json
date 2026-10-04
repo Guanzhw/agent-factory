@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "stage": "native-process-shared-lease-runtime",
+  "date": "2026-10-04",
+  "baseCommit": "ce0c06f21ced442344f46b36587297f2518100e9",
+  "goKeyRead": false,
+  "goCalls": 0,
+  "newCredentials": false,
+  "paidProvisioning": false,
+  "hostSecurityNetworkCgroupChanged": false,
+  "deployed": false,
+  "targetCapacityCertified": false,
+  "aggregateQuotaValidated": false,
+  "hostileCodeSandboxValidated": false,
+  "tests": {
+    "frontend": 98,
+    "actualProcessEngine": {
+      "passed": 12,
+      "seconds": 2.685
+    },
+    "providerMock": 14,
+    "profileMock": 6,
+    "strictReceipt": 8,
+    "nativePostgres": {
+      "cases": 9,
+      "initialPassed": 8,
+      "initialFailures": 1,
+      "initialSeconds": 45.168,
+      "failureCause": "test incorrectly forbade reading an existing receipt; implementation did not replay",
+      "correctedCasePassed": 1,
+      "correctedCaseSeconds": 9.241,
+      "unknownTerminalHold": {
+        "passed": true,
+        "seconds": 13.207,
+        "actualNativeStatus": "cancelled",
+        "taskCapacityHeld": true,
+        "storageHeld": true,
+        "allocationCount": 1,
+        "launchCount": 1
+      }
+    },
+    "npmKnownVulnerabilities": 0,
+    "linuxPyrightErrors": 0,
+    "windowsPyrightErrors": 0,
+    "independentProviderProfile": 20,
+    "lifecycleTerminalRace": {
+      "passed": 10,
+      "seconds": 0.019
+    },
+    "defaultPython": {
+      "total": 1028,
+      "passed": 697,
+      "skipped": 331,
+      "seconds": 50.886
+    },
+    "independentFinalLight": 38,
+    "initialDefaultRegression": {
+      "failedSubcases": 18,
+      "cause": "legacy unrestricted Mock synthesized process_runtime; fixture now explicitly None and UNKNOWN hold regression added"
+    }
+  },
+  "browserAcceptance": {
+    "schema": 1,
+    "evidenceKind": "actual-native-cooperative-process-controlled-fixture",
+    "taskId": "2e011bf5-bdc4-4ea2-b394-c13bb9fb7f00",
+    "planId": "fed90a83-bc54-4610-b246-bbdf066122c4",
+    "leaseId": "633f69b2-8ec0-436e-a3a4-a76408b1bed7",
+    "nativeRunId": "5bf70ddc-9033-4a97-8262-4a8a47c5d479",
+    "providerJobId": "0172d25e-4cd5-4729-9682-80ee37cb3b3c",
+    "actualNativeTask": true,
+    "nativeTaskCompleted": true,
+    "actualBoundedProcess": true,
+    "normalLifecycleReleased": true,
+    "stoppedHeldBrowserScenario": false,
+    "browserMutationRequests": 0,
+    "pageErrors": 0,
+    "mobileHorizontalOverflow": false,
+    "bobCannotSeeAliceLease": true,
+    "allocationCount": 2,
+    "browserTriggeredAllocations": 0,
+    "unknownLeaseId": "1155aafb-d45c-4a48-8573-7bcca785e043",
+    "unknownHeld": true,
+    "unknownCase": "controlled-Popen-failure-no-child",
+    "aggregateQuotaValidated": false,
+    "hostileCodeSandboxValidated": false,
+    "productionCapacityValidated": false
+  },
+  "exactHeadCI": "Pending at commit time; final same-SHA push/PR runs and two terminal observations recorded in draft PR body."
+}

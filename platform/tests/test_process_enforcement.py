@@ -1,6 +1,9 @@
 """Small real cooperative child processes; no cgroup, host or network changes."""
 import hashlib
 import json
+import os
+import shutil
+import sqlite3
 from pathlib import Path
 import signal
 import sys
@@ -9,7 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessEnforcementError, ProcessLimits, ProcessSpec, birth
+from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessEnforcementError, ProcessLimits, ProcessSpec, birth, boot_id, same_birth
 
 
 @unittest.skipUnless(sys.platform == "linux", "Linux /proc and POSIX rlimits required")
@@ -120,6 +123,92 @@ class ProcessEnforcementTests(unittest.TestCase):
         facts = adapter.inspect(owner_id="alice")
         self.assertEqual(facts["state"], "PREPARED")
         self.assertTrue(facts["capacityHeld"])
+
+
+    def rewrite(self, change):
+        with sqlite3.connect(self.path) as conn:
+            body = json.loads(conn.execute("SELECT body FROM custody").fetchone()[0])
+            change(body)
+            conn.execute("UPDATE custody SET body=?", (json.dumps(body),))
+
+    def test_birth_identity_rejects_boot_group_and_pid_reuse(self):
+        actual = birth(os.getpid())
+        self.assertIsNotNone(actual)
+        assert actual is not None
+        self.assertTrue(same_birth(actual, dict(actual)))
+        for key, value in (("bootId", "0" * 36), ("start", "different"), ("pid", -1), ("group", -1)):
+            with self.subTest(key=key):
+                self.assertFalse(same_birth(actual, {**actual, key: value}))
+
+    def test_reopen_rejects_changed_spec_and_replaced_journal_inode(self):
+        self.adapter("pass")
+        original = self.path.read_bytes()
+        self.rewrite(lambda body: body["spec"].update(argv=["-I", "-c", "unexpected"]))
+        with self.assertRaises(ProcessEnforcementError):
+            BoundedProcessAdapter(self.path)
+        self.path.write_bytes(original)
+        copied = self.path.with_suffix(".copy")
+        shutil.copyfile(self.path, copied)
+        os.chmod(copied, 0o600)
+        os.replace(copied, self.path)
+        with self.assertRaises(ProcessEnforcementError):
+            BoundedProcessAdapter(self.path)
+
+    def test_missing_stop_receipt_and_new_boot_never_release(self):
+        adapter = self.adapter("pass")
+        adapter.cancel(owner_id="alice")
+        self.assertTrue(BoundedProcessAdapter(self.path).inspect(owner_id="alice")["stoppedProof"])
+        with patch("agent_factory.process_enforcement.boot_id", return_value="0" * 36):
+            drift = BoundedProcessAdapter(self.path).inspect(owner_id="alice")
+        self.assertEqual(drift["state"], "UNKNOWN")
+        self.assertTrue(drift["capacityHeld"])
+        self.rewrite(lambda body: body.update(stopReceipt=None))
+        missing = BoundedProcessAdapter(self.path).inspect(owner_id="alice")
+        self.assertEqual(missing["state"], "UNKNOWN")
+        self.assertFalse(missing["stoppedProof"])
+        self.assertTrue(missing["capacityHeld"])
+
+    def test_guardian_lost_keeps_unknown_even_after_fixture_stops_original_child(self):
+        adapter = self.adapter("import time;time.sleep(20)")
+        adapter.launch(owner_id="alice", before_effect=lambda: None)
+        deadline = time.monotonic() + 2
+        facts = adapter.inspect(owner_id="alice")
+        while facts["state"] != "RUNNING" and time.monotonic() < deadline:
+            time.sleep(.01)
+            facts = adapter.inspect(owner_id="alice")
+        self.assertEqual(facts["state"], "RUNNING")
+        guardian, child = facts["guardian"], facts["child"]
+        try:
+            self.assertEqual(guardian["bootId"], boot_id())
+            self.assertTrue(same_birth(birth(guardian["pid"]), guardian))
+            os.kill(guardian["pid"], getattr(signal, "SIGKILL"))
+            assert adapter._process is not None
+            adapter._process.wait(timeout=2)
+            reopened = BoundedProcessAdapter(self.path)
+            lost = reopened.inspect(owner_id="alice")
+            self.assertEqual(lost["state"], "UNKNOWN")
+            self.assertTrue(lost["capacityHeld"])
+            with patch("agent_factory.process_enforcement.subprocess.Popen") as spawn:
+                with self.assertRaises(ProcessEnforcementError):
+                    reopened.launch(owner_id="alice", before_effect=lambda: None)
+                spawn.assert_not_called()
+        finally:
+            # Test-only emergency cleanup signals only the positively matched
+            # original trusted child; adapter itself never guesses release.
+            if same_birth(birth(child["pid"]), child):
+                getattr(os, "killpg")(child["pid"], getattr(signal, "SIGKILL"))
+            cleanup_deadline = time.monotonic() + 1
+            current = birth(child["pid"])
+            while same_birth(current, child) and current is not None and current["state"] != "Z" and time.monotonic() < cleanup_deadline:
+                time.sleep(.01)
+                current = birth(child["pid"])
+            self.assertTrue(not same_birth(current, child) or current is not None and current["state"] == "Z")
+            if adapter._process is not None and adapter._process.poll() is None:
+                adapter.cancel(owner_id="alice")
+                adapter._process.wait(timeout=6)
+        stopped = BoundedProcessAdapter(self.path).inspect(owner_id="alice")
+        self.assertEqual(stopped["state"], "UNKNOWN")
+        self.assertFalse(stopped["stoppedProof"])
 
 
 if __name__ == "__main__":

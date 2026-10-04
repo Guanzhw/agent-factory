@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Active native process / shared-lease integration — 2026-10-04
+
+Base PR26 `ce0c06f21ced442344f46b36587297f2518100e9`; branch
+`coord/process-lease-runtime-20261004`. Root retains sole integration ownership.
+Only task-owned bounded cooperative Linux workloads; no live Go credential reads,
+provider calls, privileged/cgroup/host changes, provisioning, merge or deployment.
+
+| Owner / exclusive scope | Dependencies | Acceptance / state |
+|---|---|---|
+| root: schema/resources/runtime/lifecycle/API/docs | Original native identity, pools and process custody | Integrated; final local1028=697pass+331skip, frontend98/static/audit clean; exact CI pending at commit time. |
+| factory_flow: process_provider + isolated tests | Root af_process_runs/allocation schema | Frozen14 mock tests pass; durable intent, original restart custody, no replay, outcome preservation and late dispatch fence independently reviewed. |
+| go_adapter: process_enforcement/guardian + tests | Existing Linux adapter | Boot/PID/start/group, immutable journal pins and positive stop receipts; final12 actual tests passed2.685s. |
+| go_policy: process_runtime_profile + tests | Governed bindings/runtime contract | Explicit operator-only target/profile; six light tests passed; no default production selection. |
+| at10: process_runtime_postgres tests | Frozen provider/core | Nine PG cases validated: initial8pass, corrected original-receipt read case pass9.241s; strengthened native-terminal UNKNOWN hold pass13.207s. Exact CI will run all together. |
+| independent_review: lease UI + browser acceptance script | Owner-only API and execution outcomes | Ten frontend checks passed; actual PG/native/process desktop/mobile normal release and controlled UNKNOWN held passed, four screenshots inspected. |
+| reviewer: independent read-only review | Combined implementation | All three findings fixed; final38 independent light tests pass; no remaining blocker; exact CI review pending. |
+
+Required evidence: original task/run/plan/lease/process identity through restart,
+no duplicate after lost launch/stop replies, UNKNOWN capacity retention, revocation,
+cancel/expiry, shared-pool contention, positive matching release and separately
+reported execution outcome. Per-process/per-file limits and cooperative process-group
+custody do not certify aggregate quotas, hostile-code isolation or target-host capacity.
+
 ## Active browser authentication and process enforcement — 2026-10-04
 
 Base PR25 `a61898a5b92e1584e4adf7cf35bcdcc14b3948b5`; branch

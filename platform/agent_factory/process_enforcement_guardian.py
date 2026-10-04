@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from process_enforcement import _open_journal, _read, _write, birth  # type: ignore[reportMissingImports]  # noqa: E402
+from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt  # type: ignore[reportMissingImports]  # noqa: E402
 
 
 def update(path, **changes):
@@ -42,7 +42,7 @@ def main(path):
     with _open_journal(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         body = _read(conn)
-        if body["state"] != "DISPATCHING" or body["guardian"] is not None:
+        if body["state"] != "DISPATCHING" or body["guardian"] is not None or body["bootId"] != boot_id():
             return
         body["guardian"] = birth(os.getpid())
         _write(conn, body)
@@ -77,6 +77,14 @@ def main(path):
             if os.read(gate_read, 1) != b"G":
                 os._exit(125)
             os.close(gate_read)
+            # Re-read cancellation and immutable custody after gate delay, just
+            # before exec. Caller authority itself is never serialized/replayed.
+            with _open_journal(path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                current = _read(conn)
+                if (current["cancelRequested"] or current["bootId"] != boot_id()
+                        or not same_birth(birth(os.getpid()), current["child"])):
+                    os._exit(125)
             os.execve(binary, [spec["executable"], *spec["argv"]], {"LANG": "C.UTF-8"})
         except BaseException:
             os._exit(125)
@@ -112,7 +120,7 @@ def main(path):
         # Keep the root unreaped until group cleanup so its birth ID fences
         # killpg even when the trusted executable left group descendants.
         root = birth(child)
-        if root is None or root["start"] != identity["start"]:
+        if not same_birth(root, identity):
             raise ValueError("Child custody changed")
         if cause or root["state"] == "Z":
             if members(child):
@@ -127,8 +135,15 @@ def main(path):
         raise ValueError("Group stop unconfirmed")
     code = os.waitstatus_to_exitcode(status)
     state = cause or ("COMPLETED" if code == 0 else "LIMIT_STOPPED" if code in {-getattr(signal, "SIGKILL"), -getattr(signal, "SIGXCPU"), -getattr(signal, "SIGXFSZ")} else "FAILED")
-    update(path, state=state, exitCode=code, stoppedProof=True, capacityHeld=False,
-        stopEvidence="original-root-reaped-and-no-live-process-group-members")
+    with _open_journal(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        body = _read(conn)
+        if not same_birth(body["child"], identity) or not same_birth(body["guardian"], birth(os.getpid())):
+            raise ValueError("Stop receipt identity changed")
+        body.update(state=state, exitCode=code, stoppedProof=True, capacityHeld=False,
+            stopEvidence="original-root-reaped-and-no-live-process-group-members")
+        body["stopReceipt"] = stop_receipt(body, "original-group-stopped", code)
+        _write(conn, body)
 
 
 if __name__ == "__main__":
@@ -140,7 +155,7 @@ if __name__ == "__main__":
         # work. Failed cleanup remains UNKNOWN; never signal a recycled PID.
         if CHILD_ID is not None:
             current = birth(CHILD_ID["pid"])
-            if current and current["start"] == CHILD_ID["start"] and current["group"] == CHILD_ID["pid"]:
+            if same_birth(current, CHILD_ID) and current["group"] == CHILD_ID["pid"]:
                 try:
                     getattr(os, "killpg")(CHILD_ID["pid"], getattr(signal, "SIGKILL"))
                     os.waitpid(CHILD_ID["pid"], 0)

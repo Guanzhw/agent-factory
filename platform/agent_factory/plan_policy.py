@@ -37,7 +37,7 @@ READ_ONLY_TOOLS = LEGACY_READ_ONLY_TOOLS | {"orx_discover"}
 READ_ONLY_CAPABILITIES = frozenset({"research:read", "question:ask", "checksum:read"})
 LOCAL_ORX_READ_ONLY_TOOLS = READ_ONLY_TOOLS | {"orx_experiment_inspect", "orx_experiment_wait", "orx_experiment_logs"}
 LITERATURE_TOOLS = {**KNOWN_TOOLS, "orx_paper": "research:read", "orx_text": "research:read", "orx_sources_report": "research:read"}
-ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1"]
+ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1"]
 
 
 def tools_for_contract(contract: ToolContract) -> dict[str, str]:
@@ -51,6 +51,8 @@ def tools_for_contract(contract: ToolContract) -> dict[str, str]:
         return dict(LITERATURE_TOOLS)
     if contract == "pubmed-host-evidence-v1":
         return {**LEGACY_TOOLS, "pubmed_sources_report": "research:read"}
+    if contract == "bounded-process-v1":
+        return {**LEGACY_TOOLS, "bounded_process_run": "compute:local"}
     if contract == "scientific-synthesis-fixture-v1":
         return {**LEGACY_TOOLS, "save_literature_synthesis": "research:read"}
     raise ValueError("Unsupported registered tool contract")

@@ -64,6 +64,7 @@ class Store:
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
+        self.process_runtime: Any = None
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
@@ -122,6 +123,8 @@ class Store:
 
     def initialize(self):
         statements = [
+            "CREATE TABLE IF NOT EXISTS af_process_runs (task_id TEXT NOT NULL,effect_key TEXT NOT NULL,owner_id TEXT NOT NULL,native_run_id TEXT NOT NULL,lease_id TEXT UNIQUE NOT NULL,body JSONB NOT NULL,PRIMARY KEY(task_id,effect_key))",
+            "CREATE TABLE IF NOT EXISTS af_process_allocations (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,body JSONB NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_browser_auth (id TEXT PRIMARY KEY,kind TEXT NOT NULL,body JSONB NOT NULL)",
             "CREATE INDEX IF NOT EXISTS af_browser_auth_expiry ON af_browser_auth ((CAST(body->>'expires' AS DOUBLE PRECISION)))",
             "CREATE INDEX IF NOT EXISTS af_browser_auth_binding ON af_browser_auth ((body->>'binding')) WHERE kind='flow'",
@@ -229,12 +232,18 @@ class Store:
             if self.native_db is not None:
                 active = conn.execute(text("SELECT id,run_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL")).mappings().all()
                 for candidate in active:
+                    current = conn.execute(text("SELECT id,run_id,terminal FROM af_tasks WHERE id=:id FOR UPDATE"),
+                        {"id": candidate["id"]}).mappings().first()
+                    if current is None or current["terminal"] or current["run_id"] is None:
+                        continue
+                    candidate = current
                     native = self.native_db.get_job(candidate["run_id"]) or {}
                     uncertain = any(effect_unresolved(effect) for effect in conn.execute(
                         text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
                         {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
-                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending:
+                    process_held = self.process_runtime is not None and self.process_runtime.task_held(candidate["id"])
+                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not process_held:
                         conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
                         if self.storage is not None:
                             self.storage.release(candidate["id"])
@@ -385,6 +394,17 @@ class Store:
         return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
 
     def observed(self, task, status, terminal):
+        # Process reservation takes this same task row lock before inserting its
+        # durable binding. Terminal storage/task release cannot race admission.
+        with self.transaction():
+            rows = self.sql("SELECT * FROM af_tasks WHERE id=:id FOR UPDATE", id=task["id"])
+            if not rows:
+                return
+            self._observed_locked(rows[0], status, terminal)
+
+    def _observed_locked(self, task, status, terminal):
+        if terminal and self.process_runtime is not None and self.process_runtime.task_held(task["id"]):
+            terminal = False
         if terminal and self.storage is not None:
             self.storage.release(task["id"])
         if task["body"].get("lastStatus") != status:

@@ -111,6 +111,12 @@ class ResourceMaintenance:
         if (type(snapshot) is not dict or any(type(snapshot.get(key)) is not str or snapshot[key] != expected
                 for key, expected in (("leaseId", lease["id"]), ("ownerId", lease["ownerId"]), ("fingerprint", lease["fingerprint"])))):
             raise _Held("SNAPSHOT_INVALID")
+        changes = {}
+        if lease.get("nativeRunId") is not None:
+            try:
+                changes = self.resources.process_snapshot(lease, snapshot)
+            except (ValueError, TypeError):
+                raise _Held("PROCESS_RECEIPT_UNCONFIRMED") from None
         state = snapshot.get("state")
         if type(state) is not str or state not in TERMINAL | {"ACCEPTED", "RUNNING", "UNKNOWN", "RECLAIMED"}:
             raise _Held("SNAPSHOT_INVALID")
@@ -118,10 +124,10 @@ class ResourceMaintenance:
             if snapshot.get("released") is not True:
                 raise _Held("RELEASE_UNCONFIRMED")
             return self.resources._update(lease["ownerId"], lease["id"], "RECLAIMED",
-                {"reclaimedAt": now(), "releaseScope": "compute_provider", "snapshotAt": now()})
+                {**changes, "reclaimedAt": now(), "releaseScope": "compute_provider", "snapshotAt": now()})
         # Terminal execution is still held until reclaim and positive release.
         return self.resources._update(lease["ownerId"], lease["id"], state,
-            {"snapshotAt": now(), "connected": True})
+            {**changes, "snapshotAt": now(), "connected": True})
 
     async def _effect(self, operator, original, target, field):
         lease, _ = self._current(operator, original, target)

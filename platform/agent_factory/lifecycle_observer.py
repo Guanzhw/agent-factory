@@ -210,6 +210,8 @@ class FactoryLifecycleObserver:
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
         effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
+        process_runtime = getattr(self.store, "process_runtime", None)
+        effects_unknown = effects_unknown or (process_runtime is not None and process_runtime.task_held(task["id"]))
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
@@ -333,6 +335,8 @@ class FactoryLifecycleObserver:
 
     async def tick(self) -> dict:
         async with self._tick_lock:
+            process_runtime = getattr(self.store, "process_runtime", None)
+            process_results = await process_runtime.tick() if process_runtime is not None else []
             query = """SELECT task.id FROM af_tasks task WHERE NOT EXISTS(
                 SELECT 1 FROM af_delegation_links own_link WHERE own_link.child_id=task.id)
                 AND (NOT task.terminal OR EXISTS(SELECT 1 FROM af_delegation_links link JOIN af_tasks child ON child.id=link.child_id
@@ -349,7 +353,7 @@ class FactoryLifecycleObserver:
                 except Exception as error:
                     errors.append({"rootTaskId": row["id"], "errorType": type(error).__name__})
                 await asyncio.sleep(0)
-            self.last_result = {"groups": groups, "errors": errors, "nativeOwner": "agno", "createsExecution": False}
+            self.last_result = {"groups": groups, "errors": errors, "processLeases": process_results, "nativeOwner": "agno", "createsExecution": False}
             return self.last_result
 
     async def _run(self) -> None:

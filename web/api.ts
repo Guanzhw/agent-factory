@@ -289,6 +289,7 @@ export const api = {
   acceptProposal: async (id: string, requestId: string) => sealedPlan(await request(`/compositions/proposals/${segment(id)}/accept`, 'POST', { requestId })),
   userConnections, connectionRegistrations, bindConnection, revokeConnection, inspectUserConnection,
   events,
+  resourceLeases: (after?: string, signal?: AbortSignal) => request<{ leases: unknown[]; nextCursor: string | null }>('/resources/leases' + (after ? '?after=' + encodeURIComponent(after) : ''), 'GET', undefined, signal),
   session: (signal?: AbortSignal) => request<User>('/session', 'GET', undefined, signal),
   login: (persona: 'manager' | 'alice' | 'bob') => request<User>('/demo/login', 'POST', { persona }),
   logout: () => request<void>('/logout', 'POST'),

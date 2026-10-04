@@ -32,6 +32,10 @@ def resource_router(auth, resources, maintenance=None):
     def discover(request: Request):
         return resources.discover(owner(request))
 
+    @router.get("/leases")
+    def leases(request: Request, after: str | None = None):
+        return resources.list_leases(owner(request), after=after)
+
     @router.post("/attach")
     async def attach(body: Attach, request: Request):
         return await resources.attach(owner(request), body.connectionRef, body.taskId, body.requestId)

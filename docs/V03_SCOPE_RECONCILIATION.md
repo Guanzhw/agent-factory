@@ -1,5 +1,14 @@
 # Factory v0.3 scope reconciliation — 2026-10-04
 
+Latest continuation: [native process and shared-lease integration](PROCESS_LEASE_RUNTIME.md)
+connects original governed native task/run/plan identity to bounded cooperative
+process custody, shared-pool holds, stop-only lifecycle reconciliation and a
+Chinese owner-only lease view. UNKNOWN remains held; matching positive stop proof
+alone permits release, independently of execution success. Aggregate isolation,
+remote provisioning, production scientific contracts and target-host acceptance
+remain open. Older stage statements below are historical; final exact-head CI is
+recorded on this continuation's draft PR.
+
 The delivery target is the complete material-driven Factory, with AutoResearch as
 its first Chinese-language application, approximately twenty departmental users,
 and single-host targets of 32 cores/64 GB or 54 cores/192 GB. Agno 3.1.0 and

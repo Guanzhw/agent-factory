@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import json
+import hashlib
 import inspect
 import os
 from pathlib import Path
@@ -61,11 +62,68 @@ class ProcessSpec:
             _deny()
 
 
+def boot_id():
+    value = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if not re.fullmatch(r"[a-f0-9-]{36}", value):
+        _deny()
+    return value
+
+
+def same_birth(actual, expected):
+    def valid(value):
+        return (type(value) is dict and type(value.get("bootId")) is str
+                and re.fullmatch(r"[a-f0-9-]{36}", value["bootId"]) is not None
+                and type(value.get("start")) is str and value["start"].isdigit()
+                and all(type(value.get(key)) is int and value[key] > 0 for key in ("pid", "group")))
+    return (valid(actual) and valid(expected)
+            and all(actual[key] == expected[key] for key in ("bootId", "pid", "start", "group")))
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _root_pin(path):
+    directory, file = path.parent.lstat(), path.lstat()
+    if (not stat.S_ISDIR(directory.st_mode) or stat.S_IMODE(directory.st_mode) & 0o077
+            or not stat.S_ISREG(file.st_mode) or file.st_nlink != 1
+            or stat.S_IMODE(file.st_mode) != 0o600):
+        _deny()
+    return {"directoryDevice": directory.st_dev, "directoryInode": directory.st_ino,
+            "fileDevice": file.st_dev, "fileInode": file.st_ino, "path": str(path.absolute())}
+
+
+def _identity(body):
+    return {key: body[key] for key in ("schema", "id", "ownerId", "taskId", "requestId", "spec", "limits",
+                                      "bootId", "rootPin", "specSha256")}
+
+
+def stop_receipt(body, kind, exit_code=None):
+    return {"kind": kind, "journalId": body["id"], "identitySha256": body["identitySha256"],
+            "bootId": body["bootId"], "guardian": body["guardian"], "child": body["child"],
+            "exitCode": exit_code, "groupStopped": True}
+
+
+def valid_stop(body):
+    receipt = body.get("stopReceipt")
+    if body["bootId"] != boot_id() or type(receipt) is not dict:
+        return False
+    if receipt.get("kind") == "never-dispatched":
+        return (body["state"] == "CANCELLED" and body["guardian"] is None and body["child"] is None
+                and receipt == stop_receipt(body, "never-dispatched"))
+    child, guardian = body.get("child"), body.get("guardian")
+    return (body["state"] in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
+            and same_birth(child, child) and same_birth(guardian, guardian)
+            and child.get("group") == child.get("pid")
+            and child.get("bootId") == body["bootId"] and guardian.get("bootId") == body["bootId"]
+            and receipt == stop_receipt(body, "original-group-stopped", body.get("exitCode")))
+
+
 def birth(pid):
     try:
         raw = Path(f"/proc/{pid}/stat").read_text()
         fields = raw[raw.rfind(")") + 2:].split()
-        return {"pid": pid, "start": fields[19], "state": fields[0], "group": int(fields[2])}
+        return {"bootId": boot_id(), "pid": pid, "start": fields[19], "state": fields[0], "group": int(fields[2])}
     except (OSError, ValueError, IndexError):
         return None
 
@@ -84,10 +142,18 @@ def _open_journal(path):
 
 
 def _read(conn):
-    return json.loads(conn.execute("SELECT body FROM custody WHERE singleton=1").fetchone()[0])
+    body = json.loads(conn.execute("SELECT body FROM custody WHERE singleton=1").fetchone()[0])
+    path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    if (body.get("identitySha256") != _digest(_identity(body)) or body.get("rootPin") != _root_pin(path)
+            or body.get("specSha256") != _digest({"spec": body["spec"], "limits": body["limits"]})):
+        _deny()
+    return body
 
 
 def _write(conn, body):
+    original = _read(conn)
+    if _identity(original) != _identity(body) or body.get("identitySha256") != original["identitySha256"]:
+        _deny()
     conn.execute("UPDATE custody SET body=? WHERE singleton=1", (json.dumps(body, sort_keys=True),))
 
 
@@ -123,10 +189,13 @@ class BoundedProcessAdapter:
             body = {"schema": 1, "id": str(uuid4()), "ownerId": owner_id, "taskId": task_id,
                 "requestId": request_id, "spec": asdict(spec), "limits": asdict(limits),
                 "state": "PREPARED", "capacityHeld": True, "cancelRequested": False,
-                "guardian": None, "child": None, "stoppedProof": False,
+                "guardian": None, "child": None, "stoppedProof": False, "stopReceipt": None,
+                "bootId": boot_id(), "rootPin": _root_pin(path),
                 "enforcement": {"cpu": "per-process-RLIMIT_CPU", "memory": "per-process-RLIMIT_AS",
                     "fileSize": "per-file-RLIMIT_FSIZE", "wall": "cooperative-process-group-guardian",
                     "aggregateQuota": False, "hostileCodeSandbox": False, "networkIsolation": False}}
+            body["specSha256"] = _digest({"spec": body["spec"], "limits": body["limits"]})
+            body["identitySha256"] = _digest(_identity(body))
             conn.execute("INSERT INTO custody VALUES(1,?)", (json.dumps(body, sort_keys=True),))
         result = cls(path)
         result._launch_owner = True
@@ -138,7 +207,7 @@ class BoundedProcessAdapter:
         with _open_journal(self.path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             body = _read(conn)
-            if body["ownerId"] != owner_id or body["state"] != "PREPARED" or body["cancelRequested"]:
+            if body["ownerId"] != owner_id or body["state"] != "PREPARED" or body["cancelRequested"] or body["bootId"] != boot_id():
                 raise ProcessEnforcementError("PROCESS_DISPATCH_DENIED")
             approval = before_effect()  # Fresh authority after durable admission lock.
             if inspect.isawaitable(approval):
@@ -168,10 +237,14 @@ class BoundedProcessAdapter:
             raise ProcessEnforcementError("PROCESS_OWNER_DENIED")
         if self._process is not None:
             self._process.poll()  # Reap only this instance's original guardian.
+        if body["bootId"] != boot_id() or ((body["state"] in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
+                or body.get("stoppedProof") or not body.get("capacityHeld", True)) and not valid_stop(body)):
+            return {key: value for key, value in {**body, "state": "UNKNOWN", "capacityHeld": True,
+                "stoppedProof": False}.items() if key != "spec"}
         guardian = body["guardian"]
         if body["state"] not in {"PREPARED", "COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}:
             actual = birth(guardian["pid"]) if guardian else None
-            if guardian and (actual is None or actual["start"] != guardian["start"] or actual["state"] == "Z"):
+            if guardian and (actual is None or not same_birth(actual, guardian) or actual["state"] == "Z"):
                 body = {**body, "state": "UNKNOWN", "capacityHeld": True, "stoppedProof": False}
         return {key: value for key, value in body.items() if key != "spec"}
 
@@ -184,6 +257,7 @@ class BoundedProcessAdapter:
             body["cancelRequested"] = True
             if body["state"] == "PREPARED":
                 body.update(state="CANCELLED", stoppedProof=True, capacityHeld=False)
+                body["stopReceipt"] = stop_receipt(body, "never-dispatched")
             _write(conn, body)
         return self.inspect(owner_id=owner_id)
 

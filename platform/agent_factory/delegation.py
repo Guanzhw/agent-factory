@@ -288,7 +288,9 @@ class DelegationService:
             if not link["child_id"]:
                 return True
             task = self.store.task(link["child_id"], link["owner_id"])
-            if any(effect_unresolved(effect) for effect in self.store.effects(task["id"])):
+            process_runtime = getattr(self.store, "process_runtime", None)
+            if (any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
+                    or process_runtime is not None and process_runtime.task_held(task["id"])):
                 return True
             if task["admission"] == "rejected" and not task.get("run_id"):
                 continue
@@ -483,6 +485,8 @@ class DelegationService:
         raw = str(native.get("status") or (snapshot.get("run") or snapshot).get("status") or "").lower().removeprefix("runstatus.")
         effects = self.store.effects(task["id"])
         unresolved_effect = any(effect_unresolved(effect) for effect in effects)
+        process_runtime = getattr(self.store, "process_runtime", None)
+        unresolved_effect = unresolved_effect or (process_runtime is not None and process_runtime.task_held(task["id"]))
         # A reserved effect during known native computation is in flight. It
         # retains capacity, but becomes externally UNKNOWN after native work
         # stops without a confirmed result/cleanup.

@@ -1,5 +1,14 @@
 # Current delivery and review index
 
+Latest continuation: [native process and shared-lease integration](PROCESS_LEASE_RUNTIME.md)
+connects original governed native task/run/plan identity to bounded cooperative
+process custody, shared-pool holds, stop-only lifecycle reconciliation and a
+Chinese owner-only lease view. UNKNOWN remains held; matching positive stop proof
+alone permits release, independently of execution success. Aggregate isolation,
+remote provisioning, production scientific contracts and target-host acceptance
+remain open. Older stage statements below are historical; final exact-head CI is
+recorded on this continuation's draft PR.
+
 Latest continuation: [browser authentication and bounded process enforcement](BROWSER_AUTH_PROCESS_ENFORCEMENT.md)
 implements code/PKCE/state/nonce, revocable browser sessions, CSRF/logout and Chinese
 login UX, verified with a synthetic HTTPS IdP on desktop/mobile. A separate trusted

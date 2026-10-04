@@ -297,11 +297,13 @@ class PersistentResourceService:
                 or lease.get("providerNamespace") != self._provider_namespace(target)):
             raise HTTPException(409, "Allocation configuration changed before dispatch")
         task = self.store.task(lease["localTaskId"], owner)
+        if lease.get("nativeRunId") is not None:
+            self.store.process_runtime.guard_lease(lease)
         if (task.get("terminal") or task.get("cancel_requested")
                 or datetime.now(timezone.utc) >= datetime.fromisoformat(lease["deadlineAt"])):
             raise HTTPException(409, "Canceled, terminal or expired work cannot allocate new effects")
 
-    def _reserve(self, owner, ref, task_id, request_id, limits, resource=None):
+    def _reserve(self, owner, ref, task_id, request_id, limits, resource=None, execution=None):
         target = self._authorize(owner, ref)
         if not isinstance(request_id, str) or not request_id or len(request_id) > 200:
             raise HTTPException(400, "A bounded request ID is required")
@@ -309,6 +311,8 @@ class PersistentResourceService:
         if task.get("terminal") or task.get("cancel_requested"):
             raise HTTPException(409, "A terminal or canceled local task cannot attach new execution")
         plan = self.store.plan(task["plan_id"], owner)
+        if execution is not None:
+            self.store.process_runtime.validate_execution(owner, task, plan, ref, execution)
         resource = resource or self._resource(owner, ref)
         pool = target.capacity_pool
         provider_namespace = self._provider_namespace(target)
@@ -316,9 +320,29 @@ class PersistentResourceService:
                         "poolLimits": pool.limits()} if pool is not None else {}
         fingerprint = digest({"connectionRef": ref, "axis": target.axis, "taskId": task_id,
                               "targetFingerprint": self._target_fingerprint(target), "planHash": digest(plan),
-                              "limits": limits, **({"poolFingerprint": pool.fingerprint} if pool is not None else {})})
+                              "limits": limits, **({"poolFingerprint": pool.fingerprint} if pool is not None else {}),
+                              **({"execution": execution} if execution is not None else {})})
         with self.store.engine.begin() as conn:
             self._lock(conn)
+            if execution is not None:
+                fresh_task = conn.execute(text("SELECT * FROM af_tasks WHERE id=:task FOR UPDATE"),
+                    {"task": task_id}).mappings().first()
+                if (fresh_task is None or fresh_task["terminal"] or fresh_task["cancel_requested"]
+                        or fresh_task["owner_id"] != owner or fresh_task["plan_id"] != plan["id"]
+                        or fresh_task["run_id"] != execution["nativeRunId"]):
+                    raise HTTPException(409, "Original native task no longer admits process execution")
+                prior = conn.execute(text("SELECT * FROM af_process_runs WHERE task_id=:task AND effect_key=:effect"),
+                    {"task": task_id, "effect": execution["effectKey"]}).mappings().first()
+                if prior:
+                    binding = self._body(prior["body"])
+                    if (prior["owner_id"] != owner or prior["native_run_id"] != execution["nativeRunId"]
+                            or binding.get("leaseFingerprint") != fingerprint):
+                        raise HTTPException(409, "Original process execution binding cannot be replaced")
+                    original = conn.execute(text("SELECT body FROM af_leases WHERE id=:id AND owner_id=:owner"),
+                        {"id": prior["lease_id"], "owner": owner}).first()
+                    if original is None:
+                        raise HTTPException(409, "Original process lease is unavailable; no replay")
+                    return self._body(original[0]), False
             old = conn.execute(text("SELECT * FROM af_leases WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
             if old:
                 if old["fingerprint"] != fingerprint:
@@ -371,11 +395,19 @@ class PersistentResourceService:
                     "serverVersion": resource.get("serverVersion"), "serverId": resource.get("serverId"),
                     "targetFingerprint": self._target_fingerprint(target),
                     "updatedAt": at.isoformat(), "heartbeatAt": at.isoformat(),
+                    **({"nativeRunId": execution["nativeRunId"], "planHash": digest(plan)} if execution is not None else {}),
                     "deadlineAt": (at + timedelta(seconds=duration)).isoformat(), "cancelRequested": False,
                     "artifacts": [], "syntheticFixture": target.synthetic_fixture, "reconciliation": "snapshot", **pool_binding,
                     **({"providerNamespace": provider_namespace} if provider_namespace is not None else {})}
             conn.execute(text(f"INSERT INTO af_leases VALUES(:id,:owner,:target,:request,:fp,'RESERVED',{self._json_param})"),
                          {"id": lease_id, "owner": owner, "target": resource["id"], "request": request_id, "fp": fingerprint, "body": canonical(body)})
+            if execution is not None:
+                binding = {"taskId": task_id, "nativeRunId": execution["nativeRunId"], "planId": plan["id"],
+                    "ownerId": owner, "leaseId": lease_id, "targetRef": ref, "planHash": digest(plan),
+                    "requestId": request_id, "leaseFingerprint": fingerprint}
+                conn.execute(text(f"INSERT INTO af_process_runs VALUES(:task,:effect,:owner,:run,:lease,{self._json_param})"),
+                    {"task": task_id, "effect": execution["effectKey"], "owner": owner,
+                     "run": execution["nativeRunId"], "lease": lease_id, "body": canonical(binding)})
         self.store.audit(owner, "resource.reserve", lease_id, {"connectionRef": ref, "fingerprint": fingerprint})
         return body, True
 
@@ -439,9 +471,66 @@ class PersistentResourceService:
             if state == "RECLAIMED" and snapshot.get("released") is not True:
                 state = "UNKNOWN"
             changes = {"providerJobId": snapshot.get("providerJobId")}
+            if lease.get("nativeRunId") is not None:
+                changes = self.process_snapshot(lease, snapshot)
         return self._update(owner, lease_id, state, {**changes, "connected": True,
                             "acknowledgement": "confirmed", "observedStatus": snapshot.get("status", snapshot.get("state")),
                             "snapshotAt": now()})
+
+    @staticmethod
+    def process_snapshot(lease, snapshot):
+        if (type(snapshot) is not dict or snapshot.get("leaseId") != lease["id"]
+                or snapshot.get("ownerId") != lease["ownerId"] or snapshot.get("fingerprint") != lease["fingerprint"]):
+            raise ValueError("Process lease receipt mismatch")
+        binding, job = snapshot.get("processBinding"), snapshot.get("providerJobId")
+        if snapshot.get("state") == "UNKNOWN" and binding is None and job is None:
+            return {}
+        if (type(binding) is not dict or set(binding) != {"taskId", "nativeRunId", "planId", "bindingFingerprint"}
+                or any(binding.get(key) != expected for key, expected in
+                    (("taskId", lease["localTaskId"]), ("nativeRunId", lease["nativeRunId"]), ("planId", lease["planId"])))
+                or not isinstance(binding.get("bindingFingerprint"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", binding["bindingFingerprint"])
+                or type(job) is not str or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", job)
+                or lease.get("providerJobId") not in {None, job}
+                or lease.get("processBinding") not in (None, binding)):
+            raise ValueError("Original process identity changed")
+        enforcement = snapshot.get("enforcement")
+        expected = {"cpu": "per-process-RLIMIT_CPU", "memory": "per-process-RLIMIT_AS",
+            "fileSize": "per-file-RLIMIT_FSIZE", "wall": "cooperative-process-group-guardian",
+            "aggregateQuota": False, "hostileCodeSandbox": False, "networkIsolation": False}
+        if (type(enforcement) is not dict or enforcement != expected
+                or any(type(enforcement[key]) is not type(value) for key, value in expected.items())):
+            raise ValueError("Process enforcement contract changed")
+        outcome, exit_code = snapshot.get("executionStatus"), snapshot.get("exitCode")
+        if (outcome not in {"PREPARED", "DISPATCHING", "RUNNING", "UNKNOWN", "COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}
+                or exit_code is not None and (type(exit_code) is not int or not -255 <= exit_code <= 255)):
+            raise ValueError("Process outcome is invalid")
+        stop = snapshot.get("stopEvidence")
+        positive = (type(stop) is dict and set(stop) == {"allStopped", "kind"} and stop["allStopped"] is True
+                    and stop["kind"] in {"original-root-reaped-and-no-live-process-group-members", "never-dispatched"})
+        if snapshot.get("state") in TERMINAL | {"RECLAIMED"} and (not positive or outcome not in {"COMPLETED", "CANCELLED", "LIMIT_STOPPED", "FAILED"}):
+            raise ValueError("Terminal process lacks original stop proof")
+        if snapshot.get("state") == "RECLAIMED" and snapshot.get("released") is not True:
+            raise ValueError("Process allocation release is unconfirmed")
+        return {"providerJobId": job, "processBinding": binding, "enforcement": expected,
+                "stopEvidence": stop if positive else None, "executionStatus": outcome, "exitCode": exit_code}
+
+    def list_leases(self, owner, *, after=None):
+        self.auth.require(owner, "run")
+        if after is not None and (type(after) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", after)):
+            raise HTTPException(400, "Invalid lease cursor")
+        rows = self.store.sql("SELECT id,body FROM af_leases WHERE owner_id=:owner AND id>:after ORDER BY id LIMIT 100",
+                              owner=owner, after=after or "")
+        leases = []
+        for row in rows:
+            body = self._body(row["body"])
+            if body.get("nativeRunId") is None:
+                continue
+            # Metadata visibility does not grant launch/stop/release authority.
+            fields = ("id", "ownerId", "localTaskId", "planId", "nativeRunId", "state", "capacityHeld",
+                      "providerJobId", "processBinding", "enforcement", "stopEvidence", "syntheticFixture", "executionStatus", "exitCode")
+            leases.append({key: body.get(key) for key in fields})
+        return {"leases": leases, "nextCursor": rows[-1]["id"] if len(rows) == 100 else None}
 
     def _claim_effect(self, owner, lease_id, field, state):
         """Compare-and-set before transmission across processes, not a Python lock."""
@@ -465,21 +554,28 @@ class PersistentResourceService:
                          {"id": lease_id, "owner": owner, "state": state, "body": canonical(body)})
             return body, True
 
-    async def allocate(self, owner: str, connection_ref: str, task_id: str, request_id: str, limits: dict) -> dict:
+    async def allocate(self, owner: str, connection_ref: str, task_id: str, request_id: str, limits: dict, *, execution=None) -> dict:
         target = self._authorize(owner, connection_ref)
         if target.axis != "compute" or target.provider is None:
             raise HTTPException(409, "ALLOCATION_UNSUPPORTED: native runtime attachment does not provision environments")
+        if callable(getattr(target.provider, "allocate_bound", None)) and execution is None:
+            raise HTTPException(409, "Governed native execution binding is required for process allocation")
+        if execution is not None and (not callable(getattr(target.provider, "allocate_bound", None)) or target.capacity_pool is None):
+            raise HTTPException(409, "Bound process execution requires its configured shared pool")
         ceilings = {"cpu": target.max_cpu, "memoryMb": target.max_memory_mb, "diskMb": target.max_disk_mb, "seconds": target.max_seconds}
         if not isinstance(limits, dict) or set(limits) != set(ceilings) or any(type(limits[key]) is not int or not 0 < limits[key] <= ceiling for key, ceiling in ceilings.items()):
             raise HTTPException(400, "Allocation must stay within all configured resource ceilings")
-        lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, limits)
+        lease, fresh = self._reserve(owner, connection_ref, task_id, request_id, limits, execution=execution)
         if not fresh:
             return lease
         self._admit_effect(owner, lease)
         try:
             provider = self._provider(target)
             guarded: Any = getattr(provider, "allocate_guarded", None)
-            if callable(guarded):
+            bound: Any = getattr(provider, "allocate_bound", None)
+            if execution is not None and callable(bound):
+                result = await cast(Awaitable[dict], bound(lease, before_effect=lambda: self._admit_effect(owner, lease)))
+            elif callable(guarded):
                 result = await cast(Awaitable[dict], guarded(lease["id"], owner, lease["fingerprint"], limits,
                                        before_effect=lambda: self._admit_effect(owner, lease)))
             else:

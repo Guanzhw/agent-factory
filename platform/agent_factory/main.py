@@ -158,6 +158,8 @@ def create_app(settings=None):
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
+    from .process_runtime import ProcessRuntimeService
+    store.process_runtime = ProcessRuntimeService(store, auth, resources)
     resource_maintenance = ResourceMaintenance(resources)
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))
@@ -226,7 +228,7 @@ def create_app(settings=None):
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
-    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance)
+    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime)
     external = None
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge

@@ -18,6 +18,7 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         failure = {'present': False}
         actions = []
         store = Mock()
+        store.process_runtime = None
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []
@@ -49,6 +50,16 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         observer._group = Mock(side_effect=lambda _: ([task.copy()], []))
         observer._binding = Mock(return_value={'status': 'completed'})
         return observer, store, task, failure, actions
+
+    def test_native_terminal_with_unknown_process_keeps_group_capacity(self):
+        observer, store, task, _, actions = self.fixture()
+        store.process_runtime = SimpleNamespace(task_held=lambda _: True)
+        facts = observer._facts(task)
+        self.assertFalse(facts["stopped"])
+        self.assertTrue(facts["unknown"])
+        observer._observe_stopped(task)
+        store.observed.assert_not_called()
+        self.assertNotIn("release-root", actions)
 
     def test_failure_after_positive_stop_records_cleanup_before_terminal_release(self):
         observer, store, task, failure, actions = self.fixture()
