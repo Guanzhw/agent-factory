@@ -26,6 +26,17 @@ Each observation pins the contract, variant file map, dataset, evaluator, ordere
 
 Failed, cancelled and unknown observations require a null value and yield `inconclusive`. They are never coerced to zero or counted as improvement. Missing or malformed evidence is rejected, not ranked. A valid positive delta means improvement in the declared direction only when it strictly exceeds the threshold; a negative delta beyond the opposite threshold means regression. Values inside the threshold band are `unchanged`, not proof of statistical equivalence. One metric and one paired observation do not establish significance, uncertainty, generalization or scientific validity.
 
-## Remaining integration and acceptance
+## Original offline-stage boundary
 
 No core API or execution path is connected in this stage. Required future work includes separate material and plan approvals, verified actual dataset/evaluator/result bytes, an explicit bounded execution backend, original task/run and effect receipts, current authority before each effect, immutable baseline/candidate provenance, partial/UNKNOWN custody, real workload acceptance and user-facing review. Neither the pure contract tests nor existing toy ORX acceptance prove those steps complete.
+
+## Controlled workflow continuation
+
+The subsequent [controlled comparison workflow](CONTROLLED_COMPARISON_WORKFLOW.md)
+connects this unchanged pure contract to separately reviewed fixed synthetic
+inputs, immutable native plans, one bounded paired process and verified original
+artifacts. The pure assessment still does not assert execution verification; a
+separate native evidence envelope carries custody and byte verification. This
+finite development workflow does not complete real scientific acceptance. See
+the draft PR for actual process/PostgreSQL/browser and exact-head CI evidence,
+and the [closure map](IMPLEMENTATION_CLOSURE_MAP.md) for remaining work.

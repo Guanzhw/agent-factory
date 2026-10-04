@@ -247,10 +247,13 @@ class FactoryAPI:
                       if plan.get("application") in APPLICATION_TOOLS else None)
         from .synthesis_runtime import inspect_synthesis_evidence
         synthesis = inspect_synthesis_evidence(self.store, task["owner_id"], task["id"])
+        comparison = self.store.comparisons.inspect(task["owner_id"], task["id"]) if self.store.comparisons is not None else None
         ledger = getattr(self.store, "usage_ledger", None)
         usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
         if synthesis is not None:
             job.update(validationStatus="受控综合；引用结构检查不等于科研结论验证", evidenceKind="controlled_model_synthesis")
+        if comparison is not None:
+            job.update(validationStatus="合成开发数据的受控比较；未验证科学结论", evidenceKind="controlled_comparison")
         if literature is not None:
             labels = {"ready": "书目与摘录已保存；不代表科研结论", "no-sources": "执行已结束，但未取得文献来源",
                       "pending": "等待文献证据产物", "invalid": "文献证据未通过完整性核对"}
@@ -266,7 +269,7 @@ class FactoryAPI:
                          "源码和命令哈希见下方实验凭证。金额批准为零，无模型服务调用。")
                 job["approvalDetail"]["scope"] = scope
                 job["approval"]["scope"] = scope
-        return {**({"synthesisEvidence": synthesis} if synthesis is not None else {}), **({"literatureEvidence": literature} if literature is not None else {}), "inferenceWait": inference_wait, "orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+        return {**({"comparisonEvidence": comparison} if comparison is not None else {}), **({"synthesisEvidence": synthesis} if synthesis is not None else {}), **({"literatureEvidence": literature} if literature is not None else {}), "inferenceWait": inference_wait, "orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
 
     def routes(self):

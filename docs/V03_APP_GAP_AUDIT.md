@@ -132,3 +132,17 @@ claim.
   provisioning are distinct claims. Completion of one does not establish another.
 - This audit ran no heavy tests, model calls, network retrieval, production
   identity operation or deployment. It changed only this audit document.
+
+
+## Controlled comparison continuation (2026-10-04)
+
+The next stage connects the PR32 offline comparison contract to independently
+published fixed synthetic inputs, an approved immutable plan, the existing native
+bounded process/lease lifecycle and verified raw/report artifacts. The frontend
+selects finite baseline/candidate/data/evaluator/change scope, then reuses the
+proposal/review/instance workflow and displays outcomes separately from scientific
+validation. Actual native PG and desktop/mobile evidence plus exact-head CI are
+recorded in the corresponding draft PR; pure contracts alone remain insufficient.
+See [CONTROLLED_COMPARISON_WORKFLOW.md](CONTROLLED_COMPARISON_WORKFLOW.md) and the
+[whole-project closure map](IMPLEMENTATION_CLOSURE_MAP.md). The historical PR28
+table above must not be read as a fresh list of unimplemented UI gaps.

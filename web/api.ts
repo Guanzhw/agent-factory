@@ -302,6 +302,7 @@ export const api = {
     setEnabled: (id: string, input: { enabled: boolean; requestId: string; expectedDefinitionFingerprint: string }) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/enabled`, 'POST', input),
     occurrences: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/occurrences${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
   },
+  comparisons: { catalog: (signal?: AbortSignal) => request<unknown>('/comparisons/catalog', 'GET', undefined, signal) },
   synthesis: {
     preview: (taskId: string, signal?: AbortSignal) => request<unknown>(`/synthesis/sources/${segment(taskId)}`, 'GET', undefined, signal),
     list: (taskId: string, after?: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots?${new URLSearchParams({ sourceTaskId: taskId, limit: '20', ...(after ? { after } : {}) })}`, 'GET', undefined, signal),

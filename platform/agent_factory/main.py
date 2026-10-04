@@ -178,6 +178,9 @@ def create_app(settings=None):
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
+    from .comparison_workflow import ComparisonService, comparison_router
+    store.comparisons = ComparisonService(store, auth)
+    base.include_router(comparison_router(auth, store.comparisons))
     resource_maintenance = ResourceMaintenance(resources)
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))

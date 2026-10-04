@@ -59,6 +59,7 @@ class Store:
         self.applications: Any = None
         self.composition: Any = None
         self.synthesis_sources: Any = None
+        self.comparisons: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
         self.handoff_receiver: Any = None

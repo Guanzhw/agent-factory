@@ -16,6 +16,7 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 import sys
 from typing import cast
@@ -355,3 +356,40 @@ class ProcessResourceProvider:
 
     async def reclaim(self, lease_id, owner):
         return await asyncio.to_thread(self._operate, lease_id, owner, "reclaim")
+
+    def read_completed_output(self, lease_id, owner):
+        """Read bounded original output only after verified successful stop.
+
+        This grants no dispatch or cleanup authority. Paths are derived solely
+        from original custody; output is never interpreted as executable code.
+        """
+        with self._root_guard._operation_lock():
+            with self._transaction() as conn:
+                record = self._load(conn, lease_id, owner)
+            with self._adapter(record) as (_, snapshot):
+                _require(record["released"] is True and snapshot["state"] == "COMPLETED"
+                         and snapshot.get("exitCode") == 0 and snapshot.get("stoppedProof") is True)
+                with self._root_guard._root() as root_fd:
+                    directory = os.open(lease_id, os.O_RDONLY | self._root_guard._directory_flag |
+                                        self._root_guard._nofollow_flag, dir_fd=root_fd)
+                    try:
+                        info = os.fstat(directory)
+                        _require(record["directoryIdentity"] == [info.st_dev, info.st_ino])
+                        nonblocking = getattr(os, "O_NONBLOCK", None)
+                        _require(type(nonblocking) is int and nonblocking > 0)
+                        descriptor = os.open("custody.output", os.O_RDONLY | self._root_guard._nofollow_flag |
+                                             cast(int, nonblocking), dir_fd=directory)
+                        try:
+                            before = os.fstat(descriptor)
+                            _require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
+                                     and stat.S_IMODE(before.st_mode) == 0o600
+                                     and 0 < before.st_size <= self.limits.file_size_bytes)
+                            raw = os.read(descriptor, self.limits.file_size_bytes + 1)
+                            after = os.fstat(descriptor)
+                            _require(len(raw) == before.st_size and all(getattr(before, key) == getattr(after, key)
+                                for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_nlink")))
+                            return raw
+                        finally:
+                            os.close(descriptor)
+                    finally:
+                        os.close(directory)

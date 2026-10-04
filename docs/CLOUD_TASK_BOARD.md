@@ -1,6 +1,39 @@
 # Cloud integration task board
 
-## Active schedule management journey — 2026-10-04
+## Active controlled comparison workflow — 2026-10-04
+
+Base PR32 accepted exact `0a12409f4739b6cfcaa34e9be24037a0907bec6c`; branch
+`coord/comparison-workflow-20261004`. PR32 push/PR 10 jobs passed; both actual PG
+1171 total / 1108 passed / 63 skipped; coordinator and independent reviewer each
+observed twice at >90s intervals. Prior failed-head evidence remains in PR32.
+
+The approved next milestone connects the existing offline contract to one native
+task and one bounded paired-evaluator process. Inputs are operator-installed
+synthetic development data and finite candidate configurations, approved through
+existing material/application/plan governance. No arbitrary code, new scheduler,
+external account, paid call, production experiment, host change, merge or deployment.
+
+| Owner / exclusive scope | Dependencies | Status / acceptance |
+|---|---|---|
+| root: core comparison service/read custody/main/guard/shared UI/docs | Frozen fixture/profile/UI contracts | Integrated; frontend188/lint/type/build and audit pass; Linux/Windows Pyright clean. NativePG7 pass55.837s; final local Python1200=837pass363skip52.362s; desktop/mobile four scenarios pass. Exact-head CI pending |
+| go_adapter: comparison_fixture + pure tests | Existing strict comparison contract/process spec | Frozen: 6 tests, Ruff/Pyright pass; no actual execution claimed |
+| factory_flow: comparison_profile + pure tests | Fixture manifest/existing governance/runtime | Frozen: 7 tests, Ruff/Pyright pass; separate publication and plan approval |
+| independent_review: ComparisonPanel/state/UI tests | Root API contract | Frozen: 10 tests/lint/typecheck pass; strict mode/raw-hash consistency; browser pending |
+| at10: comparison PG test/fixture | Integrated root core | Frozen: 7 actual PG/native cases pass55.837s, resources cleaned and heavy lane released |
+| go_policy: comparison browser script | Built UI and PG fixture | Frozen: desktop/mobile success and candidate-failure four scenarios pass; two lost acknowledgements per scenario recover original IDs with one POST each; bytes/SHA/Bob404/page+console0; 8 screenshots reviewed; cleanup complete |
+| reviewer: independent read-only code/evidence review | Integrated changes | No remaining code blocker; coroutine-to-thread cancellation finding fixed with 2 tests/3 interleavings; independently reran UI10. Four browser scenarios/8 screenshots independently reviewed; no blocker. Exact-head CI pending |
+
+All worker files are frozen and heavy local fixtures cleaned. Final shared process-output flag access was adjusted for Windows static compatibility after browser startup; Linux semantics are unchanged, and 9 output/cancellation tests plus the final full local suite pass.
+
+One process evaluates the approved pair as one effect; pure internal arithmetic
+creates no second external effect. The final immutable plan pins all input bytes;
+the derived comparison contract refers to the final plan fingerprint, avoiding
+circular self-hashes. Offline assessment verification flags remain false; only the
+outer verified native evidence may establish controlled execution, never scientific
+validity. Whole-project remaining-code/external-validation map due before closing.
+
+
+## Accepted schedule management journey — 2026-10-04
 
 Base accepted draft PR31 exact `d81d455eeaacd258f60a536f9d247b5ee1cecb11`;
 branch `coord/schedule-management-journey-20261004`. Requirements checked against
@@ -13,13 +46,13 @@ merge or deployment. Root grants one heavy local lane at a time.
 
 | Owner / exclusive scope | Dependencies | Status / acceptance |
 |---|---|---|
-| root: scheduling core/editor journal/API/main and shared frontend integration/docs | Frozen worker contracts | Integrated durable native-write receipts, paused create, CAS revisions, finite owner projections, exact-command GET recovery and bounded independent lock pool. Frontend178/static/audit pass; final local Python1171=815pass356skip57.484s; actual desktop/mobile final pass. Initial8ce321a PR CI allpass; pushPG two old remote fixture facts500 failures. Fixture publication-readiness race deterministically reproduced/fixed without swallowing pinned errors; original04/09 actualPG2pass54.059s. New exact CI pending; original500 precise cause not proven. |
+| root: scheduling core/editor journal/API/main and shared frontend integration/docs | Frozen worker contracts | Integrated durable native-write receipts, paused create, CAS revisions, finite owner projections, exact-command GET recovery and bounded independent lock pool. Frontend178/static/audit pass; final local Python1171=815pass356skip57.484s; actual desktop/mobile final pass. Initial8ce321a PR CI allpass; pushPG two old remote fixture facts500 failures. Fixture publication-readiness race deterministically reproduced/fixed without swallowing pinned errors; original04/09 actualPG2pass54.059s. Exact0a12409 push/PR all10success, PG1108pass63skip each; root/reviewer double terminal97s/125s. Original500 precise cause not proven. |
 | factory_flow: schedule_contract helper/unit tests/clock doc | Installed native Agno clock | Frozen; 7 light tests pass, actual fixed-clock native comparison incl. DST gap/fold, coalesce/no catch-up and allowed budgeted overlap. |
 | independent_review: new schedule panel/state/frontend tests | Root management API and preview contract | Frozen; 11 frontend tests pass. Chinese editor/list/history, current-action guards, lost-ACK exact-command recovery, opaque owner pointers and strict receipts. |
 | at10: new schedule management PG tests | Integrated core/API | Frozen; 5 actual PG cases pass (initial4 14.011s, added cancellation4.514s), plus targeted exact receipt/pending/ABA regressions. Metadata pool1, paused native cancellation and owner fences verified; fixtures cleaned. |
 | go_policy: new schedule browser script/scratch runner | Built UI/mock HTTPS + PG | Frozen; final manager+independent reviewer desktop/mobile PASS: create1 lostACK GET recovery, edit/enable/pause/history, fixture original trigger1, native artifacts/Bob404, page/console0, 8 screenshots; cleanup complete. |
 | go_adapter: offline comparison contract/tests/doc | Existing plan/ORX boundaries | Frozen; 6 pure tests pass. Exact data/evaluator/sample/change/authority pins; no execution and no full comparison claim. |
-| reviewer: read-only independent review | Shared implementation and final evidence | Lock/ACK/CAS/old-pending rollback and cleanup-fence findings fixed and regression tested. Code/11 UI tests and final browser/screens/doc matrix independently reviewed. InitialCI remote fixture failure disclosed; readiness fix independently reviewed, exact new CI pending. |
+| reviewer: read-only independent review | Shared implementation and final evidence | Lock/ACK/CAS/old-pending rollback and cleanup-fence findings fixed and regression tested. Code/11 UI tests and final browser/screens/doc matrix independently reviewed. InitialCI remote fixture failure disclosed; readiness fix independently reviewed; exact0a12409 accepted after separate double-terminal and both actualPG log checks. |
 
 Native missed ticks coalesce; no backfill. Overlap is allowed subject to current
 owner/global admission and existing task budgets, not a new periodic cost budget.
