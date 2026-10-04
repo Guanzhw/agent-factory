@@ -289,6 +289,14 @@ def schedule_management_router(auth, service):
     def recover(request_id: str, request: Request):
         return service.recover(owner(request), request_id)
 
+    @router.get("/diagnostic-schedules")
+    def diagnostic_schedules(request: Request, after: str | None = None):
+        return service.service.diagnostics.catalog(auth.user(request)["id"], after)
+
+    @router.get("/{identifier}/diagnostics")
+    def diagnostics(identifier: str, request: Request, after: str | None = None):
+        return service.service.diagnostics.page(auth.user(request)["id"], identifier, after)
+
     @router.get("/{identifier}")
     def inspect(identifier: str, request: Request):
         return service.inspect(owner(request), identifier)

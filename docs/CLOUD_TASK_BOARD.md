@@ -1,5 +1,34 @@
 # Cloud integration task board
 
+## Active schedule diagnostics and development checkpoint — 2026-10-04
+
+Base accepted PR33 exact `e0f74ec330b4f11929be49b4d260acbe1747856f`;
+branch `coord/schedule-diagnostics-checkpoint-20261004`. PR33 push/PR ten jobs
+passed, both actual PG1200 total/1137 passed/63 skipped; root and independent
+reviewer each checked twice more than90 seconds apart. Earlier milestone rows
+below remain historical, including their then-pending gates.
+
+| Owner / exclusive scope | Dependency | State / acceptance |
+|---|---|---|
+| root | Diagnostic persistence/guards/read APIs/shared UI integration/tool contract/docs/commit/CI | Frozen/independent review clear; fullPython1220=846pass374skip57.787s, frontend196/build/audit, Ruff/Linux+Windows Pyright passed; exact-head CI pending |
+| at10 | New diagnostic PG/native tests only | Frozen:9 actual PG/native cases validated, including read-only permission, pending fence, real lock/pool and original error preservation; cleanup complete |
+| independent_review | New diagnostic UI/state/tests only | Eight tests, lint/typecheck passed; frozen for root integration |
+| go_policy | New diagnostic browser acceptance script only | Frozen: desktop/mobile four native denials, GET-only reads/reload/Bob404/zero tasks. New checked-in disposable runner independently repeated PASS; cleanup complete |
+| go_adapter | Development launcher + new controlled workflow profile/tests | Frozen: actual combined native source/snapshot/synthesis/comparison and bootstrap/revocation/restart passed; shipped CLI twice HTTPS+Chromium mock-login+same3app pins, both exit0; cleanup complete |
+| factory_flow | New final requirements audit document only | Frozen: final code/test audit reconciled with actual diagnostic/startup evidence; two input-dependent scientific/non-toy CODE boundaries retained |
+| reviewer | Independent read-only safety/requirements/CI review | Final frozen code/UI/runner/docs approved; independent exact-head CI observation pending |
+
+Diagnostic records contain finite reason/source/time fields and opaque IDs only.
+They never reserve, execute, replay or release tasks; reads require current read
+permission and original ownership independently of editor fences. Retention is
+30 days/100 records per schedule, with best-effort observation explicitly shown.
+No new external provider, key, account, host change, merge or deployment.
+All heavy local lanes completed serially; none remain active. Original fixture
+failures (role-assignment ordering, browser cookie restoration, runner event loop)
+remain in evidence; fixes did not relax production authority. Final SHA, draft PR
+and twice-observed CI results will be recorded in the PR acceptance receipt.
+
+
 ## Active controlled comparison workflow — 2026-10-04
 
 Base PR32 accepted exact `0a12409f4739b6cfcaa34e9be24037a0907bec6c`; branch

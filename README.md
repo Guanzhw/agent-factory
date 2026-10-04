@@ -2,7 +2,13 @@
 
 An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Managers maintain versioned materials and approved application definitions; users compose exact, scoped task plans and inspect native runs. Auto-Research is the first application. New approved applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
 
-This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: real authentication, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled. The opt-in Linux public-literature evidence workflow attempted a free PubMed query, but this host could not reach the endpoint; it produced an explicit failure report. Full production acceptance remains open.
+This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: native authorization, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled by default. Historical live and failed retrieval evidence stays scoped to its recorded run; controlled fixtures do not establish scientific validity. Full production acceptance remains open.
+
+For the persistent Linux mock-login instance with synthetic source → synthesis,
+fixed baseline/candidate comparisons and schedule diagnostics, use the
+[runnable development checkpoint](docs/DEVELOPMENT_IMPLEMENTATION_CHECKPOINT.md).
+The [final requirements audit](docs/V03_FINAL_REQUIREMENT_AUDIT.md) distinguishes
+implemented development flows from input-dependent code and real acceptance.
 
 ## Start locally
 

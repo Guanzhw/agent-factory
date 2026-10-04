@@ -291,6 +291,10 @@ async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ prop
 }
 
 export const api = {
+  scheduleDiagnostics: {
+    list: (after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/diagnostic-schedules${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
+    page: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/diagnostics${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
+  },
   schedules: {
     recover: (requestId: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/commands/${encodeURIComponent(requestId)}`, 'GET', undefined, signal),
     metadata: (signal?: AbortSignal) => request<unknown>('/schedule-management/metadata', 'GET', undefined, signal),

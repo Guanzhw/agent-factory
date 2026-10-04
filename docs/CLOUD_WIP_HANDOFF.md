@@ -1,5 +1,17 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Current development checkpoint — 2026-10-04
+
+Continue from the exact tested head recorded in the draft PR for branch
+`coord/schedule-diagnostics-checkpoint-20261004`, based on accepted PR33
+`e0f74ec330b4f11929be49b4d260acbe1747856f`. See the
+[runnable handoff](DEVELOPMENT_IMPLEMENTATION_CHECKPOINT.md),
+[current board](CLOUD_TASK_BOARD.md), [final scope audit](V03_FINAL_REQUIREMENT_AUDIT.md)
+and [Git-reproducible browser fixture](SCHEDULE_DIAGNOSTICS_ACCEPTANCE.md).
+The entries below preserve earlier handoff evidence and are not today's branch
+or missing-code instructions. Reconstruct fixtures from checked-in tests/scripts;
+do not assume any earlier scratch path or ephemeral database survives.
+
 ## Delivery review cleanup — 2026-10-03
 
 Current review/integration order: **PR9 → PR10 → PR14 (checkpoint bridge) → PR11 → PR12 → PR13**.

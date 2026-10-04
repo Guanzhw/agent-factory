@@ -20,6 +20,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from .auth import EXECUTOR_ID
+from .schedule_diagnostics import ScheduleDiagnostics
 from .store import canonical, digest, now
 
 MANAGED_BY = "agent-factory"
@@ -33,6 +34,7 @@ class SchedulingService:
         self.settings, self.store, self.db = settings, store, native_db
         self.auth, self.bridge = auth, bridge
         self.manager = ScheduleManager(native_db)
+        self.diagnostics = ScheduleDiagnostics(self)
         # Separate, strictly bounded lock pool: metadata stays available across HTTP.
         self.lock_engine = create_engine(store.engine.url, pool_size=1, max_overflow=0, pool_timeout=.01)
         self.poller = SchedulePoller(native_db, self,
@@ -58,6 +60,8 @@ class SchedulingService:
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_schedule_editor_state (
             schedule_id TEXT PRIMARY KEY, revision INTEGER NOT NULL,
             request_id TEXT, last_command_id TEXT)""")
+
+        self.diagnostics.initialize()
 
     def _touch_editor(self, schedule_id):
         self.store.sql("""INSERT INTO af_schedule_editor_state VALUES(:id,1,NULL,NULL)
@@ -296,25 +300,45 @@ class SchedulingService:
                          {"occurrenceId": identifier, "taskId": receipt["task_id"], "status": status})
 
     async def _fire(self, claimed: Schedule, key: str, release: bool) -> dict[str, Any]:
+        observation = {"reason": "CLOCK_BUSY", "beforeOccurrence": True}
+        try:
+            return await self._fire_locked(claimed, key, release, observation)
+        except Exception as error:
+            if observation["beforeOccurrence"]:
+                reason = observation["reason"] if isinstance(error, HTTPException) and error.status_code < 500 else "CHECK_UNAVAILABLE"
+                await self.diagnostics.observe(claimed, key, reason, source="native" if release else "manual")
+            raise
+
+    async def _fire_locked(self, claimed: Schedule, key: str, release: bool, observation: dict[str, Any]) -> dict[str, Any]:
         with self._lock(claimed.id):
             try:
+                observation["reason"] = "AUTHORIZATION_DENIED"
                 owner = claimed.user_id
                 if not owner:
                     raise HTTPException(403, "Unowned schedules cannot admit Factory tasks")
                 self.auth.require(owner, "run")
+                observation["reason"] = "CLAIM_CHANGED"
                 if release:
                     self._require_lease(claimed)
+                observation["reason"] = "BINDING_UNAVAILABLE"
                 current, binding = self._bound(claimed.id, owner)
-                if not current.enabled or self._definition(claimed) != self._definition(current):
-                    raise HTTPException(409, "Schedule disabled or changed after claim")
+                observation["reason"] = "PAUSED"
+                if not current.enabled:
+                    raise HTTPException(409, "Schedule disabled after claim")
+                observation["reason"] = "DEFINITION_CHANGED"
+                if self._definition(claimed) != self._definition(current):
+                    raise HTTPException(409, "Schedule changed after claim")
+                observation["reason"] = "CLAIM_CHANGED"
                 if release and current.next_run_at != claimed.next_run_at:
                     raise HTTPException(409, "Schedule occurrence already advanced")
+                observation["reason"] = "PLAN_UNAVAILABLE"
                 plan = self._plan(binding["plan_id"], owner)
                 if digest(plan) != binding["plan_hash"]:
                     raise HTTPException(409, "Immutable scheduled plan differs from its binding")
                 identifier = str(uuid5(NAMESPACE_URL, canonical({"owner": owner, "schedule": claimed.id, "key": key})))
                 fp = digest({"definition": binding["definition_hash"], "plan": binding["plan_hash"]})
                 request_id = "schedule:" + identifier
+                observation["beforeOccurrence"] = False
                 rows = self.store.sql("""INSERT INTO af_schedule_occurrences
                     VALUES(:id,:schedule,:owner,:key,:fp,:request,NULL,'reserving',NULL,:at)
                     ON CONFLICT DO NOTHING RETURNING id""", id=identifier, schedule=claimed.id,
@@ -384,6 +408,7 @@ class SchedulingService:
         if not release_schedule:
             raise HTTPException(409, "Use the Factory trigger API with a request ID")
         if claimed.next_run_at is None:
+            await self.diagnostics.observe(claimed, "missing-due-time", "CLAIM_CHANGED")
             raise HTTPException(409, "Schedule has no persisted occurrence time")
         return await self._fire(claimed, "due:" + str(claimed.next_run_at), release=True)
 
@@ -404,6 +429,7 @@ class SchedulingService:
         await self.poller.stop()
         self.manager.close()
         self.lock_engine.dispose()
+        self.diagnostics.engine.dispose()
 
     @asynccontextmanager
     async def lifespan(self, app: Any):

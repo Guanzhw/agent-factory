@@ -2,6 +2,13 @@
 
 ## Current scope — 2026-10-04
 
+Current implementation coverage is reconciled in the
+[final requirement audit](V03_FINAL_REQUIREMENT_AUDIT.md) and
+[closure map](IMPLEMENTATION_CLOSURE_MAP.md). PR31/32/33 added source-snapshot
+synthesis, schedule management and controlled paired comparison; earlier tables
+below retain their historical pending descriptions, not today's missing-code list.
+The active diagnostic/development-checkpoint acceptance belongs to its draft PR.
+
 The [application workflow audit](V03_APP_GAP_AUDIT.md) records the PR28 baseline
 and remaining product flows; its baseline gaps are not acceptance claims for
 later work. Proposal-history and plan-review recovery are implemented with controlled
