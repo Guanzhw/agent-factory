@@ -158,6 +158,8 @@ def create_app(settings=None):
         receiver.install_guard()
     schedules = SchedulingService(settings, store, native_db, auth, bridge)
     schedules.initialize()
+    from .schedule_management import ScheduleManagement, schedule_management_router
+    schedule_management = ScheduleManagement(schedules)
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
     if receiver:
         base.include_router(receiver.router)
@@ -171,6 +173,7 @@ def create_app(settings=None):
     base.include_router(synthesis_router(auth, store.synthesis_sources, settings))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
+    base.include_router(schedule_management_router(auth, schedule_management))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
@@ -242,7 +245,7 @@ def create_app(settings=None):
             store.dispose_root_locks()
 
     native.router.lifespan_context = observed_lifespan
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
     native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime)
     external = None
     if settings.oidc_identity is not None:

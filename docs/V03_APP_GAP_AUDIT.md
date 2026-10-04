@@ -15,7 +15,11 @@ below retains the PR28 baseline to explain the selected changes. PR30 closes the
 guided approved-template editor and material-to-task slice. The subsequent
 [source-to-synthesis milestone](SOURCE_SYNTHESIS_JOURNEY.md) implements the bounded
 owner source handoff and controlled synthesis journey; its own draft PR records
-acceptance. Schedule and general scientific-evaluation workflows remain code work.
+acceptance. The subsequent [schedule management milestone](SCHEDULING.md#user-facing-schedule-management-continuation-2026-10-04)
+adds the owner editor/list/pause/resume/history over the existing native scheduler.
+Its draft PR records acceptance and its requirement matrix separates remaining
+code from external validation. General scientific-evaluation execution remains
+code work; offline comparison contracts do not close it.
 
 The continuation also adds explicit development mock login, deployment declaration
 validation and an opt-in [aggregate process contract](AGGREGATE_PROCESS_CONTRACTS.md).

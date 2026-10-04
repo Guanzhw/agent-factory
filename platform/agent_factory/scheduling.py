@@ -16,7 +16,8 @@ from agno.db.schemas.scheduler import Schedule, ScheduleRun
 from agno.scheduler import ScheduleManager, SchedulePoller
 from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from .auth import EXECUTOR_ID
 from .store import canonical, digest, now
@@ -32,6 +33,8 @@ class SchedulingService:
         self.settings, self.store, self.db = settings, store, native_db
         self.auth, self.bridge = auth, bridge
         self.manager = ScheduleManager(native_db)
+        # Separate, strictly bounded lock pool: metadata stays available across HTTP.
+        self.lock_engine = create_engine(store.engine.url, pool_size=1, max_overflow=0, pool_timeout=.01)
         self.poller = SchedulePoller(native_db, self,
             poll_interval=getattr(settings, "schedule_poll_seconds", 15),
             max_concurrent=min(settings.max_workers, 4), stop_timeout=2)
@@ -48,6 +51,19 @@ class SchedulingService:
             status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL,
             UNIQUE(owner_id,schedule_id,occurrence_key))""")
 
+        self.store.sql("""CREATE TABLE IF NOT EXISTS af_schedule_editor_commands (
+            owner_id TEXT NOT NULL, request_id TEXT NOT NULL, schedule_id TEXT NOT NULL,
+            fingerprint TEXT NOT NULL, intent TEXT NOT NULL, status TEXT NOT NULL,
+            PRIMARY KEY(owner_id,request_id))""")
+        self.store.sql("""CREATE TABLE IF NOT EXISTS af_schedule_editor_state (
+            schedule_id TEXT PRIMARY KEY, revision INTEGER NOT NULL,
+            request_id TEXT, last_command_id TEXT)""")
+
+    def _touch_editor(self, schedule_id):
+        self.store.sql("""INSERT INTO af_schedule_editor_state VALUES(:id,1,NULL,NULL)
+            ON CONFLICT(schedule_id) DO UPDATE SET revision=af_schedule_editor_state.revision+1,
+            last_command_id=NULL""", id=schedule_id)
+
     @staticmethod
     def _definition(schedule: Schedule) -> str:
         return digest({key: getattr(schedule, key) for key in (
@@ -58,7 +74,11 @@ class SchedulingService:
     def _lock(self, key: str):
         # A nonblocking session lock spans committed metadata and native HTTP.
         # A crash releases it; duplicate claimants never block the event loop.
-        with self.store.engine.connect() as connection:
+        try:
+            connection = self.lock_engine.connect()
+        except PoolTimeout:
+            raise HTTPException(409, "SCHEDULE_ADMISSION_BUSY: inspect the persisted occurrence") from None
+        with connection:
             locked = connection.execute(text("SELECT pg_try_advisory_lock(hashtext(:key))"),
                                         {"key": "af_schedule:" + key}).scalar()
             connection.commit()
@@ -92,6 +112,10 @@ class SchedulingService:
         if schedule is None or not rows:
             raise HTTPException(404, "Factory schedule not found")
         binding = rows[0]
+        pending = self.store.sql("""SELECT request_id FROM af_schedule_editor_commands
+            WHERE owner_id=:owner AND schedule_id=:id AND status='pending' LIMIT 1""", owner=owner, id=schedule_id)
+        if pending:
+            raise HTTPException(409, "SCHEDULE_EDITOR_UNKNOWN: reconcile the original editor receipt")
         if schedule.managed_by != MANAGED_BY or self._definition(schedule) != binding["definition_hash"]:
             raise HTTPException(409, "SCHEDULE_INTEGRITY: native definition differs from its trusted binding")
         return schedule, binding
@@ -138,6 +162,7 @@ class SchedulingService:
                 raise HTTPException(503, "Native schedule update failed")
             self.store.sql("UPDATE af_schedule_bindings SET definition_hash=:hash WHERE schedule_id=:id",
                            id=schedule_id, hash=self._definition(updated))
+            self._touch_editor(schedule_id)
         self.store.audit(owner, "schedule.update", schedule_id, {"cron": cron, "timezone": timezone})
         return updated.to_dict()
 
@@ -150,12 +175,25 @@ class SchedulingService:
             updated = self.manager.enable(schedule_id, user_id=owner) if enabled else self.manager.disable(schedule_id, user_id=owner)
             if updated is None:
                 raise HTTPException(503, "Native schedule state update failed")
+            self._touch_editor(schedule_id)
         self.store.audit(owner, "schedule.enable" if enabled else "schedule.disable", schedule_id, {})
         return updated.to_dict()
 
+    def _history_binding(self, schedule_id, owner):
+        # Cleanup and history bind to the original immutable plan, not a pending
+        # clock edit. A native ACK cannot revoke custody of an already owned task.
+        rows = self.store.sql("SELECT * FROM af_schedule_bindings WHERE schedule_id=:id AND owner_id=:owner",
+                              id=schedule_id, owner=owner)
+        if not rows:
+            raise HTTPException(404, "Factory schedule not found")
+        plan = self.store.plan(rows[0]["plan_id"], owner)
+        if digest(plan) != rows[0]["plan_hash"]:
+            raise HTTPException(409, "SCHEDULE_INTEGRITY: historical plan binding changed")
+        return rows[0]
+
     def occurrences(self, owner: str, schedule_id: str) -> list[dict[str, Any]]:
         self.auth.require(owner, "run")
-        self._bound(schedule_id, owner)
+        self._history_binding(schedule_id, owner)
         rows = self.store.sql("SELECT * FROM af_schedule_occurrences WHERE schedule_id=:id AND owner_id=:owner ORDER BY created_at DESC LIMIT 100", id=schedule_id, owner=owner)
         for row in rows:
             if row["task_id"]:
@@ -173,7 +211,7 @@ class SchedulingService:
 
     async def cancel_occurrence(self, owner: str, schedule_id: str, occurrence_id: str) -> dict[str, Any]:
         self.auth.require(owner, "run")
-        self._bound(schedule_id, owner)
+        self._history_binding(schedule_id, owner)
         rows = self.store.sql("SELECT * FROM af_schedule_occurrences WHERE id=:id AND schedule_id=:schedule AND owner_id=:owner",
                               id=occurrence_id, schedule=schedule_id, owner=owner)
         if not rows:
@@ -182,6 +220,9 @@ class SchedulingService:
         if not occurrence["task_id"]:
             raise HTTPException(409, "UNKNOWN occurrence has no authoritative task binding")
         task = self.store.task(occurrence["task_id"], owner)
+        binding = self._history_binding(schedule_id, owner)
+        if task["plan_id"] != binding["plan_id"] or task["request_id"] != occurrence["request_id"]:
+            raise HTTPException(409, "SCHEDULE_INTEGRITY: original occurrence task changed")
         self.store.request_cancel(task["id"])
         if self.store.delegation:
             return await self.store.delegation.cascade_cancel(owner, task["id"])
@@ -362,6 +403,7 @@ class SchedulingService:
     async def stop(self) -> None:
         await self.poller.stop()
         self.manager.close()
+        self.lock_engine.dispose()
 
     @asynccontextmanager
     async def lifespan(self, app: Any):

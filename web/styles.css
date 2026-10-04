@@ -69,3 +69,10 @@
 .synthesis-journey label { overflow-wrap: anywhere; }
 .synthesis-journey input[type=checkbox] { margin-right: 8px; }
 .synthesis-journey .primary, .synthesis-journey .secondary { white-space: normal; }
+
+.schedules-panel { min-width: 0; overflow-wrap: anywhere; }
+.schedules-panel fieldset { min-width: 0; margin-block: 1rem; }
+.schedules-panel button { white-space: normal; overflow-wrap: anywhere; }
+.schedules-panel article { margin-block: 1rem; }
+.schedules-panel input { max-width: 100%; }
+.schedules-panel .material-row { grid-template-columns: minmax(0, 1fr); }

@@ -291,6 +291,17 @@ async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ prop
 }
 
 export const api = {
+  schedules: {
+    recover: (requestId: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/commands/${encodeURIComponent(requestId)}`, 'GET', undefined, signal),
+    metadata: (signal?: AbortSignal) => request<unknown>('/schedule-management/metadata', 'GET', undefined, signal),
+    list: (after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
+    inspect: (id: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}`, 'GET', undefined, signal),
+    preview: (input: { cron: string; timezone: string }, signal?: AbortSignal) => request<unknown>('/schedule-management/preview', 'POST', input, signal),
+    create: (input: { planId: string; name: string; cron: string; timezone: string; requestId: string }) => request<unknown>('/schedule-management', 'POST', input),
+    update: (id: string, input: { cron: string; timezone: string; requestId: string; expectedDefinitionFingerprint: string }) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}`, 'PATCH', input),
+    setEnabled: (id: string, input: { enabled: boolean; requestId: string; expectedDefinitionFingerprint: string }) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/enabled`, 'POST', input),
+    occurrences: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/occurrences${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
+  },
   synthesis: {
     preview: (taskId: string, signal?: AbortSignal) => request<unknown>(`/synthesis/sources/${segment(taskId)}`, 'GET', undefined, signal),
     list: (taskId: string, after?: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots?${new URLSearchParams({ sourceTaskId: taskId, limit: '20', ...(after ? { after } : {}) })}`, 'GET', undefined, signal),

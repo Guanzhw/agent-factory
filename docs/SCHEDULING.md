@@ -136,3 +136,89 @@ $env:FACTORY_TEST_DATABASE_URL = '<owned disposable PostgreSQL URL>'
 $env:PYTHONPATH = 'platform'
 uv run python -m unittest discover -s platform/tests -p test_scheduling_postgres.py -v
 ```
+
+## User-facing schedule management continuation (2026-10-04)
+
+The **计划任务** workspace now exposes owner-scoped list/detail, five-field cron
+and IANA timezone preview, editing, pause/resume, occurrence history and links to
+original tasks. A manager enters from an already approved immutable plan in the
+existing composer; runner personas receive read-only controls. Backend permissions
+remain authoritative at every write and every dispatch. New editor-created
+schedules are persisted **paused**, with explicit separate enable. The editor has
+no manual-trigger or external-notification action. Test fixtures may explicitly
+use the existing owned trigger endpoint with far-future cron definitions.
+
+`/api/factory/schedule-management` is a finite control-plane projection over the
+same `SchedulingService`, public native schedule storage and poller. It is not
+another scheduler or task executor. Legacy `/schedules` Factory wrappers remain
+compatible. `metadata` declares current management authority and active-task
+limits; `preview` is read-only and takes no client clock; `commands/{requestId}`
+recovers an original owner command directly without scanning a partial list.
+Schedule and occurrence lists expose bounded cursor pages, not full snapshots.
+Raw native queue bodies, stored request payloads and errors are not projected into
+the new UI contract. Actual task status remains separate from admission status.
+
+Creation/edit/enable commands persist exact owner, semantic request key, immutable
+plan hash, target native definition and revision intent **before** the native
+write. The native ID is fixed in the creation intent. The public native DB create
+primitive is used because `ScheduleManager.create` cannot accept a precommitted
+ID or an initially paused state. Lost native acknowledgements never cause another
+create or native write. GET recovery can repair only metadata for that exact
+already-committed native row; if no authoritative native result exists, the command
+remains UNKNOWN. It does not guess failure, adopt a same-name row or replay effects.
+
+Editor CAS fingerprints include the stable definition, enabled state and monotonic
+editor revision, excluding natural clock/lease advancement. Old pending snapshots
+are re-read under the schedule lock before receipt repair so they cannot roll back
+later revisions. Legacy edits and new dispatch are fenced while an editor command
+is pending. Original occurrence history and cancellation instead retain the
+original owner/immutable-plan/task/request custody; a lost clock-edit reply cannot
+block cleanup of an already owned task. A pause acknowledgement still does not
+cancel accepted tasks or prove an external effect has stopped.
+
+The lock connection is separate from metadata and root-resource lock pools and
+bounded to one connection with a short acquisition timeout. Contention returns a
+finite busy conflict instead of blocking the event loop while it awaits native
+HTTP. Metadata pool size one is part of targeted PostgreSQL acceptance.
+
+Clock behavior is specified and tested in [SCHEDULE_CLOCK_CONTRACT.md](SCHEDULE_CLOCK_CONTRACT.md).
+The preview shows UTC, local time and explicit UTC offset for the next three ticks.
+It follows installed Agno/croniter/pytz semantics, including DST gap/fold behavior;
+it is not a guarantee of actual admission. Missed ticks coalesce, with no catch-up
+replay. Overlap remains allowed subject to current per-owner and aggregate active
+task/storage admission, plus each immutable plan's existing execution/usage budget.
+This is not a new cumulative daily/monthly spend cap or per-schedule no-overlap
+policy. Paused/UNKNOWN tasks retain their normal active capacity until authoritative
+lifecycle evidence releases it. Restarts reconcile original occurrences/tickets,
+not replacement runs. Single active poller and the documented conditional-release
+limitation remain unchanged.
+
+The milestone uses explicit synthetic development fixtures, mock HTTPS login,
+deterministic clock seams and isolated PostgreSQL/native runtime only. Its draft PR
+records exact-head CI, targeted PostgreSQL and desktop/mobile evidence. It creates
+no production schedules or notifications and accepts no new provider credentials,
+financial commitment, host configuration, deployment or merge. Schedule deletion,
+catalog quota/history retention, multi-poller lease fencing, cumulative recurring
+spend policy and production identity/host acceptance remain separate work. Offline
+[baseline/candidate contracts](BASELINE_CANDIDATE_CONTRACT.md) are validation-only;
+no comparison execution or full scientific workflow is claimed.
+
+History in this initial editor covers persisted occurrences, not a complete log of
+all clock claims or refusals. Current-role/plan/pending/lease checks may reject
+before occurrence persistence and remain internal audit only; lock acquisition can
+fail before that audit boundary. An empty history does not prove no tick occurred.
+Owner-visible finite pre-admission refusal diagnostics remain code work; this
+milestone does not claim that every non-execution can be diagnosed from the UI.
+
+| Requirement | Current milestone | Remaining code / external validation |
+|---|---|---|
+| Create/edit/list/pause/resume/history | Manager own approved plan, initially paused create, immutable plan pin, CAS, finite owner projections and actual UI | Production operating policy and account onboarding |
+| Timezone/DST/missed runs | Five-field cron, IANA zone, UTC/local-offset preview; deterministic native clock comparisons; missed ticks coalesce | No catch-up/backfill feature; deployed clock/zone-data operations not certified |
+| Overlap/per-owner limits | Concurrent occurrences allowed within current owner/global active quotas, storage admission and per-plan execution/usage budgets | Per-schedule no-overlap, cumulative daily/monthly spend caps and catalog quota |
+| Identity/permission changes | Current authorization and plan/binding checks at each dispatch; pause/revoke race coverage | Production identity deployment and operator policy |
+| Lost replies/stale edits/restart | Durable exact native ID/command, stable occurrence identity, original receipt reconciliation, CAS and no UNKNOWN replay | Administrative resolution of truly unknown control-plane writes; history retention/deletion policy |
+| Cancellation with pending edits | Original plan/task/request custody remains available for explicit owned cancellation | External stop confirmation remains existing runtime-specific evidence |
+| History and failure explanations | Persisted admission records, actual queue state, original task links; safe finite projection | Owner-visible pre-reservation denial diagnostics |
+| Scheduler topology | One existing native poller, bounded separate advisory-lock pool; no second orchestrator | Atomic native conditional lease release and multi-poller acceptance |
+| Baseline/candidate comparison | Strict offline declared-data/evaluator/change-scope contract, synthetic unit tests | Actual verified bytes, governed execution, result provenance and complete comparison/review UI |
+| Scientific/host acceptance | Explicit synthetic mock-login and isolated native fixtures | Real scientific provider/domain validation, deployed IdP/TLS, target host and sustained capacity acceptance |

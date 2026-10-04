@@ -1,5 +1,33 @@
 # Cloud integration task board
 
+## Active schedule management journey — 2026-10-04
+
+Base accepted draft PR31 exact `d81d455eeaacd258f60a536f9d247b5ee1cecb11`;
+branch `coord/schedule-management-journey-20261004`. Requirements checked against
+`V03_APP_GAP_AUDIT.md` and `SCHEDULING.md`: native poller/admission/recovery already
+exist; remaining application gap is owner-visible editing/list/pause/resume/history.
+Manager-only writes retain own approved immutable plans and current dispatch rights.
+New creations start paused. Explicit synthetic mock-login fixtures only; no actual
+production schedules, notifications, provider credentials, paid calls, host changes,
+merge or deployment. Root grants one heavy local lane at a time.
+
+| Owner / exclusive scope | Dependencies | Status / acceptance |
+|---|---|---|
+| root: scheduling core/editor journal/API/main and shared frontend integration/docs | Frozen worker contracts | Integrated durable native-write receipts, paused create, CAS revisions, finite owner projections, exact-command GET recovery and bounded independent lock pool. Frontend178/static/audit pass; local Python1169=813pass356skip54.992s; actual desktop/mobile final pass; exact CI pending, to be recorded in draft PR at immutable head. |
+| factory_flow: schedule_contract helper/unit tests/clock doc | Installed native Agno clock | Frozen; 7 light tests pass, actual fixed-clock native comparison incl. DST gap/fold, coalesce/no catch-up and allowed budgeted overlap. |
+| independent_review: new schedule panel/state/frontend tests | Root management API and preview contract | Frozen; 11 frontend tests pass. Chinese editor/list/history, current-action guards, lost-ACK exact-command recovery, opaque owner pointers and strict receipts. |
+| at10: new schedule management PG tests | Integrated core/API | Frozen; 5 actual PG cases pass (initial4 14.011s, added cancellation4.514s), plus targeted exact receipt/pending/ABA regressions. Metadata pool1, paused native cancellation and owner fences verified; fixtures cleaned. |
+| go_policy: new schedule browser script/scratch runner | Built UI/mock HTTPS + PG | Frozen; final manager+independent reviewer desktop/mobile PASS: create1 lostACK GET recovery, edit/enable/pause/history, fixture original trigger1, native artifacts/Bob404, page/console0, 8 screenshots; cleanup complete. |
+| go_adapter: offline comparison contract/tests/doc | Existing plan/ORX boundaries | Frozen; 6 pure tests pass. Exact data/evaluator/sample/change/authority pins; no execution and no full comparison claim. |
+| reviewer: read-only independent review | Shared implementation and final evidence | Lock/ACK/CAS/old-pending rollback and cleanup-fence findings fixed and regression tested. Code/11 UI tests and final browser/screens/doc matrix independently reviewed with no blocker; exact CI pending. |
+
+Native missed ticks coalesce; no backfill. Overlap is allowed subject to current
+owner/global admission and existing task budgets, not a new periodic cost budget.
+Pause blocks future admissions, not accepted tasks. UNKNOWN retains original task
+capacity and never automatically replays. Single active native poller remains the
+supported topology; conditional native lease release/replica acceptance remain open.
+
+
 ## Active verified-source controlled synthesis journey — 2026-10-04
 
 Base accepted draft PR30, exact `d4f5e6c0f64cc49e44561629ba6dc1e909661387`;
@@ -10,13 +38,13 @@ calls, new accounts, paid services, host changes, production schedules, merge or
 
 | Owner / exclusive scope | Dependency | Acceptance / state |
 |---|---|---|
-| root: shared composition/snapshot pins, policy/main/API/store wiring, app integration/CSS/docs | Frozen source/runtime/UI contracts | Integrated immutable sourceSnapshotRef and same native plan/review/run path; frontend167/static/audit clean; local Python1151=800pass351skip58.703s; desktop/mobile final pass; exact-head CI pending (recorded in draft PR after commit). |
+| root: shared composition/snapshot pins, policy/main/API/store wiring, app integration/CSS/docs | Frozen source/runtime/UI contracts | Integrated immutable sourceSnapshotRef and same native plan/review/run path; frontend167/static/audit clean; local Python1151=800pass351skip58.703s; desktop/mobile final pass; draft PR31 exact d81d455 push37220288533/PR37220329603 all10 jobs pass; each PG1088pass63skip. Root/reviewer dual terminal observations97.090241s/125.049434s. |
 | factory_flow: new synthesis_sources + unit tests | Existing verified literature artifacts | Frozen; 9 source + 6 configuration tests pass, owner/custody/hash/stale/restart/idempotency and baseline policy fingerprint compatibility. |
 | go_adapter: new synthesis_runtime + unit tests | Root extracted existing saver; source service | Frozen; 11 tests pass. Static adapters resolve plan snapshot; verified report projection reuses saver; no per-request publication/registry mutation. |
 | independent_review: new SynthesisJourney/state/report UI and tests | Owner snapshot APIs; root Composer bridge | Frozen; 11 tests pass. Selection/provenance/limits/recovery + controlled output inspection; no new execution flow. |
 | at10: new synthesis_journey_postgres tests | Integrated API and runtime | Four real PG/native cases pass across initial run + corrected fixture rerun; legacy synthesis profile2 pass. Cancel/revoke at actual model boundary, no report; source drift/missing/owner/restart covered. Lane released. |
 | go_policy: new accept_synthesis_journey_browser script + scratch runner | Built UI, mock HTTPS/PG/source runtime | Frozen; final desktop/mobile actual mock HTTPS/PG/native journey passes. Snapshot/proposal lost ACK read recovery, exactly one source + synthesis per viewport, verified downloads/Bob404, page/console0/no overflow; fixtures cleaned. Completed-only mount fixes premature preview409. |
-| reviewer: independent read-only contracts/security/acceptance review | Combined changes | Backend and frontend reviewed, 28 Python + 23 frontend independently pass; stable ref/sealed plan correction verified; code review complete; final browser/exact CI review pending. |
+| reviewer: independent read-only contracts/security/acceptance review | Combined changes | Backend and frontend reviewed, 28 Python + 23 frontend independently pass; stable ref/sealed plan correction verified; code/browser/exact CI independently verified, two terminal observations125.049434s apart; no blocking issue. |
 
 Heavy local tests run serially only after root grants the lane. Baseline/candidate
 execution comparison shares unresolved evaluator/dataset/approved-change and native
