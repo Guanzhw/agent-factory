@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from typing import Any
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -156,11 +157,13 @@ class DeploymentValidationTests(unittest.TestCase):
         data["computeBackend"]["owners"] = ["x" * 201]
         self.assertFalse(validate_manifest(data)["configurationValid"])
 
+    @patch("os.name", "posix")
+    @patch("os.uname", new=lambda: SimpleNamespace(sysname="Linux"), create=True)
     def test_local_observation_is_mocked_read_only_and_not_target_acceptance(self):
         data = self.manifest()
         data["computeBackend"] = self.delegated()
         with patch("agent_factory.deployment_validation._read_public_file", return_value="MemTotal: 4194304 kB\n"), \
-             patch("os.sched_getaffinity", return_value={0, 1}), \
+             patch("os.sched_getaffinity", return_value={0, 1}, create=True), \
              patch("agent_factory.deployment_validation.LinuxDelegatedCgroupFS") as filesystem:
             report = collect_local_observations(data)
             filesystem.assert_called_once()

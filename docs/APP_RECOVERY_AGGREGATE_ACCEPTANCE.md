@@ -63,6 +63,12 @@ geometry, misleading post-removal readback and ambiguous guardian-death recovery
 Fake filesystem, SQLite and mocked full guardian control-flow tests verify
 ordering, no replay and positive stop contracts. They do not exercise cgroups.
 
+Initial CI at `c834ba6` exposed two Windows fixture failures: Linux-only affinity
+and uname attributes needed explicit mocked creation, and a SQLite engine had to
+be disposed before its temporary directory cleanup. The fixes only change tests;
+22 targeted tests pass locally. That failed head is not accepted, and its
+superseded workflows are cancelled in favor of the corrected exact-head runs.
+
 ## Remaining boundaries
 
 No live provider/key calls, host/cgroup/security configuration changes, machine

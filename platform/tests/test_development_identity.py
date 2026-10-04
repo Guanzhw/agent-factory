@@ -159,38 +159,38 @@ class MockIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denied.status_code, 400)
 
     async def test_existing_sql_session_lifecycle_logout_and_current_owner_recheck(self):
-        with TemporaryDirectory() as directory:
-            engine = create_engine("sqlite:///" + str(Path(directory) / "browser.sqlite"))
-            self.addCleanup(engine.dispose)
-            with engine.begin() as connection:
-                connection.execute(text("CREATE TABLE af_browser_auth(id TEXT PRIMARY KEY,kind TEXT,body TEXT)"))
-            enabled = {"alice", "bob", "manager", "manager2"}
-            def current(owner):
-                if owner not in enabled:
-                    raise HTTPException(403, "Synthetic owner disabled")
-                return {"id": owner}
-            authority = SimpleNamespace(_key="synthetic-browser-key-memory-only-not-a-production-credential", _current_user=current)
-            service = BrowserSessionService(SimpleNamespace(engine=engine), authority, self.provider.config, exchanger=self.provider.exchanger)
-            url, binding = service.start()
-            params = {key: value[0] for key, value in parse_qs(urlsplit(url).query).items()}
-            form, _, _, _ = await self.begin(params=params)
-            callback, _, _ = await self.select("alice", form=form)
-            opaque = await service.finish(callback["code"][0], callback["state"][0], binding)
-            self.assertEqual(service.session(opaque)["owner"], "alice")
-            self.assertEqual(len(service.csrf(opaque)), 43)
-            enabled.remove("alice")
-            with self.assertRaises(HTTPException):
-                service.session(opaque)
-            enabled.add("alice")
-            service.logout(opaque)
-            with self.assertRaises(HTTPException):
-                service.session(opaque)
-            with self.assertRaises(HTTPException):
-                await service.finish(callback["code"][0], callback["state"][0], binding)
-            with engine.connect() as connection:
-                rows = connection.execute(text("SELECT body FROM af_browser_auth")).all()
-            self.assertNotIn(callback["code"][0], str(rows))
-            self.assertNotIn(opaque, str(rows))
+        directory = self.enterContext(TemporaryDirectory())
+        engine = create_engine("sqlite:///" + str(Path(directory) / "browser.sqlite"))
+        self.addCleanup(engine.dispose)
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE af_browser_auth(id TEXT PRIMARY KEY,kind TEXT,body TEXT)"))
+        enabled = {"alice", "bob", "manager", "manager2"}
+        def current(owner):
+            if owner not in enabled:
+                raise HTTPException(403, "Synthetic owner disabled")
+            return {"id": owner}
+        authority = SimpleNamespace(_key="synthetic-browser-key-memory-only-not-a-production-credential", _current_user=current)
+        service = BrowserSessionService(SimpleNamespace(engine=engine), authority, self.provider.config, exchanger=self.provider.exchanger)
+        url, binding = service.start()
+        params = {key: value[0] for key, value in parse_qs(urlsplit(url).query).items()}
+        form, _, _, _ = await self.begin(params=params)
+        callback, _, _ = await self.select("alice", form=form)
+        opaque = await service.finish(callback["code"][0], callback["state"][0], binding)
+        self.assertEqual(service.session(opaque)["owner"], "alice")
+        self.assertEqual(len(service.csrf(opaque)), 43)
+        enabled.remove("alice")
+        with self.assertRaises(HTTPException):
+            service.session(opaque)
+        enabled.add("alice")
+        service.logout(opaque)
+        with self.assertRaises(HTTPException):
+            service.session(opaque)
+        with self.assertRaises(HTTPException):
+            await service.finish(callback["code"][0], callback["state"][0], binding)
+        with engine.connect() as connection:
+            rows = connection.execute(text("SELECT body FROM af_browser_auth")).all()
+        self.assertNotIn(callback["code"][0], str(rows))
+        self.assertNotIn(opaque, str(rows))
 
 
 class DevelopmentLauncherTests(unittest.TestCase):
