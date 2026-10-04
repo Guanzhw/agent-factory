@@ -46,3 +46,6 @@
 .storage-list li { display: flex; align-items: start; justify-content: space-between; gap: 18px; padding: 18px 0; border-bottom: 1px solid var(--line, #ddd); overflow-wrap: anywhere; }
 .storage-list details { font-size: .8rem; }
 @media(max-width: 720px) { .storage-list li { flex-direction: column; } .storage-card { padding: 16px; } }
+
+.literature-evidence { min-width: 0; overflow-wrap: anywhere; }
+.literature-evidence blockquote { margin-inline: 16px; }

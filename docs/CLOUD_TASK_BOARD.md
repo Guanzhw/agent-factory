@@ -506,3 +506,8 @@ exact-head CI pending; no new external retrieval or provider calls.
 Final independent literature review approved with no blockers. All implementation
 lanes are frozen; root owns commit/push/draft PR and exact-head CI. Earlier local
 corrupt-ZIP/report-integrity findings are resolved with regression coverage.
+
+Final browser follow-up: source-present mobile hash expansion initially overflowed;
+scoped wrapping fixes it and rerun passed. Initial PR22 head fb6e5f3 workflows
+37187033930/37187049147 were canceled as superseded, not claimed green. Root
+will verify only the new final head; backend unchanged from passing805 suite.

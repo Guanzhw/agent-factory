@@ -180,3 +180,9 @@ rendering and no page errors or mutation requests. This browser fixture does not
 claim live retrieval. It also exposed the existing Vite `/api` proxy matching the
 frontend `/api.ts` module; narrowing the proxy to `/api/` restores development
 page loading while preserving API routing.
+
+A source-present mobile browser check additionally found the expanded SHA-256
+line overflowing its panel. Scoped wrapping and narrower quotation margins fix
+that observed case; the same browser check now confirms no panel overflow.
+The superseded initial PR22 workflows were canceled before completion to avoid
+duplicating heavy CI after this display correction. Only final-head runs count.
