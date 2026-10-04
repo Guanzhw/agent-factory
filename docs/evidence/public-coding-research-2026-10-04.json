@@ -1,0 +1,385 @@
+{
+  "mode": "public-code-development-example",
+  "sourceEvidenceMode": "live-public-fetch",
+  "sources": [
+    {
+      "sourceId": "go-http-policy",
+      "path": "platform/agent_factory/go_http.py",
+      "commit": "914de54a18ee3ccda772f578a217f7df6594c805",
+      "rawUrl": "https://raw.githubusercontent.com/Guanzhw/agent-factory/914de54a18ee3ccda772f578a217f7df6594c805/platform/agent_factory/go_http.py",
+      "url": "https://github.com/Guanzhw/agent-factory/blob/914de54a18ee3ccda772f578a217f7df6594c805/platform/agent_factory/go_http.py#L20-L38",
+      "lineStart": 20,
+      "lineEnd": 38,
+      "sha256": "a3eb5b54d205964865575b5bfe1aa28426b88c72fa579a93d819b377e9430bc3",
+      "excerptSha256": "429e1cff4c683c4f818eefcd8f28cdd9a1edf36394897a8bacbf09b20cccab29",
+      "license": "MIT"
+    },
+    {
+      "sourceId": "go-http-tests",
+      "path": "platform/tests/test_go_http.py",
+      "commit": "914de54a18ee3ccda772f578a217f7df6594c805",
+      "rawUrl": "https://raw.githubusercontent.com/Guanzhw/agent-factory/914de54a18ee3ccda772f578a217f7df6594c805/platform/tests/test_go_http.py",
+      "url": "https://github.com/Guanzhw/agent-factory/blob/914de54a18ee3ccda772f578a217f7df6594c805/platform/tests/test_go_http.py#L58-L69",
+      "lineStart": 58,
+      "lineEnd": 69,
+      "sha256": "f706663df7f0c48fc8aa32b89950033bec5d187fd283a3e4ac0f0b4177c10174",
+      "excerptSha256": "0687c6f772963d66b5713ee90e8476f37241f88e1b2f9b1d58ff554d80f751d4",
+      "license": "MIT"
+    }
+  ],
+  "deepseek": {
+    "model": "deepseek-flash",
+    "status": "completed",
+    "taskId": "9c50f7c5-48e7-48b0-bd47-116eaf93b541",
+    "planId": "86654109-fab3-4603-a4bd-27d6912070ec",
+    "requestId": "8ddd95d5-4018-4f75-a477-e856e3ea266b",
+    "receiptVerified": true,
+    "usage": {
+      "attempts": [
+        {
+          "state": "SETTLED"
+        },
+        {
+          "state": "SETTLED"
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "task",
+          "settledTokens": 4778,
+          "heldTokens": 0
+        }
+      ],
+      "pricingBasis": "operator-nominal-not-invoice",
+      "invoiceVerified": false,
+      "actualCostStatus": "UNKNOWN"
+    },
+    "research": {
+      "mode": "public-code-development-example",
+      "sourceEvidenceMode": "live-public-fetch",
+      "sourceCount": 2,
+      "answer": "SHA-256: `a9642da7ebb756f1b0e0c15578b576e30f75fd542ab6fbb0d4702a3da18dcde4`\n\nReview: `open_go_client` keeps managed proxy/CA behavior by leaving `transport=None`, so `trust_env=True` preserves environment proxy mounts, NO_PROXY, and CA settings [S1]. Destinations are bounded at request time by `_go_destination`, allowing only HTTPS `opencode.ai` on port 443/None with no userinfo, query, fragment, `@`, or `#` [S1]. Redirects are disabled (`follow_redirects=False`), and default retries are 0 [S1]. Tested: proxy failure yields one proxied attempt, no direct fallback, no retry [S2]. Suggestions: keep these invariants covered when transport is injected.",
+      "citationPresenceVerified": true,
+      "semanticReview": "required-separately",
+      "sourceSetId": "agent-factory-go-http-914de54-v1"
+    },
+    "artifactSha256": "8a8e7b27d296c6f7801f8fb318ef7ac22bbe97f244baa4337acff193daf15349",
+    "nativeAttempts": 1
+  },
+  "luna": {
+    "model": "gpt-6-luna",
+    "status": "stopped",
+    "taskId": "b739eb4c-fe31-4d72-ba50-14389ff28821",
+    "planId": "6ae607b1-f304-4637-a560-a9a994d2e038",
+    "requestId": "70bbb059-f5cc-4dc4-8647-b7d8da339b30",
+    "receiptVerified": true,
+    "diagnostic": {
+      "phase": "RUNNER_FAILED",
+      "summary": "The local validation runner failed.",
+      "errorType": "RuntimeError",
+      "errorCategory": "unknown",
+      "rejectionCode": "UNKNOWN_ERROR",
+      "exceptionChain": [
+        "RuntimeError"
+      ]
+    },
+    "cancellationRequested": true,
+    "usage": {
+      "attempts": [
+        {
+          "state": "SETTLED"
+        },
+        {
+          "state": "UNKNOWN"
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "task",
+          "settledTokens": 2085,
+          "heldTokens": 33280
+        }
+      ],
+      "pricingBasis": "operator-nominal-not-invoice",
+      "invoiceVerified": false,
+      "actualCostStatus": "UNKNOWN"
+    }
+  },
+  "campaign": {
+    "status": "STOPPED",
+    "stopCode": "UNKNOWN",
+    "requestCount": 14
+  },
+  "newTickets": [
+    {
+      "id": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "ordinal": 11,
+      "model": "deepseek-flash",
+      "purpose": "product",
+      "session": "9c50f7c5-48e7-48b0-bd47-116eaf93b541",
+      "state": "SETTLED",
+      "output_cap": 256,
+      "created": 1791102799.8449843,
+      "input_tokens": 2189,
+      "output_tokens": 61,
+      "total_tokens": 2250,
+      "error_code": null,
+      "actual_model": "deepseek-flash"
+    },
+    {
+      "id": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "ordinal": 12,
+      "model": "deepseek-flash",
+      "purpose": "product",
+      "session": "9c50f7c5-48e7-48b0-bd47-116eaf93b541",
+      "state": "SETTLED",
+      "output_cap": 256,
+      "created": 1791102802.4882357,
+      "input_tokens": 2320,
+      "output_tokens": 208,
+      "total_tokens": 2528,
+      "error_code": null,
+      "actual_model": "deepseek-flash"
+    },
+    {
+      "id": "b244fe99-b18b-4813-9909-df53ced96032",
+      "ordinal": 13,
+      "model": "gpt-6-luna",
+      "purpose": "product",
+      "session": "b739eb4c-fe31-4d72-ba50-14389ff28821",
+      "state": "SETTLED",
+      "output_cap": 256,
+      "created": 1791102833.917623,
+      "input_tokens": 1896,
+      "output_tokens": 189,
+      "total_tokens": 2085,
+      "error_code": null,
+      "actual_model": "gpt-6-luna"
+    },
+    {
+      "id": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "ordinal": 14,
+      "model": "gpt-6-luna",
+      "purpose": "product",
+      "session": "b739eb4c-fe31-4d72-ba50-14389ff28821",
+      "state": "UNKNOWN",
+      "output_cap": 256,
+      "created": 1791102837.7655716,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "error_code": "UNKNOWN",
+      "actual_model": null
+    }
+  ],
+  "newDiagnostics": [
+    {
+      "sequence": 67,
+      "timestampUtc": "2026-10-04T08:33:19.847211+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "phase": "PREPARED",
+      "summary": "A durable local request slot was reserved."
+    },
+    {
+      "sequence": 68,
+      "timestampUtc": "2026-10-04T08:33:19.849144+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "phase": "CREDENTIAL_CHECK",
+      "summary": "Local credential authorization is about to be checked."
+    },
+    {
+      "sequence": 69,
+      "timestampUtc": "2026-10-04T08:33:19.876630+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "phase": "DISPATCH_STARTED",
+      "summary": "The local HTTP dispatch call is about to start; no socket or server receipt is established."
+    },
+    {
+      "sequence": 70,
+      "timestampUtc": "2026-10-04T08:33:21.209289+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "httpStatus": 200,
+      "phase": "RESPONSE_HEADERS",
+      "responseHeaders": {
+        "contentType": "event-stream"
+      },
+      "summary": "The HTTP client exposed response headers."
+    },
+    {
+      "sequence": 71,
+      "timestampUtc": "2026-10-04T08:33:21.500414+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "phase": "STREAM_COMPLETED",
+      "summary": "The HTTP body reached EOF; successful parsing is not established."
+    },
+    {
+      "sequence": 72,
+      "timestampUtc": "2026-10-04T08:33:21.503220+00:00",
+      "requestId": "e4086a2e-28de-4029-8219-6cd82aa79c8e",
+      "phase": "PARSED",
+      "summary": "The bounded provider response was parsed."
+    },
+    {
+      "sequence": 73,
+      "timestampUtc": "2026-10-04T08:33:22.490520+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "phase": "PREPARED",
+      "summary": "A durable local request slot was reserved."
+    },
+    {
+      "sequence": 74,
+      "timestampUtc": "2026-10-04T08:33:22.492223+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "phase": "CREDENTIAL_CHECK",
+      "summary": "Local credential authorization is about to be checked."
+    },
+    {
+      "sequence": 75,
+      "timestampUtc": "2026-10-04T08:33:22.515296+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "phase": "DISPATCH_STARTED",
+      "summary": "The local HTTP dispatch call is about to start; no socket or server receipt is established."
+    },
+    {
+      "sequence": 76,
+      "timestampUtc": "2026-10-04T08:33:24.445466+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "httpStatus": 200,
+      "phase": "RESPONSE_HEADERS",
+      "responseHeaders": {
+        "contentType": "event-stream"
+      },
+      "summary": "The HTTP client exposed response headers."
+    },
+    {
+      "sequence": 77,
+      "timestampUtc": "2026-10-04T08:33:25.672685+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "phase": "STREAM_COMPLETED",
+      "summary": "The HTTP body reached EOF; successful parsing is not established."
+    },
+    {
+      "sequence": 78,
+      "timestampUtc": "2026-10-04T08:33:25.678659+00:00",
+      "requestId": "7a60e033-6efa-4975-97a5-a1a3e6e4ab2f",
+      "phase": "PARSED",
+      "summary": "The bounded provider response was parsed."
+    },
+    {
+      "sequence": 79,
+      "timestampUtc": "2026-10-04T08:33:53.920979+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "phase": "PREPARED",
+      "summary": "A durable local request slot was reserved."
+    },
+    {
+      "sequence": 80,
+      "timestampUtc": "2026-10-04T08:33:53.923511+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "phase": "CREDENTIAL_CHECK",
+      "summary": "Local credential authorization is about to be checked."
+    },
+    {
+      "sequence": 81,
+      "timestampUtc": "2026-10-04T08:33:53.949354+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "phase": "DISPATCH_STARTED",
+      "summary": "The local HTTP dispatch call is about to start; no socket or server receipt is established."
+    },
+    {
+      "sequence": 82,
+      "timestampUtc": "2026-10-04T08:33:54.790886+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "httpStatus": 200,
+      "phase": "RESPONSE_HEADERS",
+      "responseHeaders": {
+        "contentType": "event-stream"
+      },
+      "summary": "The HTTP client exposed response headers."
+    },
+    {
+      "sequence": 83,
+      "timestampUtc": "2026-10-04T08:33:56.781444+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "phase": "STREAM_COMPLETED",
+      "summary": "The HTTP body reached EOF; successful parsing is not established."
+    },
+    {
+      "sequence": 84,
+      "timestampUtc": "2026-10-04T08:33:56.783963+00:00",
+      "requestId": "b244fe99-b18b-4813-9909-df53ced96032",
+      "phase": "PARSED",
+      "summary": "The bounded provider response was parsed."
+    },
+    {
+      "sequence": 85,
+      "timestampUtc": "2026-10-04T08:33:57.767903+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "phase": "PREPARED",
+      "summary": "A durable local request slot was reserved."
+    },
+    {
+      "sequence": 86,
+      "timestampUtc": "2026-10-04T08:33:57.770534+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "phase": "CREDENTIAL_CHECK",
+      "summary": "Local credential authorization is about to be checked."
+    },
+    {
+      "sequence": 87,
+      "timestampUtc": "2026-10-04T08:33:57.794124+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "phase": "DISPATCH_STARTED",
+      "summary": "The local HTTP dispatch call is about to start; no socket or server receipt is established."
+    },
+    {
+      "sequence": 88,
+      "timestampUtc": "2026-10-04T08:33:59.198521+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "httpStatus": 200,
+      "phase": "RESPONSE_HEADERS",
+      "responseHeaders": {
+        "contentType": "event-stream"
+      },
+      "summary": "The HTTP client exposed response headers."
+    },
+    {
+      "sequence": 89,
+      "timestampUtc": "2026-10-04T08:34:01.091801+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "errorCategory": "protocol",
+      "errorType": "ModelProviderError",
+      "exceptionChain": [
+        "ModelProviderError"
+      ],
+      "phase": "RESPONSE_HEADERS",
+      "rejectionCode": "RESPONSES_INCOMPLETE",
+      "summary": "The HTTP client exposed response headers."
+    },
+    {
+      "sequence": 90,
+      "timestampUtc": "2026-10-04T08:34:01.094079+00:00",
+      "requestId": "9abc941d-47c8-4ed9-9323-c70660e5a37f",
+      "errorCategory": "protocol",
+      "errorType": "ModelProviderError",
+      "exceptionChain": [
+        "ModelProviderError"
+      ],
+      "phase": "FAILED",
+      "rejectionCode": "RESPONSES_INCOMPLETE",
+      "summary": "The operation failed; dispatch certainty requires the recorded phase history."
+    }
+  ],
+  "hostPubmedDiagnostic": {
+    "scope": "host-existing-managed-egress-diagnostic",
+    "endpoint": "pubmed-esearch-fixed-public-rag-query",
+    "retries": 0,
+    "containerTransportVerified": false,
+    "httpStatus": 200,
+    "responseBytes": 4670,
+    "sourceIdsReturned": 1,
+    "elapsedMilliseconds": 681
+  },
+  "historicalUnknownsPreserved": true,
+  "dualModelLiveAcceptance": false
+}

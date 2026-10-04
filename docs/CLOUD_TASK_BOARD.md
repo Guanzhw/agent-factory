@@ -1,5 +1,34 @@
 # Cloud integration task board
 
+## Active milestone — public coding research, 2026-10-04
+
+Current branch `coord/public-coding-research-20261004`, based on PR22 exact
+`914de54a18ee3ccda772f578a217f7df6594c805`. PR21/22 are completed stages,
+not whole-product acceptance. All older ownership/gates below are historical.
+The user authorized ongoing subscription-only Go coding-development tests;
+root alone owns credentials. No new payment, production provider, merge or deployment.
+
+| Owner / exclusive scope | Dependencies | Acceptance / state |
+|---|---|---|
+| factory_flow: public_code_knowledge and isolated native/runner tests | Fixed MIT source pins, existing governance | Both protocols passed actual Factory/Agno/PG with mocked HTTP; 8 KiB bound, two settlements, no holds, cited persisted answer. Three runner checks and failed-retrieval PG diagnostic case passed. |
+| go_policy: public_code_fetch and scope reconciliation | Fixed source schema | Eight offline fetch checks and static checks passed; root actual fetch verified both pinned full/excerpt hashes. Scope map delivered. |
+| independent_review: read-only review | Frozen worker files and root diff | Source integrity/transport review passed; wrapper bounded-read fix and future diagnostic integration reviewed. |
+| root: shared integration, runner, live evidence, board, PR/exact CI | Worker handback and serialized PG lane | Live DeepSeek accepted; Luna RESPONSES_INCOMPLETE/UNKNOWN, campaign stopped without retry. Local 828 total/528 passed/300 skipped; frontend78/static/audit passed; exact CI pending. |
+
+Selected acceptance: a genuine coding question about this client's proxy/CA,
+destination, redirect and retry behavior, answered from two reviewed immutable
+public sources with explicit citations. This is a development example, not an
+invented production research question. Root verifies real HTTP acquisition,
+native execution, checksum artifact, settled ledger and answer semantics.
+Historical UNKNOWNs and the old zero-source PubMed failure remain unchanged.
+Current host PubMed diagnostic returned HTTP200/one source ID; container transport
+and the historical failure cause remain unverified. No host security settings changed.
+
+PR22 CI accounting correction: each PostgreSQL suite **805 total = 742 passed +
+63 skipped**, zero failures/errors. Ubuntu default suite **805 total = 506 passed +
+299 skipped**; Windows **805 total = 391 passed + 414 skipped**.
+
+
 ## Delivery review cleanup — 2026-10-03
 
 Current review/integration order: **PR9 → PR10 → PR14 (checkpoint bridge) → PR11 → PR12 → PR13**.

@@ -1,5 +1,15 @@
 # Production and research decisions still needed
 
+Current continuation (2026-10-04): [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md)
+separates remaining product code from external production inputs. Draft
+[PR21](https://github.com/Guanzhw/agent-factory/pull/21) and
+[PR22](https://github.com/Guanzhw/agent-factory/pull/22) completed individual stages,
+not full-product acceptance. Go is authorized for subscription-only coding tests;
+production scientific-provider selection and invoice verification remain separate.
+The public-code development example passed live DeepSeek; Luna's second response
+was incomplete and remains UNKNOWN with the campaign stopped. No retry occurred.
+Older status/gate statements below describe their original stage.
+
 This is a read-only integration assessment, not a request to change accounts or
 supply secrets. Collect the following four choices together before implementation.
 

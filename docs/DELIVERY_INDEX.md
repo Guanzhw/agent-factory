@@ -1,5 +1,15 @@
 # Current delivery and review index
 
+Current continuation (2026-10-04): [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md)
+separates remaining product code from external production inputs. Draft
+[PR21](https://github.com/Guanzhw/agent-factory/pull/21) and
+[PR22](https://github.com/Guanzhw/agent-factory/pull/22) completed individual stages,
+not full-product acceptance. Go is authorized for subscription-only coding tests;
+production scientific-provider selection and invoice verification remain separate.
+The public-code development example passed live DeepSeek; Luna's second response
+was incomplete and remains UNKNOWN with the campaign stopped. No retry occurred.
+Older status/gate statements below describe their original stage.
+
 This index separates the latest tested runtime from the historical stack under
 review. Every PR remains Draft. No merge, branch-history rewrite or deployment
 has occurred as part of the delivery cleanup.

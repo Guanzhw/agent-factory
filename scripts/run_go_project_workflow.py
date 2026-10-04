@@ -1,7 +1,7 @@
 """One native Factory coding roundtrip using an existing Go project policy.
 
 Operator-only. Never creates admission authority or runs a preliminary smoke.
-Only the runtime credential callback reads OPENCODE_GO; reports exclude model text.
+Only the runtime credential callback reads OPENCODE_GO; default reports exclude model text; public coding research includes its answer.
 """
 from __future__ import annotations
 
@@ -69,8 +69,16 @@ def check_smoke(proof, model):
                 for row in proof.get("tickets", [])))
 
 
-def execute_product(campaign, args):
+def execute_product(campaign, args, *, research_snapshot=None):
     evidence = {"model": args.model, "status": "stopped"}
+    code = PUBLIC_CODE
+    runtime_adapters = []
+    if research_snapshot is not None:
+        from agent_factory.public_code_knowledge import knowledge_registration, validate_snapshot
+        from agent_factory.public_coding_research import CHECKSUM_TEXT
+        validate_snapshot(research_snapshot)
+        runtime_adapters = [knowledge_registration(research_snapshot)]
+        code = CHECKSUM_TEXT
     with ExitStack() as stack:
         handle = GoDevelopmentHandle(mode="subscription", credential=credential,
             wire_stream=True, native_retries=0, live_campaign=campaign)
@@ -81,6 +89,7 @@ def execute_product(campaign, args):
             runtime_tool_contract="registered-runtime-v1",
             usage_policy=UsagePolicy(revision="go-project-nominal-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
+            runtime_adapters=runtime_adapters,
             trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
         application = create_app(settings)
         state = application.app.state.factory
@@ -106,6 +115,9 @@ def execute_product(campaign, args):
         definition = application_definition(models,
             next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum"),
             next(row for row in seeds if row["id"] == "local-environment"))
+        if research_snapshot is not None:
+            from agent_factory.public_coding_research import add_reviewed_sources
+            definition = add_reviewed_sources(state, definition, research_snapshot, author="manager", reviewer="bob")
         for mode in definition["modes"].values():
             mode["budget"]["toolCalls"] = 1
         login("bob")
@@ -118,9 +130,12 @@ def execute_product(campaign, args):
         app_ref = {key: app[key] for key in ("id", "version", "sha256")}
         connection = state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()), capabilities=[CAPABILITY])
         login("alice")
+        goal = 'Coding development: call checksum exactly once with text "' + code + '". Then report the returned SHA-256. Use no other tools.'
+        if research_snapshot is not None:
+            from agent_factory.public_coding_research import QUESTION
+            goal += " Answer from approved sources: " + QUESTION
         proposal = post("/api/factory/compositions/proposals", {
-            "goal": 'Coding development: call checksum exactly once with text "' + PUBLIC_CODE +
-                    '". Then report the returned SHA-256. Use no other tools.',
+            "goal": goal,
             "mode": args.model, "applicationRef": app_ref,
             "connectionRefs": {CONNECTION_NAME: connection["ref"]}, "requestId": str(uuid4())}, 201)
         require(proposal["candidate"]["status"] == "ready")
@@ -155,7 +170,16 @@ def execute_product(campaign, args):
             require(download.status_code == 200)
             digest = hashlib.sha256(download.content).hexdigest()
             require(digest == artifact["sha256"])
-            require(hashlib.sha256(PUBLIC_CODE.encode()).hexdigest() in json.dumps(download.json()))
+            require(hashlib.sha256(code.encode()).hexdigest() in json.dumps(download.json()))
+            if research_snapshot is not None:
+                snapshot = detail["snapshot"]
+                answer = snapshot.get("content") or (snapshot.get("run") or {}).get("content")
+                require(isinstance(answer, str) and 1 <= len(answer.encode()) <= 8192)
+                require("[S1]" in answer and "[S2]" in answer)
+                evidence["research"] = {"mode": "public-code-development-example",
+                    "sourceEvidenceMode": research_snapshot["evidenceMode"], "sourceCount": 2,
+                    "answer": answer, "citationPresenceVerified": True,
+                    "semanticReview": "required-separately", "sourceSetId": research_snapshot["sourceSetId"]}
             evidence.update(status="completed", artifactSha256=digest, nativeAttempts=1)
         except BaseException as error:
             evidence["diagnostic"] = safe_diagnostic("RUNNER_FAILED", error=error)
@@ -172,7 +196,10 @@ def execute_product(campaign, args):
     return evidence
 
 
-def run(args):
+def run(args, *, research_snapshot=None):
+    if research_snapshot is not None:
+        from agent_factory.public_code_knowledge import validate_snapshot
+        validate_snapshot(research_snapshot)
     require(args.model in MODELS)
     root = Path(args.evidence_directory).absolute()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -191,7 +218,8 @@ def run(args):
         stream.flush()
         os.fsync(stream.fileno())
     try:
-        evidence = execute_product(campaign, args)
+        evidence = (execute_product(campaign, args) if research_snapshot is None
+                    else execute_product(campaign, args, research_snapshot=research_snapshot))
     except BaseException as error:
         evidence = {"model": args.model, "status": "stopped", "diagnostic": safe_diagnostic("RUNNER_FAILED", error=error)}
     descriptor = os.open(root / "workflow-result.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)

@@ -205,6 +205,14 @@ class FailedLiteraturePostgresTests(LiteraturePostgresTests):
             self.assertEqual(evidence['provenance']['retrievalErrors'], ['COMMAND_FAILED'])
             self.assertIn('未取得来源'.encode(), archive.read('report.md'))
             self.assertIn(b'COMMAND_FAILED', archive.read('report.md'))
+        source_artifact = next(row for row in detail['artifacts'] if row['name'].startswith('literature-sources-'))
+        _, source_bytes = self.store.artifact(task, source_artifact['id'])
+        diagnostic = {'schema': 1, 'stage': 'discover', 'code': 'COMMAND_FAILED',
+                      'failureClass': 'command-exit', 'transportCause': 'UNKNOWN'}
+        self.assertEqual(source_artifact['provenance']['retrievalDiagnostics'], [diagnostic])
+        self.assertEqual(json.loads(source_bytes)['retrievalDiagnostics'], [diagnostic])
+        self.assertNotIn('Controlled unavailable public endpoint', source_bytes.decode())
+        self.assertNotIn('Controlled unavailable public endpoint', json.dumps(source_artifact['provenance']))
         self.assertEqual(len(self.store.effects(task)), 2, 'Exactly one query and one report; no automatic repeated requests')
 
 

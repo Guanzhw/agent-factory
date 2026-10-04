@@ -14,6 +14,7 @@ from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
 from .openresearch import OpenResearchError
+from .retrieval_diagnostics import safe_retrieval_diagnostic
 from .orx_experiment_tools import _limits
 from .orx_pins import approved_pin
 from .orx_retrieval import LinuxRetrievalAdapter
@@ -188,6 +189,7 @@ def register_literature_adapters(bindings):
 
             async def execute(ctx, identifier: str = ""):
                 retrieval_error = None
+                retrieval_diagnostics = []
                 nonlocal adapter
                 plan = authorize(ctx)
                 environment = bindings.environment_limits(plan, ctx)
@@ -257,6 +259,7 @@ def register_literature_adapters(bindings):
                                 if error.code not in {"COMMAND_FAILED", "TIMEOUT", "OUTPUT_LIMIT"}:
                                     raise
                                 retrieval_error = error.code
+                                retrieval_diagnostics.append(safe_retrieval_diagnostic(error, "discover"))
                                 return []
                             return [evidence_record(str(hit["id"]), str(hit.get("abstract") or ""),
                                 status="abstract_only" if hit.get("abstract") else "metadata_only",
@@ -277,6 +280,7 @@ def register_literature_adapters(bindings):
                         except OpenResearchError as error:
                             if error.code not in {"COMMAND_FAILED", "TIMEOUT", "OUTPUT_LIMIT"}:
                                 raise
+                            retrieval_diagnostics.append(safe_retrieval_diagnostic(error, "text" if selected == "orx_text" else "paper"))
                             return [evidence_record(identifier, "", status="retrieval_failed", field="stdout", error_code=error.code)]
                     operation = asyncio.create_task(retrieve())
                     try:
@@ -293,12 +297,14 @@ def register_literature_adapters(bindings):
                     if not containment["allStopped"]:
                         raise OpenResearchError("CLEANUP_UNCONFIRMED", "Retrieval process stop is unconfirmed")
                     provenance["containment"] = containment
+                    provenance["retrievalDiagnostics"] = retrieval_diagnostics
                     if type(adapter) is not LinuxRetrievalAdapter:
                         provenance["evidenceKind"] = "controlled_literature_fixture"
                     for source in retrieved:
                         source["evidenceKind"] = provenance["evidenceKind"]
                     authorize(ctx)
-                    result = {"mode": provenance["mode"], "sources": retrieved, "retrievalError": retrieval_error}
+                    result = {"mode": provenance["mode"], "sources": retrieved, "retrievalError": retrieval_error,
+                              "retrievalDiagnostics": retrieval_diagnostics}
                     artifact = context.store.artifact_write(task_id, "literature-sources-" + fingerprint[:16] + ".json",
                         json.dumps(result, ensure_ascii=False, sort_keys=True), metadata=provenance)
                     result["artifactId"] = artifact["id"]
