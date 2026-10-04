@@ -2,12 +2,17 @@
 
 ## Current matrix
 
-Preceding exact-head baseline: **`45eeb6b88046a40f8743e01e69d10353be386499`**,
-Draft PR15 push 37103072210 and PR 37103111700, all ten jobs passed, two root
-terminal observations 106.515 seconds apart; PostgreSQL 650 tests / 63 skips in
-each run. The current [safe-diagnostics correction](GO_SAFE_DIAGNOSTICS.md) is
-strictly offline; exact new-head CI belongs to its own draft PR. No prior-head
-CI or synthetic diagnostic fault is relabeled as live provider acceptance.
+Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
+adds explicit Luna revision2 and governed public literature contracts on PR23 exact
+`a5173379ce7f119fdcf3540239fd82cb19ff86ab`. Live Luna coding completed with two
+SETTLED attempts/4332 tokens/zero holds. Native host PubMed retrieved two actual
+abstract-only sources; a separately labelled controlled synthesis used these real
+sources without calling a scientific provider. The old failed container retrieval
+and all UNKNOWN attempts remain unchanged. See [stage evidence](LUNA_SCIENTIFIC_CONTRACTS.md)
+and [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md). Exact final CI belongs
+to PR24; earlier green runs do not certify its head. No full-product, production,
+scientific-validity, invoice or target-host acceptance is claimed.
+Older status/gate statements below describe their original stage.
 
 The delivery target remains complete factory/v0.3 plus the agreed extensions.
 This matrix separates implemented mechanisms, further code and real-environment
@@ -19,10 +24,10 @@ including the separately reviewed historical checkpoint bridge.
 |---|---|---|
 | Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
 | AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
-| Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](GO_PROJECT_INTEGRATION.md) |
+| Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](LUNA_SCIENTIFIC_CONTRACTS.md) |
 | Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
 | Production identity | Bearer validation, managed SQL identities/roles, current revocation and owner isolation; demo-only browser session | Browser login/IdP or gateway integration, production session/logout and deployment configuration remain code/integration work |
-| Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Actual PubMed attempt failed connectivity: **sourceCount=0, liveSourceSuccess=false**. No live retrieval/synthesis success; new real questions need governed query/application contracts |
+| Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Historical container attempt failed with zero sources. New explicit host PubMed native retrieval succeeded with two abstracts; governed source-bound native synthesis passed with a controlled model. No live scientific synthesis or scientific-validity claim; new questions need governed contracts |
 | Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
 | Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Real compute allocator/environment provisioning is not implemented. External-host TLS, identities, runtime/stop proof and target capacity require integration/acceptance |
 | Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |

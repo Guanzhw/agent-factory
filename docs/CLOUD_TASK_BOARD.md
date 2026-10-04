@@ -9,7 +9,7 @@ no per-call permission gate, no old UNKNOWN replay/release, no guessed historica
 | Owner / scope | Dependency | Acceptance / state |
 |---|---|---|
 | go_policy: Go diagnostics/revision tests | Existing rejection/campaign contracts | Frozen: 52 diagnostics-related checks; six revision checks; native PG revision2 test passed. |
-| factory_flow: bounded PubMed acquisition | Managed egress/fixed public query | Frozen: 12 offline tests; real host HTTP retrieval yielded two public abstracts. Browser verification tracked in the draft PR. |
+| factory_flow: bounded PubMed acquisition | Managed egress/fixed public query | Frozen: 12 offline tests; real host HTTP retrieval yielded two public abstracts. Real-result desktop/mobile and download-hash browser checks passed. |
 | at10: governed PubMed profile | Fetcher/root projection | Frozen: five native PG scenarios passed, including revoke/cancel/UNKNOWN and empty failure evidence. |
 | independent_review: source-bound synthesis | Trusted source projection | Frozen: eight immutable context/citation checks passed; no live scientific model. |
 | go_adapter: synthesis profile | Root explicit tool contracts/source context | Frozen: offline + native PG tests passed; root native fixture with actual retrieved sources completed. |

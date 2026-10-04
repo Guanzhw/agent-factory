@@ -1,13 +1,15 @@
 # Current delivery and review index
 
-Current continuation (2026-10-04): [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md)
-separates remaining product code from external production inputs. Draft
-[PR21](https://github.com/Guanzhw/agent-factory/pull/21) and
-[PR22](https://github.com/Guanzhw/agent-factory/pull/22) completed individual stages,
-not full-product acceptance. Go is authorized for subscription-only coding tests;
-production scientific-provider selection and invoice verification remain separate.
-The public-code development example passed live DeepSeek; Luna's second response
-was incomplete and remains UNKNOWN with the campaign stopped. No retry occurred.
+Current continuation (2026-10-04): [Draft PR24](https://github.com/Guanzhw/agent-factory/pull/24)
+adds explicit Luna revision2 and governed public literature contracts on PR23 exact
+`a5173379ce7f119fdcf3540239fd82cb19ff86ab`. Live Luna coding completed with two
+SETTLED attempts/4332 tokens/zero holds. Native host PubMed retrieved two actual
+abstract-only sources; a separately labelled controlled synthesis used these real
+sources without calling a scientific provider. The old failed container retrieval
+and all UNKNOWN attempts remain unchanged. See [stage evidence](LUNA_SCIENTIFIC_CONTRACTS.md)
+and [v0.3 scope reconciliation](V03_SCOPE_RECONCILIATION.md). Exact final CI belongs
+to PR24; earlier green runs do not certify its head. No full-product, production,
+scientific-validity, invoice or target-host acceptance is claimed.
 Older status/gate statements below describe their original stage.
 
 This index separates the latest tested runtime from the historical stack under
