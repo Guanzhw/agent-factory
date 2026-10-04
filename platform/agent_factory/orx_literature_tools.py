@@ -94,18 +94,55 @@ def _sources(store, ctx):
 
 
 def report_bundle(sources, provenance):
-    report = ["# 公开文献来源证据", "", "模式：书目 / 有界摘录。未调用模型，不提供模型综合或科研结论。",
+    from html import escape
+
+    def plain(value):
+        # Source-controlled strings remain text, never Markdown links or HTML.
+        text = escape(str(value), quote=True).replace("\r", " ").replace("\n", " ")
+        text = re.sub(r"([\\`*_{}\[\]()#+.!|>~-])", r"\\\1", text)
+        return text.replace(":", "&#58;")
+
+    def error_text(value):
+        if isinstance(value, str) and value in {"COMMAND_FAILED", "TIMEOUT", "OUTPUT_LIMIT"}:
+            return "`" + value + "`"
+        return plain(value)
+
+    kinds = {source.get("evidenceKind") for source in sources}
+    kinds.add(provenance.get("evidenceKind"))
+    public, controlled = "public_literature_excerpt", "controlled_literature_fixture"
+    if public in kinds and controlled in kinds:
+        provenance_label = "混合来源：包含受控合成夹具；不得作为完整真实公开检索验收。"
+    elif controlled in kinds:
+        provenance_label = "受控合成夹具：来源内容为测试证据，不代表真实公开检索成功。"
+    elif kinds == {public}:
+        provenance_label = "公开检索来源记录；不代表科研结论或全文均已验证。"
+    else:
+        provenance_label = "来源类型未完整核对；不得据此认定真实公开检索成功。"
+    full_count = sum(source.get("fullTextAvailable") is True
+                     and source.get("textStatus") == "extracted_text" for source in sources)
+    excerpt_count = sum(bool(source.get("excerpt")) for source in sources)
+    errors = provenance.get("retrievalErrors") or []
+    report = ["# 文献来源证据", "", "模式：书目 / 有界摘录。未调用模型，不提供模型综合或科研结论。",
+              "证据来源：" + provenance_label, "",
+              f"来源记录数：{len(sources)}；已取得提取正文：{full_count}；含有界摘录：{excerpt_count}。",
+              f"检索失败记录数：{len(errors)}。记录数及任务完成状态不等于文献研究成功。", "",
               "哈希覆盖 CLI 文本呈现或元数据摘要，并非原始论文/PDF。定位符指向该呈现。", ""]
     for source in sources:
-        report += ["## " + (source.get("title") or source["sourceId"]).replace("\n", " "),
-                   "", "来源 ID：" + source["sourceId"], "", "来源：" + source["url"],
-                   "", "正文状态：" + source["textStatus"], "", "SHA-256：" + str(source["sha256"]),
-                   "", "定位：`" + json.dumps(source["locator"], ensure_ascii=False) + "`", "",
-                   "摘录：" + (source["excerpt"] or "（未取得可验证摘录）"), ""]
+        report += ["## " + plain(source.get("title") or source["sourceId"]),
+                   "", "来源 ID：" + plain(source["sourceId"]), "", "来源地址（文本）：" + plain(source["url"]),
+                   "", "来源类型：" + plain(source.get("evidenceKind", "未提供")),
+                   "", "正文状态：" + plain(source["textStatus"]),
+                   "", "未取得全文原因：" + plain(source.get("missingFullTextReason") or "无已记录原因"),
+                   "", "最近正文尝试状态：" + plain(source.get("lastTextAttemptStatus", "未提供")),
+                   "", "错误记录：" + error_text(source.get("lastRetrievalError") or source.get("errorCode") or "无已记录错误"),
+                   "", "SHA-256：" + plain(source["sha256"]),
+                   "", "哈希范围：" + plain(source.get("hashScope", "未提供")),
+                   "", "定位：" + plain(json.dumps(source["locator"], ensure_ascii=False)), "",
+                   "摘录：" + plain(source["excerpt"] or "（未取得可验证摘录）"), ""]
     if not sources:
         report += ["未取得来源记录；不得将空结果当作完成文献研究。", ""]
-    if provenance.get("retrievalErrors"):
-        report += ["检索失败记录：" + ", ".join(provenance["retrievalErrors"]), ""]
+    if errors:
+        report += ["检索失败记录：" + ", ".join(error_text(error) for error in errors), ""]
     raw = ("\n".join(report) + "\n").encode()
     evidence = json.dumps({"schema": 1, "mode": "bibliography-excerpts-no-provider", "sources": sources,
                            "provenance": provenance}, ensure_ascii=False, sort_keys=True, indent=2).encode()

@@ -96,6 +96,11 @@ class LiteraturePostgresTests(unittest.TestCase):
 
     def test_native_review_queue_sources_report_and_owner_download(self):
         task, detail = self.run_evidence()
+        projection = detail['literatureEvidence']
+        self.assertEqual(projection['status'], 'ready')
+        self.assertEqual(projection['sourceCount'], 1)
+        self.assertEqual(projection['evidenceKind'], 'controlled_literature_fixture')
+        self.assertFalse(projection['sources'][0]['fullTextAvailable'])
         bundle = next(a for a in detail['artifacts'] if a['name'].endswith('.zip'))
         headers = {'Authorization': 'Bearer ' + self.state['auth']._issue_native_token('alice')}
         path = '/api/factory/jobs/' + task + '/artifacts/' + bundle['id']
@@ -178,6 +183,19 @@ class FailedLiteraturePostgresTests(LiteraturePostgresTests):
 
     def test_native_review_queue_sources_report_and_owner_download(self):
         task, detail = self.run_evidence()
+        self.assertEqual(detail['job']['status'], 'completed')
+        evidence = detail['literatureEvidence']
+        self.assertEqual(evidence['status'], 'no-sources')
+        self.assertEqual(evidence['sourceCount'], 0)
+        self.assertEqual(evidence['retrievalErrors'], ['COMMAND_FAILED'])
+        self.assertEqual(evidence['evidenceKind'], 'controlled_literature_fixture')
+        self.assertIn('未取得文献来源', detail['job']['validationStatus'])
+        other = self.client.get('/api/factory/jobs/' + task,
+            headers={'Authorization': 'Bearer ' + self.state['auth']._issue_native_token('bob')})
+        self.assertEqual(other.status_code, 404)
+        again = self.request('GET', '/jobs/' + task)
+        self.assertEqual(again['literatureEvidence'], evidence)
+        self.assertEqual(len(again['artifacts']), len(detail['artifacts']))
         bundle = next(a for a in detail['artifacts'] if a['name'].endswith('.zip'))
         self.assertEqual(bundle['provenance']['evidenceKind'], 'controlled_literature_fixture')
         _, raw = self.store.artifact(task, bundle['id'])

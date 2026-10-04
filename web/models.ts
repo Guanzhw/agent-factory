@@ -51,7 +51,7 @@ export type FactoryJob = Omit<Job, 'input'> & {
   recoveryDetail?: { approvalCommandId: string; requirementId: string; version: number; runId: string; scope: string };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
-export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; usageLedger?: unknown }
+export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; orxExperiment?: unknown; literatureEvidence?: unknown; usageLedger?: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;
   failed: boolean; pending: boolean; stopped: boolean;

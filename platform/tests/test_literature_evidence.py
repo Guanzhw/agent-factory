@@ -44,6 +44,60 @@ class LiteratureEvidenceTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), digest)
         self.assertNotIn(text.encode(), bundle)
 
+    def test_standalone_report_distinguishes_public_controlled_mixed_and_unverified(self):
+        record = evidence_record('123', 'A short source abstract', status='abstract_only', field='abstract')
+        public = {**record, 'evidenceKind': 'public_literature_excerpt'}
+        controlled = {**record, 'sourceId': '456', 'evidenceKind': 'controlled_literature_fixture'}
+        cases = [([public], {'evidenceKind': 'public_literature_excerpt'}, '公开检索来源记录'),
+                 ([controlled], {'evidenceKind': 'controlled_literature_fixture'}, '受控合成夹具'),
+                 ([public, controlled], {'evidenceKind': 'controlled_literature_fixture'}, '混合来源'),
+                 ([record], {}, '来源类型未完整核对')]
+        for sources, provenance, label in cases:
+            with self.subTest(label=label):
+                report, bundle = report_bundle(sources, provenance)
+                text = report.decode()
+                self.assertIn(label, text)
+                self.assertIn(f'来源记录数：{len(sources)}', text)
+                self.assertIn('未调用模型，不提供模型综合或科研结论', text)
+                self.assertIn('并非原始论文/PDF', text)
+                with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+                    self.assertEqual(archive.read('report.md'), report)
+                    document = json.loads(archive.read('sources.json'))
+                    self.assertEqual(document['sources'], sources)
+                    self.assertEqual(document['provenance'], provenance)
+                    for name, expected in json.loads(archive.read('manifest.json'))['files'].items():
+                        self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), expected)
+
+    def test_report_retains_zero_source_failure_and_partial_text_availability(self):
+        report, _ = report_bundle([], {'evidenceKind': 'public_literature_excerpt', 'retrievalErrors': ['COMMAND_FAILED']})
+        self.assertIn('来源记录数：0', report.decode())
+        self.assertIn('检索失败记录数：1', report.decode())
+        self.assertIn(b'`COMMAND_FAILED`', report)
+        self.assertIn('不得将空结果当作完成文献研究', report.decode())
+        record = evidence_record('123', 'located text', status='extracted_text', field='stdout')
+        record.update(evidenceKind='public_literature_excerpt', lastTextAttemptStatus='fetch_failed', lastRetrievalError='NETWORK_ERROR')
+        report, _ = report_bundle([record], {'evidenceKind': 'public_literature_excerpt'})
+        self.assertIn('已取得提取正文：1', report.decode())
+        self.assertIn('最近正文尝试状态：fetch', report.decode())
+        self.assertIn('错误记录：NETWORK', report.decode())
+        self.assertIn('哈希范围：decoded', report.decode())
+
+    def test_markdown_source_strings_are_text_while_json_preserves_original_facts(self):
+        hostile = '[click](javascript:alert(1)) <img src=x onerror=alert(1)>\n# forged'
+        record = evidence_record('123', hostile, status='abstract_only', field='abstract', title=hostile)
+        record['url'] = 'javascript:alert(1)'
+        before = json.dumps(record, sort_keys=True)
+        report, bundle = report_bundle([record], {'retrievalErrors': [hostile]})
+        text = report.decode()
+        self.assertNotIn('[click](', text)
+        self.assertNotIn('<img', text)
+        self.assertNotIn('javascript:', text)
+        self.assertNotIn('\n# forged', text)
+        self.assertIn('&lt;img', text)
+        self.assertEqual(json.dumps(record, sort_keys=True), before)
+        with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+            self.assertEqual(json.loads(archive.read('sources.json'))['sources'], [record])
+
     def test_reviewed_query_has_no_paths_endpoints_or_unbounded_limit(self):
         validate_config({'queryId': 'public-rag-v1', 'limit': 1})
         for value in ({'query': 'x', 'url': 'https://example.org'}, {'query': 'x', 'limit': 4}, {'query': '-x'}):

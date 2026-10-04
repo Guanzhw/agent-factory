@@ -473,3 +473,36 @@ Cumulative DeepSeek7/Luna3;4UNKNOWN/6SETTLED; ACTIVE. Originalrows/sessions/
 17eventprefix/sevenimmutablefiles verified unchanged. Root fullchecks and
 exact-head draftPR CI in progress. Next AutoResearch slice selected from audit:
 owner-scoped literature evidence projection/UI and standalone report provenance.
+
+## Literature evidence visibility — 2026-10-04
+
+Branch `coord/literature-evidence-visibility-20261004`, based on Go stage PR21
+exact `38b4014692713060a2e1bd269d6dbfb1287bbf05`. No new provider calls or
+retrieval requests in this stage. Production identities/research providers remain
+separate; existing source failures are not reclassified as live success.
+
+| Owner | Exclusive scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | Owner-scoped persisted projection, Factory API, App integration, PG/browser/full checks, final PR | Existing literature artifact/manifest contract | In progress |
+| factory_flow | Standalone report provenance and tests; independent projection review/regressions | Existing report ZIP | 10 report and 8 projection tests passed; reviewed corruption fixes |
+| independent_review | Chinese evidence panel/state validator/tests | Bounded optional literatureEvidence projection | In progress |
+| go_policy | Read-only PR21 exact-head CI monitor | Push and PR workflows | 8/10 passed, PostgreSQL pending |
+
+Projection reads only persisted owner-scoped artifacts: hashes, ZIP member bounds,
+manifest, owner/plan provenance and bounded source fields are checked. It never
+performs retrieval. Mixed controlled/public sources are labeled controlled;
+no-sources and invalid evidence cannot appear ready. Standalone Markdown carries
+its own provenance, missing text, failure and hash-scope explanations. Initial
+PG run retained an escaped fixed error-code regression; known enum codes now
+render as copyable inline code while untrusted fields remain escaped.
+
+Literature stage local outcomes: report10/projection8/frontend78 tests passed;
+PG4/1liveopt-in skip passed39.919s; fullPython805/299skip passed46.112s;
+Ruff/Pyright passed. Browsercontrolledfixtures prove desktop/mobile no-sources,
+failure/provenance labels and scoped links, zero page errors/writes. Narrowed
+Vite proxy fixes demonstrated `/api.ts` source interception. Finalreview/PR
+exact-head CI pending; no new external retrieval or provider calls.
+
+Final independent literature review approved with no blockers. All implementation
+lanes are frozen; root owns commit/push/draft PR and exact-head CI. Earlier local
+corrupt-ZIP/report-integrity findings are resolved with regression coverage.

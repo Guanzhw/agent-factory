@@ -146,3 +146,37 @@ that fails the model while observing the original external work and receipt.
 This literature stage did not solve that boundary; the later AT10 scope must not
 be generalized to every provider/runtime. Real provider, identity,
 workload and target-host acceptance require separate decisions and evidence.
+
+## Evidence visibility continuation — 2026-10-04
+
+The task detail now projects persisted literature evidence separately from native
+execution status. A completed native job can still have no sources or invalid
+evidence. The Chinese panel shows source counts, controlled-fixture provenance,
+retrieval failures, abstract/full-text distinctions, bounded excerpts and their
+Unicode locators. It explains that rendition/abstract hashes are not original
+paper/PDF hashes and that this workflow performs no provider synthesis.
+
+Projection first checks task ownership, then validates the fixed application,
+owner/plan provenance, bounded ZIP members, manifest hashes, standalone report
+bytes and exact source fields. Missing reports remain pending; malformed or
+corrupt evidence is explicitly unverified. Read operations do not retrieve or
+retry sources. Controlled records mixed with public records remain labeled
+controlled. Existing PubMed sourceCount=0/liveSourceSuccess=false is unchanged.
+
+A separately downloaded Markdown report now retains provenance, source/text
+counts, retrieval failures and hash-scope explanations. Untrusted source text
+cannot create active Markdown/HTML instructions or links; original sources.json
+facts remain unchanged and ZIP manifest hashes cover the resulting files.
+
+This is evidence presentation and integrity integration, not new scientific
+research/provider or live-source acceptance. Stage runtime/CI results are recorded
+in its draft PR.
+
+Local validation: PostgreSQL4 tests/1explicit live-source skip passed in39.919s;
+full Python805 tests/299opt-in skips passed in46.112s; frontend78 tests plus
+lint/typecheck/build; Ruff/Pyright passed. Actual Chromium with controlled API
+fixtures verified no-source/failure labels, scoped download links, desktop/mobile
+rendering and no page errors or mutation requests. This browser fixture does not
+claim live retrieval. It also exposed the existing Vite `/api` proxy matching the
+frontend `/api.ts` module; narrowing the proxy to `/api/` restores development
+page loading while preserving API routing.
