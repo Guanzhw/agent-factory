@@ -1,5 +1,45 @@
 # Cloud integration task board
 
+## Active local research execution adapter — 2026-10-06
+
+Base accepted draft PR36 exact `0e05b19b84770e22d9bcc79a5df6990130079b84`;
+branch `coord/research-local-adapter-20261006`. PR36's final two exact-head
+workflows passed all ten jobs, each PG1292=1229 passed/63 skipped; root and
+independent observations were more than90 seconds apart. Earlier pending notes
+below describe the pre-CI checkpoint.
+
+| Owner / exclusive scope | Dependency | State / acceptance |
+|---|---|---|
+| root | Shared process hooks/types, evidence storage import, evaluator integration, serial PG/full checks, PR/CI | Frozen: Python1384=995pass389skip94.509s; corrected PG17pass124.505s; frontend196/build, Ruff/Linux+Windows Pyright/audit0; commit/exact CI pending |
+| go_adapter | Training source adaptation, lazy Torch runtime, static environment observer and tests | Frozen: training/runtime11 and environment9 pass; no ML imports/execution |
+| at10 | Checkpoint format/FD helpers; research guardian extension; actual controlled PG lifecycle | Frozen: checkpoint11, guardian6+ordinary12; PG4pass52.036s including distinct evaluator and size-one metadata pool |
+| factory_flow | Local provider/device observer, checkpoint-store tests | Frozen: provider9, device6, checkpoint-store10; hash-time revocation and original-stop regression covered |
+| go_policy | Immutable staging, trusted local driver, uv handoff documentation | Frozen: staging10 and driver12 pass, including real standard-library stale-bytecode regression |
+| reviewer + independent_review | Independent source, scientific boundary, lock/custody review | All reported code blockers closed; separate28 and20 light checks passed; actual uv/GPU compatibility remains unverified |
+
+The initial PG31 run exposed a shared retention-lock pool timeout and an old
+race between outer lease cancellation and the guardian-deadline test oracle.
+Retention now uses its own bounded, fast-failing connection pool; the test
+isolates the two deadlines without changing production limits. Corrected PG17
+passes include concurrent async fences, metadata pool1, original-run checkpoint
+import, independent evaluator byte consumption, acknowledgement loss and revoke.
+All local heavy tests ran serially. Isolated databases and guardians were checked
+absent after cleanup; no UNKNOWN execution was counted as successful.
+
+The cloud stage executes only controlled tests. No downloaded upstream/community
+code, ML dependencies, GPU training or dataset downloads are executed here.
+Separately authorized target work remains with the designated local executor;
+this coordinator does not start a competing local task. Windows and WSL Python
+environment management uses uv, independent project environments and reviewed
+locks, preserving existing environments and caches.
+
+The local baseline explicitly changes attention implementation, microbatch,
+checkpoint export, safe tokenizer input and fixed independent evaluation. It is
+not an unchanged upstream benchmark. The default uv interpreter symlink and
+pinned-FD launch/venv discovery are not yet compatible with the strict regular
+interpreter observer. That route remains blocked pending reviewed support and
+actual target evidence; no static check establishes GPU/numerical validity.
+
 ## Active research custody and native wait — 2026-10-06
 
 Base accepted PR35 `767323e0f0983a1bf6e4056485c4b767bde2a436`;

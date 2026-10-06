@@ -9,6 +9,7 @@ from unittest.mock import Mock
 from agent_factory.research_evaluation_service import ResearchEvaluationService
 from agent_factory.store import digest
 from agent_factory.research_manifest import manifest_fingerprint
+from agent_factory.research_evaluation import evaluation_contract_fingerprint
 from test_research_evaluation import example_contract, output
 
 
@@ -20,6 +21,14 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.records, self.plans, self.rows = {}, {}, {}
         self.training_provider = SimpleNamespace(read_completed_output=Mock(side_effect=AssertionError('Never read training output')))
         self.evaluator_provider = SimpleNamespace(read_completed_output=Mock(side_effect=lambda *_: output(self.contract)))
+        def launch_proof(training):
+            return {'schema': 1, 'descriptorSha256': 'a' * 64, 'sourceSha256': 'b' * 64,
+                'manifestSha256': manifest_fingerprint(self.contract['comparisonManifest']),
+                'variantSha256': self.contract['training']['variantSha256'],
+                'checkpoint': None if training else deepcopy(self.contract['training']['checkpoint']),
+                'evaluationContractSha256': None if training else evaluation_contract_fingerprint(self.contract)}
+        self.training_provider.read_launch_proof = Mock(side_effect=lambda *_: launch_proof(True))
+        self.evaluator_provider.read_launch_proof = Mock(side_effect=lambda *_: launch_proof(False))
         self.targets = {'training': SimpleNamespace(provider=self.training_provider, pin='training-pin'),
                         'evaluation': SimpleNamespace(provider=self.evaluator_provider, pin='evaluation-pin')}
         for field, reference in (('training', 'training'), ('evaluatorExecution', 'evaluation')):
@@ -156,6 +165,16 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
             ResearchEvaluationService(self.store, self.auth, self.resources, {'not-hash': 'evaluation'}, checkpoint_reader=self.reader)
         with self.assertRaises(ValueError):
             ResearchEvaluationService(self.store, self.auth, self.resources, {next(iter(self.mapping)): 'missing'}, checkpoint_reader=self.reader)
+
+
+    async def test_original_launch_must_bind_actual_checkpoint_and_contract(self):
+        original = self.evaluator_provider.read_launch_proof.side_effect
+        for changes in ({'checkpoint': None}, {'evaluationContractSha256': '0' * 64},
+                        {'manifestSha256': '0' * 64}, {'descriptorSha256': None}):
+            self.evaluator_provider.read_launch_proof.side_effect = lambda *args, changes=changes: {**original(*args), **changes}
+            with self.assertRaises(ValueError):
+                await self.service.verify('alice', self.contract)
+        self.evaluator_provider.read_completed_output.assert_not_called()
 
 
 if __name__ == '__main__':

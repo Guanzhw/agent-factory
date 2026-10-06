@@ -276,9 +276,15 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
 
     def test_guardian_deadline_records_stop_proof_without_claiming_success(self):
         self.start(code="import time;time.sleep(20)", wall=.3)
-        task, _ = self.submit()
-        lease = self.until(lambda: self.lease(task))
-        self.until(lambda: self.process_state(lease))
+        # This case isolates the guardian deadline from the independent outer
+        # lease deadline. Slow DB/dispatch admission must not turn it into a
+        # race between cancellation and the .3-second child wall limit.
+        from agent_factory.process_runtime import process_reservation
+        reservation = process_reservation(self.provider) | {"seconds": 5}
+        with patch("agent_factory.process_runtime.process_reservation", return_value=reservation):
+            task, _ = self.submit()
+            lease = self.until(lambda: self.lease(task))
+            self.until(lambda: self.process_state(lease))
         custody = BoundedProcessAdapter(self.provider.root / lease["id"] / "custody.sqlite")
         evidence = custody.inspect(owner_id="alice")
         self.assertEqual(evidence["state"], "LIMIT_STOPPED")

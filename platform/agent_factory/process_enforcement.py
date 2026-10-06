@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from uuid import uuid4
+from typing import cast
 
 
 class ProcessEnforcementError(RuntimeError):
@@ -60,6 +61,80 @@ class ProcessSpec:
                 or any(type(value) is not str or "\x00" in value for value in self.argv)
                 or len(json.dumps(self.argv).encode()) > 8192):
             _deny()
+
+
+@dataclass(frozen=True)
+class ResearchProcessLimits:
+    """Explicit operator research profile; ordinary ProcessLimits stay unchanged."""
+    cpu_seconds: int = 3600
+    address_space_mb: int = 65536
+    file_size_bytes: int = 2 * 1024**3
+    wall_seconds: float = 900.0
+    disk_bytes: int = 5 * 1024**3
+    output_bytes: int = 16 * 1024**2
+
+    def __post_init__(self):
+        bounds = ((self.cpu_seconds, 1, 86400), (self.address_space_mb, 32, 1048576),
+                  (self.file_size_bytes, 1024, 2 * 1024**3),
+                  (self.disk_bytes, 2 * self.file_size_bytes, 8 * 1024**4),
+                  (self.output_bytes, 1024, min(64 * 1024**2, self.file_size_bytes)))
+        if any(type(value) is not int or not low <= value <= high for value, low, high in bounds):
+            _deny()
+        if type(self.wall_seconds) not in {int, float} or not .1 <= self.wall_seconds <= 86400:
+            _deny()
+
+
+@dataclass(frozen=True)
+class ResearchProcessSpec(ProcessSpec):
+    working_directory: str = ""
+    environment: tuple[tuple[str, str], ...] = ()
+    working_directory_identity: tuple[int, int] = (0, 0)
+
+    def __post_init__(self):
+        super().__post_init__()
+        allowed = {"HOME", "PATH", "CUDA_VISIBLE_DEVICES", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR",
+                   "CUDA_CACHE_PATH", "TMPDIR", "HF_HOME", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE", "PYTHONPYCACHEPREFIX"}
+        if (type(self.working_directory) is not str or not Path(self.working_directory).is_absolute()
+                or "\x00" in self.working_directory or type(self.environment) is not tuple
+                or len(self.environment) > len(allowed)):
+            _deny()
+        if (type(self.working_directory_identity) is not tuple or len(self.working_directory_identity) != 2
+                or any(type(v) is not int or v <= 0 for v in self.working_directory_identity)):
+            _deny()
+        names = set()
+        for pair in self.environment:
+            if (type(pair) is not tuple or len(pair) != 2 or pair[0] not in allowed or pair[0] in names
+                    or type(pair[1]) is not str or not 0 < len(pair[1]) <= 4096 or "\x00" in pair[1]):
+                _deny()
+            names.add(pair[0])
+        values = dict(self.environment)
+        if any(values.get(key) != "1" for key in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE")):
+            _deny()
+
+
+def open_working_directory(path, expected):
+    """Open every component without following links and retain the pinned inode."""
+    value = Path(path)
+    if not value.is_absolute() or ".." in value.parts:
+        raise ValueError("PROCESS_WORKING_DIRECTORY_INVALID")
+    flags = (getattr(os, "O_DIRECTORY", None), getattr(os, "O_NOFOLLOW", None))
+    if os.name != "posix" or any(type(flag) is not int or flag <= 0 for flag in flags):
+        raise ValueError("PROCESS_WORKING_DIRECTORY_UNAVAILABLE")
+    directory_flag, nofollow_flag = cast(tuple[int, int], flags)
+    fd = os.open("/", os.O_RDONLY | directory_flag | nofollow_flag)
+    try:
+        for part in value.parts[1:]:
+            next_fd = os.open(part, os.O_RDONLY | directory_flag | nofollow_flag, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        info = os.fstat(fd)
+        if ([info.st_dev, info.st_ino] != list(expected)
+                or info.st_uid != getattr(os, "getuid")() or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("PROCESS_WORKING_DIRECTORY_INVALID")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def boot_id():
@@ -314,14 +389,19 @@ class BoundedProcessAdapter:
             _deny()
 
     @classmethod
-    def create(cls, path, *, owner_id, task_id, request_id, spec, limits=ProcessLimits(), aggregate_config=None, aggregate_binding=None):
+    def create(cls, path, *, owner_id, task_id, request_id, spec, limits: ProcessLimits | ResearchProcessLimits = ProcessLimits(), aggregate_config=None, aggregate_binding=None):
         if sys.platform != "linux" or not hasattr(os, "fork") or not Path("/proc/self/stat").is_file():
             raise ProcessEnforcementError("PROCESS_ENFORCEMENT_UNAVAILABLE")
-        if type(spec) is not ProcessSpec or type(limits) is not ProcessLimits:
+        if (type(spec), type(limits)) not in {(ProcessSpec, ProcessLimits), (ResearchProcessSpec, ResearchProcessLimits)}:
             _deny()
-        for value in (owner_id, task_id, request_id):
+        if type(owner_id) is not str or not 1 <= len(owner_id) <= 200 or any(ord(c) < 32 or ord(c) == 127 for c in owner_id):
+            _deny()
+        for value in (task_id, request_id):
             if type(value) is not str or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
                 _deny()
+        if type(spec) is ResearchProcessSpec:
+            directory_fd = open_working_directory(spec.working_directory, spec.working_directory_identity)
+            os.close(directory_fd)
         aggregate_body = {}
         if aggregate_config is not None:
             try:

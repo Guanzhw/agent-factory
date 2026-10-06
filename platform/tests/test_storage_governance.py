@@ -1,5 +1,7 @@
 """Only generated task scratch is moved or deleted; real PostgreSQL/native stop."""
+import asyncio
 import os
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -286,3 +288,34 @@ class StorageGovernancePostgresTests(unittest.TestCase):
         events = [event for event in self.store.events(task) if event["type"] == "retention_planned"]
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["data"]["planId"], response.json()["id"])
+
+    def test_retention_fence_fails_fast_without_starving_awaited_owner_or_root_locks(self):
+        from fastapi import HTTPException
+        from sqlalchemy import text
+
+        async def concurrent():
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def owner():
+                with self.storage._lock('synthetic-fence-owner'):
+                    entered.set()
+                    await release.wait()
+                    self.assertEqual(self.store.sql('SELECT 1 AS n')[0]['n'], 1)
+
+            async def contender():
+                await entered.wait()
+                started = time.monotonic()
+                try:
+                    with self.assertRaises(HTTPException) as busy:
+                        with self.storage._lock('synthetic-fence-contender'):
+                            self.fail('A second retention connection must not be created')
+                    self.assertEqual(busy.exception.status_code, 409)
+                    self.assertLess(time.monotonic() - started, 1)
+                    with self.store.root_lock_engine().connect() as connection:
+                        self.assertEqual(connection.execute(text('SELECT 1')).scalar(), 1)
+                finally:
+                    release.set()
+            await asyncio.wait_for(asyncio.gather(owner(), contender()), timeout=2)
+        asyncio.run(concurrent())
+        with self.storage._lock('synthetic-fence-recovered'):
+            self.assertEqual(self.store.sql('SELECT 1 AS n')[0]['n'], 1)

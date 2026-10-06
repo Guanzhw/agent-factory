@@ -160,5 +160,27 @@ class ResearchRuntimeProfileTests(unittest.TestCase):
             profile.publish_research_application(state, **(args | {'reviewer': 'manager'}))
 
 
+    def test_distinct_evaluator_adapter_namespace_keeps_original_target_frozen(self):
+        evaluator = profile.registrations(target_ref='evaluation-target', comparison_manifest=self.manifest,
+                                         adapter_suffix='-evaluator')
+        self.assertFalse({entry.adapter_id for entry in evaluator} & {entry.adapter_id for entry in self.entries})
+        selected = dict(self.ctx.spec['config'], targetRef='evaluation-target')
+        for entry in evaluator:
+            assert entry.validator is not None
+            entry.validator(selected)
+            with self.assertRaises(ValueError):
+                entry.validator(self.ctx.spec['config'])
+        drafts = profile.material_drafts(target_ref='evaluation-target', comparison_manifest=self.manifest,
+                                         adapter_suffix='-evaluator')
+        for row in drafts:
+            MaterialDefinition.model_validate(row)
+            if 'runtimeBinding' in row:
+                self.assertIn(row['runtimeBinding']['adapterId'], {entry.adapter_id for entry in evaluator})
+        for invalid in ('../other', 'invalid', '-' * 40, True):
+            with self.assertRaises(ValueError):
+                profile.registrations(target_ref='evaluation-target', comparison_manifest=self.manifest,
+                                      adapter_suffix=invalid)
+
+
 if __name__ == '__main__':
     unittest.main()

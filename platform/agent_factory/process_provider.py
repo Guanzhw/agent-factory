@@ -27,7 +27,7 @@ from .isolation_capabilities import SUPPORTED_SCOPES, IsolationCapabilityError, 
 from .aggregate_process import aggregate_enforcement, validate_aggregate_evidence
 from .delegated_cgroup import DelegatedCgroupBackend, DelegatedCgroupConfig
 from .local_compute import LocalWorkspaceProvider
-from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, spec_contract
+from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, ResearchProcessLimits, ResearchProcessSpec, spec_contract
 from .store import canonical, digest
 
 _BINDINGS = ("id", "ownerId", "fingerprint", "localTaskId", "planId", "nativeRunId", "requestId",
@@ -42,7 +42,9 @@ def _require(value):
 
 
 class ProcessResourceProvider:
-    def __init__(self, store, root: Path, spec: ProcessSpec, limits: ProcessLimits, *, required_isolation=(), aggregate_config=None):
+    effect_key = "bounded-process-run-v1"
+
+    def __init__(self, store, root: Path, spec: ProcessSpec | ResearchProcessSpec, limits: ProcessLimits | ResearchProcessLimits, *, required_isolation=(), aggregate_config=None):
         # Operator-only requirements: fail before root creation or allocation.
         self.aggregate_config = aggregate_config
         if aggregate_config is None:
@@ -54,7 +56,8 @@ class ProcessResourceProvider:
                 raise IsolationCapabilityError("ISOLATION_SCOPE_UNSUPPORTED")
         self.required_isolation = tuple(sorted(set(required_isolation)))
         _require(sys.platform == "linux")
-        _require(type(spec) is ProcessSpec and type(limits) is ProcessLimits)
+        _require((self.effect_key == "bounded-process-run-v1" and type(spec) is ProcessSpec and type(limits) is ProcessLimits)
+                 or (self.effect_key == "research-process-run-v1" and type(spec) is ResearchProcessSpec and type(limits) is ResearchProcessLimits))
         self.store, self.spec, self.limits = store, spec, limits
         # Reuse descriptor-pinned root traversal and bounded directory flock.
         # No workspace allocation or its journal API is invoked.
@@ -101,8 +104,10 @@ class ProcessResourceProvider:
 
     def _binding(self, lease: dict):
         _require(type(lease) is dict and all(key in lease for key in _BINDINGS))
-        for key in ("id", "ownerId", "localTaskId", "planId", "nativeRunId", "requestId", "connectionRef", "poolId"):
+        for key in ("id", "localTaskId", "planId", "nativeRunId", "requestId", "connectionRef", "poolId"):
             _require(type(lease[key]) is str and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", lease[key]))
+        _require(type(lease["ownerId"]) is str and 1 <= len(lease["ownerId"]) <= 200
+                 and not any(ord(char) < 32 or ord(char) == 127 for char in lease["ownerId"]))
         _require(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", lease["id"]))
         for key in ("fingerprint", "planHash", "targetFingerprint", "poolFingerprint", "providerNamespace"):
             _require(type(lease[key]) is str and re.fullmatch(r"[a-f0-9]{64}", lease[key]))
@@ -112,14 +117,21 @@ class ProcessResourceProvider:
                  and all(type(value) is int and 0 < value <= 2147483647 for value in budgets.values()))
         budgets = cast(dict[str, int], budgets)
         _require(budgets["cpu"] >= 1 and budgets["memoryMb"] >= self.limits.address_space_mb
-                 and budgets["diskMb"] >= math.ceil(self.limits.file_size_bytes / (1024 * 1024))
+                 and budgets["diskMb"] >= math.ceil(getattr(self.limits, "disk_bytes", self.limits.file_size_bytes) / (1024 * 1024))
                  and budgets["seconds"] >= self.limits.wall_seconds)
         if self.aggregate_config is not None:
             config = self.aggregate_config
             _require(config.cpu_quota_us <= budgets["cpu"] * config.cpu_period_us
                      and config.memory_bytes + config.swap_bytes <= budgets["memoryMb"] * 1024 * 1024)
         # JSON roundtrip detaches caller-owned mutable inputs before thread work.
-        return json.loads(canonical({key: lease[key] for key in _BINDINGS}))
+        keys = _BINDINGS
+        if self.effect_key == "research-process-run-v1":
+            _require(lease.get("executionEffect") == self.effect_key
+                     and type(lease.get("executionGuard")) is dict and type(lease.get("gpuBinding")) is dict)
+            keys += ("executionEffect", "executionGuard", "gpuBinding")
+        else:
+            _require(lease.get("executionEffect", self.effect_key) == self.effect_key and "gpuBinding" not in lease)
+        return json.loads(canonical({key: lease[key] for key in keys}))
 
     @contextmanager
     def _transaction(self):
@@ -163,7 +175,7 @@ class ProcessResourceProvider:
         _require(lease is not None and self._binding(self._decode(lease["body"])) == binding)
         row = conn.execute(text("SELECT task_id,owner_id,native_run_id,lease_id,body FROM af_process_runs "
             "WHERE task_id=:task AND effect_key=:effect"),
-            {"task": binding["localTaskId"], "effect": "bounded-process-run-v1"}).mappings().first()
+            {"task": binding["localTaskId"], "effect": self.effect_key}).mappings().first()
         _require(row is not None and row["owner_id"] == binding["ownerId"]
                  and row["native_run_id"] == binding["nativeRunId"] and row["lease_id"] == binding["id"])
         expected = {"taskId": binding["localTaskId"], "nativeRunId": binding["nativeRunId"],
@@ -247,13 +259,39 @@ class ProcessResourceProvider:
                 record["processPin"] = {key: original[key] for key in _PINS}
                 with self._transaction() as conn:
                     self._save(conn, record)
-                adapter.launch(owner_id=binding["ownerId"], before_effect=lambda: self._dispatch_authority(binding, cancelled, callback))
+                def before_launch():
+                    self._dispatch_authority(binding, cancelled, callback)
+                    self._before_launch(record, original)
+                    with self._transaction() as conn:
+                        self._save(conn, record)
+                    self._dispatch_authority(binding, cancelled, callback)
+                adapter.launch(owner_id=binding["ownerId"], before_effect=before_launch)
                 return self._inspect_locked(binding["id"], binding["ownerId"])
             except (Exception, asyncio.CancelledError):
                 # Never retry create/launch after durable intent, including uncertain
                 # dispatch. Original journal remains available for inspect/cancel.
                 with self._transaction() as conn:
                     return self._snapshot(self._load(conn, binding["id"], binding["ownerId"]))
+
+    def _before_launch(self, record, snapshot):
+        """Operator subclass hook under original custody lock and fresh authority."""
+
+    def _before_release(self, record, snapshot):
+        """Operator subclass hook only after positive original process stop."""
+
+    def read_launch_proof(self, lease_id, owner):
+        with self._root_guard._operation_lock():
+            with self._transaction() as conn:
+                record = self._load(conn, lease_id, owner)
+            with self._adapter(record) as (_, snapshot):
+                _require(record["released"] is True and record["executionStatus"] == "COMPLETED"
+                         and record["exitCode"] == 0 and snapshot.get("state") == "COMPLETED"
+                         and snapshot.get("exitCode") == 0 and snapshot.get("stoppedProof") is True
+                         and (snapshot.get("stopReceipt") or {}).get("kind") in
+                         {"original-group-stopped", "original-delegated-cgroup-released"})
+                proof = record.get("programVerification")
+                _require(type(proof) is dict)
+                return json.loads(canonical(proof))
 
     def _validate_process(self, record, snapshot, *, pin=True):
         binding = record["binding"]
@@ -335,6 +373,7 @@ class ProcessResourceProvider:
                 elif stopped:
                     record.update(state=_TERMINAL[snapshot["state"]], allStopped=True)
                     if action == "reclaim":
+                        self._before_release(record, snapshot)
                         record.update(state="RECLAIMED", released=True)
                 else:
                     record.update(state="RUNNING" if snapshot.get("state") == "RUNNING" else "UNKNOWN", allStopped=False)
@@ -380,11 +419,12 @@ class ProcessResourceProvider:
                         descriptor = os.open("custody.output", os.O_RDONLY | self._root_guard._nofollow_flag |
                                              cast(int, nonblocking), dir_fd=directory)
                         try:
+                            output_limit = getattr(self.limits, "output_bytes", self.limits.file_size_bytes)
                             before = os.fstat(descriptor)
                             _require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
                                      and stat.S_IMODE(before.st_mode) == 0o600
-                                     and 0 < before.st_size <= self.limits.file_size_bytes)
-                            raw = os.read(descriptor, self.limits.file_size_bytes + 1)
+                                     and 0 < before.st_size <= output_limit)
+                            raw = os.read(descriptor, output_limit + 1)
                             after = os.fstat(descriptor)
                             _require(len(raw) == before.st_size and all(getattr(before, key) == getattr(after, key)
                                 for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_nlink")))

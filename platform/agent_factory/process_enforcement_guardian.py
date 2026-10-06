@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt, aggregate_operation, aggregate_finish, aggregate_projection  # type: ignore[reportMissingImports]  # noqa: E402
+from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt, aggregate_operation, aggregate_finish, aggregate_projection, open_working_directory  # type: ignore[reportMissingImports]  # noqa: E402
 
 
 def update(path, **changes):
@@ -31,6 +31,28 @@ def members(group):
     return result
 
 
+def drain_output(pipe, output, count, limit):
+    # Bound work per tick even when a writer continuously fills the pipe.
+    for _ in range(16):
+        try:
+            chunk = os.read(pipe, 65536)
+        except BlockingIOError:
+            return count, False
+        if not chunk:
+            return count, False
+        available = max(0, limit - count)
+        kept = memoryview(chunk)[:available]
+        while kept:
+            written = os.write(output, kept)
+            if written <= 0:
+                raise OSError("PROCESS_OUTPUT_WRITE_FAILED")
+            kept = kept[written:]
+        count += len(chunk)
+        if count > limit:
+            return count, True
+    return count, False
+
+
 CHILD_ID = None
 
 
@@ -49,6 +71,11 @@ def main(path):
     if "aggregateConfig" in body:
         aggregate_operation(path, "prepare")
     spec, limits = body["spec"], body["limits"]
+    research = "working_directory" in spec
+    directory = open_working_directory(spec["working_directory"], spec["working_directory_identity"]) if research else None
+    output_read, output_write = os.pipe() if research else (None, None)
+    if output_read is not None:
+        os.set_blocking(output_read, False)
     binary = os.open(spec["executable"], os.O_RDONLY | getattr(os, "O_NOFOLLOW"))
     info = os.fstat(binary)
     if not stat.S_ISREG(info.st_mode):
@@ -71,8 +98,13 @@ def main(path):
             memory = limits["address_space_mb"] * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
             resource.setrlimit(resource.RLIMIT_FSIZE, (limits["file_size_bytes"], limits["file_size_bytes"]))
-            os.dup2(output, 1)
-            os.dup2(output, 2)
+            child_output = output_write if output_write is not None else output
+            if output_read is not None:
+                os.close(output_read)
+            os.dup2(child_output, 1)
+            os.dup2(child_output, 2)
+            if output_write is not None:
+                os.close(output_write)
             os.close(output)
             os.write(ready_write, b"R")
             os.close(ready_write)
@@ -87,11 +119,23 @@ def main(path):
                 if (current["cancelRequested"] or current["bootId"] != boot_id()
                         or not same_birth(birth(os.getpid()), current["child"])):
                     os._exit(125)
-            os.execve(binary, [spec["executable"], *spec["argv"]], {"LANG": "C.UTF-8"})
+            environment = {"LANG": "C.UTF-8"}
+            if directory is not None:
+                checked = open_working_directory(spec["working_directory"], current["spec"]["working_directory_identity"])
+                os.close(checked)
+                os.fchdir(directory)
+                os.close(directory)
+                environment.update(dict(spec["environment"]))
+            os.execve(binary, [spec["executable"], *spec["argv"]], environment)
         except BaseException:
             os._exit(125)
     os.close(binary)
-    os.close(output)
+    if directory is not None:
+        os.close(directory)
+    if output_write is not None:
+        os.close(output_write)
+    else:
+        os.close(output)
     os.close(gate_read)
     os.close(ready_write)
     if os.read(ready_read, 1) != b"R":
@@ -119,6 +163,7 @@ def main(path):
         os.close(gate_write)
     started = time.monotonic()
     cause, status = None, None
+    output_count = 0
     while True:
         with _open_journal(path) as conn:
             body = _read(conn)
@@ -133,6 +178,10 @@ def main(path):
             cause = "CANCELLED"
         elif time.monotonic() - started >= limits["wall_seconds"]:
             cause = "LIMIT_STOPPED"
+        if output_read is not None:
+            output_count, exceeded = drain_output(output_read, output, output_count, limits["output_bytes"])
+            if exceeded and cause is None:
+                cause = "LIMIT_STOPPED"
         # Keep the root unreaped until group cleanup so its birth ID fences
         # killpg even when the trusted executable left group descendants.
         root = birth(child)
@@ -153,6 +202,13 @@ def main(path):
         time.sleep(.02)
     if members(child):
         raise ValueError("Group stop unconfirmed")
+    if output_read is not None:
+        output_count, exceeded = drain_output(output_read, output, output_count, limits["output_bytes"])
+        if exceeded and cause is None:
+            cause = "LIMIT_STOPPED"
+        os.close(output_read)
+        os.fsync(output)
+        os.close(output)
     code = os.waitstatus_to_exitcode(status)
     state = cause or ("COMPLETED" if code == 0 else "LIMIT_STOPPED" if code in {-getattr(signal, "SIGKILL"), -getattr(signal, "SIGXCPU"), -getattr(signal, "SIGXFSZ")} else "FAILED")
     with _open_journal(path) as conn:

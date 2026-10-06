@@ -41,6 +41,10 @@ def process_reservation(provider):
     reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
                    "diskMb": max(1, (limits.file_size_bytes + mib - 1) // mib),
                    "seconds": math.ceil(limits.wall_seconds)}
+    disk_bytes = getattr(limits, "disk_bytes", None)
+    if disk_bytes is not None:
+        _require(type(disk_bytes) is int and disk_bytes >= limits.file_size_bytes)
+        reservation["diskMb"] = max(reservation["diskMb"], (disk_bytes + mib - 1) // mib)
     aggregate = getattr(provider, "aggregate_config", None)
     if aggregate is not None:
         quota, period = aggregate.cpu_quota_us, aggregate.cpu_period_us

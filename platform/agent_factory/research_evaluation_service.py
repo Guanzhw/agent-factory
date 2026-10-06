@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import re
-from typing import Any
+from typing import Any, cast
 
-from .research_evaluation import validate_evaluation_contract, validate_evaluator_output
+from .research_evaluation import validate_evaluation_contract, validate_evaluator_output, evaluation_contract_fingerprint
 from .store import digest
 from .research_manifest import manifest_fingerprint
 
@@ -34,7 +34,8 @@ class ResearchEvaluationService:
             _require(type(fingerprint) is str and re.fullmatch('[a-f0-9]{64}', fingerprint) is not None
                      and type(reference) is str and reference in resources.targets)
             target = resources.targets[reference]
-            _require(callable(getattr(target.provider, 'read_completed_output', None)))
+            _require(callable(getattr(target.provider, 'read_completed_output', None))
+                     and callable(getattr(target.provider, 'read_launch_proof', None)))
             self._targets[fingerprint] = (reference, resources._target_fingerprint(target))
 
     def _execution(self, owner, execution, manifest, *, training=False):
@@ -101,6 +102,16 @@ class ResearchEvaluationService:
                  and evaluator_target.provider is not training_target.provider
                  and self.resources._target_fingerprint(evaluator_target) == fingerprint)
         self._checkpoint(contract)
+        training_proof = training_target.provider.read_launch_proof(training['id'], owner)
+        evaluation_proof = evaluator_target.provider.read_launch_proof(evaluation['id'], owner)
+        for proof, lease in ((training_proof, training), (evaluation_proof, evaluation)):
+            _require(type(proof) is dict and proof.get('manifestSha256') == manifest_fingerprint(contract['comparisonManifest'])
+                     and proof.get('variantSha256') == lease['executionGuard']['variantSha256']
+                     and all(type(proof.get(key)) is str and re.fullmatch('[a-f0-9]{64}', cast(str, proof[key]))
+                             for key in ('descriptorSha256', 'sourceSha256')))
+        _require(training_proof.get('checkpoint') is None and training_proof.get('evaluationContractSha256') is None
+                 and evaluation_proof.get('checkpoint') == contract['training']['checkpoint']
+                 and evaluation_proof.get('evaluationContractSha256') == evaluation_contract_fingerprint(contract))
         return (evaluator_target.provider, getattr(training_target, 'synthetic_fixture', False) is True,
                 getattr(evaluator_target, 'synthetic_fixture', False) is True)
 
@@ -111,7 +122,7 @@ class ResearchEvaluationService:
         raw = await asyncio.to_thread(provider.read_completed_output, execution['leaseId'], owner)
         result = validate_evaluator_output(checked, raw)
         _, training_fixture, evaluator_fixture = await asyncio.to_thread(self._check, owner, checked)
-        return {**result, 'evidenceKind': 'original_evaluator_custody', 'evaluatorCustodyVerified': True,
+        return {**result, 'evidenceKind': 'original_evaluator_custody', 'evaluatorCustodyVerified': True, 'launchInputsVerified': True,
                 'executionVerified': False, 'scientificConclusionVerified': False,
                 'trainingSyntheticFixture': training_fixture,
                 'evaluatorSyntheticFixture': evaluator_fixture,

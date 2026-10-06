@@ -102,7 +102,12 @@ class StorageGovernance:
     def _lock(self, identifier):
         """Nonblocking cross-process fence, shared by producers and retention."""
         from sqlalchemy import text
-        with self.store.engine.connect() as connection:
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+        try:
+            connection = self.store.retention_lock_engine().connect()
+        except PoolTimeout:
+            raise HTTPException(409, "RETENTION_BUSY: another original fence is active") from None
+        with connection:
             key = "af_retention:" + identifier
             if not connection.execute(text("SELECT pg_try_advisory_lock(hashtext(:key))"), {"key": key}).scalar():
                 raise HTTPException(409, "RETENTION_BUSY: reconcile the original plan")

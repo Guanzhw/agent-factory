@@ -43,3 +43,12 @@ class ProcessReservationTests(unittest.TestCase):
                 setattr(provider.limits, field, value)
                 with self.assertRaises(HTTPException):
                     process_reservation(provider)
+
+    def test_research_disk_includes_staging_and_retained_partial_bytes(self):
+        provider = self.provider()
+        provider.limits.disk_bytes = 5 * 1024**3 + 1
+        self.assertEqual(process_reservation(provider)['diskMb'], 5121)
+        for invalid in (True, 0, provider.limits.file_size_bytes - 1):
+            provider.limits.disk_bytes = invalid
+            with self.assertRaises(HTTPException):
+                process_reservation(provider)

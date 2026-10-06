@@ -87,7 +87,12 @@ def _config(target_ref, comparison_manifest, variant_sha256=None):
     return {'targetRef': _target(target_ref), 'comparisonManifestSha256': manifest_fingerprint(comparison_manifest), 'variantSha256': variant}
 
 
-def registrations(*, target_ref, comparison_manifest, owner='alice', variant_sha256=None):
+def _adapter_id(identifier, suffix):
+    _require(type(suffix) is str and (not suffix or re.fullmatch(r'-[a-z0-9][a-z0-9-]{0,30}', suffix)))
+    return identifier + suffix
+
+
+def registrations(*, target_ref, comparison_manifest, owner='alice', variant_sha256=None, adapter_suffix=''):
     expected = _config(target_ref, comparison_manifest, variant_sha256)
     content = _manifest_content(comparison_manifest)
     _require(type(owner) is str and bool(owner))
@@ -129,11 +134,11 @@ def registrations(*, target_ref, comparison_manifest, owner='alice', variant_sha
         config(ctx.spec['config'])
         return KnowledgeContext(content, {'evidenceKind': 'offline_research_experiment_manifest'})
 
-    return [AdapterRegistration('knowledge', KNOWLEDGE_ID, '1', knowledge, validator=config),
-            AdapterRegistration('tool', TOOL_ID, '1', runner, tool_name=TOOL_NAME,
+    return [AdapterRegistration('knowledge', _adapter_id(KNOWLEDGE_ID, adapter_suffix), '1', knowledge, validator=config),
+            AdapterRegistration('tool', _adapter_id(TOOL_ID, adapter_suffix), '1', runner, tool_name=TOOL_NAME,
                 permissions=(PERMISSION,), validator=config),
-            AdapterRegistration('model', MODEL_ID, '1', model, validator=config, demo_only=True),
-            AdapterRegistration('environment', ENVIRONMENT_ID, '1', environment, validator=config)]
+            AdapterRegistration('model', _adapter_id(MODEL_ID, adapter_suffix), '1', model, validator=config, demo_only=True),
+            AdapterRegistration('environment', _adapter_id(ENVIRONMENT_ID, adapter_suffix), '1', environment, validator=config)]
 
 
 def research_settings(*, db_url, workspace: Path, target_ref, remote_targets, comparison_manifest, owner='alice', variant_sha256=None):
@@ -148,20 +153,21 @@ def research_settings(*, db_url, workspace: Path, target_ref, remote_targets, co
             per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),))
 
 
-def material_drafts(*, target_ref, comparison_manifest, variant_sha256=None):
+def material_drafts(*, target_ref, comparison_manifest, variant_sha256=None, adapter_suffix=""):
+    _adapter_id(APPLICATION_ID, adapter_suffix)
     config = _config(target_ref, comparison_manifest, variant_sha256)
     definitions = []
     for kind, name, adapter in (('prompt', 'instructions', None), ('model', 'model', MODEL_ID),
             ('tool', TOOL_NAME, TOOL_ID), ('environment', 'environment', ENVIRONMENT_ID),
             ('knowledge', 'comparison-manifest', KNOWLEDGE_ID)):
-        row = {'id': APPLICATION_ID + '-' + name, 'kind': kind, 'name': 'Controlled research fixture ' + name,
+        row = {'id': APPLICATION_ID + adapter_suffix + '-' + name, 'kind': kind, 'name': 'Controlled research fixture ' + name,
             'description': 'Synthetic native external-execution workflow; no verified training or hardware claim.',
             'content': INSTRUCTIONS if kind == 'prompt' else _manifest_content(comparison_manifest) if kind == 'knowledge' else name, 'license': 'MIT',
             'compatibility': ['agno:3.1.0'], 'dependencies': [],
             'permissions': [PERMISSION] if kind == 'tool' else [],
             'provenance': {'kind': 'original', 'notice': 'Controlled fixture orchestration only; supplied manifest identities remain declarations.'}}
         if adapter is not None:
-            row['runtimeBinding'] = {'adapterId': adapter, 'revision': '1', 'config': deepcopy(config)}
+            row['runtimeBinding'] = {'adapterId': _adapter_id(adapter, adapter_suffix), 'revision': '1', 'config': deepcopy(config)}
         definitions.append(row)
     return definitions
 
@@ -175,11 +181,11 @@ def application_definition(materials):
             'budget': {'toolCalls': 2, 'maxDepth': 1, 'maxChildren': 1, 'experimentSeconds': 30, 'outputBytes': 1024 * 1024}}}}
 
 
-def publish_research_application(state, *, target_ref, comparison_manifest, author, reviewer, variant_sha256=None):
+def publish_research_application(state, *, target_ref, comparison_manifest, author, reviewer, variant_sha256=None, adapter_suffix=""):
     _require(author != reviewer)
     state['auth'].require(author, 'components:write')
     state['auth'].require(reviewer, 'agent_os:admin')
-    definitions = material_drafts(target_ref=target_ref, comparison_manifest=comparison_manifest, variant_sha256=variant_sha256)
+    definitions = material_drafts(target_ref=target_ref, comparison_manifest=comparison_manifest, variant_sha256=variant_sha256, adapter_suffix=adapter_suffix)
     governance, applications = state['material_governance'], state['applications']
     materials = []
     for definition in definitions:

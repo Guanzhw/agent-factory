@@ -98,6 +98,11 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
                  and target.gpu_binding.identity_key == manifest["device"]["identitySha256"]
                  and limits.wall_seconds == manifest["protocol"]["totalWallSeconds"])
         assert limits is not None
+        from .process_enforcement import ResearchProcessLimits
+        if type(limits) is ResearchProcessLimits:
+            _require(limits.output_bytes <= manifest['artifactLimits']['logBytes']
+                     and limits.file_size_bytes >= min(manifest['artifactLimits']['checkpointBytes'], 2 * 1024**3)
+                     and limits.disk_bytes >= 2 * limits.file_size_bytes + limits.output_bytes)
         reservation = process_reservation(provider)
         return await self.resources.allocate(owner, target_ref, task_id,
             "research-" + digest({"task": task_id, "run": task["run_id"], "effect": EFFECT}), reservation,
