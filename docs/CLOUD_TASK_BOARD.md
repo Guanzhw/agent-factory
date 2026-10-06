@@ -10,16 +10,29 @@ new access channel or three-stage execution occurs while the storage choice is p
 
 | Owner / exclusive scope | Dependency | Acceptance |
 |---|---|---|
-| root | Integration, private-control plan, task board | Full Python1654=1258pass396skip161.155s; Ruff/project Pyright0; new script Linux/Windows Pyright0; five changed files credential-pattern scan0; exact-head CI pending |
+| root | Integration, private-control plan, task board | After regression repair: full Python1655=1259pass396skip134.936s; Ruff0; production modules unchanged from project Pyright0; new script Linux/Windows Pyright0; exact-head CI pending; local PG08/10 failure retained below |
 | at10 | New optimizer/compile probe and mock/stdlib tests only | Same pinned training adapter; two partial-accumulation updates and two eager forwards; source-only pins, startup gate and verified descendant stop implemented |
 | go_adapter | Read-only control/research environment and network feasibility | Same-prefix/package gates confirmed; isolated control venv cannot substitute for combined runtime |
-| reviewer | Independent probe and documentation review |14 mock/stdlib tests pass7.403s; no remaining review blocker; no Torch/GPU/PG execution |
+| reviewer | Independent probe, documentation and deadline-regression review |14 probe mock/stdlib tests pass7.403s; cause-specific PG assertion and new controlled-transport test reviewed; no remaining code-review blocker |
 
 Actual target storage and dependency facts remain private. No full-copy fallback is
 attempted before enough storage is established. Baseline0 / val_bpb null persists.
 See `RESEARCH_OPTIMIZER_PREFLIGHT.md` for diagnostic limits and
 `RESEARCH_CONTROL_ENVIRONMENT_PLAN.md` for the conditional private-control installation plan.
 Actual compiler timing, full warmup/evaluation budgets and target installation remain unverified.
+
+The first exact head `9d9bbe97d66ca5b36cc4e3d67676d1a0c8e8fa9f` reached
+9/10 CI jobs, not acceptance. Push PostgreSQL recorded one existing read-disconnect
+test failure: its actual 503 response boundary crossed the fixed lease deadline by
+1.606 ms; PR PostgreSQL passed all1654 tests (1591pass63skip). Two terminal
+observations106.653s apart preserve this failure. The regression repair separates
+real HTTP/PG expiry or original-process-limit evidence from deterministic
+unexpired-lease transport coverage; it does not change production lease durations.
+Local targeted PG08/10 did not pass (2 failures,134.832s), both before the changed
+assertions:08 lacked its provider allocation record;10 never observed RUNNING and
+reported a non-successful execution with stop proof. These logs do not identify
+an OS restriction or prove a dispatch bug. The runs are retained as failures;
+no production change or repeated local PG run is inferred from those incomplete facts.
 
 ## Canonical local development bootstrap — 2026-10-06
 
