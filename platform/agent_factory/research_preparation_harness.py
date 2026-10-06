@@ -51,7 +51,7 @@ def main(config_path, *, expected_sha256, root_identity):
         raise ValueError('PREPARATION_CONFIG_INVALID')
     root_fd = _root(path.parent, root_identity)
     try:
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+        fd = os.open(path.name, os.O_RDONLY | getattr(os, 'O_NOFOLLOW'), dir_fd=root_fd)
     finally:
         os.close(root_fd)
     try:

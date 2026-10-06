@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from agent_factory.research_preparation_driver import PreparationDriver
+from agent_factory.research_preparation_driver import PreparationDriver, _entrypoint
+import hashlib
+import py_compile
+import sys
+from unittest.mock import patch
 from agent_factory.process_enforcement import ProcessSpec
 import base64
 import json
@@ -39,7 +43,7 @@ class PreparationDriverTests(unittest.TestCase):
         original = {p.name: (p.read_bytes(), p.stat().st_ino) for p in self.root.iterdir()}
         self.assertEqual(self.driver(self.record), first)
         self.assertEqual(original, {p.name: (p.read_bytes(), p.stat().st_ino) for p in self.root.iterdir()})
-        self.reserve.assert_called_with('alice', 'lease', disk_bytes=65536)
+        self.reserve.assert_called_with('alice', 'lease', disk_bytes=3 * 1024**2)
         self.assertFalse(first['executionVerified'])
 
     def test_tampered_and_partial_bundle_never_adopted(self):
@@ -61,6 +65,30 @@ class PreparationDriverTests(unittest.TestCase):
         record = deepcopy(self.record); record['processPin']['id'] = 'other'
         with self.assertRaises(ValueError):
             self.driver(record)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_source_loader_ignores_unchecked_pyc_and_package_shadow(self):
+        package = self.root / 'source'; package.mkdir()
+        init = package / '__init__.py'; init.write_bytes(b'')
+        source = package / 'research_preparation_harness.py'
+        source.write_text("raise RuntimeError('unchecked cache executed')")
+        py_compile.compile(str(source), invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        source.write_text('SOURCE_VERIFIED=True\ndef main(path): pass\n')
+        shadow = package / 'research_preparation_harness'; shadow.mkdir()
+        (shadow / '__init__.py').write_text("raise RuntimeError('package shadow executed')")
+        pins = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (init, source)}
+        with patch.dict(sys.modules), patch.object(sys, 'meta_path', list(sys.meta_path)), patch.object(sys, 'argv', ['entry', 'unused']):
+            for name in list(sys.modules):
+                if name == 'agent_factory' or name.startswith('agent_factory.'):
+                    del sys.modules[name]
+            exec(_entrypoint(package, pins), {})
+            self.assertTrue(getattr(sys.modules['agent_factory.research_preparation_harness'], 'SOURCE_VERIFIED'))
+
+    def test_large_input_rejected_before_reservation_or_staging(self):
+        with self.assertRaises(ValueError):
+            PreparationDriver(root=self.root, root_identity=self.driver.identity,
+                tokenizer_json=b' ' * (1024**2 + 1), reserve=self.reserve, manifest_sha256='b'*64)
+        self.reserve.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_spec_must_launch_fixed_entry_and_config(self):
