@@ -1,5 +1,22 @@
 # Cloud integration task board
 
+## Public PR47 installation handoff — 2026-10-06
+
+Branch `coord/pr47-install-closure-delivery-20261006`, based on runtime
+`6d6eb9f5fbd3ead921a82b1226edbe6f3d96c12f`. Delivery-only scripts, public manifest,
+usage instructions and synthetic regression checks; no application/schema change.
+
+| Owner / scope | Dependency | Acceptance |
+|---|---|---|
+| root | Public helper delivery, instructions, tests, draft PR | 9 synthetic tests pass; Ruff/Pyright/Bash checks pass; exact source/wheel verified; source pin remains PR47 |
+| reviewer | Independent public diff/security/commit-boundary review | Approved; independently reran 9 tests |
+| target operator | New private combined installation and database preflight | Not run by this delivery; target database policy remains unknown |
+
+The previous MODULE_NOT_FOUND occurred before DSN reading because the installed
+package was older than the entrypoint. Installation closure must pass before
+retrying the existing database preflight. Preserve all old environments/attempts.
+See [the portable handoff](PR47_INSTALL_HANDOFF.md); no private cloud paths needed.
+
 ## Control/canonical policy alignment and assembly diagnosis — 2026-10-06
 
 Branch `coord/preparation-assembly-diagnosis-20261006`, based on exact PR46
