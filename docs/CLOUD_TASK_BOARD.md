@@ -1,5 +1,26 @@
 # Cloud integration task board
 
+## Bounded optimizer/compile probe — 2026-10-06
+
+Branch `coord/research-compile-resource-probe-20261006`, based on accepted PR42
+exact `4e0d3aceddc4e7a2fdbd88cbe1f1569ce865755f` (10/10 CI, two terminal observations).
+Only an independent diagnostic and minimal control-environment plan are in scope.
+No target cleanup, environment synchronization, isolation relaxation, database startup,
+new access channel or three-stage execution occurs while the storage choice is pending.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Integration, private-control plan, task board | Full Python1654=1258pass396skip161.155s; Ruff/project Pyright0; new script Linux/Windows Pyright0; five changed files credential-pattern scan0; exact-head CI pending |
+| at10 | New optimizer/compile probe and mock/stdlib tests only | Same pinned training adapter; two partial-accumulation updates and two eager forwards; source-only pins, startup gate and verified descendant stop implemented |
+| go_adapter | Read-only control/research environment and network feasibility | Same-prefix/package gates confirmed; isolated control venv cannot substitute for combined runtime |
+| reviewer | Independent probe and documentation review |14 mock/stdlib tests pass7.403s; no remaining review blocker; no Torch/GPU/PG execution |
+
+Actual target storage and dependency facts remain private. No full-copy fallback is
+attempted before enough storage is established. Baseline0 / val_bpb null persists.
+See `RESEARCH_OPTIMIZER_PREFLIGHT.md` for diagnostic limits and
+`RESEARCH_CONTROL_ENVIRONMENT_PLAN.md` for the conditional private-control installation plan.
+Actual compiler timing, full warmup/evaluation budgets and target installation remain unverified.
+
 ## Canonical local development bootstrap — 2026-10-06
 
 Branch `coord/research-canonical-bootstrap-20261006` preserves PR40's frozen CI head.
