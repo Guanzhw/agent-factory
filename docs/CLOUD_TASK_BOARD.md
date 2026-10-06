@@ -1,5 +1,46 @@
 # Cloud integration task board
 
+## Active pinned uv research launch — 2026-10-06
+
+Base draft PR37 exact `6fd3646ff74a2ab8b7c625461a6f5738fef15079` passed
+all ten push/PR jobs; root/independent double observations were105s/115s apart.
+Complete final PG logs were unavailable despite successful job conclusions, so
+their exact counts remain unclaimed. PR37 proves offline adapter behavior only.
+
+Branch `coord/research-uv-launch-20261006`, draft PR38. Initial public probe
+commit `7d30aec38014a2a7b89aaafb6f3dc9925dc8e54f` lets the existing target
+executor report exact startup facts; it is not the final integration head.
+
+| Owner / exclusive files | Dependency | Acceptance |
+|---|---|---|
+| root | Shared spec/guardian/provider/driver/manifest integration, serial checks and final CI | Python1440=1051pass389skip120.223s; PG4pass84.196s; static/frontend/audit passed; final commit/CI pending |
+| at10 | Interpreter identity module and filesystem/manifest tests | Interpreter23 and manifest5 passed; namespace and link normalization review fixes closed |
+| go_adapter | Environment observer and tests |13 passed; pinned default uv startup profile, installed/upstream lock distinction |
+| factory_flow | New uv guardian tests |11 passed; actual prefix success/failure, original stop/restart/cancel, gate-late denial |
+| go_policy | Read-only target probe, tests and uv documentation | Probe12 passed; original-argv diagnostics and exact launch recipes documented |
+| reviewer | Core lifecycle and observer independent review | Blocking namespace finding fixed and independently reproduced as denied |
+| independent_review | Interpreter boundary review; probe review | Interpreter23/probe12 independently passed; link dotdot and trailing slash findings closed |
+
+Only declared bounded interpreter links are supported by the new contract;
+ordinary path components and final files retain no-follow checks. Canonical
+contract bytes bind project/venv/interpreter roots, config/lock/inventory/package
+identities and original custody. The fixed startup prelude rejects base-prefix
+fallback before entering the research script. Target CPython3.12.13 previously
+reported FD fallback, while a cloud3.12.14 diagnostic retained venv with logical
+argv0: these are distinct observations, not interchangeable acceptance.
+
+The first interpreter copy-only guardian fixture failed Python stdlib discovery;
+the self-authored fixture now explicitly supplies its existing stdlib layout.
+No target environment was modified to make that test pass. The fixed prelude
+also has an actual negative test: wrong prefix exits126 before the entrypoint,
+while original process stop proof remains valid. Initial probe-only workflows
+37431030250/37431103113 were canceled as superseded, not claimed final green.
+
+No new local task, ML installation, upstream execution or GPU experiment runs
+in this cloud stage. The local SDPA adaptation and eleven bounded assignments
+(approved microbatch overrides both variants) do not support full architecture
+search. Real target startup and GPU/numerical evidence remain pending.
+
 ## Active local research execution adapter — 2026-10-06
 
 Base accepted draft PR36 exact `0e05b19b84770e22d9bcc79a5df6990130079b84`;

@@ -287,7 +287,9 @@ class LocalDriverTests(unittest.TestCase):
         self.bundle['generatedFiles']['train_baseline.py'] = b'arbitrary replacement'
         proof = driver(self.record)
         self.assertEqual(proof['sourceSha256'], original)
-        self.assertEqual(len(subject._runtime_pins()), 13)
+        self.assertEqual(len(subject._runtime_pins()), 15)
+        self.assertTrue({'research_interpreter.py', 'process_enforcement_guardian.py'} <=
+                        {pin.basename for pin in subject._runtime_pins()})
         self.assertTrue(all(asdict(pin)['sha256'] for pin in subject._runtime_pins()))
 
 

@@ -27,7 +27,7 @@ from .isolation_capabilities import SUPPORTED_SCOPES, IsolationCapabilityError, 
 from .aggregate_process import aggregate_enforcement, validate_aggregate_evidence
 from .delegated_cgroup import DelegatedCgroupBackend, DelegatedCgroupConfig
 from .local_compute import LocalWorkspaceProvider
-from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, ResearchProcessLimits, ResearchProcessSpec, spec_contract
+from .process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, ResearchProcessLimits, ResearchProcessSpec, UvResearchProcessSpec, spec_contract
 from .store import canonical, digest
 
 _BINDINGS = ("id", "ownerId", "fingerprint", "localTaskId", "planId", "nativeRunId", "requestId",
@@ -57,7 +57,7 @@ class ProcessResourceProvider:
         self.required_isolation = tuple(sorted(set(required_isolation)))
         _require(sys.platform == "linux")
         _require((self.effect_key == "bounded-process-run-v1" and type(spec) is ProcessSpec and type(limits) is ProcessLimits)
-                 or (self.effect_key == "research-process-run-v1" and type(spec) is ResearchProcessSpec and type(limits) is ResearchProcessLimits))
+                 or (self.effect_key == "research-process-run-v1" and type(spec) in {ResearchProcessSpec, UvResearchProcessSpec} and type(limits) is ResearchProcessLimits))
         self.store, self.spec, self.limits = store, spec, limits
         # Reuse descriptor-pinned root traversal and bounded directory flock.
         # No workspace allocation or its journal API is invoked.

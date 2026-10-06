@@ -33,6 +33,14 @@ def _absolute(value: str) -> Path:
     return path
 
 
+def _argument(value: object) -> str:
+    # A versioned guardian uses a trusted multiline -c prelude. Preserve it in
+    # JSON only; unlike path fields, argv can legitimately contain newlines.
+    if not isinstance(value, str) or len(value) > 4096 or '\x00' in value:
+        raise ValueError('PROBE_INPUT_INVALID')
+    return value
+
+
 def _under(path: str, root: str) -> bool:
     try:
         return Path(path).is_absolute() and Path(path).is_relative_to(Path(root))
@@ -153,7 +161,7 @@ def observe(*, expected_venv: str | None = None, venv_config: str | None = None,
     original_argv = getattr(sys, 'orig_argv', [])
     if not isinstance(original_argv, list) or len(original_argv) > 32:
         raise ValueError('PROBE_ARGV_LIMIT')
-    original_argv = [_text(item) for item in original_argv]
+    original_argv = [_argument(item) for item in original_argv]
     base_executable = getattr(sys, '_base_executable', None)
     base_executable = _text(base_executable) if isinstance(base_executable, str) else None
     executed_binary_link = None

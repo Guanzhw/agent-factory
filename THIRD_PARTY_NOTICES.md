@@ -7,3 +7,14 @@ New code and documentation in this repository are MIT licensed. Dependencies ret
 - React and Vite, MIT; FastAPI and SQLAlchemy, MIT; PostgreSQL, PostgreSQL License.
 
 Agno is imported as a pinned dependency, not vendored or modified. OpenResearch is an optional external CLI; no upstream skills, service implementation or company workflows are copied. Keep upstream notices with any future redistributed third-party code. No commercial Control Plane assets are included.
+
+The inert compressed `_virtualenv.py` test fixture in
+`platform/tests/test_research_environment_observer.py` preserves the exact
+uv 0.12.19 startup source (5246 bytes, SHA-256
+`cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a`).
+It is never imported or executed by that test. Source:
+https://github.com/astral-sh/uv/blob/0.12.19/crates/uv-virtualenv/src/_virtualenv.py
+Uv is copyright (c) 2025 Astral Software Inc.; its MIT license is retained in
+[`licenses/uv-MIT.txt`](licenses/uv-MIT.txt). The startup patch derives from
+virtualenv, copyright (c) 2020-present The virtualenv developers; its MIT notice
+is also retained in [`licenses/virtualenv-MIT.txt`](licenses/virtualenv-MIT.txt).

@@ -64,7 +64,7 @@ def artifact_identity(raw: bytes) -> dict[str, Any]:
 def validate_manifest(value: Any) -> dict[str, Any]:
     """Validate exact inert fields; preserve shard order and return detached data."""
     _keys(value, 'schema evidenceKind sourceProfileSha256 baselineSourceManifestSha256 protocol dataset tokenizer environment device evaluator initialCheckpoint artifactLimits')
-    _integer(value['schema'], 1, 1)
+    _integer(value['schema'], 1, 2)
     _require(type(value['evidenceKind']) is str and value['evidenceKind'] == 'offline_research_experiment_manifest')
     _hash(value['sourceProfileSha256'])
     _require(value['sourceProfileSha256'] == _digest(source_profile()))
@@ -106,9 +106,15 @@ def validate_manifest(value: Any) -> dict[str, Any]:
     for artifact in tokenizer.values():
         _artifact(artifact)
     environment = value['environment']
-    _keys(environment, 'lockfileSha256 installedInventory runtimeKernel')
+    _keys(environment, 'lockfileSha256 installedInventory runtimeKernel' +
+          (' upstreamLockfileSha256' if value['schema'] == 2 else ''))
     _hash(environment['lockfileSha256'])
-    _require(environment['lockfileSha256'] == SOURCE_SHA256['uv.lock'])
+    if value['schema'] == 1:
+        _require(environment['lockfileSha256'] == SOURCE_SHA256['uv.lock'])
+    else:
+        # Installed adapted uv project identity is distinct from unchanged
+        # upstream provenance. Both remain inside the immutable manifest.
+        _require(environment['upstreamLockfileSha256'] == SOURCE_SHA256['uv.lock'])
     _artifact(environment['installedInventory'])
     _artifact(environment['runtimeKernel'])
     device = value['device']

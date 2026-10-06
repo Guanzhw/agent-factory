@@ -112,6 +112,84 @@ class ResearchProcessSpec(ProcessSpec):
             _deny()
 
 
+def interpreter_module():
+    try:
+        from . import research_interpreter
+    except ImportError:
+        import research_interpreter  # pyright: ignore[reportMissingImports]
+    return research_interpreter
+
+
+@dataclass(frozen=True)
+class UvResearchProcessSpec(ResearchProcessSpec):
+    """Explicit versioned uv path; legacy research fingerprints stay unchanged."""
+    interpreter_contract: str = ""
+
+    def __post_init__(self):
+        super().__post_init__()
+        interpreter_module().validate_interpreter_contract(self.interpreter_contract, self.executable, self.sha256)
+        if (len(self.argv) < 2 or self.argv[0] != '-B'
+                or not Path(self.argv[1]).is_absolute()
+                or Path(self.argv[1]).parent != Path(self.working_directory)
+                or dict(self.environment).get('PYTHONPYCACHEPREFIX') != self.working_directory):
+            _deny()
+
+
+def verify_interpreter_spec(spec):
+    """Only new dispatch checks current files; stop/reclaim uses original custody."""
+    if 'interpreter_contract' in spec:
+        fd = interpreter_module().open_interpreter(spec['interpreter_contract'], spec['executable'], spec['sha256'])
+        os.close(fd)
+
+
+UV_STARTUP_CODE = '''import os,sys
+expected,logical,entry = sys.argv[1:4]
+site = expected + '/lib/python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '/site-packages'
+cwd = os.getcwd()
+paths = [cwd if item == '' else item for item in sys.path]
+base = sys.base_prefix.rstrip('/') + '/lib/'
+valid = (sys.prefix == expected and sys.exec_prefix == expected and sys.base_prefix != expected
+         and sys.executable == logical and sys.flags.no_user_site == 1
+         and sys.dont_write_bytecode and sys.pycache_prefix == cwd and site in paths
+         and len(paths) <= 64 and all(type(item) is str and len(item) <= 4096 for item in paths)
+         and all(item in (cwd,site) or (item.startswith(base) and '/site-packages' not in item
+                                       and '/dist-packages' not in item) for item in paths))
+if not valid:
+    sys.stderr.write('RESEARCH_UV_STARTUP_UNVERIFIED\\n')
+    raise SystemExit(126)
+sys.path[:] = paths
+sys.argv = sys.argv[3:]
+import runpy
+runpy.run_path(entry, run_name='__main__')
+'''
+
+
+def interpreter_argv(spec):
+    if 'interpreter_contract' not in spec:
+        return [spec['executable'], *spec['argv']]
+    value = interpreter_module().validate_interpreter_contract(
+        spec['interpreter_contract'], spec['executable'], spec['sha256'])
+    # Fixed trusted prelude rejects a base-prefix fallback before entrypoint or
+    # ML imports. This is a runtime check, not an inference from FD acceptance.
+    return [spec['executable'], '-B', '-c', UV_STARTUP_CODE,
+            value['roots']['venv'], spec['executable'], *spec['argv'][1:]]
+
+
+def execute_pinned_interpreter(spec, binary, environment, before_exec):
+    """The original child calls this only after its release gate and cwd pin."""
+    if 'interpreter_contract' in spec:
+        interpreter_module().recheck_interpreter(
+            spec['interpreter_contract'], spec['executable'], spec['sha256'], binary)
+    approval = before_exec()
+    if inspect.isawaitable(approval):
+        if inspect.iscoroutine(approval):
+            approval.close()
+        _deny()
+    if approval is False:
+        _deny()
+    os.execve(binary, interpreter_argv(spec), environment)
+
+
 def open_working_directory(path, expected):
     """Open every component without following links and retain the pinned inode."""
     value = Path(path)
@@ -392,16 +470,18 @@ class BoundedProcessAdapter:
     def create(cls, path, *, owner_id, task_id, request_id, spec, limits: ProcessLimits | ResearchProcessLimits = ProcessLimits(), aggregate_config=None, aggregate_binding=None):
         if sys.platform != "linux" or not hasattr(os, "fork") or not Path("/proc/self/stat").is_file():
             raise ProcessEnforcementError("PROCESS_ENFORCEMENT_UNAVAILABLE")
-        if (type(spec), type(limits)) not in {(ProcessSpec, ProcessLimits), (ResearchProcessSpec, ResearchProcessLimits)}:
+        if (type(spec), type(limits)) not in {(ProcessSpec, ProcessLimits), (ResearchProcessSpec, ResearchProcessLimits),
+                                             (UvResearchProcessSpec, ResearchProcessLimits)}:
             _deny()
         if type(owner_id) is not str or not 1 <= len(owner_id) <= 200 or any(ord(c) < 32 or ord(c) == 127 for c in owner_id):
             _deny()
         for value in (task_id, request_id):
             if type(value) is not str or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
                 _deny()
-        if type(spec) is ResearchProcessSpec:
+        if type(spec) in {ResearchProcessSpec, UvResearchProcessSpec}:
             directory_fd = open_working_directory(spec.working_directory, spec.working_directory_identity)
             os.close(directory_fd)
+            verify_interpreter_spec(asdict(spec))
         aggregate_body = {}
         if aggregate_config is not None:
             try:
@@ -457,6 +537,13 @@ class BoundedProcessAdapter:
                 if inspect.iscoroutine(approval):
                     approval.close()
                 raise ProcessEnforcementError("PROCESS_ASYNC_AUTHORITY_DENIED")
+            verify_interpreter_spec(body['spec'])
+            if 'interpreter_contract' in body['spec']:
+                approval = before_effect()  # Recheck after bounded inventory IO.
+                if inspect.isawaitable(approval):
+                    if inspect.iscoroutine(approval):
+                        approval.close()
+                    raise ProcessEnforcementError("PROCESS_ASYNC_AUTHORITY_DENIED")
             body["state"] = "DISPATCHING"
             _write(conn, body)
         self._launch_owner = False

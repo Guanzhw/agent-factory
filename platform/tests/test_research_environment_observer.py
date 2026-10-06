@@ -1,4 +1,6 @@
 """Synthetic temp installation only; no interpreter, package or GPU execution."""
+import base64
+import zlib
 from copy import deepcopy
 from dataclasses import asdict
 import hashlib
@@ -16,6 +18,41 @@ from agent_factory.research_environment_observer import ResearchEnvironmentObser
 from agent_factory.research_staging import FilePin, InputPin, RootIdentity
 from agent_factory.store import digest
 from test_research_manifest import example_manifest  # pyright: ignore[reportMissingImports]
+
+
+# Exact reviewed virtualenv startup source, inert compressed fixture; never executed.
+# uv0.12.19 / virtualenv MIT attribution and license text: THIRD_PARTY_NOTICES.md.
+_UV_STARTUP_SOURCE = zlib.decompress(base64.b85decode(
+    'c%0o>TW{kw7Jm1yAe4vN14~ZQooy#*fDJmA2FMPINv1D@fj~>N#f>bgBo)Q8*#ExYAt_n5>|pnyeJFv%vPhlFcfNCxqbT~7+pG|V'
+    '*@9cfwP3uiODS@OuezzM+z4hBwgr2V+BUpoqQaG`Hlngg6h)JX+|){2mZ{2$XIsi;cSo7-'
+    '%52SK^4smFhtD^6?>_#P{(AH9^DpW9+q-'
+    'w{8po2F+alphL!Z+$UCC0U>1;BY<YL8YvN6r2u~YgtyP7a8Qca(4ajUViG>n&}Y7J|Q&}1|0S;=(+pNxVRT(29l*}xIbc)!i9R23'
+    'tQUT$G+ZLSuJTxGCpYYSB+O0O5+Cl?nBSs4p8_{_y~QrJy-mUsH&J&7?%G|9xtye9+H3NT7DFa)xjb-'
+    '{8~eP`K*Kf+Q`8Np=Lf$1MQioG-'
+    '0%vmYycLrac>EMPnb<)AZ*cq$T@BE6ry*z*I?w+w$u#8ugvK}svO>iq<!g%0AtC})rYhe+B?2)g*lW-CQQH?b+7cW@oG^#RBYp#t'
+    '*y>J&>gQyd32?bBfWkZN1<6|B@&w<0esS)LB&Rzjdpz!L|V@p?o9JI7BO=*c=M@=~KeE)cd$u*;c2~bE?O?HBbnVm*qKblQ;kE~c'
+    '!Yk^oq6vJ@hieM**{1#iQC!s6D+CpfTT%9I5gY3~<OSsMkE1dY!N&gC~j%L$*luXFH#6PujZKX6@a!<5rR3k;8Hk!lulG|`u2%Za'
+    'V=+b0b*4AC--12CEF|9|jg*mGZko4aq`ajXW11opz0F+#@9TC^1TJny9hHxq5zd$?o1WHj2DE2WK;F8p;o<jbdeN>g04H#e>T?HZ'
+    'pF8vRzgEz;hI5}gtzM2(EJ^Bo(L-}-Bv{89Ok5fq3l|pd$Ys?cbo37L@wcw9kT6KQ-'
+    'W0d_s5bBUxN74#KC4GB)|M2<Y_U_)t9u`M^9ZKlR#SQM)R;lh5B%Um83s1c5!WV3O^VJP9tgO~?Q^&lD{ie_WBP+QvEPYRvQ1=!2'
+    'hHZr9E?Ou_v=uswFU<}vh;vjA!gAJI-XZAQieqY1mK6uK*Dkb^P{c}=J$^a=$|Ru)By-42?r?KDn=`}}7)mR7DZfE{$-'
+    'l{ROHtuZO6EbYw<0_Xj_EBET;m+9MKFMRJrCNJBI9T(WHdEM{H+B@X=5UK?mK4YVi$s23EYOhr2q)pSjPxYot?_%))j0NmnZ5IUe'
+    '&!2eT>%97R@rr)Mim{YrY6n023C{7%*vZ@#CA<E}3(HPLX#~2pr(`<?F8gfBO9X{Ni#~O(`^~sYMowU<dQuMQ+aEKkD7J%ciTHn4'
+    '3=@&d)FV^g3f78m<ArniGMU=9!~>E<F}`qsdW9ALL-Gr4{5g5+-'
+    '}34HShDkr7cCC@YaC13eGaH_^6O0kB0yrL%Gza<Z|v6eN%eE2**Wh})vx=r?=1!32)7gJ7Z}t4tU(RQ3Nw;PTDi-'
+    ';5(b%j)fZne17fx-3A14xR6hi|0(#mVHD--f6A$zMxRmTs{oyYo98pABVblmHRHXJ7k=IeaUBoyy<hyr_W(E2MCTk2_2iU>uYv?H'
+    '7?HwoS%$N1g;(?@#x%HNIsZdD`VtRmeOv0w%Jw%0fs$XIA0$wU78xXLE-'
+    '0>P>n%mW1g)X6Ds6mp91qE%G44w<P)8B{?R}rHnl~AA?d3|JNB$qFO7^_Zg=pxYLKvBREtUhb~ODI{o(fRn8uR&k|TFMoiSC5&@*'
+    'UWv}z+Wr`gSqE#ER#mGrNlzB>O~i8&%_WfhUWy0Lz!fDcD>#vVW6il3L@1yHezy<<tBL2~5z)6HbXfA1QKZzC-'
+    'f#Yp<x#A+4$Rv){57;hTu2WCVp_EyA(uf#}UPqz*yN4<Sct+d)8K2_%0UPnN5a|+A&<gVFKwsgmPYV6ByQ4MxR0FyD{_jByJ&&ko'
+    'jQFZ7gKrKDk7wG-cJkAVS$Vc}a$U*beII)Lo7q_-;hhfXb)1nr&p?~rD-(FuV&I;AWrE-'
+    '}W6Eosg=`oXfGfY~EHs!U12L(6WT0JGh5|SY_MiTKXveb9^=(sPmD1d2zaPJZFbf86)AZkRyy8|ah;vE3O(A368_1a!GsCy9@*mK'
+    'OBK#<;~(`c=nQ6Xle;dIPs5oLC*`2O~v7vY`mrDa}pc;02kly1$*p4n*-Xob#nWBvSmtUVoDHO-'
+    '2!{pa}IGn%uZ%I2*xu2AcRVy2-'
+    '+W!N`acVnhcxu3pIemJQiG((rIhkHmO%$=ta?I2b6+Uc;xx|{znRHQNtw}s04F={}CDX^P|`E~GqguByl^G}-'
+    '$hC_kZoun?@X?kQfIGg}>KejN8HPX^NM%7kS8Qx0S2F-`~iqSUAX~)LAaoybgIFy*C#tW%2)832OI7EZrd^-'
+    'GI2*e=Yd>~vp@1%xwbw346_f!23pVJP?z+WsV$DN%_=w}Cd6-?ca5qLci+D^~s-3#Lsb>_cFFim~'
+))
 
 
 @unittest.skipUnless(os.name == 'posix', 'POSIX nofollow static inventory')
@@ -75,6 +112,94 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
         info = self.root.stat()
         return InputPin(label, 'environment', str(self.root), RootIdentity(info.st_dev, info.st_ino),
             FilePin(name, identity['sha256'], identity['sizeBytes']))
+
+    def uv_fixture(self):
+        from agent_factory.research_interpreter import capture_interpreter_contract
+        cfg = self.write(self.venv / 'pyvenv.cfg', b'include-system-site-packages = false\nuv = 0.12.19\n')
+        project_pin = self.write(self.root / 'pyproject.toml', b'[project]\nname="synthetic"\nversion="0.0.1"\n')
+        lock_pin = self.write(self.root / 'uv.lock', b'version = 1\n# synthetic installed lock, not upstream provenance\n')
+        interpreter = self.venv / 'bin' / 'python'
+        managed = self.root / 'managed'
+        managed.mkdir(mode=0o700)
+        target = managed / 'python'
+        interpreter.rename(target)
+        target.chmod(0o700)
+        interpreter.symlink_to(target)
+        self.write(self.site / '_virtualenv.py', _UV_STARTUP_SOURCE)
+        self.write(self.site / '_virtualenv.pth', b'import _virtualenv')
+        inventory = json.loads((self.root / 'inventory.json').read_bytes())
+        info = self.root.stat()
+        inventory.update(schema=2, interpreterMode='research-uv-interpreter-v1',
+            project={'root': str(self.root), 'rootIdentity': {'device': info.st_dev, 'inode': info.st_ino},
+                     'pyprojectToml': project_pin, 'uvLock': lock_pin},
+            startupProfile=module.UV_STARTUP_PROFILE, startupFiles=deepcopy(module.UV_STARTUP_FILES))
+        inventory['venv']['pyvenvCfg'] = cfg
+        first = self.input('environment-inventory', 'inventory.json', inventory)
+        self.observer = ResearchEnvironmentObserver(first, self.observer._kernel)
+        self.request['environment']['installedInventory'] = {'sha256': first.file.sha256, 'sizeBytes': first.file.size_bytes}
+        upstream = self.request['environment']['lockfileSha256']
+        self.request['environment'].update(lockfileSha256=lock_pin['sha256'], upstreamLockfileSha256=upstream)
+        self.request['runtimeConfig']['comparisonManifest']['schema'] = 2
+        self.request['configurationFingerprint'] = self.observer.configuration_fingerprint
+        lock = InputPin('environment-lockfile', 'environment', str(self.root), RootIdentity(info.st_dev, info.st_ino),
+                        FilePin('uv.lock', lock_pin['sha256'], lock_pin['sizeBytes']))
+        self.request['environmentPins'] = [asdict(first), asdict(self.observer._kernel), asdict(lock)]
+        paths = [str(Path(package['root']) / row['path']) for package in inventory['packages'] for row in package['files']]
+        paths += [str(self.runtime_root / row['basename']) for row in self.request['trustedRuntimeFiles']]
+        paths += [str(self.site / name) for name in module.UV_STARTUP_FILES]
+        self.request['launchSpec']['interpreter_contract'] = capture_interpreter_contract(
+            executable=str(interpreter), sha256=inventory['python']['sha256'], project_root=str(self.root),
+            venv_root=str(self.venv), approved_interpreter_roots=[str(managed)],
+            pyvenv_cfg=str(self.venv / 'pyvenv.cfg'), pyproject_toml=str(self.root / 'pyproject.toml'),
+            uv_lock=str(self.root / 'uv.lock'), package_inventory=str(self.root / 'inventory.json'), package_files=paths)
+
+    def test_uv_pinned_chain_exact_startup_and_adapted_lock_static_identity(self):
+        self.uv_fixture()
+        self.assertEqual(self.observer(self.request)['status'], 'VERIFIED')
+        self.assertEqual(self.observer(self.request), self.observer(deepcopy(self.request)))
+
+    def test_uv_cfg_lock_project_package_and_link_drift_unknown(self):
+        for relative in ('venv/pyvenv.cfg', 'uv.lock', 'pyproject.toml',
+                         'package', 'link'):
+            with self.subTest(path=relative):
+                case = ResearchEnvironmentObserverTests()
+                case.setUp()
+                try:
+                    case.uv_fixture()
+                    self.assertEqual(case.observer(case.request)['status'], 'VERIFIED')
+                    if relative == 'link':
+                        path = case.venv / 'bin' / 'python'
+                        path.unlink()
+                        path.symlink_to(case.root / 'managed' / 'missing')
+                    else:
+                        path = case.site / 'torch' / '__init__.py' if relative == 'package' else case.root / relative
+                        path.write_bytes(path.read_bytes() + b'# altered\n')
+                    self.assertEqual(case.observer(case.request)['status'], 'UNKNOWN')
+                finally:
+                    case.doCleanups()
+
+    def test_uv_missing_inventory_coverage_or_wrong_lock_declaration_unknown(self):
+        self.uv_fixture()
+        self.assertEqual(self.observer(self.request)['status'], 'VERIFIED')
+        request = deepcopy(self.request)
+        contract = json.loads(request['launchSpec']['interpreter_contract'])
+        contract['packageFiles'].pop()
+        request['launchSpec']['interpreter_contract'] = json.dumps(contract, sort_keys=True, separators=(',', ':'))
+        self.assertEqual(self.observer(request)['status'], 'UNKNOWN')
+        request = deepcopy(self.request)
+        request['environmentPins'][-1]['file']['sha256'] = '0' * 64
+        self.assertEqual(self.observer(request)['status'], 'UNKNOWN')
+
+    def test_uv_startup_modified_extra_or_shadowed_unknown(self):
+        self.uv_fixture()
+        self.assertEqual(self.observer(self.request)['status'], 'VERIFIED')
+        for name in ('_virtualenv.abi3.so', '_virtualenv.pyc', 'other.pth'):
+            path = self.site / name
+            self.write(path, b'import unreviewed')
+            self.assertEqual(self.observer(self.request)['status'], 'UNKNOWN')
+            path.unlink()
+        self.write(self.site / '_virtualenv.py', _UV_STARTUP_SOURCE + b'\n# altered')
+        self.assertEqual(self.observer(self.request)['status'], 'UNKNOWN')
 
     def test_static_declared_scope_verified_without_executing_interpreter(self):
         receipt = self.observer(self.request)

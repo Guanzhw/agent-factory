@@ -297,20 +297,25 @@ are separate artifacts; neither their environments nor platform-specific wheels
 are interchangeable. Native Windows environment preparation does not establish
 support for this Linux/POSIX research provider.
 
-**Current compatibility blocker:** the read-only observer's regular-interpreter
-contract requires an ordinary, non-symlink `<venv>/bin/python` with its pinned
-bytes, and the process guardian executes a pinned file descriptor. uv-created
-POSIX environments ordinarily use interpreter symlinks; the checked
+**Versioned uv support:** the original regular-interpreter profile still
+requires a non-symlink `<venv>/bin/python`. The explicit `UvResearchProcessSpec`
+and environment inventory schema2 now support declared bounded interpreter
+links, a pinned final FD, complete listed package identities and startup
+namespace checks. See [the uv launch contract and target probe](RESEARCH_UV_LAUNCH.md).
+This does not globally permit symlinks or establish target compatibility.
+uv-created POSIX environments ordinarily use interpreter symlinks; the checked
 `uv venv --help` exposes no `--copies` option. `--link-mode copy` controls package
 installation and does not solve that interpreter/FD-exec/venv-discovery mismatch.
-Any virtualenv startup hooks must also satisfy the observer’s closed startup-file
-policy; `--no-editable` alone does not prove that compatibility.
+Virtualenv startup hooks must satisfy the observer’s closed startup-file policy;
+schema2 permits only the independently reviewed exact uv startup-file profile.
+`--no-editable` alone does not prove that compatibility.
 Do not invent `uv venv --copies`, copy an interpreter manually into an existing
 environment, or describe the templates above as an accepted execution recipe.
-Any future observer/provider support must explicitly pin interpreter link/target
-identity and verify venv/import behavior without weakening the current no-follow
-file contracts. Until reviewed support and an actual authorized acceptance run
-exist, this route remains blocked for real research execution.
+The new guardian preserves logical venv argv0 while executing the verified FD,
+then checks actual prefix/import-path layout before entering the research script.
+The cloud and target have reported different earlier FD startup results; target
+probe evidence and actual authorized acceptance remain necessary. Controlled
+tests do not establish that the current target project can execute research.
 
 ## Acceptance boundaries
 

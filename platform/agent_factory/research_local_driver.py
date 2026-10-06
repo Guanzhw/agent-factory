@@ -15,7 +15,7 @@ import stat
 import re
 from typing import Any, cast
 
-from .process_enforcement import ResearchProcessSpec
+from .process_enforcement import ResearchProcessSpec, UvResearchProcessSpec
 from .research_checkpoint import _flags, _root, _stamp, checkpoint_binding
 from .research_evaluation import evaluation_contract_fingerprint
 from .research_manifest import manifest_fingerprint, validate_manifest
@@ -31,7 +31,8 @@ ERROR = 'RESEARCH_LOCAL_DRIVER_INVALID'
 _RUNTIME_FILES = ('research_torch_runtime.py', 'research_checkpoint.py',
     'research_manifest.py', 'research_evaluation.py', 'research_assessment.py',
     'research_profile.py', 'research_candidate.py', 'research_training_adapter.py',
-    'research_staging.py', 'research_local_driver.py', 'process_enforcement.py', 'store.py', '__init__.py')
+    'research_staging.py', 'research_local_driver.py', 'process_enforcement.py',
+    'process_enforcement_guardian.py', 'research_interpreter.py', 'store.py', '__init__.py')
 _BASE_KEYS = {'inputRoot', 'inputRootIdentity', 'tokenizer', 'tokenBytes', 'dataset', 'outputCheckpoint'}
 _EXECUTION = ('ownerId', 'taskId', 'nativeRunId', 'planId', 'planFingerprint', 'leaseId', 'providerJobId')
 
@@ -200,7 +201,7 @@ class _LocalDriver:
                      for name, raw in self._generated.items()))
         self._root, self._identity = Path(program_root).absolute(), program_root_identity
         self._entrypoint, self._manifest, self._variant = entrypoint, manifest, variant_sha256
-        _require(type(cache_root_identity) is RootIdentity and type(launch_spec) is ResearchProcessSpec)
+        _require(type(cache_root_identity) is RootIdentity and type(launch_spec) in {ResearchProcessSpec, UvResearchProcessSpec})
         self._cache_root, self._cache_identity = Path(cache_root).absolute(), cache_root_identity
         self._spec = cast(ResearchProcessSpec, launch_spec)
         self.validate_spec(launch_spec)
@@ -237,7 +238,7 @@ class _LocalDriver:
 
     def validate_spec(self, spec):
         """Provider construction must call this before accepting a launch spec."""
-        _require(type(spec) is ResearchProcessSpec and spec == self._spec
+        _require(type(spec) in {ResearchProcessSpec, UvResearchProcessSpec} and spec == self._spec
                  and spec.argv == ('-B', self.entrypoint_path, '--config', self.config_path)
                  and spec.working_directory == str(self._root)
                  and spec.working_directory_identity == (self._identity.device, self._identity.inode))

@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt, aggregate_operation, aggregate_finish, aggregate_projection, open_working_directory  # type: ignore[reportMissingImports]  # noqa: E402
+from process_enforcement import _open_journal, _read, _write, birth, boot_id, same_birth, stop_receipt, aggregate_operation, aggregate_finish, aggregate_projection, open_working_directory, interpreter_module, execute_pinned_interpreter  # type: ignore[reportMissingImports]  # noqa: E402
 
 
 def update(path, **changes):
@@ -76,7 +76,9 @@ def main(path):
     output_read, output_write = os.pipe() if research else (None, None)
     if output_read is not None:
         os.set_blocking(output_read, False)
-    binary = os.open(spec["executable"], os.O_RDONLY | getattr(os, "O_NOFOLLOW"))
+    uv_contract = spec.get('interpreter_contract')
+    binary = (interpreter_module().open_interpreter(uv_contract, spec['executable'], spec['sha256'])
+              if uv_contract is not None else os.open(spec["executable"], os.O_RDONLY | getattr(os, "O_NOFOLLOW")))
     info = os.fstat(binary)
     if not stat.S_ISREG(info.st_mode):
         raise ValueError("Executable is not regular")
@@ -126,7 +128,14 @@ def main(path):
                 os.fchdir(directory)
                 os.close(directory)
                 environment.update(dict(spec["environment"]))
-            os.execve(binary, [spec["executable"], *spec["argv"]], environment)
+            def before_exec():
+                # Long bounded inventory reads cannot hide cancellation at the
+                # original gate; recheck the unchanged original custody again.
+                with _open_journal(path) as conn:
+                    current = _read(conn)
+                    return (not current['cancelRequested'] and current['bootId'] == boot_id()
+                            and same_birth(birth(os.getpid()), current['child']))
+            execute_pinned_interpreter(spec, binary, environment, before_exec)
         except BaseException:
             os._exit(125)
     os.close(binary)

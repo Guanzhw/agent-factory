@@ -105,9 +105,21 @@ class ResearchUVProbeTests(unittest.TestCase):
         self.assertEqual(report['runtime']['executedBinaryLink'], '/public/base/python')
         self.assertIn(call('/proc/self/exe'), readlink.call_args_list)
         self.assertFalse(report['capabilities']['fdLaunchVerified'])
-        for invalid in (['x'] * 33, ['x' * 4097], [False]):
+        for invalid in (['x'] * 33, ['x' * 4097], [False], ['invalid\x00argument']):
             with patch.object(sys, 'orig_argv', invalid), self.assertRaises(ValueError):
                 PROBE['observe']()
+
+    def test_multiline_internal_prelude_is_preserved_only_as_escaped_json(self):
+        argv = ['/public/venv/bin/python', '-B', '-c',
+            'import sys\nif not sys.prefix:\n\traise SystemExit(126)\n',
+            '/public/venv', '/public/probe_research_uv.py']
+        output = io.StringIO()
+        with patch.object(sys, 'path', []), patch.object(sys, 'orig_argv', argv), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(PROBE['main']([]), 0)
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertEqual(json.loads(output.getvalue())['runtime']['origArgv'], argv)
+        self.assertIn('import sys\\n', output.getvalue())
 
     def test_binary_link_missing_or_nonlinux_and_nonstring_base_are_unknown(self):
         with patch.object(sys, 'path', []), patch.object(sys, '_base_executable', False, create=True), \
