@@ -218,7 +218,9 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
 
     def test_uv_new_startup_file_or_modified_script_at_final_recheck_unknown(self):
         original = module._uv_interpreter
-        for profile in module.UV_STARTUP_PROFILES:
+        # This legacy fixture contains only uv startup files. Complete setuptools
+        # profiles use the full-site fixture in test_research_inventory_profile.
+        for profile in ('uv0117-virtualenv-startup-v1', module.UV_STARTUP_PROFILE):
             for modification in ('new-pth', 'modified-script'):
                 with self.subTest(profile=profile, modification=modification):
                     case = ResearchEnvironmentObserverTests()

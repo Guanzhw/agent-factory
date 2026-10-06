@@ -1,5 +1,27 @@
 # Cloud integration task board
 
+## Canonical local development bootstrap — 2026-10-06
+
+Branch `coord/research-canonical-bootstrap-20261006` preserves PR40's frozen CI head.
+No cloud Torch/GPU execution, production deployment or external identity setup.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Versioned interpreter/observer limits, trusted assembly, integration | Complete profile13 and legacy50 pass; full Python1639=1243pass396skip94.521s; runner identity follow-up10pass; Ruff/Linux+Windows Pyright0; real assembled preparation PostgreSQL1 pass25.900s; target full scan pending |
+| factory_flow | Preparation runtime, complete inventory, executable handoff docs | Source-only preparation native PG2 pass; inventory10 mock pass; handoff documented |
+| at10 | Loopback bootstrap, native controller, three-stage runner | Bootstrap10/controller10 mock and native PG1 pass; runner/controller22 mock pass plus final runner10pass; original-process failure cleanup PG1 pass11.104s |
+| go_adapter | Capability probe, captured inputs, assembly regression | Probe13/input9 pass; assembly4 constructor tests pass |
+| reviewer | Strict CoW clone and independent assembly review | Clone17 pass; preparation review clear; assembly/stop-only review clear |
+| independent_review | Inventory/profile review |13 pass; same-base, cwd and installed RECORD findings resolved |
+| go_policy | PR40 exact b8b4ff0 CI |10/10 success, two terminal observations138.075s apart; each PG1507=1444pass63skip |
+
+A deterministic orchestration model is labeled separately from actual provider
+execution. Development code identities do not represent independent human review.
+Shared-cache contents/permissions are never changed. CoW unavailability has no
+full-copy or hardlink fallback. Reviewed target .pth profile is explicit; existing local PG tooling and actual
+CoW capability remain factual inputs; missing assembly code continues here instead of being
+presented as a user approval prerequisite.
+
 ## Cancellation before synthetic process dispatch — 2026-10-06
 
 PR40 head `7a0a5a6ce6df0a75c813710fec4230dddfbf85f3` failed both PostgreSQL

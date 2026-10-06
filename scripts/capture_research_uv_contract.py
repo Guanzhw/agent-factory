@@ -14,6 +14,8 @@ import sys
 from typing import Any, cast
 
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
+MAX_COMPLETE_CONFIG_BYTES = 8 * 1024 * 1024
+_COMPLETE_PROFILE = 'complete-venv-32768-v1'
 _KEYS = {'executable', 'sha256', 'project_root', 'venv_root', 'approved_interpreter_roots',
          'pyvenv_cfg', 'pyproject_toml', 'uv_lock', 'package_inventory', 'package_files'}
 _ERROR = 'RESEARCH_UV_CONTRACT_CAPTURE_FAILED'
@@ -27,9 +29,9 @@ def capture_interpreter_contract(**value):
     return capture(**value)
 
 
-def contract_limit():
-    from agent_factory.research_interpreter import MAX_CONTRACT_BYTES
-    return MAX_CONTRACT_BYTES
+def contract_limit(profile=None):
+    from agent_factory.research_interpreter import inventory_bounds
+    return inventory_bounds(profile)[4]
 
 def _require(value):
     if not value:
@@ -80,13 +82,15 @@ def _constant(_):
 
 
 def _shape(value):
-    _require(type(value) is dict and set(value) == _KEYS)
+    _require(type(value) is dict and set(value) in (_KEYS, _KEYS | {'bounds_profile'}))
+    complete = 'bounds_profile' in value
+    _require(not complete or value['bounds_profile'] == _COMPLETE_PROFILE)
     value = cast(dict[str, Any], value)
     for name in _KEYS - {'sha256', 'approved_interpreter_roots', 'package_files'}:
         _absolute(value[name])
     _require(type(value['sha256']) is str and len(value['sha256']) == 64
              and all(char in '0123456789abcdef' for char in value['sha256']))
-    for name, minimum, maximum in (('approved_interpreter_roots', 1, 16), ('package_files', 0, 4096)):
+    for name, minimum, maximum in (('approved_interpreter_roots', 1, 16), ('package_files', 0, 32768 if complete else 4096)):
         _require(type(value[name]) is list and minimum <= len(value[name]) <= maximum)
         for item in value[name]:
             _absolute(item)
@@ -104,17 +108,18 @@ def configuration(path):
         name = PurePosixPath(path).name
         fd = os.open(name, os.O_RDONLY | nofollow | nonblock, dir_fd=parent)
         info = os.fstat(fd)
-        _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= MAX_CONFIG_BYTES
+        _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= MAX_COMPLETE_CONFIG_BYTES
                  and stat.S_IMODE(info.st_mode) & 0o022 == 0)
         before = _stamp(info); raw = bytearray()
         while True:
-            chunk = os.read(fd, min(65536, MAX_CONFIG_BYTES - len(raw) + 1))
+            chunk = os.read(fd, min(65536, MAX_COMPLETE_CONFIG_BYTES - len(raw) + 1))
             if not chunk:
                 break
-            raw.extend(chunk); _require(len(raw) <= MAX_CONFIG_BYTES)
+            raw.extend(chunk); _require(len(raw) <= MAX_COMPLETE_CONFIG_BYTES)
         _require(len(raw) == info.st_size and before == _stamp(os.fstat(fd))
                  and before == _stamp(os.stat(name, dir_fd=parent, follow_symlinks=False)))
         value = _shape(json.loads(raw.decode('utf-8'), object_pairs_hook=_unique, parse_constant=_constant))
+        _require(len(raw) <= (MAX_COMPLETE_CONFIG_BYTES if 'bounds_profile' in value else MAX_CONFIG_BYTES))
         yield value
         _require(before == _stamp(os.fstat(fd)))
         reopened = _parent(path)
@@ -132,8 +137,8 @@ def main(argv=None):
     try:
         args = sys.argv[1:] if argv is None else argv
         _require(type(args) is list and len(args) == 2 and args[0] == '--config')
-        maximum = contract_limit()
         with configuration(args[1]) as value:
+            maximum = contract_limit(value.get('bounds_profile'))
             contract = capture_interpreter_contract(**value)
             _require(type(contract) is str and 0 < len(contract.encode('utf-8')) <= maximum)
         # No newline or progress output: preserve the helper's canonical bytes.

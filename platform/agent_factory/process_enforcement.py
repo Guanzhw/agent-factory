@@ -93,7 +93,7 @@ class ResearchProcessSpec(ProcessSpec):
     def __post_init__(self):
         super().__post_init__()
         allowed = {"HOME", "PATH", "CUDA_VISIBLE_DEVICES", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR",
-                   "CUDA_CACHE_PATH", "TMPDIR", "HF_HOME", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE", "PYTHONPYCACHEPREFIX"}
+                   "CUDA_CACHE_PATH", "TMPDIR", "HF_HOME", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE", "PYTHONPYCACHEPREFIX", "SETUPTOOLS_USE_DISTUTILS"}
         if (type(self.working_directory) is not str or not Path(self.working_directory).is_absolute()
                 or "\x00" in self.working_directory or type(self.environment) is not tuple
                 or len(self.environment) > len(allowed)):
@@ -108,6 +108,8 @@ class ResearchProcessSpec(ProcessSpec):
                 _deny()
             names.add(pair[0])
         values = dict(self.environment)
+        if "SETUPTOOLS_USE_DISTUTILS" in values and values["SETUPTOOLS_USE_DISTUTILS"] not in {"stdlib", "local"}:
+            _deny()
         if any(values.get(key) != "1" for key in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE")):
             _deny()
 

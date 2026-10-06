@@ -9,9 +9,14 @@ A complete environment must fit all bounds together. Package file count, tree
 entry count, serialized metadata size and hard-link identity are separate gates.
 A reported complete inventory that exceeds any gate remains inadmissible.
 
-Current admission remains closed: 4,096 files, 8,192 entries per module tree,
-1 MiB collected inventory JSON, 2 MiB canonical interpreter contract, and
-single-link regular files. The aggregate byte bound alone is insufficient.
+The default profile remains bounded to 4,096 files, 8,192 entries per module tree,
+1 MiB inventory JSON and 2 MiB canonical interpreter contract. The explicit
+`complete-venv-32768-v1` profile uses inventory schema3/interpreter schema2:
+32,768 files, 65,536 namespace/tree entries, 16,384 pinned directories, 8 MiB
+inventory JSON and 16 MiB canonical contract. Both retain single-link regular
+files, at most1 GiB per file and8 GiB package bytes. The capture CLI requires
+`bounds_profile` explicitly; the observer independently requires the same profile.
+Old schemas cannot borrow the larger limits. The aggregate byte bound alone is insufficient.
 No package subtree, shared library, metadata file or startup file may be omitted
 to fit these limits. The largest file, total namespace entries/directories and
 actual canonical-contract bytes are still separate required measurements.
@@ -23,7 +28,7 @@ not a semantic audit. Unlisted executable startup files remain rejected.
 
 ## Hard links and storage choices
 
-A larger, versioned inventory profile could finitely bound the complete tree,
+The explicit `complete-venv-32768-v1` inventory profile finitely bounds the complete tree and can
 check each path's device/inode/link count/mode/owner/size/hash/timestamps, require
 consistent pins for paths sharing an inode, and retain descriptors. That proves
 observed consistency, not immutability throughout execution. Repeated hashes,
@@ -32,7 +37,10 @@ through another hard-link alias. Changing shared-cache permissions is not an
 acceptable isolation repair.
 
 When free space cannot hold an additional complete copy, copying is not a safe
-fallback. A strong runtime isolation route needs one of these actual capabilities:
+fallback. A cooperative private-copy route, consistent with the existing trusted-operator
+contract, can use independently verified CoW inodes and an explicit no-concurrent-
+writer window. It does not claim defense against a malicious same-UID writer.
+Stronger runtime isolation would need one of these actual capabilities:
 
 - A supported independent CoW clone or read-only filesystem snapshot, with its
   namespace protected from replacement and measured/reserved CoW growth. Reflink
@@ -49,7 +57,8 @@ requirements; it does not establish this target's capability or authorize modify
 shared cache files. [FICLONE](https://man7.org/linux/man-pages/man2/FICLONE.2const.html)
 is a filesystem-dependent CoW operation, not a synonym for hard linking.
 
-No route is automatically selected or performed. A cooperative operator freeze
+No filesystem capability is assumed. The capability probe and strict private
+clone tool perform only their explicit operator-selected operations. A cooperative operator freeze
 of all uv/cache writers can support an explicitly independent diagnostic, but
 must not be represented as enforced runtime isolation or managed acceptance.
 The coordinator does not weaken the existing hard-link gate to disguise this
@@ -73,14 +82,18 @@ launch. Replacing any of these with hand-written IDs would defeat custody.
 Safe token-byte preparation needs its own immutable preparation manifest and
 original producer binding. Reusing the final training manifest creates a hash
 cycle: that manifest includes the token-byte file hash while the file header
-includes its producer manifest hash. The preparation artifact must precede the
-final training manifest. A preparation-store primitive under development is not
-a complete preparation runtime or executable bootstrap.
+includes its producer manifest hash. The preparation artifact precedes the final training manifest. The task-local
+[baseline bootstrap](RESEARCH_BASELINE_BOOTSTRAP.md) assembles its own bounded
+preparation provider, imports the original completed artifact, then builds the
+training manifest. Native PostgreSQL tests verify this preparation path; they
+do not prove target training or numerical results.
 
 The target must identify an existing Factory/Agno control environment with a
 reachable PostgreSQL store, or an existing configured remote receiver/runtime
 channel. No credential, private path or fabricated plan/journal is requested.
-Absent that control plane, managed baseline bootstrap remains unavailable.
+The task-local bootstrap can use an existing dedicated loopback PostgreSQL
+database and private DSN without deploying a public server. Actual target
+database tooling and storage admission must still be established.
 
 The separately documented fixed eager-model diagnostic requires none of these
 managed IDs and produces none. It uses the existing verified generator and SDPA

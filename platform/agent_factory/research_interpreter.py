@@ -14,6 +14,16 @@ import stat
 from typing import Any, cast
 
 MAX_CONTRACT_BYTES = 2 * 1024 * 1024
+COMPLETE_PROFILE = 'complete-venv-32768-v1'
+MAX_COMPLETE_CONTRACT_BYTES = 16 * 1024 * 1024
+
+def inventory_bounds(profile=None):
+    if profile is None:
+        return (4096, 8192, 4096, 32768, MAX_CONTRACT_BYTES)
+    if type(profile) is str and profile == COMPLETE_PROFILE:
+        return (32768, 16384, 16384, 65536, MAX_COMPLETE_CONTRACT_BYTES)
+    raise ValueError('RESEARCH_INTERPRETER_INVALID')
+
 MAX_PACKAGE_BYTES = 1024 * 1024 * 1024
 MAX_TOTAL_PACKAGE_BYTES = 8 * 1024**3
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -99,12 +109,19 @@ def _constant(_value):
 def validate_interpreter_contract(raw, executable, sha256):
     """Validate immutable canonical shape and scope only; never touch files."""
     try:
-        _require(type(raw) is str and 0 < len(raw.encode('utf-8')) <= MAX_CONTRACT_BYTES)
+        _require(type(raw) is str and 0 < len(raw.encode('utf-8')) <= MAX_COMPLETE_CONTRACT_BYTES)
         _path(executable); _sha(sha256)
         value = json.loads(raw, object_pairs_hook=_object, parse_constant=_constant)
-        _keys(value, _TOP)
-        _require(_canonical(value) == raw and type(value['schema']) is int and value['schema'] == 1
-                 and value['kind'] == 'research-uv-interpreter-v1'
+        _require(type(value) is dict and type(value.get('schema')) is int and value['schema'] in (1, 2))
+        value = cast(dict[str, Any], value)
+        complete = value['schema'] == 2
+        _keys(value, _TOP | {'boundsProfile'} if complete else _TOP)
+        profile = value['boundsProfile'] if complete else None
+        _require(not complete or profile == COMPLETE_PROFILE)
+        max_files, max_dirs, max_namespaces, max_entries, max_bytes = inventory_bounds(profile)
+        _require(len(raw.encode('utf-8')) <= max_bytes)
+        _require(_canonical(value) == raw
+                 and value['kind'] == ('research-uv-interpreter-v2' if complete else 'research-uv-interpreter-v1')
                  and value['executable'] == executable and value['sha256'] == sha256)
         roots = value['roots']; _keys(roots, {'project', 'venv', 'interpreters'})
         _path(roots['project']); _path(roots['venv'])
@@ -115,7 +132,7 @@ def validate_interpreter_contract(raw, executable, sha256):
         allowed = [roots['venv'], *roots['interpreters']]
         _require(_inside(executable, [roots['venv']]))
         directories = value['directories']
-        _require(type(directories) is list and 1 <= len(directories) <= 8192)
+        _require(type(directories) is list and 1 <= len(directories) <= max_dirs)
         for pin in directories:
             _pin(pin, kind='directory')
         directories = cast(list[dict[str, Any]], directories)
@@ -124,27 +141,28 @@ def validate_interpreter_contract(raw, executable, sha256):
         for root in [roots['project'], *allowed]:
             _require(root in directory_paths)
         namespaces = value['namespaces']
-        _require(type(namespaces) is list and 1 <= len(namespaces) <= 4096)
+        _require(type(namespaces) is list and 1 <= len(namespaces) <= max_namespaces)
         namespace_paths = []; total_entries = 0
         for namespace in namespaces:
             _keys(namespace, {'path', 'entryCount', 'entriesSha256'})
             namespace = cast(dict[str, Any], namespace)
             _path(namespace['path']); _sha(namespace['entriesSha256'])
-            _require(type(namespace['entryCount']) is int and 0 <= namespace['entryCount'] <= 32768)
+            _require(type(namespace['entryCount']) is int and 0 <= namespace['entryCount'] <= max_entries)
             total_entries += namespace['entryCount']; namespace_paths.append(namespace['path'])
-        _require(total_entries <= 32768 and namespace_paths == [path for path in directory_paths if _inside(path, [roots['venv']])])
+        _require(total_entries <= max_entries and namespace_paths == [path for path in directory_paths if _inside(path, [roots['venv']])])
         _keys(value['files'], _FILES)
         _require(value['files']['pyvenvCfg']['path'] == roots['venv'].rstrip('/') + '/pyvenv.cfg'
                  and value['files']['pyprojectToml']['path'] == roots['project'].rstrip('/') + '/pyproject.toml'
                  and value['files']['uvLock']['path'] == roots['project'].rstrip('/') + '/uv.lock')
-        _require(type(value['packageFiles']) is list and len(value['packageFiles']) <= 4096)
-        pins = [*value['files'].values(), *value['packageFiles']]
+        _require(type(value['packageFiles']) is list and len(value['packageFiles']) <= max_files)
+        package_files = cast(list[dict[str, Any]], value['packageFiles'])
+        pins = [*value['files'].values(), *package_files]
         for pin in value['files'].values():
             _pin(pin, kind='file'); _require(0 < pin['sizeBytes'] <= MAX_FILE_BYTES)
-        for pin in value['packageFiles']:
+        for pin in package_files:
             _pin(pin, kind='file'); _require(0 <= pin['sizeBytes'] <= MAX_PACKAGE_BYTES)
-        _require(sum(pin['sizeBytes'] for pin in value['packageFiles']) <= MAX_TOTAL_PACKAGE_BYTES)
-        for pin in value['packageFiles']:
+        _require(sum(pin['sizeBytes'] for pin in package_files) <= MAX_TOTAL_PACKAGE_BYTES)
+        for pin in package_files:
             _require(_inside(pin['path'], [roots['project'], *allowed]))
         _require(len({pin['path'] for pin in pins}) == len(pins))
         links = value['links']; _require(type(links) is list and len(links) <= 8)
@@ -159,10 +177,11 @@ def validate_interpreter_contract(raw, executable, sha256):
         _require(target['path'] == current and current not in seen and _inside(current, allowed)
                  and target['sha256'] == sha256 and 0 < target['sizeBytes'] <= MAX_EXECUTABLE_BYTES
                  and target['mode'] & 0o111 != 0)
+        directory_scope = set(directory_paths)
         for pin in [*pins, *links, target]:
             parent = PurePosixPath(pin['path']).parent
             while True:
-                _require(str(parent) in directory_paths)
+                _require(str(parent) in directory_scope)
                 if str(parent) == '/':
                     break
                 parent = parent.parent
@@ -320,10 +339,11 @@ def _namespace_pin(path, directories, remaining):
         os.close(fd)
 
 
-def _namespaces(venv, directories):
+def _namespaces(venv, directories, profile=None):
+    _, _, max_namespaces, max_entries, _ = inventory_bounds(profile)
     paths = sorted(path for path in directories if _inside(path, [venv]))
-    _require(1 <= len(paths) <= 4096)
-    result = []; remaining = 32768
+    _require(1 <= len(paths) <= max_namespaces)
+    result = []; remaining = max_entries
     for path in paths:
         pin = _namespace_pin(path, directories, remaining)
         remaining -= pin['entryCount']; result.append(pin)
@@ -357,7 +377,7 @@ def _verify(value, *, held_fd=None):
                 os.close(parent)
         for link in value['links']:
             _require(_read_link(link['path'], directories) == link)
-        _require(_namespaces(value['roots']['venv'], directories) == value['namespaces'])
+        _require(_namespaces(value['roots']['venv'], directories, value.get('boundsProfile')) == value['namespaces'])
         return fd
     except BaseException:
         os.close(fd)
@@ -382,14 +402,15 @@ def recheck_interpreter(raw, executable, sha256, fd):
 
 
 def capture_interpreter_contract(*, executable, sha256, project_root, venv_root,
-        approved_interpreter_roots, pyvenv_cfg, pyproject_toml, uv_lock, package_inventory, package_files=()):
+        approved_interpreter_roots, pyvenv_cfg, pyproject_toml, uv_lock, package_inventory, package_files=(), bounds_profile=None):
     """Operator-only read-only capture; does not authorize, import or launch."""
     try:
+        max_files, _, _, _, _ = inventory_bounds(bounds_profile)
         executable = _path(str(executable)); _sha(sha256)
         project, venv = _path(str(project_root)), _path(str(venv_root))
         _require(type(approved_interpreter_roots) in {list, tuple} and 1 <= len(approved_interpreter_roots) <= 16)
         roots = [_path(str(root)) for root in approved_interpreter_roots]
-        _require(type(package_files) in {list, tuple} and len(package_files) <= 4096)
+        _require(type(package_files) in {list, tuple} and len(package_files) <= max_files)
         directories: dict[str, Any] = {}
         for root in [project, venv, *roots]:
             fd = _open_directory(root, directories, capture=True); os.close(fd)
@@ -415,7 +436,9 @@ def capture_interpreter_contract(*, executable, sha256, project_root, venv_root,
             'roots': {'project': project, 'venv': venv, 'interpreters': roots},
             'directories': sorted(directories.values(), key=lambda pin: pin['path']), 'files': files,
             'packageFiles': packages, 'links': links, 'target': target,
-            'namespaces': _namespaces(venv, directories)}
+            'namespaces': _namespaces(venv, directories, bounds_profile)}
+        if bounds_profile is not None:
+            value.update(schema=2, kind='research-uv-interpreter-v2', boundsProfile=bounds_profile)
         raw = _canonical(value)
         validated = validate_interpreter_contract(raw, executable, sha256)
         fd = _verify(validated); os.close(fd)

@@ -25,3 +25,16 @@ The same inert fixture collection also includes uv0.11.7 `_virtualenv.py`
 It is not imported or executed. Source:
 https://github.com/astral-sh/uv/blob/0.11.7/crates/uv-virtualenv/src/_virtualenv.py
 The Astral and virtualenv MIT notices above apply to this fixture too.
+
+
+### Setuptools 82.0.0 startup profile
+
+The exact startup-file fixture and official wheel payload hash inventory are
+derived from setuptools82.0.0 (MIT). The original license is retained at
+`platform/tests/fixtures/setuptools82/LICENSE`. Official wheel source:
+https://files.pythonhosted.org/packages/e1/c6/76dc613121b793286a3f91621d7b75a2b493e0390ddca50f11993eadf192/setuptools-82.0.0-py3-none-any.whl
+Wheel SHA256:70b18734b607bd1da571d097d236cfcfacaf01de45717d59e6e04b96877532e0.
+Only hashes and startup fixture text are included; vendored code is not copied.
+The local profile explicitly enables the reviewed distutils shim and requires
+complete installed inventory plus matching wheel payload. No compiler or runtime
+compatibility result follows from these static pins.

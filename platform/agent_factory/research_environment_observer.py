@@ -45,6 +45,16 @@ UV_STARTUP_PROFILES = {
     }),
 }
 
+SETUPTOOLS_STDLIB_PROFILE = 'uv0117-setuptools82-stdlib-v1'
+UV_STARTUP_PROFILES[SETUPTOOLS_STDLIB_PROFILE] = ('0.11.7', {
+    **UV_STARTUP_PROFILES['uv0117-virtualenv-startup-v1'][1],
+    'distutils-precedence.pth': {'sha256': '2638ce9e2500e572a5e0de7faed6661eb569d1b696fcba07b0dd223da5f5d224',
+                                'sizeBytes': 151},
+})
+
+SETUPTOOLS_LOCAL_PROFILE = 'uv0117-setuptools82-local-v1'
+UV_STARTUP_PROFILES[SETUPTOOLS_LOCAL_PROFILE] = UV_STARTUP_PROFILES[SETUPTOOLS_STDLIB_PROFILE]
+
 MAX_FILES = 4096
 MAX_FILE_BYTES = 1024**3
 MAX_TOTAL_BYTES = 8 * 1024**3
@@ -102,10 +112,10 @@ def _stamp(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode, info.st_nlink)
 
 
-def _read(path, pin, *, collect=False, observations=None) -> Any:
+def _read(path, pin, *, collect=False, observations=None, collect_limit=1024**2) -> Any:
     _keys(pin, 'sha256 sizeBytes')
     _require(type(pin['sha256']) is str and re.fullmatch('[a-f0-9]{64}', pin['sha256']) is not None
-             and type(pin['sizeBytes']) is int and (1 if collect else 0) <= pin['sizeBytes'] <= (1024**2 if collect else MAX_FILE_BYTES))
+             and type(pin['sizeBytes']) is int and (1 if collect else 0) <= pin['sizeBytes'] <= (collect_limit if collect else MAX_FILE_BYTES))
     fd = _open(path)
     try:
         before = os.fstat(fd)
@@ -138,7 +148,7 @@ def _relative(path):
     return path
 
 
-def _tree(root, observations=None):
+def _tree(root, observations=None, *, max_files=MAX_FILES, max_entries=8192):
     found = set()
     entries = 0
     def walk(path, prefix='', depth=0):
@@ -150,7 +160,7 @@ def _tree(root, observations=None):
             _require(not before.st_mode & 0o022)
             for name in sorted(os.listdir(fd)):
                 entries += 1
-                _require(entries <= 8192)
+                _require(entries <= max_entries)
                 relative = prefix + name
                 _relative(relative)
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -159,7 +169,7 @@ def _tree(root, observations=None):
                 else:
                     _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
                     found.add(relative)
-                    _require(len(found) <= MAX_FILES)
+                    _require(len(found) <= max_files)
             _require(_stamp(before) == _stamp(os.fstat(fd)))
             if observations is not None:
                 observations.append((str(path), True, _stamp(before)))
@@ -182,7 +192,7 @@ def _startup(root, observations=None, *, startup_files=None):
             if startup_files is not None and (name == '_virtualenv' or name.startswith('_virtualenv.')):
                 _require(name in startup_files)
             if name.endswith('.pth'):
-                if startup_files is not None and name == '_virtualenv.pth':
+                if startup_files is not None and name in startup_files:
                     continue
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 _require(stat.S_ISREG(info.st_mode) and info.st_size <= 65536)
@@ -255,6 +265,11 @@ def _uv_interpreter(request, inventory, inventory_pin, observations, startup_fil
     spec = request['launchSpec']
     raw = spec['interpreter_contract']
     value = validate_interpreter_contract(raw, spec['executable'], spec['sha256'])
+    _require(value.get('boundsProfile') == inventory.get('boundsProfile'))
+    if inventory.get('startupProfile') == SETUPTOOLS_LOCAL_PROFILE:
+        # This profile's stdlib hook check belongs to this exact interpreter,
+        # not an unrelated controller Python installation.
+        _require(value['target']['path'] == str(Path(sys.executable).resolve(strict=True)))
     project = inventory['project']
     _keys(project, 'root rootIdentity pyprojectToml uvLock')
     _keys(project['rootIdentity'], 'device inode')
@@ -291,6 +306,9 @@ def _uv_interpreter(request, inventory, inventory_pin, observations, startup_fil
         normalized = {key: pin[key] for key in ('sha256', 'sizeBytes')}
         _require(path not in coverage or coverage[path] == normalized)
         coverage[path] = normalized
+    if inventory.get('schema') == 3:
+        for row in inventory['siteFiles']:
+            include(str(Path(inventory['venv']['sitePackages']) / _relative(row['path'])), row)
     for package in inventory['packages']:
         for row in package['files']:
             include(str(Path(package['root']) / _relative(row['path'])), row)
@@ -309,14 +327,19 @@ def _uv_interpreter(request, inventory, inventory_pin, observations, startup_fil
 
 
 class ResearchEnvironmentObserver:
-    def __init__(self, inventory_pin: InputPin, kernel_pin: InputPin):
+    def __init__(self, inventory_pin: InputPin, kernel_pin: InputPin, *, bounds_profile=None):
+        from .research_interpreter import inventory_bounds
+        self._max_files, _, _, self._max_entries, _ = inventory_bounds(bounds_profile)
+        self._bounds_profile = bounds_profile
+        self._document_limit = 8 * 1024**2 if bounds_profile is not None else 1024**2
         _require(type(inventory_pin) is InputPin and type(kernel_pin) is InputPin
                  and inventory_pin.kind == kernel_pin.kind == 'environment'
                  and inventory_pin.label == 'environment-inventory' and kernel_pin.label == 'environment-kernel')
         self._inventory, self._kernel = inventory_pin, kernel_pin
         self.configuration_fingerprint = digest({'policy': 'static-regular-venv-inventory-v1',
             'inventory': asdict(inventory_pin), 'kernel': asdict(kernel_pin),
-            'maxFiles': MAX_FILES, 'maxFileBytes': MAX_FILE_BYTES, 'maxTotalBytes': MAX_TOTAL_BYTES})
+            'maxFiles': self._max_files, 'maxFileBytes': MAX_FILE_BYTES, 'maxTotalBytes': MAX_TOTAL_BYTES,
+            **({'boundsProfile': bounds_profile} if bounds_profile is not None else {})})
 
     def _document(self, pin, observations):
         fd = _open(pin.root, directory=True)
@@ -327,7 +350,7 @@ class ResearchEnvironmentObserver:
         finally:
             os.close(fd)
         return _json(_read(Path(pin.root) / pin.file.basename,
-            {'sha256': pin.file.sha256, 'sizeBytes': pin.file.size_bytes}, collect=True, observations=observations))
+            {'sha256': pin.file.sha256, 'sizeBytes': pin.file.size_bytes}, collect=True, observations=observations, collect_limit=self._document_limit))
 
     def __call__(self, request):
         request_hash = digest(request)
@@ -349,9 +372,13 @@ class ResearchEnvironmentObserver:
         observations = []
         _cache_prefix(request['launchSpec'], observations)
         inventory, kernel = self._document(self._inventory, observations), self._document(self._kernel, observations)
-        _require(type(inventory) is dict and type(inventory.get('schema')) is int and inventory['schema'] in (1, 2))
-        uv_mode = inventory['schema'] == 2
-        _keys(inventory, 'schema python venv packages interpreterMode project startupProfile startupFiles' if uv_mode else 'schema python venv packages')
+        _require(type(inventory) is dict and type(inventory.get('schema')) is int and inventory['schema'] in (1, 2, 3))
+        uv_mode = inventory['schema'] in (2, 3)
+        complete = inventory['schema'] == 3
+        _require(complete == (self._bounds_profile is not None))
+        if complete:
+            _require(inventory.get('boundsProfile') == self._bounds_profile)
+        _keys(inventory, ('schema python venv packages interpreterMode project startupProfile startupFiles' + (' boundsProfile siteFiles' if complete else '')) if uv_mode else 'schema python venv packages')
         python, venv = inventory['python'], inventory['venv']
         _keys(python, 'path sha256 sizeBytes')
         _keys(venv, 'root sitePackages pyvenvCfg')
@@ -362,11 +389,15 @@ class ResearchEnvironmentObserver:
                  and request['launchSpec']['executable'] == python['path'] and request['launchSpec']['sha256'] == python['sha256'])
         startup_version, startup_files = None, None
         if uv_mode:
-            _require(inventory['interpreterMode'] == 'research-uv-interpreter-v1'
+            _require(inventory['interpreterMode'] == ('research-uv-interpreter-v2' if complete else 'research-uv-interpreter-v1')
                      and type(inventory['startupProfile']) is str
                      and inventory['startupProfile'] in UV_STARTUP_PROFILES)
             startup_version, startup_files = UV_STARTUP_PROFILES[inventory['startupProfile']]
             _require(inventory['startupFiles'] == startup_files)
+            if inventory['startupProfile'] in {SETUPTOOLS_STDLIB_PROFILE, SETUPTOOLS_LOCAL_PROFILE}:
+                expected_distutils = 'local' if inventory['startupProfile'] == SETUPTOOLS_LOCAL_PROFILE else 'stdlib'
+                _require(dict(request['launchSpec']['environment']).get('SETUPTOOLS_USE_DISTUTILS') == expected_distutils)
+                _require(expected_distutils != 'local' or complete)
         else:
             _require(request['launchSpec'].get('interpreter_contract') is None)
             _read(python['path'], {key: python[key] for key in ('sha256', 'sizeBytes')}, observations=observations)
@@ -383,6 +414,48 @@ class ResearchEnvironmentObserver:
         _startup(site, observations, startup_files=startup_files)
         if uv_mode:
             _uv_interpreter(request, inventory, self._inventory, observations, startup_files)
+        site_pins = {}
+        site_version_source = None
+        if complete:
+            site_rows = inventory['siteFiles']
+            _require(type(site_rows) is list and 1 <= len(site_rows) <= self._max_files)
+            site_total = 0
+            for row in site_rows:
+                _keys(row, 'path sha256 sizeBytes')
+                row = cast(dict[str, Any], row)
+                relative = _relative(row['path'])
+                _require(relative not in site_pins and type(row['sizeBytes']) is int)
+                site_total += row['sizeBytes']
+                _require(site_total <= MAX_TOTAL_BYTES)
+                pin = {key: row[key] for key in ('sha256', 'sizeBytes')}
+                content = _read(site / relative, pin, collect=relative == 'torch/version.py', observations=observations)
+                if relative == 'torch/version.py':
+                    site_version_source = content
+                site_pins[relative] = pin
+            _require(set(site_pins) == _tree(site, observations, max_files=self._max_files, max_entries=self._max_entries))
+        if inventory.get('startupProfile') == SETUPTOOLS_LOCAL_PROFILE:
+            from .research_setuptools_profile import FILES as setuptools_files
+            cwd_fd = _open(request['launchSpec']['working_directory'], directory=True)
+            try:
+                _require('pybuilddir.txt' not in os.listdir(cwd_fd))
+            finally:
+                os.close(cwd_fd)
+            _require(all(site_pins.get(name) == pin for name, pin in setuptools_files.items()
+                         if name != 'setuptools-82.0.0.dist-info/RECORD'))
+            for name in site_pins:
+                if name.startswith(('setuptools/', '_distutils_hack/')) and name not in setuptools_files:
+                    _require('/__pycache__/' in name and name.endswith('.pyc'))
+                _require(not name.startswith(('setuptools.', '_distutils_hack.', '_distutils_system_mod')))
+            # Base stdlib is an existing trusted operator prerequisite. Reject
+            # the optional system shim hook rather than silently admitting it.
+            import sysconfig
+            for location in {sysconfig.get_path('stdlib'), sysconfig.get_path('platstdlib')}:
+                fd = _open(location, directory=True)
+                try:
+                    _require(not any(name.startswith('_distutils_system_mod') for name in os.listdir(fd)))
+                    observations.append((location, True, _stamp(os.fstat(fd))))
+                finally:
+                    os.close(fd)
         packages = inventory['packages']
         _require(type(packages) is list and 3 <= len(packages) <= 128)
         observed, modules, total, count, torch_files = [], set(), 0, 0, {}
@@ -390,12 +463,12 @@ class ResearchEnvironmentObserver:
         for package in cast(list[dict[str, Any]], packages):
             _keys(package, 'module version root files')
             name = package['module']
-            _require(type(name) is str and re.fullmatch('[A-Za-z][A-Za-z0-9_]*', name) is not None
+            _require(type(name) is str and re.fullmatch('[A-Za-z_][A-Za-z0-9_]*' if complete else '[A-Za-z][A-Za-z0-9_]*', name) is not None
                      and name not in modules and type(package['version']) is str and len(package['version']) <= 64
                      and Path(package['root']) == site / name)
             modules.add(name)
             rows = package['files']
-            _require(type(rows) is list and 1 <= len(rows) <= MAX_FILES)
+            _require(type(rows) is list and 1 <= len(rows) <= self._max_files)
             pins = {}
             for row in cast(list[dict[str, Any]], rows):
                 _keys(row, 'path sha256 sizeBytes')
@@ -403,13 +476,17 @@ class ResearchEnvironmentObserver:
                 _require(relative not in pins)
                 count += 1
                 total += row['sizeBytes']
-                _require(count <= MAX_FILES and total <= MAX_TOTAL_BYTES)
+                _require(count <= self._max_files and total <= MAX_TOTAL_BYTES)
                 pin = {key: row[key] for key in ('sha256', 'sizeBytes')}
-                content = _read(Path(package['root']) / relative, pin, collect=name == 'torch' and relative == 'version.py', observations=observations)
+                if complete:
+                    _require(site_pins.get(name + '/' + relative) == pin)
+                    content = site_version_source if name == 'torch' and relative == 'version.py' else None
+                else:
+                    content = _read(Path(package['root']) / relative, pin, collect=name == 'torch' and relative == 'version.py', observations=observations)
                 if name == 'torch' and relative == 'version.py':
                     version_source = content
                 pins[relative] = pin
-            _require(set(pins) == _tree(package['root'], observations) and '__init__.py' in pins)
+            _require(set(pins) == _tree(package['root'], observations, max_files=self._max_files, max_entries=self._max_entries if complete else 8192) and '__init__.py' in pins)
             observed.append({'module': name, 'declaredVersion': package['version'], 'files': pins})
             if name == 'torch':
                 torch_files = pins
