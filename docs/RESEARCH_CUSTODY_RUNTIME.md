@@ -1,6 +1,6 @@
 # Research custody runtime integration handoff
 
-Status: implemented contract helpers and native lifecycle integration with a controlled test driver; **no live GPU driver or verified scientific result**. This document describes the current code, not completed hardware acceptance. The local combined acceptance run passed 18 PostgreSQL/native tests: nine research cases and nine existing process regressions. The research driver remains inert; no pass count establishes hardware execution.
+Status: implemented contract helpers and native lifecycle integration with a controlled test driver; **no live GPU driver or verified scientific result**. This document describes the current code, not completed hardware acceptance. The local combined acceptance run passed 19 PostgreSQL/native tests: ten research cases and nine existing process regressions. The research driver remains inert; no pass count establishes hardware execution.
 
 ## Implemented boundaries
 
@@ -9,6 +9,12 @@ Status: implemented contract helpers and native lifecycle integration with a con
 `resources.py` uses the existing lease database and serialized admission transaction. Exclusivity concerns participating Factory allocations in that database, including configured aliases and owners. It does not establish cross-database exclusivity, exclude external GPU users, enforce VRAM quotas, or provide physical device isolation. An operator must configure a consistent identity for aliases of the same device.
 
 A trusted provider implements `allocate_bound(lease, before_effect=...)`, `inspect`, `cancel`, and `reclaim`. Original task, owner, native run, plan, lease fingerprint and GPU binding are pinned. A provider invokes the fresh-authority callback immediately before dispatch, after any wait, and persists original custody before the effect. Reopening an allocation reads its original state; it must not launch a replacement job.
+
+Research and ordinary processes share the reservation calculation. A declared
+aggregate CPU quota is rounded up to whole reserved cores; aggregate memory plus
+swap is rounded up to MiB and cannot reduce the single-process reservation.
+Both target ceilings and pool capacity are checked before provider dispatch.
+These admission checks do not independently enforce the declared kernel limits.
 
 `gpuEvidence` is a strict schema-1 assertion bound by `evidence_fingerprint(lease)`. HELD and UNKNOWN retain the binding and cannot carry release proof. RELEASED requires a RECLAIMED snapshot, explicit release, matching original process binding and positive stop evidence, plus a bounded device-observation hash. The proof kind distinguishes `never-dispatched` from `original-process-stopped-and-device-released`. These hashes bind a trusted operator provider's assertion; they do not authenticate the issuer or independently prove physical GPU behavior. Shared process validation remains required alongside GPU validation.
 

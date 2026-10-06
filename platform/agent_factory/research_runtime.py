@@ -6,13 +6,12 @@ launch or resume work. This boundary does not implement a GPU hardware driver.
 from __future__ import annotations
 
 import asyncio
-import math
 import json
 import re
 
 from agno.db.base import SessionType
 
-from .process_runtime import ProcessRuntimeService, _require
+from .process_runtime import ProcessRuntimeService, _require, process_reservation
 from .research_manifest import validate_manifest, manifest_fingerprint
 from .store import digest
 
@@ -99,9 +98,7 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
                  and target.gpu_binding.identity_key == manifest["device"]["identitySha256"]
                  and limits.wall_seconds == manifest["protocol"]["totalWallSeconds"])
         assert limits is not None
-        reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
-                       "diskMb": max(1, math.ceil(limits.file_size_bytes / (1024 * 1024))),
-                       "seconds": math.ceil(limits.wall_seconds)}
+        reservation = process_reservation(provider)
         return await self.resources.allocate(owner, target_ref, task_id,
             "research-" + digest({"task": task_id, "run": task["run_id"], "effect": EFFECT}), reservation,
             execution={"nativeRunId": task["run_id"], "effectKey": EFFECT, "requirement": guard})

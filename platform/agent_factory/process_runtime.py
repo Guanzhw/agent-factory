@@ -28,6 +28,30 @@ def _require(value):
         raise HTTPException(409, "PROCESS_EXECUTION_BINDING_INVALID")
 
 
+def process_reservation(provider):
+    """Reserve the complete declared job budget before any external dispatch."""
+    limits = getattr(provider, "limits", None)
+    _require(limits is not None)
+    assert limits is not None
+    _require(type(limits.address_space_mb) is int and limits.address_space_mb > 0
+             and type(limits.file_size_bytes) is int and limits.file_size_bytes > 0
+             and type(limits.wall_seconds) in {int, float}
+             and math.isfinite(limits.wall_seconds) and limits.wall_seconds > 0)
+    mib = 1024 * 1024
+    reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
+                   "diskMb": max(1, (limits.file_size_bytes + mib - 1) // mib),
+                   "seconds": math.ceil(limits.wall_seconds)}
+    aggregate = getattr(provider, "aggregate_config", None)
+    if aggregate is not None:
+        quota, period = aggregate.cpu_quota_us, aggregate.cpu_period_us
+        memory, swap = aggregate.memory_bytes, aggregate.swap_bytes
+        _require(all(type(value) is int and value > 0 for value in (quota, period, memory))
+                 and type(swap) is int and swap >= 0)
+        reservation["cpu"] = max(reservation["cpu"], (quota + period - 1) // period)
+        reservation["memoryMb"] = max(reservation["memoryMb"], (memory + swap + mib - 1) // mib)
+    return reservation
+
+
 class ProcessRuntimeService:
     tool_name = TOOL
     effect_key = EFFECT
@@ -235,16 +259,7 @@ class ProcessRuntimeService:
         else:
             target = self.resources._authorize(context.user_id, config["targetRef"])
             provider = self.resources._provider(target)
-            limits = getattr(provider, "limits", None)
-            _require(limits is not None)
-            assert limits is not None
-            reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
-                "diskMb": max(1, math.ceil(limits.file_size_bytes / (1024 * 1024))),
-                "seconds": math.ceil(limits.wall_seconds)}
-            aggregate = getattr(provider, "aggregate_config", None)
-            if aggregate is not None:
-                reservation["cpu"] = max(reservation["cpu"], math.ceil(aggregate.cpu_quota_us / aggregate.cpu_period_us))
-                reservation["memoryMb"] = max(reservation["memoryMb"], math.ceil((aggregate.memory_bytes + aggregate.swap_bytes) / (1024 * 1024)))
+            reservation = process_reservation(provider)
             lease = await self.resources.allocate(context.user_id, config["targetRef"], task["id"],
                 "process-" + digest({"task": task["id"], "run": context.run_id, "effect": self.effect_key}), reservation, execution=execution)
         # Bounded observation only; a later native retry can read the same binding

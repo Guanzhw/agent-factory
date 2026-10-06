@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 from contextlib import ExitStack
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
@@ -339,3 +340,40 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
             self.assertEqual(self.driver.launches, 1)
         finally:
             self.store.sql('DELETE FROM af_process_runs WHERE lease_id=:id', id=ordinary_lease)
+
+    def test_aggregate_cpu_and_memory_plus_swap_reservation_reject_before_lease_or_dispatch(self):
+        task, _ = self.task()
+        resources = self.runtime.resources
+        original_target = resources.targets['research-main']
+        # Operator target ceilings allow these requests; the unchanged shared
+        # pool (1 CPU, 128 MiB) must enforce aggregate reservation geometry.
+        resources.targets['research-main'] = replace(original_target, max_cpu=4, max_memory_mb=512)
+        try:
+            for quota, memory, swap, expected_cpu, expected_memory in (
+                (100001, 128 * 1024 * 1024, 0, 2, 128),
+                (100000, 128 * 1024 * 1024, 1, 1, 129),
+                (100001, 128 * 1024 * 1024, 1, 2, 129),
+            ):
+                with self.subTest(cpu=expected_cpu, memory_mb=expected_memory):
+                    # Metadata-only controlled driver; no cgroup backend or host write.
+                    setattr(self.driver, 'aggregate_config', SimpleNamespace(cpu_quota_us=quota,
+                        cpu_period_us=100000, memory_bytes=memory, swap_bytes=swap))
+                    with patch.object(resources, 'allocate', wraps=resources.allocate) as reservation, \
+                         patch.object(self.driver, 'allocate_bound', wraps=self.driver.allocate_bound) as dispatch:
+                        with self.assertRaises(HTTPException) as denied:
+                            self.portal.call(self.runtime.submit, 'alice', task['id'])
+                        self.assertEqual(denied.exception.status_code, 429)
+                        self.assertEqual(denied.exception.detail,
+                            'Compute pool capacity is reserved; UNKNOWN retains all resource dimensions')
+                        assert reservation.await_args is not None
+                        requested = reservation.await_args.args[4]
+                        self.assertEqual(requested['cpu'], expected_cpu)
+                        self.assertEqual(requested['memoryMb'], expected_memory)
+                        dispatch.assert_not_awaited()
+                    self.assertEqual(self.store.sql('SELECT id FROM af_leases'), [])
+                    self.assertEqual(self.store.sql('SELECT task_id FROM af_process_runs'), [])
+                    self.assertEqual(self.store.sql('SELECT id FROM af_process_allocations'), [])
+            self.assertEqual(self.driver.launches, 0)
+        finally:
+            resources.targets['research-main'] = original_target
+            delattr(self.driver, 'aggregate_config')
