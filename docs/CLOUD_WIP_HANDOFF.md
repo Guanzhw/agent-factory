@@ -1,5 +1,16 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Current research custody checkpoint — 2026-10-06
+
+Current integration branch: `coord/research-custody-runtime-20261006`, based on
+accepted draft PR35 `767323e0f0983a1bf6e4056485c4b767bde2a436`. Continue from the
+exact tested head and CI receipt in this branch's draft PR. See the
+[research custody handoff](RESEARCH_CUSTODY_RUNTIME.md) and
+[current task board](CLOUD_TASK_BOARD.md). This phase adds original native pause,
+GPU lease release evidence, immutable experiment inputs and independent evaluator
+custody. Its test driver is inert; actual GPU execution, checkpoint production and
+scientific validation remain outstanding. Earlier entries below are historical.
+
 ## Current development checkpoint — 2026-10-04
 
 Continue from the exact tested head recorded in the draft PR for branch

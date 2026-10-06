@@ -67,6 +67,8 @@ class Store:
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
         self.process_runtime: Any = None
+        self.research_runtime: Any = None
+        self.research_evaluation: Any = None
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
@@ -488,3 +490,35 @@ class Store:
         if hashlib.sha256(raw).hexdigest() != rows[0]["body"]["sha256"]:
             raise HTTPException(409, "Artifact integrity check failed")
         return rows[0]["body"], raw
+
+    def artifact_identity(self, task_id, artifact_id, max_bytes):
+        """Hash original checkpoint bytes in bounded chunks under a row lock.
+
+        No deserialization or full checkpoint materialization. The operator
+        consumer still supplies current authorization and original provenance.
+        """
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 2 * 1024**3:
+            raise ValueError("CHECKPOINT_READ_BOUND_INVALID")
+        with self.engine.begin() as conn:
+            suffix = " FOR SHARE" if self.engine.dialect.name == "postgresql" else ""
+            row = conn.execute(text("SELECT body,length(content) AS size FROM af_artifacts "
+                "WHERE task_id=:task AND id=:id" + suffix), {"task": task_id, "id": artifact_id}).mappings().first()
+            if row is None:
+                raise HTTPException(404, "Artifact not found")
+            size = row["size"]
+            body = row["body"] if isinstance(row["body"], dict) else json.loads(row["body"])
+            if type(size) is not int or not 0 < size <= max_bytes or body.get("size") != size:
+                raise HTTPException(409, "Checkpoint size differs from approved bound")
+            hasher = hashlib.sha256()
+            for offset in range(0, size, 1024 * 1024):
+                length = min(1024 * 1024, size - offset)
+                raw = conn.execute(text("SELECT substr(content,:start,:length) FROM af_artifacts "
+                    "WHERE task_id=:task AND id=:id"),
+                    {"task": task_id, "id": artifact_id, "start": offset + 1, "length": length}).scalar_one()
+                if len(raw) != length:
+                    raise HTTPException(409, "Checkpoint bytes changed")
+                hasher.update(raw)
+            fingerprint = hasher.hexdigest()
+            if fingerprint != body.get("sha256") or body.get("id") != artifact_id or body.get("jobId") != task_id:
+                raise HTTPException(409, "Checkpoint integrity check failed")
+            return body, {"sha256": fingerprint, "sizeBytes": size}

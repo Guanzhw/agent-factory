@@ -47,6 +47,8 @@ class Settings:
     port: int = 3100
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
+    # Operator-only evaluator manifest digests mapped to existing fixed targets.
+    research_evaluators: dict = field(default_factory=dict)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
     remote_binding_mappings: dict = field(default_factory=dict)
@@ -94,7 +96,7 @@ class Settings:
             raise ValueError("Storage budgets must be positive")
         if self.storage_retention_grace_seconds < (0 if self.demo else 60):
             raise ValueError("Production retention needs a positive recovery window")
-        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1"}:
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1"}:
             raise ValueError("Unsupported runtime tool contract")
         if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")

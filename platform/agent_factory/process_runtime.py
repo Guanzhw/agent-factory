@@ -29,6 +29,8 @@ def _require(value):
 
 
 class ProcessRuntimeService:
+    tool_name = TOOL
+    effect_key = EFFECT
     def __init__(self, store, auth, resources):
         self.store, self.auth, self.resources = store, auth, resources
         self._cursor = ""
@@ -46,16 +48,16 @@ class ProcessRuntimeService:
 
     def validate_execution(self, owner, task, plan, target_ref, execution):
         _require(type(execution) is dict and set(execution) == {"nativeRunId", "effectKey"}
-            and execution["effectKey"] == EFFECT and type(task.get("run_id")) is str
+            and execution["effectKey"] == self.effect_key and type(task.get("run_id")) is str
             and execution["nativeRunId"] == task["run_id"] and owner == task["owner_id"])
         # Receiver mappings preserve the immutable source manifest. Resolve the
         # already-verified effective target under this exact native context.
         bindings = self.store.execution_bindings
         _require(bindings is not None)
         specs = bindings.manifest(plan, context=self._context(task)).get("tools", [])
-        selected = [item for item in specs if item.get("toolName") == TOOL]
+        selected = [item for item in specs if item.get("toolName") == self.tool_name]
         _require(len(selected) == 1 and selected[0].get("config") == {"targetRef": target_ref})
-        self.store.authorize_tool(self._context(task), TOOL)
+        self.store.authorize_tool(self._context(task), self.tool_name)
 
     def guard_lease(self, lease):
         self.resources._authorize(lease["ownerId"], lease["connectionRef"])
@@ -63,11 +65,11 @@ class ProcessRuntimeService:
         plan = self.store.plan(lease["planId"], lease["ownerId"])
         _require(task["plan_id"] == lease["planId"] and digest(plan) == lease["planHash"])
         self.validate_execution(lease["ownerId"], task, plan, lease["connectionRef"],
-                                {"nativeRunId": lease["nativeRunId"], "effectKey": EFFECT})
+                                {"nativeRunId": lease["nativeRunId"], "effectKey": self.effect_key})
 
     def _original(self, task_id):
         rows = self.store.sql("SELECT * FROM af_process_runs WHERE task_id=:task AND effect_key=:effect",
-                              task=task_id, effect=EFFECT)
+                              task=task_id, effect=self.effect_key)
         _require(len(rows) <= 1)
         return rows[0] if rows else None
 
@@ -75,6 +77,7 @@ class ProcessRuntimeService:
         # Reuse strict persisted resource-directory checks, without a synthetic
         # admin principal or the ability to grant new execution authority.
         lease = ResourceMaintenance(self.resources)._custody(lease_id)
+        _require(lease.get("executionEffect", EFFECT) == self.effect_key)
         row = self._original(lease["localTaskId"])
         _require(row is not None)
         assert row is not None
@@ -165,7 +168,7 @@ class ProcessRuntimeService:
 
     async def tick(self):
         async with self._tick_lock:
-            query = """SELECT p.lease_id FROM af_process_runs p LEFT JOIN af_leases l ON l.id=p.lease_id
+            query = """SELECT p.lease_id,p.effect_key FROM af_process_runs p LEFT JOIN af_leases l ON l.id=p.lease_id
                 WHERE (l.id IS NULL OR l.state<>'RECLAIMED') AND p.lease_id>:after ORDER BY p.lease_id LIMIT 20"""
             rows = self.store.sql(query, after=self._cursor)
             if not rows and self._cursor:
@@ -174,7 +177,8 @@ class ProcessRuntimeService:
             results = []
             for row in rows:
                 try:
-                    lease = await self.observe_lease(row["lease_id"])
+                    runtime = self.resources.execution_runtime(row["effect_key"])
+                    lease = await runtime.observe_lease(row["lease_id"])
                     results.append({"leaseId": row["lease_id"], "state": lease["state"], "capacityHeld": lease["capacityHeld"]})
                 except Exception:
                     results.append({"leaseId": row["lease_id"], "state": "UNKNOWN", "capacityHeld": True})
@@ -195,7 +199,7 @@ class ProcessRuntimeService:
                 conn.commit()
 
     def _write_receipt(self, context, lease):
-        self.store.authorize_tool(context, TOOL)
+        self.store.authorize_tool(context, self.tool_name)
         _require(lease["state"] == "RECLAIMED" and lease.get("stopEvidence", {}).get("allStopped") is True)
         result = {key: lease.get(key) for key in ("id", "localTaskId", "planId", "nativeRunId", "providerJobId",
             "state", "capacityHeld", "processBinding", "enforcement", "stopEvidence", "executionStatus", "exitCode")}
@@ -210,7 +214,7 @@ class ProcessRuntimeService:
             _require(len(existing) == 1 and existing[0]["sha256"] == hashlib.sha256(raw.encode()).hexdigest())
             artifact = existing[0]
         else:
-            self.store.authorize_tool(context, TOOL)
+            self.store.authorize_tool(context, self.tool_name)
             artifact = self.store.artifact_write(context.run_id, name, raw, "application/json",
                 {"evidenceKind": evidence_kind, "leaseId": lease["id"],
                  "nativeRunId": context.run_id, "providerJobId": lease["providerJobId"], "researchValidated": False})
@@ -218,10 +222,10 @@ class ProcessRuntimeService:
 
     async def run(self, context, config):
         _require(type(config) is dict and set(config) == {"targetRef"})
-        self.store.authorize_tool(context, TOOL)
+        self.store.authorize_tool(context, self.tool_name)
         task = self.store.task(context.session_id, context.user_id)
         plan = self.store.plan(task["plan_id"], context.user_id)
-        execution = {"nativeRunId": context.run_id, "effectKey": EFFECT}
+        execution = {"nativeRunId": context.run_id, "effectKey": self.effect_key}
         self.validate_execution(context.user_id, task, plan, config["targetRef"], execution)
         prior = self._original(task["id"])
         if prior:
@@ -242,12 +246,12 @@ class ProcessRuntimeService:
                 reservation["cpu"] = max(reservation["cpu"], math.ceil(aggregate.cpu_quota_us / aggregate.cpu_period_us))
                 reservation["memoryMb"] = max(reservation["memoryMb"], math.ceil((aggregate.memory_bytes + aggregate.swap_bytes) / (1024 * 1024)))
             lease = await self.resources.allocate(context.user_id, config["targetRef"], task["id"],
-                "process-" + digest({"task": task["id"], "run": context.run_id, "effect": EFFECT}), reservation, execution=execution)
+                "process-" + digest({"task": task["id"], "run": context.run_id, "effect": self.effect_key}), reservation, execution=execution)
         # Bounded observation only; a later native retry can read the same binding
         # but can never issue a second allocate, even after positive release.
         deadline = asyncio.get_running_loop().time() + 7
         while True:
-            self.store.authorize_tool(context, TOOL)
+            self.store.authorize_tool(context, self.tool_name)
             lease = await self.observe_lease(lease["id"])
             if lease["state"] == "RECLAIMED":
                 result = await asyncio.to_thread(self._receipt, context, lease)

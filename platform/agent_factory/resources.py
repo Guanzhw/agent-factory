@@ -18,6 +18,7 @@ import httpx
 from sqlalchemy import text
 
 from .store import canonical, digest, now
+from .gpu_custody import GpuBinding, validate_binding, validate_gpu_evidence
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCEL_CONFIRMED"}
 NATIVE_STATES = {"PENDING": "ACCEPTED", "RUNNING": "RUNNING", "PAUSED": "PAUSED",
@@ -81,6 +82,7 @@ class RemoteTarget:
     expected_version: str = "3.1.0"
     configuration_revision: str = "1"
     capacity_pool: ComputePool | None = None
+    gpu_binding: GpuBinding | None = None
 
     def __post_init__(self):
         if self.axis not in {"runtime", "compute", "a2a"} or not self.owners:
@@ -98,6 +100,13 @@ class RemoteTarget:
             raise ValueError("Positive operator resource ceilings are required")
         if self.capacity_pool is not None and (self.axis != "compute" or type(self.capacity_pool) is not ComputePool):
             raise ValueError("Compute pools apply only to explicit compute targets")
+        if self.gpu_binding is None and getattr(self.provider, "gpu_binding", None) is not None:
+            raise ValueError("GPU provider cannot be attached without its device binding")
+        if self.gpu_binding is not None:
+            if (type(self.gpu_binding) is not GpuBinding or self.axis != "compute" or self.capacity_pool is None
+                    or not callable(getattr(self.provider, "allocate_bound", None))
+                    or getattr(self.provider, "gpu_binding", None) != self.gpu_binding):
+                raise ValueError("GPU custody requires its explicitly configured bound provider and pool")
 
 
 class NativeAgnoHTTP:
@@ -230,7 +239,8 @@ class PersistentResourceService:
             raise ValueError("Provider configuration fingerprint must be a SHA-256 identity")
         return digest({"axis": target.axis, "url": target.base_url, "executor": target.executor_id,
                        "version": target.expected_version, "revision": target.configuration_revision,
-                       **({"providerFingerprint": provider_pin} if provider_pin is not None else {})})
+                       **({"providerFingerprint": provider_pin} if provider_pin is not None else {}),
+                       **({"gpuBinding": target.gpu_binding.to_dict()} if target.gpu_binding is not None else {})})
 
     @staticmethod
     def _provider(target: RemoteTarget) -> ResourceProvider:
@@ -292,6 +302,15 @@ class PersistentResourceService:
             # Even an error response may follow a committed remote effect.
             return self._update(owner, lease["id"], "UNKNOWN", {"acknowledgement": "unknown", "connected": False})
 
+    def execution_runtime(self, effect):
+        from .process_runtime import EFFECT
+        if effect == EFFECT:
+            return self.store.process_runtime
+        from .research_runtime import EFFECT as RESEARCH_EFFECT
+        if effect == RESEARCH_EFFECT and getattr(self.store, "research_runtime", None) is not None:
+            return self.store.research_runtime
+        raise HTTPException(409, "PROCESS_EXECUTION_EFFECT_UNSUPPORTED")
+
     def _admit_effect(self, owner, lease):
         """Current task/owner authority immediately before new external work."""
         target = self._authorize(owner, lease["connectionRef"])
@@ -302,7 +321,7 @@ class PersistentResourceService:
             raise HTTPException(409, "Allocation configuration changed before dispatch")
         task = self.store.task(lease["localTaskId"], owner)
         if lease.get("nativeRunId") is not None:
-            self.store.process_runtime.guard_lease(lease)
+            self.execution_runtime(lease.get("executionEffect", "bounded-process-run-v1")).guard_lease(lease)
         if (task.get("terminal") or task.get("cancel_requested")
                 or datetime.now(timezone.utc) >= datetime.fromisoformat(lease["deadlineAt"])):
             raise HTTPException(409, "Canceled, terminal or expired work cannot allocate new effects")
@@ -316,9 +335,12 @@ class PersistentResourceService:
             raise HTTPException(409, "A terminal or canceled local task cannot attach new execution")
         plan = self.store.plan(task["plan_id"], owner)
         if execution is not None:
-            self.store.process_runtime.validate_execution(owner, task, plan, ref, execution)
+            self.execution_runtime(execution.get("effectKey")).validate_execution(owner, task, plan, ref, execution)
         resource = resource or self._resource(owner, ref)
         pool = target.capacity_pool
+        gpu = target.gpu_binding.to_dict() if target.gpu_binding is not None else None
+        if gpu is not None and execution is None:
+            raise HTTPException(409, "GPU_NATIVE_BINDING_REQUIRED")
         provider_namespace = self._provider_namespace(target)
         pool_binding = {"poolId": pool.pool_id, "poolFingerprint": pool.fingerprint,
                         "poolLimits": pool.limits()} if pool is not None else {}
@@ -359,6 +381,13 @@ class PersistentResourceService:
             # A restart/config change cannot hide an old pool reservation behind
             # another pool, an unpooled alias, or a replacement provider.
             for previous in held:
+                previous_gpu = previous.get("gpuBinding")
+                if previous_gpu is not None:
+                    previous_gpu = validate_binding(previous_gpu)
+                    if gpu is not None and (previous_gpu["receiverNamespace"], previous_gpu["deviceId"]) == (gpu["receiverNamespace"], gpu["deviceId"]):
+                        raise HTTPException(429, "GPU_CAPACITY_HELD: original device custody is not released")
+                if previous.get("connectionRef") == ref and previous_gpu != gpu:
+                    raise HTTPException(409, "GPU_CONFIGURATION_CHANGED_CAPACITY_HELD")
                 if (provider_namespace is not None and previous.get("providerNamespace") == provider_namespace
                         and (previous.get("poolId") != pool_binding.get("poolId")
                              or previous.get("poolFingerprint") != pool_binding.get("poolFingerprint"))):
@@ -399,6 +428,8 @@ class PersistentResourceService:
                     "serverVersion": resource.get("serverVersion"), "serverId": resource.get("serverId"),
                     "targetFingerprint": self._target_fingerprint(target),
                     "updatedAt": at.isoformat(), "heartbeatAt": at.isoformat(),
+                    **({"gpuBinding": gpu} if gpu is not None else {}),
+                    **({"executionEffect": execution["effectKey"], "executionGuard": execution["requirement"]} if execution is not None and execution["effectKey"] == "research-process-run-v1" else {}),
                     **({"nativeRunId": execution["nativeRunId"], "planHash": digest(plan)} if execution is not None else {}),
                     "deadlineAt": (at + timedelta(seconds=duration)).isoformat(), "cancelRequested": False,
                     "artifacts": [], "syntheticFixture": target.synthetic_fixture, "reconciliation": "snapshot", **pool_binding,
@@ -442,6 +473,13 @@ class PersistentResourceService:
                 state = "CANCEL_REQUESTED"
             if body.get("releaseAck") == "unknown" and state in TERMINAL:
                 state = "RECLAIMING"
+            if body.get("gpuBinding") is not None and state == "RECLAIMED":
+                # Every path (including internal maintenance) needs already validated
+                # original device evidence; terminal process state alone is insufficient.
+                evidence = (changes or {}).get("gpuEvidence", body.get("gpuEvidence"))
+                if type(evidence) is not dict or evidence.get("state") != "RELEASED":
+                    raise ValueError("GPU_RELEASE_UNCONFIRMED")
+                validate_gpu_evidence(body, {**body, **(changes or {}), "state": state, "released": True})
             body = {**body, **(changes or {}), "state": state, "updatedAt": now(), "capacityHeld": state != "RECLAIMED"}
             conn.execute(text(f"UPDATE af_leases SET state=:state,body={self._json_param} WHERE id=:id AND owner_id=:owner"),
                          {"id": lease_id, "owner": owner, "state": state, "body": canonical(body)})
@@ -486,9 +524,12 @@ class PersistentResourceService:
         if (type(snapshot) is not dict or snapshot.get("leaseId") != lease["id"]
                 or snapshot.get("ownerId") != lease["ownerId"] or snapshot.get("fingerprint") != lease["fingerprint"]):
             raise ValueError("Process lease receipt mismatch")
+        gpu = {"gpuEvidence": validate_gpu_evidence(lease, snapshot)} if lease.get("gpuBinding") is not None else {}
+        if not gpu and (snapshot.get("gpuBinding") is not None or snapshot.get("gpuEvidence") is not None):
+            raise ValueError("Unexpected GPU custody")
         binding, job = snapshot.get("processBinding"), snapshot.get("providerJobId")
         if snapshot.get("state") == "UNKNOWN" and binding is None and job is None:
-            return {}
+            return gpu
         if (type(binding) is not dict or set(binding) != {"taskId", "nativeRunId", "planId", "bindingFingerprint"}
                 or any(binding.get(key) != expected for key, expected in
                     (("taskId", lease["localTaskId"]), ("nativeRunId", lease["nativeRunId"]), ("planId", lease["planId"])))
@@ -530,7 +571,7 @@ class PersistentResourceService:
             raise ValueError("Terminal process lacks original stop proof")
         if snapshot.get("state") == "RECLAIMED" and snapshot.get("released") is not True:
             raise ValueError("Process allocation release is unconfirmed")
-        return {"providerJobId": job, "processBinding": binding, "enforcement": expected,
+        return {**gpu, "providerJobId": job, "processBinding": binding, "enforcement": expected,
                 "stopEvidence": stop if positive else None, "executionStatus": outcome, "exitCode": exit_code,
                 **({"aggregateEvidence": aggregate} if aggregate is not None else {})}
 

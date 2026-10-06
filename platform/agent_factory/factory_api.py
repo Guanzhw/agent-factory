@@ -207,6 +207,21 @@ class FactoryAPI:
                     "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
                 if status == "waiting_approval":
                     actions.append("approve")
+            elif tool.get("tool_name") == "research_process_run" and tool.get("external_execution_required"):
+                runtime = getattr(self.store, "research_runtime", None)
+                original = runtime._original(task["id"]) if runtime is not None else None
+                if original is not None and runtime is not None:
+                    lease = runtime.resources.inspect(task["owner_id"], original["lease_id"])
+                    job["researchExecution"] = {"leaseId": lease["id"], "state": lease["state"],
+                        "capacityHeld": lease["capacityHeld"], "gpuExecutionVerified": False,
+                        "scientificConclusionVerified": False}
+                    if (status == "waiting_approval" and lease["state"] == "RECLAIMED"
+                            and lease.get("executionStatus") == "COMPLETED" and lease.get("exitCode") == 0
+                            and lease.get("gpuEvidence", {}).get("state") == "RELEASED"):
+                        scope = "原研究进程已停止并释放租约；继续同一运行，仅接收执行凭据，不代表科研评分已验证。"
+                        job.update(approvalDetail={"id": requirement["id"], "version": version,
+                            "scope": scope, "toolName": "research_process_run", "arguments": {}}, approval={"scope": scope})
+                        actions.append("approve")
             elif tool.get("requires_user_input") and not tool.get("answered"):
                 question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
                 job.update(questionDetail=question, question=question["text"])

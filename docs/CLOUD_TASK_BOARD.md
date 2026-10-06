@@ -1,5 +1,27 @@
 # Cloud integration task board
 
+## Active research custody and native wait — 2026-10-06
+
+Base accepted PR35 `767323e0f0983a1bf6e4056485c4b767bde2a436`;
+branch `coord/research-custody-runtime-20261006`. Both exact-head CI workflows
+passed all ten jobs; both actual PG1236=1173 passed/63 skipped. Coordinator and
+independent reviewer each observed success twice more than90 seconds apart.
+
+| Owner / exclusive scope | Dependencies | State / acceptance |
+|---|---|---|
+| root | resources/process runtime/native tool/control integration; shared APIs/docs | Frozen: full Python1287=904pass383skip65.562s; PG18pass128.881s plus routing1pass7.014s; frontend196/build, Ruff/Linux+Windows Pyright/audit0; exact-head CI pending |
+| factory_flow | GPU custody helper/tests, inert controlled driver, custody handoff | Frozen; strict GPU proof/UNKNOWN retention and driver contract documented |
+| go_adapter | manifest/profile and trusted evaluator service with unit tests | Frozen; approved knowledge manifest plus variant pins, original checkpoint and distinct evaluator custody |
+| at10 | evaluator parser/tests and new native PostgreSQL lifecycle tests | Frozen: nine actual PG/native cases passed, including revocation/routing/continuation ACK faults; inert GPU driver only |
+| reviewer | Read-only independent lifecycle/code/CI review | Final source/test review clear; 28 independent light tests passed; exact-head CI pending |
+
+All local heavy tests finished serially; isolated test databases were cleaned. The initial full-suite mock-interface failure was fixed with autospec, preserving GPU admission guards. Exact-head hosted CI remains pending. Actual dependency installation,
+training data download, native GPU kernel execution, training and new persistent
+connections remain outside this phase. Controlled fixtures cannot establish
+physical GPU isolation or scientific validation. Only generic code/tests and
+public provenance may be published; no local operational/identifying metadata.
+
+
 ## Active autoresearch contracts — 2026-10-06
 
 Base accepted PR34 `7509e26d8d16374c2fdc94ed2cec88aa13fb9e71`;

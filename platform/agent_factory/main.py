@@ -178,6 +178,11 @@ def create_app(settings=None):
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
+    from .research_runtime import ResearchProcessRuntimeService
+    store.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
+    if settings.research_evaluators:
+        from .research_evaluation_service import ResearchEvaluationService
+        store.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
     from .comparison_workflow import ComparisonService, comparison_router
     store.comparisons = ComparisonService(store, auth)
     base.include_router(comparison_router(auth, store.comparisons))
@@ -249,7 +254,8 @@ def create_app(settings=None):
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
-    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime)
+    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
+        research_runtime=store.research_runtime, research_evaluation=store.research_evaluation)
     external = None
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge

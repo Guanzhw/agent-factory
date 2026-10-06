@@ -25,7 +25,7 @@ class DevelopmentWorkflowTests(unittest.TestCase):
     def test_explicit_settings_install_only_controlled_owned_resources_and_close_bootstrap(self):
         store = SimpleNamespace(engine=SimpleNamespace(dispose=Mock()))
         with TemporaryDirectory() as directory, patch.object(workflows, 'Store', return_value=store), \
-                patch.object(workflows, 'ProcessResourceProvider') as providers, patch.object(workflows.sys, 'platform', 'linux'), \
+                patch.object(workflows, 'ProcessResourceProvider', autospec=True) as providers, patch.object(workflows.sys, 'platform', 'linux'), \
                 patch.object(workflows.stat, 'S_IMODE', return_value=0o700):
             base = self.settings(directory)
             with workflows.controlled_workflow_settings(base) as settings:

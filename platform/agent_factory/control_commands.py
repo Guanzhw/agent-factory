@@ -246,6 +246,11 @@ class ControlCommands:
             requirement["user_input_schema"] = fields
             tool.update(user_input_schema=fields, answered=True)
         else:
+            from .research_runtime import TOOL as RESEARCH_TOOL
+            if tool.get("tool_name") == RESEARCH_TOOL:
+                receipt = await self.store.research_runtime.completion(task, requirement)
+                tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
+                return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
             from .inference_wait import CONTROL_NAME, validate_requirement
             if tool.get("tool_name") == CONTROL_NAME:
                 await asyncio.to_thread(validate_requirement, self.store, task, tool)
