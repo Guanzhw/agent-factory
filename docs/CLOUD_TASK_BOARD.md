@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Active autoresearch contracts — 2026-10-06
+
+Base accepted PR34 `7509e26d8d16374c2fdc94ed2cec88aa13fb9e71`;
+branch `coord/autoresearch-contracts-20261006`. Selected upstream is
+`karpathy/autoresearch`, commit `228791fb499afffb54b46200aca536f79142f117`.
+ORX and existing synthetic profiles remain unchanged. This phase implements inert
+contracts; it does not authorize or claim GPU execution.
+
+| Owner / exclusive scope | Dependency | State / acceptance |
+|---|---|---|
+| root | Source pin/profile, shared task board, integration/commit/CI | Static six-file pin verified; 16 new tests, Ruff/Linux+Windows Pyright and frontend196/check/audit0 pass; full Python1236=862pass374skip80.234s; commit/exact CI pending |
+| go_adapter | research_candidate.py and its unit tests | Frozen: byte-bound train.py-only validation, five tests pass |
+| at10 | research_assessment.py and its unit tests | Frozen: advisory same-identity comparison, eight tests pass |
+| factory_flow | AUTORESEARCH_INTEGRATION.md only | Frozen: provenance, GPU readiness, milestones and code gaps documented |
+| reviewer | Read-only independent review | Pure contracts independently reviewed, no blockers; source success-test/native60s documentation suggestions incorporated |
+
+Local full Python regression completed; no heavy local lane remains running. No upstream code/dependency execution,
+training, new credentials, paid resources, merge or deployment. Parent owns local
+GPU preflight; Windows RTX5070 observed, WSL readiness/data/kernel provenance and
+connection plan remain pending. Official code uses mutable dataset main and
+runtime kernel resolution: repository commit alone does not freeze those inputs.
+
+
 ## Active schedule diagnostics and development checkpoint — 2026-10-04
 
 Base accepted PR33 exact `e0f74ec330b4f11929be49b4d260acbe1747856f`;
