@@ -6,6 +6,7 @@ progress, interpreter contracts and receipts contain private paths: KEEP LOCAL.
 No dependency install, database provisioning, remote endpoint or model payment.
 Existing workspace means inspect-only; never reset or automatically replay a stage.
 """
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import json
 import logging
@@ -15,6 +16,8 @@ import re
 import stat
 import sys
 import time
+import warnings
+from types import ModuleType
 from typing import Any, cast
 
 ERROR = 'RESEARCH_BASELINE_STOPPED'
@@ -22,6 +25,81 @@ _KEYS = {'schema', 'ackLocalDevelopment', 'ackTraining', 'databaseUrlFile', 'wor
          'inputRoot', 'tokenizerBasename', 'shards', 'validationIds', 'upstreamRoot', 'projectRoot',
          'venvRoot', 'interpreterTarget', 'interpreterSha256', 'approvedInterpreterRoots', 'deviceUuid',
          'receiverNamespaceSha256', 'nvidiaSmi', 'limits', 'microbatch'}
+
+
+# Public diagnostic vocabulary only: no exception text, arguments, traceback,
+# configuration values, paths, request identifiers or credential-derived data.
+_STAGES = frozenset({
+    'ARGUMENTS', 'CONFIG_READ', 'CONFIG_VALIDATE', 'WORKSPACE_INSPECT',
+    'WORKSPACE_CREATE', 'PROGRESS_START', 'EXECUTE', 'PROGRESS_COMPLETE', 'PROGRESS_STOPPED',
+    'EXECUTION_IMPORTS', 'EXECUTION_IDENTITY', 'DATABASE_CONFIG', 'UPSTREAM_READ',
+    'UPSTREAM_VERIFY', 'TOKENIZER_READ', 'RESOURCE_LIMITS', 'DEVICE_OBSERVER',
+    'PREPARATION_ASSEMBLY', 'PREPARATION_STARTUP', 'PREPARATION_SHUTDOWN', 'PREPARATION_PUBLICATION',
+    'PREPARATION_PROPOSAL', 'PREPARATION_PLAN', 'PREPARATION_REVIEW',
+    'PREPARATION_APPROVAL', 'PREPARATION_SUBMIT', 'PREPARATION_RECEIPT',
+    'PREPARATION_WAIT', 'PREPARATION_IMPORT', 'PREPARATION_CLEANUP',
+    'ENVIRONMENT_INVENTORY', 'INTERPRETER_CONTRACT', 'ENVIRONMENT_PINS',
+    'INPUT_CAPTURE', 'TRAINING_ASSEMBLY', 'TRAINING_STARTUP', 'TRAINING_PUBLICATION',
+    'TRAINING_RUN', 'TRAINING_RECEIPT', 'TRAINING_SHUTDOWN', 'EVALUATION_ASSEMBLY', 'EVALUATION_STARTUP',
+    'EVALUATION_PUBLICATION', 'EVALUATION_RUN', 'EVALUATION_RECEIPT', 'EVALUATION_SHUTDOWN', 'CLEANUP',
+})
+
+
+def exception_code(error):
+    # Inspect only trusted types already imported; diagnostic handling must not
+    # import more dependencies or inspect driver .orig / exception attributes.
+    ancestry = type.__getattribute__(type(error), '__mro__')
+    for module_name, class_name, code in (
+        ('sqlalchemy.exc', 'IntegrityError', 'DATABASE_INTEGRITY'),
+        ('sqlalchemy.exc', 'OperationalError', 'DATABASE_OPERATIONAL'),
+        ('sqlalchemy.exc', 'SQLAlchemyError', 'DATABASE_ERROR'),
+        ('httpx', 'TimeoutException', 'HTTP_TIMEOUT'),
+        ('httpx', 'HTTPError', 'HTTP_ERROR'),
+        ('starlette.exceptions', 'HTTPException', 'HTTP_REJECTED'),
+        ('asyncio.exceptions', 'CancelledError', 'CANCELLED'),
+    ):
+        module = sys.modules.get(module_name)
+        kind = vars(module).get(class_name) if type(module) is ModuleType else None
+        if isinstance(kind, type) and any(base is kind for base in ancestry):
+            return code
+    for kind, code in (
+        (KeyboardInterrupt, 'INTERRUPTED'), (SystemExit, 'SYSTEM_EXIT'),
+        (ModuleNotFoundError, 'MODULE_NOT_FOUND'), (ImportError, 'IMPORT_ERROR'),
+        (FileNotFoundError, 'FILE_NOT_FOUND'), (PermissionError, 'PERMISSION_DENIED'),
+        (FileExistsError, 'ALREADY_EXISTS'), (TimeoutError, 'TIMEOUT'),
+        (json.JSONDecodeError, 'CONFIG_JSON_INVALID'), (UnicodeError, 'ENCODING_INVALID'),
+        (ValueError, 'VALIDATION_REJECTED'), (TypeError, 'TYPE_INVALID'),
+        (KeyError, 'FIELD_MISSING'), (OSError, 'OS_ERROR'),
+        (RuntimeError, 'RUNTIME_ERROR'), (AssertionError, 'INVARIANT_REJECTED'),
+    ):
+        if any(base is kind for base in ancestry):
+            return code
+    return 'UNEXPECTED_ERROR'
+
+
+class Diagnostics:
+    """One primary failure plus at most one secondary cleanup/journal code."""
+    def __init__(self):
+        self.stage = 'ARGUMENTS'
+        self.failure = None
+        self._error_identity = None
+
+    def at(self, stage):
+        require(type(stage) is str and stage in _STAGES)
+        self.stage = stage
+
+    def capture(self, error):
+        if self.failure is None:
+            self.failure = {'schema': 1, 'kind': 'RESEARCH_BASELINE_DIAGNOSTIC',
+                            'stage': self.stage, 'errorCode': exception_code(error)}
+            self._error_identity = id(error)
+        elif id(error) != self._error_identity and 'secondaryErrorCode' not in self.failure:
+            self.failure['secondaryErrorCode'] = exception_code(error)
+            self.failure['secondaryStage'] = self.stage
+
+    def emit(self):
+        if self.failure is not None:
+            print(json.dumps(self.failure, sort_keys=True, separators=(',', ':')), file=sys.stderr)
 
 
 def require(value):
@@ -136,8 +214,15 @@ def identity(path):
 
 
 class Progress:
-    def __init__(self, workspace):
+    def __init__(self, workspace, diagnostics=None):
         self.workspace, self.sequence = workspace, 0
+        self.diagnostics = diagnostics if diagnostics is not None else Diagnostics()
+
+    def at(self, stage):
+        self.diagnostics.at(stage)
+
+    def capture(self, error):
+        self.diagnostics.capture(error)
 
     def record(self, stage, value):
         self.sequence += 1
@@ -159,6 +244,7 @@ def preparation_phase(bundle, client, request_id, progress):
     from bootstrap_research_control import ensure_task_development_reviewer
     from agent_factory.process_runtime_profile import publish_process_application
     state, store = bundle['state'], bundle['state']['store']
+    progress.at('PREPARATION_PUBLICATION')
     reviewer = ensure_task_development_reviewer(state)
     app = publish_process_application(state, target_ref='preparation', author='manager', reviewer=reviewer)
     request = request_client(bundle, client)
@@ -166,21 +252,29 @@ def preparation_phase(bundle, client, request_id, progress):
     def post(path, body, key, owner='alice'):
         return request('POST', '/api/factory' + path, {**body, 'requestId': request_id + ':prep:' + key}, owner=owner)
     try:
+        progress.at('PREPARATION_PROPOSAL')
         proposal = post('/compositions/proposals', {'goal': 'Prepare source-bound tokenizer byte lengths',
             'mode': 'controlled-fixture', 'applicationRef': {k: app[k] for k in ('id', 'version', 'sha256')}}, 'proposal')
+        progress.at('PREPARATION_PLAN')
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {}, 'accept')
         plan_id = plan['id']
+        progress.at('PREPARATION_REVIEW')
         review = post('/plan-reviews', {'planId': plan['id']}, 'review')
+        progress.at('PREPARATION_APPROVAL')
         post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
         try:
+            progress.at('PREPARATION_SUBMIT')
             task = post('/instances', {'planId': plan['id']}, 'instance')
             task_id = task['id']
-        except BaseException:
+        except BaseException as error:
+            progress.capture(error)
+            progress.at('PREPARATION_RECEIPT')
             receipt = request('GET', '/api/factory/requests/' + request_id + ':prep:instance', None, owner='alice')
             require(receipt['planId'] == plan['id'] and receipt['requestId'] == request_id + ':prep:instance')
             task_id = receipt['taskId']
             raise
         progress.record('preparation', {'taskId': task_id, 'planId': plan['id'], 'phase': 'ACCEPTED'})
+        progress.at('PREPARATION_WAIT')
         while True:
             require(time.monotonic() < deadline)
             detail = request('GET', '/api/factory/jobs/' + task_id, None, owner='alice')
@@ -188,6 +282,7 @@ def preparation_phase(bundle, client, request_id, progress):
             if detail['job']['status'] == 'completed':
                 break
             time.sleep(.1)
+        progress.at('PREPARATION_IMPORT')
         original = store.process_runtime._original(task_id)
         require(original is not None)
         lease = store.process_runtime.resources.inspect('alice', original['lease_id'])
@@ -198,7 +293,9 @@ def preparation_phase(bundle, client, request_id, progress):
         progress.record('preparation', {'phase': 'IMPORTED', 'taskId': task_id, 'nativeRunId': lease['nativeRunId'],
             'leaseId': lease['id'], 'providerJobId': lease['providerJobId'], 'artifactId': artifact['id']})
         return task_id, artifact['id'], pin
-    except BaseException:
+    except BaseException as error:
+        progress.capture(error)
+        progress.at('PREPARATION_CLEANUP')
         validated_original = False
         if task_id is not None:
             try:
@@ -245,6 +342,7 @@ def environment_pins(config, evidence, inventory):
 
 def execute(config, workspace, progress):
     # Imports stay inside the explicitly acknowledged execution path. No Torch import.
+    progress.at('EXECUTION_IMPORTS')
     import agent_factory
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
@@ -258,19 +356,26 @@ def execute(config, workspace, progress):
     from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
     from agent_factory.research_runtime_profile import publish_research_application
     from agent_factory.research_bootstrap_controller import ResearchBootstrapController
+    progress.at('EXECUTION_IDENTITY')
     require(sys.dont_write_bytecode and Path(sys.prefix) == Path(config['venvRoot'])
             and Path(sys.executable).resolve() == Path(config['interpreterTarget']))
     site = Path(config['venvRoot']) / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
     require(Path(agent_factory.__file__).parent == site / 'agent_factory')
+    progress.at('DATABASE_CONFIG')
     db = read_database_url(config['databaseUrlFile'])
+    progress.at('UPSTREAM_READ')
     upstream = {name: read_private(Path(config['upstreamRoot']) / name, 8 * 1024**2, private=False) for name in SOURCE_SHA256}
+    progress.at('UPSTREAM_VERIFY')
     verify_upstream_source(upstream)
+    progress.at('TOKENIZER_READ')
     tokenizer = read_private(Path(config['inputRoot']) / config['tokenizerBasename'], 1024**2)
+    progress.at('RESOURCE_LIMITS')
     limits = ResearchProcessLimits(**config['limits'])
     require(limits.disk_bytes >= 2 * limits.file_size_bytes + limits.output_bytes)
     def directory(name):
         path = workspace / name; path.mkdir(mode=0o700)
         return path
+    progress.at('DEVICE_OBSERVER')
     gpu = GpuBinding(config['receiverNamespaceSha256'], hashlib.sha256(config['deviceUuid'].encode()).hexdigest())
     device = NvidiaSmiObserver(Path(config['nvidiaSmi']['executable']), config['nvidiaSmi']['sha256'],
                                config['deviceUuid'], gpu, 'task-local-real-observer-v1')
@@ -279,14 +384,23 @@ def execute(config, workspace, progress):
         bundles.append(bundle)
         return bundle
     try:
+        progress.at('PREPARATION_ASSEMBLY')
         program = directory('preparation-program')
         prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program,
             program_identity=identity(program), custody_root=directory('preparation-custody'),
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=hashlib.sha256(canonical(
                 {'schema': 1, 'purpose': 'tokenizer-preparation', 'tokenizerSha256': hashlib.sha256(tokenizer).hexdigest()})).hexdigest()))
+        progress.at('PREPARATION_STARTUP')
         with TestClient(prep['app']) as client:
-            prep_task, prep_artifact, token_pin = preparation_phase(prep, client, config['requestId'], progress)
+            try:
+                prep_task, prep_artifact, token_pin = preparation_phase(prep, client, config['requestId'], progress)
+            except BaseException as error:
+                progress.capture(error)
+                raise
+            finally:
+                progress.at('PREPARATION_SHUTDOWN')
+        progress.at('ENVIRONMENT_INVENTORY')
         evidence = directory('environment')
         inventory = build_inventory(project_root=config['projectRoot'], venv_root=config['venvRoot'],
             interpreter_target=config['interpreterTarget'], interpreter_sha256=config['interpreterSha256'],
@@ -294,9 +408,12 @@ def execute(config, workspace, progress):
             startup_profile='uv0117-setuptools82-local-v1')
         write_private(evidence / 'inventory.json', inventory['inventoryBytes'])
         write_private(evidence / 'kernel.json', inventory['kernelBytes'])
+        progress.at('INTERPRETER_CONTRACT')
         contract = capture_interpreter_contract(**inventory['captureKwargs'])
         write_private(evidence / 'interpreter-contract.json', contract.encode())
+        progress.at('ENVIRONMENT_PINS')
         pins = environment_pins(config, evidence, inventory)
+        progress.at('INPUT_CAPTURE')
         captured = capture_bootstrap_inputs(input_root=Path(config['inputRoot']), tokenizer_basename=config['tokenizerBasename'],
             shards=tuple((row['id'], row['basename']) for row in config['shards']), validation_ids=tuple(config['validationIds']),
             upstream_files=upstream, environment_pins=pins, gpu_binding=gpu, limits=limits,
@@ -304,6 +421,7 @@ def execute(config, workspace, progress):
         prior, training, training_store = prep, None, None
         results = {}
         for stage in ('training', 'evaluation'):
+            progress.at(stage.upper() + '_ASSEMBLY')
             program, cache, custody = directory(stage + '-program'), directory(stage + '-cache'), directory(stage + '-custody')
             entry = 'train_baseline.py' if stage == 'training' else 'evaluate.py'
             env = launch_environment(config, program, cache)
@@ -319,36 +437,50 @@ def execute(config, workspace, progress):
                 prior_adapters=prior['settings'].runtime_adapters, prior_pricing=prior['settings'].usage_pricing,
                 training_store=training_store, training=training, microbatch=config['microbatch'],
                 bounds_profile=inventory['captureKwargs']['bounds_profile']))
+            progress.at(stage.upper() + '_STARTUP')
             with TestClient(bundle['app']) as client:
-                reviewer = ensure_task_development_reviewer(bundle['state'])
-                app = publish_research_application(bundle['state'], target_ref=stage,
-                    comparison_manifest=captured['comparisonManifest'], author='manager', reviewer=reviewer,
-                    adapter_suffix='-evaluation' if stage == 'evaluation' else '')
-                assert client.portal is not None
-                portal = client.portal
-                def imported(owner, task, lease):
+                try:
+                    progress.at(stage.upper() + '_PUBLICATION')
+                    reviewer = ensure_task_development_reviewer(bundle['state'])
+                    app = publish_research_application(bundle['state'], target_ref=stage,
+                        comparison_manifest=captured['comparisonManifest'], author='manager', reviewer=reviewer,
+                        adapter_suffix='-evaluation' if stage == 'evaluation' else '')
+                    assert client.portal is not None
+                    portal = client.portal
+                    def imported(owner, task, lease):
+                        if stage == 'training':
+                            artifact = bundle['checkpoints'].import_completed(owner, lease['id'])
+                            _, checked = bundle['checkpoints'].identity(task['id'], artifact['id'], limits.file_size_bytes)
+                            plan = bundle['state']['store'].plan(task['plan_id'], owner)
+                            return {**{key: lease[field] for key, field in (('ownerId', 'ownerId'), ('taskId', 'localTaskId'),
+                                ('nativeRunId', 'nativeRunId'), ('planId', 'planId'), ('leaseId', 'id'), ('providerJobId', 'providerJobId'))},
+                                'planFingerprint': plan['fingerprint'], 'variantSha256': lease['executionGuard']['variantSha256'],
+                                'checkpoint': {'artifactId': artifact['id'], **checked}}
+                        return portal.call(bundle['state']['store'].research_evaluation.verify,
+                            owner, bundle['pending']['evaluationContract'])
+                    progress.at(stage.upper() + '_RUN')
+                    result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(
+                        owner='alice', reviewer=reviewer, application_ref={k: app[k] for k in ('id', 'version', 'sha256')},
+                        goal='Source-bound baseline' if stage == 'training' else 'Independent checkpoint evaluation',
+                        request_id=config['requestId'] + ':' + stage, timeout_seconds=int(min(86400, limits.wall_seconds + 120)),
+                        after_reclaimed=imported, on_progress=lambda value: progress.record(stage, value))
+                    progress.at(stage.upper() + '_RECEIPT')
+                    results[stage] = result
+                    write_private(workspace / (stage + '-receipt.json'), canonical(result))
                     if stage == 'training':
-                        artifact = bundle['checkpoints'].import_completed(owner, lease['id'])
-                        _, checked = bundle['checkpoints'].identity(task['id'], artifact['id'], limits.file_size_bytes)
-                        plan = bundle['state']['store'].plan(task['plan_id'], owner)
-                        return {**{key: lease[field] for key, field in (('ownerId', 'ownerId'), ('taskId', 'localTaskId'),
-                            ('nativeRunId', 'nativeRunId'), ('planId', 'planId'), ('leaseId', 'id'), ('providerJobId', 'providerJobId'))},
-                            'planFingerprint': plan['fingerprint'], 'variantSha256': lease['executionGuard']['variantSha256'],
-                            'checkpoint': {'artifactId': artifact['id'], **checked}}
-                    return portal.call(bundle['state']['store'].research_evaluation.verify,
-                        owner, bundle['pending']['evaluationContract'])
-                result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(
-                    owner='alice', reviewer=reviewer, application_ref={k: app[k] for k in ('id', 'version', 'sha256')},
-                    goal='Source-bound baseline' if stage == 'training' else 'Independent checkpoint evaluation',
-                    request_id=config['requestId'] + ':' + stage, timeout_seconds=int(min(86400, limits.wall_seconds + 120)),
-                    after_reclaimed=imported, on_progress=lambda value: progress.record(stage, value))
-                results[stage] = result
-                write_private(workspace / (stage + '-receipt.json'), canonical(result))
-                if stage == 'training':
-                    training, training_store = result['imported'], bundle['checkpoints']
+                        training, training_store = result['imported'], bundle['checkpoints']
+                except BaseException as error:
+                    progress.capture(error)
+                    raise
+                finally:
+                    progress.at(stage.upper() + '_SHUTDOWN')
             prior = bundle
         return results
+    except BaseException as error:
+        progress.capture(error)
+        raise
     finally:
+        progress.at('CLEANUP')
         for bundle in reversed(bundles):
             for store in (bundle['state']['store'], bundle['providerStore']):
                 store.dispose_root_locks(); store.engine.dispose()
@@ -360,31 +492,48 @@ def execute(config, workspace, progress):
 def main(argv=None, *, run=execute):
     old_logging = logging.root.manager.disable
     progress = None
+    diagnostics = Diagnostics()
     try:
         args = sys.argv[1:] if argv is None else argv
         require(len(args) == 2 and args[0] == '--config')
-        config = config_from_bytes(read_private(args[1]))
+        diagnostics.at('CONFIG_READ')
+        raw = read_private(args[1])
+        diagnostics.at('CONFIG_VALIDATE')
+        config = config_from_bytes(raw)
         from bootstrap_research_control import _workspace
+        diagnostics.at('WORKSPACE_INSPECT')
         workspace = Path(config['workspace'])
         if workspace.exists() or workspace.is_symlink():
             identity(workspace)  # Read-only recovery; never create/restart another batch.
             print('RESEARCH_BASELINE_EXISTING_INSPECT_ONLY')
             return 0
+        diagnostics.at('WORKSPACE_CREATE')
         _workspace(str(workspace), create=True)
-        progress = Progress(workspace)
+        progress = Progress(workspace, diagnostics)
+        diagnostics.at('PROGRESS_START')
         progress.record('controller', {'phase': 'STARTED', 'requestId': config['requestId']})
         logging.disable(logging.CRITICAL)
-        run(config, workspace, progress)
+        diagnostics.at('EXECUTE')
+        # Import warnings can include source paths; keep the public failure
+        # channel limited to the fixed diagnostic below. No dependency import here.
+        with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
+                redirect_stdout(sink), redirect_stderr(sink):
+            warnings.simplefilter('ignore')
+            run(config, workspace, progress)
+        diagnostics.at('PROGRESS_COMPLETE')
         progress.record('controller', {'phase': 'COMPLETED', 'scientificConclusionVerified': False})
         print('RESEARCH_BASELINE_COMPLETED_PRIVATE_EVIDENCE')
         return 0
-    except BaseException:
+    except BaseException as error:
+        diagnostics.capture(error)
         if progress is not None:
             try:
+                diagnostics.at('PROGRESS_STOPPED')
                 progress.record('controller', {'phase': 'STOPPED', 'cleanupConfirmed': False})
-            except Exception:
-                pass
+            except BaseException as journal_error:
+                diagnostics.capture(journal_error)
         print(ERROR, file=sys.stderr)
+        diagnostics.emit()
         return 2
     finally:
         logging.disable(old_logging)

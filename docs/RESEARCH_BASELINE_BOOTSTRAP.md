@@ -168,6 +168,39 @@ PYTHONDONTWRITEBYTECODE=1 SETUPTOOLS_USE_DISTUTILS=local \
 本调用在进程内启动原生控制应用；不需要另起公网监听器。
 受控开发身份与独立 reviewer **代码身份**用于既有发布/审批接口，不是独立人类审查或生产 IdP 证明。
 
+## canonical 入口失败诊断
+
+仍使用上面的唯一 `--config` 入口，没有新的诊断执行框架、自动重试或绕过校验开关。
+失败仍返回 exit2，保留 `RESEARCH_BASELINE_STOPPED`；随后 runner 输出一行有界 JSON：
+
+```json
+{"errorCode":"VALIDATION_REJECTED","kind":"RESEARCH_BASELINE_DIAGNOSTIC","schema":1,"stage":"PREPARATION_ASSEMBLY"}
+```
+
+以上仅为格式示例，不是已知本地故障原因。`stage` 来自代码内固定枚举，区分配置读取/校验、
+workspace、解释器身份、数据库配置、prepare 组装、lifespan 启动、发布、审批、提交、
+输入清单、训练、评价及清理。`errorCode` 仅由可信异常类型分类，例如 `FILE_NOT_FOUND`、
+`PERMISSION_DENIED`、`DATABASE_OPERATIONAL`、`VALIDATION_REJECTED` 或 `UNEXPECTED_ERROR`；
+不读取或输出异常原文、参数、因果链、DSN、密码、私有路径、原请求或设备标识。
+
+runner 在退出 lifespan 和处理清理前保存它最早观察到的失败。后续故障至多增加一组
+`secondaryStage` / `secondaryErrorCode`，不会替换主诊断；组件内部已经包装的异常不被
+反向解包，不能据此声称捕获了最深层根因。诊断不改变原清理权限、调度或回放规则。
+原 STOPPED 记录的 `cleanupConfirmed:false` 保持不变，后来的空表观察不能回填原记录。
+
+受控调用期间抑制常规 Python warning/stdout/stderr，避免 import warning 带出路径；
+这是 Python 流重定向，不宣称拦截所有 C 扩展或直接文件描述符输出。只回传固定诊断字段，
+不要转发完整原始日志、配置文件或命令中的真实路径。
+
+本地复现最小回传：修复源码 commit、退出码、该 JSON 的固定字段，以及是否出现既有
+`RESEARCH_BASELINE_EXISTING_INSPECT_ONLY` 标记。若已提交任务，另报各阶段是否已提交和
+原任务清理证据的有限状态；不要上传原请求、凭据、文件内容或凭据哈希。
+
+已有 workspace 仍只读 inspect，不会重跑失败批次。保留旧证据；若此前已证实没有提交
+任何任务，后续使用已授权流程中的新 attempt/workspace，不能删除或重置旧 workspace
+来制造“首次执行”。已被拒绝访问的 unused password 文件不属于诊断输入：不读、不散列、
+不触碰，也不作为 `databaseUrlFile` 的替代；清理须另有明确许可。
+
 ## 三个阶段的持久结果
 
 | 阶段 | 实际操作与成功条件 | 必须保留的关联 |

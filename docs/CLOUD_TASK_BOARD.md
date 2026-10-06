@@ -1,5 +1,25 @@
 # Cloud integration task board
 
+## Canonical entry safe failure diagnostics — 2026-10-06
+
+Branch `coord/canonical-safe-diagnostics-20261006`, based on PR44 exact
+`3c76da2e6cf395bc6f9cfbc8666a62cee4148af6` (10/10 CI; two terminal observations).
+The reported first real canonical attempt stopped after STARTED/STOPPED at exit2
+without a preparation ACCEPTED record. Its root cause is unknown; baseline0 and
+val_bpb null remain. Later empty tables do not rewrite cleanupConfirmed:false.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Existing runner stage/type diagnostics, integration and local handoff | 19 focused tests pass; full non-PG1671=1275pass396skip84.624s; Ruff and runner Linux/Windows Pyright0; exact-head CI pending |
+| at10 | Runner failure and redaction regression tests | 9 new diagnostic tests, including real execute mock boundaries and 512-byte bound; no credentials, PG, GPU or target execution |
+| reviewer | Independent diagnostic safety and lifecycle review | Final safety/lifecycle/docs review approved; POSIX entry-test scope matches existing runner; pure classification cross-platform |
+
+No credential contents/hashes are read by this investigation. The denied unused
+password file remains untouched; no cleanup is authorized by this change. The
+same canonical entry is used for the next local diagnostic attempt. Target
+preparation, baseline and evaluation remain unverified.
+
+
 ## Local PG08/10 failure diagnosis — 2026-10-06
 
 Branch `coord/local-pg-diagnosis-20261006`, based on PR43 exact

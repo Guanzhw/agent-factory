@@ -5,6 +5,7 @@ import importlib
 import io
 import json
 import logging
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -97,6 +98,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.output(diagnostics)['stage'], 'EVALUATION_RUN')
 
 
+@unittest.skipUnless(os.name == 'posix', 'Canonical private-filesystem entry requires POSIX')
 class MainDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
