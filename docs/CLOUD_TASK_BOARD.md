@@ -1,5 +1,30 @@
 # Cloud integration task board
 
+## Local PG08/10 failure diagnosis — 2026-10-06
+
+Branch `coord/local-pg-diagnosis-20261006`, based on PR43 exact
+`2628e4be74f9c31def9208ea32b05405a54b79d6` (10/10 CI; two terminal observations).
+Scope is the retained local failures only. CI success does not explain them.
+No provider request, GPU/training, new database container or target storage work.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Test timeout evidence, serial reproduction, lifecycle integration and final CI | One serial diagnostic run:2fail164.345s retained; full non-PG1662=1266pass396skip164.905s; Ruff/configured Pyright0; exact-head CI pending |
+| at10 | Controlled process fixture diagnostics and isolated lightweight tests | Bounded in-memory allocation phases and finite provider/custody observations;7 pure tests passed; frozen |
+| reviewer | Independent read-only environment and diagnostic review | Both admission-crossing mechanisms, evidence hashes and diagnostic tests reviewed; no blocker |
+
+The original two-failure log is retained unchanged outside Git. New observations
+use original lease identities/deadlines and real timestamps; authority callbacks
+retain their return/exception behavior. No duration or lifecycle rule is changed.
+
+Reproduction:08 crossed its original1s deadline before provider intent and retained
+UNKNOWN capacity;10 crossed its original5s deadline before dispatch, then safely
+reclaimed PREPARED custody with LEASE_EXPIRED/never-dispatched proof. Neither
+entered the intended running-process phase. Original-run causality and the
+underlying latency source remain unproven. See `LOCAL_PG_ADMISSION_DIAGNOSIS.md`
+for timestamps, hashes and the explicit pre-intent UNKNOWN availability limitation.
+
+
 ## Bounded optimizer/compile probe — 2026-10-06
 
 Branch `coord/research-compile-resource-probe-20261006`, based on accepted PR42

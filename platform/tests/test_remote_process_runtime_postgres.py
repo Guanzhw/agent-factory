@@ -160,6 +160,12 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
             if last:
                 return last
             time.sleep(.05)
+        try:
+            self.diagnostics("wait-timeout", self.receiver.facts())
+        except Exception as error:
+            category = next((name for kind, name in ((OSError, "OSError"), (ValueError, "ValueError"),
+                (TypeError, "TypeError"), (httpx.HTTPError, "HTTPError")) if isinstance(error, kind)), "UnexpectedError")
+            print("Remote process timeout diagnostic unavailable: " + category, flush=True)
         self.fail("Remote process fixture did not reach expected state; diagnostics: " + self.receiver.log_tail())
 
     def execute(self):
@@ -200,8 +206,17 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         value = {"stage": stage, "observedAt": datetime.now(timezone.utc).isoformat(),
             "nativeStatus": facts.get("nativeStatus"), "cancelCount": facts["cancelAttemptCount"],
             "taskCancelRequested": task.get("cancel_requested"), "taskTerminal": task.get("terminal"),
+            "launchCount": facts.get("launchAttemptCount"),
+            "tasks": [{key: item.get(key) for key in ("id", "terminal", "cancel_requested")}
+                for item in facts.get("tasks", [])],
             "leases": [{key: lease.get(key) for key in ("id", "state", "deadlineAt", "cancelRequested",
-                "executionStatus", "stopEvidence", "capacityHeld", "cancellationReason")} for lease in facts["leases"]],
+                "executionStatus", "exitCode", "stopEvidence", "capacityHeld", "cancellationReason")} for lease in facts["leases"]],
+            "allocationDiagnostics": facts.get("allocationDiagnostics", []),
+            "providerDiagnostics": facts.get("providerDiagnostics", []),
+            "custody": [{key: item.get(key) for key in ("leaseId", "state", "stoppedProof", "capacityHeld",
+                    "guardianObservation", "childObservation")}
+                | {"childPresent": bool(item.get("child")), "guardianPresent": bool(item.get("guardian"))}
+                for item in facts.get("custody", [])],
             "cancelDiagnostics": facts.get("cancelDiagnostics", []),
             "disconnectDiagnostics": facts.get("disconnectDiagnostics", [])}
         print("Remote process synthetic timing: " + json.dumps(value, sort_keys=True), flush=True)
