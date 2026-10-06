@@ -49,35 +49,51 @@ def development_settings(settings):
 
 def prepare_application(*, db_url, workspace, program_root, program_identity,
                         custody_root, executable, executable_sha256, tokenizer_json,
-                        preparation_manifest_sha256, owner='alice'):
+                        preparation_manifest_sha256, owner='alice', diagnostics=None):
     """Construct the original bounded preparation target; execute nothing."""
     workspace, program_root = Path(workspace), Path(program_root)
     pending = {}
-    bootstrap = Store(db_url, development_settings(Settings(db_url=db_url, workspace=workspace,
-        max_workers=1, temporary_policy='admin-review')))
+    def at(stage):
+        if diagnostics is not None:
+            diagnostics.at(stage)
+    at('PREPARATION_SETTINGS')
+    bootstrap_settings = development_settings(Settings(db_url=db_url, workspace=workspace,
+        max_workers=1, temporary_policy='admin-review'))
+    at('PREPARATION_DATABASE')
+    bootstrap = Store(db_url, bootstrap_settings)
     try:
+        at('PREPARATION_DRIVER')
         driver = PreparationDriver(root=program_root, root_identity=program_identity,
             tokenizer_json=tokenizer_json, manifest_sha256=preparation_manifest_sha256,
             reserve=lambda *args, **kwargs: pending['preparation'].reserve(*args, **kwargs))
+        at('PREPARATION_PROCESS_SPEC')
         spec = ProcessSpec(executable, executable_sha256,
             ('-I', '-B', str(program_root / 'prepare.py'), str(program_root / 'run-config.json')))
         limits = ProcessLimits(file_size_bytes=65536, wall_seconds=5)
+        at('PREPARATION_PROVIDER')
         provider = PreparationProvider(bootstrap, Path(custody_root), spec, limits, driver=driver)
+        at('PREPARATION_TARGET')
         target = RemoteTarget('Task-local safe tokenizer preparation', 'compute', frozenset({owner}),
             provider=provider, synthetic_fixture=False, max_cpu=1, max_memory_mb=128,
             max_disk_mb=4, max_seconds=5, capacity_pool=ComputePool('research-preparation', 1, 128, 4, 1, 1))
+        at('PREPARATION_APPLICATION_SETTINGS')
         settings = development_settings(process_settings(db_url=db_url, workspace=workspace,
             target_ref='preparation', remote_targets={'preparation': target}, owner=owner))
+        at('PREPARATION_CREATE_APP')
         app = create_app(settings)
         state = app.app.state.factory
         store = state['store']
+        at('PREPARATION_STORE')
         preparation = ResearchPreparationStore(store, state['auth'], store.process_runtime.resources,
             store.storage, preparation_manifest_sha256=preparation_manifest_sha256,
             source_sha256=driver.configuration_fingerprint)
         pending['preparation'] = preparation
         return {'app': app, 'state': state, 'preparation': preparation, 'target': target,
                 'providerStore': bootstrap, 'settings': settings}
-    except BaseException:
+    except BaseException as error:
+        if diagnostics is not None:
+            diagnostics.capture(error)
+        at('PREPARATION_ASSEMBLY_CLEANUP')
         bootstrap.engine.dispose()
         raise
 

@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Preparation validation and read-only preflight — 2026-10-06
+
+Branch `coord/preparation-preflight-repair-20261006`, based on PR45 exact
+`58cb4fc01261d83d681e72cb522dbac965af47bc`. The actual local attempt stopped
+at PREPARATION_ASSEMBLY / VALIDATION_REJECTED, with no submitted preparation,
+training or evaluation. Root cause remains unknown; no environmental replacement
+or relaxed validator is justified. Environment disconnect notice was checked:
+actual workspace read/write/execute succeeded.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Runner read-only CLI, assembly diagnostic hooks, integration, exact CI/handoff | Local full1695=1299pass396skip85.533s; npm196/check/audit pass; Ruff/Pyright0; exact CI pending |
+| reviewer | Pure tokenizer preflight module and synthetic unit tests | 10 tests including 8192 and UTF8 BOM; independent review approved |
+| at10 | Controlled full-vocabulary assembly and CLI regressions | 8192 total constructs; 8193 rejects; CLI no-write/no-DB regressions pass |
+| factory_flow | Pure accumulated configuration diagnostics/tests | 7 tests; independent field checks and existing capture constraints |
+| independent_review | Independent safety/lifecycle review | Final approved; no remaining blocker |
+| go_policy | Exact-head push/PR CI, two terminal observations | Waiting final SHA |
+
+The existing canonical schema remains authoritative. Pure preflight grants no
+admission; database/application and runtime-only checks stay NOT_CHECKED. The
+historical failed attempts and cleanup uncertainty are preserved.
+
+
 ## Canonical entry safe failure diagnostics — 2026-10-06
 
 Branch `coord/canonical-safe-diagnostics-20261006`, based on PR44 exact

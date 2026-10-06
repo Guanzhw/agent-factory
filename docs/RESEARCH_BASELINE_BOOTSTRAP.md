@@ -249,3 +249,46 @@ controller 仍标记 `scientificConclusionVerified: false`，不能据此宣称�
 [inputs](../platform/agent_factory/research_bootstrap_inputs.py)、
 [controller](../platform/agent_factory/research_bootstrap_controller.py)、
 [preparation custody](../platform/agent_factory/research_preparation_store.py)。
+
+### Read-only preparation validation (after PR45 diagnostic)
+
+The target returned `PREPARATION_ASSEMBLY / VALIDATION_REJECTED` at exact
+`58cb4fc01261d83d681e72cb522dbac965af47bc`, before any task submission.
+This does not identify a specific invalid field. Controlled construction with
+8191 mergeable tokens plus one special token (8192 total) succeeds; 8192 plus
+one special (8193 total) fails the existing vocabulary bound. Neither result
+establishes the private target's cause.
+
+Run once using the same acknowledged private configuration and pinned environment:
+
+```sh
+<pinned-python> -B <source>/scripts/run_research_baseline.py --preflight --config <private-config>
+```
+
+This mode reads the configuration, tokenizer, fixed installed runtime sources,
+and existing preparation directory metadata. It does not read `databaseUrlFile`,
+construct a database/application/provider, create directories or progress files,
+run an observer, submit a task, or execute training. Existing attempts remain
+read-only. It emits one bounded-schema JSON report with fixed field/code/status
+enums and public numeric bounds, never input values, paths, exception strings,
+credential derivatives or tokenizer contents. Configuration fields and execution acknowledgments are checked independently;
+a blocked acknowledgment does not suppress unrelated diagnostics. Malformed JSON
+or unsafe tokenizer path fields leave only their dependent checks unperformed.
+The canonical configuration validator is also checked without short-circuiting
+the independent report. No acknowledgment is inferred from a preflight run.
+
+Independent tokenizer checks are accumulated in one report. Invalid dependencies
+are marked `NOT_CHECKED`; absent program/custody directories are `NOT_CREATED`.
+`CHECKED_FIELDS_PASS` means only the reported static checks passed. Database and
+application construction, source pin freshness at execution, admission and real
+scientific execution remain unverified. A blocked report exits 2; checked fields
+passing exits 0 even when explicit runtime-only checks remain `NOT_CHECKED`.
+Do not treat this exit code as preparation or target acceptance.
+
+The normal entry also reports fixed assembly substages: settings, initial
+metadata database, driver, process spec, provider, target, application settings,
+application creation, and preparation store. First failure survives assembly
+cleanup errors. These diagnostics do not change validation, budgets, approvals,
+execution or reclamation. Do not restart an old attempt or alter its historical
+`cleanupConfirmed:false`; use any subsequent execution only under the existing
+local attempt policy.

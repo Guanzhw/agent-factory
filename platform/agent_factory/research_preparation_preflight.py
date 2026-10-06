@@ -68,7 +68,7 @@ def tokenizer_preflight(raw: object) -> dict[str, Any]:
     result('serialized_config_bound', len(json.dumps(decoded, sort_keys=True,
         separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode()) + CONFIG_RESERVE_BYTES <= MAX_CONFIG_BYTES)
     try:
-        value = json.loads(decoded, object_pairs_hook=_unique, parse_constant=_nonfinite)
+        value = json.loads(raw, object_pairs_hook=_unique, parse_constant=_nonfinite)
     except (ValueError, TypeError, RecursionError):
         result('json', False)
         return report()

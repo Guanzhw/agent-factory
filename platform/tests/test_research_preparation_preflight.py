@@ -31,6 +31,17 @@ class PreparationPreflightTests(unittest.TestCase):
         self.assertNotIn('synthetic-private-pattern', json.dumps(result))
         self.assertLess(len(json.dumps(result)), 4096)
 
+    def test_utf8_bom_matches_execution_decoder(self):
+        self.assertEqual(tokenizer_preflight(b'\xef\xbb\xbf' + raw(value()))['status'], 'PASS')
+
+    def test_exact_8192_total_vocabulary_passes(self):
+        data = value()
+        data['mergeable_ranks'].extend([
+            [base64.b64encode(b'long' + i.to_bytes(2, 'big')).decode(), i]
+            for i in range(256, 8191)])
+        data['special_tokens']['<|reserved_0|>'] = 8191
+        self.assertEqual(tokenizer_preflight(raw(data))['status'], 'PASS')
+
     def test_all_independent_fields_reported_in_one_result(self):
         data = value()
         data.update(schema=True, pat_str='', extra='private-unknown-key-value')

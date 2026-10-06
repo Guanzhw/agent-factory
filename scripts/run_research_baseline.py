@@ -34,7 +34,10 @@ _STAGES = frozenset({
     'WORKSPACE_CREATE', 'PROGRESS_START', 'EXECUTE', 'PROGRESS_COMPLETE', 'PROGRESS_STOPPED',
     'EXECUTION_IMPORTS', 'EXECUTION_IDENTITY', 'DATABASE_CONFIG', 'UPSTREAM_READ',
     'UPSTREAM_VERIFY', 'TOKENIZER_READ', 'RESOURCE_LIMITS', 'DEVICE_OBSERVER',
-    'PREPARATION_ASSEMBLY', 'PREPARATION_STARTUP', 'PREPARATION_SHUTDOWN', 'PREPARATION_PUBLICATION',
+    'PREFLIGHT', 'PREPARATION_SETTINGS', 'PREPARATION_DATABASE', 'PREPARATION_DRIVER',
+    'PREPARATION_PROCESS_SPEC', 'PREPARATION_PROVIDER', 'PREPARATION_TARGET',
+    'PREPARATION_APPLICATION_SETTINGS', 'PREPARATION_CREATE_APP', 'PREPARATION_STORE',
+    'PREPARATION_ASSEMBLY_CLEANUP', 'PREPARATION_ASSEMBLY', 'PREPARATION_STARTUP', 'PREPARATION_SHUTDOWN', 'PREPARATION_PUBLICATION',
     'PREPARATION_PROPOSAL', 'PREPARATION_PLAN', 'PREPARATION_REVIEW',
     'PREPARATION_APPROVAL', 'PREPARATION_SUBMIT', 'PREPARATION_RECEIPT',
     'PREPARATION_WAIT', 'PREPARATION_IMPORT', 'PREPARATION_CLEANUP',
@@ -386,7 +389,7 @@ def execute(config, workspace, progress):
     try:
         progress.at('PREPARATION_ASSEMBLY')
         program = directory('preparation-program')
-        prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program,
+        prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
             program_identity=identity(program), custody_root=directory('preparation-custody'),
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=hashlib.sha256(canonical(
@@ -489,16 +492,104 @@ def execute(config, workspace, progress):
                     native.db_engine.dispose()
 
 
+def preparation_preflight(raw_config):
+    """Read-only local checks. Never opens the DSN or constructs an application."""
+    from agent_factory.research_config_preflight import config_preflight
+    parsed = config_preflight(raw_config)
+    checks = list(parsed['checks'])
+    config = parsed['config'] or {}
+    valid = parsed['validFields']
+    def add(field, status, code):
+        checks.append({'field': field, 'status': status, 'code': code})
+    def check(field, action):
+        try:
+            action()
+        except Exception as error:
+            add(field, 'BLOCKED', exception_code(error))
+        else:
+            add(field, 'PASS', 'VALID')
+    if {'inputRoot', 'tokenizerBasename'} <= valid:
+        try:
+            raw = read_private(Path(config['inputRoot']) / config['tokenizerBasename'], 1024**2)
+        except Exception as error:
+            add('TOKENIZER_FILE', 'BLOCKED', exception_code(error))
+            add('TOKENIZER_CONTENT', 'NOT_CHECKED', 'DEPENDENCY_BLOCKED')
+        else:
+            add('TOKENIZER_FILE', 'PASS', 'VALID')
+            try:
+                from agent_factory.research_preparation_preflight import tokenizer_preflight
+                checks.extend(tokenizer_preflight(raw)['checks'])
+            except Exception as error:
+                add('TOKENIZER_VALIDATOR', 'BLOCKED', exception_code(error))
+    else:
+        add('TOKENIZER_CONTENT', 'NOT_CHECKED', 'DEPENDENCY_BLOCKED')
+    if {'workspace', 'interpreterTarget', 'interpreterSha256'} <= valid:
+        def process_spec():
+            from agent_factory.process_enforcement import ProcessSpec
+            program = Path(config['workspace']) / 'preparation-program'
+            ProcessSpec(config['interpreterTarget'], config['interpreterSha256'],
+                        ('-I', '-B', str(program / 'prepare.py'), str(program / 'run-config.json')))
+        check('PREPARATION_PROCESS_SPEC', process_spec)
+    else:
+        add('PREPARATION_PROCESS_SPEC', 'NOT_CHECKED', 'DEPENDENCY_BLOCKED')
+    check('PLATFORM', lambda: require(sys.platform == 'linux'))
+    try:
+        from agent_factory.research_preparation_driver import _FILES
+        import agent_factory
+    except Exception as error:
+        add('RUNTIME_SOURCE_CLOSURE', 'BLOCKED', exception_code(error))
+    else:
+        package = Path(agent_factory.__file__).parent
+        for name in _FILES:
+            # Fixed source names only. Bounded, nonblocking, nofollow file read.
+            check('SOURCE_' + name.replace('.py', '').upper(),
+                  lambda name=name: read_private(package / name, 2 * 1024**2, private=False))
+    if 'workspace' in valid:
+        for label, path in (('PROGRAM_DIRECTORY', Path(config['workspace']) / 'preparation-program'),
+                            ('CUSTODY_DIRECTORY', Path(config['workspace']) / 'preparation-custody')):
+            try:
+                exists = path.exists() or path.is_symlink()
+            except Exception as error:
+                add(label, 'BLOCKED', exception_code(error))
+                continue
+            if exists:
+                check(label, lambda path=path: identity(path))
+            else:
+                add(label, 'NOT_CHECKED', 'NOT_CREATED')
+    else:
+        for label in ('PROGRAM_DIRECTORY', 'CUSTODY_DIRECTORY'):
+            add(label, 'NOT_CHECKED', 'DEPENDENCY_BLOCKED')
+    # Check parity with the canonical schema without using it as an early gate.
+    check('CANONICAL_CONFIG_AUTHORITY', lambda: config_from_bytes(raw_config))
+    add('DATABASE_AND_APPLICATION', 'NOT_CHECKED', 'REQUIRES_EXECUTION')
+    add('RUNTIME_ADMISSION', 'NOT_CHECKED', 'REQUIRES_EXECUTION')
+    return {'schema': 1, 'kind': 'RESEARCH_PREPARATION_PREFLIGHT',
+            'status': 'BLOCKED' if any(row['status'] == 'BLOCKED' for row in checks) else 'CHECKED_FIELDS_PASS',
+            'executionVerified': False, 'checks': checks}
+
+
 def main(argv=None, *, run=execute):
     old_logging = logging.root.manager.disable
     progress = None
     diagnostics = Diagnostics()
     try:
         args = sys.argv[1:] if argv is None else argv
+        preflight = len(args) == 3 and args[0] == '--preflight'
+        if preflight:
+            args = args[1:]
         require(len(args) == 2 and args[0] == '--config')
         diagnostics.at('CONFIG_READ')
         raw = read_private(args[1])
         diagnostics.at('CONFIG_VALIDATE')
+        if preflight:
+            diagnostics.at('PREFLIGHT')
+            logging.disable(logging.CRITICAL)
+            with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
+                    redirect_stdout(sink), redirect_stderr(sink):
+                warnings.simplefilter('ignore')
+                report = preparation_preflight(raw)
+            print(json.dumps(report, sort_keys=True, separators=(',', ':')))
+            return 2 if report['status'] == 'BLOCKED' else 0
         config = config_from_bytes(raw)
         from bootstrap_research_control import _workspace
         diagnostics.at('WORKSPACE_INSPECT')

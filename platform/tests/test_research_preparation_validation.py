@@ -79,3 +79,26 @@ class PreparationConstructionTests(unittest.TestCase):
                     bootstrap.engine.connect.assert_not_called()
                     self.assertEqual(list(program.iterdir()), [])
                     self.assertEqual(list(custody.iterdir()), [])
+
+    def test_assembly_cleanup_preserves_driver_failure_stage(self):
+        from test_research_baseline_runner import runner
+        diagnostics = runner.Diagnostics()
+        bootstrap = Mock()
+        bootstrap.engine.dispose.side_effect = RuntimeError('synthetic private cleanup detail')
+        with patch.object(assembly, 'Store', return_value=bootstrap), \
+             patch.object(assembly, 'PreparationDriver', side_effect=ValueError('synthetic private driver detail')), \
+             patch.object(assembly, 'create_app') as create:
+            try:
+                assembly.prepare_application(db_url='postgresql+psycopg://synthetic-unused/unused',
+                    workspace=Path('/synthetic'), program_root=Path('/synthetic/program'), program_identity={},
+                    custody_root=Path('/synthetic/custody'), executable='/synthetic/python',
+                    executable_sha256='a' * 64, tokenizer_json=b'{}', preparation_manifest_sha256='b' * 64,
+                    diagnostics=diagnostics)
+            except RuntimeError as error:
+                diagnostics.capture(error)
+            else:
+                self.fail('cleanup failure must propagate')
+            create.assert_not_called()
+        self.assertEqual(diagnostics.failure, {'schema': 1, 'kind': 'RESEARCH_BASELINE_DIAGNOSTIC',
+            'stage': 'PREPARATION_DRIVER', 'errorCode': 'VALIDATION_REJECTED',
+            'secondaryStage': 'PREPARATION_ASSEMBLY_CLEANUP', 'secondaryErrorCode': 'RUNTIME_ERROR'})
