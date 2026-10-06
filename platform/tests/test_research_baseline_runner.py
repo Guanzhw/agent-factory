@@ -70,7 +70,13 @@ class RunnerTests(unittest.TestCase):
 
     def test_failure_journal_fixed_stdout_no_exception_path_and_no_retry(self):
         execute = Mock(side_effect=RuntimeError('private path and password must not be echoed'))
-        self.assertEqual(self.call(execute), (2, '', runner.ERROR + '\n'))
+        code, stdout, stderr = self.call(execute)
+        self.assertEqual((code, stdout), (2, ''))
+        lines = stderr.splitlines()
+        self.assertEqual(lines[0], runner.ERROR)
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[1]), {'schema': 1, 'kind': 'RESEARCH_BASELINE_DIAGNOSTIC',
+            'stage': 'EXECUTE', 'errorCode': 'RUNTIME_ERROR'})
         execute.assert_called_once()
         files = sorted(Path(self.config['workspace']).glob('progress-*.json'))
         self.assertEqual(json.loads(files[-1].read_bytes())['progress'], {'phase': 'STOPPED', 'cleanupConfirmed': False})
