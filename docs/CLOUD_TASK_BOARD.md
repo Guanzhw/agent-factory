@@ -1,5 +1,25 @@
 # Cloud integration task board
 
+## Cancellation before synthetic process dispatch — 2026-10-06
+
+PR40 head `7a0a5a6ce6df0a75c813710fec4230dddfbf85f3` failed both PostgreSQL
+jobs (8/10 jobs passed). Both exposed an environment-preflight cancellation after
+effect reservation that retained UNKNOWN; one also exhausted active capacity.
+Push: 1500 tests, 2 failures, 63 skips. PR: 1500 tests, 1 failure, 63 skips.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | tools lifecycle, native PG regression, integration | Original control-command PG8 pass; deterministic preflight PG1 pass; full Python1507=1116pass391skip107.886s; Ruff/Linux+Windows Pyright0 |
+| go_adapter | New synthetic predispatch unit tests | Covers no-launch cancellation, ambiguous launch, stale exception proof, cleanup failure and no replay |
+| independent_review / at10 | Read-only lifecycle review | Never-dispatched proof must come from this invocation before Popen; unknown launch retains capacity |
+| go_policy | Exact-head CI evidence | Both failed terminal observations preserved; no blind rerun |
+
+The repair does not alter generic binding cancellation or infer stop from a native
+CANCELLED status. Only the current worker's positive pre-dispatch/cleanup evidence
+settles its original effect. Startup-call errors without a returned handle remain
+UNKNOWN. Target diagnostics remain independently deliverable from the prior head;
+no target training or cloud GPU execution is claimed.
+
 ## Active uv0.11.7 target startup profile — 2026-10-06
 
 Branch `coord/research-uv0117-profile-20261006`, based on PR39 exact

@@ -92,34 +92,36 @@ class _WindowsJob:
 
 
 def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
-    runtime_root = Path(getattr(settings, 'runtime_directory', '.local/runtime')).resolve()
-    if getattr(store, 'storage', None) is not None:
-        runtime_root = store.storage.directory(ctx.run_id, "synthetic-runtime")
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    timeout = min(30.0, max(.1, float(getattr(settings, 'experiment_timeout_seconds', 5))))
-    output_cap = min(1024 * 1024, max(1024, int(getattr(settings, 'experiment_output_bytes', 65536))))
-    duration = min(5.0, max(.01, float(plan.get('config', {}).get('experimentDurationSeconds', .05))))
-    memory_cap = min(1024 * 1024 * 1024, max(64 * 1024 * 1024, int(getattr(settings, 'experiment_memory_bytes', 256 * 1024 * 1024))))
-    process_cap = min(8, max(1, int(getattr(settings, 'experiment_process_limit', 4))))
-    cpu_percent = min(100, max(1, int(getattr(settings, 'experiment_cpu_percent', 10))))
-    timeout = min(timeout, plan.get('budget', {}).get('experimentSeconds', timeout))
-    output_cap = min(output_cap, plan.get('budget', {}).get('outputBytes', output_cap))
-    bindings = getattr(store, 'execution_bindings', None)
-    selected_runtime = 'local-python-bounded-v1'
-    if bindings is not None:
-        limits = bindings.environment_limits(plan, ctx)
-        selected_runtime = limits.runtime_id
-        timeout = min(timeout, limits.timeout_seconds)
-        output_cap = min(output_cap, limits.output_bytes)
-        memory_cap = min(memory_cap, limits.memory_bytes)
-        process_cap = min(process_cap, limits.process_limit)
-        cpu_percent = min(cpu_percent, limits.cpu_percent)
     proc = job = None
     failure = None
-    started = time.monotonic()
-    next_authority_check = started
+    dispatch_attempted = False
     try:
+        runtime_root = Path(getattr(settings, 'runtime_directory', '.local/runtime')).resolve()
+        if getattr(store, 'storage', None) is not None:
+            runtime_root = store.storage.directory(ctx.run_id, "synthetic-runtime")
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        timeout = min(30.0, max(.1, float(getattr(settings, 'experiment_timeout_seconds', 5))))
+        output_cap = min(1024 * 1024, max(1024, int(getattr(settings, 'experiment_output_bytes', 65536))))
+        duration = min(5.0, max(.01, float(plan.get('config', {}).get('experimentDurationSeconds', .05))))
+        memory_cap = min(1024 * 1024 * 1024, max(64 * 1024 * 1024, int(getattr(settings, 'experiment_memory_bytes', 256 * 1024 * 1024))))
+        process_cap = min(8, max(1, int(getattr(settings, 'experiment_process_limit', 4))))
+        cpu_percent = min(100, max(1, int(getattr(settings, 'experiment_cpu_percent', 10))))
+        timeout = min(timeout, plan.get('budget', {}).get('experimentSeconds', timeout))
+        output_cap = min(output_cap, plan.get('budget', {}).get('outputBytes', output_cap))
+        bindings = getattr(store, 'execution_bindings', None)
+        selected_runtime = 'local-python-bounded-v1'
+        if bindings is not None:
+            limits = bindings.environment_limits(plan, ctx)
+            selected_runtime = limits.runtime_id
+            timeout = min(timeout, limits.timeout_seconds)
+            output_cap = min(output_cap, limits.output_bytes)
+            memory_cap = min(memory_cap, limits.memory_bytes)
+            process_cap = min(process_cap, limits.process_limit)
+            cpu_percent = min(cpu_percent, limits.cpu_percent)
+        started = time.monotonic()
+        next_authority_check = started
         with tempfile.TemporaryFile(dir=runtime_root) as output:
+            dispatch_attempted = True
             proc = subprocess.Popen([sys.executable, '-I', '-c', EXPERIMENT_PROGRAM, str(duration), str(memory_cap), str(int(timeout)+1), str(process_cap)], stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                     cwd=runtime_root, creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0,
                                     start_new_session=os.name != 'nt', env={k: v for k, v in os.environ.items() if k in ['SystemRoot','WINDIR','TEMP','TMP','PATH','LANG','LC_ALL']})
@@ -152,6 +154,9 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
             return {**metric, 'evidenceKind': 'synthetic', 'datasetHash': DATASET_HASH, 'evaluatorId': 'synthetic-sort-inversions', 'evaluatorVersion': '1', 'runtimeId': selected_runtime, 'modelAdapterId': (plan.get('executionBindings') or {}).get('model', {}).get('adapterId', 'local-synthetic-model-v1'), 'pid': proc.pid, 'elapsedSeconds': round(time.monotonic() - started, 4), 'outputHash': hashlib.sha256(raw).hexdigest()}
     except BaseException as error:
         failure = error
+        # These markers describe this invocation, never a reused exception.
+        setattr(error, 'compute_cleanup_complete', False)
+        setattr(error, 'compute_never_dispatched', False)
         raise
     finally:
         if job: job.close()
@@ -174,14 +179,20 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
                 except ProcessLookupError: pass
             store.event(ctx.run_id, 'compute_stopped', 'Task-owned compute and descendants cleaned up', {'pid': proc.pid, 'returnCode': proc.returncode, 'cleanupComplete': True})
         if failure is not None:
-            setattr(failure, 'compute_cleanup_complete', True)
+            # A failed launch call may have dispatched without returning a handle.
+            # Only our local pre-dispatch boundary or confirmed cleanup proves stop.
+            if proc is not None or not dispatch_attempted:
+                setattr(failure, 'compute_cleanup_complete', True)
+            if not dispatch_attempted:
+                setattr(failure, 'compute_never_dispatched', True)
 
 
 def _experiment_outcome(settings, store, ctx, plan, stop_signal, authority_check=None):
     try:
         return {'ok': True, 'result': _experiment(settings, store, ctx, plan, stop_signal, authority_check), 'cleanupComplete': True}
     except BaseException as error:
-        return {'ok': False, 'error': error, 'cleanupComplete': bool(getattr(error, 'compute_cleanup_complete', False))}
+        return {'ok': False, 'error': error, 'cleanupComplete': bool(getattr(error, 'compute_cleanup_complete', False)),
+                'neverDispatched': bool(getattr(error, 'compute_never_dispatched', False))}
 
 
 def build_tools(settings, store):
@@ -269,6 +280,8 @@ def build_tools(settings, store):
         except BaseException as error:
             if outcome and outcome.get('cleanupComplete') and isinstance(error, (RunCancelledException, asyncio.CancelledError)):
                 known = outcome['result'] if outcome['ok'] else {'cancelled': True, 'cleanupComplete': True, 'runtimeId': 'local-python-bounded-v1'}
+                if not outcome['ok'] and outcome.get('neverDispatched'):
+                    known['dispatchState'] = 'never-dispatched'
                 if not recorded: store.effect_complete(run_context.run_id, key, known)
                 store.event(run_context.run_id, 'compute_cancelled', 'Cancellation settled after confirmed task-owned compute cleanup', {'effectKey':key,'cleanupComplete':True})
             elif not recorded:

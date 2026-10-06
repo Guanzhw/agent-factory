@@ -106,6 +106,31 @@ class ControlCommandPostgresTests(unittest.TestCase):
                 self.client.post(f"/api/factory/jobs/{task}/cancel")
                 self.wait(task, {"canceled", "failed", "completed"})
 
+    def test_cancel_during_environment_preflight_settles_never_dispatched_effect(self):
+        task, command = self.waiting("approve")
+        store = self.state["store"]
+        original = store.execution_bindings.environment_limits
+        calls = []
+
+        def cancel_before_launch(plan, context):
+            calls.append(context.run_id)
+            self.assertEqual(store.effects(task)[0]["status"], "UNKNOWN")
+            store.request_cancel(task)
+            return original(plan, context)
+
+        with patch.object(store.execution_bindings, "environment_limits", side_effect=cancel_before_launch):
+            response = self.post(task, command)
+            self.assertEqual(response.status_code, 202, response.text)
+            detail = self.wait(task, {"canceled"})
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(store.task(task)["terminal"])
+        effects = store.effects(task)
+        self.assertEqual(len(effects), 1)
+        self.assertEqual(effects[0]["status"], "CANCELLED")
+        self.assertEqual(effects[0]["result"]["dispatchState"], "never-dispatched")
+        self.assertTrue(effects[0]["result"]["cleanupComplete"])
+        self.assertFalse(any(event["type"] in {"compute_started", "compute_stopped"} for event in detail["events"]))
+
     def test_cancel_lost_ack_needs_positive_stop_evidence_and_does_not_repeat_dispatch(self):
         task, _ = self.waiting()
         command = {"commandId": str(uuid4()), "action": "cancel"}
