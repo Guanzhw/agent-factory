@@ -1,5 +1,32 @@
 # Cloud integration task board
 
+## Active bounded SDPA compatibility diagnostic — 2026-10-06
+
+Base PR38 exact `63c0be99ee4da310492dbbed855bcc4badb6d453` passed all ten
+push/PR jobs (37433117998/37433124232). Root double terminal observations were
+96.801 seconds apart; independent observations were107.499 seconds apart.
+Final PostgreSQL logs could not be downloaded (`Transport closed`), so their
+exact test counts remain unverified. No merge or deployment occurred.
+
+The designated target worker reports uv0.11.7/Python3.12.13/Torch2.9.1cu128,
+64 frozen dependencies and all11 data/7 kernel assets verified. Its original
+FA3 compatibility run failed after5.6 seconds with no kernel image for sm120;
+tokenizer, training and evaluation have not run. This is operator-reported
+target evidence, not a cloud reproduction. Preserve that original failure
+separately from the adapted SDPA baseline.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Integration, public launch/parameter contract, serial checks and exact CI | Probe9 pass1.774s, Ruff/Pyright0; new branch `coord/research-sdpa-probe-20261006`, final commit/CI pending |
+| factory_flow | `scripts/probe_research_sdpa.py` and focused tests | Seven fixed GPU cases, nine mock/pure tests passed; no actual Torch/GPU execution in cloud |
+| go_adapter | Read-only baseline and SDPA contract review | Fixed entry/config/eleven-parameter contract verified unchanged from PR37 |
+| reviewer | Independent probe resource/semantic review | Nine mock/pure tests pass1.258s; BF16 quantization issue fixed, D128 nonzero gradient case added; no remaining code blocker |
+
+Target uv0.11.7 is not the reviewed uv0.12.19 startup profile supported by PR38.
+Ordinary-path independent compatibility diagnostics do not establish Factory
+launch acceptance. Do not upgrade global uv or change version metadata to make
+the environment pass. No new local task or source-toolchain build is requested.
+
 ## Active pinned uv research launch — 2026-10-06
 
 Base draft PR37 exact `6fd3646ff74a2ab8b7c625461a6f5738fef15079` passed
