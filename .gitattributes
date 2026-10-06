@@ -5,3 +5,4 @@ docs/evidence/pr47-source-manifest.json text eol=lf
 scripts/install-handoff.sh text eol=lf
 scripts/verify_closure.py text eol=lf
 docs/PR47_INSTALL_HANDOFF.md text eol=lf
+scripts/copy_install_site.py text eol=lf

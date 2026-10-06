@@ -7,7 +7,8 @@ change the application, or claim target installation/database/training acceptanc
 ## Two separate checkouts
 
 The **tool delivery commit** is the commit containing this document,
-`scripts/install-handoff.sh`, `scripts/verify_closure.py`, and
+`scripts/install-handoff.sh`, `scripts/verify_closure.py`,
+`scripts/copy_install_site.py`, and
 `docs/evidence/pr47-source-manifest.json`. Pin that reviewed commit when obtaining
 these files. It is not the runtime source to build.
 
@@ -47,12 +48,20 @@ in the authorized target's local shell; values and output artifacts stay private
 Run the shell script from the tool checkout:
 
 ```sh
-bash scripts/install-handoff.sh
+bash scripts/install-handoff.sh --copy-mode full-copy
 ```
+
+The known ext4 target reports `FICLONE` / `ENOTSUP` and has sufficient space
+for independent copies: use **full-copy**, with no CoW probe or receipt required.
+The optional `--copy-mode clone` retains the previous CoW path; omitting the flag
+keeps clone for compatibility. Neither mode silently falls back or accepts
+shared hardlinks. `copy_install_site.py` must remain beside `verify_closure.py`
+in the same pinned tool checkout.
 
 If the accepted original 95-package installation selected explicit groups or
 extras, pass those **same** `uv sync` selection flags as arguments, for example
-`bash scripts/install-handoff.sh --no-dev` only when `--no-dev` was actually used.
+`bash scripts/install-handoff.sh --copy-mode full-copy --no-dev` only when
+`--no-dev` was actually used.
 Do not edit either checkout just to set paths or flags.
 
 Review effective uv configuration and preserve the original approved package
@@ -71,10 +80,33 @@ venv. It uses offline cached packages; a cache miss stops the attempt. Obtain th
 identified public artifact through the existing authorized package channel
 before a new preserved attempt. No model or subscription call is involved.
 
-CoW must already be proven on the actual destination filesystem. Reported clone
-fallback stops before import/inventory. Detection occurs after copying may have
-occurred, so reserve the full-copy worst-case space and retain failed new roots.
-No old venv, attempt, config, project lock or historical receipt is overwritten.
+Before build/install, full-copy requires at least **20 GiB currently free** on
+the new root's filesystem: two maximum admitted 8-GiB site trees, 2 GiB build
+scratch, and 2 GiB remaining headroom. The observed byte budget is written to
+private evidence. Clone uses a 12-GiB conservative installation budget and still
+requires a proven CoW destination; reported fallback stops the attempt. These
+budgets do not waive the runtime's separate 32768-file / 65536-entry / 1-GiB-file /
+8-GiB-site limits. Available disk space is measured, never inferred from an older
+free-space report.
+
+Full-copy keeps uv's initial installation in a new task-owned staging directory,
+then materializes the complete site back at its original logical venv location.
+It does not relocate the venv or copy an old environment. Each file uses an
+exclusive same-directory temporary file, streamed SHA256/size validation, fsync,
+atomic rename and readback; source identity and the complete namespace are
+rechecked. Source symlinks, special files, shared hardlinks, insufficient space
+and changing content fail closed. Owner execute permission is preserved on new
+copies; no shared/cache/source inode is chmodded. Final files must be independent
+single-link files. The helper never uses `FICLONE` or `os.link`.
+
+On failure, cleanup removes only newly created destination entries whose inode
+identities still match this copy attempt. Replaced or unknown entries are left
+held; old files are never cleaned up. New source staging and failure evidence
+remain private for inspection. The retained staging tree also counts toward the
+budget on success. Do not delete or reuse an old attempt to make room. This is an
+operator-owned private installation procedure, not isolation against concurrent
+malicious writes by the same OS account; do not run competing writers.
+
 The same package version `0.2.0` does not prove source identity.
 
 ## Acceptance and next action
@@ -82,7 +114,12 @@ The same package version `0.2.0` does not prove source identity.
 The verifier checks all 135 runtime package files against the exact source and
 wheel, all 95 installed distribution names/versions against the original set,
 entrypoint Factory imports and symbols, installed import origins, and the shared
-policy contract. It rejects editable installation and stale package payloads.
+policy contract. It rejects editable installation and stale package payloads. The final check
+still requires exact uv 0.11.7 / Python 3.12.13 and the previously reviewed
+`uv0117-setuptools82-local-v1` startup profile. These known target versions, all
+95 package versions, original extras/groups, root-project installation selection,
+local source referents and original package indexes must remain consistent;
+copy mode changes filesystem materialization only.
 It then revalidates a derived configuration and builds fresh full-site inventory,
 kernel and interpreter-contract evidence under `NEW_ROOT/evidence`.
 `installation-identity.json` binds the derived project/lock, wheel and evidence.

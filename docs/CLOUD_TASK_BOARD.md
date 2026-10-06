@@ -1,5 +1,18 @@
 # Cloud integration task board
 
+## Full-copy installation compatibility — 2026-10-06
+
+Known target ext4 reports FICLONE/ENOTSUP; free space permits independent copies.
+The former CoW-only delivery was incompatible. Explicit full-copy installation
+preserves all source/identity/runtime checks and old attempts; no target execution.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Shell mode/budget/integration, documentation, exact CI | 23 local tests pass; static checks pass; previous b18 non-PG 8 jobs passed, remaining CI superseded; new exact CI pending |
+| at10 | New bounded atomic copy helper and deterministic tests | 14 copy tests pass; no hardlink/reflink; late mutation and budget regressions covered |
+| reviewer | Independent implementation and known-target compatibility review | Approved after closing final-hash mutation window |
+| original local worker | Actual private install/identity/DB preflight | Await fixed reviewed tool commit; no cloud duplicate executor |
+
 ## Public PR47 installation handoff — 2026-10-06
 
 Branch `coord/pr47-install-closure-delivery-20261006`, based on runtime

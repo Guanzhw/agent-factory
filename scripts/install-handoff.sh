@@ -24,15 +24,34 @@ umask 077
 #    stop for review of that concrete layout, not for an additional generic permission.
 # 4. Pass the SAME extras/groups flags used by the accepted 95-package install as script arguments.
 #    Default below is only correct when that install used default groups/extras.
-# 5. Existing target-filesystem CoW receipt must cover NEW_ROOT's filesystem.
-#    Stop if uv reports clone fallback; do not silently accept hardlinks/full-copy fallback.
+# 5. Select --copy-mode full-copy on known non-CoW filesystems (including ext4 ENOTSUP).
+#    Only clone mode requires an existing CoW receipt. Neither mode accepts hardlinks.
 # 6. Review effective uv configuration: no unexpected user/parent uv.toml or UV_* overrides.
 #    Preserve original reviewed project index/source settings (especially Torch). Do not blindly
 #    add --no-config and thereby discard that provenance. Prefer an authorized cache on the
 #    same proven filesystem. Fallback detection occurs AFTER copies may have happened; keep
 #    the failed new root and provision full-copy worst-case space even though it is not accepted.
 # 7. Resolve all variables explicitly; do not derive them by reading credentials.
-SYNC_SELECTION=("$@") # e.g. --no-dev / --extra ... only if actually used.
+COPY_MODE=clone
+if [[ "${1-}" == --copy-mode ]]; then
+  test "$#" -ge 2
+  COPY_MODE="$2"
+  shift 2
+fi
+case "$COPY_MODE" in
+  clone) export UV_LINK_MODE=clone ;;
+  full-copy) export UV_LINK_MODE=copy ;;
+  *) printf '%s\n' 'INSTALL_COPY_MODE_INVALID' >&2; exit 2 ;;
+esac
+COPY_HELPER="${VERIFIER%/*}/copy_install_site.py"
+test -f "$COPY_HELPER"
+SYNC_SELECTION=("$@") # Original uv extras/groups only; do not override installation policy.
+for arg in "${SYNC_SELECTION[@]}"; do
+  case "$arg" in
+    --link-mode*|--python*|--project*|--active|--directory*|--editable|--no-sources|--config-file*)
+      printf '%s\n' 'INSTALL_SELECTION_OVERRIDE_REJECTED' >&2; exit 2 ;;
+  esac
+done
 test ! -e "$NEW_ROOT"
 mkdir -m 700 "$NEW_ROOT"
 mkdir -m 700 "$NEW_ROOT/project" "$NEW_ROOT/evidence" "$NEW_ROOT/wheels"
@@ -41,6 +60,22 @@ unset PYTHONPATH PYTHONHOME VIRTUAL_ENV OPENCODE_GO FACTORY_TEST_DATABASE_URL UV
 NEW_PROJECT="$NEW_ROOT/project"
 NEW_VENV="$NEW_ROOT/venv"
 EVIDENCE="$NEW_ROOT/evidence"
+# Before build/install, reserve two maximum admitted 8-GiB site trees (uv staging
+# plus verified materialization), 2 GiB build scratch, and 2 GiB remaining headroom.
+# Existing sealed environments are already reflected in the observed free space.
+"$CONTROL_PYTHON" -I -B - "$NEW_ROOT" "$COPY_MODE" <<'PY_BUDGET'
+import json, os, shutil, sys
+from pathlib import Path
+root, mode = Path(sys.argv[1]), sys.argv[2]
+required = 20 * 1024**3 if mode == 'full-copy' else 12 * 1024**3
+free = shutil.disk_usage(root).free
+with (root/'evidence/disk-budget.json').open('x') as out:
+    json.dump({'mode':mode,'availableBytes':free,'requiredBytes':required,
+               'siteByteLimit':8*1024**3,'remainingHeadroomBytes':2*1024**3},out)
+if free < required:
+    print('INSTALL_DISK_BUDGET_BLOCKED',file=sys.stderr)
+    raise SystemExit(2)
+PY_BUDGET
 "$UV" --version > "$EVIDENCE/uv-version.txt"
 "$CONTROL_PYTHON" -I -B -c 'import pathlib,re,sys; sys.exit(0 if re.fullmatch(r"uv 0\.11\.7(?: \([^\n]*\))?\n?",pathlib.Path(sys.argv[1]).read_text()) else 2)' "$EVIDENCE/uv-version.txt"
 "$UV" add --help > "$EVIDENCE/uv-add-help.txt"
@@ -70,9 +105,30 @@ export UV_PROJECT_ENVIRONMENT="$NEW_VENV"
   --no-python-downloads --constraints "$EVIDENCE/constraints.txt" "$WHEEL" \
   > "$EVIDENCE/lock.log" 2>&1
 "$UV" sync --project "$NEW_PROJECT" --offline --frozen --no-editable --no-install-project \
-  --python "$NEW_VENV/bin/python" --no-python-downloads --link-mode clone "${SYNC_SELECTION[@]}" \
+  --python "$NEW_VENV/bin/python" --no-python-downloads --link-mode "$UV_LINK_MODE" "${SYNC_SELECTION[@]}" \
   > "$EVIDENCE/sync.log" 2>&1
-"$CONTROL_PYTHON" -I -B -c 'from pathlib import Path; import re,sys; sys.exit(2 if re.search(r"fall(?:ing)? back|fallback|full.copy",Path(sys.argv[1]).read_text(),re.I) else 0)' "$EVIDENCE/sync.log"
+if [[ "$COPY_MODE" == clone ]]; then
+  "$CONTROL_PYTHON" -I -B -c 'from pathlib import Path; import re,sys; sys.exit(2 if re.search(r"fall(?:ing)? back|fallback|full.copy",Path(sys.argv[1]).read_text(),re.I) else 0)' "$EVIDENCE/sync.log"
+else
+  # Both trees belong exclusively to this new attempt. Preserve the logical venv
+  # prefix: move only site-packages to staging, then materialize it back in place.
+  # Never run this move on OLD_SITE. No interpreter/package startup during copy.
+  "$CONTROL_PYTHON" -I -B - "$NEW_ROOT" <<'PY_STAGE'
+import os, stat, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+site = root/'venv/lib/python3.12/site-packages'
+staging = root/'installed-site-staging'
+info = site.lstat()
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or staging.exists():
+    print('INSTALL_SITE_STAGE_BLOCKED',file=sys.stderr)
+    raise SystemExit(2)
+os.chmod(site.parent,0o700)  # Fresh attempt only; never chmod a cached/source file.
+os.rename(site,staging)
+PY_STAGE
+  "$CONTROL_PYTHON" -I -B "$COPY_HELPER" --source-root "$NEW_ROOT/installed-site-staging" \
+    --destination-root "$NEW_VENV/lib/python3.12/site-packages" --receipt "$EVIDENCE/full-copy-receipt.json"
+fi
 "$UV" pip check --python "$NEW_VENV/bin/python" > "$EVIDENCE/dependency-check.log" 2>&1
 # Direct interpreter, NEVER uv run (which could resync). No source PYTHONPATH.
 # Final verifies exact installed payload, all95versions, all direct entrypoint imports/symbols,
