@@ -149,17 +149,20 @@ class MainDiagnosticsTests(unittest.TestCase):
         self.assertEqual(logging.root.manager.disable, old_logging)
 
     def test_stopped_journal_failure_does_not_replace_original_or_retry(self):
-        writes = []
-        def write(path, raw):
-            phase = json.loads(raw)['progress']['phase']; writes.append(phase)
-            if phase == 'STOPPED': raise PermissionError(SECRET)
-        execute = Mock(side_effect=HostileError(SECRET))
-        value = self.call(execute, write=write)
-        self.assertEqual((value['stage'], value['errorCode']), ('EXECUTE', 'RUNTIME_ERROR'))
-        self.assertEqual(value['secondaryErrorCode'], 'PERMISSION_DENIED')
-        self.assertEqual(value['secondaryStage'], 'PROGRESS_STOPPED')
-        self.assertEqual(writes, ['STARTED', 'STOPPED'])
-        execute.assert_called_once()
+        for error, code in ((PermissionError(SECRET), 'PERMISSION_DENIED'),
+                            (KeyboardInterrupt(SECRET), 'INTERRUPTED')):
+            with self.subTest(secondary=code):
+                writes = []
+                def write(path, raw):
+                    phase = json.loads(raw)['progress']['phase']; writes.append(phase)
+                    if phase == 'STOPPED': raise error
+                execute = Mock(side_effect=HostileError(SECRET))
+                value = self.call(execute, write=write)
+                self.assertEqual((value['stage'], value['errorCode']), ('EXECUTE', 'RUNTIME_ERROR'))
+                self.assertEqual(value['secondaryErrorCode'], code)
+                self.assertEqual(value['secondaryStage'], 'PROGRESS_STOPPED')
+                self.assertEqual(writes, ['STARTED', 'STOPPED'])
+                execute.assert_called_once()
 
     def execute_boundary(self, *, assembly_error=None, startup_error=None, body_error: BaseException | None = None,
                          shutdown_error=None, dispose_error=None):
