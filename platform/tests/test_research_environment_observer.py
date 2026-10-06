@@ -55,6 +55,37 @@ _UV_STARTUP_SOURCE = zlib.decompress(base64.b85decode(
 ))
 
 
+# uv0.11.7 official startup source; same virtualenv MIT notice as above.
+# https://github.com/astral-sh/uv/blob/0.11.7/crates/uv-virtualenv/src/_virtualenv.py
+_UV_0117_STARTUP_SOURCE = zlib.decompress(base64.b85decode(
+    'c$}?QU2oeq6n*!vAe4v7g(W-bifzFHENIg<Kvon@+LxjbXo<F1%Op!uR-9q~efN^ohrfb7Oh95;BJVvs_uNA|ilR@{<|Q-'
+    '4medle8KFv5oD~GV>RMR7X2eQ(&B%spThod#0e4cYnXqXTMWYd4E2%A!roA&;Ga7xp{rvFd`tIiA*X+~v!<!G;yW6`Pas|UuMQxe'
+    '>kX*!Bw%`@Zvhip%D%gT3gp(EA*cktfFGmC}%z~e9;ZbdQWeBY**%(qArV(B)#ey$ufNvxKrg~W;JOh|1q1|h0xfBF5`naXF%3My'
+    'Th0Foe)|OJFQZJ{k()05v7sf&w_$=6CTH1AWR<!w(ornoWH0j92yhi|X0gQ1o00Ob=Wl0JtURbiGD?rMGVT21rXW66mlaA8tAe#x'
+    'Pn0;a3%Oeh4lUk)MJ%pSQA%D_K^7dl(+C4oZ4I?=fLRwFk=O!#Ga6)J(eIx6tAWLSU1o?_CK@wpkXhGK2@Pa*q&}EcWktwPT%Y1N'
+    'GTLUFW-cl@{=JOgEOAm*6_Phr6-^GSiiwSuNbOH-6U#=Rw3*x{_GgDU<#dQ?IiTU01mXj-j15;ojlL~Qy5_20z;e9k7^-'
+    '~rkQkp?6BCKH;af!4eMgA38$_>-PkfvnX^--G%$5ec-sphbBGPuHsZ*BDNfa+)~O}b8^bAz8Tv|Z|F^-'
+    'EhwP3F`KEshkl2&9cB0KTF&+?I?MOdGs4x#r5c+k#pe4LHVY#kK%v(GrsVjiLXEb{DX4!}driB<Y2?tmK@w5;Vw5$$x<C$Oa^Z9#'
+    'HObGT<duQpFH|LOx2t#sdY|T8kirpr!wyI#|syDUQy_t+%pL%9ZaB6`ay_(OMQYPREiig@oendd!Aab?d5g&FHFat9BiJ7<NA}2<'
+    'f1;j<gk+O7`~l{^85R?cKevJs^%cA4>7g)eV-ftd#8|h<MW6re1j4sdsDm=G_fqST2@Htr98{|B`7SBd@42BzuQWs5?i#CTnJ?s}'
+    '@)iz6zU&w`NBdgmY34!3xqLZyEGEh*N4^Re}PySFW_9U}BZbSKnse2}d@8$pT`gcknPCPYBc%IOLYoia$a4iazmbi&dc;$%~NJqX'
+    '=_BV|q&%)i4gwLNS1KH3`|~ET^!kAZXkR;cv-6lr}-37k+chUF||~1%t<sZ_a=OZLCv-mrkE@zIBET=CZ+k!l$}ttgF$I+p?agxm'
+    '-`xR?%sY0w`h1jR7T1&wu;<wQJ@ANXN>%C`b<Q_3eA_|DV6So1I_uZi=PJjAD5(!ItKUtK5XZ`oZt6TsK|zVXi;FpUp0YcGuMhM0'
+    '+4gDhltN{V3zgxa%KhgKBk^^+ntF5LmoJoZ_%Cxw;~=%R^JxV|sKjA~3Wsor7^_q2vHtNn`k&SKMxWjcp@C07D+m-'
+    'C7?moHz_$gWXWUWNkoCa9|QxZ!SOu9r2SR$>bbPE*l){)`#0LTPq8;hS3+bMl`T}bkPvpeB0CKG?<bPvH^X9D(dc-_Wt(nSjGz75'
+    'cJDL5s!&fEI1XOQmkC_++}vBmWFPL6czsK_WXAJ4Ts$;YPg6npQ^3j%3uvgaweWX=3352@By&J62GuC$RIs3|FnfI=+D;1ym>W{C'
+    '|LpJCXtK8Z!n2-'
+    ';bdJ~e@uglB_2g$=z<+2?Bv$+<fON&sfCtnsE^2<*|q|NJp{{gII_1`biH<XCym|M4Y)uL0ysGo{BDn3bxnCN(CY2sY!?C2;>6At'
+    'b`9aMGw_0bbn`$QxQib)_VDWK)-'
+    '=tqYz5m)6;lTPC9_{%pHI(9*(8;8otdCAl1A!7C3P@NCRmeE#bE^{HPl)iBd`=>Fbx|adt`a$_m=4RTJXXGW`V+;DY()>7FK~!BM'
+    'jaSI2jU7o)8SI^bk~+?Rh}$@pFLZ7@Q!G4$^7177kRX8D=<LGrUkT{RVJ<``3B+CGp&4o?Y;y?Ti>7O%TucGzoaI$DAokuB|_{u^'
+    'X+WejYbo3Qs72{Y`T7XyJzyI-5shoKfqkB&N<wG}<Sw+QW@+xj$Z|zn;tx4wkN4_uoMi!D;7IqwTe-JJjq&?GHMC8Z@aKj#Q;Ay3'
+    'Knag&4S-'
+    'gj3VtR1Qz$@Nl?U`$uW!s*q*J_Uv8MgCE{)xMy$;<mYiYb@vg2dfo4_cvt!V6SzGhLo19%_!|h%rJ4I>1cz;=Z9JQ_r`H(d_b-'
+    'N3Gui'
+))
+
+
 @unittest.skipUnless(os.name == 'posix', 'POSIX nofollow static inventory')
 class ResearchEnvironmentObserverTests(unittest.TestCase):
     def setUp(self):
@@ -113,9 +144,13 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
         return InputPin(label, 'environment', str(self.root), RootIdentity(info.st_dev, info.st_ino),
             FilePin(name, identity['sha256'], identity['sizeBytes']))
 
-    def uv_fixture(self):
+    def uv_fixture(self, profile=module.UV_STARTUP_PROFILE, *, cfg_version=None, source=None,
+                   declared_profile=None, declared_files=None):
         from agent_factory.research_interpreter import capture_interpreter_contract
-        cfg = self.write(self.venv / 'pyvenv.cfg', b'include-system-site-packages = false\nuv = 0.12.19\n')
+        version, pins = module.UV_STARTUP_PROFILES[profile]
+        if source is None:
+            source = _UV_STARTUP_SOURCE if version == '0.12.19' else _UV_0117_STARTUP_SOURCE
+        cfg = self.write(self.venv / 'pyvenv.cfg', f'include-system-site-packages = false\nuv = {cfg_version or version}\n'.encode())
         project_pin = self.write(self.root / 'pyproject.toml', b'[project]\nname="synthetic"\nversion="0.0.1"\n')
         lock_pin = self.write(self.root / 'uv.lock', b'version = 1\n# synthetic installed lock, not upstream provenance\n')
         interpreter = self.venv / 'bin' / 'python'
@@ -125,14 +160,14 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
         interpreter.rename(target)
         target.chmod(0o700)
         interpreter.symlink_to(target)
-        self.write(self.site / '_virtualenv.py', _UV_STARTUP_SOURCE)
+        self.write(self.site / '_virtualenv.py', source)
         self.write(self.site / '_virtualenv.pth', b'import _virtualenv')
         inventory = json.loads((self.root / 'inventory.json').read_bytes())
         info = self.root.stat()
         inventory.update(schema=2, interpreterMode='research-uv-interpreter-v1',
             project={'root': str(self.root), 'rootIdentity': {'device': info.st_dev, 'inode': info.st_ino},
                      'pyprojectToml': project_pin, 'uvLock': lock_pin},
-            startupProfile=module.UV_STARTUP_PROFILE, startupFiles=deepcopy(module.UV_STARTUP_FILES))
+            startupProfile=declared_profile or profile, startupFiles=deepcopy(pins if declared_files is None else declared_files))
         inventory['venv']['pyvenvCfg'] = cfg
         first = self.input('environment-inventory', 'inventory.json', inventory)
         self.observer = ResearchEnvironmentObserver(first, self.observer._kernel)
@@ -146,7 +181,7 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
         self.request['environmentPins'] = [asdict(first), asdict(self.observer._kernel), asdict(lock)]
         paths = [str(Path(package['root']) / row['path']) for package in inventory['packages'] for row in package['files']]
         paths += [str(self.runtime_root / row['basename']) for row in self.request['trustedRuntimeFiles']]
-        paths += [str(self.site / name) for name in module.UV_STARTUP_FILES]
+        paths += [str(self.site / name) for name in pins]
         self.request['launchSpec']['interpreter_contract'] = capture_interpreter_contract(
             executable=str(interpreter), sha256=inventory['python']['sha256'], project_root=str(self.root),
             venv_root=str(self.venv), approved_interpreter_roots=[str(managed)],
@@ -157,6 +192,55 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
         self.uv_fixture()
         self.assertEqual(self.observer(self.request)['status'], 'VERIFIED')
         self.assertEqual(self.observer(self.request), self.observer(deepcopy(self.request)))
+
+    def test_uv_0117_exact_profile_static_identity(self):
+        self.uv_fixture('uv0117-virtualenv-startup-v1')
+        self.assertEqual(self.observer(self.request)['status'], 'VERIFIED')
+        self.assertEqual(self.observer(self.request), self.observer(deepcopy(self.request)))
+
+    def test_uv_profiles_reject_cross_version_cross_bytes_and_renamed_claims(self):
+        profiles = ('uv0117-virtualenv-startup-v1', module.UV_STARTUP_PROFILE)
+        for profile in profiles:
+            other = profiles[1] if profile == profiles[0] else profiles[0]
+            other_version, other_pins = module.UV_STARTUP_PROFILES[other]
+            other_source = _UV_STARTUP_SOURCE if other_version == '0.12.19' else _UV_0117_STARTUP_SOURCE
+            for options in ({'cfg_version': other_version}, {'source': other_source},
+                            {'declared_profile': 'uv-unreviewed-startup-v1'},
+                            {'declared_profile': other}, {'declared_files': other_pins}):
+                with self.subTest(profile=profile, changed=next(iter(options))):
+                    case = ResearchEnvironmentObserverTests()
+                    case.setUp()
+                    try:
+                        case.uv_fixture(profile, **options)
+                        self.assertEqual(case.observer(case.request)['status'], 'UNKNOWN')
+                    finally:
+                        case.doCleanups()
+
+    def test_uv_new_startup_file_or_modified_script_at_final_recheck_unknown(self):
+        original = module._uv_interpreter
+        for profile in module.UV_STARTUP_PROFILES:
+            for modification in ('new-pth', 'modified-script'):
+                with self.subTest(profile=profile, modification=modification):
+                    case = ResearchEnvironmentObserverTests()
+                    case.setUp()
+                    try:
+                        case.uv_fixture(profile)
+                        self.assertEqual(case.observer(case.request)['status'], 'VERIFIED')
+                        calls = []
+                        def final_mutation(*args, **kwargs):
+                            calls.append(True)
+                            if len(calls) == 2:
+                                if modification == 'new-pth':
+                                    case.write(case.site / 'late-injection.pth', b'import unreviewed')
+                                else:
+                                    path = case.site / '_virtualenv.py'
+                                    path.write_bytes(path.read_bytes() + b'\n# changed')
+                            return original(*args, **kwargs)
+                        with patch.object(module, '_uv_interpreter', side_effect=final_mutation):
+                            self.assertEqual(case.observer(case.request)['status'], 'UNKNOWN')
+                        self.assertEqual(len(calls), 2)
+                    finally:
+                        case.doCleanups()
 
     def test_uv_cfg_lock_project_package_and_link_drift_unknown(self):
         for relative in ('venv/pyvenv.cfg', 'uv.lock', 'pyproject.toml',

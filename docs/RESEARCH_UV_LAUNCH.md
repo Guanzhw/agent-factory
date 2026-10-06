@@ -149,6 +149,104 @@ claims. This documentation update did not execute either example.
 
 ## Launch and uv boundaries
 
+### Minimal path-free target evidence
+
+The standalone standard-library `scripts/probe_research_uv_startup.py` takes
+exactly `--venv ABSOLUTE_VENV`. It reads only `pyvenv.cfg` and the two fixed
+startup files under `lib/pythonX.Y/site-packages`, using the probing interpreter's
+major/minor version. Run it with the existing trusted Python3.12 interpreter,
+`-B -S` and the target worker's bounded output/time runner. `-S` is suitable here
+because this script inspects files, not venv prefix behavior:
+
+```text
+<existing trusted Python3.12> -B -S <reviewed scripts>/probe_research_uv_startup.py --venv <private absolute target venv>
+```
+
+It performs no package imports, startup-file execution, network requests,
+installation or environment changes. Its bounded JSON contains only fixed file
+labels, hashes/sizes/status and cfg `uv`, `include-system-site-packages`,
+`version_info`. Private paths and other cfg fields are not emitted; invalid CLI
+arguments also use a fixed error instead of echoing their text. Both reviewed
+profiles are compared, while Factory execution, startup safety and scientific
+acceptance remain false. A profile match is passive file evidence only.
+
+For an initial capacity check, also return only four quantities from the existing
+private audit: complete unique file count for the union of selected package files,
+Factory execution-library files and the two startup files; their total bytes;
+largest single file; and inventory JSON bytes. No path, raw cfg or full inventory
+needs to be published.64 installed dependencies do not establish these counts.
+Do not omit headers, extensions or other files from a selected module's complete
+tree merely to satisfy a limit.
+
+### Generate the actual Factory canonical contract
+
+`scripts/capture_research_uv_contract.py --config ABSOLUTE_PRIVATE_JSON` is a
+thin read-only wrapper around the existing `capture_interpreter_contract` API.
+The private UTF8 JSON has exactly these ten keys:
+
+| Key | Trusted operator value |
+|---|---|
+| `executable` | Exact logical venv Python path, preserving argv0 semantics |
+| `sha256` | Independently approved final interpreter-byte SHA256 |
+| `project_root`, `venv_root` | Actual absolute roots |
+| `approved_interpreter_roots` | Explicit approved absolute interpreter-root list |
+| `pyvenv_cfg`, `pyproject_toml`, `uv_lock` | Actual cfg/project/installed-lock paths |
+| `package_inventory` | Final inventory schema2 file path |
+| `package_files` | Deduplicated exact union of full inventory files, trusted runtime files and selected startup files |
+
+No generic-contract hash, model-selected path, synthesized target hash or
+equivalent-looking JSON is a replacement. The wrapper rejects unknown/duplicate
+keys, noncanonical paths, unsafe config links and changed config identity. It
+holds and rechecks the config while the existing helper measures and rechecks
+the actual files. It does not choose a startup profile or approve an inventory;
+the environment observer performs those additional checks before launch.
+
+Use the existing reviewed Factory package through an exact source/import path
+or installed immutable package. The helper and its dependencies are standard
+library only. In a clean, offline/no-sync ordinary uv invocation analogous to
+the diagnostic command above, the final Python command is:
+
+```text
+python -B <reviewed scripts>/capture_research_uv_contract.py --config <private capture-config.json>
+```
+
+Apply the existing runner's bounded wall time and at most2 MiB stdout capture.
+The only successful stdout is the helper's canonical contract, with no added
+newline. Capture those bytes into a new private file with mode0600 and no-clobber
+semantics; the wrapper itself writes no files. A nonzero exit invalidates any
+partial output. This contract **contains private absolute paths**: keep the
+entire file local. Only its hash and sanitized status/counts should leave the
+target unless separately authorized. A successful capture is identity evidence,
+not an execution admission or target-startup success.
+
+The present limits remain explicit:4096 union package files,1 GiB per package
+file,8 GiB total package bytes,2 MiB canonical contract; the observer reads at
+most1 MiB inventory JSON. Complete per-module trees are bounded to8192 entries
+and20 levels; the contract also bounds pinned/namespace directories and32768
+namespace entries. If the actual target exceeds a limit, stop and report bounded
+counts for a separate reviewed capacity change. Do not trim the inventory or
+silently increase the limits. These constraints are independent of uv version.
+
+### Target launch verification sequence
+
+1. Preserve the original FA3 failure and independent SDPA result separately.
+   Verify actual startup-summary bytes against the selected explicit profile.
+2. Finish the immutable inventory, kernel/adapter evidence and comparison
+   manifest schema2. Its installed lock identity differs from upstream lock
+   provenance. Verify complete coverage and capacity before canonical capture.
+3. Capture the canonical contract privately and bind its exact string into
+   `UvResearchProcessSpec`; use the same logical executable, roots, input pins,
+   approved hash and immutable config. Do not wrap a generic hash as that string.
+4. In the existing target harness, run the fixed startup diagnostic under the
+   same actual guardian/clean environment/gate path intended for research. Record
+   actual logical argv0, prefix/execPrefix, executable, flags and import paths.
+   The guardian's fixed prelude must pass before the diagnostic entrypoint, and
+   original-process stop/recovery must retain its normal evidence.
+5. Only the resulting actual target proof closes launch compatibility. Controlled
+   cloud tests, direct-FD observations, successful canonical capture and standalone
+   SDPA tests remain separate evidence. Platform execution and scientific results
+   are coordinated separately; this procedure adds no automatic training launch.
+
 This probe performs observation, without environment installation, upstream/ML
 execution, or changes to host configuration. Separately authorized local setup
 and resource use retain their existing scope; this document adds no permission
@@ -195,14 +293,30 @@ before calling the intended entrypoint. A failed check exits 126 with the
 finite `RESEARCH_UV_STARTUP_UNVERIFIED` diagnostic. Accepting an executable FD
 alone is not treated as proof of correct venv discovery.
 
-Environment inventory schema 2 opts into `research-uv-interpreter-v1` with the
-reviewed `uv01219-virtualenv-startup-v1` profile. Its exact `_virtualenv.py` and
-`_virtualenv.pth` hashes are fixed in `research_environment_observer.UV_STARTUP_FILES`;
+Environment inventory schema 2 opts into `research-uv-interpreter-v1` with one
+explicit reviewed startup profile. The original `uv01219-virtualenv-startup-v1`
+requires cfg `uv=0.12.19`; `uv0117-virtualenv-startup-v1` requires cfg `uv=0.11.7`.
+Their exact `_virtualenv.py` and `_virtualenv.pth` hashes are fixed in
+`research_environment_observer.UV_STARTUP_PROFILES`. Existing
+`UV_STARTUP_PROFILE`/`UV_STARTUP_FILES` aliases still mean the original0.12.19
+profile. A profile name, cfg version and startup-byte set must all agree;
+cross-version mixtures fail. The chosen pins also bind the final interpreter
+contract coverage recheck, not only an initial startup scan. In both profiles,
 arbitrary `.pth` or customization code is not thereby authorized. The interpreter
 contract is in the launch spec, outside inventory bytes, to avoid a hash cycle.
 Its package pins include the exact inventory files, trusted execution-library
 files and these two startup files. This is static file evidence, not proof of
 successful package import or GPU compatibility.
+
+The0.11.7 patch is4342 bytes with SHA256
+`6cf30c56faf2a55228914dbbd17f8088ed371ebb08f5e7fa6fd931f913fcaf1d`;
+the0.12.19 patch is5246 bytes with SHA256
+`cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a`.
+Both `.pth` files are18 bytes with SHA256
+`69ac3d8f27e679c81b94ab30b3b56e9cd138219b1ba94a1fa3606d5a76a1433d`.
+These are reviewed source identities, not proof of which installer binary
+created an environment. Do not upgrade global uv or rewrite cfg/version labels.
+Actual target file bytes and the complete environment contract must verify.
 
 Comparison manifest schema 2 keeps `environment.lockfileSha256` for the
 installed adapted project's lock and `environment.upstreamLockfileSha256` for

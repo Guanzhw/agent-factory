@@ -61,4 +61,11 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run python -m unittest discover -s platform/tests -v
+      - name: PostgreSQL suite (bounded diagnostic log)
+        shell: bash
+        run: |
+          set +e
+          uv run python -m unittest discover -s platform/tests -v > "$RUNNER_TEMP/postgres-tests.log" 2>&1
+          test_status=$?
+          tail -n 400 "$RUNNER_TEMP/postgres-tests.log"
+          exit "$test_status"

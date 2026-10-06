@@ -18,3 +18,10 @@ Uv is copyright (c) 2025 Astral Software Inc.; its MIT license is retained in
 [`licenses/uv-MIT.txt`](licenses/uv-MIT.txt). The startup patch derives from
 virtualenv, copyright (c) 2020-present The virtualenv developers; its MIT notice
 is also retained in [`licenses/virtualenv-MIT.txt`](licenses/virtualenv-MIT.txt).
+
+The same inert fixture collection also includes uv0.11.7 `_virtualenv.py`
+(4342 bytes, SHA-256
+`6cf30c56faf2a55228914dbbd17f8088ed371ebb08f5e7fa6fd931f913fcaf1d`).
+It is not imported or executed. Source:
+https://github.com/astral-sh/uv/blob/0.11.7/crates/uv-virtualenv/src/_virtualenv.py
+The Astral and virtualenv MIT notices above apply to this fixture too.

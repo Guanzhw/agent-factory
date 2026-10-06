@@ -44,7 +44,12 @@ def reference(length, query_heads, kv_heads, left):
 
 
 def safe_version(value):
-    return value if type(value) is str and re.fullmatch(r'[A-Za-z0-9.+_-]{1,80}', value) else 'UNKNOWN'
+    # torch.__version__ is a TorchVersion (str subclass). Read its underlying
+    # string directly; never coerce other objects or invoke subclass hooks.
+    if not issubclass(type(value), str) or not 1 <= str.__len__(value) <= 80:
+        return 'UNKNOWN'
+    plain = str.__str__(value)
+    return plain if re.fullmatch(r'[A-Za-z0-9.+_-]{1,80}', plain) else 'UNKNOWN'
 
 
 def run_case(torch, adapter, case):

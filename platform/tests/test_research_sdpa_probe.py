@@ -64,6 +64,23 @@ class SdpaProbeTests(unittest.TestCase):
         self.assertEqual(result['cudaCapability'], [12, 0])
         self.assertEqual(result['externalTimeoutSeconds'], 60)
 
+    def test_torchversion_subclass_passes_software_gate_and_mocked_cases(self):
+        class TorchVersion(str):
+            pass
+        torch = self.torch(); torch.__version__ = TorchVersion('2.9.1+cu128')
+        with patch.dict(sys.modules, {'torch': torch}), \
+                patch.object(probe, 'run_case', side_effect=lambda _t, _a, case: {'case': case[0], 'passed': True}) as run, \
+                patch.object(probe, 'run_nonzero_case', return_value={'case': 'nonzero', 'passed': True}):
+            result = probe.run_probe()
+        self.assertEqual(result['torchVersion'], '2.9.1+cu128')
+        self.assertIs(type(result['torchVersion']), str)
+        self.assertTrue(result['passed'])
+        self.assertEqual(run.call_count, 6)
+        self.assertEqual(len(result['cases']), 7)
+        self.assertNotIn('errorCode', result)
+        self.assertFalse(result['factoryExecutionVerified'])
+        self.assertFalse(result['scientificConclusionVerified'])
+
     def test_failure_stops_without_exception_text(self):
         with patch.dict(sys.modules, {'torch': self.torch()}), \
              patch.object(probe, 'run_case', side_effect=RuntimeError('private/path never report')) as run:
@@ -124,3 +141,46 @@ class SdpaProbeTests(unittest.TestCase):
             result = probe.run_probe()
         self.assertEqual(result['errorCode'], 'ADAPTER_SOURCE_MISMATCH')
         torch.cuda.is_available.assert_not_called()
+
+
+class SafeVersionTests(unittest.TestCase):
+    def test_real_string_subclass_returns_plain_underlying_string(self):
+        class TorchVersion(str):
+            pass
+        version = probe.safe_version(TorchVersion('2.9.1+cu128'))
+        self.assertIs(type(version), str)
+        self.assertEqual(version, '2.9.1+cu128')
+
+    def test_subclass_hooks_cannot_run_or_spoof_underlying_value(self):
+        class HostileVersion(str):
+            def __str__(self):
+                raise AssertionError('DO_NOT_STRINGIFY')
+            def __len__(self):
+                raise AssertionError('DO_NOT_CALL_LENGTH_OVERRIDE')
+            def split(self, *args, **kwargs):
+                raise AssertionError('DO_NOT_CALL_SPLIT_OVERRIDE')
+            def __eq__(self, other):
+                raise AssertionError('DO_NOT_CALL_EQUALITY_OVERRIDE')
+        self.assertEqual(probe.safe_version(HostileVersion('2.9.1+cu128')), '2.9.1+cu128')
+        for raw in ('', 'x'*81, 'private/path', '2.9.1\n', '2.9.1\x00', '版本2.9.1'):
+            with self.subTest(length=len(raw)):
+                self.assertEqual(probe.safe_version(HostileVersion(raw)), 'UNKNOWN')
+        class SpoofVersion(str):
+            def __str__(self):
+                return '2.9.1+cu128'
+        self.assertEqual(probe.safe_version(SpoofVersion('private/path')), 'UNKNOWN')
+
+    def test_nonstr_objects_do_not_call_str_or_class_properties(self):
+        class NotAString:
+            def __str__(self):
+                raise AssertionError('DO_NOT_COERCE')
+            @property
+            def __class__(self):
+                raise AssertionError('DO_NOT_READ_CLASS_PROPERTY')
+        for value in (NotAString(), None, True, 291, b'2.9.1+cu128', ['2.9.1']):
+            self.assertEqual(probe.safe_version(value), 'UNKNOWN')
+
+    def test_plain_string_bounds_and_whitelist_remain_unchanged(self):
+        self.assertEqual(probe.safe_version('x'*80), 'x'*80)
+        for value in ('', 'x'*81, '2.9.1 cu128', '../2.9.1', '2.9.1\r\n'):
+            self.assertEqual(probe.safe_version(value), 'UNKNOWN')

@@ -1,5 +1,52 @@
 # Cloud integration task board
 
+## Active uv0.11.7 target startup profile — 2026-10-06
+
+Branch `coord/research-uv0117-profile-20261006`, based on PR39 exact
+`87f7227fae1d4a39ba85db6f68d96061f9f4de3a`. PR39's corrected Linux/Windows
+Python and frontend jobs passed; push PostgreSQL passed, PR PostgreSQL failed.
+Final9/10 is not accepted. Full failing logs were unavailable (Transport closed /
+HTTP403); no assertion or final count is inferred. The next phase preserves test
+exit status and prints only the final400 PostgreSQL log lines for diagnosis.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Documentation, notices, integration and serial validation/CI | Native PG5pass76.362s; full Python1495=1105pass390skip97.546s; Ruff/Linux+Windows Pyright0; no target execution |
+| go_adapter | Observer profile selection and tests |16 pass; exact uv0.11.7/0.12.19 cfg+startup-byte pairing and both final coverage checks |
+| at10 | Canonical capture CLI and tests |11 pass; private canonical output, same held config, finite missing-import errors |
+| factory_flow | Path-free startup evidence probe and tests |9 pass; fixed files/config fields, no raw paths or argument echo |
+| reviewer | Independent implementation review |36 focused tests pass, no remaining code blocker |
+| independent_review | Actual inventory limits and CLI boundary review | No CLI blocker; complete target counts prove admission blocked; safety review recorded |
+| go_policy | PR39 exact CI observer | Exact PR39 final9/10 confirmed; PostgreSQL PR job failed |
+
+Official uv0.11.7 startup bytes differ from0.12.19 and now have a separate named
+profile. Existing0.12.19 and schema1 behavior remain. The target worker reports
+ordinary-FD plus logical argv0 restores venv prefix, and independent SDPA full/
+half-window BF16 forward/backward plus tokenizer8192 checks passed. These are
+relayed target observations, not Factory end-to-end or cloud GPU reproduction.
+The generic local contract hash is not adopted as the canonical Factory contract.
+
+The complete target inventory is not admitted by existing count/tree/JSON and
+single-link gates. Additional executable startup files also require review.
+No private inventory/capacity measurements are published here. Bounds and safety
+checks are not silently relaxed. See `RESEARCH_TARGET_ADMISSION.md` for bounded
+snapshot/isolation resource choices and control-plane/preparation requirements.
+
+The integrated provider constructor now accepts the exact UV spec as well as the
+legacy spec; subclasses remain rejected. The native UV PG regression exercises
+real task/native/lease IDs, original checkpoint storage, prefix/argv0, full spec
+fingerprint and recovered original-process cleanup. Its synthetic verifier now
+matches the real driver's idempotent sealed-input recheck for both fresh-authority
+callbacks. Device evidence remains explicitly mocked.
+
+Parallel follow-up scopes: at10 fixed SDPA TorchVersion acceptance (15 mock/pure
+checks); go_adapter produced the fixed eager-model diagnostic (independent review
+includes interruption cleanup;14 mock tests passed); root retains integration/CI ownership.
+Publication scan20files/diffcheck passed. New exact-head CI remains pending. The
+separate preparation-store primitive stays in an isolated WIP worktree and is not
+claimed as an executable bootstrap. Baseline0, val_bpb null. No global uv update,
+dependency install, new local worker, merge or deployment.
+
 ## Active bounded SDPA compatibility diagnostic — 2026-10-06
 
 Base PR38 exact `63c0be99ee4da310492dbbed855bcc4badb6d453` passed all ten

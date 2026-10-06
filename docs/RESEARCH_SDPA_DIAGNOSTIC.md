@@ -14,6 +14,24 @@ and independent double terminal checks; these controlled checks do not establish
 target GPU compatibility. Use the exact subsequent probe commit supplied by the
 coordinator, never an unpinned branch head or a modified copy.
 
+## Actual target attempt and follow-up
+
+The target ran the unchanged `87f7227fae1d4a39ba85db6f68d96061f9f4de3a`
+probe and reported exit1 / `VERSION_MISMATCH` before executing any case.
+Torch2.9.1 exposes `TorchVersion`, a legitimate `str` subclass. The original
+exact-type check rejected it. The follow-up reads only the underlying bounded
+string, without invoking overridden conversion methods, and preserves the
+version and adapter-byte requirements. Fifteen pure/mock regression tests cover
+this case; no cloud GPU execution or successful target rerun is implied.
+
+That PR's final CI was9/10, with one PostgreSQL suite failure whose full logs
+were unavailable; it is not accepted as all-green. The subsequent phase bounds
+PostgreSQL console output while preserving its original test exit status so
+failure summaries remain retrievable. See [target admission](RESEARCH_TARGET_ADMISSION.md)
+for complete-inventory, hard-link and extra startup-file blockers, and
+[the eager-model diagnostic](RESEARCH_MODEL_PREFLIGHT.md) for the separate fixed
+full-model memory/gradient measurement.
+
 ## Diagnostic scope
 
 `scripts/probe_research_sdpa.py` is a standalone diagnostic for the already
@@ -158,7 +176,11 @@ PR38's explicit profile is `uv01219-virtualenv-startup-v1`; its observer require
 `uv=0.12.19` in `pyvenv.cfg` and exact reviewed `_virtualenv.py`/`_virtualenv.pth`
 bytes, plus declared package/config/lock/interpreter identities and final prefix
 checks. The reported target uv0.11.7 is not accepted by that profile, even if
-some startup bytes happen to match. Review the actual target files and version
-under a separate explicit profile change. Do not upgrade global uv, edit the cfg
+some startup bytes happen to match. The subsequent explicit
+`uv0117-virtualenv-startup-v1` profile now checks the reviewed0.11.7 source bytes
+and exact cfg version separately, while retaining the original0.12.19 profile.
+Follow [canonical capture and target verification](RESEARCH_UV_LAUNCH.md) with the
+actual target files and complete inventory. Do not upgrade global uv, edit the cfg
 version, relabel the profile or bypass the observer. Ordinary-path SDPA diagnostic
-success does not close this Factory-launch gate.
+success does not close this Factory-launch gate, and the standalone generic
+contract hash is not the Factory canonical contract.

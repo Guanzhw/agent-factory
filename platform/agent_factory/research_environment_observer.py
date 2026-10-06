@@ -35,6 +35,16 @@ UV_STARTUP_FILES = {
     '_virtualenv.pth': {'sha256': '69ac3d8f27e679c81b94ab30b3b56e9cd138219b1ba94a1fa3606d5a76a1433d', 'sizeBytes': 18},
 }
 
+# Each profile is reviewed source identity, not proof of the installer binary.
+# Keep the original aliases above for existing inventory builders.
+UV_STARTUP_PROFILES = {
+    UV_STARTUP_PROFILE: ('0.12.19', UV_STARTUP_FILES),
+    'uv0117-virtualenv-startup-v1': ('0.11.7', {
+        '_virtualenv.py': {'sha256': '6cf30c56faf2a55228914dbbd17f8088ed371ebb08f5e7fa6fd931f913fcaf1d', 'sizeBytes': 4342},
+        '_virtualenv.pth': {'sha256': '69ac3d8f27e679c81b94ab30b3b56e9cd138219b1ba94a1fa3606d5a76a1433d', 'sizeBytes': 18},
+    }),
+}
+
 MAX_FILES = 4096
 MAX_FILE_BYTES = 1024**3
 MAX_TOTAL_BYTES = 8 * 1024**3
@@ -159,9 +169,9 @@ def _tree(root, observations=None):
     return found
 
 
-def _startup(root, observations=None, *, uv_startup=False):
-    if uv_startup:
-        for name, pin in UV_STARTUP_FILES.items():
+def _startup(root, observations=None, *, startup_files=None):
+    if startup_files is not None:
+        for name, pin in startup_files.items():
             _read(Path(root) / name, pin, observations=observations)
     fd = _open(root, directory=True)
     try:
@@ -169,10 +179,10 @@ def _startup(root, observations=None, *, uv_startup=False):
         for name in os.listdir(fd):
             _require(not any(name == stem or name.startswith(stem + '.')
                              for stem in ('sitecustomize', 'usercustomize')))
-            if uv_startup and (name == '_virtualenv' or name.startswith('_virtualenv.')):
-                _require(name in UV_STARTUP_FILES)
+            if startup_files is not None and (name == '_virtualenv' or name.startswith('_virtualenv.')):
+                _require(name in startup_files)
             if name.endswith('.pth'):
-                if uv_startup and name == '_virtualenv.pth':
+                if startup_files is not None and name == '_virtualenv.pth':
                     continue
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 _require(stat.S_ISREG(info.st_mode) and info.st_size <= 65536)
@@ -240,7 +250,7 @@ def _cache_prefix(spec, observations):
         os.close(fd)
 
 
-def _uv_interpreter(request, inventory, inventory_pin, observations):
+def _uv_interpreter(request, inventory, inventory_pin, observations, startup_files):
     from .research_interpreter import open_interpreter, recheck_interpreter, validate_interpreter_contract
     spec = request['launchSpec']
     raw = spec['interpreter_contract']
@@ -287,7 +297,7 @@ def _uv_interpreter(request, inventory, inventory_pin, observations):
     for row in request['trustedRuntimeFiles']:
         _require(type(row['basename']) is str and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\.py', row['basename']) is not None)
         include(str(Path(request['trustedRuntimePackage']) / row['basename']), {'sha256': row['sha256'], 'sizeBytes': row['size_bytes']})
-    for name, pin in UV_STARTUP_FILES.items():
+    for name, pin in startup_files.items():
         include(str(Path(inventory['venv']['sitePackages']) / name), pin)
     actual_coverage = {pin['path']: {key: pin[key] for key in ('sha256', 'sizeBytes')} for pin in value['packageFiles']}
     _require(actual_coverage == coverage and len(value['packageFiles']) == len(coverage))
@@ -350,10 +360,13 @@ class ResearchEnvironmentObserver:
                  and site.name == 'site-packages' and Path(request['trustedRuntimePackage']) == site / 'agent_factory'
                  and Path(python['path']) == root / 'bin' / 'python'
                  and request['launchSpec']['executable'] == python['path'] and request['launchSpec']['sha256'] == python['sha256'])
+        startup_version, startup_files = None, None
         if uv_mode:
             _require(inventory['interpreterMode'] == 'research-uv-interpreter-v1'
-                     and inventory['startupProfile'] == UV_STARTUP_PROFILE
-                     and inventory['startupFiles'] == UV_STARTUP_FILES)
+                     and type(inventory['startupProfile']) is str
+                     and inventory['startupProfile'] in UV_STARTUP_PROFILES)
+            startup_version, startup_files = UV_STARTUP_PROFILES[inventory['startupProfile']]
+            _require(inventory['startupFiles'] == startup_files)
         else:
             _require(request['launchSpec'].get('interpreter_contract') is None)
             _read(python['path'], {key: python[key] for key in ('sha256', 'sizeBytes')}, observations=observations)
@@ -366,10 +379,10 @@ class ResearchEnvironmentObserver:
                 entries[name] = value
         _require(entries.get('include-system-site-packages') == 'false')
         if uv_mode:
-            _require(entries.get('uv') == '0.12.19')
-        _startup(site, observations, uv_startup=uv_mode)
+            _require(entries.get('uv') == startup_version)
+        _startup(site, observations, startup_files=startup_files)
         if uv_mode:
-            _uv_interpreter(request, inventory, self._inventory, observations)
+            _uv_interpreter(request, inventory, self._inventory, observations, startup_files)
         packages = inventory['packages']
         _require(type(packages) is list and 3 <= len(packages) <= 128)
         observed, modules, total, count, torch_files = [], set(), 0, 0, {}
@@ -448,7 +461,7 @@ class ResearchEnvironmentObserver:
         validation_hashes = {row['sha256'] for row in dataset['shards'] if row['id'] in validation}
         _require(bool(train_hashes) and bool(validation_hashes) and not train_hashes & validation_hashes)
         if uv_mode:
-            _uv_interpreter(request, inventory, self._inventory, observations)
+            _uv_interpreter(request, inventory, self._inventory, observations, startup_files)
         _require(len(observations) <= 16384)
         for path, directory, stamp in observations:
             fd = _open(path, directory=directory)

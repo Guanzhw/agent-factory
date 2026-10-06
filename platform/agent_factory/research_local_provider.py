@@ -9,7 +9,7 @@ from typing import cast
 
 from .gpu_custody import GpuBinding, evidence_fingerprint, validate_gpu_evidence
 from .process_provider import ProcessResourceProvider
-from .process_enforcement import ResearchProcessLimits, ResearchProcessSpec
+from .process_enforcement import ResearchProcessLimits, ResearchProcessSpec, UvResearchProcessSpec
 from .store import digest
 
 
@@ -24,7 +24,7 @@ class ResearchLocalProvider(ProcessResourceProvider):
     def __init__(self, store, root, spec, limits, *, gpu_binding, source_fingerprint,
                  manifest_fingerprint, observer, program_verifier, **kwargs):
         _require(type(gpu_binding) is GpuBinding and callable(observer) and callable(program_verifier)
-                 and type(spec) is ResearchProcessSpec and type(limits) is ResearchProcessLimits)
+                 and type(spec) in {ResearchProcessSpec, UvResearchProcessSpec} and type(limits) is ResearchProcessLimits)
         for value in (source_fingerprint, manifest_fingerprint, getattr(observer, 'configuration_fingerprint', None)):
             _require(type(value) is str and re.fullmatch('[a-f0-9]{64}', value))
         _require(getattr(program_verifier, 'configuration_fingerprint', None) == source_fingerprint)

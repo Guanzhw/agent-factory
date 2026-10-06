@@ -1,4 +1,8 @@
 from contextlib import nullcontext
+import hashlib
+import os
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -6,7 +10,8 @@ from unittest.mock import patch
 from agent_factory.gpu_custody import GpuBinding
 from agent_factory.research_local_provider import ResearchLocalProvider
 from agent_factory.store import digest
-from agent_factory.process_enforcement import ResearchProcessSpec, ResearchProcessLimits
+from agent_factory.research_interpreter import capture_interpreter_contract
+from agent_factory.process_enforcement import ResearchProcessSpec, ResearchProcessLimits, UvResearchProcessSpec
 
 
 class Observer:
@@ -143,3 +148,59 @@ class LocalProviderTests(unittest.TestCase):
                     ResearchProcessLimits.__new__(ResearchProcessLimits), gpu_binding=GpuBinding('a'*64, 'b'*64),
                     source_fingerprint='e'*64, manifest_fingerprint='f'*64, observer=Observer(), program_verifier=WrongSpec())
             base.assert_not_called()
+
+
+class ExplicitSpecAdmissionTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'POSIX contract capture required')
+    def test_valid_uv_spec_is_verified_before_base_provider_construction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); venv = root / 'venv'; venv.mkdir(); (venv / 'bin').mkdir()
+            approved = root / 'approved'; approved.mkdir()
+            binary = approved / 'python'; binary.write_bytes(b'inert never-executed interpreter'); binary.chmod(0o700)
+            link = venv / 'bin' / 'python'; link.symlink_to(binary)
+            cfg = venv / 'pyvenv.cfg'; cfg.write_text('uv = 0.11.7\n')
+            project = root / 'pyproject.toml'; project.write_text('[project]\nname="fixture"\n')
+            lock = root / 'uv.lock'; lock.write_text('version = 1\n')
+            inventory = root / 'inventory.json'; inventory.write_text('{"fixture":true}')
+            sha = hashlib.sha256(binary.read_bytes()).hexdigest()
+            raw = capture_interpreter_contract(executable=str(link), sha256=sha, project_root=root,
+                venv_root=venv, approved_interpreter_roots=[approved], pyvenv_cfg=cfg,
+                pyproject_toml=project, uv_lock=lock, package_inventory=inventory, package_files=[])
+            info = root.stat()
+            spec = UvResearchProcessSpec(str(link), sha, ('-B', str(root / 'owned-entry.py')),
+                working_directory=str(root), working_directory_identity=(info.st_dev, info.st_ino),
+                environment=tuple((key, '1') for key in
+                    ('HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE', 'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE')) +
+                    (('PYTHONPYCACHEPREFIX', str(root)),),
+                interpreter_contract=raw)
+            events = []; verifier = Verifier()
+            with patch.object(verifier, 'validate_spec', side_effect=lambda actual: events.append(('verified', actual))), \
+                    patch('agent_factory.research_local_provider.ProcessResourceProvider.__init__',
+                          side_effect=lambda *args, **kwargs: events.append(('base', args[2]))):
+                ResearchLocalProvider(None, None, spec, ResearchProcessLimits(), gpu_binding=GpuBinding('a'*64, 'b'*64),
+                    source_fingerprint=verifier.configuration_fingerprint, manifest_fingerprint='f'*64,
+                    observer=Observer(), program_verifier=verifier)
+            self.assertEqual(events, [('verified', spec), ('base', spec)])
+            with patch.object(verifier, 'validate_spec', side_effect=ValueError('DENIED')), \
+                    patch('agent_factory.research_local_provider.ProcessResourceProvider.__init__') as base:
+                with self.assertRaises(ValueError):
+                    ResearchLocalProvider(None, None, spec, ResearchProcessLimits(), gpu_binding=GpuBinding('a'*64, 'b'*64),
+                        source_fingerprint=verifier.configuration_fingerprint, manifest_fingerprint='f'*64,
+                        observer=Observer(), program_verifier=verifier)
+                base.assert_not_called()
+
+    def test_arbitrary_subclasses_of_both_approved_specs_still_denied_before_verifier(self):
+        class OtherResearchSpec(ResearchProcessSpec):
+            pass
+        class OtherUvSpec(UvResearchProcessSpec):
+            pass
+        for cls in (OtherResearchSpec, OtherUvSpec):
+            with self.subTest(kind=cls.__name__):
+                verifier = Verifier()
+                with patch.object(verifier, 'validate_spec') as verify, \
+                        patch('agent_factory.research_local_provider.ProcessResourceProvider.__init__') as base:
+                    with self.assertRaises(ValueError):
+                        ResearchLocalProvider(None, None, object.__new__(cls), ResearchProcessLimits(),
+                            gpu_binding=GpuBinding('a'*64, 'b'*64), source_fingerprint='e'*64,
+                            manifest_fingerprint='f'*64, observer=Observer(), program_verifier=verifier)
+                    verify.assert_not_called(); base.assert_not_called()
