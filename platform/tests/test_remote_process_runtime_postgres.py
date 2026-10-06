@@ -337,7 +337,10 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         receipt = {"remoteTaskId": first["localTaskId"], "remoteRunId": first["nativeRunId"], "remotePlanId": first["planId"]}
         self.diagnostics("before-read-disconnect", before)
         self.assertEqual(before["cancelAttemptCount"], 0)
-        self.assertLess(datetime.now(timezone.utc), datetime.fromisoformat(first["deadlineAt"]))
+        # This receiver snapshot proves RUNNING/cancel0. A later client clock
+        # cannot prove when the snapshot was observed: facts transport itself
+        # may cross the unchanged lease deadline. Check actual expiry causality
+        # below instead of treating response latency as read-triggered cancel.
         self.receiver.control("fault", fault="disconnect_reads")
         try:
             unavailable = self.detail(task)
@@ -352,11 +355,40 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
             boundary = during["disconnectDiagnostics"][0]
             self.assertEqual(boundary["leaseId"], first["id"])
             self.assertEqual(boundary["deadlineAt"], first["deadlineAt"])
-            self.assertLess(datetime.fromisoformat(boundary["observedAt"]), datetime.fromisoformat(first["deadlineAt"]))
-            self.assertEqual(boundary["cancelAttemptCount"], 0)
+            before_expiry = datetime.fromisoformat(boundary["observedAt"]) < datetime.fromisoformat(first["deadlineAt"])
             self.assertFalse(boundary["cancelRequested"])
-            if during["cancelAttemptCount"]:
-                self.assert_expiry_cancel(during, during["leases"][0])
+            if before_expiry:
+                self.assertEqual(boundary["cancelAttemptCount"], 0)
+                if during["cancelAttemptCount"]:
+                    self.assert_expiry_cancel(during, during["leases"][0])
+            else:
+                # A real five-second lease may expire while these real HTTP/PG
+                # reads execute. This branch proves original deadline causality,
+                # not a pre-expiry real-HTTP outage. The independent fixed-time
+                # transport test covers the no-expiry read-only control flow.
+                during = self.until(lambda: (f if f["cancelAttemptCount"] or any(
+                    x["id"] == first["id"] and x["state"] == "RECLAIMED" for x in f["leases"]) else None)
+                    if (f := self.receiver.facts(receipt["remoteTaskId"])) else None)
+                ended = during["leases"][0]
+                self.assertEqual(ended["id"], first["id"])
+                self.assertEqual(ended["deadlineAt"], first["deadlineAt"])
+                if during["cancelAttemptCount"]:
+                    self.assert_expiry_cancel(during, ended)
+                else:
+                    # The original guardian's wall limit can win this race.
+                    # Only its positive original-process stop/reclaim proof is
+                    # admissible here; generic native terminal is insufficient.
+                    self.assertEqual(ended["executionStatus"], "LIMIT_STOPPED")
+                    self.assertIs(type(ended["exitCode"]), int)
+                    self.assertLess(ended["exitCode"], 0)
+                    self.assertFalse(ended["cancelRequested"])
+                    self.assertEqual(ended["state"], "RECLAIMED")
+                    self.assertEqual(ended["stopEvidence"]["kind"], "original-root-reaped-and-no-live-process-group-members")
+                    self.assertTrue(ended["stopEvidence"]["allStopped"])
+                    self.assertFalse(ended["capacityHeld"])
+                    self.assertEqual(during["cancelDiagnostics"], [])
+                    self.assertEqual(boundary["cancelAttemptCount"], 0)
+                self.assertIn(boundary["cancelAttemptCount"], {0, 1})
             self.assertEqual(during["launchAttemptCount"], 1)
         finally:
             self.receiver.control("fault", fault=None)
