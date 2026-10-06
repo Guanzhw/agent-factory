@@ -135,13 +135,46 @@ class DatabasePreflightTests(unittest.TestCase):
         inspector.has_table.return_value = False
         def inspected(actual):
             self.assertIs(actual, connection)
-            self.assertEqual(str(connection.execute.call_args.args[0]),
-                             'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+            self.assertEqual([str(call.args[0]) for call in connection.execute.call_args_list], [
+                'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
+                "SET LOCAL statement_timeout = '5000ms'",
+                "SET LOCAL lock_timeout = '1000ms'"])
             return inspector
         with patch('agent_factory.research_bootstrap_database_preflight.inspect', side_effect=inspected):
             report = database_preflight(engine, self.settings)
         self.assertEqual(report['status'], 'NOT_CHECKED')
-        connection.execute.assert_called_once()
+        self.assertEqual(connection.execute.call_count, 3)
+
+    def test_oversized_body_is_filtered_by_database_before_decode(self):
+        self.seed()
+        with self.engine.begin() as conn:
+            conn.execute(text('UPDATE af_plan_policy_configs SET body=:body'),
+                         {'body': '{"private":"' + 'x' * 65536 + '"}'})
+        from agent_factory import research_bootstrap_database_preflight as module
+        original = module._body
+        observed = []
+        def bounded_body(value):
+            observed.append(value)
+            self.assertTrue(value is None or len(json.dumps(value).encode()) <= 65536)
+            return original(value)
+        with patch.object(module, '_body', side_effect=bounded_body):
+            report, rows = self.preflight()
+        self.assertIn(None, observed)
+        self.assertEqual(rows['plan.currentConfig']['code'], 'CONFIG_BODY_INVALID')
+        self.assertIs(report['executionVerified'], False)
+        self.assertNotIn('private', json.dumps(report))
+
+    def test_oversized_current_revision_is_not_returned_to_caller(self):
+        self.seed()
+        with self.engine.begin() as conn:
+            conn.execute(text('UPDATE af_material_governance_current SET revision=:revision'),
+                         {'revision': 'private-' + 'x' * 100})
+            conn.execute(text('UPDATE af_plan_policy_configs SET policy_hash=:hash'),
+                         {'hash': 'private-' + 'x' * 64})
+        report, rows = self.preflight()
+        self.assertEqual(rows['material.current']['code'], 'CURRENT_ROW_INVALID')
+        self.assertEqual(rows['plan.currentConfig']['code'], 'CONFIG_BODY_OR_HASH_MISMATCH')
+        self.assertNotIn('private-', json.dumps(report))
 
     def test_invalid_settings_do_not_hide_persisted_mode(self):
         self.seed()

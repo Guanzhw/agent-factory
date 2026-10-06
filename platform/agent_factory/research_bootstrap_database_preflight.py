@@ -74,6 +74,13 @@ def database_preflight(engine, settings):
             with engine.connect() as conn, conn.begin():
                 if engine.dialect.name == 'postgresql':
                     conn.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
+                    conn.execute(text("SET LOCAL statement_timeout = '5000ms'"))
+                    conn.execute(text("SET LOCAL lock_timeout = '1000ms'"))
+                def bounded(column, maximum):
+                    expression = (f'octet_length(CAST({column} AS TEXT))' if engine.dialect.name == 'postgresql'
+                                  else f'length(CAST({column} AS BLOB))')
+                    return f'CASE WHEN {expression}<={maximum} THEN {column} ELSE NULL END AS {column}'
+
                 inspector = inspect(conn)
                 present = {name: inspector.has_table(name) for name in ('af_bootstrap',
                     'af_material_governance_current', 'af_material_governance_configs',
@@ -82,7 +89,7 @@ def database_preflight(engine, settings):
                 if not present['af_bootstrap']:
                     report('bootstrap.mode', 'NOT_CHECKED', 'NOT_INITIALIZED')
                 else:
-                    rows = conn.execute(text("SELECT mode FROM af_bootstrap WHERE id='mode' LIMIT 2")).mappings().all()
+                    rows = conn.execute(text(f"SELECT {bounded('mode', 10)} FROM af_bootstrap WHERE id='mode' LIMIT 2")).mappings().all()
                     if not rows:
                         report('bootstrap.mode', 'NOT_CHECKED', 'NOT_INITIALIZED')
                     elif type(mode) is bool:
@@ -98,7 +105,7 @@ def database_preflight(engine, settings):
                             report(field, 'NOT_CHECKED', 'NOT_INITIALIZED')
                             return
                         # Identifiers are fixed module literals, never user input.
-                        rows = conn.execute(text(f'SELECT revision,{hash_column},body FROM {table} WHERE revision=:revision LIMIT 2'),
+                        rows = conn.execute(text(f'SELECT {bounded("revision", 100)},{bounded(hash_column, 64)},{bounded("body", 65536)} FROM {table} WHERE revision=:revision LIMIT 2'),
                                             {'revision': revision}).mappings().all()
                         if not rows:
                             report(field, 'BLOCKED' if current else 'NOT_CHECKED',
@@ -108,7 +115,7 @@ def database_preflight(engine, settings):
                             if len(rows) != 1:
                                 raise ValueError('INVALID_BODY')
                             saved = constructor(**_body(rows[0]['body']))
-                            valid = saved.revision == revision and saved.fingerprint == rows[0][hash_column]
+                            valid = rows[0]['revision'] == saved.revision == revision and saved.fingerprint == rows[0][hash_column]
                             if not current and config is not None:
                                 valid = valid and saved.fingerprint == config.fingerprint and asdict(saved) == asdict(config)
                             if isinstance(saved, PlanPolicyConfig) and current:
@@ -126,7 +133,7 @@ def database_preflight(engine, settings):
                         report(label + '.current', 'NOT_CHECKED', 'NOT_INITIALIZED')
                         report(label + '.currentConfig', 'NOT_CHECKED', 'NOT_INITIALIZED')
                     else:
-                        rows = conn.execute(text(f"SELECT id,revision FROM {state} LIMIT 2")).mappings().all()
+                        rows = conn.execute(text(f"SELECT {bounded('id', 7)},{bounded('revision', 100)} FROM {state} LIMIT 2")).mappings().all()
                         if not rows:
                             report(label + '.current', 'NOT_CHECKED', 'NOT_INITIALIZED')
                             report(label + '.currentConfig', 'NOT_CHECKED', 'NOT_INITIALIZED')
@@ -142,4 +149,4 @@ def database_preflight(engine, settings):
         report('database', 'BLOCKED', 'DATABASE_READ_FAILED')
     statuses = {row['status'] for row in checks.values()}
     status = 'BLOCKED' if 'BLOCKED' in statuses else 'NOT_CHECKED' if 'NOT_CHECKED' in statuses else 'PASS'
-    return {'schema': 1, 'kind': 'RESEARCH_BOOTSTRAP_DATABASE_PREFLIGHT', 'status': status, 'checks': list(checks.values())}
+    return {'schema': 1, 'kind': 'RESEARCH_BOOTSTRAP_DATABASE_PREFLIGHT', 'executionVerified': False, 'status': status, 'checks': list(checks.values())}
