@@ -4,6 +4,9 @@
 Only a single symlink-free tree (for example site-packages) is supported. Source
 hardlinks are read, never adopted. Failure retains the original private directory; it may already contain a seal.
 No source files, shared caches, permissions, or credentials are modified.
+Regular files map ANY source execute bit to owner-only 0700; otherwise 0600.
+Directories map to 0700. Source group/other and special permission bits are never
+retained. The private receipt records both modes; this is not admission.
 """
 from __future__ import annotations
 
@@ -192,6 +195,10 @@ def parent_fd(root_fd, relative):
         raise
 
 
+def destination_mode(source_mode):
+    return 0o700 if source_mode & 0o111 else 0o600
+
+
 def reflink(destination_fd, source_fd):
     import fcntl
     try:
@@ -247,7 +254,7 @@ def clone(source, destination_parent):
                             require(after.st_size == record['sizeBytes'] and file_hash(output, after, deadline) == record['sha256'], 'SOURCE_CHANGED')
                             require(stamp(os.fstat(source_file)) == record['stamp']
                                     and file_hash(source_file, before, deadline) == record['sha256'], 'SOURCE_CHANGED')
-                            getattr(os, 'fchmod')(output, 0o700 if before.st_mode & 0o111 else 0o600)
+                            getattr(os, 'fchmod')(output, destination_mode(before.st_mode))
                             os.fsync(output)
                         finally:
                             os.close(output)
@@ -262,6 +269,13 @@ def clone(source, destination_parent):
         def strip(rows):
             return [{key: value for key, value in row.items() if key != 'stamp'} for row in rows]
         require(strip(copied) == strip(records) and (copied_count, copied_size) == (count, size), 'DESTINATION_INVALID')
+        receipt_entries = []
+        for original, destination_record in zip(records, copied):
+            source_mode = stat.S_IMODE(original['stamp'][2])
+            expected_mode = 0o700 if original['kind'] == 'directory' else destination_mode(source_mode)
+            require(stat.S_IMODE(destination_record['stamp'][2]) == expected_mode, 'DESTINATION_INVALID')
+            receipt_entries.append({**{key: value for key, value in original.items() if key != 'stamp'},
+                'sourceMode': format(source_mode, '04o'), 'destinationMode': format(expected_mode, '04o')})
         require(scan(source_fd, deadline) == (records, count, size)
                 and stamp(os.fstat(source_fd)) == stamp(source_root), 'SOURCE_CHANGED')
         for path, expected in ((source, source_root), (destination_parent, parent_info)):
@@ -276,7 +290,8 @@ def clone(source, destination_parent):
         receipt = canonical({'schema': 1, 'kind': 'private-reflink-clone-v1', 'sourceRoot': str(source),
             'destinationRoot': str(destination_parent / name), 'sourceRootIdentity': identity(source_root),
             'destinationRootIdentity': identity(destination_info), 'sourceTreeSha256': fingerprint,
-            'files': strip(records), 'fileCount': count, 'sizeBytes': size,
+            'files': receipt_entries, 'fileCount': count, 'sizeBytes': size,
+            'permissionMapping': 'owner-private-any-execute-v1',
             'symlinks': 'rejected', 'environmentAdmitted': False})
         require(len(receipt) <= MAX_RECEIPT_BYTES and size + len(receipt) <= MAX_BYTES, 'LIMIT_EXCEEDED')
         seal = os.open(PENDING, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600, dir_fd=destination)

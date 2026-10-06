@@ -163,6 +163,35 @@ class CloneTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE((target / 'module.py').stat().st_mode), 0o700)
             self.assertEqual((self.source / 'module.py').stat().st_mode & 0o777, 0o755)
 
+    def test_source_execute_and_special_bits_have_explicit_private_receipt_mapping(self):
+        modes = [0o644, 0o744, 0o654, 0o645, 0o4755, 0o2644]
+        for index, mode in enumerate(modes):
+            path = self.source / ('mode-' + str(index))
+            path.write_bytes(b'synthetic executable bytes; not executed')
+            path.chmod(mode)
+        self.run_clone()
+        [target] = list(self.parent.iterdir())
+        receipt = json.loads((target / clone.RECEIPT).read_bytes())
+        self.assertEqual(receipt['permissionMapping'], 'owner-private-any-execute-v1')
+        entries = {entry['path']: entry for entry in receipt['files']}
+        for index, mode in enumerate(modes):
+            name = 'mode-' + str(index)
+            expected = 0o700 if mode & 0o111 else 0o600
+            self.assertEqual(stat.S_IMODE((target / name).stat().st_mode), expected)
+            self.assertEqual(stat.S_IMODE((self.source / name).stat().st_mode), mode)
+            self.assertEqual(entries[name]['sourceMode'], format(mode, '04o'))
+            self.assertEqual(entries[name]['destinationMode'], format(expected, '04o'))
+        self.assertEqual(entries['package']['destinationMode'], '0700')
+
+    def test_destination_execute_drift_is_rejected_even_if_content_hash_matches(self):
+        (self.source / 'module.py').chmod(0o755)
+        original_chmod = getattr(os, 'fchmod')
+        def strip_execute(fd, mode):
+            original_chmod(fd, 0o600)
+        with patch.object(clone.os, 'fchmod', side_effect=strip_execute), self.assertRaises(clone.CloneError):
+            self.run_clone()
+        self.assertFalse(any(path.name == clone.RECEIPT for path in self.parent.rglob('*')))
+
     def test_empty_files_and_directories_are_preserved_and_reserved_names_refused(self):
         (self.source / 'empty-file').write_bytes(b'')
         (self.source / 'empty-directory').mkdir()
