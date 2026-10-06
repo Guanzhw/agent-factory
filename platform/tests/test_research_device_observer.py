@@ -9,7 +9,7 @@ from agent_factory.research_device_observer import NvidiaSmiObserver
 class DeviceObserverTests(unittest.TestCase):
     def fixture(self):
         binding = GpuBinding('a'*64, 'b'*64)
-        observer = NvidiaSmiObserver(Path('/inert/operator-binary'), 'c'*64, 'GPU-12345678', binding, 'v1')
+        observer = NvidiaSmiObserver(Path.cwd() / 'inert-operator-binary', 'c'*64, 'GPU-12345678', binding, 'v1')
         return observer, {'operation': 'launch', 'gpuBinding': binding.to_dict()}
 
     def test_idle_and_busy(self):
@@ -39,7 +39,8 @@ class DeviceObserverTests(unittest.TestCase):
 
     def test_binary_hash_mismatch_never_spawns(self):
         observer, request = self.fixture()
-        with patch('agent_factory.research_device_observer.os.open', return_value=5), \
+        with patch('agent_factory.research_device_observer.os.O_NOFOLLOW', 0x20000, create=True), \
+             patch('agent_factory.research_device_observer.os.open', return_value=5), \
              patch('agent_factory.research_device_observer.os.close'), \
              patch('agent_factory.research_device_observer.os.fstat') as info, \
              patch('agent_factory.research_device_observer.os.read', side_effect=[b'wrong', b'']), \
@@ -55,6 +56,7 @@ class DeviceObserverTests(unittest.TestCase):
         observer._sha256 = hashlib.sha256(b'binary').hexdigest()
         for overflowing in (False, True):
             with self.subTest(overflowing=overflowing), \
+                 patch('agent_factory.research_device_observer.os.O_NOFOLLOW', 0x20000, create=True), \
                  patch('agent_factory.research_device_observer.os.open', return_value=5), \
                  patch('agent_factory.research_device_observer.os.close'), \
                  patch('agent_factory.research_device_observer.os.fstat') as info, \
@@ -83,7 +85,8 @@ class DeviceObserverTests(unittest.TestCase):
         import hashlib
         observer, request = self.fixture()
         observer._sha256 = hashlib.sha256(b'binary').hexdigest()
-        with patch('agent_factory.research_device_observer.os.open', return_value=5), \
+        with patch('agent_factory.research_device_observer.os.O_NOFOLLOW', 0x20000, create=True), \
+             patch('agent_factory.research_device_observer.os.open', return_value=5), \
              patch('agent_factory.research_device_observer.os.close'), \
              patch('agent_factory.research_device_observer.os.fstat') as info, \
              patch('agent_factory.research_device_observer.os.read', side_effect=[b'binary', b'']), \
@@ -96,3 +99,12 @@ class DeviceObserverTests(unittest.TestCase):
             selector.return_value.__enter__.return_value.select.return_value = []
             self.assertEqual(observer(request)['status'], 'UNKNOWN')
             process.kill.assert_called_once()
+
+    def test_missing_nofollow_capability_denies_before_open_or_spawn(self):
+        observer, request = self.fixture()
+        with patch('agent_factory.research_device_observer.os.O_NOFOLLOW', None, create=True), \
+             patch('agent_factory.research_device_observer.os.open') as opening, \
+             patch('agent_factory.research_device_observer.subprocess.Popen') as spawn:
+            self.assertEqual(observer(request)['status'], 'UNKNOWN')
+            opening.assert_not_called()
+            spawn.assert_not_called()

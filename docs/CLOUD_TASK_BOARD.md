@@ -13,7 +13,7 @@ below describe the pre-CI checkpoint.
 | root | Shared process hooks/types, evidence storage import, evaluator integration, serial PG/full checks, PR/CI | Frozen: Python1384=995pass389skip94.509s; corrected PG17pass124.505s; frontend196/build, Ruff/Linux+Windows Pyright/audit0; commit/exact CI pending |
 | go_adapter | Training source adaptation, lazy Torch runtime, static environment observer and tests | Frozen: training/runtime11 and environment9 pass; no ML imports/execution |
 | at10 | Checkpoint format/FD helpers; research guardian extension; actual controlled PG lifecycle | Frozen: checkpoint11, guardian6+ordinary12; PG4pass52.036s including distinct evaluator and size-one metadata pool |
-| factory_flow | Local provider/device observer, checkpoint-store tests | Frozen: provider9, device6, checkpoint-store10; hash-time revocation and original-stop regression covered |
+| factory_flow | Local provider/device observer, checkpoint-store tests | Frozen: provider9, device7, checkpoint-store10; portable mocked capability and missing-capability denial covered |
 | go_policy | Immutable staging, trusted local driver, uv handoff documentation | Frozen: staging10 and driver12 pass, including real standard-library stale-bytecode regression |
 | reviewer + independent_review | Independent source, scientific boundary, lock/custody review | All reported code blockers closed; separate28 and20 light checks passed; actual uv/GPU compatibility remains unverified |
 
@@ -25,6 +25,15 @@ passes include concurrent async fences, metadata pool1, original-run checkpoint
 import, independent evaluator byte consumption, acknowledgement loss and revoke.
 All local heavy tests ran serially. Isolated databases and guardians were checked
 absent after cleanup; no UNKNOWN execution was counted as successful.
+
+Draft PR37's first head `52251bad2357e96b77734c4ff985cb77a9a6419c` failed
+both Windows Python jobs: a mocked device-observer fixture used a POSIX-only
+absolute path. Workflows37426056733/37426123008 were canceled as superseded;
+their successful Linux/frontend jobs are not final acceptance. The test fixture
+and mocked OS capability are now portable; seven targeted tests pass, including
+denial before opening/spawning when no-follow support is absent. Production path
+and no-follow checks are unchanged. Final acceptance requires both new exact-head
+workflows.
 
 The cloud stage executes only controlled tests. No downloaded upstream/community
 code, ML dependencies, GPU training or dataset downloads are executed here.
