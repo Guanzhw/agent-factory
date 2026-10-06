@@ -21,6 +21,7 @@ env -i HOME=/absolute/private-scratch TMPDIR=/absolute/private-scratch \
   PYTHONPYCACHEPREFIX=/absolute/private-scratch/pycache \
   CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
   HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  timeout --signal=INT --kill-after=5s 135s \
   /absolute/existing-uv run --project /absolute/isolated-research-project \
   --offline --no-sync python \
   /absolute/agent-factory/scripts/probe_research_model_memory.py \
@@ -30,7 +31,11 @@ env -i HOME=/absolute/private-scratch TMPDIR=/absolute/private-scratch \
 Use actual already-approved absolute paths and an existing private mode-0700
 scratch directory. The `env -i` boundary protects the initial uv/Python startup as
 well as the child; the child alone cannot sanitize its parent startup. No global
-uv upgrade or environment synchronization is part of this command.
+uv upgrade or environment synchronization is part of this command. The outer
+135-second limit includes uv/Python startup; INT gives the supervisor its normal
+interruption cleanup path before the final kill grace. Use the existing worker's
+bounded output capture (at most64 KiB per stream) and retain any timeout as a
+failure, never a positive stopped-process or memory-fit receipt.
 
 The only public argument is `--source-root`. That directory must already contain
 the six exact public upstream files `README.md`, `prepare.py`, `train.py`,
@@ -47,8 +52,10 @@ The supervisor starts exactly one fresh child using the current interpreter,
 isolated Python startup, and a small explicit environment. It bounds wall time
 at 120 seconds, then kills only its original process group and waits up to five
 seconds. GPU driver/kernel stalls can outlast userspace termination; a timeout is
-not a positive release proof. Output is one bounded JSON record, with no paths,
+not a positive release proof. Normal completion returns one bounded JSON record, with no paths,
 model output, token sequences, arbitrary exception text, or inherited secrets.
+Operator interruption may instead yield a nonzero exit without a JSON record;
+keep raw stderr private and do not publish it as a diagnostic receipt.
 Temporary compiler/cache locations are task-private. On every exit, including
 Ctrl-C/SystemExit, the supervisor attempts original-child termination before cache
 cleanup and preserves the interruption. If the five-second wait cannot confirm

@@ -59,60 +59,73 @@ class ResearchCheckpointStore:
         binding = checkpoint_binding(binding)
         _require(type(disk_bytes) is int and 1024 <= disk_bytes <= 8 * 1024**4)
         owner, task_id = binding['ownerId'], binding['taskId']
-        self.auth.require(owner, 'run')
-        task = self.store.task(task_id, owner)
-        plan = self.store.plan(binding['planId'], owner)
-        _require(task['run_id'] == binding['nativeRunId'] and task['plan_id'] == binding['planId']
-                 and plan['fingerprint'] == binding['planFingerprint']
-                 and not task['terminal'] and not task['cancel_requested'])
-        runtime = self.resources.execution_runtime('research-process-run-v1')
-        self.store.require_plan_execution(owner, plan, run_context=runtime._context(task))
-        # The allocation journal has the original job before the resource lease's
-        # asynchronous provider response. Verify that original row, not a caller ID.
-        rows = self.store.sql('SELECT body FROM af_process_allocations WHERE id=:id AND owner_id=:owner',
-                              id=binding['leaseId'], owner=owner)
-        _require(len(rows) == 1)
-        record = rows[0]['body']
-        record = json.loads(record) if isinstance(record, str) else record
-        original = record['binding']
-        _require(record.get('processPin', {}).get('id') == binding['providerJobId']
-                 and original['localTaskId'] == task_id and original['nativeRunId'] == binding['nativeRunId']
-                 and original['planId'] == binding['planId'] and original['planHash'] == digest(plan)
-                 and original['executionGuard']['manifestSha256'] == binding['manifestSha256']
-                 and original['executionGuard']['variantSha256'] == binding['variantSha256'])
-        runtime.guard_lease(original)
-        with self.store.transaction():
-            self.store.sql("SELECT pg_advisory_xact_lock(hashtext('af_admission'))")
-            holds = self.store.sql("SELECT bytes FROM af_disk_holds WHERE task_id=:task AND owner_id=:owner AND state='HELD'",
-                                   task=task_id, owner=owner)
-            _require(len(holds) == 1)
-            extra = max(0, disk_bytes - holds[0]['bytes'])
-            total = self.store.sql("SELECT COALESCE(SUM(bytes),0) AS n FROM af_disk_holds WHERE state='HELD'")[0]['n']
-            _require(all(mount['freeBytes'] - total - extra >= self.store.settings.storage_low_water_bytes
-                         for mount in self.storage.filesystems()))
-            if extra:
-                self.store.sql("UPDATE af_disk_holds SET bytes=:bytes WHERE task_id=:task AND owner_id=:owner AND state='HELD'",
-                               bytes=disk_bytes, task=task_id, owner=owner)
+        def current_authority():
+            self.auth.require(owner, 'run')
+            task = self.store.task(task_id, owner)
+            plan = self.store.plan(binding['planId'], owner)
+            _require(task['run_id'] == binding['nativeRunId'] and task['plan_id'] == binding['planId']
+                     and plan['fingerprint'] == binding['planFingerprint']
+                     and not task['terminal'] and not task['cancel_requested'])
+            runtime = self.resources.execution_runtime('research-process-run-v1')
+            self.store.require_plan_execution(owner, plan, run_context=runtime._context(task))
+            # The allocation journal has the original job before the resource lease's
+            # asynchronous provider response. Verify that original row, not a caller ID.
+            rows = self.store.sql('SELECT body FROM af_process_allocations WHERE id=:id AND owner_id=:owner',
+                                  id=binding['leaseId'], owner=owner)
+            _require(len(rows) == 1)
+            record = rows[0]['body']
+            record = json.loads(record) if isinstance(record, str) else record
+            original = record['binding']
+            _require(record.get('processPin', {}).get('id') == binding['providerJobId']
+                     and original['localTaskId'] == task_id and original['nativeRunId'] == binding['nativeRunId']
+                     and original['planId'] == binding['planId'] and original['planHash'] == digest(plan)
+                     and original['executionGuard']['manifestSha256'] == binding['manifestSha256']
+                     and original['executionGuard']['variantSha256'] == binding['variantSha256'])
+            runtime.guard_lease(original)
+
+        current_authority()
         identifier = digest({'task': task_id, 'key': _KEY})
+        # Retention must be acquired outside the metadata transaction, including
+        # a size-one metadata pool. Match global admission -> task lock ordering.
         with self.storage._lock(identifier):
-            path = self.storage._directory(task_id, identifier, evidence=True)
-            flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
-            _require(os.name == 'posix' and getattr(os, 'O_DIRECTORY', 0) and getattr(os, 'O_NOFOLLOW', 0))
-            fd = os.open(path, flags)
-            try:
-                info = os.fstat(fd)
-                row = self.storage._object(owner, identifier)
-                _require(row['identity'] == {'device': info.st_dev, 'directoryInode': info.st_ino})
-                # This dedicated producer namespace alone becomes private.
-                chmod = getattr(os, "fchmod", None)
-                _require(callable(chmod))
-                if callable(chmod):
-                    chmod(fd, 0o700)
-                os.fsync(fd)
-                identity = {'device': info.st_dev, 'inode': info.st_ino}
-            finally:
-                os.close(fd)
-        return {'root': str(path), 'basename': _BASENAME, 'rootIdentity': identity}
+            with self.store.transaction():
+                self.store.sql("SELECT pg_advisory_xact_lock(hashtext('af_admission'))")
+                tasks = self.store.sql("SELECT id FROM af_tasks WHERE id=:id AND owner_id=:owner FOR UPDATE",
+                                       id=task_id, owner=owner)
+                _require(len(tasks) == 1)
+                current_authority()  # Both lock waits can outlive authority.
+                holds = self.store.sql("SELECT bytes FROM af_disk_holds WHERE task_id=:task AND owner_id=:owner AND state='HELD' FOR UPDATE",
+                                       task=task_id, owner=owner)
+                _require(len(holds) == 1)
+                amount = max(disk_bytes, holds[0]['bytes'])
+                extra = amount - holds[0]['bytes']
+                total = self.store.sql("SELECT COALESCE(SUM(bytes),0) AS n FROM af_disk_holds WHERE state='HELD'")[0]['n']
+                _require(all(mount['freeBytes'] - total - extra >= self.store.settings.storage_low_water_bytes
+                             for mount in self.storage.filesystems()))
+                current_authority()
+                changed = self.store.sql("UPDATE af_disk_holds SET bytes=:bytes WHERE task_id=:task AND owner_id=:owner AND state='HELD' RETURNING bytes",
+                                         bytes=amount, task=task_id, owner=owner)
+                _require(len(changed) == 1 and changed[0]['bytes'] == amount)
+                current_authority()
+                path = self.storage._directory(task_id, identifier, evidence=True)
+                flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+                _require(os.name == 'posix' and getattr(os, 'O_DIRECTORY', 0) and getattr(os, 'O_NOFOLLOW', 0))
+                fd = os.open(path, flags)
+                try:
+                    info = os.fstat(fd)
+                    row = self.storage._object(owner, identifier)
+                    _require(row['identity'] == {'device': info.st_dev, 'directoryInode': info.st_ino})
+                    chmod = getattr(os, "fchmod", None)
+                    _require(callable(chmod))
+                    current_authority()
+                    if callable(chmod):
+                        chmod(fd, 0o700)
+                    os.fsync(fd)
+                    identity = {'device': info.st_dev, 'inode': info.st_ino}
+                finally:
+                    os.close(fd)
+                current_authority()
+                return {'root': str(path), 'basename': _BASENAME, 'rootIdentity': identity}
 
     @contextmanager
     def _open(self, binding, maximum):

@@ -5,6 +5,7 @@ the actual Factory Store/executor/queue and native HITL. No paid provider calls.
 The production integration is deliberately not implied by mounting test guards.
 """
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 import copy
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -109,6 +110,25 @@ class PlanPolicyTests(unittest.TestCase):
         plan = plan or self.plan
         review = self.service.request_review("alice", plan["id"], str(uuid4()))
         return self.service.decide("manager", review["id"], True, str(uuid4()))
+
+    def test_execution_approval_borrows_admission_connection_without_closing_it(self):
+        decision = self.approve()
+        with self.store.engine.connect() as connection:
+            shared = ContextVar('owned_policy_test_connection', default=connection)
+            # Native auth uses this SQLite fixture's same engine; isolate the
+            # policy SQL borrowing here. The native PostgreSQL case covers auth.
+            with patch.object(self.auth, 'require', return_value=None), \
+                    patch.object(self.store, '_connection', shared, create=True), \
+                    patch.object(self.store, 'plan', return_value=copy.deepcopy(self.plan)), \
+                    patch.object(self.store.engine, 'connect', side_effect=AssertionError('NO_SECOND_POOL_SLOT')):
+                result = self.service.require_execution('alice', self.plan['id'])
+                self.assertEqual(result['reviewId'], decision['id'])
+                self.assertFalse(connection.closed)
+                self.assertEqual(connection.execute(select(self.service.state.c.id)).scalar(), 'current')
+                with patch.object(self.service, '_scope', side_effect=HTTPException(403, 'REVOKED')), \
+                        self.assertRaises(HTTPException):
+                    self.service.require_execution('alice', self.plan['id'])
+                self.assertFalse(connection.closed)
 
     def test_conservative_default_requires_exact_admin_review(self):
         self.assertEqual(self.service.current()["name"], "admin-review")

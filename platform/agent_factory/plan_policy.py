@@ -7,6 +7,7 @@ protected boundaries; merely constructing the service does not enforce policy.
 """
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import re
@@ -16,6 +17,8 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import Column, ForeignKey, Integer, JSON, MetaData, String, Table, UniqueConstraint, select, text
+
+from sqlalchemy.engine import Connection
 
 from .store import digest
 
@@ -468,6 +471,13 @@ class PlanPolicyService:
                          decision="approved" if approved else "denied", decided_at=self._at().isoformat()))
             return self._project(conn, row)
 
+    def _execution_connection(self) -> AbstractContextManager[Connection]:
+        # Admission may already hold the sole metadata connection. Borrow it
+        # without closing/committing; outside a transaction retain ordinary reads.
+        context = getattr(self.store, "_connection", None)
+        connection = context.get() if context is not None else None
+        return nullcontext(cast(Connection, connection)) if connection is not None else self.store.engine.connect()
+
     def require_execution(self, owner: str, plan: str | Mapping, *, run_context: Any = None) -> dict:
         self.auth.require(owner, "run")
         configuration_guard = getattr(self.store, "require_current_policy", None)
@@ -476,7 +486,7 @@ class PlanPolicyService:
             # into require_execution. It preserves operator emergency denial.
             configuration_guard()
         current_plan = self._plan(owner, plan)
-        with self.store.engine.connect() as scope_connection:
+        with self._execution_connection() as scope_connection:
             scope_config = self._current(scope_connection)
         self._scope(current_plan, scope_config)
         review_plan = current_plan
@@ -497,7 +507,7 @@ class PlanPolicyService:
                     if type(value) is not int or type(ceiling) is not int or not 0 < value <= ceiling:
                         raise HTTPException(403, "Child exceeds ancestor approval budget")
             review_plan, inherited = ancestors[-1], True
-        with self.store.engine.connect() as conn:
+        with self._execution_connection() as conn:
             config = self._current(conn)
             # A concurrent operator change cannot widen admission between checks.
             self._scope(current_plan, config)

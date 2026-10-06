@@ -53,18 +53,32 @@ class GoPublicConnectivityTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(p.stat().st_mode & 0o777 == 0o600 for p in Path(directory).iterdir()))
 
     async def test_failure_is_sanitized_persisted_and_never_retried(self):
+        # The microseconds intentionally contain "403": timestamps are not a
+        # parsed HTTP status and must not trip diagnostic redaction assertions.
+        fixed_utc = '2026-10-06T12:34:56.840327+00:00'
         with tempfile.TemporaryDirectory() as directory:
             async def fail(request):
-                raise httpx.ProxyError('403 Forbidden private-proxy')
-            with patch.object(runner, 'open_go_client', side_effect=lambda **kw: httpx.AsyncClient(
+                raise httpx.ProxyError('403 Forbidden private-proxy synthetic-token-value')
+            with patch.object(runner, 'utc', return_value=fixed_utc), \
+                 patch.object(runner, 'open_go_client', side_effect=lambda **kw: httpx.AsyncClient(
                     transport=httpx.MockTransport(fail), trust_env=False)) as factory:
                 result = await runner.probe(directory)
-                await runner.probe(directory)
+                inspected = await runner.probe(directory)
             self.assertEqual(factory.call_count, 1)
-            self.assertEqual(result['diagnostic']['category'], 'PROXY')
+            self.assertEqual(result['startedUtc'], fixed_utc)
+            self.assertEqual(result['finishedUtc'], fixed_utc)
+            self.assertIn('403', result['startedUtc'])
+            diagnostic = result['diagnostic']
+            self.assertEqual(diagnostic['category'], 'PROXY')
+            self.assertEqual(diagnostic['safeCauses'], [{'errorType': 'ProxyError', 'category': 'PROXY'}])
             self.assertNotIn('httpStatus', result)
-            self.assertNotIn('private', json.dumps(result))
-            self.assertNotIn('403', json.dumps(result))
+            self.assertNotIn('httpStatus', diagnostic)
+            for cause in diagnostic['safeCauses']:
+                self.assertNotIn('proxyStatus', cause)
+            for raw_text in ('private', 'synthetic-token-value', '403 Forbidden'):
+                self.assertNotIn(raw_text, json.dumps(result))
+            self.assertEqual(inspected['result'], result)
+            self.assertEqual(json.loads((Path(directory) / runner.RESULT).read_bytes()), result)
 
     async def test_existing_prepared_marker_after_crash_never_dispatches(self):
         with tempfile.TemporaryDirectory() as directory:

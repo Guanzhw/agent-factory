@@ -47,6 +47,21 @@ separate preparation-store primitive stays in an isolated WIP worktree and is no
 claimed as an executable bootstrap. Baseline0, val_bpb null. No global uv update,
 dependency install, new local worker, merge or deployment.
 
+Checkpoint reservation follow-up: independent controlled review reproduced a
+revocation window after retention lock acquisition. Reservation now holds the
+retention fence outside the metadata transaction, then takes admission, task and
+hold locks; authority is rechecked after waiting and before directory/chmod/return.
+Even a non-growing hold update must return exactly its original row. PlanPolicy
+execution reads borrow the current metadata connection to preserve size-one pool
+operation. Thirty focused checkpoint/policy tests pass. Updated native PG5 passes83.889s,
+including actual policy with a size-one metadata pool; full Python1500 passes
+1110/390skipped97.014s; Ruff/Linux+Windows Pyright0. Fresh exact-head CI is pending.
+A full-suite test falsely matched HTTP403 in ordinary timestamp microseconds;
+its diagnostic-field assertions now use a fixed timestamp containing403, while
+retaining sensitive-text exclusion, persisted equality and no-retry checks. The earlier PR40 head's eight successful jobs
+are superseded, not final acceptance. No actual target impact is inferred from
+the controlled reproducer.
+
 ## Active bounded SDPA compatibility diagnostic — 2026-10-06
 
 Base PR38 exact `63c0be99ee4da310492dbbed855bcc4badb6d453` passed all ten

@@ -48,15 +48,20 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
         self.resources.execution_runtime.return_value = self.runtime
         self.auth, self.store, self.storage = Mock(), Mock(), Mock()
         self.store.plan.return_value = self.plan
-        self.store.task.return_value = self.task
+        self.store.task.side_effect = lambda *_args: deepcopy(self.task)
         self.store.settings = SimpleNamespace(storage_low_water_bytes=100)
         self.store.transaction.side_effect = lambda: nullcontext()
         self.held = 1024
+        self.update_rows = 1
+        self.sql_hook = None
+        self.lock_hook = None
+        self.events = []
+        self.retention_held = False
         self.free = 100000
         self.store.sql.side_effect = self.sql
         self.storage.objects = self.objects
         self.storage.root_id = 'storage-root'
-        self.storage._lock = Mock(side_effect=lambda _id: nullcontext())
+        self.storage._lock = Mock(side_effect=self.retention_lock)
         self.storage._directory.return_value = self.root
         self.object_row = {'task_id': 'task1', 'root_id': 'storage-root', 'state': 'AVAILABLE', 'evidence': True,
             'identity': {'device': info.st_dev, 'directoryInode': info.st_ino}}
@@ -72,15 +77,39 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    @contextmanager
+    def retention_lock(self, _identifier):
+        self.events.append('retention-enter')
+        self.retention_held = True
+        try:
+            if self.lock_hook is not None:
+                self.lock_hook()
+            yield
+        finally:
+            self.retention_held = False
+            self.events.append('retention-exit')
+
     def sql(self, statement, **params):
+        if self.sql_hook is not None:
+            self.sql_hook(statement)
+        if 'pg_advisory_xact_lock' in statement:
+            self.events.append('admission')
+        if 'FROM af_tasks' in statement and 'FOR UPDATE' in statement:
+            self.events.append('task-lock')
+            return [deepcopy(self.task)]
         if statement.startswith('SELECT body FROM af_process_allocations'):
             return [{'body': {'processPin': {'id': 'job1'}, 'binding': deepcopy(self.lease)}}]
         if statement.startswith('SELECT bytes'):
+            if 'FOR UPDATE' in statement: self.events.append('hold-lock')
             return [{'bytes': self.held}]
         if statement.startswith('SELECT COALESCE'):
             return [{'n': self.held}]
         if statement.startswith('UPDATE af_disk_holds'):
-            self.held = params['bytes']
+            self.events.append('hold-update')
+            if self.update_rows:
+                self.held = params['bytes']
+                return [{'task_id': 'task1', 'bytes': self.held}]
+            return []
         return []
 
     def write_artifact(self, task, name, raw, *, metadata):
@@ -222,3 +251,90 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
             with patch.object(self.service, '_open', change_after_hash), self.assertRaises(ValueError):
                 operation()
         self.store.artifact_write.assert_called_once()
+
+
+    def test_reserve_rechecks_retention_and_admission_windows_before_directory_or_chmod(self):
+        for boundary in ('retention', 'admission'):
+            for change in ('revocation', 'cancel', 'terminal'):
+                with self.subTest(boundary=boundary, change=change):
+                    self.task.update(terminal=False, cancel_requested=False)
+                    self.held = 1024; self.events.clear(); self.store.sql.reset_mock()
+                    self.storage._directory.reset_mock(); self.auth.require.reset_mock(side_effect=True)
+                    self.store.require_plan_execution.reset_mock(side_effect=True)
+                    revoked = False; denial = PermissionError('synthetic authority ended'); triggered = False
+                    def check(*_args, **_kwargs):
+                        if revoked: raise denial
+                    def mutate():
+                        nonlocal revoked, triggered
+                        if triggered: return
+                        triggered = True
+                        if change == 'revocation': revoked = True
+                        elif change == 'cancel': self.task['cancel_requested'] = True
+                        else: self.task['terminal'] = True
+                    self.auth.require.side_effect = check
+                    self.store.require_plan_execution.side_effect = check
+                    self.lock_hook = mutate if boundary == 'retention' else None
+                    self.sql_hook = (lambda statement: mutate() if 'pg_advisory_xact_lock' in statement else None) if boundary == 'admission' else None
+                    expected = PermissionError if change == 'revocation' else ValueError
+                    with patch('agent_factory.research_checkpoint_store.os.fchmod', create=True) as chmod:
+                        with self.assertRaises(expected) as raised:
+                            self.service.reserve(self.binding, disk_bytes=8192)
+                        if change == 'revocation': self.assertIs(raised.exception, denial)
+                        self.assertTrue(triggered)
+                        self.storage._directory.assert_not_called(); chmod.assert_not_called()
+                    self.assertNotIn('hold-update', self.events)
+                    self.assertEqual(self.held, 1024)
+                    self.assertFalse(self.retention_held)
+
+    def test_reserve_zero_row_update_cannot_create_or_chmod_directory(self):
+        for held, requested in ((1024, 8192), (8192, 4096)):
+            with self.subTest(held=held, requested=requested):
+                self.held = held; self.update_rows = 0
+                self.store.sql.reset_mock(); self.storage._directory.reset_mock()
+                with patch('agent_factory.research_checkpoint_store.os.fchmod', create=True) as chmod:
+                    with self.assertRaises(ValueError):
+                        self.service.reserve(self.binding, disk_bytes=requested)
+                    self.storage._directory.assert_not_called(); chmod.assert_not_called()
+                updates = [call.args[0] for call in self.store.sql.call_args_list if call.args[0].startswith('UPDATE af_disk_holds')]
+                self.assertEqual(len(updates), 1)
+                self.assertIn('RETURNING', updates[0])
+                self.assertEqual(self.held, held)
+
+    def test_reserve_lock_order_holds_owned_task_and_hold_before_effect(self):
+        @contextmanager
+        def transaction():
+            self.assertTrue(self.retention_held)
+            self.events.append('transaction-enter')
+            yield
+            self.events.append('transaction-exit')
+        def directory(*_args, **_kwargs):
+            self.assertTrue(self.retention_held)
+            self.events.append('directory')
+            return self.root
+        self.store.transaction.side_effect = transaction
+        self.storage._directory.side_effect = directory
+        self.service.reserve(self.binding, disk_bytes=8192)
+        required = ['retention-enter', 'transaction-enter', 'admission', 'task-lock', 'hold-lock', 'hold-update', 'directory']
+        self.assertEqual([event for event in self.events if event in required], required)
+        task_queries = [call for call in self.store.sql.call_args_list if 'FROM af_tasks' in call.args[0] and 'FOR UPDATE' in call.args[0]]
+        self.assertEqual(len(task_queries), 1)
+        self.assertIn('owner_id', task_queries[0].args[0])
+        self.assertIn('alice', task_queries[0].kwargs.values())
+        holds = [call.args[0] for call in self.store.sql.call_args_list if call.args[0].startswith('SELECT bytes')]
+        self.assertEqual(len(holds), 1); self.assertIn('FOR UPDATE', holds[0])
+        self.assertFalse(self.retention_held)
+
+
+    def test_reserve_object_lookup_authority_loss_prevents_chmod(self):
+        denial = PermissionError('synthetic authority ended at object lookup')
+        def revoke_object(*_args):
+            self.auth.require.side_effect = denial
+            return self.object_row
+        self.storage._object.side_effect = revoke_object
+        with patch('agent_factory.research_checkpoint_store.os.fchmod', create=True) as chmod:
+            with self.assertRaises(PermissionError) as raised:
+                self.service.reserve(self.binding, disk_bytes=8192)
+            self.assertIs(raised.exception, denial)
+            self.storage._directory.assert_called_once()
+            chmod.assert_not_called()
+        self.assertFalse(self.retention_held)
