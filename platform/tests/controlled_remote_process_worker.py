@@ -18,6 +18,7 @@ import re
 import stat
 import sys
 import time
+import threading
 from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
@@ -30,7 +31,7 @@ from sqlalchemy.engine import make_url
 from agent_factory.config import Settings
 from agent_factory.main import create_app
 from agent_factory.material_governance import MaterialDefinition
-from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec
+from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, birth, same_birth
 from agent_factory.process_provider import ProcessResourceProvider
 from agent_factory.process_runtime_profile import (MODEL_ID, TOOL_NAME, process_settings,
     publish_process_application, registrations)
@@ -45,6 +46,94 @@ ORIGIN_OWNER, RECEIVER_OWNER, OTHER_OWNER, MANAGER, REVIEWER,
 
 ORIGIN_PROCESS = "origin-process"
 RECEIVER_PROCESS = "receiver-process"
+
+
+class AllocationDiagnostics:
+    """Bounded in-memory observations; never add SQL to the dispatch boundary."""
+    def __init__(self):
+        self.records = []
+        self.dropped = 0
+        self.lock = threading.Lock()
+
+    def record(self, lease, phase, error=None):
+        now = datetime.now(timezone.utc)
+        deadline = datetime.fromisoformat(lease["deadlineAt"])
+        value = {"phase": phase, "leaseId": lease["id"], "taskId": lease["localTaskId"],
+            "nativeRunId": lease.get("nativeRunId"), "deadlineAt": deadline.isoformat(),
+            "observedAt": now.isoformat(), "deadlineElapsed": now >= deadline}
+        if error is not None:
+            value.update(safe_allocation_error(error))
+        with self.lock:
+            if len(self.records) < 128:
+                self.records.append(value)
+            else:
+                self.dropped += 1
+
+    async def allocate(self, original, lease, before_effect):
+        self.record(lease, "ALLOCATE_ENTRY")
+        def observed_effect():
+            self.record(lease, "BEFORE_EFFECT_ENTRY")
+            try:
+                result = before_effect()
+            except BaseException as error:
+                self.record(lease, "BEFORE_EFFECT_ERROR", error)
+                raise
+            self.record(lease, "BEFORE_EFFECT_RETURNED")
+            return result
+        try:
+            result = await original(lease, before_effect=observed_effect)
+        except BaseException as error:
+            self.record(lease, "ALLOCATE_ERROR", error)
+            raise
+        self.record(lease, "ALLOCATE_RETURNED")
+        return result
+
+    def snapshot(self):
+        with self.lock:
+            return {"records": copy.deepcopy(self.records), "dropped": self.dropped}
+
+
+def safe_allocation_error(error):
+    category = next((name for kind, name in ((HTTPException, "HTTPException"),
+        (asyncio.CancelledError, "CancelledError"), (TimeoutError, "TimeoutError"),
+        (PermissionError, "PermissionError"), (OSError, "OSError"),
+        (ValueError, "ValueError"), (RuntimeError, "RuntimeError")) if isinstance(error, kind)), "UnknownError")
+    value: dict[str, Any] = {"errorType": category, "errorCategory": {
+        "HTTPException": "HTTP_REJECTION", "CancelledError": "CANCELLED", "TimeoutError": "TIMEOUT",
+        "PermissionError": "PERMISSION", "OSError": "OS_ERROR", "ValueError": "INVALID_STATE",
+        "RuntimeError": "RUNTIME_ERROR", "UnknownError": "UNKNOWN"}[category],
+        "httpStatus": None, "errorCode": None}
+    if isinstance(error, HTTPException):
+        data = BaseException.__dict__["__dict__"].__get__(error)
+        status, detail = dict.get(data, "status_code"), dict.get(data, "detail")
+        if type(status) is int and 400 <= status <= 599:
+            value["httpStatus"] = status
+        codes = {"Canceled, terminal or expired work cannot allocate new effects": "ADMISSION_WORK_ENDED",
+            "Allocation configuration changed before dispatch": "ADMISSION_CONFIGURATION_CHANGED",
+            "PROCESS_EXECUTION_FAILED_WITH_STOP_PROOF": "PROCESS_EXECUTION_FAILED_WITH_STOP_PROOF",
+            "PROCESS_EXECUTION_EFFECT_UNSUPPORTED": "PROCESS_EXECUTION_EFFECT_UNSUPPORTED"}
+        if type(detail) is str:
+            value["errorCode"] = codes.get(detail)
+    return value
+
+
+def provider_observations(leases, rows):
+    states = {"UNKNOWN", "ACCEPTED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "LIMIT_STOPPED", "RECLAIMED"}
+    kinds = {"never-dispatched", "original-root-reaped-and-no-live-process-group-members", "original-delegated-cgroup-released"}
+    records = {row["id"]: row["body"] for row in rows}
+    result = []
+    for lease in leases[:100]:
+        body = records.get(lease["id"])
+        value = {"leaseId": lease["id"], "providerRowPresent": body is not None}
+        if body is not None:
+            value.update(state=body.get("state") if body.get("state") in states else "unrecognized",
+                executionStatus=body.get("executionStatus") if body.get("executionStatus") in states else "unrecognized",
+                exitCode=body.get("exitCode") if type(body.get("exitCode")) is int and -255 <= body["exitCode"] <= 255 else None,
+                allStopped=body.get("allStopped") is True, released=body.get("released") is True,
+                stopKind=body.get("stopKind") if body.get("stopKind") in kinds else None,
+                processPinPresent=bool(body.get("processPin")), journalPinPresent=bool(body.get("journalIdentity")))
+        result.append(value)
+    return result
 
 
 class DropControlAcknowledgement:
@@ -115,6 +204,18 @@ class DropControlAcknowledgement:
             await send(message)
 
 
+def process_identity_observation(pin):
+    if not isinstance(pin, dict) or type(pin.get("pid")) is not int:
+        return {"currentState": "UNPINNED", "matchesOriginal": None}
+    current = birth(pin["pid"])
+    if current is None:
+        # Missing and unreadable are deliberately not claimed as positive stop.
+        return {"currentState": "UNKNOWN", "matchesOriginal": None}
+    return {"currentState": current["state"] if current.get("state") in
+            {"R", "S", "D", "Z", "T", "t", "X", "I", "K", "W", "P"} else "UNKNOWN",
+            "matchesOriginal": same_birth(current, pin)}
+
+
 def custody_observations(store, custody):
     """Read only journals whose initialization was durably pinned by the provider.
 
@@ -139,7 +240,9 @@ def custody_observations(store, custody):
                 (TypeError, "TypeError")) if isinstance(error, kind)), "UnexpectedError")
             raise HTTPException(500, {"fixturePhase": "pinned-custody-inspect", "errorType": category}) from None
         values.append({"leaseId": row["id"], **{key: observed.get(key) for key in
-            ("id", "taskId", "ownerId", "state", "child", "guardian", "stoppedProof", "capacityHeld")}})
+            ("id", "taskId", "ownerId", "state", "child", "guardian", "stoppedProof", "capacityHeld")},
+            "guardianObservation": process_identity_observation(observed.get("guardian")),
+            "childObservation": process_identity_observation(observed.get("child"))})
     return values
 
 
@@ -276,6 +379,11 @@ def main():
                                             "materials": configuration["sourceMaterials"]}
     snapshot, materials = _publish(state, source)
     controls = {"fault": None, "droppedAcknowledgements": 0}
+    allocation_diagnostics = AllocationDiagnostics()
+    original_allocate = provider.allocate_bound
+    async def diagnostic_allocate(lease, *, before_effect):
+        return await allocation_diagnostics.allocate(original_allocate, lease, before_effect)
+    provider.allocate_bound = diagnostic_allocate
     original_launch, original_cancel = BoundedProcessAdapter.launch, BoundedProcessAdapter.cancel
     def counted_launch(self, *, owner_id, before_effect):
         adapter = self
@@ -357,16 +465,19 @@ def main():
         task = store.task(taskId, owner) if taskId else None
         native = db.get_job(task["run_id"]) if task and task.get("run_id") else None
         disk = store.sql("SELECT state FROM af_disk_holds WHERE task_id=:task", task=taskId) if taskId else []
+        leases = [row["body"] for row in store.sql("SELECT body FROM af_leases")]
+        allocations = store.sql("SELECT * FROM af_process_allocations")
         return {"fixtureOnly": True, "demo": True, "mode": "controlled-process-fixture", "pid": os.getpid(),
             "workspace": str(workspace), "applicationRef": pin(snapshot), "applicationSnapshot": snapshot,
             "materials": materials, "sourceSpecs": _source_specs(materials), "providerCreated": list(created),
             "nativeTickets": count, "tasks": store.tasks(owner), "task": task,
             "nativeStatus": native.get("status") if native else None, "diskHold": disk[0]["state"] if disk else None,
             "plan": store.plan(store.task(taskId, owner)["plan_id"], owner) if taskId else None,
-            "leases": [row["body"] for row in store.sql("SELECT body FROM af_leases")], "processMappings": store.sql("SELECT * FROM af_process_runs"),
+            "leases": leases, "allocationDiagnostics": allocation_diagnostics.snapshot(),
+            "providerDiagnostics": provider_observations(leases, allocations), "processMappings": store.sql("SELECT * FROM af_process_runs"),
             "processAllocations": [{"id": row["id"], "owner_id": row["owner_id"], "body": {
                 key: row["body"].get(key) for key in ("processPin", "state", "released", "allStopped", "executionStatus", "exitCode")}}
-                for row in store.sql("SELECT * FROM af_process_allocations")],
+                for row in allocations],
             "custody": custody_observations(store, custody),
             "launchAttemptCount": store.sql("SELECT count(*) AS count FROM af_events WHERE type='fixture_process_launch_attempt'")[0]["count"],
             "disconnectDiagnostics": [row["data"] for row in store.sql(
