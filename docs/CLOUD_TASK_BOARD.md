@@ -8,7 +8,7 @@ usage instructions and synthetic regression checks; no application/schema change
 
 | Owner / scope | Dependency | Acceptance |
 |---|---|---|
-| root | Public helper delivery, instructions, tests, draft PR | 9 synthetic tests pass; Ruff/Pyright/Bash checks pass; exact source/wheel verified; source pin remains PR47 |
+| root | Public helper delivery, instructions, tests, draft PR | 9 synthetic tests pass; Ruff/Pyright/Bash checks pass; Windows CI exposed CRLF manifest drift, fixed with LF checkout attributes; exact CI pending; source pin remains PR47 |
 | reviewer | Independent public diff/security/commit-boundary review | Approved; independently reran 9 tests |
 | target operator | New private combined installation and database preflight | Not run by this delivery; target database policy remains unknown |
 

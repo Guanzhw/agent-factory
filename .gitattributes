@@ -1,2 +1,7 @@
 # Reviewed toy file hashes require identical bytes on every checkout.
 platform/agent_factory/orx_toy/* text eol=lf
+# Public installation handoff pins require identical bytes across checkout hosts.
+docs/evidence/pr47-source-manifest.json text eol=lf
+scripts/install-handoff.sh text eol=lf
+scripts/verify_closure.py text eol=lf
+docs/PR47_INSTALL_HANDOFF.md text eol=lf
