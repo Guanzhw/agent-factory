@@ -2,7 +2,7 @@
 """Private FICLONE-only regular-file tree clone; not environment admission.
 
 Only a single symlink-free tree (for example site-packages) is supported. Source
-hardlinks are read, never adopted. Failure retains an unsealed private directory.
+hardlinks are read, never adopted. Failure retains the original private directory; it may already contain a seal.
 No source files, shared caches, permissions, or credentials are modified.
 """
 from __future__ import annotations
