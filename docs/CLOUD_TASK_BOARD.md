@@ -1,5 +1,20 @@
 # Cloud integration task board
 
+## Preserved tokenizer preparation WIP — not integrated
+
+Base PR40 exact `7a0a5a6ce6df0a75c813710fec4230dddfbf85f3`.
+Branch `wip/research-preparation-checkpoint-20261006` preserves three new files
+and this board entry; it does not change PR40's frozen head.
+
+| Owner / scope | Dependency | State / blocker |
+|---|---|---|
+| factory_flow | Preparation store and controlled tests |17 mock tests pass; no actual provider/harness or PG concurrency proof |
+| reviewer | Independent authority/locking review |17 tests pass; known lock-window defects fixed; not execution acceptance |
+| root | Preservation checkpoint, integration boundary |No integration/merge/deploy; real controller cancellation, genuine preparation lifecycle and complete CI remain required |
+
+Checkpoint CI is intentionally not requested while PR40's two heavy jobs run.
+This is preservation only, not an accepted phase. See `RESEARCH_PREPARATION_WIP.md`.
+
 ## Active uv0.11.7 target startup profile — 2026-10-06
 
 Branch `coord/research-uv0117-profile-20261006`, based on PR39 exact
