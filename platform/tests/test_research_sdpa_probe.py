@@ -1,11 +1,13 @@
 """Probe control/reference tests without importing torch or invoking a GPU."""
 import importlib.util
+import hashlib
+import io
 from pathlib import Path
 import sys
 import struct
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import Mock, patch
 
 _SPEC = importlib.util.spec_from_file_location('research_sdpa_probe', Path(__file__).resolve().parents[2] / 'scripts' / 'probe_research_sdpa.py')
 assert _SPEC is not None and _SPEC.loader is not None
@@ -14,6 +16,14 @@ _SPEC.loader.exec_module(probe)
 
 
 class SdpaProbeTests(unittest.TestCase):
+    def setUp(self):
+        source = Path(__file__).resolve().parents[1] / 'agent_factory' / 'research_torch_runtime.py'
+        self.canonical_source = source.read_text(encoding='utf-8').encode('utf-8')
+        self.assertEqual(hashlib.sha256(self.canonical_source).hexdigest(), probe.ADAPTER_SHA256)
+        opening = patch.object(probe, 'open', side_effect=lambda *_args, **_kwargs: io.BytesIO(self.canonical_source), create=True)
+        opening.start()
+        self.addCleanup(opening.stop)
+
     def torch(self):
         cuda = Mock()
         cuda.is_available.return_value = True
@@ -99,8 +109,18 @@ class SdpaProbeTests(unittest.TestCase):
 
     def test_wrong_adapter_source_stops_before_cuda_access(self):
         torch = self.torch()
-        with patch.dict(sys.modules, {'torch': torch}), patch('builtins.open', mock_open(read_data=b'wrong implementation')):
+        with patch.dict(sys.modules, {'torch': torch}), patch.object(probe, 'open', side_effect=lambda *_args: io.BytesIO(b'wrong implementation')):
             result = probe.run_probe()
         self.assertEqual(result['errorCode'], 'ADAPTER_SOURCE_MISMATCH')
         self.assertNotIn('adapterSourceSha256', result)
+        torch.cuda.is_available.assert_not_called()
+
+    def test_crlf_adapter_bytes_are_rejected_before_cuda(self):
+        torch = self.torch()
+        crlf_source = self.canonical_source.replace(b'\n', b'\r\n')
+        self.assertNotEqual(hashlib.sha256(crlf_source).hexdigest(), probe.ADAPTER_SHA256)
+        with patch.dict(sys.modules, {'torch': torch}), \
+             patch.object(probe, 'open', side_effect=lambda *_args: io.BytesIO(crlf_source)):
+            result = probe.run_probe()
+        self.assertEqual(result['errorCode'], 'ADAPTER_SOURCE_MISMATCH')
         torch.cuda.is_available.assert_not_called()

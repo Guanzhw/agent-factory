@@ -17,15 +17,23 @@ separately from the adapted SDPA baseline.
 
 | Owner / exclusive scope | Dependency | Acceptance |
 |---|---|---|
-| root | Integration, public launch/parameter contract, serial checks and exact CI | Probe9 pass1.774s, Ruff/Pyright0; new branch `coord/research-sdpa-probe-20261006`, final commit/CI pending |
-| factory_flow | `scripts/probe_research_sdpa.py` and focused tests | Seven fixed GPU cases, nine mock/pure tests passed; no actual Torch/GPU execution in cloud |
+| root | Integration, public launch/parameter contract, serial checks and exact CI | Corrected probe10 pass1.600s, Ruff/Pyright0; new branch `coord/research-sdpa-probe-20261006`, final commit/CI pending |
+| factory_flow | `scripts/probe_research_sdpa.py` and focused tests | Seven fixed GPU cases, ten mock/pure tests passed; no actual Torch/GPU execution in cloud |
 | go_adapter | Read-only baseline and SDPA contract review | Fixed entry/config/eleven-parameter contract verified unchanged from PR37 |
-| reviewer | Independent probe resource/semantic review | Nine mock/pure tests pass1.258s; BF16 quantization issue fixed, D128 nonzero gradient case added; no remaining code blocker |
+| reviewer | Independent probe resource/semantic review | Corrected ten mock/pure tests pass1.528s; BF16 quantization issue fixed, D128 nonzero gradient case added, CRLF fixture fix verified; no remaining code blocker |
 
 Target uv0.11.7 is not the reviewed uv0.12.19 startup profile supported by PR38.
 Ordinary-path independent compatibility diagnostics do not establish Factory
 launch acceptance. Do not upgrade global uv or change version metadata to make
 the environment pass. No new local task or source-toolchain build is requested.
+
+The initial probe commit `85e161448a90623c5ec39afda5bd2bb12c81f5cf` failed
+both Windows Python jobs: mock success tests read CRLF-converted checkout bytes,
+which correctly failed the exact adapter-source pin. The tests now use an
+explicit canonical binary fixture and separately assert CRLF rejection; the
+actual probe and expected adapter hash remain unchanged. Superseded workflows
+37437734399/37437819107 were canceled, not counted as acceptance. Final acceptance
+requires fresh exact-head workflows.
 
 ## Active pinned uv research launch — 2026-10-06
 

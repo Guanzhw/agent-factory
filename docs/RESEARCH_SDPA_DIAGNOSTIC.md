@@ -35,6 +35,11 @@ adapter source SHA256
 `cd3c9e3edc1800f495fd0c3e4ed9bdef03b077d918883262e19f1fd192774dde`.
 This detects an accidentally stale installed adapter under trusted startup; it
 is not a hostile-import sandbox or the Factory interpreter-custody verifier.
+Preserve the exact reviewed LF source bytes when staging from Windows into WSL;
+automatic CRLF conversion changes the identity and is correctly rejected. Never
+normalize bytes inside the probe or replace its expected hash with a local hash
+merely to get a passing result. Use the immutable repository artifact and verify
+its supplied hash before ordinary target startup.
 The128 MiB observed tensor-allocation threshold is a stopping check after each
 small case, not a hard CUDA context/reserved-memory limit. The JSON report retains
 `factoryExecutionVerified=false` and `scientificConclusionVerified=false` even
