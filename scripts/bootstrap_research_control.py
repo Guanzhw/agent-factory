@@ -144,6 +144,8 @@ def main(argv=None, *, build_application=None, serve=None):
         settings = Settings(db_url=url, workspace=workspace, demo=True, max_workers=1,
                             max_user_tasks=1, max_total_tasks=1, max_queued=1,
                             temporary_policy='admin-review', host='127.0.0.1', port=args.port)
+        from agent_factory.research_bootstrap_policy import development_settings
+        settings = development_settings(settings)
         if args.check_config:
             print('RESEARCH_CONTROL_CONFIG_VALID_NOT_CONNECTED')
             return 0

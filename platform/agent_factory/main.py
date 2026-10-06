@@ -61,40 +61,59 @@ class NativeIngress:
         await self.app(scope, receive, send)
 
 
-def create_app(settings=None):
+def create_app(settings=None, *, diagnostics=None):
+    # Trusted operator diagnostics only; fixed stage strings, no configuration.
+    def at(stage):
+        if diagnostics is not None:
+            diagnostics.at(stage)
+    at('PREPARATION_APP_SETTINGS')
     settings = settings or Settings.from_env()
     settings.runtime_directory.mkdir(parents=True, exist_ok=True)
+    at('PREPARATION_APP_NATIVE_DB')
     native_db = PostgresDb(db_url=settings.db_url, id="factory-native-postgres")
+    at('PREPARATION_APP_STORE')
     store = Store(settings.db_url, settings)
+    at('PREPARATION_APP_ORX_SCHEMA')
     initialize_orx_experiments(store)
     store.native_db = native_db
+    at('PREPARATION_APP_AUTH')
     auth = AuthService(settings, native_db)
+    at('PREPARATION_APP_DEMO_IDENTITIES')
     auth.initialize_demo()
     store.auth = auth
     from .storage_governance import StorageGovernance
     from .storage_api import storage_router
+    at('PREPARATION_APP_STORAGE')
     store.storage = StorageGovernance(store, auth)
+    at('PREPARATION_APP_EVENT_REPLAY')
     replay = EventReplay(store, auth, signing_key=auth._key)
     store.event_replay = replay
+    at('PREPARATION_APP_CATALOG')
     if settings.demo:
         seed_catalog(store)
+    at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, GovernanceConfig(
         review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled))
+    at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
     store.material_governance = governance
     store.register_execution_guard("material-governance",
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
+    at('PREPARATION_APP_CONNECTIONS')
     connections = ConnectionService(store, auth, settings.trusted_connections)
     store.connections = connections
     from .synthesis_sources import SynthesisSourceService
+    at('PREPARATION_APP_SYNTHESIS_SOURCES')
     store.synthesis_sources = SynthesisSourceService(store, auth)
+    at('PREPARATION_APP_BINDINGS')
     bindings = default_bindings(settings, store, connections)
     register_orx_adapter(bindings)
     register_literature_adapters(bindings)
     bindings.register("model", LITERATURE_MODEL_ID, "1", lambda context: LiteratureEvidenceModel())
     register_orx_experiment_adapters(bindings)
     bindings.register("model", MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION, lambda context: LocalORXWorkflowModel())
+    at('PREPARATION_APP_RUNTIME_ADAPTERS')
     for entry in settings.runtime_adapters:
         bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
@@ -127,28 +146,37 @@ def create_app(settings=None):
         prices[(price.adapter_id, price.adapter_revision)] = price
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
+    at('PREPARATION_APP_USAGE_LEDGER')
     store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
+    at('PREPARATION_APP_REMOTE_BINDINGS')
     remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
     store.remote_bindings = remote_bindings
+    at('PREPARATION_APP_APPLICATIONS')
     applications = ApplicationService(store, auth)
     if settings.demo:
         applications.seed_demo()
     store.applications = applications
+    at('PREPARATION_APP_COMPOSITION')
     composition = CompositionService(store, auth, applications, bindings, connections)
     store.composition = composition
     store.register_execution_guard("execution-bindings",
         lambda owner, plan, context, tool: bindings.recheck(plan, context), tool_independent=True)
     store.register_execution_guard("application-governance",
         lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
+    at('PREPARATION_APP_NATIVE_GRAPH')
     executor, registry = build_runtime(settings, store, native_db)
+    at('PREPARATION_APP_BRIDGE')
     bridge = NativeBridge(settings, native_db, auth)
+    at('PREPARATION_APP_DELEGATION')
     delegation = DelegationService(settings, store, auth, bridge)
     delegation.initialize()
     store.delegation = delegation
+    at('PREPARATION_APP_PLAN_POLICY')
     policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
         review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
+    at('PREPARATION_APP_HANDOFF')
     handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
     handoff_client.install_guard()
     store.remote_execution = RemoteExecution(store, handoff_client)
@@ -156,10 +184,12 @@ def create_app(settings=None):
     store.handoff_receiver = receiver
     if receiver:
         receiver.install_guard()
+    at('PREPARATION_APP_SCHEDULING')
     schedules = SchedulingService(settings, store, native_db, auth, bridge)
     schedules.initialize()
     from .schedule_management import ScheduleManagement, schedule_management_router
     schedule_management = ScheduleManagement(schedules)
+    at('PREPARATION_APP_ROUTES')
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
     if receiver:
         base.include_router(receiver.router)
@@ -175,15 +205,19 @@ def create_app(settings=None):
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(schedule_management_router(auth, schedule_management))
     base.include_router(FactoryAPI(settings, store, auth, bridge).router)
+    at('PREPARATION_APP_RESOURCES')
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
+    at('PREPARATION_APP_PROCESS_RUNTIME')
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
     from .research_runtime import ResearchProcessRuntimeService
+    at('PREPARATION_APP_RESEARCH_RUNTIME')
     store.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
     if settings.research_evaluators:
         from .research_evaluation_service import ResearchEvaluationService
         store.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
     from .comparison_workflow import ComparisonService, comparison_router
+    at('PREPARATION_APP_COMPARISONS')
     store.comparisons = ComparisonService(store, auth)
     base.include_router(comparison_router(auth, store.comparisons))
     resource_maintenance = ResourceMaintenance(resources)
@@ -226,6 +260,7 @@ def create_app(settings=None):
     def favicon():
         return None
 
+    at('PREPARATION_APP_AGENTOS')
     native = AgentOS(id="agent-factory", agents=[executor], db=native_db, registry=registry,
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
@@ -234,9 +269,11 @@ def create_app(settings=None):
                          lock_grace_seconds=6, stop_timeout_seconds=2, poll_interval=settings.queue_poll,
                          timeout_seconds=60), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
+    at('PREPARATION_APP_ATTACH')
     native.add_middleware(NativeIngress)
     bridge.attach(native)
     # Start after the native DB/worker lifespans; stop before their drain.
+    at('PREPARATION_APP_OBSERVER')
     observer = FactoryLifecycleObserver(store, auth, native_db,
                                         lambda: getattr(native.state, "queue_worker", None))
     store.lifecycle_observer = observer
@@ -256,6 +293,7 @@ def create_app(settings=None):
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
     native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
         research_runtime=store.research_runtime, research_evaluation=store.research_evaluation)
+    at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge

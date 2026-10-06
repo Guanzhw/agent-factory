@@ -30,11 +30,46 @@ _KEYS = {'schema', 'ackLocalDevelopment', 'ackTraining', 'databaseUrlFile', 'wor
 # Public diagnostic vocabulary only: no exception text, arguments, traceback,
 # configuration values, paths, request identifiers or credential-derived data.
 _STAGES = frozenset({
+    'PREPARATION_APP_SETTINGS',
+    'PREPARATION_APP_NATIVE_DB',
+    'PREPARATION_APP_STORE',
+    'PREPARATION_APP_ORX_SCHEMA',
+    'PREPARATION_APP_AUTH',
+    'PREPARATION_APP_DEMO_IDENTITIES',
+    'PREPARATION_APP_STORAGE',
+    'PREPARATION_APP_EVENT_REPLAY',
+    'PREPARATION_APP_CATALOG',
+    'PREPARATION_APP_GOVERNANCE',
+    'PREPARATION_APP_DEMO_GOVERNANCE',
+    'PREPARATION_APP_CONNECTIONS',
+    'PREPARATION_APP_SYNTHESIS_SOURCES',
+    'PREPARATION_APP_BINDINGS',
+    'PREPARATION_APP_RUNTIME_ADAPTERS',
+    'PREPARATION_APP_USAGE_LEDGER',
+    'PREPARATION_APP_REMOTE_BINDINGS',
+    'PREPARATION_APP_APPLICATIONS',
+    'PREPARATION_APP_COMPOSITION',
+    'PREPARATION_APP_NATIVE_GRAPH',
+    'PREPARATION_APP_BRIDGE',
+    'PREPARATION_APP_DELEGATION',
+    'PREPARATION_APP_PLAN_POLICY',
+    'PREPARATION_APP_HANDOFF',
+    'PREPARATION_APP_SCHEDULING',
+    'PREPARATION_APP_ROUTES',
+    'PREPARATION_APP_RESOURCES',
+    'PREPARATION_APP_PROCESS_RUNTIME',
+    'PREPARATION_APP_RESEARCH_RUNTIME',
+    'PREPARATION_APP_COMPARISONS',
+    'PREPARATION_APP_AGENTOS',
+    'PREPARATION_APP_ATTACH',
+    'PREPARATION_APP_OBSERVER',
+    'PREPARATION_APP_BROWSER_AUTH',
+
     'ARGUMENTS', 'CONFIG_READ', 'CONFIG_VALIDATE', 'WORKSPACE_INSPECT',
     'WORKSPACE_CREATE', 'PROGRESS_START', 'EXECUTE', 'PROGRESS_COMPLETE', 'PROGRESS_STOPPED',
     'EXECUTION_IMPORTS', 'EXECUTION_IDENTITY', 'DATABASE_CONFIG', 'UPSTREAM_READ',
     'UPSTREAM_VERIFY', 'TOKENIZER_READ', 'RESOURCE_LIMITS', 'DEVICE_OBSERVER',
-    'PREFLIGHT', 'PREPARATION_SETTINGS', 'PREPARATION_DATABASE', 'PREPARATION_DRIVER',
+    'DATABASE_PREFLIGHT', 'ASSEMBLY_DISPOSE', 'PREFLIGHT', 'PREPARATION_SETTINGS', 'PREPARATION_DATABASE', 'PREPARATION_DRIVER',
     'PREPARATION_PROCESS_SPEC', 'PREPARATION_PROVIDER', 'PREPARATION_TARGET',
     'PREPARATION_APPLICATION_SETTINGS', 'PREPARATION_CREATE_APP', 'PREPARATION_STORE',
     'PREPARATION_ASSEMBLY_CLEANUP', 'PREPARATION_ASSEMBLY', 'PREPARATION_STARTUP', 'PREPARATION_SHUTDOWN', 'PREPARATION_PUBLICATION',
@@ -343,10 +378,86 @@ def environment_pins(config, evidence, inventory):
         FilePin(name, hashlib.sha256(raw).hexdigest(), len(raw))) for label, root, name, raw in rows)
 
 
+def runtime_identity(config):
+    import agent_factory
+    require(sys.dont_write_bytecode and Path(sys.prefix) == Path(config['venvRoot'])
+            and Path(sys.executable).resolve() == Path(config['interpreterTarget']))
+    site = Path(config['venvRoot']) / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
+    require(Path(agent_factory.__file__).parent == site / 'agent_factory')
+
+
+def database_report(config):
+    """Existing authorized DB, read-only transaction; no Store or app construction."""
+    from bootstrap_research_control import read_database_url
+    from sqlalchemy import create_engine
+    from agent_factory.config import Settings
+    from agent_factory.research_bootstrap_policy import development_settings
+    from agent_factory.research_bootstrap_database_preflight import database_preflight
+    runtime_identity(config)
+    url = read_database_url(config['databaseUrlFile'])
+    settings = development_settings(Settings(db_url=url, workspace=Path(config['workspace']),
+        max_workers=1, temporary_policy='admin-review'))
+    engine = create_engine(url, pool_size=1, max_overflow=0, pool_pre_ping=True)
+    try:
+        return database_preflight(engine, settings)
+    finally:
+        engine.dispose()
+
+
+def assemble_only(config, workspace, progress):
+    """One original application construction, without entering any lifespan."""
+    from bootstrap_research_control import read_database_url
+    from agent_factory.research_bootstrap_assembly import prepare_application
+    progress.at('EXECUTION_IDENTITY')
+    runtime_identity(config)
+    progress.at('DATABASE_CONFIG')
+    db = read_database_url(config['databaseUrlFile'])
+    progress.at('TOKENIZER_READ')
+    tokenizer = read_private(Path(config['inputRoot']) / config['tokenizerBasename'], 1024**2)
+    progress.at('PREPARATION_ASSEMBLY')
+    program, custody = workspace / 'preparation-program', workspace / 'preparation-custody'
+    program.mkdir(mode=0o700); custody.mkdir(mode=0o700)
+    bundle = None
+    try:
+        bundle = prepare_application(db_url=db, workspace=workspace, program_root=program,
+            program_identity=identity(program), custody_root=custody,
+            executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
+            tokenizer_json=tokenizer, preparation_manifest_sha256=hashlib.sha256(canonical(
+                {'schema': 1, 'purpose': 'tokenizer-preparation', 'tokenizerSha256': hashlib.sha256(tokenizer).hexdigest()})).hexdigest(),
+            diagnostics=progress)
+    except BaseException as error:
+        progress.capture(error)
+        raise
+    finally:
+        if bundle is not None:
+            progress.at('ASSEMBLY_DISPOSE')
+            # No lifespan was entered: dispose pools directly, never start a
+            # worker or scheduler in order to shut it down.
+            operations = []
+            for store in (bundle['state']['store'], bundle['providerStore']):
+                operations.extend((store.dispose_root_locks, store.engine.dispose))
+                native = getattr(store, 'native_db', None)
+                if native is not None:
+                    operations.append(native.db_engine.dispose)
+            schedules = bundle['state'].get('schedules')
+            if schedules is not None:
+                operations.extend((schedules.manager.close, schedules.lock_engine.dispose,
+                                   schedules.diagnostics.engine.dispose))
+            first = None
+            for operation in operations:
+                try:
+                    operation()
+                except BaseException as error:
+                    progress.capture(error)
+                    if first is None:
+                        first = error
+            if first is not None:
+                raise first
+
+
 def execute(config, workspace, progress):
     # Imports stay inside the explicitly acknowledged execution path. No Torch import.
     progress.at('EXECUTION_IMPORTS')
-    import agent_factory
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
     from agent_factory.research_bootstrap_assembly import prepare_application, research_application
@@ -360,10 +471,7 @@ def execute(config, workspace, progress):
     from agent_factory.research_runtime_profile import publish_research_application
     from agent_factory.research_bootstrap_controller import ResearchBootstrapController
     progress.at('EXECUTION_IDENTITY')
-    require(sys.dont_write_bytecode and Path(sys.prefix) == Path(config['venvRoot'])
-            and Path(sys.executable).resolve() == Path(config['interpreterTarget']))
-    site = Path(config['venvRoot']) / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
-    require(Path(agent_factory.__file__).parent == site / 'agent_factory')
+    runtime_identity(config)
     progress.at('DATABASE_CONFIG')
     db = read_database_url(config['databaseUrlFile'])
     progress.at('UPSTREAM_READ')
@@ -574,8 +682,9 @@ def main(argv=None, *, run=execute):
     diagnostics = Diagnostics()
     try:
         args = sys.argv[1:] if argv is None else argv
-        preflight = len(args) == 3 and args[0] == '--preflight'
-        if preflight:
+        mode = args[0] if len(args) == 3 and args[0] in {'--preflight', '--database-preflight', '--assembly-only'} else None
+        preflight = mode == '--preflight'
+        if mode is not None:
             args = args[1:]
         require(len(args) == 2 and args[0] == '--config')
         diagnostics.at('CONFIG_READ')
@@ -591,10 +700,27 @@ def main(argv=None, *, run=execute):
             print(json.dumps(report, sort_keys=True, separators=(',', ':')))
             return 2 if report['status'] == 'BLOCKED' else 0
         config = config_from_bytes(raw)
+        if mode == '--database-preflight':
+            diagnostics.at('DATABASE_PREFLIGHT')
+            logging.disable(logging.CRITICAL)
+            with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
+                    redirect_stdout(sink), redirect_stderr(sink):
+                warnings.simplefilter('ignore')
+                report = database_report(config)
+            print(json.dumps(report, sort_keys=True, separators=(',', ':')))
+            return 2 if report['status'] == 'BLOCKED' else 0
+        if mode == '--assembly-only':
+            diagnostics.at('EXECUTION_IDENTITY')
+            logging.disable(logging.CRITICAL)
+            with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
+                    redirect_stdout(sink), redirect_stderr(sink):
+                warnings.simplefilter('ignore')
+                runtime_identity(config)
         from bootstrap_research_control import _workspace
         diagnostics.at('WORKSPACE_INSPECT')
         workspace = Path(config['workspace'])
         if workspace.exists() or workspace.is_symlink():
+            require(mode != '--assembly-only')
             identity(workspace)  # Read-only recovery; never create/restart another batch.
             print('RESEARCH_BASELINE_EXISTING_INSPECT_ONLY')
             return 0
@@ -610,7 +736,15 @@ def main(argv=None, *, run=execute):
         with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
                 redirect_stdout(sink), redirect_stderr(sink):
             warnings.simplefilter('ignore')
-            run(config, workspace, progress)
+            if mode == '--assembly-only':
+                assemble_only(config, workspace, progress)
+            else:
+                run(config, workspace, progress)
+        if mode == '--assembly-only':
+            diagnostics.at('PROGRESS_COMPLETE')
+            progress.record('controller', {'phase': 'ASSEMBLY_CHECKED', 'executionVerified': False})
+            print('RESEARCH_PREPARATION_ASSEMBLED_NO_EXECUTION')
+            return 0
         diagnostics.at('PROGRESS_COMPLETE')
         progress.record('controller', {'phase': 'COMPLETED', 'scientificConclusionVerified': False})
         print('RESEARCH_BASELINE_COMPLETED_PRIVATE_EVIDENCE')

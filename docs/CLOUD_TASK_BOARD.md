@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Control/canonical policy alignment and assembly diagnosis — 2026-10-06
+
+Branch `coord/preparation-assembly-diagnosis-20261006`, based on exact PR46
+`2112b4b0246542aa488b3e13def0dbaad1c67ad1` (10/10 CI, two terminal observations).
+Target static preflight: 76 PASS / 0 BLOCKED / 2 NOT_CHECKED. Target is offline;
+no second executor, environment replacement, credential access or local PG/GPU
+work is performed. Actual failure root cause remains unconfirmed.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Shared control/canonical policy, runtime diagnostic CLI, main stages, integration | Full non-PG1716:1320pass396skip88.313s; final focused21pass1PGskip; npm196/check/audit; Ruff/Pyright0; exact CI pending |
+| at10 | Actual control-entry → real SQLite policy regressions, diagnostic boundary tests | Old wiring deterministically rejects; shared policy passes; assembly never enters lifespan |
+| factory_flow | Read-only database compatibility helper/tests | 11 pure/SQLite tests pass; new isolated-schema PG test deferred to existing CI service |
+| reviewer / independent_review | Independent lifecycle, credentials and policy review | Final approved, including isolated-schema PG acceptance test |
+
+The concrete code defect is the prior control entrypoint's legacy policy contract
+conflicting with canonical construction. That does not establish the target DB's
+contents. First inspect it with the read-only database mode after reconnection;
+retain all prior evidence. Assembly-only mode is explicitly non-read-only but
+cannot submit work. Partial constructor failures rely on the short CLI exiting;
+no positive cleanup or scientific acceptance is inferred.
+
+
 ## Preparation validation and read-only preflight — 2026-10-06
 
 Branch `coord/preparation-preflight-repair-20261006`, based on PR45 exact

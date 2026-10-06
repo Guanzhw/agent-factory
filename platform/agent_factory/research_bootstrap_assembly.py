@@ -30,21 +30,12 @@ from .research_staging import RootIdentity
 from .resources import ComputePool, RemoteTarget
 from .store import Store, digest
 
-REVISION = 'task-research-bootstrap-v1'
+from .research_bootstrap_policy import REVISION, development_settings
 
 
 def _require(value):
     if not value:
         raise ValueError('RESEARCH_BOOTSTRAP_ASSEMBLY_INVALID')
-
-
-def development_settings(settings):
-    """Keep one policy identity across the preparation and research phases."""
-    _require(settings.demo is True and settings.host == '127.0.0.1'
-             and settings.temporary_policy == 'admin-review' and settings.max_workers == 1)
-    return replace(settings, runtime_tool_contract='research-bootstrap-v1',
-        policy_revision=REVISION, material_policy_revision=REVISION,
-        plan_review_ttl_seconds=86400)
 
 
 def prepare_application(*, db_url, workspace, program_root, program_identity,
@@ -80,7 +71,7 @@ def prepare_application(*, db_url, workspace, program_root, program_identity,
         settings = development_settings(process_settings(db_url=db_url, workspace=workspace,
             target_ref='preparation', remote_targets={'preparation': target}, owner=owner))
         at('PREPARATION_CREATE_APP')
-        app = create_app(settings)
+        app = create_app(settings, diagnostics=diagnostics) if diagnostics is not None else create_app(settings)
         state = app.app.state.factory
         store = state['store']
         at('PREPARATION_STORE')

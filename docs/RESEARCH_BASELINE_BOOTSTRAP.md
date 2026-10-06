@@ -292,3 +292,69 @@ cleanup errors. These diagnostics do not change validation, budgets, approvals,
 execution or reclamation. Do not restart an old attempt or alter its historical
 `cleanupConfirmed:false`; use any subsequent execution only under the existing
 local attempt policy.
+
+### Persisted policy compatibility and assembly-only diagnosis
+
+The PR46 target preflight reported 76 PASS, zero BLOCKED, and two NOT_CHECKED:
+`DATABASE_AND_APPLICATION` and `RUNTIME_ADMISSION`. Do not recycle the passed
+static fields as unexplained suspects.
+
+A controlled regression now proves a concrete entrypoint defect: the control
+bootstrap originally initialized `material-governance-v1` / `plan-policy-v1`
+with `legacy-v1` and a 3600-second review TTL, while canonical preparation
+requested `task-research-bootstrap-v1` / `research-bootstrap-v1` and 86400 seconds.
+The real SQLite-backed governance constructors reject that sequence. Both
+entrypoints now use one shared `development_settings` contract. This fixes new
+initialization; it does **not** rewrite an already initialized database or prove
+that the target's persisted policy was the observed failure.
+
+After target reconnection, first inspect the existing authorized database:
+
+```sh
+<pinned-python> -B <source>/scripts/run_research_baseline.py --database-preflight --config <original-private-config>
+```
+
+Unlike `--preflight`, this mode reads the existing configured `databaseUrlFile`
+through the original private-file/loopback reader and connects to that database.
+It never reads an alternative password file, constructs Store/create_app,
+initializes tables, changes current revisions, or creates a workspace/executor.
+PostgreSQL queries run inside a read-only repeatable-read transaction with bounded
+statement/lock waits. The fixed JSON reports current-revision compatibility,
+registered body/hash integrity and mode; values, revisions, hashes, paths, DSN
+and exception text are never returned. Missing tables/configuration are explicitly
+NOT_CHECKED, not successful initialization. No automatic reconciliation occurs.
+An existing revision mismatch requires a separate, evidence-grounded reconciliation
+of the original policy through its native authority; do not delete the database,
+reset history, rebind immutable revisions or silently adopt a different policy.
+
+If policy compatibility is established but application construction still needs
+diagnosis, use a fresh diagnostic configuration/workspace under the same approved
+local environment and database. Preserve every original attempt:
+
+```sh
+<pinned-python> -B <source>/scripts/run_research_baseline.py --assembly-only --config <fresh-private-diagnostic-config>
+```
+
+This performs exactly one original `prepare_application` call, then exits. It
+constructs the original unstarted Agent object; it does not create a second
+execution service, enter TestClient/lifespan, start QueueWorker/scheduler/observer,
+query a GPU, publish plans, approve requests, or submit prepare/train/eval jobs.
+It **does** perform normal database/schema/identity/catalog initialization and
+create the fresh private storage namespace, so it is not a read-only operation.
+An existing workspace is rejected. Runtime identity and `-B` are checked before
+creating that workspace. No dependency installation or environment replacement
+is part of this mode.
+
+On success, all returned Store/native/scheduling pools are explicitly disposed;
+`RESEARCH_PREPARATION_ASSEMBLED_NO_EXECUTION` is not training or admission success.
+On an internal constructor failure before an app is returned, not all partially
+constructed pools are accessible to the caller. Run this as a short-lived CLI
+process and let it exit; do not import it into a persistent diagnostic server or
+claim complete explicit cleanup. The original stopped journal retains
+`cleanupConfirmed:false`. Fixed `PREPARATION_APP_*` substages distinguish native
+DB, Store, identities, storage, governance, bindings, usage, plan policy, native
+graph and AgentOS construction without inspecting exception text.
+
+Cloud regressions use synthetic/SQLite fixtures and existing installed packages.
+They do not claim to reproduce the target's exact 95-package combined environment,
+which remains unchanged and awaits actual target confirmation after reconnection.
