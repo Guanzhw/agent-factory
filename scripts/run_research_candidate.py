@@ -168,11 +168,15 @@ def preparation_phase(bundle, client, request_id, progress, journal):
         raise
 
 
-def execute(candidate_config, workspace, progress, journal):
+def execute(candidate_config, workspace, progress, journal, *, database_url_file=None, database_url=None):
     inputs = load_inputs(candidate_config)
     require(inputs['identity'] == journal.snapshot()['identity'])
     config = inputs['baselineConfig']
     config = {**config, 'workspace': str(workspace), 'requestId': candidate_config['requestId']}
+    require(database_url_file is None or database_url is None)
+    if database_url_file is not None:
+        from research_candidate_database import resolve_database
+        database_url = resolve_database(inputs, database_url_file)
     # Imports stay inside the explicitly acknowledged execution path. No Torch import.
     progress.at('EXECUTION_IMPORTS')
     from fastapi.testclient import TestClient
@@ -197,9 +201,9 @@ def execute(candidate_config, workspace, progress, journal):
     runtime_identity(config)
     # Authenticate the retained original via its real providers and evaluator
     # service before preparation or any candidate native instance is created.
-    require(authorize_baseline(inputs) == inputs['observation'])
+    db = database_url if database_url is not None else read_database_url(config['databaseUrlFile'])
+    require(authorize_baseline(inputs, database_url=db) == inputs['observation'])
     progress.at('DATABASE_CONFIG')
-    db = read_database_url(config['databaseUrlFile'])
     progress.at('UPSTREAM_READ')
     upstream = {name: read_private(Path(config['upstreamRoot']) / name, 8 * 1024**2, private=False) for name in SOURCE_SHA256}
     progress.at('UPSTREAM_VERIFY')
@@ -374,14 +378,33 @@ def main(argv=None, run=execute):
     argv = sys.argv[1:] if argv is None else argv
     previous_logging = logging.root.manager.disable
     try:
-        recovering = len(argv) == 3 and argv[0] == '--recover'
-        if recovering:
+        recovering = bool(argv) and argv[0] == '--recover'
+        preflight = bool(argv) and argv[0] == '--database-preflight'
+        if recovering or preflight:
             argv = argv[1:]
+        database_url_file = None
+        if len(argv) == 4 and argv[2] == '--database-url-file':
+            database_url_file = argv[3]
+            argv = argv[:2]
         require(len(argv) == 2 and argv[0] == '--config')
         config = config_from_bytes(read_private(argv[1]))
         from bootstrap_research_control import _workspace
         from research_candidate_recovery import CandidateJournal
         workspace = Path(config['workspace'])
+        database_url = None
+        anchored_identity = None
+        if database_url_file is not None or preflight:
+            logging.disable(logging.CRITICAL)
+            with warnings.catch_warnings(), open(os.devnull, 'w') as sink, \
+                    redirect_stdout(sink), redirect_stderr(sink):
+                warnings.simplefilter('ignore')
+                from research_candidate_database import resolve_database
+                inputs = load_inputs(config)
+                database_url = resolve_database(inputs, database_url_file)
+                anchored_identity = inputs['identity']
+            if preflight:
+                print('RESEARCH_CANDIDATE_DATABASE_BOUND_NO_EXECUTION')
+                return 0
         if recovering:
             identity(workspace)
             logging.disable(logging.CRITICAL)
@@ -390,8 +413,10 @@ def main(argv=None, run=execute):
                 warnings.simplefilter('ignore')
                 from research_candidate_recover_command import recover
                 inputs = load_inputs(config)
+                require(anchored_identity is None or inputs['identity'] == anchored_identity)
                 with CandidateJournal(workspace / 'candidate-journal.json', identity=inputs['identity']) as journal:
-                    report = recover(config, inputs, journal)
+                    report = (recover(config, inputs, journal, database_url=database_url)
+                              if database_url is not None else recover(config, inputs, journal))
             print('RESEARCH_CANDIDATE_ORIGINAL_STOP_CONFIRMED' if report['cleanupConfirmed']
                   else 'RESEARCH_CANDIDATE_ORIGINAL_CUSTODY_UNKNOWN')
             return 0 if report['cleanupConfirmed'] else 2
@@ -404,6 +429,7 @@ def main(argv=None, run=execute):
                 redirect_stdout(sink), redirect_stderr(sink):
             warnings.simplefilter('ignore')
             inputs = load_inputs(config)
+            require(anchored_identity is None or inputs['identity'] == anchored_identity)
         _workspace(str(workspace), create=True)
         with CandidateJournal(workspace / 'candidate-journal.json', identity=inputs['identity'],
                               total_seconds=config['totalSeconds']) as journal:
@@ -415,7 +441,10 @@ def main(argv=None, run=execute):
                     redirect_stdout(sink), redirect_stderr(sink):
                 warnings.simplefilter('ignore')
                 try:
-                    run(config, workspace, progress, journal)
+                    if database_url is not None:
+                        run(config, workspace, progress, journal, database_url=database_url)
+                    else:
+                        run(config, workspace, progress, journal)
                 except BaseException:
                     for stage, row in journal.snapshot()['stages'].items():
                         if row['consumed'] and row['result'] is None:

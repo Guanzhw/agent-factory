@@ -1,14 +1,34 @@
 # Cloud integration task board
 
+## Ephemeral candidate database authentication — 2026-10-07
+
+Local PR57 acceptance stopped before execution: its retained baseline config
+names an expired or different database route. The successful baseline's temporary
+auth file was removed. No local candidate stage or budget was consumed.
+
+| Owner / exclusive scope | Dependency | Acceptance / blocker |
+|---|---|---|
+| root | CLI route, read-only original-lineage anchor, baseline/recovery integration, docs and draft PR | Explicit private-file override shared in memory; original config/journal identity unchanged; 82 focused tests, Ruff/Pyright, frontend196 tests/build and dependency audit pass; exact-head CI pending |
+| toolchain_path_fix | Focused authentication tests | Twelve tests pass: one read, strict args, redaction, path rotation, unchanged identity and retained-input drift refusal |
+| candidate_support_audit | Standalone real PostgreSQL integration | Native synthetic baseline records; real CLI/auth/DB reopen, removed auth file and replacement path, wrong DB/binding rejection; standalone case passed; combined nine required cases passed in 218.066s with zero skips |
+| candidate_final_review | Independent read-only review | Final diff reviewed; no remaining blocker, 30 independent light tests passed |
+
+The override is a connection route, not permission to create credentials or new
+access. It is never persisted or included in identity hashes. Both original
+training and evaluator chains must match before workspace/state writes. An exact
+record clone has the same logical lineage; physical-server attestation is not
+claimed. No installed runtime, old config or old auth pathname is modified.
+
 ## Bounded candidate/recovery implementation — 2026-10-07
 
 External operator scripts continue PR56 without changing the installed scientific
-runtime or replaying the accepted baseline. Implementation and local acceptance are complete; final exact-head CI is pending. No GPU
+runtime or replaying the accepted baseline. Synthetic acceptance and exact-head CI
+completed on PR57; local target acceptance found the routing gap above. No GPU
 run, candidate improvement, or target recovery acceptance is claimed.
 
 | Owner / exclusive scope | Dependency | Acceptance / blocker |
 |---|---|---|
-| root | Shared state composition, integration, handoff, strict CI and draft PR | Integrated commands and handoff; draft PR57; final exact-head CI pending |
+| root | Shared state composition, integration, handoff, strict CI and draft PR | Integrated commands and handoff; draft PR57; exact c1a592aa95b9d592249e2aae292ebac1f47ffd39 CI passed twice |
 | candidate_support_audit | Candidate assembly, original-provider reopening | Original preparation/training/evaluation provider fingerprints verified; no installed runtime changes |
 | toolchain_path_fix | Single-candidate CLI and isolated CLI tests | One consumed attempt/stage, exact comparison identity, real baseline custody gate and advisory assessment |
 | target_recovery_audit | Durable invocation journal and stop-only recovery | 19 focused tests pass including repeated cancellation; shared deadline persists across reopen, no replay |

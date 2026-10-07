@@ -96,7 +96,7 @@ No inventory, directory, receipt, contract or identity is created here.
             'receipt': evaluation_receipt, 'runConfig': runconfigs['training']}
 
 
-def authorize_baseline(inputs):
+def authorize_baseline(inputs, *, database_url=None):
     """Synchronous CLI gate before candidate preparation or native startup.
 
 Reconstruction uses only original baseline files. Existing-schema service
@@ -120,7 +120,7 @@ seeds identities, publishes material, opens a lifespan or dispatches a process.
              and _canonical(captured['runConfig']) == _canonical(inputs['baselineRunConfig']))
     manifest = captured['contract']['comparisonManifest']
     _require(manifest_fingerprint(manifest) == inputs['manifestSha256'])
-    db = read_database_url(original['databaseUrlFile'])
+    db = database_url if database_url is not None else read_database_url(original['databaseUrlFile'])
     workspace = Path(original['workspace'])
     basic = development_settings(Settings(db_url=db, workspace=workspace, max_workers=1,
                                            temporary_policy='admin-review'))

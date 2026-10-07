@@ -185,6 +185,7 @@ class CandidateRunnerTests(unittest.TestCase):
              patch.object(authority, 'authorize_baseline', side_effect=ValueError('synthetic authority denied')), \
              patch.object(research_bootstrap_assembly, 'prepare_application') as prepare:
             with self.assertRaises(ValueError):
-                runner.execute(self.config, workspace, runner.Progress(workspace, journal), journal)
+                runner.execute(self.config, workspace, runner.Progress(workspace, journal), journal,
+                               database_url='postgresql+psycopg://synthetic@127.0.0.1:5432/unused')
             prepare.assert_not_called()
             self.assertTrue(all(not row['consumed'] for row in journal.snapshot()['stages'].values()))

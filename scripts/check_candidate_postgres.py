@@ -14,10 +14,11 @@ def main():
     sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
     suite = unittest.TestSuite(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern=pattern)
         for pattern in ('test_research_candidate_postgres.py', 'test_research_candidate_baseline_postgres.py',
-                        'test_research_candidate_command_postgres.py', 'test_research_candidate_execute_postgres.py'))
+                        'test_research_candidate_command_postgres.py', 'test_research_candidate_execute_postgres.py',
+                        'test_candidate_database_auth_postgres.py'))
     expected = suite.countTestCases()
-    if expected != 8:
-        print('CANDIDATE_POSTGRES_REQUIRED: expected eight acceptance cases', file=sys.stderr)
+    if expected != 9:
+        print('CANDIDATE_POSTGRES_REQUIRED: expected nine acceptance cases', file=sys.stderr)
         return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     accepted = result.wasSuccessful() and not result.skipped and result.testsRun == expected

@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 
 
-def recover(config, inputs, journal):
+def recover(config, inputs, journal, *, database_url_file=None, database_url=None):
     from bootstrap_research_control import read_database_url
     from run_research_baseline import read_private, canonical, write_private
     from run_research_candidate import decode, require
@@ -17,7 +17,11 @@ def recover(config, inputs, journal):
     require(not journal.fresh and journal.snapshot()['identity'] == inputs['identity'])
     original = {**inputs['baselineConfig'], 'workspace': config['workspace'], 'requestId': config['requestId']}
     workspace = Path(config['workspace'])
-    db = read_database_url(original['databaseUrlFile'])
+    require(database_url_file is None or database_url is None)
+    if database_url_file is not None:
+        from research_candidate_database import resolve_database
+        database_url = resolve_database(inputs, database_url_file)
+    db = database_url if database_url is not None else read_database_url(original['databaseUrlFile'])
     settings = development_settings(Settings(db_url=db, workspace=workspace, max_workers=1,
                                              temporary_policy='admin-review'))
     report = {'schema': 1, 'kind': 'candidate-original-stop-only', 'stages': {},

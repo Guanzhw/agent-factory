@@ -59,16 +59,58 @@ no-ops, other source changes, evaluator changes and a different comparison
 manifest are rejected. A candidate starts from the same initialization protocol;
 the retained baseline checkpoint is comparison evidence, not its initial state.
 
+## Ephemeral database authentication
+
+If the retained baseline configuration names a deleted temporary auth file or a
+different database, pass `--database-url-file` explicitly. Keep the original
+baseline and candidate configuration bytes unchanged. The override must point to
+a new owner-only mode0600 regular file under real absolute directories, without
+symlinks, containing the already-authorized connection URL for the database used
+by the successful baseline. Use the approved private credential reader/writer;
+do not put credentials in command arguments, shell history or captured output.
+The normal loopback PostgreSQL URL restrictions still apply. This does not create
+credentials, grant access, or restore the obsolete auth path.
+
+The file is read once per invocation; the resolved URL is shared in memory by
+baseline reauthorization and candidate state. Before workspace creation or state
+constructors, a bounded read-only transaction checks both original training and
+evaluator task/plan/native-run/process-mapping/lease/provider identities, immutable
+plan digests and comparison-manifest bindings. Wrong or missing records fail
+closed. This verifies logical database lineage, not physical-server identity:
+an exact copy of the retained records cannot be distinguished from their source.
+The full scientific baseline verifier remains required before candidate admission.
+
+The route path, URL and their hashes are excluded from configuration identity,
+journal, snapshots and receipts. The local owner manages file creation/removal;
+the harness neither stores the URL nor deletes the supplied file. After exit,
+remove that temporary auth file through the approved local procedure. A later
+recovery can use a newly created mode0600 file at a different path with current
+credentials for the same database; the original journal identity stays unchanged.
+Never rotate or rewrite the retained configuration merely to change routing.
+
 ## Commands for the authorized local owner
 
 Run with the same approved research interpreter and environment convention as the
 accepted baseline. `CANDIDATE_CONFIG` names the private config above; `SOURCE`
 names this exact reviewed source checkout; `RESEARCH_PYTHON` names the accepted
-research venv interpreter. These variables contain no database credential.
+research venv interpreter. `DATABASE_URL_FILE` names the private ephemeral auth
+file described above; these variables contain no database credential. First check
+routing without creating a candidate workspace, journal, task or allocation:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$RESEARCH_PYTHON" \
-  "$SOURCE/scripts/run_research_candidate.py" --config "$CANDIDATE_CONFIG"
+  "$SOURCE/scripts/run_research_candidate.py" --database-preflight \
+  --config "$CANDIDATE_CONFIG" --database-url-file "$DATABASE_URL_FILE"
+```
+
+Exit0 and `RESEARCH_CANDIDATE_DATABASE_BOUND_NO_EXECUTION` confirm only the
+retained database binding. They do not certify scientific readiness or consume an
+attempt. A failure prints a fixed redacted diagnostic and exits2. Then execute:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$RESEARCH_PYTHON" \
+  "$SOURCE/scripts/run_research_candidate.py" --config "$CANDIDATE_CONFIG" \
+  --database-url-file "$DATABASE_URL_FILE"
 ```
 
 Successful completion saves original training/evaluation receipts and
@@ -83,7 +125,8 @@ For an interrupted invocation, use the explicit stop-only command:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$RESEARCH_PYTHON" \
-  "$SOURCE/scripts/run_research_candidate.py" --recover --config "$CANDIDATE_CONFIG"
+  "$SOURCE/scripts/run_research_candidate.py" --recover --config "$CANDIDATE_CONFIG" \
+  --database-url-file "$DATABASE_URL_FILE"
 ```
 
 Recovery acquires the same exclusive journal lock, reconstructs only its consumed
@@ -103,6 +146,16 @@ successfully evaluated candidate. Repeated recovery may improve cleanup evidence
 but can never spend another stage attempt or renew the deadline.
 
 ## Validation boundary
+
+The standalone auth integration uses real private-file reads, subprocess CLI
+entry points and PostgreSQL records from native synthetic training/evaluation.
+It deletes the auth file after execute and reopens recovery through a new path,
+preserving retained bytes and journal identity. Execute intentionally stops at
+the unchanged scientific interpreter gate before consuming a stage; recovery
+opens actual state and writes a no-stage UNKNOWN receipt. Wrong databases and
+substituted native bindings fail before workspace creation; wrong recovery routes
+write no receipt. This specifically proves routing and reopening, not a live GPU
+candidate or successful recovery of interrupted scientific work.
 
 Unit tests cover source/variant restrictions, journal durability and repeated
 cancellation, strict config, lost ACK lookup after deadline, original provider
