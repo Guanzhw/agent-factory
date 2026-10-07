@@ -64,6 +64,7 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
             row=Mock(return_value={'body': {'candidates': {'candidate': self.candidate}}}))
         self.ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='parent', run_id='native-parent'))
         self.config = Mock(return_value=pin())
+        self.config.phase_target.return_value = SimpleNamespace(owners=frozenset({'alice'}))
         self.children = AutoResearchChildren(self.store, Mock(), self.service,
             phase_config=self.config, preparation=Mock(), checkpoints=Mock())
 
@@ -379,3 +380,19 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
         self.store.delegation._link.return_value['root_id'] = 'parent'
         self.service.current.side_effect = PermissionError('parent revoked')
         with self.assertRaises(PermissionError): self.children.require_child_custody(ctx, 'training')
+
+
+    async def test_separate_preparation_target_never_needs_new_registry_or_restoration(self):
+        self.store.process_runtime.resources.targets.clear()
+        self.store.process_runtime.resources._authorize.side_effect = AssertionError('legacy provider must not be registered')
+        with self.assertRaises(ConnectionError):
+            await self.children.experiment(self.ctx, self.candidate, 'original')
+        body = self.children._read('native-parent')
+        self.assertEqual(body['phases']['preparation']['targetFingerprint'], '3'*64)
+        self.children._restore_phase(self.ctx, 'preparation', body)
+        self.config.restore_phase.assert_not_called()
+        self.config.phase_target.assert_called_with('preparation', pin())
+        self.store.process_runtime.resources._authorize.assert_not_called()
+        self.assertEqual(self.store.process_runtime.resources.targets, {})
+        self.config.phase_target.return_value = SimpleNamespace(owners=frozenset({'bob'}))
+        with self.assertRaises(ValueError): self.children._phase_target('alice', 'preparation', pin())

@@ -40,6 +40,14 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
             except ValueError:
                 raise PermissionError('AUTORESEARCH_CHILD_AUTHORITY_ENDED') from None
             return pin['targetRef'], pin['comparisonManifest'], pin['variantSha256']
+        from .remote_scientific_profile import adapter_id as remote_adapter_id, phase_pin as remote_phase_pin
+        remote_phase = next((phase for phase in ('training', 'evaluation')
+            if selected[0].get('adapterId') == remote_adapter_id(phase, 'tool')), None)
+        if remote_phase is not None:
+            from .execution_bindings import BindingContext
+            pin = remote_phase_pin(BindingContext(self.store.settings, self.store, plan,
+                self._context(task), selected[0]), remote_phase, custody=True)
+            return pin['targetRef'], pin['comparisonManifest'], pin['variantSha256']
         config = selected[0].get("config")
         _require(type(config) is dict and set(config) == {"targetRef", "comparisonManifestSha256", "variantSha256"})
         knowledge = bindings.knowledge_for(plan, self._context(task))

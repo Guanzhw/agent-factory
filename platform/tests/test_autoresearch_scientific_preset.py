@@ -1,4 +1,6 @@
 """Synthetic source-only wiring: no baseline data, provider, controller or GPU run."""
+import asyncio
+import threading
 from dataclasses import replace
 from pathlib import Path
 import sys
@@ -47,9 +49,9 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(preset.external_session)
         with self.assertRaises(ValueError): await preset.experiment(None, self.candidate(preset), 'call')
 
-    def test_real_eleven_literal_validator_context_and_fresh_baseline(self):
+    async def test_real_eleven_literal_validator_context_and_fresh_baseline(self):
         preset = self.preset()
-        result = preset.context_reader()
+        result = await preset.context_reader()
         self.assertEqual(result['programMd'], self.files['program.md'].decode())
         self.assertEqual(result['baselineObservation'], self.observation)
         valid = self.candidate(preset)['validated']
@@ -60,9 +62,9 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
                       self.files['train.py'].decode() + '\nimport arbitrary\n'):
             with self.assertRaises(ValueError): preset.candidate_validator(train)
         self.config.baseline_reader.return_value = {**self.observation, 'comparisonIdentitySha256': 'f'*64}
-        with self.assertRaises(ValueError): preset.context_reader()
+        with self.assertRaises(ValueError): await preset.context_reader()
 
-    def test_compact_builder_rereads_verified_source_and_keeps_existing_validation(self):
+    async def test_compact_builder_rereads_verified_source_and_keeps_existing_validation(self):
         preset = self.preset()
         self.config.upstream_reader.reset_mock()
         generated = preset.candidate_builder({'EMBEDDING_LR': .25, 'ADAM_BETAS': [.8, .99]})
@@ -70,7 +72,7 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generated, self.files['train.py'].decode().replace('\nEMBEDDING_LR = 0.5',
             '\nEMBEDDING_LR = 0.25').replace('ADAM_BETAS = (0.8, 0.95)', 'ADAM_BETAS = (0.8, 0.99)'))
         self.assertFalse(preset.candidate_validator(generated)['executionVerified'])
-        info = preset.context_reader()
+        info = await preset.context_reader()
         self.assertNotIn('trainPy', info)
         self.assertEqual(len(info['candidateParameters']['allowedParameters']), 11)
         with patch.object(module, 'verify_upstream_source', side_effect=ValueError('original-source-changed')):
@@ -104,4 +106,37 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         executor.assert_awaited_once(); verifier.assert_awaited_once()
         executor.reset_mock(); current.side_effect = PermissionError('synthetic revoked')
         with self.assertRaises(PermissionError): await preset.experiment(ctx, candidate, 'denied-call')
+        executor.assert_not_awaited()
+
+
+    async def test_sync_reader_with_own_event_loop_is_offloaded_and_read_fresh(self):
+        original_thread = threading.get_ident()
+        calls = []
+        async def verified(): return dict(self.observation)
+        def reader():
+            calls.append(threading.get_ident())
+            return asyncio.run(verified())
+        self.config = replace(self.config, baseline_reader=reader)
+        preset = self.preset(subordinate_executor=AsyncMock(return_value={}), result_verifier=AsyncMock(return_value=self.result()))
+        await preset.context_reader()
+        await preset.context_reader()
+        ctx = SimpleNamespace(store=SimpleNamespace(autoresearch=SimpleNamespace(current=Mock(return_value=preset))))
+        await preset.experiment(ctx, self.candidate(preset), 'original-call')
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(thread != original_thread for thread in calls))
+
+    async def test_async_reader_is_awaited_and_current_revocation_prevents_experiment(self):
+        reader = AsyncMock(return_value=self.observation)
+        self.config = replace(self.config, baseline_reader=reader)
+        executor = AsyncMock()
+        preset = self.preset(subordinate_executor=executor, result_verifier=AsyncMock())
+        value = await preset.context_reader()
+        self.assertEqual(value['baselineObservation'], self.observation)
+        error = PermissionError('original baseline no longer readable')
+        reader.side_effect = error
+        ctx = SimpleNamespace(store=SimpleNamespace(autoresearch=SimpleNamespace(current=Mock(return_value=preset))))
+        with self.assertRaises(PermissionError) as caught:
+            await preset.experiment(ctx, self.candidate(preset), 'same-call')
+        self.assertIs(caught.exception, error)
+        self.assertEqual(reader.await_count, 2)
         executor.assert_not_awaited()

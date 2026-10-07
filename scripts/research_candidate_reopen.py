@@ -16,7 +16,7 @@ from agent_factory.research_bootstrap_assembly import _Reservation, _Evaluation
 from agent_factory.research_checkpoint_store import ResearchCheckpointStore
 from agent_factory.research_device_observer import NvidiaSmiObserver
 from agent_factory.research_environment_observer import ResearchEnvironmentObserver
-from agent_factory.research_local_driver import build_local_driver, derive_local_identities
+from agent_factory.research_local_driver import ScientificRuntimePin, build_local_driver, derive_local_identities
 from agent_factory.research_local_provider import ResearchLocalProvider
 from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
 from agent_factory.research_staging import FilePin, InputPin, RootIdentity
@@ -58,7 +58,8 @@ def _files(value):
     return {name: bytes.fromhex(raw) for name, raw in value.items()}
 
 
-def reconstruct_research_target(state, config, snapshot, *, candidate=True, owner='alice'):
+def reconstruct_research_target(state, config, snapshot, *, candidate=True, owner='alice',
+                                scientific_runtime: ScientificRuntimePin | None = None):
     """Rebuild original training/evaluation authority; caller checks persisted custody.
 
     State requires store/auth/resources/storage, with native/lifecycle services
@@ -74,7 +75,8 @@ def reconstruct_research_target(state, config, snapshot, *, candidate=True, owne
         _require(upstream == proposed)
     manifest = validate_manifest(snap['capturedInputs']['comparisonManifest'])
     _require(manifest_fingerprint(manifest) == snap['capturedInputs']['manifestSha256'])
-    derived = derive_local_identities(upstream, proposed, microbatch=snap['microbatch'])['identities']
+    derived = derive_local_identities(upstream, proposed, microbatch=snap['microbatch'],
+                                      scientific_runtime=scientific_runtime)['identities']
     variant = derived['candidate' if candidate else 'baseline']['sha256']
     _require(training is None or training['variantSha256'] == variant)
     spec_data = snap['launchSpec']
@@ -109,7 +111,7 @@ def reconstruct_research_target(state, config, snapshot, *, candidate=True, owne
         environment_pins=pins, plan_reader=store.plan, before_effect=_stop_only,
         reserve_output=reservation, evaluation_factory=resolver, environment_verifier=observer,
         launch_spec=spec, cache_root=Path(snap['cacheRoot']), cache_root_identity=RootIdentity(**snap['cacheIdentity']),
-        microbatch=snap['microbatch'])
+        microbatch=snap['microbatch'], scientific_runtime=scientific_runtime)
     provider = ResearchLocalProvider(store, Path(snap['custodyRoot']), spec, limits,
         gpu_binding=gpu, source_fingerprint=driver.configuration_fingerprint,
         manifest_fingerprint=manifest_fingerprint(manifest), observer=device, program_verifier=driver)

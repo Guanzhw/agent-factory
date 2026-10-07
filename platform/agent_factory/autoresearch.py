@@ -409,6 +409,8 @@ class AutoResearchService:
             if preset.context_reader is None:
                 raise ValueError('RESEARCH_CONTEXT_UNAVAILABLE')
             result = preset.context_reader()
+            if inspect.isawaitable(result):
+                result = await result
             self.record(ctx, 'model-instructions', '研究 agent 读取了经审批的项目说明与上下文。', accepted='instructionsRead')
         elif name == 'research_candidate':
             if type(validated) is not dict or set(validated) != {'trainPy', 'validated'}:

@@ -318,6 +318,26 @@ class RemoteBindingService:
         if proof["receiverOwner"] != root["ownerId"] or proof["receiptId"] != handoff.get("receiptId") or proof["originRef"] != handoff.get("originRef") or proof["originTaskId"] != handoff.get("originTaskId") or proof["manifestHash"] != handoff.get("manifestHash") or digest(proof["sourcePlan"]) != proof["manifestHash"]:
             raise HTTPException(409, "REMOTE_BINDING_IDENTITY: root origin manifest binding differs")
         ignored = {"id", "ownerId", "createdAt", "fingerprint"}
+        if proof['sourcePlan'].get('delegation'):
+            receiver = getattr(self.store, 'remote_scientific_receiver', None)
+            if receiver is None:
+                raise HTTPException(409, 'Scientific receiver service is unavailable')
+            phase = conn.execute(text('SELECT body FROM af_remote_scientific_phases WHERE receipt_id=:id AND owner_id=:owner'),
+                {'id': handoff['receiptId'], 'owner': root['ownerId']}).mappings().first()
+            body = phase['body'] if phase else None
+            if (body is None or digest(body['binding']) != body['bindingSha256']
+                    or body['binding']['receiptId'] != handoff['receiptId']
+                    or body['binding']['ownerId'] != root['ownerId']):
+                raise HTTPException(409, 'Scientific receiver binding is unavailable')
+            envelope = {'schema': 1, 'projectId': body['binding']['projectId'],
+                'scope': body['binding']['scope'], 'candidate': body['candidate']}
+            from .remote_scientific_origin import validate_source
+            if receiver is None or envelope is None:
+                raise HTTPException(409, 'Remote child has no scientific placement authority')
+            validate_source(proof['sourcePlan'], envelope)
+            if root.get('delegation') is not None or root.get('budget') != {**proof['sourcePlan']['budget'], 'depth': 0}:
+                raise HTTPException(409, 'Receiver scientific phase must remain a local root')
+            ignored |= {'delegation', 'budget'}
         if (set(root) - set(proof["sourcePlan"]) - {"remoteHandoff", "taskId", "runId"}
                 or any(root.get(key) != value for key, value in proof["sourcePlan"].items() if key not in ignored)):
             raise HTTPException(409, "REMOTE_BINDING_SOURCE: imported root rewrote its immutable source plan")

@@ -366,7 +366,7 @@ class DelegationService:
                 scope["executionUnavailable"] = True
         return scope
 
-    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str) -> dict[str, Any]:
+    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, scientific_placement: dict | None = None) -> dict[str, Any]:
         if not isinstance(requestId, str) or not 8 <= len(requestId) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in requestId):
             raise HTTPException(422, "A bounded delegation request ID is required")
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
@@ -374,8 +374,18 @@ class DelegationService:
         self.auth.require(owner, "run")
         self.store.require_current_policy()
         parent = self.store.task(parentTaskId, owner)
+        parent_plan = self.store.plan(parent['plan_id'], owner)
+        receiver_binding = parent_plan.get('remoteHandoff')
+        if receiver_binding and getattr(self.store, 'remote_scientific_receiver', None) is not None:
+            receipt = self.store.handoff_receiver._row(receiver_binding['receiptId'], owner)
+            if receipt['body'].get('scientificEnvelope') is not None:
+                raise HTTPException(409, 'Receiver scientific phases cannot delegate further')
         root_id, _ = self._ancestry(parent)
         request = {"owner": owner, "parent": parent["id"], "goal": goal.strip(), "mode": mode}
+        if scientific_placement is not None:
+            if getattr(self.store, 'remote_scientific', None) is None:
+                raise HTTPException(409, 'Scientific placement service is unavailable')
+            request['scientificPlacement'] = scientific_placement
         fp = digest(request)
         native_request = "delegation:" + digest({"parent": parent["id"], "request": requestId})
         fresh, duplicate = False, False
@@ -430,6 +440,21 @@ class DelegationService:
                     conn.execute(text("UPDATE af_delegation_links SET child_id=:child WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request"), {"child": task["id"], "owner": owner, "parent": parent["id"], "request": requestId})
                 link["child_id"] = task["id"]
                 self.store.event(task["id"], "delegation_bound", "Immutable child bound before native submission", binding)
+        if scientific_placement is not None:
+            plan = self.store.plan(task['plan_id'], owner)
+            envelope = self.store.remote_scientific.prepare_placement(owner, parent, task, plan, scientific_placement)
+            client = self.store.handoff_client
+            row = client.reserve(owner, plan['id'], scientific_placement['targetRef'], native_request,
+                scientific_envelope=envelope)
+            if row['state'] == 'RESERVED':
+                receipt = await client.prepare(owner, task['id'])
+                if not receipt.get('receiverReviewRequired'):
+                    receipt = await client.dispatch(owner, task['id'])
+            else:
+                # A lost acknowledgement is read-only recovery, not another dispatch.
+                receipt = await client.receipt(owner, task['id'])
+            return {'childTask': self.store.task(task['id'], owner), 'receipt': receipt,
+                    'link': link, 'duplicate': duplicate}
         receipt = None
         if fresh:
             try:
@@ -474,6 +499,19 @@ class DelegationService:
             ) SELECT * FROM descendants ORDER BY depth,created_at""", parent=parent_id)
 
     async def _facts(self, task: dict[str, Any]) -> dict[str, Any]:
+        if not task.get('run_id') and getattr(self.store, 'remote_scientific', None) is not None:
+            rows = self.store.sql('SELECT child_id FROM af_remote_scientific_origins WHERE child_id=:id AND owner_id=:owner',
+                id=task['id'], owner=task['owner_id'])
+            if rows:
+                reader = (self.store.remote_scientific.cleanup_phase if task['cancel_requested']
+                          else self.store.remote_scientific.origin_phase)
+                phase = await reader(task['owner_id'], task['id'])
+                raw = phase['status']; stopped = phase['allStopped']
+                return {'taskId': task['id'], 'ownerId': task['owner_id'], 'planId': task['plan_id'],
+                    'runId': None, 'admission': task['admission'], 'nativeStatus': raw,
+                    'snapshot': phase['receipt'], 'effects': self.store.effects(task['id']),
+                    'cancelRequested': task['cancel_requested'], 'unknown': raw == 'unknown',
+                    'failed': raw in {'failed', 'error'}, 'pending': not stopped, 'stopped': stopped}
         snapshot, unavailable = {}, False
         if task.get("run_id"):
             try:
@@ -536,6 +574,16 @@ class DelegationService:
         requested, errors = [], []
         for task in tasks:
             task = self.store.task(task["id"], owner)
+            if not task.get('run_id') and getattr(self.store, 'remote_scientific', None) is not None:
+                rows = self.store.sql('SELECT child_id FROM af_remote_scientific_origins WHERE child_id=:id AND owner_id=:owner',
+                    id=task['id'], owner=owner)
+                if rows:
+                    try:
+                        await self.store.remote_scientific.cancel_original(owner, task['id'])
+                        requested.append(task['id'])
+                    except HTTPException as error:
+                        errors.append({'taskId': task['id'], 'status': error.status_code})
+                    continue
             if not task.get("run_id"):
                 continue  # Unacknowledged admission retains capacity/UNKNOWN.
             try:

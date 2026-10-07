@@ -11,12 +11,12 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec, open_working_directory
 from agent_factory.research_bootstrap_assembly import _Reservation, _Evaluation, REVISION as BOOTSTRAP_REVISION
 from agent_factory.research_environment_observer import ResearchEnvironmentObserver
-from agent_factory.research_local_driver import _LocalDriver, build_local_driver, derive_local_identities
+from agent_factory.research_local_driver import ScientificRuntimePin, _LocalDriver, build_local_driver, derive_local_identities
 from agent_factory.research_local_provider import ResearchLocalProvider
 from agent_factory.research_evaluation_service import ResearchEvaluationService
 from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
@@ -45,10 +45,20 @@ class ScientificStage:
 class ScientificPhaseAssembler:
     def __init__(self, state, *, owner, upstream_files, captured_inputs, environment_pins,
                  stages, limits, gpu_binding, device_observer, preparation, checkpoints,
-                 preparation_target_ref, preparation_reference, microbatch=1, bounds_profile=None):
+                 preparation_target_ref, preparation_reference, microbatch=1, bounds_profile=None,
+                 scientific_runtime=None, preparation_state=None, committed_entry_reader=None):
         require(set(stages) == {'training', 'evaluation'} and all(type(v) is ScientificStage for v in stages.values())
             and type(limits) is ResearchProcessLimits and callable(device_observer))
+        require(committed_entry_reader is None or callable(committed_entry_reader))
+        self.committed_entry_reader = committed_entry_reader
+        require(scientific_runtime is None or type(scientific_runtime) is ScientificRuntimePin)
+        require(preparation_state is None or type(preparation_state) is dict)
+        self.scientific_runtime = scientific_runtime
         self.state, self.store, self.owner = state, state['store'], owner
+        self.preparation_state = state if preparation_state is None else preparation_state
+        self.preparation_store = cast(Any, self.preparation_state['store'])
+        require(preparation.store is self.preparation_store
+            and preparation.resources is self.preparation_store.process_runtime.resources)
         self.files, self.inputs = deepcopy(upstream_files), deepcopy(captured_inputs)
         self.manifest = validate_manifest(self.inputs['comparisonManifest'])
         require(manifest_fingerprint(self.manifest) == self.inputs['manifestSha256']
@@ -67,14 +77,15 @@ class ScientificPhaseAssembler:
         self.base_custody = {phase: self._directory_identity(stage.custody_root) for phase, stage in self.stages.items()}
         self.evaluation_registrations = {}
         self.evaluation_services = {}
-        target = self.store.process_runtime.resources.targets[preparation_target_ref]
+        target = self.preparation_store.process_runtime.resources.targets[preparation_target_ref]
         require(type(target.provider) is PreparationProvider and target.owners == frozenset({owner}))
         self.prep_target = target
+        self.preparation_fingerprint = self.preparation_store.process_runtime.resources._target_fingerprint(target)
 
     def _candidate(self, candidate):
         require(type(candidate) is dict and type(candidate.get('trainPy')) is str)
         files = {**self.files, 'train.py': cast(str, candidate['trainPy']).encode('utf-8')}
-        derived = derive_local_identities(self.files, files, microbatch=self.microbatch)
+        derived = derive_local_identities(self.files, files, microbatch=self.microbatch, **self._science_kwargs())
         identities = derived['identities']
         require(identities['baseline']['sha256'] == self.manifest['baselineSourceManifestSha256'])
         for field, name in (('code', 'evaluatorCode'), ('configuration', 'evaluatorConfiguration')):
@@ -92,12 +103,13 @@ class ScientificPhaseAssembler:
             and {k: pin[k] for k in ('sha256', 'sizeBytes')} == self.manifest['tokenizer']['tokenBytes'])
         binding = pin['binding']
         require(binding['ownerId'] == self.owner and binding['taskId'] == ref['taskId'])
-        runtime = self.store.process_runtime
+        original_store = getattr(self, 'preparation_store', self.store)
+        runtime = original_store.process_runtime
         original = runtime._original(ref['taskId'])
         require(original is not None and original['lease_id'] == binding['leaseId']
             and original['native_run_id'] == binding['nativeRunId'] and original['owner_id'] == self.owner)
         lease, target, task, _ = runtime._custody(binding['leaseId'])
-        plan = self.store.plan(binding['planId'], self.owner)
+        plan = original_store.plan(binding['planId'], self.owner)
         require(target is self.prep_target and lease['connectionRef'] == self.prep_ref
             and lease['ownerId'] == self.owner and lease['localTaskId'] == binding['taskId']
             and lease['nativeRunId'] == binding['nativeRunId'] and lease['planId'] == binding['planId']
@@ -106,7 +118,7 @@ class ScientificPhaseAssembler:
             and lease['state'] == 'RECLAIMED' and lease['capacityHeld'] is False
             and lease['executionStatus'] == 'COMPLETED' and type(lease['exitCode']) is int and lease['exitCode'] == 0
             and lease.get('stopEvidence', {}).get('allStopped') is True)
-        artifact, _ = self.store.artifact(ref['taskId'], ref['artifactId'])
+        artifact, _ = original_store.artifact(ref['taskId'], ref['artifactId'])
         require(artifact['id'] == ref['artifactId'] and artifact['jobId'] == ref['taskId']
             and all(artifact['provenance'].get(k) == v for k, v in binding.items()))
         # Revalidate original storage bytes and authority after reading metadata.
@@ -137,8 +149,16 @@ class ScientificPhaseAssembler:
         os.close(fd)
         return pin
 
+    def _science_kwargs(self):
+        pin = getattr(self, 'scientific_runtime', None)
+        return {'scientific_runtime': pin} if pin is not None else {}
+
+    def _science_snapshot(self):
+        pin = getattr(self, 'scientific_runtime', None)
+        return {'scientificRuntime': pin.to_dict()} if pin is not None else {}
+
     def _envelope(self):
-        return digest({'limits': asdict(self.limits), 'gpu': self.gpu.to_dict(),
+        return digest({**self._science_snapshot(), 'limits': asdict(self.limits), 'gpu': self.gpu.to_dict(),
             'observer': self.observer.configuration_fingerprint,
             'manifest': self.manifest, 'inputs': self.inputs,
             'environment': [asdict(pin) for pin in self.environment],
@@ -233,7 +253,7 @@ class ScientificPhaseAssembler:
             operator_config=inputs, environment_pins=self.environment, plan_reader=self.store.plan,
             before_effect=guard, reserve_output=reservation, evaluation_factory=evaluation,
             environment_verifier=env_verifier, launch_spec=stage.spec, cache_root=stage.cache_root,
-            cache_root_identity=stage.cache_identity, microbatch=self.microbatch)
+            cache_root_identity=stage.cache_identity, microbatch=self.microbatch, **self._science_kwargs())
         provider = ResearchLocalProvider(self.store, stage.custody_root, stage.spec, self.limits,
             gpu_binding=self.gpu, source_fingerprint=driver.configuration_fingerprint,
             manifest_fingerprint=manifest_fingerprint(self.manifest), observer=self.observer, program_verifier=driver,
@@ -246,7 +266,22 @@ class ScientificPhaseAssembler:
         self.phase_stages[pin['targetRef']] = stage
         return target
 
+    def phase_target(self, phase, pin):
+        require(phase in {'preparation', 'training', 'evaluation'})
+        if phase != 'preparation':
+            return self.store.process_runtime.resources.targets[pin['targetRef']]
+        resources = self.preparation_store.process_runtime.resources
+        require(pin['targetRef'] == self.prep_ref
+            and resources.targets.get(self.prep_ref) is self.prep_target
+            and resources._target_fingerprint(self.prep_target) == self.preparation_fingerprint)
+        return self.prep_target
+
     def _register(self, phase, candidate, prior, pin, target):
+        if phase == 'preparation' and getattr(self, 'preparation_store', self.store) is not self.store:
+            # Verification binding only. Never expose the legacy provider as an
+            # allocatable target in the independent candidate control plane.
+            require(target is self.phase_target(phase, pin))
+            return target
         resources = self.store.process_runtime.resources
         require(self.store.research_runtime.resources is resources)
         for registry in (resources.targets, self.state['settings'].remote_targets):
@@ -273,6 +308,8 @@ class ScientificPhaseAssembler:
         if phase == 'preparation':
             require(target is self.prep_target and pin['targetRef'] == self.prep_ref
                 and type(target.provider) is PreparationProvider)
+            if hasattr(self, 'preparation_store'):
+                require(target is self.phase_target(phase, pin))
             return
         provider = target.provider
         require(type(provider) is ResearchLocalProvider and provider.spec == self.phase_stages[pin['targetRef']].spec
@@ -281,7 +318,8 @@ class ScientificPhaseAssembler:
         require(type(driver) is _LocalDriver and driver._manifest == self.manifest and driver._variant == variant
             and driver._entrypoint == ('evaluate.py' if phase == 'evaluation' else 'train_candidate.py')
             and driver._generated == build_training_bundle(self.files, files, microbatch=self.microbatch)['generatedFiles']
-            and driver.configuration_fingerprint == provider._source)
+            and driver.configuration_fingerprint == provider._source
+            and getattr(driver, '_scientific_runtime', None) == getattr(self, 'scientific_runtime', None))
         driver.validate_spec(provider.spec)
         require(json.loads(driver._operator_json)['tokenBytes'] == self.inputs['operatorInputs']['tokenBytes'])
         if phase == 'evaluation':
@@ -315,9 +353,16 @@ class ScientificPhaseAssembler:
             require(driver._evaluation.training == self._training(prior, pin['variantSha256']))
 
     def _committed(self, ctx, phase, candidate, pin):
-        rows = self.store.sql('SELECT * FROM af_autoresearch_experiments WHERE parent_run_id=:run', run=ctx.run_context.run_id)
-        require(len(rows) == 1)
-        row = rows[0]
+        reader = getattr(self, 'committed_entry_reader', None)
+        if reader is None:
+            rows = self.store.sql('SELECT * FROM af_autoresearch_experiments WHERE parent_run_id=:run', run=ctx.run_context.run_id)
+            require(len(rows) == 1)
+            row = rows[0]
+        else:
+            row = reader(ctx, phase, deepcopy(candidate), deepcopy(pin))
+            require(type(row) is dict and row.get('parent_run_id') == ctx.run_context.run_id)
+        require(type(row) is dict)
+        row = cast(dict[str, Any], row)
         require(row['owner_id'] == self.owner == ctx.run_context.user_id
             and row['parent_task_id'] == ctx.run_context.session_id and row['body']['candidate'] == candidate
             and row['body']['phases'][phase]['config'] == pin)
@@ -343,7 +388,7 @@ class ScientificPhaseAssembler:
         self.verify_phase(phase, candidate, prior, pin, target)
         files, _ = self._candidate(candidate)
         captured = deepcopy(self.inputs); captured['operatorInputs'] = inputs
-        snapshot = {'schema': 1, 'kind': 'autoresearch-scientific-phase-v1', 'intent': intent,
+        snapshot = {**self._science_snapshot(), 'schema': 1, 'kind': 'autoresearch-scientific-phase-v1', 'intent': intent,
             'pin': deepcopy(pin), 'limits': asdict(self.limits), 'gpu': self.gpu.to_dict(),
             'observerFingerprint': self.observer.configuration_fingerprint, 'rootIdentities': identities,
             'poolFingerprint': cast(ComputePool, target.capacity_pool).fingerprint,
@@ -364,11 +409,12 @@ class ScientificPhaseAssembler:
         wrapped = entry.get('runtimeSnapshot')
         require(type(wrapped) is dict and wrapped.get('body') == snapshot and wrapped.get('sha256') == digest(snapshot))
         fields = {'schema', 'kind', 'intent', 'pin', 'limits', 'gpu', 'observerFingerprint', 'rootIdentities',
-            'poolFingerprint', 'providerFingerprint', 'targetFingerprint', 'launch'}
+            'poolFingerprint', 'providerFingerprint', 'targetFingerprint', 'launch'} | set(self._science_snapshot())
         require(type(snapshot) is dict and set(snapshot) == fields and type(snapshot['schema']) is int
             and snapshot['schema'] == 1 and snapshot['kind'] == 'autoresearch-scientific-phase-v1'
             and len(canonical(snapshot).encode()) <= 40 * 1024**2 and phase in {'training', 'evaluation'})
         intent = self._intent(ctx, phase, candidate)
+        require({key: snapshot[key] for key in self._science_snapshot()} == self._science_snapshot())
         require(snapshot['intent'] == intent and snapshot['pin'] == pin
             and pin['targetRef'] == 'ar-science-' + digest(intent)[:48]
             and snapshot['limits'] == asdict(self.limits) and snapshot['gpu'] == self.gpu.to_dict()

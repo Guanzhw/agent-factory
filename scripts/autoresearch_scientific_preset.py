@@ -5,6 +5,8 @@ not called here. A subordinate executor and an original-custody result verifier
 must be installed by the control plane. This module supplies neither authority
 inheritance nor evidence attestation merely because a callback returned True.
 """
+import asyncio
+import inspect
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -68,21 +70,26 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         verify_upstream_source(files)
         return dict(files)
 
-    def baseline():
-        observation = config.baseline_reader()
+    async def baseline():
+        # Legacy synchronous custody readers may run their own event loop. Run
+        # them offloop; genuinely async readers are awaited on the current loop.
+        # No observation or acceptance is cached across context/experiment calls.
+        observation = await asyncio.to_thread(config.baseline_reader)
+        if inspect.isawaitable(observation):
+            observation = await observation
         assess_observations(observation, observation)
         require(observation['status'] == 'completed'
                 and observation['comparisonIdentitySha256'] == fingerprint
                 and observation['variantSha256'] == manifest['baselineSourceManifestSha256'])
         return deepcopy(observation)
 
-    def context_reader():
-        files = upstream()
+    async def context_reader():
+        files = await asyncio.to_thread(upstream)
         return {'schema': 1, 'evidenceKind': 'approved-scientific-project-context',
             'programMd': files['program.md'].decode('utf-8'),
             'trainSha256': hashlib.sha256(files['train.py']).hexdigest(),
             'candidateParameters': parameter_context(files['train.py'], microbatch=config.microbatch),
-            'baselineObservation': baseline(), 'comparisonManifestSha256': fingerprint,
+            'baselineObservation': await baseline(), 'comparisonManifestSha256': fingerprint,
             'scientificConclusionVerified': False}
 
     def candidate_builder(changes):
@@ -104,7 +111,7 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         require(type(call_id) is str and 1 <= len(call_id) <= 200 and type(candidate) is dict
                 and set(candidate) == {'hypothesis', 'trainPy', 'validated'})
         require(candidate_validator(candidate['trainPy']) == candidate['validated'])
-        baseline()  # Original baseline still has readable, verified custody.
+        await baseline()  # Original baseline still has readable, verified custody.
         def parent_guard():
             preset = ctx.store.autoresearch.current(ctx)
             require(preset.id == config.id and preset.owner_id == config.owner_id)

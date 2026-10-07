@@ -1,8 +1,10 @@
-"""Read-only, authenticated current origin authority over operator-selected HTTP.
+"""Authenticated current origin authority over operator-selected HTTP.
 
 The receiver never supplies an endpoint, credential or owner grant through this
 protocol. A positive response checks the original persisted placement and all
 current Factory guards. Cancellation is a separately verified cleanup signal.
+The separate scientific-tool-call endpoint debits one stable protected call;
+ordinary current-authority checks never debit the scientific budget.
 """
 from __future__ import annotations
 
@@ -24,13 +26,17 @@ from .store import digest
 
 # Wire vocabulary is not a grant: both servers still check their selected
 # contract, immutable plan, exact mapping and current managed authority.
-AUTHORITY_TOOLS = {**KNOWN_TOOLS, **tools_for_contract("bounded-process-v1")}
+SCIENTIFIC_TOOLS = {name: tools_for_contract("autoresearch-session-v1")[name]
+    for name in ("research_process_run", "research_preparation_verify")}
+AUTHORITY_TOOLS = {**KNOWN_TOOLS, **tools_for_contract("bounded-process-v1"), **SCIENTIFIC_TOOLS}
 
 IDENTIFIER = r"^[A-Za-z0-9_.:-]{1,120}$"
 IDENTITY = r"^[^\x00-\x1f\x7f]{1,200}$"
 HASH = r"^[a-f0-9]{64}$"
 UUID_TEXT = r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
 PATH = "/api/factory/remote-authority/check"
+SCIENTIFIC_CUSTODY_PATH = "/api/factory/remote-authority/scientific-custody"
+SCIENTIFIC_CALL_PATH = "/api/factory/remote-authority/scientific-tool-call"
 
 
 class AuthorityCheck(BaseModel):
@@ -45,6 +51,32 @@ class AuthorityCheck(BaseModel):
     receiverIdentity: str = Field(pattern=IDENTITY)
     targetRevision: str = Field(pattern=IDENTIFIER)
     targetFingerprint: str = Field(pattern=HASH)
+
+
+class AuthorityScientificCall(AuthorityCheck):
+    tool: Literal["research_process_run", "research_preparation_verify"]
+    callId: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
+    receiverTaskId: str = Field(pattern=UUID_TEXT)
+    nativeRunId: str = Field(pattern=UUID_TEXT)
+    phaseScopeSha256: str = Field(pattern=HASH)
+
+
+class ScientificCallReply(AuthorityScientificCall):
+    outcome: Literal["consumed"]
+    callProofSha256: str = Field(pattern=HASH)
+
+
+class AuthorityScientificCustody(AuthorityCheck):
+    tool: None
+    receiverTaskId: str = Field(pattern=UUID_TEXT)
+    nativeRunId: str = Field(pattern=UUID_TEXT)
+    phaseScopeSha256: str = Field(pattern=HASH)
+    leaseId: str = Field(pattern=UUID_TEXT)
+
+
+class ScientificCustodyReply(AuthorityScientificCustody):
+    outcome: Literal["custody-readable"]
+    custodyProofSha256: str = Field(pattern=HASH)
 
 
 class AuthorityBudget(BaseModel):
@@ -101,6 +133,12 @@ class BoundedAuthorityRoute(APIRoute):
                     raise HTTPException(413, "ORIGIN_AUTHORITY_REQUEST_BOUND: bounded schema is required")
                 body.extend(chunk)
             request._body = bytes(body)
+            if request.url.path in {SCIENTIFIC_CALL_PATH, SCIENTIFIC_CUSTODY_PATH}:
+                try:
+                    json.loads(body, object_pairs_hook=OriginAuthorityTransport._json_object,
+                               parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                except (ValueError, RecursionError) as error:
+                    raise HTTPException(422, "ORIGIN_AUTHORITY_SCHEMA_INVALID: exact typed binding is required") from error
             try:
                 return await handler(request)
             except RequestValidationError as error:
@@ -112,7 +150,8 @@ def origin_authority_router(auth: Any, handoff_client: Any) -> APIRouter:
     """Install only for operator-configured origin handoff targets.
 
 Native middleware authenticates the receiver actor. Its current read grant and
-the selected per-owner receiver mapping authorize only this read-only mandate.
+the selected per-owner receiver mapping bind both endpoints. The scientific
+endpoint additionally requires the persisted phase scope and atomic debit fence.
 """
     router = APIRouter(route_class=BoundedAuthorityRoute)
 
@@ -157,6 +196,63 @@ the selected per-owner receiver mapping authorize only this read-only mandate.
         auth.require(actor, "read")
         return AuthorityReply(**body.model_dump(), outcome=outcome, authority=scope)
 
+    @router.post(SCIENTIFIC_CUSTODY_PATH, response_model=ScientificCustodyReply)
+    def scientific_custody(body: AuthorityScientificCustody, request: Request, response: Response):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Pragma"] = "no-cache"
+        actor = auth.user(request)["id"]
+        auth.require(actor, "read")
+        target = handoff_client.targets.get(body.targetRef)
+        if (target is None or target.origin_ref != body.originRef
+                or target.identity_map.get(body.originOwner) != actor or body.receiverIdentity != actor
+                or target.configuration_revision != body.targetRevision or target.fingerprint != body.targetFingerprint):
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody target differs")
+        service = getattr(handoff_client.store, "remote_scientific", None)
+        if service is None:
+            raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: custody service unavailable")
+        try:
+            proof = service.authorize_completed_custody(body.model_dump())
+            current = handoff_client.targets.get(body.targetRef)
+            if current is None or current.fingerprint != body.targetFingerprint or current.identity_map.get(body.originOwner) != actor:
+                raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody target changed")
+            auth.require(actor, "read")
+            if type(proof) is not dict or set(proof) != {"custodyProofSha256"}:
+                raise ValueError()
+            return ScientificCustodyReply(**body.model_dump(), outcome="custody-readable", **proof)
+        except HTTPException:
+            raise
+        except PermissionError as error:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: custody mandate denied") from error
+        except Exception as error:
+            raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: custody proof unavailable") from error
+
+    @router.post(SCIENTIFIC_CALL_PATH, response_model=ScientificCallReply)
+    def consume_scientific_tool(body: AuthorityScientificCall, request: Request, response: Response):
+        # Reuse every actor/configuration/placement/current-authority fence. The
+        # check remains read-only, including repeated runtime authority probes.
+        mandate = check(AuthorityCheck.model_validate(body.model_dump(include=set(AuthorityCheck.model_fields))),
+                        request, response)
+        if mandate.outcome != "authorized":
+            raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: cancelled mandate cannot debit a tool call")
+        service = getattr(handoff_client.store, "remote_scientific", None)
+        if service is None:
+            raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: scientific debit service is unavailable")
+        # The service atomically rechecks persisted scientific scope/current
+        # source authority and binds callId to one debit. An unknown HTTP reply
+        # is never permission to execute or create a replacement call identity.
+        try:
+            proof = service.consume_remote_tool(body.model_dump())
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: scientific debit outcome is unavailable") from error
+        try:
+            if not isinstance(proof, dict) or set(proof) != {"callProofSha256"}:
+                raise ValueError("Invalid scientific debit proof")
+            return ScientificCallReply(**body.model_dump(), outcome="consumed", **proof)
+        except (ValueError, ValidationError) as error:
+            raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: exact scientific debit proof is unavailable") from error
+
     return router
 
 
@@ -164,7 +260,9 @@ the selected per-owner receiver mapping authorize only this read-only mandate.
 class OriginAuthorityTransport:
     """Operator-installed synchronous guard; no retry, redirect or body credential.
 
-The native runtime invokes this in its trusted guard/tool thread. HTTP failures
+The native runtime invokes this in its trusted guard/tool thread. ``__call__``
+only reads authority; ``consume_scientific_tool`` explicitly debits a bound call.
+HTTP failures
 deny execution; only a fully bound authenticated cancellation reply raises the
 native cleanup signal. `.fingerprint` contains public configuration, never a
 bearer, callback implementation, credential handle or secret digest.
@@ -232,16 +330,81 @@ bearer, callback implementation, credential handle or secret digest.
                 targetRevision=self.target_revision, targetFingerprint=self.target_fingerprint)
         except ValidationError as error:
             raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: exact owner task/manifest/tool binding is required") from error
+        raw = self._post(owner, PATH, expected.model_dump())
+        try:
+            reply = AuthorityReply.model_validate(json.loads(raw, object_pairs_hook=self._json_object))
+        except (ValueError, ValidationError, RecursionError) as error:
+            raise HTTPException(502, "ORIGIN_AUTHORITY_RESPONSE_INVALID: exact typed authority is required") from error
+        if reply.model_dump(exclude={"outcome", "authority"}) != expected.model_dump():
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: response identity/configuration/hash differs")
+        if reply.outcome == "cancelled":
+            raise HandoffCancellationRequested(owner, task_id, manifest_hash)
+        if reply.authority is None:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: no current execution mandate")
+        return HandoffAuthority(frozenset(reply.authority.capabilities), frozenset(reply.authority.tools),
+            reply.authority.budget.model_dump(), origin_ref=self.origin_ref, target_ref=self.target_ref,
+            receiver_identity=receiver, target_revision=self.target_revision, target_fingerprint=self.target_fingerprint,
+            usage_grant_sha256=reply.authority.usageGrantSha256)
+
+    def consume_scientific_tool(self, owner: str, task_id: str, manifest_hash: str, tool: str, *,
+                               call_id: str, receiver_task_id: str, native_run_id: str,
+                               phase_scope_sha256: str) -> dict:
+        receiver = self.receiver_identity_map.get(owner)
+        if receiver is None:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: owner has no installed receiver identity")
+        try:
+            expected = AuthorityScientificCall.model_validate({"schema": 1, "originRef": self.origin_ref,
+                "targetRef": self.target_ref, "originOwner": owner, "originTaskId": task_id,
+                "manifestSha256": manifest_hash, "tool": tool, "receiverIdentity": receiver,
+                "targetRevision": self.target_revision, "targetFingerprint": self.target_fingerprint,
+                "callId": call_id, "receiverTaskId": receiver_task_id, "nativeRunId": native_run_id,
+                "phaseScopeSha256": phase_scope_sha256})
+        except ValidationError as error:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: exact scientific call binding is required") from error
+        raw = self._post(owner, SCIENTIFIC_CALL_PATH, expected.model_dump())
+        try:
+            reply = ScientificCallReply.model_validate(json.loads(raw, object_pairs_hook=self._json_object))
+        except (ValueError, ValidationError, RecursionError) as error:
+            raise HTTPException(502, "ORIGIN_AUTHORITY_RESPONSE_INVALID: exact scientific debit proof is required") from error
+        if reply.model_dump(exclude={"outcome", "callProofSha256"}) != expected.model_dump():
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: scientific debit response binding differs")
+        return reply.model_dump()
+
+    def check_scientific_custody(self, owner: str, task_id: str, manifest_hash: str, *,
+                                receiver_task_id: str, native_run_id: str,
+                                phase_scope_sha256: str, lease_id: str) -> dict:
+        try:
+            expected = AuthorityScientificCustody.model_validate({"schema": 1, "originRef": self.origin_ref,
+                "targetRef": self.target_ref, "originOwner": owner, "originTaskId": task_id,
+                "manifestSha256": manifest_hash, "tool": None, "receiverIdentity": self.receiver_identity_map.get(owner),
+                "targetRevision": self.target_revision, "targetFingerprint": self.target_fingerprint,
+                "receiverTaskId": receiver_task_id, "nativeRunId": native_run_id,
+                "phaseScopeSha256": phase_scope_sha256, "leaseId": lease_id})
+        except ValidationError as error:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: exact custody binding required") from error
+        raw = self._post(owner, SCIENTIFIC_CUSTODY_PATH, expected.model_dump())
+        try:
+            reply = ScientificCustodyReply.model_validate(json.loads(raw, object_pairs_hook=self._json_object))
+        except (ValueError, ValidationError, RecursionError) as error:
+            raise HTTPException(502, "ORIGIN_AUTHORITY_RESPONSE_INVALID: typed custody proof required") from error
+        if reply.model_dump(exclude={"outcome", "custodyProofSha256"}) != expected.model_dump():
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody response differs")
+        return reply.model_dump()
+
+    def _post(self, owner: str, path: str, body: dict) -> bytes:
+        # Fixed internal endpoint callers only; credentials never enter DTOs.
+        if path not in {PATH, SCIENTIFIC_CALL_PATH, SCIENTIFIC_CUSTODY_PATH}:
+            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: unsupported authority endpoint")
         try:
             token = self.credential_provider(owner)
             if not isinstance(token, str) or not 1 <= len(token) <= 16384 or any(char.isspace() for char in token):
                 raise ValueError("Unavailable operator credential")
         except Exception as error:
             raise HTTPException(403, "ORIGIN_AUTHORITY_AUTH_UNAVAILABLE: operator credential is unavailable") from error
-        url = self.base_url.rstrip("/") + PATH
+        url = self.base_url.rstrip("/") + path
         try:
             with httpx.Client(timeout=self.timeout_seconds, follow_redirects=False, trust_env=False) as client:
-                with client.stream("POST", url, json=expected.model_dump(), headers={"Authorization": "Bearer " + token,
+                with client.stream("POST", url, json=body, headers={"Authorization": "Bearer " + token,
                         "Accept": "application/json", "Accept-Encoding": "identity", "Cache-Control": "no-store"}) as response:
                     if response.status_code != 200:
                         raise HTTPException(403 if response.status_code in {401, 403, 404, 409, 422} else 503,
@@ -258,17 +421,4 @@ bearer, callback implementation, credential handle or secret digest.
                         raw.extend(chunk)
         except httpx.HTTPError as error:
             raise HTTPException(503, "ORIGIN_AUTHORITY_UNAVAILABLE: current origin authority cannot be reached") from error
-        try:
-            reply = AuthorityReply.model_validate(json.loads(raw, object_pairs_hook=self._json_object))
-        except (ValueError, ValidationError, RecursionError) as error:
-            raise HTTPException(502, "ORIGIN_AUTHORITY_RESPONSE_INVALID: exact typed authority is required") from error
-        if reply.model_dump(exclude={"outcome", "authority"}) != expected.model_dump():
-            raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: response identity/configuration/hash differs")
-        if reply.outcome == "cancelled":
-            raise HandoffCancellationRequested(owner, task_id, manifest_hash)
-        if reply.authority is None:
-            raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: no current execution mandate")
-        return HandoffAuthority(frozenset(reply.authority.capabilities), frozenset(reply.authority.tools),
-            reply.authority.budget.model_dump(), origin_ref=self.origin_ref, target_ref=self.target_ref,
-            receiver_identity=receiver, target_revision=self.target_revision, target_fingerprint=self.target_fingerprint,
-            usage_grant_sha256=reply.authority.usageGrantSha256)
+        return bytes(raw)

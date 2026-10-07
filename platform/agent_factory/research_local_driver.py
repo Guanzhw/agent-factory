@@ -4,7 +4,7 @@ Static source/configuration identity excludes future journal IDs. A separate
 sealed descriptor binds the actual original journal IDs at launch. No HTTP,
 process launch, imports of generated code, ML installation or lifecycle lives here.
 """
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from copy import deepcopy
 import hashlib
 import inspect
@@ -64,10 +64,49 @@ def _sync(function, *args) -> Any:
     return value
 
 
-def _runtime_pins():
-    """Read only this actually installed package; no operator substitute paths."""
+@dataclass(frozen=True)
+class ScientificRuntimePin:
+    """Operator-declared original scientific package, never imported here.
+
+    The concrete environment observer still requires this exact directory inside
+    the selected interpreter's site-packages and verifies its installed closure.
+    This pin does not establish scientific validity or trust arbitrary code.
+    """
+    package_root: str
+    root_identity: RootIdentity
+    files: tuple[FilePin, ...]
+
+    def __post_init__(self):
+        _require(type(self.package_root) is str)
+        path = Path(self.package_root)
+        _require(path.is_absolute() and str(path) == self.package_root and '..' not in path.parts
+                 and path.name == 'agent_factory' and path.parent.name == 'site-packages')
+        _require(type(self.root_identity) is RootIdentity
+                 and all(type(value) is int and value > 0 for value in asdict(self.root_identity).values()))
+        _require(type(self.files) is tuple and all(type(pin) is FilePin for pin in self.files)
+                 and tuple(pin.basename for pin in self.files) == _RUNTIME_FILES)
+
+    def to_dict(self):
+        return {'schema': 1, 'kind': 'sealed-scientific-runtime-v1', 'packageRoot': self.package_root,
+                'rootIdentity': asdict(self.root_identity), 'files': [asdict(pin) for pin in self.files]}
+
+    @classmethod
+    def from_dict(cls, value):
+        _require(type(value) is dict and set(value) == {'schema', 'kind', 'packageRoot', 'rootIdentity', 'files'}
+                 and type(value['schema']) is int and value['schema'] == 1
+                 and value['kind'] == 'sealed-scientific-runtime-v1'
+                 and type(value['rootIdentity']) is dict and set(value['rootIdentity']) == {'device', 'inode'}
+                 and type(value['files']) is list and len(value['files']) == len(_RUNTIME_FILES))
+        _require(all(type(row) is dict and set(row) == {'basename', 'sha256', 'size_bytes'} for row in value['files']))
+        return cls(value['packageRoot'], RootIdentity(**value['rootIdentity']),
+                   tuple(FilePin(**row) for row in value['files']))
+
+
+def _runtime_pins(scientific_runtime=None):
+    """Read the installed default or an explicitly pinned original science package."""
+    _require(scientific_runtime is None or type(scientific_runtime) is ScientificRuntimePin)
     nofollow, directory, nonblock = _flags()
-    package = Path(__file__).absolute().parent
+    package = Path(scientific_runtime.package_root) if scientific_runtime is not None else Path(__file__).absolute().parent
     _require('..' not in package.parts)
     fd = os.open(package.anchor, os.O_RDONLY | directory | nofollow)
     try:
@@ -80,7 +119,11 @@ def _runtime_pins():
         _require(callable(getuid))
         uid = getuid() if callable(getuid) else -1
         _require(info.st_uid == uid and not info.st_mode & 0o022)
+        if scientific_runtime is not None:
+            _require((info.st_dev, info.st_ino) == (scientific_runtime.root_identity.device,
+                                                   scientific_runtime.root_identity.inode))
         pins = []
+        stamps = {}
         for name in _RUNTIME_FILES:
             source_fd = os.open(name, os.O_RDONLY | nofollow | nonblock, dir_fd=fd)
             try:
@@ -98,10 +141,16 @@ def _runtime_pins():
                 _require(os.read(source_fd, 1) == b'' and _stamp(os.fstat(source_fd)) == _stamp(source)
                          and _stamp(os.stat(name, dir_fd=fd, follow_symlinks=False)) == _stamp(source))
                 pins.append(FilePin(name, hasher.hexdigest(), source.st_size))
+                stamps[name] = _stamp(source)
             finally:
                 os.close(source_fd)
         current = os.stat(package, follow_symlinks=False)
         _require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino))
+        if scientific_runtime is not None:
+            _require(tuple(pins) == scientific_runtime.files)
+            _require(_stamp(os.fstat(fd)) == _stamp(info))
+            _require(all(_stamp(os.stat(name, dir_fd=fd, follow_symlinks=False)) == stamp
+                         for name, stamp in stamps.items()))
         return tuple(pins)
     finally:
         os.close(fd)
@@ -128,7 +177,7 @@ def _derived_identities(bundle, runtime_pins):
     return values
 
 
-def derive_local_identities(upstream_files, candidate_files, *, microbatch=8):
+def derive_local_identities(upstream_files, candidate_files, *, microbatch=8, scientific_runtime=None):
     """Derive actual adapted identities before constructing the inert manifest.
 
     Local identities are deliberately distinct from upstream source manifests.
@@ -136,9 +185,36 @@ def derive_local_identities(upstream_files, candidate_files, *, microbatch=8):
     """
     try:
         bundle = build_training_bundle(upstream_files, candidate_files, microbatch=microbatch)
-        return {'identities': _derived_identities(bundle, _runtime_pins()),
+        return {'identities': _derived_identities(bundle, _runtime_pins(scientific_runtime)),
                 'adaptationReceipt': deepcopy(bundle['receipt'])}
     except (OSError, TypeError, ValueError, KeyError, OverflowError, RecursionError):
+        raise ValueError(ERROR) from None
+
+
+
+def derive_declared_local_identities(upstream_files, candidate_files, *, runtime_file_pins, microbatch=8):
+    """Compute commitments from declarations, without reading runtime files.
+
+    This validates the ordered file-pin contract, not possession, authenticity,
+    or installed bytes. The receiver must independently verify its sealed
+    scientific runtime and environment before admitting execution.
+    """
+    try:
+        _require(type(runtime_file_pins) is tuple
+                 and len(runtime_file_pins) == len(_RUNTIME_FILES)
+                 and all(type(pin) is FilePin for pin in runtime_file_pins))
+        # Reconstruct each immutable value to validate even manually forged
+        # instances. No paths are opened or selected from these declarations.
+        checked = tuple(FilePin(pin.basename, pin.sha256, pin.size_bytes)
+                        for pin in cast(tuple[FilePin, ...], runtime_file_pins))
+        _require(tuple(pin.basename for pin in checked) == _RUNTIME_FILES
+                 and all(pin.size_bytes <= 4 * 1024**2 for pin in checked))
+        bundle = build_training_bundle(upstream_files, candidate_files, microbatch=microbatch)
+        return {'identities': _derived_identities(bundle, checked),
+                'adaptationReceipt': deepcopy(bundle['receipt']),
+                'evidenceKind': 'declared-scientific-runtime-commitment',
+                'runtimeBytesVerified': False, 'executionVerified': False}
+    except (OSError, TypeError, ValueError, KeyError, AttributeError, OverflowError, RecursionError):
         raise ValueError(ERROR) from None
 
 
@@ -164,7 +240,7 @@ class _LocalDriver:
     def __init__(self, bundle, *, entrypoint, comparison_manifest, variant_sha256,
                  program_root, program_root_identity, operator_config, environment_pins,
                  plan_reader, before_effect, reserve_output, evaluation_factory, environment_verifier,
-                 launch_spec, cache_root, cache_root_identity):
+                 launch_spec, cache_root, cache_root_identity, scientific_runtime=None):
         _require(entrypoint in {'train_baseline.py', 'train_candidate.py', 'evaluate.py'})
         _require(type(program_root_identity) is RootIdentity and type(operator_config) is dict
                  and set(operator_config) == _BASE_KEYS and callable(plan_reader) and callable(before_effect))
@@ -181,7 +257,10 @@ class _LocalDriver:
             pin = environment[label].file
             _require({'sha256': pin.sha256, 'sizeBytes': pin.size_bytes} == manifest['environment'][key])
         receipt = bundle['receipt']
-        self._runtime = _runtime_pins()
+        self._scientific_runtime = scientific_runtime
+        self._runtime = _runtime_pins(scientific_runtime)
+        self._runtime_package = (scientific_runtime.package_root if scientific_runtime is not None
+                                 else str(Path(__file__).absolute().parent))
         derived = _derived_identities(bundle, self._runtime)
         baseline = derived['baseline']['sha256']
         candidate = derived['candidate']['sha256']
@@ -269,7 +348,7 @@ class _LocalDriver:
         try:
             _sync(self._guard)
             self.validate_spec(self._spec)
-            _require(_runtime_pins() == self._runtime)
+            _require(_runtime_pins(self._scientific_runtime) == self._runtime)
             lease = record['binding']
             plan = _sync(self._plan_reader, lease['planId'], lease['ownerId'])
             _require(type(plan) is dict and plan['id'] == lease['planId'] and plan['ownerId'] == lease['ownerId']
@@ -315,7 +394,7 @@ class _LocalDriver:
                 'runtimeKernel': deepcopy(self._manifest['environment']['runtimeKernel']),
                 'sampleSetSha256': self._manifest['dataset']['sampleSetSha256'],
                 'configurationFingerprint': self._environment_policy,
-                'launchSpec': asdict(self._spec), 'trustedRuntimePackage': str(Path(__file__).absolute().parent),
+                'launchSpec': asdict(self._spec), 'trustedRuntimePackage': self._runtime_package,
                 'trustedRuntimeFiles': [asdict(pin) for pin in self._runtime],
                 'runtimeConfig': deepcopy(config),
                 'environmentPins': [asdict(pin) for pin in self._environment]}
@@ -342,7 +421,7 @@ class _LocalDriver:
                 _require(SEAL in existing)  # Never adopt a partial/unknown staging root.
             phase = 'staged-program-verification'
             verified = verify_staged_program(self._root, descriptor)
-            _require(_runtime_pins() == self._runtime)
+            _require(_runtime_pins(self._scientific_runtime) == self._runtime)
             _sync(self._guard)
             return {'schema': 1, 'descriptorSha256': verified['descriptorSha256'],
                 'sourceSha256': self.configuration_fingerprint, 'manifestSha256': manifest_sha,
@@ -356,7 +435,7 @@ def build_local_driver(upstream_files, candidate_files, *, entrypoint, compariso
                        variant_sha256, program_root, program_root_identity, operator_config,
                        environment_pins, plan_reader, before_effect, reserve_output=None,
                        evaluation_factory=None, environment_verifier=None, launch_spec=None,
-                       cache_root=None, cache_root_identity=None, microbatch=8):
+                       cache_root=None, cache_root_identity=None, microbatch=8, scientific_runtime=None):
     """Adapt pinned source bytes offline; return a trusted launch-verifier closure.
 
     Callback/configuration arguments belong only to operator bootstrap code.
@@ -373,6 +452,6 @@ def build_local_driver(upstream_files, candidate_files, *, entrypoint, compariso
             environment_pins=environment_pins, plan_reader=plan_reader, before_effect=before_effect,
             reserve_output=reserve_output, evaluation_factory=evaluation_factory,
             environment_verifier=environment_verifier, launch_spec=launch_spec,
-            cache_root=cache_root, cache_root_identity=cache_root_identity)
+            cache_root=cache_root, cache_root_identity=cache_root_identity, scientific_runtime=scientific_runtime)
     except (OSError, TypeError, ValueError, KeyError, OverflowError, RecursionError):
         raise ValueError(ERROR) from None

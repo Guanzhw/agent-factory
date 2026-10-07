@@ -26,6 +26,10 @@ _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _MARKER = ".allocation.json"
 
 
+class LocalComputeBusy(ValueError):
+    """Pinned custody is held by another operation; no new observation exists."""
+
+
 def _require(value):
     if not value:
         raise ValueError("LOCAL_COMPUTE_UNCONFIRMED")
@@ -93,7 +97,8 @@ class LocalWorkspaceProvider:
                     fcntl.flock(root_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    _require(time.monotonic() < deadline)
+                    if time.monotonic() >= deadline:
+                        raise LocalComputeBusy("LOCAL_COMPUTE_UNCONFIRMED") from None
                     time.sleep(.005)
             yield
 

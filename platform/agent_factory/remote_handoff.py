@@ -15,7 +15,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
 from agno.exceptions import RunCancelledException
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -158,13 +158,22 @@ def plan_manifest(plan: Mapping[str, Any]) -> dict[str, Any]:
     return {"plan": body, "sha256": digest(body)}
 
 
-def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: bool = False) -> dict[str, Any]:
+def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: bool = False, scientific_envelope: dict | None = None) -> dict[str, Any]:
     if set(manifest) != {"plan", "sha256"} or not isinstance(manifest.get("plan"), dict):
         raise HTTPException(422, "An exact immutable plan manifest is required")
     plan = copy.deepcopy(manifest["plan"])
     if len(canonical(manifest).encode()) > 524288 or digest(plan) != manifest.get("sha256"):
         raise HTTPException(409, "Immutable manifest integrity mismatch")
-    if set(plan) - {"usageBudget"} not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
+    scientific = scientific_envelope is not None
+    if scientific:
+        if getattr(store, 'remote_scientific_receiver' if receiver else 'remote_scientific', None) is None:
+            raise HTTPException(409, 'Scientific placement service is unavailable')
+        from .remote_scientific_origin import validate_source
+        validate_source(plan, scientific_envelope)
+        if not receiver:
+            store.remote_scientific.validate_source(plan, scientific_envelope)
+    optional = {'usageBudget'} | ({'delegation'} if scientific else set())
+    if set(plan) - optional not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
         raise HTTPException(409, "Remote handoff requires a complete ready root plan owned by the origin user")
     if plan.get("fingerprint") != digest({key: value for key, value in plan.items()
                                          if key not in {"id", "createdAt", "fingerprint"}}):
@@ -183,7 +192,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(422, "Manifest contains an unregistered remote tool")
     if not isinstance(caps, list) or any(type(cap) is not str for cap in caps) or set(caps) != {known_tools[name] for name in tools}:
         raise HTTPException(422, "Manifest capability scope does not exactly match registered tools")
-    if not isinstance(budget, dict) or set(budget) != BUDGET_KEYS | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != 0:
+    if not isinstance(budget, dict) or set(budget) != BUDGET_KEYS | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != (1 if scientific else 0):
         raise HTTPException(422, "Only a root delegation tree may select an execution server")
     _check_budget({key: budget[key] for key in BUDGET_KEYS})
     if not isinstance(plan.get("instructions"), list) or any(type(item) is not str or len(item) > 16000 for item in plan["instructions"]):
@@ -199,7 +208,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(422, "Remote tool order differs from the immutable tool scope")
     if "usageBudget" in plan:
         _usage_commitment(plan["usageBudget"], bindings=plan.get("executionBindings"))
-    if set(plan) - {"usageBudget"} == PLAN_KEYS | ASSEMBLY_KEYS:
+    if set(plan) - optional == PLAN_KEYS | ASSEMBLY_KEYS:
         applications = getattr(store, "applications", None)
         bindings = getattr(store, "execution_bindings", None)
         if applications is None or bindings is None:
@@ -256,6 +265,7 @@ class PrepareBody(BaseModel):
     originTaskId: UUID
     requestId: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{8,100}$")
     manifest: dict[str, Any]
+    scientificEnvelope: dict[str, Any] | None = None
 
 
 class DispatchBody(BaseModel):
@@ -374,7 +384,7 @@ class PreparedHandoffService:
 
     def prepare(self, remote_owner: str, body: PrepareBody) -> dict[str, Any]:
         origin = self._origin(remote_owner, body.originRef, body.originOwnerId)
-        source = _manifest(body.manifest, self.store, body.originOwnerId, receiver=True)
+        source = _manifest(body.manifest, self.store, body.originOwnerId, receiver=True, scientific_envelope=body.scientificEnvelope)
         origin_task = str(body.originTaskId)
         key = digest({"origin": body.originRef, "owner": body.originOwnerId, "request": body.requestId})
         task_key = digest({"origin": body.originRef, "task": origin_task})
@@ -385,10 +395,17 @@ class PreparedHandoffService:
                 row = rows[0]
                 if len(rows) != 1 or row["remote_owner"] != remote_owner or row["origin_task"] != origin_task or row["origin_owner"] != body.originOwnerId or row["request_id"] != body.requestId or row["manifest_hash"] != body.manifest["sha256"]:
                     raise HTTPException(409, "IDEMPOTENCY_CONFLICT: original handoff identity or manifest changed")
+                if row['body'].get('scientificEnvelope') != body.scientificEnvelope:
+                    raise HTTPException(409, 'Original scientific placement changed')
                 self._check_row(row, remote_owner)
             else:
                 authority = self._authority(origin, body.originOwnerId, origin_task, body.manifest["sha256"], source)
                 identifier, plan_id = str(uuid4()), str(uuid4())
+                if body.scientificEnvelope is not None:
+                    # A crash after inert phase/binding metadata but before the
+                    # handoff row must reopen the same original identities.
+                    identifier = str(uuid5(NAMESPACE_URL, 'agent-factory:scientific-receipt:' + key))
+                    plan_id = str(uuid5(NAMESPACE_URL, 'agent-factory:scientific-plan:' + key))
                 service = getattr(self.store, "remote_bindings", None)
                 if service is None:
                     raise HTTPException(409, "Receiver binding proof service is unavailable")
@@ -406,8 +423,14 @@ class PreparedHandoffService:
                             "remoteHandoff": {"receiptId": identifier, "originRef": body.originRef,
                                               "originTaskId": origin_task, "manifestHash": body.manifest["sha256"],
                                               "bindingProofSha256": proof["sha256"]}}
+                if body.scientificEnvelope is not None:
+                    self.store.remote_scientific_receiver.prepare_binding(identifier, source, body.scientificEnvelope, remote_owner)
+                    imported.pop('delegation')
+                    imported['budget'] = {**source['budget'], 'depth': 0}
                 imported["fingerprint"] = digest({k: v for k, v in imported.items() if k not in {"id", "createdAt", "fingerprint"}})
                 saved = {"manifest": body.manifest, "remotePlan": imported, "remoteTaskId": None, "createdAt": now()}
+                if body.scientificEnvelope is not None:
+                    saved['scientificEnvelope'] = copy.deepcopy(body.scientificEnvelope)
                 ledger = getattr(self.store, "usage_ledger", None)
                 if ledger is not None:
                     effective = self.store.execution_bindings.manifest(imported)
@@ -443,6 +466,9 @@ class PreparedHandoffService:
                 self.store.sql("UPDATE af_remote_handoffs SET state='PREPARED',body=CAST(:body AS JSONB) WHERE id=:id AND state='PREPARING'",
                                id=row["id"], body=canonical(saved))
                 self.store.event(task["id"], "remote_prepared", "Remote immutable plan reserved without native execution", {"receiptId": row["id"], "originRef": body.originRef})
+            if body.scientificEnvelope is not None:
+                current = self._row(row['id'], remote_owner)
+                self.store.remote_scientific_receiver.bind_task(row['id'], self._task(current))
             return self._public(self._row(row["id"], remote_owner))
 
     def _process_evidence(self, row, receipt):
@@ -478,6 +504,9 @@ class PreparedHandoffService:
                    if "receiverUsageCommitment" in row["body"] else {}),
                 **({"usageGrant": {"id": row["body"]["usageGrant"]["id"], "sha256": row["body"]["usageGrant"]["sha256"]}}
                    if "usageGrant" in row["body"] else {})}
+        if row['body'].get('scientificEnvelope') is not None:
+            from .remote_scientific_evidence import project_scientific_evidence
+            result['scientificEvidence'] = project_scientific_evidence(result, scope=row['body']['scientificEnvelope']['scope'])
         result.update(self._process_evidence(row, result))
         return result
 
@@ -526,6 +555,12 @@ class PreparedHandoffService:
                 # facts when trusted cleanup follows an earlier failure.
                 failed = group["parent"]["failed"] or any(child["failed"] for child in group["children"])
                 application_status = ("failed" if failed else "canceled") if group["allStopped"] else "unknown" if group["unknown"] else "canceling"
+        if row['body'].get('scientificEnvelope') is not None:
+            self.store.remote_scientific_receiver.bind_task(identifier, task)
+            result['scientificEvidence'] = await self.store.remote_scientific_receiver.project_evidence(result)
+            no_dispatch = self.store.remote_scientific_receiver.no_dispatch_proof(result)
+            if no_dispatch is not None:
+                result['scientificNoDispatch'] = no_dispatch
         result.update(effects=effects, artifacts=self.store.artifacts(task["id"]), group=group,
                       applicationStatus=application_status,
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
@@ -535,6 +570,16 @@ class PreparedHandoffService:
             result["allStopped"] = False
             if raw in {"completed", "failed", "cancelled", "error"}:
                 result["applicationStatus"] = "unknown"
+        if row['body'].get('scientificEnvelope') is not None and result['allStopped']:
+            from .remote_scientific_evidence import scientific_stopped, scientific_native_stopped
+            scope = row['body']['scientificEnvelope']['scope']
+            if row['state'] != 'CANCELLED_NO_DISPATCH' and not scientific_native_stopped(result):
+                result['allStopped'] = False
+            if (raw == 'completed' and not task['cancel_requested']
+                    and self.store.remote_scientific_receiver._read(identifier)['state'] != 'COMPLETED'):
+                result['allStopped'] = False
+            if scope['phase'] != 'preparation' and row['state'] != 'CANCELLED_NO_DISPATCH':
+                result['allStopped'] = result['allStopped'] and scientific_stopped(result, expected_scope=scope)
         if row["body"].get("usageGrant") is not None:
             result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
                 all_stopped=result["allStopped"])
@@ -596,6 +641,8 @@ class PreparedHandoffService:
         delegation = getattr(self.store, "delegation", None)
         if delegation is None:
             raise HTTPException(503, "Receiver descendant/experiment cancellation service is unavailable")
+        if row['body'].get('scientificEnvelope') is not None and task.get('run_id'):
+            self.store.remote_scientific_receiver.cancel_before_dispatch(remote_owner, task['id'])
         group = await delegation.cascade_cancel(remote_owner, task["id"])
         return {**group, "receipt": await self.receipt(remote_owner, identifier)}
 
@@ -777,6 +824,23 @@ class PreparedHandoffService:
         async def by_request(request: Request, originRef: str, originOwnerId: str, requestId: str):
             return await self.by_request(owner(request), originRef, originOwnerId, requestId)
 
+        @self.router.get('/scientific-projects/{project_id}/baseline')
+        async def scientific_baseline(project_id: str, request: Request, projectPin: str):
+            service = getattr(self.store, 'remote_scientific_receiver', None)
+            if service is None:
+                raise HTTPException(404, 'Scientific project is unavailable')
+            return await service.project_baseline(owner(request), project_id, projectPin)
+
+        @self.router.post('/{identifier}/scientific-drive')
+        async def scientific_drive(identifier: str, request: Request):
+            identity = owner(request, True)
+            row = self._row(identifier, identity)
+            self._check_row(row, identity)
+            if row['body'].get('scientificEnvelope') is None:
+                raise HTTPException(409, 'Scientific placement is unavailable')
+            await self.store.remote_scientific_receiver.start_drive(identity, self._task(row)['id'])
+            return await self.receipt(identity, identifier)
+
         @self.router.get("/{identifier}")
         async def receipt(identifier: str, request: Request):
             return await self.receipt(owner(request), identifier)
@@ -870,7 +934,7 @@ class TrustedHandoffClient:
             request_id TEXT NOT NULL, manifest_hash TEXT NOT NULL, configuration_hash TEXT NOT NULL,
             state TEXT NOT NULL, body JSONB NOT NULL, UNIQUE(owner_id,request_id))""")
 
-    def reserve(self, owner: str, plan_id: str, target_ref: str, request_id: str) -> dict[str, Any]:
+    def reserve(self, owner: str, plan_id: str, target_ref: str, request_id: str, *, scientific_envelope: dict | None = None) -> dict[str, Any]:
         self.auth.require(owner, "run")
         self.store.require_current_policy()
         target = self.targets.get(target_ref)
@@ -879,24 +943,32 @@ class TrustedHandoffClient:
         if not REQUEST.fullmatch(request_id):
             raise HTTPException(422, "A bounded stable remote request key is required")
         plan = self.store.plan(plan_id, owner)
-        _manifest(plan_manifest(plan), self.store, owner)
-        if self.admission_guard:
+        _manifest(plan_manifest(plan), self.store, owner, scientific_envelope=scientific_envelope)
+        if scientific_envelope is not None:
+            self.store.require_plan_execution(owner, plan, scientific_child_id=scientific_envelope['scope']['originChildTaskId'])
+        elif self.admission_guard:
             self.admission_guard(owner, plan)
         # Child placement is deliberately unsupported: its root-selected server
         # owns the whole shared-budget/authority tree until cross-server fencing.
-        if plan.get("delegation") or plan.get("remoteHandoff"):
+        if plan.get("remoteHandoff") or (plan.get("delegation") and scientific_envelope is None):
             raise HTTPException(409, "Delegation must stay on its initially selected receiver")
         task, _ = self.store.reserve_task(plan, request_id)
         if task.get("run_id"):
             raise HTTPException(409, "A locally executing task cannot switch execution servers")
+        if scientific_envelope is not None and task['id'] != scientific_envelope['scope']['originChildTaskId']:
+            raise HTTPException(409, 'Scientific placement must retain original child reservation')
         manifest = plan_manifest(plan)
         saved = {"manifest": manifest, "receipt": None, "dispatchAttempted": False, "createdAt": now()}
+        if scientific_envelope is not None:
+            saved['scientificEnvelope'] = copy.deepcopy(scientific_envelope)
         rows = self.store.sql("INSERT INTO af_remote_placements VALUES(:task,:owner,:target,:request,:manifest,:configuration,'RESERVED',CAST(:body AS JSONB)) ON CONFLICT DO NOTHING RETURNING task_id",
                               task=task["id"], owner=owner, target=target_ref, request=request_id,
                               manifest=manifest["sha256"], configuration=target.fingerprint, body=canonical(saved))
         row = self._row(owner, task["id"])
         if row["target_ref"] != target_ref or row["manifest_hash"] != manifest["sha256"] or row["configuration_hash"] != target.fingerprint:
             raise HTTPException(409, "IDEMPOTENCY_CONFLICT: initially selected server or manifest changed")
+        if row['body'].get('scientificEnvelope') != scientific_envelope:
+            raise HTTPException(409, 'Original scientific placement changed')
         if rows:
             self.store.event(task["id"], "remote_selected", "One receiver selected; origin has a metadata reservation and no native run", {"targetRef": target_ref})
         return row
@@ -926,7 +998,11 @@ class TrustedHandoffClient:
             if native_cancellation and not self.store.failure_cleanup_requested(task["id"]) and not self.store.has_failures(task["id"]):
                 raise HandoffCancellationRequested(owner, task["id"], row["manifest_hash"])
             raise HTTPException(409, "Origin task/manifest authority is unavailable")
-        if execution and self.admission_guard:
+        if execution and row['body'].get('scientificEnvelope') is not None:
+            self.store.remote_scientific.assert_authority(owner, row['task_id'])
+        if execution and row['body'].get('scientificEnvelope') is not None:
+            self.store.require_plan_execution(owner, plan, scientific_child_id=row['task_id'])
+        elif execution and self.admission_guard:
             self.admission_guard(owner, plan)
         return target
 
@@ -1040,12 +1116,35 @@ class TrustedHandoffClient:
                     effective[kind] = entry["effectiveSpec"]
             effective["sha256"] = digest(effective)
             _usage_commitment(quote, bindings=effective)
-        with self.store.engine.begin() as connection:
+        with self.store.transaction() as connection:
             current = connection.execute(text("SELECT * FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner FOR UPDATE"),
                                          {"id": row["task_id"], "owner": row["owner_id"]}).mappings().first()
             if current is None:
                 raise HTTPException(404, "Owner-bound remote placement disappeared")
             previous = current["body"].get("receipt")
+            if receipt.get('state') == 'CANCELLED_NO_DISPATCH' and (receipt.get('remoteRunId')
+                    or previous and previous.get('remoteRunId')):
+                raise HTTPException(409, 'Pre-admission cancellation cannot replace an original native ticket')
+            envelope = current['body'].get('scientificEnvelope')
+            if envelope is not None:
+                if ('scientificClaimsRetained' in receipt
+                        and type(receipt['scientificClaimsRetained']) is not bool):
+                    raise HTTPException(409, 'Scientific retained-claim annotation must be boolean')
+                from .remote_scientific_evidence import validate_scientific_evidence
+                scientific = validate_scientific_evidence(dict(receipt), expected_scope=envelope['scope'], previous=previous)
+                if receipt.get('state') == 'CANCELLED_NO_DISPATCH' and any(scientific[key] is not None
+                        for key in ('lease', 'launchProof', 'checkpoint', 'evaluation', 'preparation')):
+                    raise HTTPException(409, 'Pre-admission cancellation cannot replace scientific custody')
+                self.store.remote_scientific.validate_received_native(row['owner_id'], row['task_id'], receipt)
+                if receipt.get('allStopped') is True and receipt.get('state') != 'CANCELLED_NO_DISPATCH':
+                    from .remote_scientific_evidence import scientific_stopped, scientific_native_stopped
+                    if not scientific_native_stopped(dict(receipt)):
+                        raise HTTPException(409, 'Scientific stop requires original native terminal evidence')
+                    if envelope['scope']['phase'] != 'preparation' and not scientific_stopped(dict(receipt), expected_scope=envelope['scope']):
+                        raise HTTPException(409, 'Scientific stop requires process and GPU release evidence')
+
+            elif any(key in receipt for key in ('scientificEvidence', 'scientificNoDispatch', 'scientificClaimsRetained')):
+                raise HTTPException(409, 'Unexpected scientific evidence outside selected placement')
             if "bounded_process_run" in original.get("tools", []):
                 from .remote_process_evidence import validate_process_evidence
                 try:
@@ -1109,7 +1208,8 @@ class TrustedHandoffClient:
         self.store.sql("UPDATE af_remote_placements SET state='PREPARE_UNKNOWN' WHERE task_id=:id", id=task_id)
         receipt = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/prepare", json={
             "originRef": target.origin_ref, "originOwnerId": owner, "originTaskId": task_id,
-            "requestId": row["request_id"], "manifest": row["body"]["manifest"]})
+            "requestId": row["request_id"], "manifest": row["body"]["manifest"],
+            **({'scientificEnvelope': row['body']['scientificEnvelope']} if 'scientificEnvelope' in row['body'] else {})})
         return self._save_receipt(row, target, receipt)
 
     async def receipt(self, owner: str, task_id: str) -> dict[str, Any]:
@@ -1182,6 +1282,47 @@ class TrustedHandoffClient:
         if not isinstance(result, dict) or not isinstance(result.get("receipt"), dict):
             raise HTTPException(502, "Remote cancellation has no scoped receipt")
         self._save_receipt(self._row(owner, task_id), target, result["receipt"])
+        return result
+
+    def _scientific_cleanup_target(self, owner, task_id, expected_scope):
+        # Internal original-custody cleanup only. Never used by public read/run routes.
+        row = self._row(owner, task_id)
+        envelope = row['body'].get('scientificEnvelope')
+        task = self.store.task(task_id, owner)
+        plan = self.store.plan(task['plan_id'], owner)
+        service = getattr(self.store, 'remote_scientific', None)
+        if (service is None or envelope is None or envelope['scope'] != expected_scope
+                or not task['cancel_requested'] or task.get('run_id') or digest(plan) != row['manifest_hash']):
+            raise HTTPException(409, 'Original scientific cleanup binding is unavailable')
+        service.validate_source(plan, envelope)
+        target = self.targets.get(row['target_ref'])
+        if target is None or owner not in target.identity_map or target.fingerprint != row['configuration_hash']:
+            raise HTTPException(409, 'Original scientific cleanup target changed')
+        return row, target
+
+    async def scientific_cleanup_receipt(self, owner, task_id, *, expected_scope):
+        row, target = self._scientific_cleanup_target(owner, task_id, expected_scope)
+        previous = row['body'].get('receipt')
+        if previous:
+            receipt = await self._request(owner, target, 'GET', '/api/factory/remote-handoffs/' + quote(previous['id'], safe=''))
+        else:
+            receipt = await self._request(owner, target, 'GET', '/api/factory/remote-handoffs/receipts/by-request',
+                params={'originRef': target.origin_ref, 'originOwnerId': owner, 'requestId': row['request_id']})
+        return self._save_receipt(row, target, receipt)
+
+    async def cancel_scientific_original(self, owner, task_id, *, expected_scope):
+        row = self._row(owner, task_id)
+        envelope = row['body'].get('scientificEnvelope')
+        if envelope is None or envelope['scope'] != expected_scope:
+            raise HTTPException(409, 'Original scientific cleanup scope changed')
+        self.store.remote_scientific.validate_source(self.store.plan(self.store.task(task_id, owner)['plan_id'], owner), envelope)
+        self.store.request_cancel(task_id)
+        row, target = self._scientific_cleanup_target(owner, task_id, expected_scope)
+        receipt = row['body'].get('receipt') or await self.scientific_cleanup_receipt(owner, task_id, expected_scope=expected_scope)
+        result = await self._request(owner, target, 'POST', '/api/factory/remote-handoffs/' + quote(receipt['id'], safe='') + '/cancel')
+        if not isinstance(result, dict) or not isinstance(result.get('receipt'), dict):
+            raise HTTPException(502, 'Remote scientific cancellation has no original receipt')
+        self._save_receipt(self._row(owner, task_id), target, result['receipt'])
         return result
 
     def _control_result(self, owner, row, target, value, remote_task_id):

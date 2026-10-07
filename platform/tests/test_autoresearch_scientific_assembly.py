@@ -371,6 +371,51 @@ class PhaseNamespaceTests(unittest.TestCase):
             self.assertTrue(swapped)
             value._build.assert_not_called()
 
+    def test_explicit_scientific_pin_snapshot_roundtrip_and_default_shape_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('agent_factory.process_enforcement.interpreter_module', return_value=SimpleNamespace(validate_interpreter_contract=Mock())), \
+             patch.object(module, 'PersistentResourceService'):
+            value = self.fixture(Path(directory))
+            self.assertEqual(value._science_kwargs(), {})
+            self.assertEqual(value._science_snapshot(), {})
+            original_envelope = value._envelope()
+            science = module.ScientificRuntimePin('/sealed/site-packages/agent_factory', module.RootIdentity(1, 2),
+                tuple(FilePin(name, 'a'*64, 1) for name in local_driver._RUNTIME_FILES))
+            value.scientific_runtime = science
+            self.assertNotEqual(value._envelope(), original_envelope)
+            self.assertIs(value._science_kwargs()['scientific_runtime'], science)
+            ctx = self.context(); candidate = {'trainPy': 'candidate'}
+            pin = value('training', candidate, {}, context=ctx)
+            entry, persist = self.commit(value, ctx, candidate, pin)
+            target = value.register_phase(ctx, 'training', candidate, {}, pin, persist_snapshot=persist)
+            snapshot = entry['runtimeSnapshot']['body']
+            self.assertEqual(snapshot['scientificRuntime'], science.to_dict())
+            value.store.process_runtime.resources.targets.clear(); value.state['settings'].remote_targets.clear()
+            restored = value.restore_phase(ctx, 'training', candidate, {}, pin, snapshot)
+            self.assertEqual(restored.fingerprint, target.fingerprint)
+            value.scientific_runtime = None
+            with self.assertRaises(ValueError): value.restore_phase(ctx, 'training', candidate, {}, pin, snapshot)
+
+
+    def test_driver_construction_receives_explicit_science_pin_without_importing_package(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('agent_factory.process_enforcement.interpreter_module', return_value=SimpleNamespace(validate_interpreter_contract=Mock())):
+            value = self.fixture(Path(directory))
+            value.scientific_runtime = module.ScientificRuntimePin('/sealed/site-packages/agent_factory', module.RootIdentity(1, 2),
+                tuple(FilePin(name, 'a'*64, 1) for name in local_driver._RUNTIME_FILES))
+            value.environment = tuple(SimpleNamespace(label=label) for label in ('environment-inventory', 'environment-kernel'))
+            value.store.plan = Mock()
+            driver = SimpleNamespace(configuration_fingerprint='a'*64)
+            with patch.object(module, 'ResearchEnvironmentObserver'), \
+                 patch.object(module, 'build_local_driver', return_value=driver) as build, \
+                 patch.object(module, 'ResearchLocalProvider') as provider, patch.object(module, 'RemoteTarget'):
+                module.ScientificPhaseAssembler._build(value, 'training', {'trainPy': 'candidate'}, {},
+                    {'targetRef': 'original'}, value.stages['training'], {'tokenBytes': {'id': 'retained-original'}}, None)
+                self.assertIs(build.call_args.kwargs['scientific_runtime'], value.scientific_runtime)
+                self.assertIs(provider.call_args.kwargs['program_verifier'], driver)
+                self.assertFalse(provider.call_args.kwargs['stop_only'])
+
+
 
 class RestoredProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_actual_restored_provider_denies_before_any_journal_or_callback(self):
@@ -382,3 +427,72 @@ class RestoredProviderTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'RESEARCH_RESTORED_DISPATCH_FORBIDDEN'):
             await provider.allocate_bound({}, before_effect=callback)
         callback.assert_not_called()
+
+
+class SeparatePreparationStateTests(unittest.TestCase):
+    def test_original_store_receipt_and_target_never_copied_to_candidate_registry(self):
+        value, _, token, artifact = PreparationReceiptTests().fixture()
+        original_store = value.store
+        original_resources = SimpleNamespace(targets={value.prep_ref: value.prep_target},
+            _target_fingerprint=Mock(return_value='a'*64))
+        original_store.process_runtime.resources = original_resources
+        value.preparation_store = original_store
+        value.preparation_fingerprint = 'a'*64
+        new_resources = SimpleNamespace(targets={})
+        value.store = SimpleNamespace(process_runtime=SimpleNamespace(resources=new_resources),
+            plan=Mock(side_effect=AssertionError('no legacy plan copied')), artifact=Mock(side_effect=AssertionError('no legacy artifact copied')))
+        value.state = {'settings': SimpleNamespace(remote_targets={})}
+        receipt = value.preparation_receipt()
+        self.assertEqual(receipt['artifact'], artifact)
+        self.assertEqual(receipt['execution']['taskId'], token['binding']['taskId'])
+        pin = {'targetRef': value.prep_ref}
+        self.assertIs(value.phase_target('preparation', pin), value.prep_target)
+        self.assertIs(value._register('preparation', {}, {}, pin, value.prep_target), value.prep_target)
+        self.assertEqual(new_resources.targets, {})
+        self.assertEqual(value.state['settings'].remote_targets, {})
+        value.store.plan.assert_not_called(); value.store.artifact.assert_not_called()
+        original_resources._target_fingerprint.return_value = 'b'*64
+        with self.assertRaises(ValueError): value.phase_target('preparation', pin)
+
+    def test_candidate_identity_derivation_receives_explicit_original_science_pin(self):
+        value = object.__new__(module.ScientificPhaseAssembler)
+        value.files, value.microbatch, value.manifest = {'train.py': b'original'}, 1, example_manifest()
+        science = module.ScientificRuntimePin('/sealed/site-packages/agent_factory', module.RootIdentity(1, 2),
+            tuple(FilePin(name, 'a'*64, 1) for name in local_driver._RUNTIME_FILES))
+        value.scientific_runtime = science
+        result = {'identities': {'baseline': {'sha256': value.manifest['baselineSourceManifestSha256']},
+            'candidate': {'sha256': 'b'*64}, 'evaluatorCode': value.manifest['evaluator']['code'],
+            'evaluatorConfiguration': value.manifest['evaluator']['configuration']}}
+        with patch.object(module, 'derive_local_identities', return_value=result) as derive:
+            value._candidate({'trainPy': 'candidate'})
+            self.assertIs(derive.call_args.kwargs['scientific_runtime'], science)
+        with patch.object(module, 'build_training_bundle', return_value={'generatedFiles': {'train_candidate.py': b'fixed'}}):
+            owner, driver, target, pin = ScientificAssemblyTests().fixture()
+            owner.scientific_runtime = science
+            with self.assertRaises(ValueError): owner.verify_authority('training', {'trainPy': 'candidate'}, {}, pin, target)
+            driver._scientific_runtime = science
+            owner.verify_authority('training', {'trainPy': 'candidate'}, {}, pin, target)
+
+
+class CommittedEntryReaderTests(unittest.TestCase):
+    def test_optional_reader_preserves_owner_parent_candidate_config_checks_without_local_sql(self):
+        value = object.__new__(module.ScientificPhaseAssembler)
+        value.owner = 'alice'
+        value.store = SimpleNamespace(sql=Mock(side_effect=AssertionError('journal belongs to parent service')))
+        ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='parent', run_id='run'))
+        candidate, pin = {'trainPy': 'original'}, {'targetRef': 'original'}
+        row = {'parent_run_id': 'run', 'owner_id': 'alice', 'parent_task_id': 'parent', 'body': {'candidate': candidate,
+            'phases': {'training': {'config': pin, 'runtimeSnapshot': {'synthetic': True}}}}}
+        value.committed_entry_reader = Mock(return_value=deepcopy(row))
+        self.assertEqual(value._committed(ctx, 'training', candidate, pin), row['body']['phases']['training'])
+        value.committed_entry_reader.assert_called_once_with(ctx, 'training', candidate, pin)
+        value.store.sql.assert_not_called()
+        for change in ('run', 'owner', 'parent', 'candidate', 'config'):
+            bad = deepcopy(row)
+            if change == 'run': bad['parent_run_id'] = 'other-run'
+            if change == 'owner': bad['owner_id'] = 'bob'
+            if change == 'parent': bad['parent_task_id'] = 'other'
+            if change == 'candidate': bad['body']['candidate'] = {}
+            if change == 'config': bad['body']['phases']['training']['config'] = {}
+            value.committed_entry_reader.return_value = bad
+            with self.subTest(change=change), self.assertRaises(ValueError): value._committed(ctx, 'training', candidate, pin)

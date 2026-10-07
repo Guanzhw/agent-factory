@@ -63,6 +63,9 @@ class Store:
         self.comparisons: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
+        self.handoff_client: Any = None
+        self.remote_scientific: Any = None
+        self.remote_scientific_receiver: Any = None
         self.handoff_receiver: Any = None
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
@@ -384,12 +387,13 @@ class Store:
         else:
             self.tool_independent_execution_guards.pop(name, None)
 
-    def require_plan_execution(self, owner, plan, *, run_context=None):
+    def require_plan_execution(self, owner, plan, *, run_context=None, scientific_child_id=None):
         self.require_current_policy()
         if self.auth is not None:
             self.auth.require(owner, "run")
         if self.plan_policy is not None:
-            self.plan_policy.require_execution(owner, self.plan(plan["id"], owner), run_context=run_context)
+            self.plan_policy.require_execution(owner, self.plan(plan["id"], owner), run_context=run_context,
+                **({'scientific_child_id': scientific_child_id} if scientific_child_id is not None else {}))
         checked = {}
         for name, guard in self.execution_guards.items():
             guard(owner, plan, run_context, None)

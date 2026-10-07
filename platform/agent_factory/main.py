@@ -179,6 +179,7 @@ def create_app(settings=None, *, diagnostics=None):
     at('PREPARATION_APP_HANDOFF')
     handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
     handoff_client.install_guard()
+    store.handoff_client = handoff_client
     store.remote_execution = RemoteExecution(store, handoff_client)
     receiver = PreparedHandoffService(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
     store.handoff_receiver = receiver
@@ -228,10 +229,22 @@ def create_app(settings=None, *, diagnostics=None):
     if settings.research_evaluators:
         from .research_evaluation_service import ResearchEvaluationService
         store.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
+    if settings.remote_scientific_factory is not None:
+        from .remote_scientific_origin import RemoteScientificOrigin
+        from .remote_scientific_receiver import RemoteScientificReceiver
+        scientific = settings.remote_scientific_factory(store, auth, resources, handoff_client,
+            receiver, factory_api.commands)
+        if type(scientific) is RemoteScientificOrigin:
+            store.remote_scientific = scientific
+        elif type(scientific) is RemoteScientificReceiver:
+            store.remote_scientific_receiver = scientific
+        else:
+            raise ValueError('REMOTE_SCIENTIFIC_SERVICE_INVALID')
     if settings.autoresearch_children_factory is not None:
         from .autoresearch_children import AutoResearchChildren
         children = settings.autoresearch_children_factory(store, auth, store.autoresearch, resources)
-        if type(children) is not AutoResearchChildren:
+        from .autoresearch_remote_children import AutoResearchRemoteChildren
+        if type(children) not in (AutoResearchChildren, AutoResearchRemoteChildren):
             raise ValueError('AUTORESEARCH_CHILD_SERVICE_INVALID')
         store.autoresearch_children = children
     from .comparison_workflow import ComparisonService, comparison_router
@@ -305,6 +318,8 @@ def create_app(settings=None, *, diagnostics=None):
                     try:
                         yield state or {}
                     finally:
+                        if store.remote_scientific_receiver is not None:
+                            await store.remote_scientific_receiver.close()
                         await store.autoresearch_session_control.close()
         finally:
             # Observer and native worker finish before their shared lock pool.

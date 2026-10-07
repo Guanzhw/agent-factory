@@ -1,5 +1,59 @@
 # Cloud integration task board
 
+## Active remote scientific bootstrap implementation
+
+Branch `feat/autoresearch-remote-scientific-bootstrap-20261007` builds on accepted
+PR59 exact `e842b0ff37114efeddcf79e356fcc7c73706a76c`. Cloud retains ORX/Go
+scientific decisions and credentials; one pinned receiver owns three bounded
+scientific phases. Original baseline custody lives in a separate database and
+workspace. The sealed real baseline is neither rerun nor rewritten. No new live
+model request, listener, trust setup, credential persistence or deployment occurs.
+
+| Owner | Exclusive scope | State / dependency |
+|---|---|---|
+| root | Core policy, placement, handoff, final acceptance and exact CI | Integrated; native acceptance passed; final exact-head CI pending |
+| go_adapter | Sealed runtime pins, baseline context, concrete operator bindings | Implemented; 19 concrete bootstrap tests passed; external operator inputs still required |
+| at10 | Fresh baseline reader, preparation separation, independent policy review | Implemented; 40 assembly/children checks plus independent custody and handoff regressions passed |
+| candidate_support_audit | Evidence, receiver phases, bounded durable drive lifecycle | Implemented; no replay after UNKNOWN; fresh stop proof separated from retained artifact claims |
+| go_policy | Origin journal, parent authority, shared debit, baseline proxy | Implemented; three actual PostgreSQL debit/receipt race cases passed |
+| factory_flow | Operator CLI, remote coordinator, three-database native fixture | Implemented; three-database native fixture passed (655.732s) |
+| independent review | Authorization, cleanup, catalogue identity, exact CI | Focused review active; final exact-head review pending |
+
+The controlled fixture uses three isolated databases/apps: original preparation,
+new receiver and cloud origin. It exercises real native queues, original process
+receipts, checkpoint/evaluation services and ASGI handoff transport. GPU observations
+and scientific payloads are synthetic. It injects one lost drive acknowledgment,
+checks three metadata-only source children and bounded shared debits, reconstructs
+the receiver service over original custody, and checks completed-task cleanup.
+This does not prove cross-host transport, process restart or active-training cancel.
+
+Integration fixes preserve immutable publication snapshot identity, native queue
+identity (`id`), original lease custody during typed local lock contention, and
+atomic first-native pin/receipt persistence. Network reads run outside journal
+row locks. Terminal training checkpoint reads use a separate authenticated,
+read-only custody proof; they do not reopen source execution authority. Retained
+artifact claims cannot establish stop: fresh original native, lease and GPU proof
+remain required. All scientific phase journals must close before successful
+completion can release capacity.
+
+Current local evidence: legacy remote handoff 24/24 actual PostgreSQL tests
+(243.313s), remote bindings 10/10 (31.736s), local scientific native fixture
+(287.143s), process runtime 9/9 (67.053s), and debit concurrency 3/3 (0.919s).
+Frontend 203 tests/build and dependency audits passed. These earlier regressions
+are supporting evidence, not substitutes for the current exact-head gate.
+The final three-database native fixture passed in 655.732s with zero skips,
+including all three original receipts, one lost drive acknowledgment, result read
+before decision, receiver service reconstruction and completed-task cleanup.
+Independent focused review passed 98 tests; Linux and Windows Pyright reported
+zero errors; Ruff and diff whitespace checks passed. The required PostgreSQL
+AutoResearch gate expects eleven tests with zero skips. Final exact CI is pending.
+
+Production identity, existing authorized bidirectional trust/connectivity, a real
+GPU candidate, live literature retrieval and target-host capacity acceptance remain
+external requirements. New controlled evidence must never relabel them as passed.
+
+## Historical acceptance and earlier integration notes
+
 Head `6ecea10` passed both required PostgreSQL gates but was rejected by Windows
 Python: the real-time 200ms GET-retry fixture sometimes observed only one read.
 The retry deadline test now deterministically expires the original real asyncio

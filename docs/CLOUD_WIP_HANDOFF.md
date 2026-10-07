@@ -1,5 +1,27 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Active continuation — remote scientific bootstrap (2026-10-07)
+
+Current branch: `feat/autoresearch-remote-scientific-bootstrap-20261007`, based on
+PR59 `e842b0ff37114efeddcf79e356fcc7c73706a76c` (ten exact-head CI jobs accepted).
+Earlier sections below are historical and do not describe current acceptance.
+Read the top of `CLOUD_TASK_BOARD.md` and `AUTORESEARCH_REMOTE_OPERATOR.md` first.
+
+The new cloud coordinator uses original delegated metadata children (no invented
+native tickets), a pinned receiver, three scientific phases, durable once-only
+drive intents, shared tool debits, original process/GPU custody, and a separately
+sealed scientific runtime. The retained real baseline is not rerun or rewritten.
+Controller/receiver bootstrap requires operator-reviewed matching publication
+snapshots, explicit existing trust and private local configuration. Examples
+are inert synthetic templates, not production credentials or run receipts.
+
+Current validation is isolated and synthetic. The three-database native fixture
+passed in 655.732s with zero skips. The eleven-case required PostgreSQL gate and
+final exact-head CI remain pending. Production identity, authorized bidirectional connectivity, real
+GPU candidate execution and live scientific literature remain separate acceptance
+requirements. Do not infer them from mock constructors or local ASGI transport.
+
+
 Head `6ecea10` passed both required PostgreSQL gates but was rejected by Windows
 Python: the real-time 200ms GET-retry fixture sometimes observed only one read.
 The retry deadline test now deterministically expires the original real asyncio

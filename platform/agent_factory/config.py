@@ -53,6 +53,7 @@ class Settings:
     # Trusted operator presets; never populated from request JSON.
     autoresearch_presets: dict = field(default_factory=dict)
     autoresearch_children_factory: Callable | None = field(default=None, repr=False)
+    remote_scientific_factory: Callable | None = field(default=None, repr=False)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
     remote_binding_mappings: dict = field(default_factory=dict)

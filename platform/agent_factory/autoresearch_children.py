@@ -57,6 +57,7 @@ class AutoResearchChildren:
                 and callable(getattr(phase_config, 'verify_authority', None))
                 and callable(getattr(phase_config, 'preparation_receipt', None))
                 and callable(getattr(phase_config, 'evaluation_service', None))
+                and callable(getattr(phase_config, 'phase_target', None))
                 and callable(getattr(phase_config, 'restore_phase', None)) and type(poll_seconds) in {int, float} and .01 <= poll_seconds <= 1)
         self.store, self.auth, self.service = store, auth, service
         self.phase_config, self.preparation, self.checkpoints = phase_config, preparation, checkpoints
@@ -111,7 +112,21 @@ class AutoResearchChildren:
         require(len(updated) == 1)
         return deepcopy(snapshot)
 
+    def _phase_target(self, owner, phase, pin):
+        if phase != 'preparation':
+            return self.store.process_runtime.resources._authorize(owner, pin['targetRef'])
+        # The original producer can belong to a separate legacy control plane.
+        # Resolve only its verified readonly reference, never register its provider.
+        self.auth.require(owner, 'run')
+        target = self.phase_config.phase_target(phase, deepcopy(pin))
+        require(not inspect.isawaitable(target) and owner in target.owners)
+        return target
+
     def _restore_phase(self, ctx, phase, body):
+        if phase == 'preparation':
+            # This child only verifies retained input. There is no local process
+            # allocation or runtime snapshot to reconstruct in the new database.
+            return
         entry = body['phases'][phase]
         resources = self.store.process_runtime.resources
         if entry['config']['targetRef'] in resources.targets:
@@ -211,7 +226,7 @@ class AutoResearchChildren:
         pin = phase_pin(entry['config'])
         resources = self.store.process_runtime.resources
         self._restore_phase(context, phase, body)
-        target = resources._authorize(run.user_id, pin['targetRef'])
+        target = self._phase_target(run.user_id, phase, pin)
         require(resources._target_fingerprint(target) == entry['targetFingerprint'])
         # Authority resolution also runs inside checkpoint metadata transactions.
         # Artifact retention belongs to registration, original launch and result
@@ -379,7 +394,7 @@ class AutoResearchChildren:
                     persist_snapshot=lambda snapshot: self._persist_snapshot(ctx, phase, config, snapshot))
                 require(not inspect.isawaitable(registered))
                 resources = self.store.process_runtime.resources
-                target = resources._authorize(task['owner_id'], config['targetRef'])
+                target = self._phase_target(task['owner_id'], phase, config)
                 self._verify_phase(ctx, phase, body, target)
                 body = self._bound(ctx); entry = body['phases'][phase]
                 entry['targetFingerprint'] = resources._target_fingerprint(target)
@@ -422,7 +437,7 @@ class AutoResearchChildren:
             if phase == 'preparation':
                 require(self.store.process_runtime._original(child['id']) is None)
                 require(entry['receipt'] == self._preparation_receipt(child))
-                target = self.store.process_runtime.resources._authorize(owner, entry['config']['targetRef'])
+                target = self._phase_target(owner, phase, entry['config'])
                 require(self.store.process_runtime.resources._target_fingerprint(target) == entry['targetFingerprint'])
                 self._verify_phase(ctx, phase, body, target)
                 continue

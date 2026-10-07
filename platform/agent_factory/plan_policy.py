@@ -486,7 +486,33 @@ class PlanPolicyService:
         connection = context.get() if context is not None else None
         return nullcontext(cast(Connection, connection)) if connection is not None else self.store.engine.connect()
 
-    def require_execution(self, owner: str, plan: str | Mapping, *, run_context: Any = None) -> dict:
+    def require_execution(self, owner: str, plan: str | Mapping, *, run_context: Any = None, scientific_child_id: str | None = None) -> dict:
+        return self._require_authorization(owner, plan, run_context=run_context,
+                                           scientific_child_id=scientific_child_id)
+
+    def require_scientific_custody(self, owner: str, plan: str | Mapping, *, scientific_child_id: str) -> dict:
+        """Read one completed training child's custody under its current parent.
+
+        This deliberately returns no execution approval. Native admission and
+        tool entrypoints continue through require_execution, which rejects the
+        completed child.
+        """
+        checked = self._require_authorization(owner, plan, scientific_child_id=scientific_child_id,
+                                              scientific_custody=True)
+        current = self._plan(owner, plan)
+        bindings = getattr(self.store, 'execution_bindings', None)
+        if bindings is not None:
+            bindings.recheck(current)
+        governance = getattr(self.store, 'material_governance', None)
+        if governance is not None:
+            governance.require_materials_current(current)
+        for guard in tuple(self.store.execution_guards.values()):
+            guard(owner, current, None, None)
+        return {'custodyReadable': True, 'ownerId': owner, 'planId': current['id'],
+                'planDigest': checked['planDigest']}
+
+    def _require_authorization(self, owner: str, plan: str | Mapping, *, run_context: Any = None,
+                               scientific_child_id: str | None = None, scientific_custody: bool = False) -> dict:
         self.auth.require(owner, "run")
         configuration_guard = getattr(self.store, "require_current_policy", None)
         if configuration_guard is not None:
@@ -497,12 +523,33 @@ class PlanPolicyService:
         with self._execution_connection() as scope_connection:
             scope_config = self._current(scope_connection)
         self._scope(current_plan, scope_config)
+        if scientific_child_id is not None and not current_plan.get('delegation'):
+            raise HTTPException(409, 'Scientific placement requires a delegated source plan')
         review_plan = current_plan
         inherited = False
         if current_plan.get("delegation"):
-            if self.ancestor_guard is None or run_context is None:
-                raise HTTPException(409, "DELEGATION_POLICY_UNBOUND: current persisted ancestor proof required")
-            ancestors = self.ancestor_guard(owner, current_plan, run_context)
+            if scientific_child_id is not None:
+                service = getattr(self.store, 'remote_scientific', None)
+                child = self.store.task(scientific_child_id, owner)
+                if (service is None or run_context is not None or child.get('run_id') or child['plan_id'] != current_plan['id']
+                        or child['cancel_requested'] or bool(child['terminal']) != scientific_custody
+                        or self.store.has_failures(child['id'])):
+                    raise HTTPException(409, 'Scientific placement requires its original metadata child')
+                if scientific_custody and current_plan.get('mode') != 'remote-scientific-training':
+                    raise HTTPException(409, 'Scientific custody is limited to completed original training')
+                row = service._row(owner, scientific_child_id)
+                service.validate_source(current_plan, row['body']['envelope'])
+                parent = self.store.task(row['parent_id'], owner)
+                link = self.store.delegation._link(scientific_child_id)
+                if (not link or link['parent_id'] != parent['id'] or link['root_id'] != parent['id']
+                        or type(link['depth']) is not int or link['depth'] != 1 or link['owner_id'] != owner
+                        or link['child_id'] != child['id'] or link['plan_id'] != current_plan['id']):
+                    raise HTTPException(409, 'Scientific placement ancestry changed')
+                _, ancestors = self.store.delegation._mandate(owner, parent)
+            else:
+                if self.ancestor_guard is None or run_context is None:
+                    raise HTTPException(409, "DELEGATION_POLICY_UNBOUND: current persisted ancestor proof required")
+                ancestors = self.ancestor_guard(owner, current_plan, run_context)
             if not ancestors or ancestors[-1].get("delegation"):
                 raise HTTPException(403, "Delegation approval root is unavailable")
             for ancestor in ancestors:

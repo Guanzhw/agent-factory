@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from .local_compute import LocalComputeBusy
 from .resource_maintenance import ResourceMaintenance
 from .resources import TERMINAL
 from .store import canonical, digest, now
@@ -171,7 +172,15 @@ class ProcessRuntimeService:
         if lease["state"] == "RECLAIMED":
             return lease
         reason = self._reason(lease, task, ticket)
-        lease = await self._read(lease_id)
+        try:
+            lease = await self._read(lease_id)
+        except LocalComputeBusy:
+            # Allocation may still hold the original custody lock. Preserve the
+            # last durable observation and capacity; a busy read proves no stop
+            # and must not trigger another effect or replace the original lease.
+            latest, current, _, _ = self._custody(lease_id)
+            _require(current is target)
+            return latest
         if reason is not None and lease["state"] not in TERMINAL | {"RECLAIMED", "RECLAIMING"}:
             lease, fresh = self.resources._claim_effect(lease["ownerId"], lease_id, "cancelAck", "CANCEL_REQUESTED", reason=reason)
             if fresh:
