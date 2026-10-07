@@ -76,3 +76,10 @@
 .schedules-panel article { margin-block: 1rem; }
 .schedules-panel input { max-width: 100%; }
 .schedules-panel .material-row { grid-template-columns: minmax(0, 1fr); }
+
+.autoresearch .composer { max-width: 900px; }
+.autoresearch .composer dl { display: flex; flex-wrap: wrap; gap: 16px 28px; margin: 24px 0; }
+.autoresearch .composer dt { color: var(--muted); font-size: 12px; }
+.autoresearch .composer dd { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
+.autoresearch-progress { padding: 24px; margin-bottom: 18px; min-height: auto; }
+.autoresearch-progress li { margin-bottom: 8px; }

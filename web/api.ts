@@ -291,6 +291,13 @@ async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ prop
 }
 
 export const api = {
+  autoresearch: {
+    presets: (signal?: AbortSignal) => request<unknown>('/autoresearch/presets', 'GET', undefined, signal),
+    start: (input: { presetId: string; goal?: string; requestId: string }, signal?: AbortSignal) => request<unknown>('/autoresearch/runs', 'POST', input, signal),
+    get: (id: string, signal?: AbortSignal) => request<unknown>(`/autoresearch/runs/${segment(id)}`, 'GET', undefined, signal),
+    recover: (id: string, signal?: AbortSignal) => request<unknown>(`/autoresearch/requests/${segment(id)}`, 'GET', undefined, signal),
+    cancel: (id: string, input: { requestId: string }, signal?: AbortSignal) => request<unknown>(`/autoresearch/runs/${segment(id)}/cancel`, 'POST', input, signal),
+  },
   scheduleDiagnostics: {
     list: (after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/diagnostic-schedules${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
     page: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/diagnostics${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),

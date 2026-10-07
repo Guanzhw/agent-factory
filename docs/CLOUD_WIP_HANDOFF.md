@@ -1,5 +1,15 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Goal-driven research session checkpoint — 2026-10-07
+
+Current branch `feat/autoresearch-goal-session-20261007` continues PR58 exact
+`d8449295535111947006b62030263efffd161906`. Read the
+[session integration handoff](AUTORESEARCH_SESSION.md) and current task board
+first. The scientific autonomous application is **not yet accepted**. Existing
+candidate/baseline runners prove controlled execution and custody; their fixture
+models do not prove autonomous hypothesis generation. Older current sections
+below are historical.
+
 ## Current research custody checkpoint — 2026-10-06
 
 Current integration branch: `coord/research-custody-runtime-20261006`, based on

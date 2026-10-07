@@ -204,7 +204,11 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(schedule_management_router(auth, schedule_management))
-    base.include_router(FactoryAPI(settings, store, auth, bridge).router)
+    factory_api = FactoryAPI(settings, store, auth, bridge)
+    base.include_router(factory_api.router)
+    from .autoresearch import AutoResearchService, autoresearch_router
+    store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
+    base.include_router(autoresearch_router(auth, store.autoresearch))
     at('PREPARATION_APP_RESOURCES')
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
@@ -265,9 +269,9 @@ def create_app(settings=None, *, diagnostics=None):
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
                          max_queue_depth=settings.max_queued,
-                         max_attempts=1 if settings.development_live_validation else 2, retry_delay_seconds=0,
+                         max_attempts=1 if settings.development_live_validation or settings.runtime_tool_contract == "autoresearch-session-v1" else 2, retry_delay_seconds=0,
                          lock_grace_seconds=6, stop_timeout_seconds=2, poll_interval=settings.queue_poll,
-                         timeout_seconds=60), telemetry=False, mcp=False, scheduler=False,
+                         timeout_seconds=settings.native_timeout_seconds), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     at('PREPARATION_APP_ATTACH')
     native.add_middleware(NativeIngress)

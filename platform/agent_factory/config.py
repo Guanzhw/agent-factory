@@ -28,6 +28,7 @@ class Settings:
     max_user_tasks: int = 2
     max_total_tasks: int = 12
     queue_poll: float = 0.2
+    native_timeout_seconds: int = 60
     max_tool_calls: int = 8
     experiment_timeout_seconds: int = 8
     experiment_output_bytes: int = 65536
@@ -49,6 +50,8 @@ class Settings:
     remote_targets: dict = field(default_factory=dict)
     # Operator-only evaluator manifest digests mapped to existing fixed targets.
     research_evaluators: dict = field(default_factory=dict)
+    # Trusted operator presets; never populated from request JSON.
+    autoresearch_presets: dict = field(default_factory=dict)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
     remote_binding_mappings: dict = field(default_factory=dict)
@@ -65,6 +68,8 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
+            raise ValueError("Native task timeout must be 60 through 3600 seconds")
         if type(self.source_synthesis_enabled) is not bool or (self.source_synthesis_enabled
                 and (self.demo is not True or self.temporary_policy != "admin-review")):
             raise ValueError("Controlled source synthesis requires explicit demo mode and independent plan review")
@@ -96,7 +101,7 @@ class Settings:
             raise ValueError("Storage budgets must be positive")
         if self.storage_retention_grace_seconds < (0 if self.demo else 60):
             raise ValueError("Production retention needs a positive recovery window")
-        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1"}:
+        if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1", "autoresearch-session-v1"}:
             raise ValueError("Unsupported runtime tool contract")
         if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")

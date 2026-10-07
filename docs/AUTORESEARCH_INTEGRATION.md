@@ -1,5 +1,9 @@
 # karpathy/autoresearch integration milestone
 
+The new [goal-driven ORX session checkpoint](AUTORESEARCH_SESSION.md) separates
+autonomous research from the existing controlled baseline/candidate execution.
+Real model-driven end-to-end acceptance remains outstanding.
+
 Latest outcome, 2026-10-07: [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) records completed
 local training, checkpoint, independent fixed evaluation and released custody.
 The earlier stage's readiness/no-live-execution statements below are historical;

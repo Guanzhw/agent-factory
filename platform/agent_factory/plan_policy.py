@@ -40,10 +40,13 @@ READ_ONLY_TOOLS = LEGACY_READ_ONLY_TOOLS | {"orx_discover"}
 READ_ONLY_CAPABILITIES = frozenset({"research:read", "question:ask", "checksum:read"})
 LOCAL_ORX_READ_ONLY_TOOLS = READ_ONLY_TOOLS | {"orx_experiment_inspect", "orx_experiment_wait", "orx_experiment_logs"}
 LITERATURE_TOOLS = {**KNOWN_TOOLS, "orx_paper": "research:read", "orx_text": "research:read", "orx_sources_report": "research:read"}
-ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1"]
+ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1", "autoresearch-session-v1"]
 
 
 def tools_for_contract(contract: ToolContract) -> dict[str, str]:
+    if contract == "autoresearch-session-v1":
+        return {name: "compute:local" if name == "research_experiment" else "research:read" for name in
+            ("research_context", "research_candidate", "research_experiment", "research_result", "research_decision")}
     if contract == "legacy-v1":
         return dict(LEGACY_TOOLS)
     if contract == "registered-runtime-v1":

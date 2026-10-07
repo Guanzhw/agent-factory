@@ -63,6 +63,8 @@ jobs:
       - run: uv sync --frozen
       - name: Required candidate PostgreSQL acceptance (no skips)
         run: uv run python scripts/check_candidate_postgres.py
+      - name: Required AutoResearch native fixtures (no skips)
+        run: uv run python scripts/check_autoresearch_postgres.py
       - name: PostgreSQL suite (bounded diagnostic log)
         shell: bash
         run: |

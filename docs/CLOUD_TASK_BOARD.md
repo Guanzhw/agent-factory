@@ -1,5 +1,36 @@
 # Cloud integration task board
 
+## Goal-driven OpenResearch application integration — 2026-10-07
+
+Continue from PR58 exact `d8449295535111947006b62030263efffd161906` on
+`feat/autoresearch-goal-session-20261007`. This phase replaces the claim that
+operator-selected candidate execution is an autonomous research application.
+Agno owns Factory tasks; the pinned ORX/OpenCode session owns research decisions.
+No parallel Factory research model is introduced.
+
+| Owner / exclusive scope | Dependency | Acceptance / blocker |
+|---|---|---|
+| root | Admission, shared configuration/lifecycle/API, App integration, docs, final checks and draft PR | Goal-only/default UI wired; original identities and UNKNOWN stop custody retained; frontend203 tests/build, Ruff/Pyright and audit pass; exact CI pending |
+| go_adapter | Real ORX HTTP transport and session/MCP/ledger runtime | Actual upstream HTTP zero-model checks and real harness/MCP context wire with synthetic provider responses pass; one real Go diagnostic stopped after one settled and one UNKNOWN attempt; no real context/decision; no retry |
+| candidate_support_audit | Isolated ORX/OpenCode container launcher and socket bridge | Actual network-none config/health/wrapper and context tool wire pass; positive original stop+container reclaim; 12 unit tests; no credentials |
+| at10 | Governed model/tool profile and explicit scientific/operator preset bootstrap | 19 focused profile/preset/bootstrap tests pass; no automatic publication |
+| factory_flow | New AutoResearch UI/state tests and separate PG acceptance tests | 7 UI tests pass; five actual PG/native cases pass, zero skips (47.283s); tool governance mismatch fixed |
+| reviewer | Broker fixes and service lifecycle regressions | 24 broker + 12 service tests pass; no live calls |
+| candidate_final_review | Independent read-only integration review | First review blockers addressed or retained as explicit unavailable prerequisites; final review pending |
+
+**Remaining implementation and target evidence:** the existing candidate CLI
+creates standalone preparation/training/evaluation tasks. It is deliberately not
+invoked from the new research tool. A durable subordinate executor with shared
+parent budgets, current authority, native approval/cancel and original custody
+verification is still required; the scientific preset stays unavailable without
+it. Actual target baseline/config/receipt bindings are also absent from this
+cloud checkout. Callback interfaces are not evidence of completed integration.
+
+The existing scientific runtime is unchanged. No GPU dispatch, paid fallback,
+merge, deployment or personal 24-hour agent is authorized by this phase. Heavy
+checks and real container probes run serially. Scratch paths are evidence only,
+not reproducibility prerequisites. See [session handoff](AUTORESEARCH_SESSION.md).
+
 ## Ephemeral candidate database authentication — 2026-10-07
 
 Local PR57 acceptance stopped before execution: its retained baseline config
