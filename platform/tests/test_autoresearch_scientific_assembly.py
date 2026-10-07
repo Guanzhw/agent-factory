@@ -457,7 +457,10 @@ class SeparatePreparationStateTests(unittest.TestCase):
     def test_candidate_identity_derivation_receives_explicit_original_science_pin(self):
         value = object.__new__(module.ScientificPhaseAssembler)
         value.files, value.microbatch, value.manifest = {'train.py': b'original'}, 1, example_manifest()
-        science = module.ScientificRuntimePin('/sealed/site-packages/agent_factory', module.RootIdentity(1, 2),
+        # Shape-only pin: use the host's absolute-path syntax (including the
+        # Windows drive) without creating or reading a scientific package.
+        package_root = str(Path(tempfile.gettempdir()).resolve() / 'sealed' / 'site-packages' / 'agent_factory')
+        science = module.ScientificRuntimePin(package_root, module.RootIdentity(1, 2),
             tuple(FilePin(name, 'a'*64, 1) for name in local_driver._RUNTIME_FILES))
         value.scientific_runtime = science
         result = {'identities': {'baseline': {'sha256': value.manifest['baselineSourceManifestSha256']},

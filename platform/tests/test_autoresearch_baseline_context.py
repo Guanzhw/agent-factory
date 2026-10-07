@@ -1,10 +1,22 @@
 """Preflight order and original database isolation; no database or ML execution."""
 from contextlib import contextmanager
+import importlib.util
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import autoresearch_baseline_context as subject  # pyright: ignore[reportMissingImports]
+# unittest discovery supplies platform/tests, not the sibling scripts directory.
+# Pin the repository script; its fixed sibling imports need that same directory.
+_scripts = Path(__file__).resolve().parents[2] / 'scripts'
+sys.path.insert(0, str(_scripts))
+_spec = importlib.util.spec_from_file_location('tested_autoresearch_baseline_context',
+                                               _scripts / 'autoresearch_baseline_context.py')
+assert _spec and _spec.loader
+subject = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = subject
+_spec.loader.exec_module(subject)
 from agent_factory.research_local_driver import ScientificRuntimePin
 
 

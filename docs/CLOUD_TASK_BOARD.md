@@ -48,6 +48,13 @@ Independent focused review passed 98 tests; Linux and Windows Pyright reported
 zero errors; Ruff and diff whitespace checks passed. The required PostgreSQL
 AutoResearch gate expects eleven tests with zero skips. Final exact CI is pending.
 
+Initial exact head `be42e96` was rejected by CI: default unittest discovery could
+not import the new baseline-context script, and the Windows assembly fixture
+used a POSIX-only absolute path. Both are test-only corrections: explicit script
+module setup and host-native synthetic absolute path. The same import failure
+was reproduced locally (2273 tests, one error, 431 expected skips). Old CI runs
+were canceled after diagnosis; replacement exact-head CI is required.
+
 Production identity, existing authorized bidirectional trust/connectivity, a real
 GPU candidate, live literature retrieval and target-host capacity acceptance remain
 external requirements. New controlled evidence must never relabel them as passed.
