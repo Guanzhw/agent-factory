@@ -63,13 +63,28 @@ class ResearchLocalProvider(ProcessResourceProvider):
         return cast(dict, result)['observationSha256']
 
     def _before_launch(self, record, snapshot):
-        # Operator closure seals run-specific inputs only after original job ID
-        # exists. Its static policy pin and dynamic verified receipt are distinct.
-        _require(self._program_verifier.configuration_fingerprint == self._source)
-        verified = self._program_verifier(deepcopy(record))
-        proof = self._program_proof(record, verified)
-        record['programVerification'] = proof
-        record['gpuLaunchObservationSha256'] = self._observe_device(record, snapshot, 'launch')
+        # This hook runs under the original PREPARED custody lock, before dispatch.
+        from .research_local_driver import ResearchDriverFailure
+        phase = 'program-verification'
+        try:
+            _require(self._program_verifier.configuration_fingerprint == self._source)
+            verified = self._program_verifier(deepcopy(record))
+            proof = self._program_proof(record, verified)
+            record['programVerification'] = proof
+            phase = 'device-verification'
+            record['gpuLaunchObservationSha256'] = self._observe_device(record, snapshot, 'launch')
+        except Exception as error:
+            if type(error) is ResearchDriverFailure and error.phase in {
+                'binding-validation', 'runtime-config-validation', 'environment-verification',
+                'config-staging', 'staged-program-verification',
+            }:
+                phase = error.phase
+            record['preDispatchFailure'] = {'schema': 1, 'phase': phase,
+                'code': 'RESEARCH_PRELAUNCH_VERIFICATION_FAILED',
+                'journalId': record['processPin']['id'],
+                'identitySha256': record['processPin']['identitySha256'],
+                'dispatchAttempted': False}
+            raise
 
     def _program_proof(self, record, verified):
         fields = {'descriptorSha256', 'sourceSha256', 'manifestSha256', 'variantSha256'}

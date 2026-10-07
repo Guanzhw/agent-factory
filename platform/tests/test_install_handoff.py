@@ -116,9 +116,18 @@ class InstallHandoffTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             closure.expected_payload({closure.PATH_FIX_FILE: 'b' * 64}, True)
 
-    def test_path_fix_pin_matches_reviewed_runtime_file(self):
+    def test_historical_path_fix_does_not_admit_later_runtime_changes(self):
+        # PR49's one-file repair is immutable, not a rolling latest-code overlay.
+        self.assertEqual(closure.PATH_FIX_SHA256,
+            'ee479cf871534572d62b292bdd616e7e657ddc2a93e1d2713e26af78c91bc587')
         runtime = Path(__file__).parents[1] / closure.PATH_FIX_FILE
-        self.assertEqual(closure.sha(runtime), closure.PATH_FIX_SHA256)
+        wheel = self.root / 'later-runtime.whl'
+        with zipfile.ZipFile(wheel, 'w') as archive:
+            archive.writestr(closure.PATH_FIX_FILE, runtime.read_bytes())
+            archive.writestr('department_agent_factory-0.2.0.dist-info/METADATA',
+                b'Name: department-agent-factory\nVersion: 0.2.0\n')
+        with self.assertRaisesRegex(ValueError, 'INSTALL_CLOSURE_REJECTED'):
+            closure.verify_wheel(wheel, {closure.PATH_FIX_FILE: closure.PATH_FIX_SHA256})
 
     def test_patch_mode_requires_original_wheel(self):
         rows = {closure.PATH_FIX_FILE: closure.PATH_FIX_BASE}

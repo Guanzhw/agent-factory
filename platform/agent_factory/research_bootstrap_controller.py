@@ -85,7 +85,8 @@ class ResearchBootstrapController:
                     'nativeRunId': None, 'leaseId': None, 'providerJobId': None,
                     'cancelRequested': False, 'cleanupConfirmed': False,
                     'orchestrationKind': 'deterministic-development-control',
-                    'scientificConclusionVerified': False}
+                    'scientificConclusionVerified': False,
+                    'processSubmissionMeaning': 'allocation-acknowledgement-not-spawn-proof'}
         deadline = self.clock() + timeout_seconds
         instance_attempted = False
 

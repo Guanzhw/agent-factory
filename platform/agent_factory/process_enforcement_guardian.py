@@ -1,11 +1,18 @@
 """Private Linux guardian for trusted cooperative fixed executable specifications."""
+import sys
+
+# Isolated mode ignores PYTHON* environment variables. Require the explicit
+# interpreter flag before importing any local module from the sealed site.
+if __name__ == '__main__' and not sys.dont_write_bytecode:
+    sys.stderr.write('PROCESS_GUARDIAN_BYTECODE_DENIED\n')
+    raise SystemExit(126)
+
 import hashlib
 import os
 from pathlib import Path
 import importlib
 import signal
 import stat
-import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))

@@ -24,6 +24,8 @@ MAX_FILES = 32768
 MAX_ENTRIES = 65536
 MAX_FILE_BYTES = 1024**3
 MAX_TOTAL_BYTES = 8 * 1024**3
+# Must fit both complete-profile observer documents and interpreter inventory pins.
+MAX_DOCUMENT_BYTES = 8 * 1024**2
 
 
 def _require(value):
@@ -190,8 +192,10 @@ def _build_inventory(*, project_root, venv_root, interpreter_target, interpreter
         'pyvenv_cfg': venv / 'pyvenv.cfg', 'pyproject_toml': project / 'pyproject.toml',
         'uv_lock': project / 'uv.lock', 'package_inventory': output,
         'package_files': [site / name for name in sorted(paths)], 'bounds_profile': PROFILE}
-    return {'inventory': inventory, 'inventoryBytes': _canonical(inventory),
-            'kernel': kernel, 'kernelBytes': _canonical(kernel), 'captureKwargs': capture,
+    inventory_bytes, kernel_bytes = _canonical(inventory), _canonical(kernel)
+    _require(len(inventory_bytes) <= MAX_DOCUMENT_BYTES and len(kernel_bytes) <= MAX_DOCUMENT_BYTES)
+    return {'inventory': inventory, 'inventoryBytes': inventory_bytes,
+            'kernel': kernel, 'kernelBytes': kernel_bytes, 'captureKwargs': capture,
             'outputParentIdentity': output_parent_identity}
 
 

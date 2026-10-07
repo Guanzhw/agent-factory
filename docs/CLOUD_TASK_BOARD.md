@@ -1270,3 +1270,46 @@ Final browser follow-up: source-present mobile hash expansion initially overflow
 scoped wrapping fixes it and rerun passed. Initial PR22 head fb6e5f3 workflows
 37187033930/37187049147 were canceled as superseded, not claimed green. Root
 will verify only the new final head; backend unchanged from passing805 suite.
+
+## Complete-inventory prelaunch consistency — 2026-10-07
+
+Branch `coord/full-inventory-observer-20261007`, base PR49
+`fdbc109a6ca59f10b9e985c18890cea6a958ea38`. Target report:24204 sealed
+files, custody PREPARED, no launch receipt/training config/evaluation. Training
+has NOT started; PROCESS_SUBMITTED is allocation acknowledgement, not spawn.
+The16384 observation cap is a confirmed static compatibility bug, not a proven
+sole cause of that attempt. Original target run remains on original pins,
+retry0, awaiting normal cancel/cleanup receipt. Recovery is authorized after positive
+original capacity/GPU release; OS idleness alone is insufficient.
+
+| Owner | Exclusive scope | Dependency | Acceptance |
+|---|---|---|---|
+| root | Prelaunch diagnostics/lifecycle integration, task board, docs, final checks/commit/draft PR/exact CI | Original custody and cancellation receipts | In progress |
+| at10 | Environment observer bounded deduplicated observations and focused tests | Existing complete inventory profile | Observer27 and document13 focused tests passed; frozen |
+| factory_flow | New real24204-file inventory→observer→config-write regression | Observer repair and unchanged driver | Real24204-file full driver/config path passed89.184s; frozen |
+| reviewer | Independent read-only cross-layer limit and final review | Worker/root patches | Independent final review passed; no blockers |
+
+Heavy tests remain serial/bounded. No target DB, secret, ML/GPU execution,
+inflight pin replacement, merge or deployment in this stage.
+
+Prelaunch diagnostics worker `go_adapter` owns only new regression tests:4 light
+tests passed,2 PostgreSQL variants prepared for exact CI. Original PREPARED
+SQLite custody, persisted diagnostic/reopen/no-replay, owner projection and
+normal never-dispatched cancel/reclaim covered with zero Popen/device calls.
+
+Updated target report: original canonical exited2/retry0 without Torch dispatch,
+300s training or evaluation. Original journal is CANCELLED/never-dispatched,
+stoppedProof:true/capacityHeld:false; framework RECLAIMED/GPU RELEASED remains
+unconfirmed UNKNOWN. Three new pyc files changed sealed namespace; old file
+contents unchanged. Guardian lacks -B (confirmed future-write defect), but its
+role in those files is not established. at10 now owns narrow guardian-bytecode
+fix/regression; reviewer owns original-custody read-only recovery runbook.
+
+Local integration validation:1777 tests/1378 passed/399 conditional skips in
+155.066s before the final guardian-only addition; guardian2+generic12 passed
+2.824s afterward. Ruff/Pyright0; frontend196tests and audit0 vulnerabilities.
+Offline wheel built with135 exact source payloads. First full run's sole stale
+PR49-current-source equality test was corrected to preserve the historical pin
+and reject the new runtime under old one-file repair mode;14 focused passed.
+Independent review approved main patch and that historical-pin regression.
+Exact final-head CI, including both PG diagnostic cases, remains pending.

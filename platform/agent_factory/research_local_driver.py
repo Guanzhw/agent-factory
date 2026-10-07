@@ -28,6 +28,14 @@ from .research_training_adapter import REVISION, build_training_bundle
 from .store import digest
 
 ERROR = 'RESEARCH_LOCAL_DRIVER_INVALID'
+
+
+class ResearchDriverFailure(ValueError):
+    """Fixed prelaunch phase only; never exception messages or input contents."""
+    def __init__(self, phase):
+        self.phase = phase
+        super().__init__(ERROR)
+
 _RUNTIME_FILES = ('research_torch_runtime.py', 'research_checkpoint.py',
     'research_manifest.py', 'research_evaluation.py', 'research_assessment.py',
     'research_profile.py', 'research_candidate.py', 'research_training_adapter.py',
@@ -257,6 +265,7 @@ class _LocalDriver:
             os.close(fd)
 
     def __call__(self, record):
+        phase = 'binding-validation'
         try:
             _sync(self._guard)
             self.validate_spec(self._spec)
@@ -291,6 +300,7 @@ class _LocalDriver:
                 evaluation = _sync(self._evaluation, deepcopy(record), dict(binding))
                 _require(type(evaluation) is dict and set(evaluation) == {'checkpoint', 'evaluationContract'})
                 config.update(deepcopy(evaluation))
+            phase = 'runtime-config-validation'
             config = validate_runtime_configuration(config,
                 mode='evaluate' if self._entrypoint == 'evaluate.py' else 'train', microbatch=self._microbatch)
             if config['evaluationContract'] is not None:
@@ -299,6 +309,7 @@ class _LocalDriver:
                          and all(contract['evaluatorExecution'][key] == binding[key] for key in _EXECUTION))
                 checkpoint_identity = dict(contract['training']['checkpoint'])
                 contract_sha = evaluation_contract_fingerprint(contract)
+            phase = 'environment-verification'
             _require(self._environment_verifier.configuration_fingerprint == self._environment_policy)
             environment_request = {'environment': deepcopy(self._manifest['environment']),
                 'runtimeKernel': deepcopy(self._manifest['environment']['runtimeKernel']),
@@ -316,6 +327,7 @@ class _LocalDriver:
                 and environment_receipt['requestSha256'] == digest(environment_request)
                 and type(environment_receipt['observationSha256']) is str
                 and re.fullmatch('[a-f0-9]{64}', environment_receipt['observationSha256']))
+            phase = 'config-staging'
             files = {**self._generated, 'run-config.json': _encoded(config)}
             descriptor = ProgramDescriptor(self._entrypoint,
                 tuple(pin_bytes(name, raw) for name, raw in sorted(files.items())),
@@ -328,6 +340,7 @@ class _LocalDriver:
                 stage_own_bundle(self._root, files, self._guard, descriptor=descriptor)
             else:
                 _require(SEAL in existing)  # Never adopt a partial/unknown staging root.
+            phase = 'staged-program-verification'
             verified = verify_staged_program(self._root, descriptor)
             _require(_runtime_pins() == self._runtime)
             _sync(self._guard)
@@ -336,7 +349,7 @@ class _LocalDriver:
                 'variantSha256': self._variant, 'checkpoint': checkpoint_identity,
                 'evaluationContractSha256': contract_sha}
         except (OSError, TypeError, ValueError, KeyError, OverflowError, RecursionError):
-            raise ValueError(ERROR) from None
+            raise ResearchDriverFailure(phase) from None
 
 
 def build_local_driver(upstream_files, candidate_files, *, entrypoint, comparison_manifest,

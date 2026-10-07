@@ -8,7 +8,12 @@ Base Python stdlib/loader and host remain trusted operator prerequisites. Symlin
 interpreters require the explicit schema2 uv chain contract. Arbitrary executable
 .pth and sitecustomize remain unsupported; only the reviewed exact uv startup
 profile is admitted. Static identity does not prove CPython venv discovery.
-Bounds: 4096 inventoried package files, 1 GiB/file, 8 GiB/package inventory total.
+Bounds: legacy profiles admit 4096 inventoried files; the explicit complete
+profile admits 32768 files and 65536 tree entries. Both retain 1 GiB/file and
+8 GiB total bounds. Identical repeated observations share one bounded record;
+changed identities are rejected, and every unique record is rechecked. Legacy
+observations remain capped at 16384; complete observations at 65536 plus 16
+fixed external document/project/cache/stdlib records.
 Sample-set identity covers ordered shard pins/split, not consumed token order or
 record-level disjointness; the driver separately verifies actual dataset bytes.
 """
@@ -65,6 +70,31 @@ _REQUEST = {'environment', 'runtimeKernel', 'sampleSetSha256', 'configurationFin
 def _require(value):
     if not value:
         raise ValueError('ENVIRONMENT_STATIC_IDENTITY_UNVERIFIED')
+
+
+class _Observations:
+    """Bounded unique observations; repeat reads may never erase earlier drift."""
+    def __init__(self, maximum):
+        _require(type(maximum) is int and maximum > 0)
+        self.maximum = maximum
+        self._items = {}
+
+    def append(self, observation):
+        path, directory, observed_stamp = observation
+        prior = self._items.get(path)
+        current = (directory, observed_stamp)
+        if prior is not None:
+            _require(prior == current)
+        else:
+            _require(len(self._items) < self.maximum)
+            self._items[path] = current
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        for path, (directory, observed_stamp) in self._items.items():
+            yield path, directory, observed_stamp
 
 
 def _keys(value, expected):
@@ -335,6 +365,9 @@ class ResearchEnvironmentObserver:
         from .research_interpreter import inventory_bounds
         self._max_files, _, _, self._max_entries, _ = inventory_bounds(bounds_profile)
         self._bounds_profile = bounds_profile
+        # Complete site entries already include every file and directory. Allow
+        # the fixed external document/project/cache/stdlib observations too.
+        self._max_observations = 16384 if bounds_profile is None else self._max_entries + 16
         self._document_limit = 8 * 1024**2 if bounds_profile is not None else 1024**2
         _require(type(inventory_pin) is InputPin and type(kernel_pin) is InputPin
                  and inventory_pin.kind == kernel_pin.kind == 'environment'
@@ -373,7 +406,7 @@ class ResearchEnvironmentObserver:
             _require(request['environment'][key] == {'sha256': pin.file.sha256, 'sizeBytes': pin.file.size_bytes}
                      and asdict(pin) in request['environmentPins'])
         _require(request['runtimeKernel'] == request['environment']['runtimeKernel'])
-        observations = []
+        observations = _Observations(self._max_observations)
         _cache_prefix(request['launchSpec'], observations)
         inventory, kernel = self._document(self._inventory, observations), self._document(self._kernel, observations)
         _require(type(inventory) is dict and type(inventory.get('schema')) is int and inventory['schema'] in (1, 2, 3))
@@ -543,7 +576,6 @@ class ResearchEnvironmentObserver:
         _require(bool(train_hashes) and bool(validation_hashes) and not train_hashes & validation_hashes)
         if uv_mode:
             _uv_interpreter(request, inventory, self._inventory, observations, startup_files)
-        _require(len(observations) <= 16384)
         for path, directory, stamp in observations:
             fd = _open(path, directory=directory)
             try:

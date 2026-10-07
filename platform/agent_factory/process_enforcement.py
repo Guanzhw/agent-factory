@@ -550,7 +550,7 @@ class BoundedProcessAdapter:
             _write(conn, body)
         self._launch_owner = False
         try:
-            self._process = subprocess.Popen([sys.executable, "-I", str(Path(__file__).with_name("process_enforcement_guardian.py")), str(self.path)],
+            self._process = subprocess.Popen([sys.executable, "-I", "-B", str(Path(__file__).with_name("process_enforcement_guardian.py")), str(self.path)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 close_fds=True, start_new_session=True, cwd=self.path.parent, env={"LANG": "C.UTF-8"})
         except Exception:

@@ -261,9 +261,13 @@ class ProcessResourceProvider:
                     self._save(conn, record)
                 def before_launch():
                     self._dispatch_authority(binding, cancelled, callback)
-                    self._before_launch(record, original)
-                    with self._transaction() as conn:
-                        self._save(conn, record)
+                    try:
+                        self._before_launch(record, original)
+                    finally:
+                        # Retain bounded hook diagnostics even when preparation denies dispatch.
+                        # This does not release custody or substitute for a stop receipt.
+                        with self._transaction() as conn:
+                            self._save(conn, record)
                     self._dispatch_authority(binding, cancelled, callback)
                 adapter.launch(owner_id=binding["ownerId"], before_effect=before_launch)
                 return self._inspect_locked(binding["id"], binding["ownerId"])
@@ -343,6 +347,7 @@ class ProcessResourceProvider:
             "executionStatus": record["executionStatus"], "exitCode": record["exitCode"],
             "allStopped": record["allStopped"], "capacityHeld": record["released"] is not True,
             "providerJobId": (record.get("processPin") or {}).get("id"), "retainedEvidence": True,
+            **({"preDispatchFailure": record["preDispatchFailure"]} if "preDispatchFailure" in record else {}),
             "allocationKind": "delegated-cgroup-process" if "aggregateEvidence" in record else "bounded-cooperative-process",
             **({"aggregateEvidence": record["aggregateEvidence"]} if "aggregateEvidence" in record else {}),
             "enforcement": record.get("enforcement") or {

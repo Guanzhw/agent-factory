@@ -571,8 +571,24 @@ class PersistentResourceService:
             raise ValueError("Terminal process lacks original stop proof")
         if snapshot.get("state") == "RECLAIMED" and snapshot.get("released") is not True:
             raise ValueError("Process allocation release is unconfirmed")
+        diagnostic = snapshot.get("preDispatchFailure")
+        if diagnostic is not None:
+            if (type(diagnostic) is not dict or set(diagnostic) != {
+                    "schema", "phase", "code", "journalId", "identitySha256", "dispatchAttempted"}
+                    or type(diagnostic["schema"]) is not int or diagnostic["schema"] != 1
+                    or type(diagnostic["phase"]) is not str
+                    or diagnostic["phase"] not in {"program-verification", "device-verification", "binding-validation",
+                        "runtime-config-validation", "environment-verification", "config-staging", "staged-program-verification"}
+                    or diagnostic["code"] != "RESEARCH_PRELAUNCH_VERIFICATION_FAILED"
+                    or diagnostic["journalId"] != job or diagnostic["dispatchAttempted"] is not False
+                    or type(diagnostic["identitySha256"]) is not str
+                    or not re.fullmatch(r"[a-f0-9]{64}", diagnostic["identitySha256"])):
+                raise ValueError("Invalid predispatch diagnostic")
+        if lease.get("preDispatchFailure") is not None and lease["preDispatchFailure"] != diagnostic:
+            raise ValueError("Original predispatch diagnostic changed")
         return {**gpu, "providerJobId": job, "processBinding": binding, "enforcement": expected,
                 "stopEvidence": stop if positive else None, "executionStatus": outcome, "exitCode": exit_code,
+                **({"preDispatchFailure": dict(diagnostic)} if diagnostic is not None else {}),
                 **({"aggregateEvidence": aggregate} if aggregate is not None else {})}
 
     def list_leases(self, owner, *, after=None):
@@ -588,7 +604,7 @@ class PersistentResourceService:
                 continue
             # Metadata visibility does not grant launch/stop/release authority.
             fields = ("id", "ownerId", "localTaskId", "planId", "nativeRunId", "state", "capacityHeld",
-                      "providerJobId", "processBinding", "enforcement", "aggregateEvidence", "stopEvidence", "syntheticFixture", "executionStatus", "exitCode")
+                      "providerJobId", "processBinding", "enforcement", "aggregateEvidence", "stopEvidence", "syntheticFixture", "executionStatus", "exitCode", "preDispatchFailure")
             leases.append({key: body.get(key) for key in fields})
         return {"leases": leases, "nextCursor": rows[-1]["id"] if len(rows) == 100 else None}
 

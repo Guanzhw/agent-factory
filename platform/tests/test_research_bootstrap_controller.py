@@ -82,6 +82,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result['progress']['nativeRunId'], 'original-run')
         self.assertEqual(result['lease']['providerJobId'], 'original-process')
         self.assertFalse(result['progress']['scientificConclusionVerified'])
+        submitted = next(p for p in h.progress if p['phase'] == 'PROCESS_SUBMITTED')
+        self.assertEqual(submitted['processSubmissionMeaning'], 'allocation-acknowledgement-not-spawn-proof')
         self.assertTrue(result['lease']['syntheticFixture'])
         decision = next(c for c in h.calls if c[1].endswith('/decision'))
         self.assertEqual(decision[3], 'task-dev-reviewer')
