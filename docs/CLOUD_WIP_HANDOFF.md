@@ -1,5 +1,11 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+Head `6ecea10` passed both required PostgreSQL gates but was rejected by Windows
+Python: the real-time 200ms GET-retry fixture sometimes observed only one read.
+The retry deadline test now deterministically expires the original real asyncio
+timeout, checks exactly two reads and one mutation per route, and preserves the
+original deadline. Its 21-case runtime suite passes; production timeouts are unchanged. Final replacement exact CI is required.
+
 Exact head `22d710720eb5b1e5ebafa606979fd6780ab1450b` was rejected by both
 PostgreSQL CI runs: the new fixture created input files using ambient umask, so
 GitHub produced 0644 while staging correctly requires 0600. Local umask was 0077.

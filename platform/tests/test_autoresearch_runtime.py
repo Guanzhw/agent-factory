@@ -317,15 +317,40 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             create_session=AsyncMock(return_value={'id': 'chat_original'}), rename_session=AsyncMock(),
             send_message=AsyncMock(return_value={'turnId': 'turn_original'}),
             read_messages=AsyncMock(side_effect=timeout), read_session=AsyncMock())
-        self.body['deadline'] = time.time() + 0.2
-        with patch('agent_factory.autoresearch_runtime.OpenResearchSessionHTTP', return_value=client):
+        clock = [100.0]
+        self.body['deadline'] = 102.0
+        real_timeout, real_sleep = asyncio.timeout, asyncio.sleep
+        contexts, requested_delays = [], []
+
+        def controlled_timeout(delay):
+            requested_delays.append(delay)
+            # Exercise the real timeout cancellation/conversion without a race
+            # against OS scheduling. Only the original context is expired below.
+            context = real_timeout(None)
+            contexts.append(context)
+            return context
+
+        async def advance_retry_clock(delay):
+            self.assertEqual(delay, 0.01)
+            clock[0] += 1
+            if clock[0] == self.body['deadline']:
+                contexts[0].reschedule(asyncio.get_running_loop().time())
+            await real_sleep(0)
+
+        with patch('agent_factory.autoresearch_runtime.OpenResearchSessionHTTP', return_value=client), \
+             patch('agent_factory.autoresearch_runtime.time.time', side_effect=lambda: clock[0]), \
+             patch('agent_factory.autoresearch_runtime.asyncio.timeout', side_effect=controlled_timeout), \
+             patch('agent_factory.autoresearch_runtime.asyncio.sleep', side_effect=advance_retry_clock):
             with self.assertRaises(TimeoutError):
                 await runtime.run()
+        self.assertEqual(requested_delays, [2.0, 30])  # original deadline, then read-only readiness
+        self.assertTrue(contexts[0].expired())
+        self.assertFalse(contexts[1].expired())
+        self.assertEqual(self.body['deadline'], 102.0)
         client.create_session.assert_awaited_once()
         client.rename_session.assert_awaited_once()
         client.send_message.assert_awaited_once()
-        self.assertGreater(client.read_messages.await_count, 1)
-        self.assertLess(client.read_messages.await_count, 30)
+        self.assertEqual(client.read_messages.await_count, 2)
         self.credential.assert_not_called()
         self.assertTrue(await runtime.stop())
 
