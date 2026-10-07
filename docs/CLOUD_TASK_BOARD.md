@@ -1,5 +1,24 @@
 # Cloud integration task board
 
+## Bounded candidate/recovery preparation — 2026-10-07
+
+Based on the completed baseline, [the next-step handoff](RESEARCH_CANDIDATE_RECOVERY_PLAN.md)
+audits existing candidate/recovery APIs and supplies executable offline source
+preparation plus strict-no-skip target smoke commands. No GPU work was started.
+
+| Owner / scope | Dependency | Acceptance / blocker |
+|---|---|---|
+| root | Source audit integration, precise candidate, envelope/evidence and docs | Actual pinned MATRIX_LR0.04→0.036 derivation passes;30 targeted tests pass; package/runtime unchanged |
+| candidate_support_audit | Read-only candidate/assembly/manifest audit | Driver/profile support exists; canonical CLI/bootstrap are baseline-only, so candidate operator wiring is a real gap |
+| target_recovery_audit | Read-only original-identity recovery audit | Original observe/stop/reopen supported; no training resume or fresh-process controller restart CLI; no reproduced defect |
+| parent / local owner | Review candidate and interruption definition; retain actual approved limits/receipts | No new department identity/provider needed; original approved numeric limits are private/local, not supplied in public summary; GPU lanes not launch-ready |
+
+No runtime fix was warranted by this audit. Next wiring can be completed using
+existing installed APIs without silently reinstalling the sealed runtime or
+invalidating comparison identity. A future GPU interruption lane is separate from
+the successful scientific comparison, bounded to one fresh attempt, not a campaign.
+Personal-agent/24-hour direction remains deferred.
+
 ## First real local baseline COMPLETE — 2026-10-07 09:48 UTC
 
 The local owner verified PR54 runner + sealed PR50 runtime: RTX 5070/SDPA/

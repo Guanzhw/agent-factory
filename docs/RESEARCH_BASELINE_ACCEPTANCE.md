@@ -48,6 +48,11 @@ Only sanitized results and digests are published here. The manifest, receipts,
 raw logs, private paths, credentials, training data and checkpoint weights remain
 local; the hashes are provenance references, not public artifact downloads.
 
+The [next bounded candidate/recovery handoff](RESEARCH_CANDIDATE_RECOVERY_PLAN.md)
+now documents executable offline preparation and existing recovery smokes, plus
+the precise candidate-orchestration and recovery operating gaps. It starts no GPU
+job and does not turn the baseline-only CLI into a candidate/resume entrypoint.
+
 ## What this closes and what remains
 
 This closes actual local baseline training, checkpoint production, independent
