@@ -1313,3 +1313,10 @@ PR49-current-source equality test was corrected to preserve the historical pin
 and reject the new runtime under old one-file repair mode;14 focused passed.
 Independent review approved main patch and that historical-pin regression.
 Exact final-head CI, including both PG diagnostic cases, remains pending.
+
+Final controller followup: validated prelaunch rejection now stops polling
+immediately and enters original cleanup instead of waiting the3600s lease.
+15controller tests passed, including initial/late rejection and unavailable
+release proofs retaining cleanupConfirmed:false. Superseded3fa4ec43 CI had
+8successful jobs; both remaining PG workflows cancelled before final push.
+New exact-head CI is the only final acceptance source.

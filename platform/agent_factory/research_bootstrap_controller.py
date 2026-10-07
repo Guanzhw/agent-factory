@@ -176,10 +176,19 @@ class ResearchBootstrapController:
             progress['leaseId'] = lease['id']
             lease_current(lease)
             mark('PROCESS_SUBMITTED')
+            def reject_prelaunch_failure():
+                if lease.get('preDispatchFailure') is not None:
+                    # The original validated lease reports rejection before spawn.
+                    # Stop polling; existing exception cleanup still needs positive receipts.
+                    progress['failureCode'] = 'RESEARCH_PRELAUNCH_VERIFICATION_FAILED'
+                    mark('PRELAUNCH_REJECTED')
+                    raise ValueError('RESEARCH_PRELAUNCH_VERIFICATION_FAILED')
+            reject_prelaunch_failure()
             while lease['state'] != 'RECLAIMED':
                 pause_poll()
                 lease = invoke(runtime.inspect_task, owner, progress['taskId'])
                 lease_current(lease)
+                reject_prelaunch_failure()
             _require(progress['providerJobId'] is not None and lease.get('executionStatus') == 'COMPLETED' and type(lease.get('exitCode')) is int
                      and lease['exitCode'] == 0 and lease.get('capacityHeld') is False
                      and (lease.get('stopEvidence') or {}).get('allStopped') is True

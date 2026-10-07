@@ -93,6 +93,48 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual([p['phase'] for p in h.progress], ['STARTED', 'PLAN_APPROVED', 'TASK_ACCEPTED',
             'NATIVE_PAUSED', 'PROCESS_SUBMITTED', 'PROCESS_RECLAIMED', 'EVIDENCE_IMPORTED', 'COMPLETED'])
 
+    def test_prelaunch_rejection_stops_without_full_lease_wait_or_new_submit(self):
+        for late in (False, True):
+            with self.subTest(late=late):
+                h = Harness()
+                failure = {**h.lease, 'state': 'UNKNOWN', 'capacityHeld': True,
+                    'preDispatchFailure': {'schema': 1, 'phase': 'environment-verification',
+                        'code': 'RESEARCH_PRELAUNCH_VERIFICATION_FAILED',
+                        'journalId': 'original-process', 'identitySha256': 'a' * 64, 'dispatchAttempted': False}}
+                held = {k: v for k, v in failure.items() if k != 'preDispatchFailure'}
+                released = {**h.lease, 'executionStatus': 'CANCELLED', 'exitCode': None,
+                    'stopEvidence': {'allStopped': True, 'kind': 'never-dispatched'}}
+                h.runtime.submit.return_value = held if late else failure
+                h.runtime.inspect_task.return_value = failure
+                h.runtime._original = Mock(return_value={'task_id': 'original-task', 'owner_id': 'alice',
+                    'native_run_id': 'original-run', 'lease_id': 'original-lease'})
+                h.runtime.observe_lease = AsyncMock(return_value=released)
+                with self.assertRaises(ResearchBootstrapError) as caught:
+                    h.run(timeout_seconds=3600)
+                self.assertLess(h.now, 1)
+                self.assertEqual(caught.exception.progress['failureCode'], 'RESEARCH_PRELAUNCH_VERIFICATION_FAILED')
+                self.assertTrue(caught.exception.progress['cleanupConfirmed'])
+                self.assertIn('PRELAUNCH_REJECTED', [p['phase'] for p in h.progress])
+                h.runtime.submit.assert_awaited_once(); h.imported.assert_not_called()
+                self.assertFalse(h.approved)
+
+    def test_prelaunch_diagnostic_cannot_substitute_for_release_receipts(self):
+        h = Harness()
+        held = {**h.lease, 'state': 'UNKNOWN', 'capacityHeld': True,
+                'stopEvidence': None, 'gpuEvidence': {'state': 'UNKNOWN'},
+                'preDispatchFailure': {'code': 'RESEARCH_PRELAUNCH_VERIFICATION_FAILED'}}
+        h.runtime.submit.return_value = held
+        h.runtime._original = Mock(return_value={'task_id': 'original-task', 'owner_id': 'alice',
+            'native_run_id': 'original-run', 'lease_id': 'original-lease'})
+        h.runtime.observe_lease = AsyncMock(return_value=held)
+        with self.assertRaises(ResearchBootstrapError) as caught:
+            h.run(timeout_seconds=3600)
+        self.assertLess(h.now, 6)
+        self.assertFalse(caught.exception.progress['cleanupConfirmed'])
+        self.assertTrue(caught.exception.progress['cancelRequested'])
+        h.runtime.submit.assert_awaited_once(); h.imported.assert_not_called()
+        self.assertFalse(h.approved)
+
     def test_lost_instance_ack_only_reads_original_request_then_cancels(self):
         h = Harness()
         def fault(method, path, body):

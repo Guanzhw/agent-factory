@@ -49,6 +49,9 @@ diagnostic; it is metadata, not launch, cancellation or release authority.
 
 `dispatchAttempted:false` refers to this adapter's guardian/process spawn.
 Preparation may already have reserved checkpoint storage or staged files.
+The controller stops polling immediately after a validated original lease
+reports this prelaunch rejection, records PRELAUNCH_REJECTED and enters the
+existing bounded cleanup path. It does not wait the entire execution lease.
 Failure remains PREPARED/UNKNOWN with capacity held. It does not manufacture a
 stop receipt or silently rerun allocation. Normal cancellation of the original
 PREPARED journal produces the existing `never-dispatched` receipt; normal
