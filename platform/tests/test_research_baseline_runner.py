@@ -154,6 +154,21 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(env['CUDA_VISIBLE_DEVICES'], self.config['deviceUuid'])
         self.assertEqual(env['PYTHONPYCACHEPREFIX'], str(self.root / 'program'))
 
+    def test_launch_environment_is_exact_allowlist_and_ignores_host_tool_overrides(self):
+        hostile = {'PATH': '/synthetic/untrusted/bin:.', 'COMPILER_PATH': '/synthetic/compiler',
+            'LIBRARY_PATH': '/synthetic/library', 'GCC_EXEC_PREFIX': '/synthetic/gcc/',
+            'LD_PRELOAD': '/synthetic/preload.so', 'PYTHONPATH': '/synthetic/python',
+            'SYNTHETIC_CREDENTIAL': 'synthetic-only'}
+        with patch.dict(os.environ, hostile):
+            env = runner.launch_environment(self.config, self.root / 'program', self.root / 'cache')
+        self.assertEqual(env['PATH'], '/usr/bin:/bin')
+        self.assertEqual(set(env), {'HOME', 'TORCHINDUCTOR_CACHE_DIR', 'TRITON_CACHE_DIR',
+            'CUDA_CACHE_PATH', 'TMPDIR', 'HF_HOME', 'PATH', 'CUDA_VISIBLE_DEVICES',
+            'HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE', 'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE',
+            'PYTHONPYCACHEPREFIX', 'SETUPTOOLS_USE_DISTUTILS'})
+        for key in hostile.keys() - {'PATH'}:
+            self.assertNotIn(key, env)
+
     def test_preparation_lost_ack_never_cancels_mismatched_original_plan(self):
         bootstrap = importlib.import_module('bootstrap_research_control')
         from agent_factory import process_runtime_profile, research_bootstrap_controller

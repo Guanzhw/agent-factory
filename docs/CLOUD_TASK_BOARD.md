@@ -1,5 +1,22 @@
 # Cloud integration task board
 
+## Executed GPU baseline compiler PATH repair — 2026-10-07
+
+Accepted PR50 installation/preflights reached actual Torch/GPU, then Inductor
+failed before checkpoint/evaluation. Missing PATH reproduced with real GCC and
+fixed at canonical runner environment owner; no guardian/schema/package changes.
+
+| Owner / exclusive scope | Dependency | Acceptance / remaining boundary |
+|---|---|---|
+| root | Integration, source-only installation handoff, exact CI/draft PR | 32 targeted tests and static checks pass; exact CI recorded in PR; package stays PR50; no cloud GPU |
+| toolchain_path_fix | Runner launch environment and isolated/compiler guardian regressions | RED missing ld; GREEN 12 focused tests; literal system PATH only |
+| toolchain_path_review | Independent mechanism reproduction, trust/toolchain review | No blocker; GCC internals resolve internally, no speculative CUDA/host directories |
+| original local worker | Original executed-attempt release chain, target smoke/preflights/new attempt | stoppedProof/cleanupConfirmed reported; GPU release UNKNOWN and full chain unverified, so new launch remains blocked |
+
+Follow [the compiler-path handoff](RESEARCH_TOOLCHAIN_PATH_HANDOFF.md). Keep the
+executed failed attempt immutable; never-dispatched release audit does not apply.
+No training/checkpoint/evaluation success claimed by this patch or compiler tests.
+
 ## Never-dispatched minimal recovery gate — 2026-10-07
 
 PR52 strict historical configuration reconstruction overconstrained the release

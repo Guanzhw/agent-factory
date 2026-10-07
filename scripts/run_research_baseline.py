@@ -359,6 +359,10 @@ def preparation_phase(bundle, client, request_id, progress):
 
 def launch_environment(config, program, cache):
     env = {key: str(cache) for key in ('HOME', 'TORCHINDUCTOR_CACHE_DIR', 'TRITON_CACHE_DIR', 'CUDA_CACHE_PATH', 'TMPDIR', 'HF_HOME')}
+    # The guardian execs with this fresh environment. GCC/collect2 descendants
+    # need a tool search path even when the compiler itself is absolute. Use only
+    # the supported host's system tools, never the operator's PATH or workspace.
+    env['PATH'] = '/usr/bin:/bin'
     env.update(CUDA_VISIBLE_DEVICES=config['deviceUuid'], HF_HUB_OFFLINE='1', HF_DATASETS_OFFLINE='1',
         TRANSFORMERS_OFFLINE='1', PYTHONNOUSERSITE='1', PYTHONPYCACHEPREFIX=str(program),
         SETUPTOOLS_USE_DISTUTILS='local')
