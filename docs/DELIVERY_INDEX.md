@@ -2,6 +2,11 @@
 
 ## Current scope — 2026-10-04
 
+Future planning is recorded in the existing scope document's
+[deferred personal-agent roadmap](V03_SCOPE_RECONCILIATION.md#deferred-roadmap-personal-agents-and-always-on-management)
+(added 2026-10-07): unscheduled and outside this implementation stage. Current
+AutoResearch baseline and resource-release acceptance priorities are unchanged.
+
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
 remaining flows and historical evidence boundaries. Browser PKCE/session/CSRF/logout
