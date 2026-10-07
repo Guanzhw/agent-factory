@@ -127,6 +127,15 @@ there is no pyc-ignore rule or post-capture cleanup exemption.
 
 ## New attempt after validated release and installation closure
 
+Before starting the new canonical application's lifespan, use the existing
+read-only export to confirm the original native task/ticket is terminal and
+its associated descendants have no pending execution or retry work. Retain that
+observation; reuse it if already verified. The old controller's exit code alone
+does not establish durable queue termination, and a new lifespan can recover
+queued work. This check requires no old service reconstruction, ACK replay or
+new authorization. The custody audit deliberately reports `newAttemptReady:
+false` because compute release alone does not certify these separate conditions.
+
 After audit and installation closure PASS, use the new interpreter and exact
 PR50 runner for its existing `--preflight` and `--database-preflight` modes.
 Database preflight uses the existing authorized credential configuration only;
