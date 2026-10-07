@@ -10,3 +10,8 @@ scripts/copy_install_site.py text eol=lf
 platform/agent_factory/research_environment_observer.py text eol=lf
 scripts/repair_factory_wheel.py text eol=lf
 docs/PR47_PACKAGE_PATH_REPAIR.md text eol=lf
+# Independent PR50 handoff source-manifest bytes are pinned across hosts.
+docs/evidence/pr50-source-manifest.json text eol=lf
+scripts/install-pr50-handoff.sh text eol=lf
+scripts/verify_pr50_closure.py text eol=lf
+scripts/audit_released_research_custody.py text eol=lf

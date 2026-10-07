@@ -1,5 +1,24 @@
 # Cloud integration task board
 
+## Already-released custody and PR50 installation handoff — 2026-10-07
+
+Runtime remains exact PR50 `997013114a8c533c84078d174b220e541ea19f9a`.
+This delivery adds standalone read-only evidence verification and separate
+installation tools; it does not change runtime code or historical repair pins.
+
+| Owner / exclusive scope | Dependency | Acceptance / remaining boundary |
+|---|---|---|
+| root | Integration, original-state reconciliation docs and fixed continuation commands | Ruff/Pyright, npm check (196 tests)/audit, relative links and diff checks pass; runtime/historical tools unchanged |
+| released_custody_audit | Standalone original released-custody consistency helper and tests | 11 synthetic tests pass, including existing runtime pure-validator cross-check; actual target export/provenance audit pending |
+| pr50_install_handoff | Separate PR50 verifier, full-copy installer, public source manifest and tests | 8 tests pass; all603 exact Git source hashes and135 wheel payloads verified; actual target95-package installation not run |
+| handoff_review | Independent read-only review and serial targeted validation | Both focused suites independently pass; no remaining review blocker |
+| original local worker | Original evidence audit, new private installation and authorized new research attempt | Reported lease/provider RECLAIMED and GPU RELEASED; full identity still pending. Do not reset/replay unknown ACKs or recreate old service just to release again |
+
+Follow [the fixed handoff](PR50_RELEASED_CUSTODY_HANDOFF.md). Preserve old
+workspaces, claims, three new pyc files and receipts. Existing PR50 exact-head
+runtime CI is distinct from these targeted delivery checks; no new scientific,
+target installation or release acceptance is claimed by the cloud tools.
+
 ## Package data path compatibility — 2026-10-07
 
 Target reports actual online install, full-copy and dependency check PASS: all95

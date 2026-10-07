@@ -1,5 +1,32 @@
 # Original research custody recovery
 
+## Latest reported state — 2026-10-07
+
+A subsequent authorized read-only target check reported the original Factory
+lease and provider allocation as `RECLAIMED`, `capacityHeld: false`,
+`released: true`, `allStopped: true`, with GPU `RELEASED` / `never-dispatched`
+proof. Original mapping, binding hash and database identity checks passed.
+`cancelAck` and `releaseAck` remain `unknown`; neither was reset or replayed.
+Full provider-configuration, journal, immutable-plan and native-envelope
+identity checks have not yet passed, and the old in-memory service is absent.
+These are operator-reported observations, not cloud execution evidence.
+
+Positive persisted release and unknown transport acknowledgements can coexist.
+After the remaining original identity checks pass, no additional release,
+reconciliation write or reconstruction of the old service is required merely
+to change those acknowledgement fields. Use the
+[read-only audit and PR50 handoff](PR50_RELEASED_CUSTODY_HANDOFF.md) to complete
+the evidence chain and continue the already-authorized research recovery with
+a separate installation and attempt. An absent service object is not itself
+a reason to repeat a completed effect. Missing original evidence stays UNKNOWN;
+do not invent pins from current files or rewrite historical records.
+
+## Earlier missing-receipt recovery procedure
+
+The following procedure applies when release is genuinely missing or requires
+the existing mutation/reconciliation path. It does not require replay after
+already-persisted release has been independently validated.
+
 This is a stop-only recovery runbook, not authorization to launch another
 experiment. The reported observation is an original journal with `CANCELLED`,
 `never-dispatched`, `stoppedProof: true` and `capacityHeld: false`, while the
