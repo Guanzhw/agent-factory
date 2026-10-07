@@ -19,7 +19,7 @@ The target's read-only report now contains positive original lease/provider
 `RECLAIMED`, `capacityHeld: false`, provider `released: true`, `allStopped: true`
 and GPU `RELEASED` with `never-dispatched` proof. Mapping, binding hash and
 database identity were reported PASS. `cancelAck` / `releaseAck` remain unknown.
-Once full original identity and proof validation passes, those transport ACKs
+Once the original release identity and proof validation passes, those transport ACKs
 do not require replay, reset or another release. Preserve all historical states.
 
 The original service object is unavailable. Do not call `create_app`, enter an
@@ -33,37 +33,58 @@ database connection in one consistent read-only transaction. Select exact
 original IDs, never the latest task or a same-name replacement. Export only the
 bounded non-credential fields required by `audit_released_research_custody.py`
 to a new private evidence file. The helper does not open a DSN or authenticate to
-a database. Original configured provider pins must come from the preserved
-pre-attempt configuration/receipts, independently of the records being checked;
-copying hashes out of the same allocation is not independent validation.
+a database. For this reported **never-dispatched, already-released** case, use
+the explicit minimal release mode below. PR52's default full historical-config
+mode was too strong as a prerequisite to this narrower release question; it
+remains available as optional forensic verification.
 
-The helper reads the original SQLite custody journal with a read-only connection
-and verifies the never-dispatched receipt, physical journal identities, original
-configuration, plan, task/native-envelope and GPU proof chain without starting
-a service. Its finite result describes consistency of the supplied original
-evidence; the authorized operator remains responsible for export provenance and
-freshness. Do not replace absent original inputs with freshly captured values.
-An UNKNOWN result identifies an evidence gap, not an instruction to rerun work.
-
-Keep three original local paths: `CUSTODY_EXPORT` (the new read-only DB export),
-`ORIGINAL_PINS` (independently retained original non-credential configuration
-represented in the helper's JSON contract), and `ORIGINAL_JOURNAL` (the original
-`custody.sqlite`, not a copied replacement). The exact required export keys are
-documented at the top of the delivered helper; DB JSON bodies must be decoded
-objects. Preserve original task-request and lease-request IDs separately.
+Keep three paths: `CUSTODY_EXPORT` (the original read-only DB export),
+`ORIGINAL_SELECTION` (a new private JSON selection of original IDs), and
+`ORIGINAL_JOURNAL` (the original `custody.sqlite`, not a copied replacement).
+The selection contains only `schema: 1`, `taskId`, `ownerId`, `requestId`,
+`leaseId`, and optionally `nativeRunId`. Obtain these from preserved bootstrap
+progress and the exact original persisted mapping. The task request ID is not
+the lease/controller request ID; preserve their distinction. Do not select a
+latest task or invent configuration fields. The helper's module docstring lists
+the DB export fields and normalized session contract; JSON bodies must be decoded.
 
 ```sh
 "$CONTROL_PYTHON" -I -B "$TOOLS/scripts/audit_released_research_custody.py" \
-  "$CUSTODY_EXPORT" "$ORIGINAL_PINS" "$ORIGINAL_JOURNAL"
+  --released-never-dispatched "$CUSTODY_EXPORT" "$ORIGINAL_SELECTION" "$ORIGINAL_JOURNAL"
 ```
 
-Exit zero with `RELEASED_CUSTODY_CONSISTENT` means the supplied original chain
-passed consistency checks. It does not authenticate the exporter or mark the
-next attempt ready; those limitations are explicit result fields. Exit two /
-`UNKNOWN` means stop the dependent launch and locate missing/mismatched evidence.
-The helper supports only the reported cooperative, never-dispatched,
-already-released case, on the same boot, with a stable DELETE-mode journal and
-no WAL/SHM/recovery sidecars. It does not rewrite storage holds or ACKs.
+The original `af_tasks.plan_id` selects `af_plans.body/hash`. The helper recomputes
+the canonical plan digest and checks it against the stored hash, task fingerprint
+and original lease binding. That persisted original plan is the legitimate source;
+a separately saved plan-hash file is not required. Original journal spec/identity
+digests must match the persisted allocation's process pin. The actual original
+journal/root physical identity must match the namespace committed in the original
+binding. These are consistency checks across original persisted records, not a
+claim that current metadata is independently retained history.
+
+Run-config, driver seal, training and evaluation receipts are **not applicable**
+when dispatch never occurred. Do not create placeholders. Historical driver,
+source and observer configuration reconstruction is not required for this release
+scope, and the result explicitly does not claim it was validated. The strict
+three-positional-argument mode still requires independently preserved full pins
+if that separate forensic question is pursued.
+
+Exit zero / `RELEASED_CUSTODY_CONSISTENT`, with
+`releaseIdentityConsistent: true` and scope `NEVER_DISPATCHED_RELEASE`, means the
+original plan/native/mapping/journal/stop/compute/GPU chain passed. The result
+keeps `identityConsistent: false`, `historicalConfigValidated: false`,
+`descendantsChecked: false` and `newAttemptReady: false`: it authenticates neither
+the exporter nor full historical configuration and does not prove queue closure.
+Trusted original export provenance and freshness remain operator responsibilities.
+Exit two / `UNKNOWN` identifies a finite failed `phase`; stop dependent launch,
+retain the evidence and investigate that specific mismatch, without ACK replay.
+
+This mode supports cooperative never-dispatched custody on the same boot with a
+stable DELETE-mode journal and no WAL/SHM/recovery sidecars. A later reboot or
+root move makes this profile inapplicable; it does not imply released capacity
+became active. Missing actual stop/release/GPU evidence remains a blocker. A
+changed host requires a separately reviewed proof from preserved original receipts
+and current resource ownership, not fabricated history or weaker release checks.
 
 ## Preserve the three new bytecode files as historical evidence
 
@@ -134,14 +155,20 @@ there is no pyc-ignore rule or post-capture cleanup exemption.
 
 ## New attempt after validated release and installation closure
 
-Before starting the new canonical application's lifespan, use the existing
-read-only export to confirm the original native task/ticket is terminal and
-its associated descendants have no pending execution or retry work. Retain that
-observation; reuse it if already verified. The old controller's exit code alone
-does not establish durable queue termination, and a new lifespan can recover
-queued work. This check requires no old service reconstruction, ACK replay or
-new authorization. The custody audit deliberately reports `newAttemptReady:
-false` because compute release alone does not certify these separate conditions.
+Before any new application lifespan, complete the executable
+[original queue/descendant read-only gate](RESEARCH_ORIGINAL_QUEUE_READ.md).
+Use `scripts/research_original_queue_audit.sql` with exact original IDs and the
+existing authorized read-only connection while old writers remain stopped.
+Require JSON `PASS` / `NO_DESCENDANTS_OF_ORIGINAL_ROOT`, not merely exit zero or
+related-pending count zero. This checks the fixed root-only profile and absence
+of every first Factory/native descendant edge, including unresolved intents and
+queued child payloads. Only then is deeper traversal legitimately not applicable.
+Any edge or unsupported schema is UNKNOWN and requires a bounded graph-specific
+read; do not restart the old service to perform it.
+
+Release audit PASS plus queue PASS closes the old attempt's custody and runnable
+work questions. Neither changes its failed outcome, resets unknown ACKs, or alone
+certifies a new installation. Continue under the existing recovery authorization.
 
 After audit and installation closure PASS, use the new interpreter and exact
 PR50 runner for its existing `--preflight` and `--database-preflight` modes.

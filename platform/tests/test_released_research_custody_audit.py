@@ -210,5 +210,109 @@ class ReleasedCustodyAuditTests(unittest.TestCase):
             helper.decode('{"schema":1,"schema":1}')
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux custody contract')
+class MinimalReleasedCustodyAuditTests(unittest.TestCase):
+    write_body = ReleasedCustodyAuditTests.write_body
+
+    def setUp(self):
+        ReleasedCustodyAuditTests.setUp(self)
+        self.selection = {key: self.pins[key] for key in
+                          ('schema', 'taskId', 'ownerId', 'requestId', 'leaseId')}
+        self.evidence['task']['terminal'] = True
+        self.evidence['ticket']['status'] = 'cancelled'
+
+    def minimal(self, expected=True):
+        result = helper.audit(self.evidence, self.selection, self.path,
+                              mode='released-never-dispatched')
+        self.assertEqual(result['releasedCustodyConsistent'], expected, result)
+        self.assertEqual(result['releaseIdentityConsistent'], expected)
+        self.assertFalse(result['identityConsistent'])
+        self.assertFalse(result['historicalConfigValidated'])
+        self.assertEqual(result['historicalConfigStatus'], 'NOT_REQUIRED_FOR_NEVER_DISPATCHED_RELEASE')
+        self.assertFalse(result['newAttemptReady'])
+        self.assertFalse(result['descendantsChecked'])
+        self.assertFalse(result['replayRequired'])
+        self.assertFalse(result['issuerAuthenticated'])
+        return result
+
+    def test_minimal_positive_without_config_or_launch_artifacts(self):
+        del self.evidence['provider']['configurationFingerprint']
+        self.pins.clear()  # No independent historical config/planHash/root pin needed.
+        before = self.path.read_bytes(), self.path.stat().st_mtime_ns
+        result = self.minimal()
+        self.assertEqual(result['phase'], 'COMPLETE')
+        self.assertEqual(before, (self.path.read_bytes(), self.path.stat().st_mtime_ns))
+        self.assertEqual(set(self.path.parent.iterdir()), {self.path})
+        self.assertEqual(self.evidence['lease']['cancelAck'], 'unknown')
+        self.assertEqual(self.evidence['lease']['releaseAck'], 'unknown')
+
+    def test_minimal_cross_checks_original_plan_and_native_envelope(self):
+        original = copy.deepcopy(self.evidence)
+        mutations = [(['plan', 'hash'], '0' * 64), (['plan', 'body', 'ownerId'], 'other'),
+                     (['task', 'fingerprint'], '0' * 64), (['task', 'terminal'], False),
+                     (['ticket', 'status'], 'pending'), (['ticket', 'status'], 'running'),
+                     (['ticket', 'status'], 'retrying'), (['ticket', 'id'], 'other'),
+                     (['ticket', 'payload', 'kwargs', 'session_state', 'factory_envelope', 'request_id'], 'other'),
+                     (['mapping', 'body', 'requestId'], 'other'),
+                     (['provider', 'released'], False), (['provider', 'allStopped'], False),
+                     (['lease', 'capacityHeld'], True),
+                     (['lease', 'gpuEvidence', 'releaseProof', 'deviceObservationSha256'], '0' * 64)]
+        for keys, value in mutations:
+            with self.subTest(keys=keys, value=value):
+                self.evidence = copy.deepcopy(original)
+                target = self.evidence
+                for key in keys[:-1]:
+                    target = target[key]
+                target[keys[-1]] = value
+                self.minimal(False)
+
+    def test_minimal_original_selection_required(self):
+        for key in ('taskId', 'ownerId', 'requestId', 'leaseId'):
+            with self.subTest(key=key):
+                old = self.selection[key]
+                self.selection[key] = 'other'
+                self.minimal(False)
+                self.selection[key] = old
+        self.selection['nativeRunId'] = 'native'
+        self.minimal()
+        self.selection['nativeRunId'] = 'other'
+        self.minimal(False)
+
+    def test_minimal_namespace_mismatch_even_with_self_consistent_binding(self):
+        binding = self.evidence['provider']['binding']
+        binding['providerNamespace'] = '0' * 64
+        self.evidence['lease']['providerNamespace'] = '0' * 64
+        self.evidence['provider']['bindingHash'] = helper.digest(binding)
+        self.assertEqual(self.minimal(False)['phase'], 'JOURNAL_NAMESPACE')
+
+    def test_minimal_journal_and_stop_proof_tamper(self):
+        original = copy.deepcopy(self.body)
+        for key, value in [('guardian', {'pid': 123}), ('child', {'pid': 456}),
+                           ('bootId', 'other'), ('stoppedProof', False),
+                           ('capacityHeld', True), ('specSha256', '0' * 64),
+                           ('identitySha256', '0' * 64), ('state', 'PREPARED'),
+                           ('stopReceipt', None)]:
+            with self.subTest(key=key):
+                self.body = copy.deepcopy(original)
+                self.body[key] = value
+                self.write_body()
+                self.minimal(False)
+
+    def test_minimal_cli_read_only_and_safe_output(self):
+        evidence_file = Path(self.tmp.name) / 'evidence.json'
+        pins_file = Path(self.tmp.name) / 'selection.json'
+        evidence_file.write_text(json.dumps(self.evidence))
+        pins_file.write_text(json.dumps(self.selection))
+        before = self.path.read_bytes(), self.path.stat().st_mtime_ns
+        response = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT),
+            '--released-never-dispatched', str(evidence_file), str(pins_file), str(self.path)],
+            text=True, capture_output=True, check=False)
+        self.assertEqual(response.returncode, 0, response.stdout)
+        self.assertEqual(response.stderr, '')
+        self.assertNotIn(str(self.path), response.stdout)
+        self.assertEqual(json.loads(response.stdout)['scope'], 'NEVER_DISPATCHED_RELEASE')
+        self.assertEqual(before, (self.path.read_bytes(), self.path.stat().st_mtime_ns))
+
+
 if __name__ == '__main__':
     unittest.main()

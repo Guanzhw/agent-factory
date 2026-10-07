@@ -1,5 +1,23 @@
 # Cloud integration task board
 
+## Never-dispatched minimal recovery gate — 2026-10-07
+
+PR52 strict historical configuration reconstruction overconstrained the release
+question. Runtime remains PR50; only standalone audit, read-only SQL and handoff
+change. Original failure and ACKunknown remain unchanged.
+
+| Owner / exclusive scope | Dependency | Acceptance / remaining boundary |
+|---|---|---|
+| root | Integration, runbooks, exact commit/CI and draft PR | Focused/static validation and exact CI recorded in PR; no target execution |
+| never_dispatched_gate | Minimal release mode + synthetic tests | 17 focused tests pass; positive journal/compute/GPU gates retained |
+| descendant_read_audit | Root-only queue SQL, provenance doc, disposable PG tests | 12 PG cases added; local PG unavailable, exact CI must execute |
+| minimal_gate_review | Independent read-only review | No blocking finding; same-boot/root limitation explicit |
+| original local worker | Exact original exports, release + queue checks, separate installation/new attempt | Target gates not run by cloud; no fabricated history or repeated release |
+
+Follow [the corrected handoff](PR50_RELEASED_CUSTODY_HANDOFF.md). Historical
+full-config checks are optional forensics; absence of never-executed training
+artifacts is not a release blocker. Real missing stop/resource proof still blocks.
+
 ## Already-released custody and PR50 installation handoff — 2026-10-07
 
 Runtime remains exact PR50 `997013114a8c533c84078d174b220e541ea19f9a`.

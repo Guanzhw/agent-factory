@@ -14,6 +14,17 @@ These MUST come from independently retained original configuration/admission
 receipts, NOT from the evidence being checked. This helper cannot authenticate
 that provenance. It reads no credential files or environment variables.
 
+Default strict mode reconstructs historical configuration as a separate forensic
+check. Explicit --released-never-dispatched mode accepts selection pins only:
+schema, taskId, ownerId, requestId, leaseId (optional nativeRunId). These identify the
+original attempt from retained progress/admission records. It cross-checks the
+original persisted plan hash, task fingerprint, native envelope, binding, journal
+identity and release proofs. It does NOT reconstruct historical driver config or
+require artifacts from stages that never ran. Current root physical identity must
+reproduce the original binding namespace. Trusted read-only exports and original
+journal provenance remain operator responsibilities. Neither mode checks the
+complete descendant closure; that is a separate read-only gate.
+
 Only already-released cooperative never-dispatched custody is supported. ACKs
 are intentionally neither interpreted as fresh release authority nor replayed.
 No attempt is made to authenticate the exported DB issuer, verify global GPU
@@ -126,17 +137,37 @@ def journal_read(path):
         os.close(fd)
 
 
-def audit(evidence, pins, journal):
+def audit(evidence, pins, journal, *, mode='strict'):
     """Return finite safe output only. Missing evidence or mismatch is UNKNOWN."""
     result = {'schema': 1, 'code': 'UNKNOWN', 'releasedCustodyConsistent': False,
               'identityConsistent': False, 'replayRequired': False,
               'issuerAuthenticated': False, 'newAttemptReady': False}
+    phase = 'INPUT'
+    result.update(mode=mode if mode in ('strict', 'released-never-dispatched') else 'INVALID',
+                  historicalConfigReconstructed=False, historicalConfigValidated=False,
+                  releaseIdentityConsistent=False, descendantsChecked=False,
+                  scope='NEVER_DISPATCHED_RELEASE' if mode == 'released-never-dispatched' else 'STRICT_FORENSIC',
+                  historicalConfigStatus='NOT_REQUIRED_FOR_NEVER_DISPATCHED_RELEASE'
+                  if mode == 'released-never-dispatched' else 'UNKNOWN')
     try:
+        need(mode in ('strict', 'released-never-dispatched'))
+        minimal = mode == 'released-never-dispatched'
         need(type(evidence['schema']) is int and evidence['schema'] == 1
              and type(pins['schema']) is int and pins['schema'] == 1)
         lease, record, mapping, task, plan_row, ticket = (
             evidence[key] for key in ('lease', 'provider', 'mapping', 'task', 'plan', 'ticket'))
         plan = plan_row['body']
+        phase = 'ORIGINAL_PLAN_AND_TASK'
+        if minimal:
+            # Selection pins identify the original task; persisted plan hash is
+            # cross-checked below, never invented from mutable allocation fields.
+            selectors = {'schema', 'taskId', 'ownerId', 'requestId', 'leaseId'}
+            need(set(pins) in (selectors, selectors | {'nativeRunId'}))
+            need('nativeRunId' not in pins or pins['nativeRunId'] == task['run_id'])
+            pins = {**pins, 'planId': task['plan_id'], 'planHash': plan_row['hash'],
+                    'nativeRunId': task['run_id']}
+            need(type(pins['leaseId']) is str and bool(pins['leaseId']))
+            need(task['terminal'] is True and ticket['status'] in ('cancelled', 'completed', 'failed'))
         for key, task_key in (('taskId', 'id'), ('ownerId', 'owner_id'), ('planId', 'plan_id'),
                               ('requestId', 'request_id'), ('nativeRunId', 'run_id')):
             need(type(pins[key]) is str and bool(pins[key]) and task[task_key] == pins[key])
@@ -144,6 +175,7 @@ def audit(evidence, pins, journal):
              and plan['ownerId'] == plan_row['owner_id'] == pins['ownerId']
              and digest(plan) == plan_row['hash'] == pins['planHash'])
         need(task['fingerprint'] == digest({'planId': pins['planId'], 'planHash': pins['planHash']}))
+        phase = 'NATIVE_ENVELOPE'
         expected_ticket = {'id': pins['nativeRunId'], 'session_id': pins['taskId'],
                            'user_id': pins['ownerId'], 'component_type': 'agent', 'component_id': 'factory-executor'}
         need(all(ticket[key] == value for key, value in expected_ticket.items())
@@ -163,6 +195,7 @@ def audit(evidence, pins, journal):
             state = decode(state)
         need(state['factory_envelope'] == {'plan_ref': pins['planId'], 'user_id': pins['ownerId'],
                                            'task_id': pins['taskId'], 'request_id': pins['requestId']})
+        phase = 'LEASE_MAPPING'
         binding = {key: lease[key] for key in BINDINGS}
         need(record['binding'] == binding and record['bindingHash'] == digest(binding)
              and binding['executionEffect'] == 'research-process-run-v1')
@@ -177,7 +210,8 @@ def audit(evidence, pins, journal):
              'targetRef': binding['connectionRef'], 'planHash': pins['planHash'],
              'requestId': binding['requestId'], 'leaseFingerprint': binding['fingerprint']})
         need(not any(key.startswith('aggregate') for key in record))
-        root = Path(pins['providerRoot'])
+        phase = 'JOURNAL_NAMESPACE'
+        root = Path(journal).parent.parent if minimal else Path(pins['providerRoot'])
         path = root / pins['leaseId'] / 'custody.sqlite'
         need(path == Path(journal) and path.is_absolute() and '..' not in path.parts)
         body, info = journal_read(path)
@@ -185,29 +219,43 @@ def audit(evidence, pins, journal):
         root_info, directory = root.lstat(), path.parent.lstat()
         need(stat.S_ISDIR(root_info.st_mode) and stat.S_ISDIR(directory.st_mode)
              and stat.S_IMODE(directory.st_mode) & 0o077 == 0)
+        if minimal:
+            # Current physical identity must reproduce the namespace committed in
+            # the ORIGINAL binding; it is not labelled independently retained history.
+            pins = {**pins, 'rootIdentity': [root_info.st_dev, root_info.st_ino],
+                    'spec': body['spec'], 'limits': body['limits'],
+                    'gpuBinding': binding['gpuBinding']}
         need(pins['rootIdentity'] == [root_info.st_dev, root_info.st_ino])
         namespace = digest({'namespace': 'process-custody-v1', 'root': digest({
             'namespace': 'local-workspace-v1', 'root': str(root), 'rootIdentity': pins['rootIdentity']})})
         need(binding['providerNamespace'] == namespace)
-        base = {'namespace': namespace, 'spec': pins['spec'], 'limits': pins['limits'],
-                'revision': 'process-provider-v1'}
-        need(type(pins['requiredIsolation']) is list)
-        if pins['requiredIsolation']:
-            base['requiredIsolation'] = sorted(set(pins['requiredIsolation']))
-        config = digest({'base': digest(base), 'revision': 'research-local-provider-v1',
-                         'gpuBinding': pins['gpuBinding'], 'sourceSha256': pins['sourceSha256'],
-                         'manifestSha256': pins['manifestSha256'], 'observerSha256': pins['observerSha256']})
+        phase = 'HISTORICAL_CONFIGURATION'
+        if not minimal:
+            base = {'namespace': namespace, 'spec': pins['spec'], 'limits': pins['limits'],
+                    'revision': 'process-provider-v1'}
+            need(type(pins['requiredIsolation']) is list)
+            if pins['requiredIsolation']:
+                base['requiredIsolation'] = sorted(set(pins['requiredIsolation']))
+            config = digest({'base': digest(base), 'revision': 'research-local-provider-v1',
+                             'gpuBinding': pins['gpuBinding'], 'sourceSha256': pins['sourceSha256'],
+                             'manifestSha256': pins['manifestSha256'], 'observerSha256': pins['observerSha256']})
         gpu_binding = pins['gpuBinding']
         need(set(gpu_binding) == {'schema', 'receiverNamespace', 'deviceId', 'policy',
                                   'quotaEnforced', 'deviceIsolationEnforced'}
              and type(gpu_binding['schema']) is int and gpu_binding['schema'] == 1
              and gpu_binding['policy'] == 'exclusive-factory-lease'
              and gpu_binding['quotaEnforced'] is False and gpu_binding['deviceIsolationEnforced'] is False)
-        for value in (gpu_binding['receiverNamespace'], gpu_binding['deviceId'], pins['sourceSha256'],
-                      pins['manifestSha256'], pins['observerSha256']):
+        hashes = [gpu_binding['receiverNamespace'], gpu_binding['deviceId']]
+        if not minimal:
+            hashes += [pins[key] for key in ('sourceSha256', 'manifestSha256', 'observerSha256')]
+        for value in hashes:
             need(type(value) is str and re.fullmatch('[a-f0-9]{64}', value) is not None)
-        need(record['configurationFingerprint'] == config and binding['gpuBinding'] == pins['gpuBinding']
-             and binding['executionGuard']['manifestSha256'] == pins['manifestSha256'])
+        if not minimal:
+            need(record['configurationFingerprint'] == config and binding['gpuBinding'] == pins['gpuBinding']
+                 and binding['executionGuard']['manifestSha256'] == pins['manifestSha256'])
+            result.update(historicalConfigReconstructed=True, historicalConfigValidated=True,
+                          historicalConfigStatus='VALIDATED')
+        phase = 'JOURNAL_IDENTITY'
         root_pin = {'directoryDevice': directory.st_dev, 'directoryInode': directory.st_ino,
                     'fileDevice': info.st_dev, 'fileInode': info.st_ino, 'path': str(path)}
         need(body['rootPin'] == root_pin and body['schema'] == 1
@@ -220,11 +268,13 @@ def audit(evidence, pins, journal):
              and record['journalIdentity'] == [info.st_dev, info.st_ino]
              and record['processPin'] == {key: body[key] for key in PROCESS_PIN})
         need(body['bootId'] == Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+        phase = 'NEVER_DISPATCHED_STOP'
         receipt = {'kind': 'never-dispatched', 'journalId': body['id'],
                    'identitySha256': body['identitySha256'], 'bootId': body['bootId'],
                    'guardian': None, 'child': None, 'exitCode': None, 'groupStopped': True}
         need(body['stopReceipt'] == receipt and body['guardian'] is None and body['child'] is None
              and body['state'] == 'CANCELLED' and body['stoppedProof'] is True and body['capacityHeld'] is False)
+        phase = 'RELEASED_CUSTODY'
         need(lease['processBinding'] == {'taskId': pins['taskId'], 'nativeRunId': pins['nativeRunId'],
              'planId': pins['planId'], 'bindingFingerprint': record['bindingHash']}
              and lease['providerJobId'] == body['id']
@@ -234,6 +284,7 @@ def audit(evidence, pins, journal):
         need(record['state'] == lease['state'] == 'RECLAIMED' and record['released'] is True
              and record['allStopped'] is True and record['stopKind'] == 'never-dispatched'
              and lease['capacityHeld'] is False)
+        phase = 'GPU_RELEASE_PROOF'
         observation = digest({'neverDispatched': True, 'processPin': record['processPin'],
                               'stopReceipt': receipt, 'binding': record['bindingHash']})
         need(record['gpuReleaseObservationSha256'] == observation)
@@ -242,9 +293,12 @@ def audit(evidence, pins, journal):
                'state': 'RELEASED', 'releaseProof': {'kind': 'never-dispatched',
                'processBindingFingerprint': record['bindingHash'], 'deviceObservationSha256': observation}}
         need(lease['gpuEvidence'] == gpu)
-        result.update(code='RELEASED_CUSTODY_CONSISTENT', releasedCustodyConsistent=True, identityConsistent=True)
+        result.update(code='RELEASED_CUSTODY_CONSISTENT', releasedCustodyConsistent=True,
+                      identityConsistent=not minimal, releaseIdentityConsistent=True)
+        phase = 'COMPLETE'
     except Exception:
         pass
+    result['phase'] = phase
     return result
 
 
@@ -255,8 +309,12 @@ def main(argv=None):
               'identityConsistent': False, 'replayRequired': False,
               'issuerAuthenticated': False, 'newAttemptReady': False}
     try:
-        need(sys.flags.isolated == 1 and sys.dont_write_bytecode and len(args) == 3)
-        result = audit(load_json(args[0]), load_json(args[1]), args[2])
+        need(sys.flags.isolated == 1 and sys.dont_write_bytecode)
+        mode = 'strict'
+        if len(args) == 4 and args[0] == '--released-never-dispatched':
+            mode, args = 'released-never-dispatched', args[1:]
+        need(len(args) == 3)
+        result = audit(load_json(args[0]), load_json(args[1]), args[2], mode=mode)
     except Exception:
         pass
     print(json.dumps(result, sort_keys=True))

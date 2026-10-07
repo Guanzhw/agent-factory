@@ -7,19 +7,25 @@ lease and provider allocation as `RECLAIMED`, `capacityHeld: false`,
 `released: true`, `allStopped: true`, with GPU `RELEASED` / `never-dispatched`
 proof. Original mapping, binding hash and database identity checks passed.
 `cancelAck` and `releaseAck` remain `unknown`; neither was reset or replayed.
-Full provider-configuration, journal, immutable-plan and native-envelope
-identity checks have not yet passed, and the old in-memory service is absent.
-These are operator-reported observations, not cloud execution evidence.
+A later target read reports original terminal task/cancelled ticket and consistent
+plan/native/mapping/ledger, but descendants remain NOT_CHECKED. Empty training
+output and absent run-config/seal/train/eval receipts agree with never-dispatched.
+The PR52 strict audit was not run because separate historical configuration pins
+were not retained. These are target reports, not cloud execution evidence.
 
-Positive persisted release and unknown transport acknowledgements can coexist.
-After the remaining original identity checks pass, no additional release,
-reconciliation write or reconstruction of the old service is required merely
-to change those acknowledgement fields. Use the
-[read-only audit and PR50 handoff](PR50_RELEASED_CUSTODY_HANDOFF.md) to complete
-the evidence chain and continue the already-authorized research recovery with
-a separate installation and attempt. An absent service object is not itself
-a reason to repeat a completed effect. Missing original evidence stays UNKNOWN;
-do not invent pins from current files or rewrite historical records.
+The strict full-configuration reconstruction prerequisite was overbroad for this
+release question. The revised [handoff](PR50_RELEASED_CUSTODY_HANDOFF.md) supplies
+an explicit minimal release mode using original persisted plan, binding, journal
+identity and positive stop/compute/GPU receipts, plus an executable root-only queue
+check. It does not require artifacts from stages that never occurred or relabel
+current metadata as independently retained history. Full forensic validation
+remains optional and is explicitly not claimed by the minimal mode.
+
+Positive persisted release can coexist with unknown transport acknowledgements.
+After these release and queue checks pass, no repeated release, ACK reset or old
+service reconstruction is needed. Preserve the failed attempt and all artifacts;
+continue with a separate installation and attempt under existing authorization.
+Actual missing or mismatched stop/release proofs remain UNKNOWN, never fabricated.
 
 ## Earlier missing-receipt recovery procedure
 
