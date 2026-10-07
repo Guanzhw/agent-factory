@@ -1,20 +1,25 @@
 # Cloud integration task board
 
+Final post-fix actual Go diagnostic passed: public context plus final reply, three
+SETTLED requests (8,877 tokens), both context/session effects DONE, zero held
+provider tokens and exact original container stop/reclaim. Rejected decision
+reserved no effect. Earlier UNKNOWNs remain. See `AUTORESEARCH_SESSION.md`.
+
 ## Active continuation after PR59 checkpoint
 
-Draft PR59 head `ca9efb2ffaab1d2b716a844917e37c1eab5dd016` is **not accepted**:
+Historical PR59 head `ca9efb2ffaab1d2b716a844917e37c1eab5dd016` was **not accepted**:
 Windows CI found three Linux-fixture portability errors. That head's push PostgreSQL job passed 2010 tests (63 platform skips), but the head remains rejected. Owned fixture fixes are
-local; a new exact head will require full final CI. The first application remains
+included in code checkpoint `a9eb50ab657d9e8e2253fdff1e101e8fa98af1d5`; final exact-head CI receipts belong to draft PR59. The first application remains
 in implementation, and this draft is not a stopping condition.
 
 | Owner | Exclusive current scope | Dependency / acceptance |
 |---|---|---|
-| root | Core API/config/lifecycle integration, original control commands, final checks | Integrate native parent external pause; retain original UNKNOWN ledger; single worker |
-| at10 | New scientific child profiles and opt-in approved application modes | Same-app ancestor authority; no standalone guard relaxation |
-| factory_flow | New durable scientific child orchestration service/tests | Original candidate/call/plan pins; preparation/train/eval custody; no new task after UNKNOWN |
-| reviewer | New parent native session control module/tests | Pause before ORX, managed controller, same-run result continuation, positive cleanup |
+| root | Core API/config/lifecycle integration, original control commands, final checks | Implemented; six required PG cases passed; original UNKNOWN retained; final exact CI pending |
+| at10 | New scientific child profiles and opt-in approved application modes | Implemented and light-tested; actual target baseline/config/receipts still missing |
+| factory_flow | New durable scientific child orchestration service/tests | Implemented and light-tested; original candidate/call/plan pins and custody; real three-stage target acceptance pending |
+| reviewer | New parent native session control module/tests | Implemented; native single-worker acceptance passed; 13 final controller regressions passed |
 | candidate_support_audit | Two Linux runtime/bridge test files | Windows skips only Linux-only behavior; portable checks remain; 12 Linux tests pass |
-| go_adapter | Read-only live UNKNOWN diagnosis | Old evidence cannot distinguish parser/transport causes; no historical backfill |
+| go_adapter | Go broker/session transport and diagnostics | Classified third diagnostic GET timeout; bounded GET-only retry implemented; historical UNKNOWN retained |
 
 The first actual Go diagnostic settled one response and held the second UNKNOWN;
 no real-provider context tool completed. The successful earlier harness/MCP test
@@ -30,6 +35,16 @@ reservation and projection; reviewer added continuation guards and stop-only
 cancellation before best-effort diagnostics. Original effects remain unchanged.
 Scientific stages were not executed. All original UNKNOWN records remain.
 The required PostgreSQL suite passed all six cases in 70.192 seconds, with no skips.
+Local full Python discovery passed 2,062 cases (426 environment skips); final
+AutoResearch focused discovery passed 106 cases (six PG-environment skips). Final
+service/controller regressions passed 22/13 cases; the six required native PG
+cases were repeated after those fixes and passed in 90.687 seconds with no skips; frontend 203 tests, lint,
+typecheck, build, Ruff/Pyright and dependency audit (zero findings) passed.
+The a9 code checkpoint then exposed one Windows assembly-fixture error: a pure
+candidate derivation test invoked POSIX-only runtime-file observation. A fixed
+synthetic runtime FilePin preserves the real derivation/architecture/manifest
+assertions on Windows; production observation is unchanged. Root owns final
+evidence and fresh exact CI integration.
 
 ## Initial PR59 checkpoint — superseded by active continuation above
 

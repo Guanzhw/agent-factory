@@ -13,6 +13,8 @@ from agent_factory.resources import PersistentResourceService
 from test_research_manifest import example_manifest
 from test_research_training_adapter import synthetic_files
 from agent_factory import research_training_adapter as adapter
+from agent_factory import research_local_driver as local_driver
+from agent_factory.research_staging import FilePin
 
 
 class ScientificAssemblyTests(unittest.TestCase):
@@ -56,7 +58,10 @@ class ScientificAssemblyTests(unittest.TestCase):
     def test_actual_candidate_derivation_rejects_architecture_or_manifest_substitution(self):
         files = synthetic_files()
         text = files['train.py'].decode().replace('EMBEDDING_LR = 0.5', 'EMBEDDING_LR = 0.25')
-        with patch.object(adapter, 'verify_upstream_source', return_value={'commit': 'synthetic-only', 'sourceSha256': {}}):
+        # This pure derivation fixture supplies fixed synthetic runtime bytes;
+        # descriptor-safe installed package scanning is a separate POSIX contract.
+        with patch.object(adapter, 'verify_upstream_source', return_value={'commit': 'synthetic-only', 'sourceSha256': {}}), \
+             patch.object(local_driver, '_runtime_pins', return_value=(FilePin('synthetic_runtime.py', 'a' * 64, 1),)):
             derived = module.derive_local_identities(files, {**files, 'train.py': text.encode()}, microbatch=1)['identities']
             value = object.__new__(module.ScientificPhaseAssembler)
             value.files, value.microbatch, value.manifest = files, 1, example_manifest()

@@ -1,5 +1,10 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+Final post-fix actual Go diagnostic passed: public context plus final reply, three
+SETTLED requests (8,877 tokens), both context/session effects DONE, zero held
+provider tokens and exact original container stop/reclaim. Rejected decision
+reserved no effect. Earlier UNKNOWNs remain. See `AUTORESEARCH_SESSION.md`.
+
 ## Active scientific integration after PR59 initial checkpoint
 
 Coordinator continues on `feat/autoresearch-goal-session-20261007`; PR59 is draft,
@@ -9,6 +14,10 @@ controlled process child → same-parent continuation acceptance. Real target
 three-stage scientific acceptance remains pending. See the current task board
 and `AUTORESEARCH_SESSION.md`; do not treat prior callback-only blockers as the
 latest code state.
+
+Final native PG verification after UNKNOWN/controller fixes passed all six cases
+in 90.687 seconds with no skips. The final exact CI head also includes the
+Windows assembly fixture correction; see PR59 for its two-round terminal receipts.
 
 Initial head ca9efb2 failed Windows fixture checks; its PostgreSQL push CI passed
 2010 tests/63 platform skips. Final new-head CI is still required. A local full

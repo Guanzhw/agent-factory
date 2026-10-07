@@ -214,3 +214,16 @@ continuation. Diagnostic-write failures cannot prevent original cancellation. Th
 or accepted scientific next-decision. This is real model/harness/context-tool
 compatibility evidence, not scientific autonomous research acceptance. The three
 older UNKNOWN attempts and their original private snapshots remain retained.
+
+## Final post-fix public diagnostic
+
+Code checkpoint `a9eb50ab657d9e8e2253fdff1e101e8fa98af1d5` completed an independent
+actual ORX/OpenCode/Go diagnostic on 2026-10-07. Task
+`4549862e-569b-4b20-825c-e6a71d347162` read the public context and returned a final
+reply. Three streaming attempts settled at 2742/46, 2878/123 and 3041/47
+input/output tokens (8,877 total). Both original context and session effects are
+DONE; provider held tokens are zero. The out-of-stage stop decision was rejected
+without reserving an effect. Original Docker exit and exact reclaim were verified.
+This verifies the precondition fix in the actual harness. All older UNKNOWN
+records remain unchanged. Invoice verification and scientific acceptance remain
+unverified; no candidate or experiment ran.
