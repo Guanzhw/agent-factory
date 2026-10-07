@@ -13,6 +13,8 @@ _spec.loader.exec_module(subject)
 
 
 class OrxBridgeTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(hasattr(asyncio, 'start_unix_server') and hasattr(asyncio, 'open_unix_connection'),
+                         'Requires asyncio Unix-domain socket support')
     async def test_loopback_http_bytes_reach_only_selected_unix_socket(self):
         with tempfile.TemporaryDirectory() as temp:
             path = str(Path(temp) / 'broker.sock')

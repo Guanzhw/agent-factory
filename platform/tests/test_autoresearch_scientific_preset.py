@@ -44,6 +44,7 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_subordinate_binding_unavailable_and_never_executes(self):
         preset = self.preset()
         self.assertTrue(preset.blockers)
+        self.assertTrue(preset.external_session)
         with self.assertRaises(ValueError): await preset.experiment(None, self.candidate(preset), 'call')
 
     def test_real_eleven_literal_validator_context_and_fresh_baseline(self):

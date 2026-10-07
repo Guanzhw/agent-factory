@@ -28,7 +28,8 @@ import uvicorn
 
 from .autoresearch_profile import DESCRIPTIONS, ORXResearchModel, TOOL_NAMES, SESSION_RESOURCE_LIMITS
 from .orx_research_broker import ORXResearchBroker
-from .orx_research_session import OpenResearchSessionHTTP, _json
+from .orx_research_session import OpenResearchSessionHTTP, OrxSessionError, OrxSessionUnknown, OrxSessionCancelled, _json
+from .go_diagnostics import safe_diagnostic
 from .store import digest
 
 ERROR = 'AUTORESEARCH_RUNTIME_UNCONFIRMED'
@@ -93,6 +94,8 @@ class AutoResearchRuntime:
         self._launch_task: asyncio.Task | None = None
         self._launch_deadline = 0.0
         self._started = False
+        self._run_phase = 'admission'
+        self.runtime_failure: dict[str, Any] | None = None
         self._cancelled = False
         self._tool_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
@@ -260,7 +263,64 @@ class AutoResearchRuntime:
         self._container_id = receipt['containerId']
         return receipt, cancelled
 
+    async def _poll_original(self, session_id):
+        """Only GET timeout observations may be retried under run's deadline.
+
+        Neither a new session/turn nor another broker request is admitted here.
+        Shape/authority/status failures remain terminal and preserve UNKNOWN.
+        """
+        client = self._http
+        _require(client is not None)
+        client = cast(OpenResearchSessionHTTP, client)
+        while True:
+            self._run_phase = 'poll-authority'
+            await self._authority()
+            _require(self.broker.stopped_reason is None)
+            try:
+                self._run_phase = 'poll-messages'
+                transcript = await client.read_messages(session_id)
+                self._run_phase = 'poll-session'
+                current = await client.read_session(session_id)
+                return transcript, current
+            except OrxSessionError as error:
+                details = error.session_diagnostic
+                retryable = (type(error) is OrxSessionError and details is not None
+                    and details.get('route') in {'sessions', 'messages'}
+                    and details.get('phase') in {'request', 'body'}
+                    and details.get('rejectionCode') == 'TRANSPORT_TIMEOUT')
+                if not retryable:
+                    raise
+                # The enclosing original deadline remains active during sleep
+                # and every subsequent GET. Recheck current authority first.
+                await self._authority()
+                await asyncio.sleep(self._poll_seconds)
+
     async def run(self):
+        try:
+            return await self._run()
+        except BaseException as error:
+            classified = safe_diagnostic('FAILED', error=error)
+            code = ('ORX_PROTOCOL' if type(error) is OrxSessionError else
+                    'ORX_ACK_UNKNOWN' if type(error) in {OrxSessionUnknown, OrxSessionCancelled} else
+                    'RUNTIME_EXCEPTION')
+            failure = {'schema': 1, 'phase': self._run_phase, 'code': code,
+                'sessionKnown': self.session is not None, 'turnKnown': self.turn is not None,
+                **{key: classified[key] for key in ('errorType', 'errorCategory', 'rejectionCode', 'exceptionChain')}}
+            if type(error) in {OrxSessionError, OrxSessionUnknown}:
+                details = cast(OrxSessionError, error).session_diagnostic
+                if details is not None:
+                    failure['sessionDiagnostic'] = dict(details)
+            self.runtime_failure = failure
+            try:
+                self.service.change(self.ctx.run_context.user_id, self.ctx.run_context.session_id,
+                    lambda body: body.update(runtimeFailure=dict(failure)))
+            except Exception:
+                # Preserve original failure; unavailable persistence cannot turn
+                # the failure into a different apparent provider rejection.
+                pass
+            raise
+
+    async def _run(self):
         _require(not self._started)
         self._started = True
         preset = self.service.current(self.ctx)
@@ -270,10 +330,12 @@ class AutoResearchRuntime:
         remaining = min(total, deadline - time.time())
         _require(remaining > 0)
         async with asyncio.timeout(remaining):
+            self._run_phase = 'host-start'
             await self._start_host()
             await self._authority()
             # start may create an OS effect while cancellation arrives; retain its
             # exact receipt before re-raising so finally.stop can prove custody.
+            self._run_phase = 'launcher-start'
             self._launch_deadline = asyncio.get_running_loop().time() + 120
             self._launch_task = asyncio.create_task(asyncio.to_thread(self.launcher.start, self.capability))
             receipt, cancelled = await self._await_launch()
@@ -284,6 +346,7 @@ class AutoResearchRuntime:
             self._http = OpenResearchSessionHTTP(4791, project_id=self.project_id,
                 harness='opencode', model='factory/deepseek-flash', transport=transport)
             # Read-only readiness retries are bounded; no POST is retried.
+            self._run_phase = 'session-readiness'
             async with asyncio.timeout(30):
                 while True:
                     await self._authority()
@@ -292,10 +355,12 @@ class AutoResearchRuntime:
                         break
                     except ValueError:
                         await asyncio.sleep(self._poll_seconds)
+            self._run_phase = 'session-create'
             session = await self._http.create_session(key='orx-create', commit_intent=self._commit)
             self.session = session
             self.service.change(self.ctx.run_context.user_id, self.ctx.run_context.session_id,
                                 lambda body: body.update(session=dict(self.session or {})))
+            self._run_phase = 'session-title'
             await self._http.rename_session(session['id'], 'Factory bounded research',
                                            key='orx-title', commit_intent=self._commit)
             row = self.service.row(self.ctx.run_context.user_id, self.ctx.run_context.session_id)['body']
@@ -307,22 +372,22 @@ class AutoResearchRuntime:
                 'results and subsequent decisions are available research stages, not mandatory actions. '
                 'Do not run an experiment unless these project instructions authorize it. '
                 'Never invent execution evidence.\nApproved project instructions:\n' + instructions + '\nGoal: ' + goal)
+            self._run_phase = 'message-send'
             turn = await self._http.send_message(session['id'], prompt,
                 client_turn_id=uuid4().hex, key='orx-message', commit_intent=self._commit)
             self.turn = turn
             self.service.change(self.ctx.run_context.user_id, self.ctx.run_context.session_id,
                                 lambda body: body.update(turn=dict(self.turn or {})))
             while True:
-                await self._authority()
-                _require(self.broker.stopped_reason is None)
-                transcript = await self._http.read_messages(session['id'])
-                current = await self._http.read_session(session['id'])
+                transcript, current = await self._poll_original(session['id'])
+                self._run_phase = 'poll-inspect'
                 leaf = next((row for row in transcript['messages'] if row['id'] == transcript['activeLeafId']), None)
                 if not current['busy'] and not transcript['queued'] and leaf and leaf['role'] == 'assistant' and leaf['completedAt'] is not None:
                     _require(not any(part.get('type') == 'error' for part in leaf['parts']))
                     final = '\n'.join(part['text'] for part in leaf['parts']
                         if part.get('type') == 'text' and type(part.get('text')) is str)
                     _require(0 < len(final.encode()) <= 32768)
+                    self._run_phase = 'completed'
                     return {'sessionId': session['id'], 'turnId': turn['turnId'],
                         'clientTurnId': turn['clientTurnId'], 'finalText': final,
                         'scientificConclusionVerified': False}

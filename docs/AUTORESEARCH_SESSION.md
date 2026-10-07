@@ -8,8 +8,12 @@ and a model-driven research cycle are different evidence levels.
 ## Ownership and existing implementation
 
 Agno 3.1 and PostgreSQL retain native task, immutable-plan, material, permission,
-cancellation and capacity ownership. `ORXResearchModel.aresponse` delegates one
-whole research turn to ORX; it does not run another model/tool loop. ORX delegates
+cancellation and capacity ownership. Scientific presets first publish an original
+Agno external-execution requirement. The paused parent releases the single worker
+while its explicitly admitted controller owns the ORX turn; the same native run
+continues only after original stop/result custody. The inline diagnostic profile
+still delegates one whole turn through `ORXResearchModel.aresponse`. Neither
+wrapper runs another research model/tool loop. ORX delegates
 research reasoning to its actual OpenCode harness. Every provider request crosses
 the Factory broker and the original task's usage ledger exactly once. The outer
 Agno model wrapper has no provider invocation or additional usage charge.
@@ -30,8 +34,9 @@ fresh, schema-checked native store and inserts its single explicit project befor
 starting ORX. It never rewrites an existing store. Session creation has no upstream
 idempotency key: lost acknowledgements remain UNKNOWN. A persisted title update
 precedes the first message to avoid ORX auto-title inference. The actual harness
-still issued a title-generation request in the wire probe; that request crosses
-the same broker and consumes the same task budget. Interrupt ACK and
+issued a title-generation request in the historical wire probe. The current
+launcher explicitly disables OpenCode's built-in title agent and verifies that
+effective setting; no hidden title request receives a separate budget. Interrupt ACK and
 `busy=false` are not stop proofs. Cleanup requires the original Docker exit proof;
 unresolved effects continue holding task capacity.
 
@@ -85,18 +90,36 @@ already authorized Go project scope, but missing billing evidence is not invente
 
 ## Outstanding integration and acceptance
 
-The scientific preset is unavailable until a **durable subordinate executor**
-binds training/evaluation to the original research task, shares budgets, checks
-current parent authority before every dispatch, preserves original native
-approval/lease identities and propagates cancellation. The current standalone
-candidate CLI does not implement this parent relationship and is not called as a
-shortcut. Its preparation/training/evaluation fixtures remain infrastructure.
+The durable subordinate path is now implemented in `autoresearch_children.py`,
+`autoresearch_scientific_child.py` and `autoresearch_session_control.py`.
+Approved same-application modes prepare, train and independently evaluate one
+candidate through original DelegationService/native tasks. The first bounded
+scientific preset admits one experiment/three children; it does not change the
+generic delegation cap. Parent runtime cleanup also checks original child stops.
 
-The paired result verifier must reread original task/plan/lease/checkpoint and
-independent evaluator custody. Callback booleans or candidate stdout cannot prove
-scientific acceptance. Actual baseline/config/receipt bindings on the existing
-GPU target have not been transferred to this cloud checkout. Do not replace the
-installed target runtime or rerun its accepted baseline to fill those gaps.
+`scripts/autoresearch_scientific_assembly.py` constructs actual existing
+preparation/local research providers in the same control plane. It binds candidate
+bytes and derived variant, original prepared input and training checkpoint to the
+reviewed parent manifest and operator environment/device/limits. A phase intent
+must be committed before a content-addressed target can be registered; existing
+targets cannot be overwritten. Result verification rereads original custody.
+Completed-child artifact reads use a narrow read-only path; they do not renew
+execution permission or bypass cancellation/UNKNOWN.
+
+The operator installs `Settings.autoresearch_children_factory` returning the
+concrete `AutoResearchChildren` service with its assembler, preparation store,
+checkpoint store and existing evaluation service. Preset callbacks call that
+service's `experiment` and `result_verifier`; publication does not create targets,
+start a baseline or grant a new environment. Missing service wiring disables the
+preset. Actual baseline/config/receipt bindings on the existing GPU target remain
+unavailable here, and the target's installed source identities must be checked
+before execution. The standalone candidate CLI is not used as a shortcut.
+
+Actual single-worker native pause/process-child/same-parent continuation has been
+verified separately with an inert ORX fixture and a trusted scientific-pin seam.
+It is not the full three-stage scientific integration or real inference proof.
+The complete real model → candidate → target experiment → independent result →
+next decision acceptance is still missing; no scientific completion is claimed.
 
 | Evidence | What it proves | What it does not prove |
 |---|---|---|
@@ -131,12 +154,63 @@ tokens remain held for the unknown attempt. The first response only proves a
 model response, not a working research agent. The original private PostgreSQL
 snapshot and ORX session store are retained. The broker did not retain sufficient
 phase evidence to identify the second failure, so its cause is not inferred.
-Safe finite-phase diagnostics are now retained for later runs without rewriting
-that history; no additional live request was used to validate the change.
+Later independent, public read-only diagnostics retained the original failed
+ledgers and snapshots. Each stopped after two requests (one settled, one UNKNOWN),
+with positive original container exit/reclaim and no experiment. The second
+settled 667 input/200 output tokens; the third settled 667/407. The third's safe
+origin diagnostic identified a 30-second GET `/api/chat/sessions` transport
+timeout during message polling. Session cleanup then denied broker authority
+while request two was streaming. This diagnoses that run; it does not rewrite
+unknown history or invent missing usage.
 
-Scientific parent/child integration still requires real code: approved same-app
-phase modes and material closure, a delegated scientific profile preserving
-ancestor guards, original-request stage coordination, a native durable pause
-that frees the single worker while children run, and complete budget/cancel/
-checkpoint/evaluator binding. Missing target configuration is an additional
-prerequisite, not a substitute explanation for this implementation gap.
+The current fix retries only classified GET transport timeouts for the same
+original session within its unchanged total deadline. It does not resend a
+message, reset a turn, retry a provider call, ignore protocol/authorization errors
+or release UNKNOWN reservations. OpenCode title generation is also disabled from
+its pinned upstream configuration contract. Updated real-wire/live validation is
+recorded separately when obtained.
+
+The new scientific integration code has focused guard tests and independent
+review. Native fixture acceptance does not certify real GPU execution or prove
+that the target's older baseline matches the current installed code identities.
+Those are remaining acceptance requirements, not substituted by callback flags.
+
+## Updated deterministic/runtime evidence
+
+The updated isolated ORX/OpenCode wire probe completed the context tool and final
+response with exactly two **synthetic** provider responses; no title request was
+forwarded. Effective configuration, original Docker exit and exact container
+reclaim were verified. This demonstrates the title-disable configuration on the
+actual pinned binary; it is not real Go inference evidence.
+
+The separate native PostgreSQL fixture passed in33.984 seconds: the original
+parent paused at queue attempt1/max_attempts1, one delegated bounded process ran
+on the single worker, and the same parent continued at attempt2/max_attempts2.
+Agno explicitly adds one continuation attempt (`update_job_for_continue`); this
+is not a provider retry. There was one controller runtime invocation, one original
+continuation command, one child allocation and positive released custody.
+
+Pinned OpenCode title behavior is documented in its
+[agent configuration source](https://raw.githubusercontent.com/anomalyco/opencode/v1.18.35/packages/opencode/src/agent/agent.ts)
+and [session prompt source](https://raw.githubusercontent.com/anomalyco/opencode/v1.18.35/packages/opencode/src/session/prompt.ts).
+
+## Real Go recovery validation
+
+After the GET-timeout/title fixes, an independent public read-only run completed
+through the actual pinned ORX/OpenCode binaries and actual Go `deepseek-flash`.
+The persisted transcript contains a completed `factory_research_context` tool
+with the original public diagnostic statement, followed by the model's final
+reply. All three provider attempts settled:2734/60,2884/145 and3068/83 input/output
+tokens. Provider attempts have no UNKNOWN; actual subscription invoice remains
+unverified. The rejected decision nevertheless left an UNKNOWN tool effect, so
+the overall task is not cleanly completed despite its original completed projection. Original container exit and exact reclaim were confirmed.
+
+The model also attempted `research_decision(stop)` without an independent result.
+Factory rejected it under the existing stage guard; the subsequent model reply
+finished the diagnostic. The original UNKNOWN tool effect is retained; validation
+before reservation and truthful unresolved-effect projection are now implemented.
+Original DONE session receipts cannot bypass an unresolved tool during native
+continuation. Diagnostic-write failures cannot prevent original cancellation. There was no candidate, experiment, independent result
+or accepted scientific next-decision. This is real model/harness/context-tool
+compatibility evidence, not scientific autonomous research acceptance. The three
+older UNKNOWN attempts and their original private snapshots remain retained.

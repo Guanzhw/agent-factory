@@ -1,6 +1,37 @@
 # Cloud integration task board
 
-## Goal-driven OpenResearch application integration — 2026-10-07
+## Active continuation after PR59 checkpoint
+
+Draft PR59 head `ca9efb2ffaab1d2b716a844917e37c1eab5dd016` is **not accepted**:
+Windows CI found three Linux-fixture portability errors. That head's push PostgreSQL job passed 2010 tests (63 platform skips), but the head remains rejected. Owned fixture fixes are
+local; a new exact head will require full final CI. The first application remains
+in implementation, and this draft is not a stopping condition.
+
+| Owner | Exclusive current scope | Dependency / acceptance |
+|---|---|---|
+| root | Core API/config/lifecycle integration, original control commands, final checks | Integrate native parent external pause; retain original UNKNOWN ledger; single worker |
+| at10 | New scientific child profiles and opt-in approved application modes | Same-app ancestor authority; no standalone guard relaxation |
+| factory_flow | New durable scientific child orchestration service/tests | Original candidate/call/plan pins; preparation/train/eval custody; no new task after UNKNOWN |
+| reviewer | New parent native session control module/tests | Pause before ORX, managed controller, same-run result continuation, positive cleanup |
+| candidate_support_audit | Two Linux runtime/bridge test files | Windows skips only Linux-only behavior; portable checks remain; 12 Linux tests pass |
+| go_adapter | Read-only live UNKNOWN diagnosis | Old evidence cannot distinguish parser/transport causes; no historical backfill |
+
+The first actual Go diagnostic settled one response and held the second UNKNOWN;
+no real-provider context tool completed. The successful earlier harness/MCP test
+used a **synthetic provider**. Two further independent public read-only diagnostics retained all original
+UNKNOWN reservations. The third identified a 30-second ORX sessions GET timeout;
+cleanup then interrupted broker request two. GET-only original-deadline retry and
+explicit OpenCode title-disable fixes are now implemented. Actual native
+single-worker pause/child/continuation passed (1 case, 33.984 seconds). The probe request ceiling is not a subscription limit. The fixed actual Go run
+then completed a real context tool and final reply with all three requests
+SETTLED. A denied out-of-stage decision left an UNKNOWN tool effect and an
+incorrect completed projection. candidate_final_review fixed precondition
+reservation and projection; reviewer added continuation guards and stop-only
+cancellation before best-effort diagnostics. Original effects remain unchanged.
+Scientific stages were not executed. All original UNKNOWN records remain.
+The required PostgreSQL suite passed all six cases in 70.192 seconds, with no skips.
+
+## Initial PR59 checkpoint — superseded by active continuation above
 
 Continue from PR58 exact `d8449295535111947006b62030263efffd161906` on
 `feat/autoresearch-goal-session-20261007`. This phase replaces the claim that

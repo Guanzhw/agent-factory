@@ -68,6 +68,9 @@ class Harness:
             self.effects[key]['result'] = deepcopy(result)
         self.store.effect_reserve.side_effect = reserve
         self.store.effect_complete.side_effect = complete
+        self.store.effects.side_effect = lambda _task: [
+            {'effect_key': 'run:' + key, 'status': 'DONE' if 'result' in value else 'UNKNOWN',
+             'result': deepcopy(value.get('result'))} for key, value in self.effects.items()]
         self.commands = SimpleNamespace(submit=AsyncMock())
         self.bridge = SimpleNamespace(submit=AsyncMock())
         self.service = MemoryService(self.store, Mock(), self.bridge, {'preset': self.preset}, commands=self.commands)
@@ -80,6 +83,143 @@ class Harness:
 
 
 class AutoResearchServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_known_rejections_do_not_create_unknown_effects_or_call_external_work(self):
+        cases = (
+            ('research_context', {'unexpected': True}, 'TOOL_PAYLOAD'),
+            ('research_candidate', {'hypothesis': '', 'trainPy': 'inert'}, 'CANDIDATE_PAYLOAD'),
+            ('research_experiment', {'candidateId': 'missing'}, 'EXPERIMENT_BUDGET'),
+            ('research_experiment', {'candidateId': []}, 'EXPERIMENT_PAYLOAD'),
+            ('research_result', {'candidateId': 'missing'}, 'INDEPENDENT_RESULT_UNAVAILABLE'),
+            ('research_decision', {'action': 'stop', 'reason': 'diagnostic finished'}, 'DECISION_WITHOUT_RESULT'),
+            ('research_decision', {'action': [], 'reason': 'invalid'}, 'DECISION_PAYLOAD'),
+            ('unregistered', {}, 'TOOL_NOT_REGISTERED'),
+        )
+        for name, payload, code in cases:
+            with self.subTest(name=name, payload=payload):
+                h = Harness()
+                with self.assertRaisesRegex(ValueError, code):
+                    await h.service.tool(h.ctx, name, {'_factoryCallId': 'rejected', **payload})
+                h.store.effect_reserve.assert_not_called()
+                h.context.assert_not_called(); h.experiment.assert_not_awaited()
+                self.assertEqual(h.effects, {})
+                self.assertEqual(h.service.saved['body']['experimentCount'], 0)
+
+    async def test_candidate_validation_failure_precedes_reservation_and_done_replay_skips_validation(self):
+        h = Harness()
+        payload = {'_factoryCallId': 'candidate', 'hypothesis': 'bounded', 'trainPy': 'inert'}
+        h.validator.side_effect = ValueError('synthetic invalid candidate')
+        with self.assertRaisesRegex(ValueError, 'synthetic invalid candidate'):
+            await h.service.tool(h.ctx, 'research_candidate', payload)
+        h.store.effect_reserve.assert_not_called()
+        h.validator.side_effect = None
+        result = await h.service.tool(h.ctx, 'research_candidate', payload)
+        h.validator.side_effect = AssertionError('must not validate an original DONE again')
+        self.assertEqual(await h.service.tool(h.ctx, 'research_candidate', payload), result)
+        with self.assertRaisesRegex(ValueError, 'EFFECT_CONFLICT'):
+            await h.service.tool(h.ctx, 'research_candidate', {**payload, 'trainPy': 'changed'})
+
+    async def test_exhausted_evidence_denies_new_work_but_preserves_done_replay(self):
+        h = Harness()
+        payload = {'_factoryCallId': 'context'}
+        result = await h.service.tool(h.ctx, 'research_context', payload)
+        h.service.saved['body']['steps'] = [{} for _ in range(256)]
+        self.assertEqual(await h.service.tool(h.ctx, 'research_context', payload), result)
+        h.store.effect_reserve.reset_mock()
+        with self.assertRaisesRegex(ValueError, 'EVIDENCE_LIMIT'):
+            await h.service.tool(h.ctx, 'research_context', {'_factoryCallId': 'new'})
+        h.store.effect_reserve.assert_not_called()
+        h.context.assert_called_once()
+
+    async def test_experiment_deadline_stop_and_budget_reject_before_reservation(self):
+        for fault in ('deadline', 'stop', 'budget', 'unavailable'):
+            with self.subTest(fault=fault):
+                h = Harness(); body = h.service.saved['body']
+                body['candidates']['candidate'] = {'validated': {}}
+                if fault == 'deadline': body['deadline'] = time.time() + .5
+                if fault == 'stop': body['decision'] = {'action': 'stop'}
+                if fault == 'budget': body['experimentCount'] = 1
+                if fault == 'unavailable':
+                    h.service.presets['preset'] = replace(h.preset, experiment=None)
+                with self.assertRaises(ValueError):
+                    await h.service.tool(h.ctx, 'research_experiment', {'_factoryCallId': 'call', 'candidateId': 'candidate'})
+                h.store.effect_reserve.assert_not_called(); h.experiment.assert_not_awaited()
+
+    async def test_historical_unknown_rejects_replay_before_changed_preconditions(self):
+        h = Harness()
+        payload = {'action': 'stop', 'reason': 'diagnostic finished'}
+        h.store.effect_reserve('run', 'autoresearch-tool:historical', {'tool': 'research_decision', 'payload': payload})
+        original = deepcopy(h.effects)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_TOOL_ORIGINAL_UNKNOWN'):
+            await h.service.tool(h.ctx, 'research_decision', {'_factoryCallId': 'historical', **payload})
+        self.assertEqual(h.effects, original)
+        self.assertFalse(h.service.saved['body']['acceptance']['nextDecision'])
+
+    async def test_runtime_stop_cannot_settle_unknown_tool_or_complete_session(self):
+        h = Harness()
+        h.store.effect_reserve('run', 'autoresearch-tool:unknown', {'original': True})
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_TOOL_EFFECT_UNKNOWN'):
+            await h.service.execute(h.ctx)
+        h.runtime.stop.assert_awaited_once()
+        h.store.effect_complete.assert_not_called()
+        self.assertEqual(h.service.saved['body']['status'], 'unknown')
+        self.assertEqual(h.service.projection('alice', 'task')['allowedActions'], ['cancel'])
+        with self.assertRaisesRegex(ValueError, 'REQUIRES_RECONCILIATION'):
+            await h.service.execute(h.ctx)
+        h.runtime.run.assert_awaited_once()
+
+    async def test_historical_done_with_unknown_tool_projects_unknown_without_rewriting_receipts(self):
+        h = Harness()
+        result = await h.service.execute(h.ctx)
+        h.store.effect_reserve('run', 'autoresearch-tool:historical', {'original': True})
+        original = deepcopy(h.effects)
+        projection = h.service.projection('alice', 'task')
+        self.assertEqual(projection['status'], 'unknown')
+        self.assertEqual(projection['allowedActions'], ['cancel'])
+        self.assertEqual(h.service.saved['body']['status'], 'completed')
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_TOOL_EFFECT_UNKNOWN'):
+            await h.service.execute(h.ctx)
+        self.assertEqual(h.effects, original)
+        self.assertEqual(h.effects['autoresearch-session-v1']['result'], result)
+        h.runtime.run.assert_awaited_once()
+
+    async def test_rejected_decision_can_be_followed_by_clean_diagnostic_completion(self):
+        h = Harness()
+        async def diagnostic():
+            await h.service.tool(h.ctx, 'research_context', {'_factoryCallId': 'context'})
+            with self.assertRaisesRegex(ValueError, 'DECISION_WITHOUT_RESULT'):
+                await h.service.tool(h.ctx, 'research_decision', {'_factoryCallId': 'stop',
+                    'action': 'stop', 'reason': 'public diagnostic done'})
+            return {'actual': 'diagnostic reply'}
+        h.runtime.run.side_effect = diagnostic
+        result = await h.service.execute(h.ctx)
+        self.assertEqual(result['outcome'], 'completed')
+        self.assertTrue(all('result' in effect for effect in h.effects.values()))
+        self.assertEqual(h.service.projection('alice', 'task')['status'], 'completed')
+        self.assertFalse(h.service.saved['body']['acceptance']['nextDecision'])
+
+    async def test_missing_scientific_child_wiring_denies_before_plan_or_dispatch(self):
+        h = Harness()
+        h.preset = replace(h.preset, external_session=True)
+        h.service.presets['preset'] = h.preset
+        h.store.autoresearch_children = None
+        self.assertFalse(h.service.list_presets('alice')[0]['ready'])
+        with self.assertRaises(HTTPException) as caught:
+            await h.service.start('alice', 'preset', None, 'new-original-request')
+        self.assertEqual(caught.exception.status_code, 409)
+        h.store.composition.propose.assert_not_called()
+        h.bridge.submit.assert_not_called()
+
+    async def test_candidate_identity_preserves_distinct_bytes_even_if_validator_summary_matches(self):
+        h = Harness()
+        one = await h.service.tool(h.ctx, 'research_candidate', {'_factoryCallId': 'one',
+            'hypothesis': 'same hypothesis', 'trainPy': 'candidate one'})
+        two = await h.service.tool(h.ctx, 'research_candidate', {'_factoryCallId': 'two',
+            'hypothesis': 'same hypothesis', 'trainPy': 'candidate two'})
+        self.assertNotEqual(one['candidateId'], two['candidateId'])
+        saved = h.service.saved['body']['candidates']
+        self.assertEqual(saved[one['candidateId']]['trainPy'], 'candidate one')
+        self.assertEqual(saved[two['candidateId']]['trainPy'], 'candidate two')
+
     async def test_cleaned_failure_cannot_become_success_on_native_retry(self):
         h = Harness()
         h.runtime.run.side_effect = ValueError('synthetic failure')

@@ -21,15 +21,25 @@ from typing import Any, cast
 
 import httpx
 
+from .go_diagnostics import safe_diagnostic
+
 UPSTREAM_COMMIT = 'f336b121525d99364e2dee4fe90b2784894a54e6'
 MAX_RESPONSE_BYTES = 2 * 1024**2
 MAX_TEXT_BYTES = 32768
 Intent = Mapping[str, str | None]
 
 
+def _diagnostic(route, phase, error, status=None):
+    classified = safe_diagnostic('FAILED', error=error, http_status=status)
+    return MappingProxyType({'schema': 1, 'route': route, 'phase': phase,
+        'httpStatus': status if type(status) is int and 100 <= status <= 599 else None,
+        **{key: classified[key] for key in ('errorType', 'errorCategory', 'rejectionCode', 'exceptionChain')}})
+
+
 class OrxSessionError(ValueError):
     def __init__(self, code='ORX_SESSION_PROTOCOL'):
         self.code = code
+        self.session_diagnostic: Mapping[str, Any] | None = None
         super().__init__(code)
 
 
@@ -117,22 +127,33 @@ class OpenResearchSessionHTTP:
             headers={'User-Agent': 'AgentFactory-OpenResearchSession/1', 'Accept': 'application/json', 'Accept-Encoding': 'identity'})
 
     async def _request(self, method, path, *, body=None, params=None):
+        # Route labels never include IDs, URLs, query parameters or payloads.
+        route = ('sessions' if path == '/api/chat/sessions' else
+                 'messages' if path.endswith('/messages') else
+                 'message' if path.endswith('/message') else
+                 'interrupt' if path.endswith('/interrupt') else 'session-update')
+        phase, status = 'request', None
         try:
             async with asyncio.timeout(self._timeout):
                 async with self._client() as client:
                     async with client.stream(method, path, content=_encoded(body) if body is not None else None,
                             headers={'Content-Type': 'application/json'} if body is not None else None, params=params) as response:
+                        phase, status = 'headers', response.status_code
                         _require(response.status_code == 200 and response.headers.get('content-encoding', 'identity') == 'identity')
                         _require(response.headers.get('content-type', '').split(';')[0].strip().lower() == 'application/json')
                         raw = bytearray()
+                        phase = 'body'
                         async for chunk in response.aiter_bytes():
                             _require(len(raw) + len(chunk) <= MAX_RESPONSE_BYTES)
                             raw.extend(chunk)
+            phase = 'json'
             return _json(raw)
         except asyncio.CancelledError:
             raise
-        except (httpx.HTTPError, TimeoutError, OSError, ValueError, TypeError, RecursionError):
-            raise OrxSessionError() from None
+        except (httpx.HTTPError, TimeoutError, OSError, ValueError, TypeError, RecursionError) as error:
+            failure = OrxSessionError()
+            failure.session_diagnostic = _diagnostic(route, phase, error, status)
+            raise failure from None
 
     def _session(self, row, session_id=None):
         _require(type(row) is dict)
@@ -147,6 +168,14 @@ class OpenResearchSessionHTTP:
             'busy': row['busy'], 'archived': row['archived'], 'usageKnown': False, 'stoppedProof': False}
 
     async def read_session(self, session_id: str):
+        try:
+            return await self._read_session(session_id)
+        except OrxSessionError as error:
+            if error.session_diagnostic is None:
+                error.session_diagnostic = _diagnostic('sessions', 'shape', error)
+            raise
+
+    async def _read_session(self, session_id: str):
         _id(session_id)
         value = await self._request('GET', '/api/chat/sessions', params={'projectId': self.project_id})
         rows = value.get('sessions')
@@ -175,8 +204,11 @@ class OpenResearchSessionHTTP:
             return parse(await self._request(method, path, body=body))
         except asyncio.CancelledError:
             raise OrxSessionCancelled(intent) from None
-        except Exception:
-            raise OrxSessionUnknown(intent) from None
+        except Exception as error:
+            failure = OrxSessionUnknown(intent)
+            if type(error) is OrxSessionError:
+                failure.session_diagnostic = error.session_diagnostic
+            raise failure from None
 
     async def create_session(self, *, key: str, commit_intent: Callable):
         body = {'projectId': self.project_id, 'harness': self.harness, 'model': self.model}
@@ -226,6 +258,14 @@ class OpenResearchSessionHTTP:
             session_id=session_id, client_turn_id=None, commit_intent=commit_intent, parse=parse)
 
     async def read_messages(self, session_id: str):
+        try:
+            return await self._read_messages(session_id)
+        except OrxSessionError as error:
+            if error.session_diagnostic is None:
+                error.session_diagnostic = _diagnostic('messages', 'shape', error)
+            raise
+
+    async def _read_messages(self, session_id: str):
         _id(session_id)
         await self.read_session(session_id)
         value = await self._request('GET', f'/api/chat/sessions/{session_id}/messages')

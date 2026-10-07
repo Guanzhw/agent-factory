@@ -29,6 +29,17 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
         tools = bindings.manifest(plan, context=self._context(task)).get("tools", [])
         selected = [item for item in tools if item.get("toolName") == TOOL]
         _require(len(selected) == 1)
+        from .autoresearch_scientific_child import adapter_id, child_pin
+        scientific_phase = next((phase for phase in ('training', 'evaluation')
+            if selected[0].get('adapterId') == adapter_id(phase, 'tool')), None)
+        if scientific_phase is not None:
+            from .execution_bindings import BindingContext
+            try:
+                pin = child_pin(BindingContext(self.store.settings, self.store, plan,
+                    self._context(task), selected[0]), scientific_phase, custody=True)
+            except ValueError:
+                raise PermissionError('AUTORESEARCH_CHILD_AUTHORITY_ENDED') from None
+            return pin['targetRef'], pin['comparisonManifest'], pin['variantSha256']
         config = selected[0].get("config")
         _require(type(config) is dict and set(config) == {"targetRef", "comparisonManifestSha256", "variantSha256"})
         knowledge = bindings.knowledge_for(plan, self._context(task))

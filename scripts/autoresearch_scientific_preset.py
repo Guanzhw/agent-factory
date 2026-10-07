@@ -132,4 +132,4 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         owner_id=config.owner_id, instructions='Read research_context before proposing an eleven-literal-only candidate.',
         manifest=manifest, limits=deepcopy(config.limits), runtime_factory=runtime_factory,
         context_reader=context_reader, candidate_validator=candidate_validator, experiment=experiment,
-        review_owner=config.review_owner, blockers=tuple(blockers))
+        review_owner=config.review_owner, blockers=tuple(blockers), external_session=True)

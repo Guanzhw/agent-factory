@@ -505,7 +505,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         try:
             plan, task, body, _ = self.execute("discovery")
             self.assertIn("orx_discover", plan["tools"])
-            completed = self.wait(self.origin, task, {"completed"})
+            completed = self.wait(self.origin, task, {"completed"}, seconds=45)
             receipt = completed["snapshot"]["remoteHandoff"]
             for item in completed["artifacts"]:
                 self.assert_binding_provenance(item, plan, receipt)

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import secrets
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from .usage_ledger import UsagePolicy
@@ -52,6 +52,7 @@ class Settings:
     research_evaluators: dict = field(default_factory=dict)
     # Trusted operator presets; never populated from request JSON.
     autoresearch_presets: dict = field(default_factory=dict)
+    autoresearch_children_factory: Callable | None = field(default=None, repr=False)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
     remote_binding_mappings: dict = field(default_factory=dict)

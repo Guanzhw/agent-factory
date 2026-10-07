@@ -95,7 +95,7 @@ def opencode_config(capability, max_output_tokens=512):
         'plugin': [], 'lsp': False, 'formatter': False, 'permission': PERMISSIONS,
         'tools': {name: False for name in BUILTINS},
         'agent': {'factory': {**agent, 'mode': 'primary'}, 'build': agent, 'plan': agent,
-                  'explore': {'disable': True}, 'general': {'disable': True}},
+                  'explore': {'disable': True}, 'general': {'disable': True}, 'title': {'disable': True}},
         'provider': {'factory': {'npm': '@ai-sdk/openai-compatible', 'name': 'Factory bounded broker',
             'options': {'baseURL': 'http://127.0.0.1:4801/v1', 'apiKey': capability},
             'models': {'deepseek-flash': {'name': 'Factory bounded model', 'limit': {'context': 32768, 'output': max_output_tokens}}}}},
@@ -126,13 +126,20 @@ def verify_effective_config(value, expected):
     require(all(value.get('tools', {}).get(name) is False for name in BUILTINS))
     agents = value.get('agent')
     require(type(agents) is dict and 'factory' in agents)
-    for agent in cast(dict[str, Any], agents).values():
+    configured_agents = cast(dict[str, Any], agents)
+    # OpenCode 1.18.35 otherwise forks its own title generation (with retries),
+    # independently of the outer ORX session title. Require explicit disable in
+    # debug config: an absent override would leave the built-in title agent active.
+    title = configured_agents.get('title')
+    require(type(title) is dict and title.get('disable') is True)
+    for agent in configured_agents.values():
         require(type(agent) is dict)
         if agent.get('disable') is True:
             continue
         permissions(agent.get('permission'))
         require(agent.get('model', 'factory/deepseek-flash') == 'factory/deepseek-flash')
-    return {'schema': 1, 'effectiveConfigVerified': True, 'builtinsDenied': True, 'factoryMcpOnly': True}
+    return {'schema': 1, 'effectiveConfigVerified': True, 'builtinsDenied': True,
+            'factoryMcpOnly': True, 'titleAgentDisabled': True}
 
 
 def opencode_wrapper(argv):

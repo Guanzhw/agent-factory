@@ -5,7 +5,7 @@ import json
 from types import SimpleNamespace
 from typing import cast
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
@@ -168,6 +168,39 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content['nativePhaseTimeoutSeconds'], 30)
         self.assertIn('3600', material['description'])
         MaterialDefinition.model_validate(material)
+
+    async def test_scientific_opt_in_has_closed_child_authority_and_same_go_tariff(self):
+        ctx = context()
+        ctx.settings.autoresearch_presets['approved-project'].external_session = True
+        cast(dict, ctx.plan)['tools'] = list(profile.SCIENTIFIC_TOOLS)
+        entries = profile.registrations(external_session=True)
+        for entry in entries:
+            if entry.tool_name in profile.SCIENTIFIC_AUTHORITY_TOOLS:
+                fn = entry.factory(ctx)
+                with self.assertRaisesRegex(ValueError, 'AUTORESEARCH_CHILD_EXECUTION_ONLY'): fn.entrypoint()
+        ctx.store.autoresearch.tool.assert_not_awaited()
+        with patch('agent_factory.autoresearch_session_control.model_factory', return_value='original-pause') as factory:
+            model = next(e for e in entries if e.kind == 'model').factory(ctx)
+            self.assertEqual(model, 'original-pause'); factory.assert_called_once_with(ctx)
+        with self.assertRaises(ValueError):
+            next(e for e in profile.registrations() if e.kind == 'model').factory(ctx)
+        broker_model = profile.ORXResearchModel(ctx)
+        price = profile.pricing_registration()
+        self.assertIsNone(price.local_model_type); self.assertEqual(broker_model.provider, price.provider)
+        self.assertEqual(broker_model.id, price.model)
+        rows = profile.material_drafts('approved-project', external_session=True)
+        self.assertEqual(len(rows), 13)
+        from agent_factory.autoresearch_scientific_child import PHASES, MODE_NAMES, material_drafts, mode_definition
+        budget = {'toolCalls': 32, 'maxDepth': 1, 'maxChildren': 3, 'experimentSeconds': 30, 'outputBytes': 65536}
+        modes = {MODE_NAMES[phase]: mode_definition([dict(row, version=1, sha256='b'*64)
+            for row in material_drafts('approved-project', phase)], phase, limits=budget) for phase in PHASES}
+        definition = profile.application_definition([dict(row, version=1, sha256='a'*64) for row in rows],
+            'approved-project', limits=budget, external_session=True, scientific_modes=modes)
+        ApplicationDefinition.model_validate(definition)
+        self.assertEqual(len(definition['modes']), 4)
+        self.assertEqual(definition['modes']['research']['toolOrder'], list(profile.SCIENTIFIC_TOOLS))
+        self.assertEqual(profile.TOOL_NAMES, ('research_context', 'research_candidate', 'research_experiment',
+            'research_result', 'research_decision'))
 
     def test_broker_pricing_is_authoritative_and_request_body_is_bounded(self):
         price = profile.pricing_registration()

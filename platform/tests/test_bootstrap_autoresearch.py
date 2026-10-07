@@ -68,6 +68,27 @@ class BootstrapAutoResearchTests(unittest.TestCase):
         events.clear(); module.publish_application(services, original, author='author', reviewer='reviewer')
         self.assertEqual(first_keys, [e[3] for e in events])
 
+    def test_scientific_settings_and_full_twenty_eight_material_closure(self):
+        original = replace(preset(), external_session=True)
+        config = module.settings(db_url='postgresql+psycopg://synthetic.invalid/not-connected',
+            workspace=Path('/synthetic/not-created'), preset=original, jwt_key='synthetic-test')
+        self.assertEqual(len(config.runtime_adapters), 23)
+        self.assertEqual(len(config.usage_pricing), 4)
+        self.assertIsNone(config.usage_pricing[0].local_model_type)
+        self.assertTrue(all(row.local_model_type is not None for row in config.usage_pricing[1:]))
+        services, events = state()
+        result = module.publish_application(services, original, author='author', reviewer='reviewer')
+        self.assertEqual(len(events), 29 * 3)
+        self.assertEqual(services['material_governance'].create_draft.call_count, 28)
+        definition = services['applications'].create_draft.call_args.args[1]
+        self.assertEqual(set(definition['modes']), {'research', 'scientific-preparation', 'scientific-training', 'scientific-evaluation'})
+        self.assertEqual(definition['modes']['research']['budget']['maxChildren'], 3)
+        self.assertEqual(len(definition['modes']['research']['materialRefs']), 13)
+        self.assertEqual(result.blockers, original.blockers); self.assertTrue(result.external_session)
+        for maximum in (True, 0, 2):
+            with self.assertRaises(ValueError):
+                module.application_budget(replace(original, limits={**original.limits, 'maxExperiments': maximum}))
+
     def test_self_review_denied_and_current_permission_failure_never_publishes(self):
         services, events = state()
         with self.assertRaises(ValueError): module.publish_application(services, preset(), author='same', reviewer='same')

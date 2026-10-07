@@ -33,6 +33,11 @@ SESSION_RESOURCE_LIMITS = MappingProxyType({'cpus': 1, 'memoryMb': 1024, 'pids':
 TOOL_NAMES = ('research_context', 'research_candidate', 'research_experiment', 'research_result', 'research_decision')
 TOOL_IDS = {name: 'autoresearch-' + name.replace('_', '-') + '-v1' for name in TOOL_NAMES}
 PERMISSIONS = ('research:read', 'compute:local')
+SESSION_TOOL = 'autoresearch_session_run'
+SCIENTIFIC_AUTHORITY_TOOLS = ('bounded_process_run', 'research_process_run')
+SCIENTIFIC_TOOLS = (*TOOL_NAMES, SESSION_TOOL, *SCIENTIFIC_AUTHORITY_TOOLS)
+SCIENTIFIC_TOOL_IDS = {name: 'autoresearch-parent-' + name.replace('_', '-') + '-v1'
+                       for name in (SESSION_TOOL, *SCIENTIFIC_AUTHORITY_TOOLS)}
 DESCRIPTIONS = {
     'research_context': 'Read the approved project instructions and original research evidence.',
     'research_candidate': 'Submit candidate bytes and a hypothesis to the existing controlled research workflow.',
@@ -62,13 +67,14 @@ def _checked(ctx):
     presets = getattr(ctx.settings, 'autoresearch_presets', None)
     _require(type(presets) is dict and value['presetId'] in presets)
     preset = cast(dict, presets)[value['presetId']]
+    expected_tools = SCIENTIFIC_TOOLS if _field(preset, 'external_session') is True else TOOL_NAMES
     owner = getattr(ctx.run_context, 'user_id', None)
     _require(type(owner) is str and bool(owner) and ctx.plan.get('ownerId') == owner
              and _field(preset, 'owner_id') == owner and _field(preset, 'id') == value['presetId']
              and ctx.plan.get('application') == APPLICATION_ID
              and (ctx.plan.get('applicationRef') or {}).get('id') == APPLICATION_ID
              and ctx.plan.get('mode') == 'research' and not ctx.plan.get('delegation')
-             and not ctx.plan.get('remoteHandoff') and ctx.plan.get('tools') == list(TOOL_NAMES)
+             and not ctx.plan.get('remoteHandoff') and ctx.plan.get('tools') == list(expected_tools)
              and set(ctx.plan.get('capabilities', [])) == set(PERMISSIONS))
     return preset
 
@@ -139,7 +145,8 @@ class ORXResearchModel(Model):
         raise ValueError('AUTORESEARCH_BROKER_REQUIRED')
 
 
-def registrations():
+def registrations(*, external_session=False):
+    _require(type(external_session) is bool)
     def knowledge(ctx):
         value = _public_context(_checked(ctx))
         return KnowledgeContext(_json(value), {'evidenceKind': 'autoresearch-approved-project',
@@ -166,12 +173,40 @@ def registrations():
             return tool(execute)
         return factory
 
-    return [AdapterRegistration('model', MODEL_ADAPTER_ID, '1', ORXResearchModel, validator=_config, demo_only=True),
+    def model(ctx):
+        preset = _checked(ctx)
+        _require((_field(preset, 'external_session') is True) == external_session)
+        if external_session:
+            from .autoresearch_session_control import model_factory
+            return model_factory(ctx)
+        return ORXResearchModel(ctx)
+
+    entries = [AdapterRegistration('model', MODEL_ADAPTER_ID, '1', model, validator=_config, demo_only=True),
         AdapterRegistration('knowledge', KNOWLEDGE_ID, '1', knowledge, validator=_config, demo_only=True),
         AdapterRegistration('environment', ENVIRONMENT_ID, '1', environment, validator=_config, demo_only=True),
         *[AdapterRegistration('tool', TOOL_IDS[name], '1', tool_factory(name), validator=_config,
             demo_only=True, tool_name=name, permissions=('compute:local',) if name == 'research_experiment' else ('research:read',))
           for name in TOOL_NAMES]]
+    if external_session:
+        def session(ctx):
+            _checked(ctx)
+            from .autoresearch_session_control import tool_factory
+            return tool_factory(ctx)
+        entries.append(AdapterRegistration('tool', SCIENTIFIC_TOOL_IDS[SESSION_TOOL], '1', session,
+            validator=_config, demo_only=True, tool_name=SESSION_TOOL, permissions=('research:read',)))
+        def authority_factory(name):
+            def factory(ctx):
+                _checked(ctx)
+                def deny() -> str:
+                    raise ValueError('AUTORESEARCH_CHILD_EXECUTION_ONLY')
+                deny.__name__ = name
+                deny.__doc__ = 'Authority declaration only; execution requires an original delegated scientific child.'
+                return tool(deny)
+            return factory
+        for name in SCIENTIFIC_AUTHORITY_TOOLS:
+            entries.append(AdapterRegistration('tool', SCIENTIFIC_TOOL_IDS[name], '1', authority_factory(name),
+                validator=_config, demo_only=True, tool_name=name, permissions=('compute:local',)))
+    return entries
 
 
 def request_guard(model, arguments, keyword_arguments, commitment):
@@ -199,19 +234,22 @@ def pricing_registration(*, request_guard=request_guard, usage_reader=native_res
         accounting_basis='operator-nominal-not-invoice')
 
 
-def material_drafts(preset_id):
+def material_drafts(preset_id, *, external_session=False):
+    _require(type(external_session) is bool)
     config = {'presetId': preset_id}; _config(config)
     rows = []
     entries = [('skill', 'method', None), ('prompt', 'instructions', None),
                ('knowledge', 'project', KNOWLEDGE_ID), ('model', 'model', MODEL_ADAPTER_ID),
                ('environment', 'environment', ENVIRONMENT_ID),
                *[('tool', name, TOOL_IDS[name]) for name in TOOL_NAMES]]
+    if external_session:
+        entries.extend(('tool', name, SCIENTIFIC_TOOL_IDS[name]) for name in (SESSION_TOOL, *SCIENTIFIC_AUTHORITY_TOOLS))
     for kind, name, adapter in entries:
         row = {'id': 'autoresearch-' + preset_id + '-' + name, 'kind': kind,
             'name': 'AutoResearch · ' + name, 'description': DESCRIPTIONS.get(name, '经审批的研究项目；整轮推理由 ORX 负责，结果以原执行凭据为准。'),
             'content': name if kind == 'tool' else 'Use the approved project instructions and original evidence through the ORX research session.',
             'license': 'MIT', 'compatibility': ['agno:3.1.0'], 'dependencies': [],
-            'permissions': ['compute:local'] if name == 'research_experiment' else ['research:read'] if kind == 'tool' else [],
+            'permissions': ['compute:local'] if name == 'research_experiment' or name in SCIENTIFIC_AUTHORITY_TOOLS else ['research:read'] if kind == 'tool' else [],
             'provenance': {'kind': 'original', 'notice': 'Native governed entry to an ORX-owned research session.'}}
         if kind == 'environment':
             row['description'] = ('ORX 会话固定资源：1 CPU、1024 MiB 内存、64 进程；'
@@ -225,15 +263,22 @@ def material_drafts(preset_id):
     return rows
 
 
-def application_definition(materials: list[dict[str, Any]], preset_id, *, limits):
+def application_definition(materials: list[dict[str, Any]], preset_id, *, limits, external_session=False, scientific_modes=None):
     _config({'presetId': preset_id})
-    expected = material_drafts(preset_id)
+    expected = material_drafts(preset_id, external_session=external_session)
     _require(type(materials) is list and len(materials) == len(expected)
              and {row['id'] for row in materials} == {row['id'] for row in expected})
     _require(type(limits) is dict and set(limits) == {'toolCalls', 'maxDepth', 'maxChildren', 'experimentSeconds', 'outputBytes'})
-    return {'id': APPLICATION_ID, 'name': 'AutoResearch 目标驱动研究',
+    _require((scientific_modes is None and not external_session) or (external_session and type(scientific_modes) is dict
+        and set(scientific_modes) == {'scientific-preparation', 'scientific-training', 'scientific-evaluation'}))
+    if external_session:
+        _require(limits['maxChildren'] == 3 and limits['maxDepth'] == 1)
+    result = {'id': APPLICATION_ID, 'name': 'AutoResearch 目标驱动研究',
         'description': '选择经审批的项目，交给 ORX 进行研究，并保留原任务、执行、评估和用量凭据。',
         'defaultMode': 'research', 'discoveryKeywords': ['AutoResearch', '自主研究'],
         'modes': {'research': {'materialRefs': [{key: row[key] for key in ('id', 'version', 'sha256')} for row in materials],
-            'capabilities': list(PERMISSIONS), 'toolOrder': list(TOOL_NAMES), 'config': {},
+            'capabilities': list(PERMISSIONS), 'toolOrder': list(SCIENTIFIC_TOOLS if external_session else TOOL_NAMES), 'config': {},
             'connectionRequirements': [], 'budget': deepcopy(limits)}}}
+    if external_session:
+        result['modes'].update(deepcopy(scientific_modes))
+    return result

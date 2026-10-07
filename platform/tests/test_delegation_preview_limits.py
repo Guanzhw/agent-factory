@@ -77,6 +77,24 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
                 self.assertEqual(authority.call_count, 2)
                 service.store.event.assert_not_called()
 
+    def test_local_modes_match_admission_scope_while_remote_materials_stay_pinned(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote):
+                service, _ = self.fixture()
+                plan = service.store.plan.return_value
+                plan.update(applicationRef={'id': 'approved-app'}, mode='parent', materialRefs=[],
+                            remoteHandoff={'id': 'handoff'} if remote else None)
+                material = {'id': 'child-model', 'version': 1, 'sha256': 'a' * 64,
+                            'kind': 'model', 'content': 'model', 'permissions': []}
+                apps = Mock()
+                apps.require_plan_current.return_value = {'defaultMode': 'child', 'modes': {
+                    'child': {'materialChoices': {}, 'toolOrder': ['inspect']}}}
+                apps.closure.return_value = [material]
+                service.store.applications = apps
+                result = service.delegation_scope('alice', 'root')
+                self.assertEqual(result['allowed'], not remote)
+                self.assertEqual(result['modes'], [] if remote else ['child'])
+
     def test_read_projection_preserves_request_cancellation(self):
         service, authority = self.fixture()
         authority.side_effect = asyncio.CancelledError()

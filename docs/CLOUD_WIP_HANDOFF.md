@@ -1,5 +1,35 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+## Active scientific integration after PR59 initial checkpoint
+
+Coordinator continues on `feat/autoresearch-goal-session-20261007`; PR59 is draft,
+not product completion. New same-parent scientific profiles/controller/assembler
+and custody guards are implemented, with actual single-worker native pause →
+controlled process child → same-parent continuation acceptance. Real target
+three-stage scientific acceptance remains pending. See the current task board
+and `AUTORESEARCH_SESSION.md`; do not treat prior callback-only blockers as the
+latest code state.
+
+Initial head ca9efb2 failed Windows fixture checks; its PostgreSQL push CI passed
+2010 tests/63 platform skips. Final new-head CI is still required. A local full
+run was interrupted after983 starts when superseded by this integration; it is
+not a pass and its four observations were checked in isolated focused runs:the Go mock campaign
+passed; the remote case completed in26.024 seconds under a bounded45-second
+observation window, so only that test's prior15-second window was corrected.
+
+Three independent public Go diagnostics retained one settled and one UNKNOWN
+attempt each. The third classified a30-second ORX sessions GET transport timeout,
+then secondary broker authority denial during cleanup. The original ledgers are
+not reconciled to zero. Fixed GET-only polling retries share the original deadline;
+OpenCode automatic title inference is explicitly disabled. Updated actual wire acceptance passed with two synthetic responses and no title
+request. A subsequent actual Go run completed the original context tool and
+final reply:three provider requests all SETTLED (2734/60,2884/145,3068/83).
+An out-of-stage decision was denied but left an UNKNOWN tool effect. Its original
+completed projection was incorrect. Its effect is retained; new pure preconditions
+now run before reservation, and unresolved tools block completed projection and
+native continuation. Stop-only cancellation precedes best-effort diagnostics. No scientific experiment or
+independent result was produced. All original stop/reclaim proofs were retained.
+
 ## Goal-driven research session checkpoint — 2026-10-07
 
 Current branch `feat/autoresearch-goal-session-20261007` continues PR58 exact

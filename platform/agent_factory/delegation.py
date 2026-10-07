@@ -335,7 +335,8 @@ class DelegationService:
                     capabilities = {cap for item in materials for cap in item["permissions"]}
                     refs = {(item["id"], item["version"], item["sha256"]) for item in materials}
                     if all(set(tools) <= set(ancestor["tools"]) and capabilities <= set(ancestor["capabilities"])
-                           and refs <= {(item["id"], item["version"], item["sha256"]) for item in ancestor["materialRefs"]}
+                           and (not root_plan.get("remoteHandoff") or
+                                refs <= {(item["id"], item["version"], item["sha256"]) for item in ancestor["materialRefs"]})
                            for ancestor in plans):
                         scope["modes"].append(name)
                 preferred = plan["mode"] if plan["mode"] in scope["modes"] else application["defaultMode"]

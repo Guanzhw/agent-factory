@@ -41,7 +41,8 @@ class ResearchPreparationStore:
         plan = self.store.plan(lease['planId'], owner)
         _require(task['id'] == lease['localTaskId'] and task['run_id'] == lease['nativeRunId']
                  and task['plan_id'] == plan['id'] and lease['planHash'] == digest(plan))
-        self.store.require_plan_execution(owner, plan, run_context=runtime._context(task))
+        from .autoresearch_custody import require_original_custody
+        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=stopped)
         authorized = self.resources._authorize(owner, lease['connectionRef'])
         _require(lease['targetFingerprint'] == self.resources._target_fingerprint(authorized)
                  and self.resources._target_fingerprint(target) == lease['targetFingerprint'])

@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from .store import canonical, digest
+from .store import canonical, digest, effect_unresolved
 
 ACCEPTANCE = ('modelExecuted', 'instructionsRead', 'agentDecision', 'managedExperiment',
               'independentResult', 'nextDecision')
@@ -41,6 +41,8 @@ class ResearchPreset:
     experiment: Callable | None = field(default=None, repr=False)
     # Explicit development operator standing approval, never model/user JSON.
     review_owner: str | None = None
+    # Explicit reviewed native pause boundary; existing inline presets remain unchanged.
+    external_session: bool = False
     blockers: tuple[str, ...] = ()
 
     def public_context(self):
@@ -50,7 +52,8 @@ class ResearchPreset:
     def fingerprint(self):
         return digest({'id': self.id, 'owner': self.owner_id, 'context': self.public_context(),
             'defaultGoal': self.default_goal, 'limits': self.limits, 'application': self.application_ref,
-            'connections': self.connection_refs, 'reviewOwner': self.review_owner})
+            'connections': self.connection_refs, 'reviewOwner': self.review_owner,
+            'externalSession': self.external_session})
 
     def unavailable(self):
         return list(self.blockers) + ([] if self.application_ref and all(callable(value) for value in
@@ -75,10 +78,16 @@ class AutoResearchService:
             raise HTTPException(404, 'RESEARCH_PRESET_NOT_FOUND')
         return value
 
+    def unavailable(self, preset):
+        blockers = preset.unavailable()
+        if preset.external_session and getattr(self.store, 'autoresearch_children', None) is None:
+            blockers.append('原父任务下的科研资源与子阶段尚未配置。')
+        return blockers
+
     def list_presets(self, owner):
         self.auth.require(owner, 'read')
         return [{'id': p.id, 'name': p.name, 'defaultGoal': p.default_goal,
-                 'ready': not p.unavailable(), 'blockers': p.unavailable(), 'limits': p.limits}
+                 'ready': not self.unavailable(p), 'blockers': self.unavailable(p), 'limits': p.limits}
                 for p in self.presets.values() if type(p) is ResearchPreset and p.owner_id == owner]
 
     def row(self, owner, task_id):
@@ -104,7 +113,10 @@ class AutoResearchService:
     def projection(self, owner, task_id):
         self.auth.require(owner, 'read')
         row = self.row(owner, task_id)
-        body = row['body']
+        body = dict(row['body'])
+        if body['status'] in {'completed', 'failed', 'awaiting-continuation'} and self._unresolved_tools(task_id):
+            # A read projection must not rewrite historical effects or their receipts.
+            body['status'] = 'unknown'
         actions = []
         try:
             self.auth.require(owner, 'run')
@@ -114,6 +126,12 @@ class AutoResearchService:
             pass
         return {key: body[key] for key in ('id', 'ownerId', 'presetId', 'requestId', 'goal', 'status',
             'steps', 'evidence', 'acceptance')} | {'allowedActions': actions}
+
+    def _unresolved_tools(self, task_id):
+        task = self.store.task(task_id)
+        prefix = task['run_id'] + ':autoresearch-tool:'
+        return any(effect['effect_key'].startswith(prefix) and effect_unresolved(effect)
+                   for effect in self.store.effects(task_id))
 
     def recover(self, owner, request_id):
         self.auth.require(owner, 'read')
@@ -134,7 +152,7 @@ class AutoResearchService:
             if row['fingerprint'] != fingerprint:
                 raise HTTPException(409, 'RESEARCH_REQUEST_CONFLICT')
             return old
-        if preset.unavailable():
+        if self.unavailable(preset):
             raise HTTPException(409, 'RESEARCH_PRESET_UNAVAILABLE')
         key = 'autoresearch:' + digest({'owner': owner, 'request': request_id})
         proposal = self.store.composition.propose(owner, goal, application_ref=preset.application_ref,
@@ -166,6 +184,11 @@ class AutoResearchService:
                 self.store.admission_unknown(task['id'])
                 self.change(owner, task['id'], lambda b: b.update(status='unknown'))
                 raise
+            if preset.external_session:
+                control = getattr(self.store, 'autoresearch_session_control', None)
+                if control is None:
+                    raise HTTPException(409, 'RESEARCH_SESSION_CONTROL_UNAVAILABLE')
+                control.start(owner, task['id'])
         return self.projection(owner, task['id'])
 
     def current(self, ctx):
@@ -222,6 +245,8 @@ class AutoResearchService:
         run = ctx.run_context
         effect = self.store.effect_reserve(run.run_id, 'autoresearch-session-v1', {'preset': preset.fingerprint})
         if effect['status'] == 'done':
+            if self._unresolved_tools(run.session_id):
+                raise ValueError('RESEARCH_TOOL_EFFECT_UNKNOWN')
             if effect['result'].get('outcome') != 'completed':
                 raise ValueError('RESEARCH_ORIGINAL_SESSION_FAILED')
             return effect['result']
@@ -245,7 +270,18 @@ class AutoResearchService:
             failure = error
         stopped = False
         if runtime is not None:
-            cleanup = asyncio.create_task(cast(Any, runtime).stop())
+            async def stop_original_tree():
+                runtime_stopped = False
+                try:
+                    runtime_stopped = await cast(Any, runtime).stop() is True
+                finally:
+                    children = getattr(self.store, 'autoresearch_children', None)
+                    has_experiment = self.row(run.user_id, run.session_id)['body']['experimentCount'] > 0
+                    children_stopped = (not preset.external_session or not has_experiment)
+                    if preset.external_session and has_experiment and children is not None:
+                        children_stopped = await children.cleanup(ctx) is True
+                return runtime_stopped and children_stopped
+            cleanup = asyncio.create_task(stop_original_tree())
             self.cleanups[run.session_id] = cleanup
             # Preserve the same cleanup operation despite repeated native cancellation.
             # The runtime owns a bounded stop timeout and positive container/experiment proof.
@@ -270,16 +306,68 @@ class AutoResearchService:
             raise ValueError('RESEARCH_STOP_PROOF_UNKNOWN')
         self.active.pop(run.session_id, None)
         self.cleanups.pop(run.session_id, None)
+        if self._unresolved_tools(run.session_id):
+            self.change(run.user_id, run.session_id, lambda b: b.update(status='unknown'))
+            # Runtime exit is known, but it cannot settle another unknown effect.
+            # Keep the original session reservation too; never rerun the session.
+            if failure is not None:
+                raise failure
+            raise ValueError('RESEARCH_TOOL_EFFECT_UNKNOWN')
         cancelled = self.store.cancellation_requested(run.run_id)
         saved = {'allStopped': True, 'cancelled': cancelled, 'research': result,
                  'outcome': 'failed' if failure is not None or cancelled else 'completed',
                  'scientificConclusionVerified': False}
         self.store.effect_complete(run.run_id, 'autoresearch-session-v1', saved)
         self.change(run.user_id, run.session_id, lambda b: b.update(
-            status='failed' if failure is not None or cancelled else 'completed'))
+            status='failed' if failure is not None or cancelled else 'awaiting-continuation' if preset.external_session else 'completed'))
         if failure is not None:
             raise failure
         return saved
+
+    def _tool_preflight(self, preset, body, name, payload):
+        """Pure admission checks before a new effect; never rerun on old effects."""
+        if len(body['steps']) >= 256:
+            raise ValueError('RESEARCH_EVIDENCE_LIMIT')
+        if name == 'research_context':
+            if payload:
+                raise ValueError('RESEARCH_TOOL_PAYLOAD')
+            if preset.context_reader is None:
+                raise ValueError('RESEARCH_CONTEXT_UNAVAILABLE')
+        elif name == 'research_candidate':
+            if (set(payload) != {'hypothesis', 'trainPy'} or type(payload['hypothesis']) is not str
+                    or not 1 <= len(payload['hypothesis']) <= 4000):
+                raise ValueError('RESEARCH_CANDIDATE_PAYLOAD')
+            if (preset.candidate_validator is None or type(payload['trainPy']) is not str
+                    or len(payload['trainPy'].encode()) > 256 * 1024):
+                raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
+            return preset.candidate_validator(payload['trainPy'])
+        elif name in {'research_experiment', 'research_result'}:
+            if (set(payload) != {'candidateId'} or type(payload['candidateId']) is not str
+                    or not 1 <= len(payload['candidateId']) <= 200):
+                raise ValueError('RESEARCH_EXPERIMENT_PAYLOAD' if name == 'research_experiment' else 'RESEARCH_RESULT_PAYLOAD')
+            if name == 'research_experiment':
+                if preset.experiment is None:
+                    raise ValueError('RESEARCH_EXPERIMENT_UNAVAILABLE')
+                if body.get('decision', {}).get('action') == 'stop':
+                    raise ValueError('RESEARCH_AGENT_STOPPED')
+                if payload['candidateId'] not in body['candidates'] or body['experimentCount'] >= preset.limits['maxExperiments']:
+                    raise ValueError('RESEARCH_EXPERIMENT_BUDGET')
+                if time.time() + preset.limits['experimentSeconds'] > body['deadline']:
+                    raise ValueError('RESEARCH_EXPERIMENT_DEADLINE')
+            else:
+                result = body['results'].get(payload['candidateId'])
+                if result is None or result.get('independentResult') is not True:
+                    raise ValueError('RESEARCH_INDEPENDENT_RESULT_UNAVAILABLE')
+        elif name == 'research_decision':
+            if (set(payload) != {'action', 'reason'} or type(payload['action']) is not str
+                    or payload['action'] not in {'continue', 'stop'} or type(payload['reason']) is not str
+                    or not 1 <= len(payload['reason']) <= 4000):
+                raise ValueError('RESEARCH_DECISION_PAYLOAD')
+            if not body['acceptance']['independentResult']:
+                raise ValueError('RESEARCH_DECISION_WITHOUT_RESULT')
+        else:
+            raise ValueError('RESEARCH_TOOL_NOT_REGISTERED')
+        return None
 
     async def tool(self, ctx, name, payload):
         preset = self.current(ctx)
@@ -293,6 +381,14 @@ class AutoResearchService:
             raise ValueError('RESEARCH_TOOL_CALL_ID_REQUIRED')
         self.store.delegation.consume_tool_budget(run, call_id, name)
         effect_key = 'autoresearch-tool:' + call_id
+        existing = [effect for effect in self.store.effects(run.session_id)
+                    if effect['effect_key'] == run.run_id + ':' + effect_key]
+        validated = None
+        if not existing:
+            validated = self._tool_preflight(preset, self.row(run.user_id, run.session_id)['body'], name, payload)
+            self.current(ctx)
+        # The original effect still owns conflict detection and replay. In particular,
+        # a completed experiment may be replayed after its lifetime budget is spent.
         original = self.store.effect_reserve(run.run_id, effect_key, {'tool': name, 'payload': payload})
         if original['status'] == 'done':
             return original['result']
@@ -304,14 +400,14 @@ class AutoResearchService:
             if preset.context_reader is None:
                 raise ValueError('RESEARCH_CONTEXT_UNAVAILABLE')
             result = preset.context_reader()
-            self.record(ctx, 'model-instructions', '研究 agent 读取了固定项目说明和基线证据。', accepted='instructionsRead')
+            self.record(ctx, 'model-instructions', '研究 agent 读取了经审批的项目说明与上下文。', accepted='instructionsRead')
         elif name == 'research_candidate':
             if set(payload) != {'hypothesis', 'trainPy'} or not isinstance(payload['hypothesis'], str) or not 1 <= len(payload['hypothesis']) <= 4000:
                 raise ValueError('RESEARCH_CANDIDATE_PAYLOAD')
             if preset.candidate_validator is None or type(payload['trainPy']) is not str or len(payload['trainPy'].encode()) > 256 * 1024:
                 raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
-            validated = preset.candidate_validator(payload['trainPy'])
-            candidate_id = digest({'hypothesis': payload['hypothesis'], 'validated': validated})
+            candidate_id = digest({'hypothesis': payload['hypothesis'], 'validated': validated,
+                                   'trainPy': payload['trainPy']})
             self.change(run.user_id, run.session_id, lambda b: b['candidates'].update({candidate_id: {
                 'hypothesis': payload['hypothesis'], 'trainPy': payload['trainPy'], 'validated': validated}}))
             self.record(ctx, 'action', payload['hypothesis'], accepted='agentDecision')

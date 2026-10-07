@@ -207,6 +207,18 @@ class FactoryAPI:
                     "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
                 if status == "waiting_approval":
                     actions.append("approve")
+            elif tool.get("tool_name") == "autoresearch_session_run" and tool.get("external_execution_required"):
+                control = getattr(self.store, "autoresearch_session_control", None)
+                if control is not None and status == "waiting_approval":
+                    try:
+                        await control.completion(task, requirement)
+                    except (ValueError, HTTPException):
+                        pass
+                    else:
+                        scope = "原 ORX 会话和受管子任务已结束；继续同一原生运行，接收原始结果。"
+                        job.update(approvalDetail={"id": requirement["id"], "version": version,
+                            "scope": scope, "toolName": "autoresearch_session_run", "arguments": {}}, approval={"scope": scope})
+                        actions.append("approve")
             elif tool.get("tool_name") == "research_process_run" and tool.get("external_execution_required"):
                 runtime = getattr(self.store, "research_runtime", None)
                 original = runtime._original(task["id"]) if runtime is not None else None

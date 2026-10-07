@@ -69,6 +69,8 @@ class Store:
         self.usage_ledger: Any = None
         self.process_runtime: Any = None
         self.autoresearch: Any = None
+        self.autoresearch_session_control: Any = None
+        self.autoresearch_children: Any = None
         self.research_runtime: Any = None
         self.research_evaluation: Any = None
         self.execution_guards: dict[str, Any] = {}

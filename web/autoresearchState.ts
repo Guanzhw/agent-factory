@@ -54,7 +54,7 @@ export function researchRun(raw: unknown, ownerId: string, expected?: { id?: str
   return result;
 }
 export const stepLabels: Record<ResearchStep['kind'], string> = { 'model-instructions': '模型执行指令', action: '实际行动', experiment: '实验', assessment: '结果评估', 'next-decision': '下一步决定' };
-export function researchStatus(value: string): string { return ({ STARTING: '正在启动', STOPPING: '正在停止', CREATED: '已创建', PENDING: '等待执行', RUNNING: '研究中', WAITING: '等待确认', CANCELLING: '正在取消', CANCELLED: '已取消', COMPLETED: '执行结束', FAILED: '执行失败', UNKNOWN: '状态待核对', BLOCKED: '暂不能开始' } as Record<string, string>)[value.toUpperCase()] ?? '等待服务器状态确认'; }
+export function researchStatus(value: string): string { return ({ STARTING: '正在启动', STOPPING: '正在停止', CREATED: '已创建', PENDING: '等待执行', RUNNING: '研究中', 'AWAITING-CONTINUATION': '正在确认原始执行结果', WAITING: '等待确认', CANCELLING: '正在取消', CANCELLED: '已取消', COMPLETED: '执行结束', FAILED: '执行失败', UNKNOWN: '状态待核对', BLOCKED: '暂不能开始' } as Record<string, string>)[value.toUpperCase()] ?? '等待服务器状态确认'; }
 export type ResearchPointer = { requestId: string; runId?: string };
 export function researchPointer(raw: string | null): ResearchPointer | undefined {
   if (!raw) return undefined;

@@ -51,6 +51,30 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         return OpenResearchSessionHTTP(38123, project_id='project_original', harness='opencode',
             model='fixture/model', transport=httpx.MockTransport(self.wire))
 
+    async def test_request_diagnostics_separate_timeout_status_json_and_reader_shape(self):
+        cases = [
+            ('timeout', lambda request: (_ for _ in ()).throw(httpx.ReadTimeout('synthetic-sensitive')),
+             'request', None, 'ReadTimeout'),
+            ('status', lambda request: httpx.Response(503, json={'private': 'synthetic-sensitive'}),
+             'headers', 503, None),
+            ('json', lambda request: httpx.Response(200, content=b'not-json', headers={'content-type': 'application/json'}),
+             'json', 200, None),
+            ('shape', lambda request: httpx.Response(200, json={'messages': [], 'queued': [], 'activeLeafId': 'ahead'}),
+             'shape', None, None),
+        ]
+        for name, handler, phase, status, error_type in cases:
+            self.handler = handler
+            with self.subTest(name=name), self.assertRaises(OrxSessionError) as caught:
+                await self.client().read_messages('chat_original')
+            details = dict(cast(dict, caught.exception.session_diagnostic))
+            self.assertEqual(details['route'], 'messages')
+            self.assertEqual(details['phase'], phase)
+            self.assertEqual(details['httpStatus'], status)
+            if error_type:
+                self.assertEqual(details['errorType'], error_type)
+            self.assertNotIn('synthetic-sensitive', json.dumps(details))
+            self.assertNotIn('chat_original', json.dumps(details))
+
     async def test_create_pins_exact_identity_and_never_promotes_context_usage(self):
         def handler(request):
             self.assertEqual(json.loads(request.content), {'projectId': 'project_original', 'harness': 'opencode', 'model': 'fixture/model'})

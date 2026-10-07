@@ -21,12 +21,13 @@ _spec.loader.exec_module(subject)
 class OrxResearchRuntimeTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
+        self.root = Path(temp.name).resolve()
         binary = self.root / 'public-binary'; binary.write_bytes(b'synthetic trusted bytes'); binary.chmod(0o700)
         pin = subject.BinaryPin(str(binary), hashlib.sha256(binary.read_bytes()).hexdigest())
         self.config = subject.RuntimeConfig(str(self.root), 'sha256:' + 'a' * 64, pin, pin)
         self.capability = 'synthetic-local-capability-12345'
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Launcher requires Linux UID and POSIX permission semantics')
     def test_command_is_networkless_bounded_and_has_no_host_home_or_secret_values(self):
         command = subject.build_command(self.config, 'factory-orx-' + 'b' * 32, self.capability)
         self.assertIn('none', command)
@@ -63,6 +64,22 @@ class OrxResearchRuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 subject.opencode_config(self.capability, cap)
 
+    def test_title_agent_explicit_disable_required_even_with_safe_tool_permissions(self):
+        expected = subject.opencode_config(self.capability)
+        self.assertEqual(expected['agent']['title'], {'disable': True})
+        self.assertTrue(subject.verify_effective_config(expected, expected)['titleAgentDisabled'])
+        for title in (None, {}, {'disable': False}, {'disable': 1}, {'disable': 'true'},
+                      deepcopy(expected['agent']['build'])):
+            with self.subTest(title=title):
+                config = deepcopy(expected)
+                if title is None:
+                    del config['agent']['title']
+                else:
+                    config['agent']['title'] = title
+                with self.assertRaises(ValueError):
+                    subject.verify_effective_config(config, expected)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Launcher requires Linux UID and POSIX permission semantics')
     def test_changed_binary_and_mutable_image_denied(self):
         Path(self.config.orx.path).write_bytes(b'changed')
         with self.assertRaises(ValueError):
@@ -84,6 +101,7 @@ class OrxResearchRuntimeTests(unittest.TestCase):
             record['State']['Status'] = 'exited'; record['Id'] = 'd' * 64
             self.assertFalse(runtime.stop()['stopped'])
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Project bootstrap requires Linux private-directory semantics')
     def test_fresh_project_bootstrap_without_http_or_model_call(self):
         for name in ('orx', 'work'):
             (self.root / name).mkdir(mode=0o700)

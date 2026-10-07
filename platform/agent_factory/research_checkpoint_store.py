@@ -34,7 +34,8 @@ class ResearchCheckpointStore:
         lease, target, task, _ = runtime._custody(lease_id)
         _require(lease['ownerId'] == owner and task['owner_id'] == owner and not task['cancel_requested'])
         plan = self.store.plan(lease['planId'], owner)
-        self.store.require_plan_execution(owner, plan, run_context=runtime._context(task))
+        from .autoresearch_custody import require_original_custody
+        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=stopped)
         self.resources._authorize(owner, lease['connectionRef'])
         _, manifest, variant = runtime._config(task, plan)
         _require(lease['executionGuard']['manifestSha256'] == manifest_fingerprint(manifest)

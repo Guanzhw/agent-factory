@@ -69,7 +69,8 @@ class ResearchEvaluationService:
                  and target_ref == lease['connectionRef'] and guard.get('variantSha256') == current_variant)
         if training:
             _require(current_variant == execution['variantSha256'])
-        self.store.require_plan_execution(owner, plan, run_context=runtime._context(task))
+        from .autoresearch_custody import require_original_custody
+        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=True)
         authorized = self.resources._authorize(owner, lease['connectionRef'])
         _require(self.resources._target_fingerprint(authorized) == self.resources._target_fingerprint(target)
                  and lease['targetFingerprint'] == self.resources._target_fingerprint(target))

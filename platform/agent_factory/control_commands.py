@@ -246,6 +246,11 @@ class ControlCommands:
             requirement["user_input_schema"] = fields
             tool.update(user_input_schema=fields, answered=True)
         else:
+            from .autoresearch_session_control import TOOL as SESSION_TOOL
+            if tool.get("tool_name") == SESSION_TOOL:
+                receipt = await self.store.autoresearch_session_control.completion(task, requirement)
+                tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
+                return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
             from .research_runtime import TOOL as RESEARCH_TOOL
             if tool.get("tool_name") == RESEARCH_TOOL:
                 receipt = await self.store.research_runtime.completion(task, requirement)

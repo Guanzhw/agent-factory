@@ -209,6 +209,14 @@ def create_app(settings=None, *, diagnostics=None):
     from .autoresearch import AutoResearchService, autoresearch_router
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
     base.include_router(autoresearch_router(auth, store.autoresearch))
+    from .autoresearch_session_control import AutoResearchSessionControl
+    async def complete_research_session(task, requirement):
+        from .control_commands import ControlCommand
+        from .factory_api import requirement_version
+        await factory_api.commands.submit(task['owner_id'], task['id'], ControlCommand(
+            commandId='ar-session:' + task['run_id'], action='approve', approved=True,
+            requirementId=requirement['id'], version=requirement_version(requirement)))
+    store.autoresearch_session_control = AutoResearchSessionControl(store, auth, complete=complete_research_session)
     at('PREPARATION_APP_RESOURCES')
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
@@ -220,6 +228,12 @@ def create_app(settings=None, *, diagnostics=None):
     if settings.research_evaluators:
         from .research_evaluation_service import ResearchEvaluationService
         store.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
+    if settings.autoresearch_children_factory is not None:
+        from .autoresearch_children import AutoResearchChildren
+        children = settings.autoresearch_children_factory(store, auth, store.autoresearch, resources)
+        if type(children) is not AutoResearchChildren:
+            raise ValueError('AUTORESEARCH_CHILD_SERVICE_INVALID')
+        store.autoresearch_children = children
     from .comparison_workflow import ComparisonService, comparison_router
     at('PREPARATION_APP_COMPARISONS')
     store.comparisons = ComparisonService(store, auth)
@@ -288,7 +302,10 @@ def create_app(settings=None, *, diagnostics=None):
         try:
             async with native_lifespan(app) as state:
                 async with observer.lifespan(app):
-                    yield state or {}
+                    try:
+                        yield state or {}
+                    finally:
+                        await store.autoresearch_session_control.close()
         finally:
             # Observer and native worker finish before their shared lock pool.
             store.dispose_root_locks()

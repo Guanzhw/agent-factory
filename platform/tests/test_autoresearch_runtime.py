@@ -4,7 +4,7 @@ from copy import deepcopy
 import json
 import time
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -230,6 +230,89 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.credential.assert_not_called()
         self.assertTrue(await runtime.stop())
         self.launcher.stop.assert_called_once()
+
+    async def test_original_poll_protocol_failure_survives_secondary_authority_denial(self):
+        from agent_factory.orx_research_session import OrxSessionError, _diagnostic
+        runtime = self.runtime()
+        original = OrxSessionError()
+        original.session_diagnostic = _diagnostic('messages', 'request', httpx.ReadTimeout('private'))
+        async def failed_poll():
+            runtime.session = {'id': 'original-session'}
+            runtime.turn = {'turnId': 'original-turn'}
+            runtime._run_phase = 'poll-messages'
+            raise original
+        runtime._run = failed_poll
+        with self.assertRaises(OrxSessionError) as caught:
+            await runtime.run()
+        self.assertIs(caught.exception, original)
+        saved = deepcopy(self.body['runtimeFailure'])
+        self.assertEqual(saved['phase'], 'poll-messages')
+        self.assertEqual(saved['code'], 'ORX_PROTOCOL')
+        self.assertEqual(saved['sessionDiagnostic']['errorType'], 'ReadTimeout')
+        self.assertEqual(saved['sessionDiagnostic']['route'], 'messages')
+        self.assertTrue(saved['sessionKnown'] and saved['turnKnown'])
+        runtime._cancelled = True
+        with self.assertRaises(ValueError):
+            await runtime._broker_authority()
+        self.assertEqual(self.body['runtimeFailure'], saved)
+        self.assertNotIn('original-session', json.dumps(saved))
+
+    async def test_runtime_diagnostic_never_echoes_exception_text_and_preserves_original(self):
+        runtime = self.runtime()
+        original = ValueError('synthetic-sensitive-body')
+        async def fail():
+            raise original
+        runtime._run = fail
+        self.service.change = Mock(side_effect=RuntimeError('persistence unavailable'))
+        with self.assertRaises(ValueError) as caught:
+            await runtime.run()
+        self.assertIs(caught.exception, original)
+        self.assertNotIn('synthetic-sensitive-body', json.dumps(runtime.runtime_failure))
+        self.assertEqual(cast(dict, runtime.runtime_failure)['phase'], 'admission')
+
+    async def test_get_timeout_recovers_original_session_without_mutation_or_broker_retry(self):
+        from agent_factory.orx_research_session import OrxSessionError, _diagnostic
+        runtime = self.runtime(poll_seconds=0.01)
+        timeout = OrxSessionError()
+        timeout.session_diagnostic = _diagnostic('sessions', 'request', TimeoutError())
+        client = SimpleNamespace(read_messages=AsyncMock(side_effect=[timeout, {'original': True}]),
+            read_session=AsyncMock(return_value={'busy': False}))
+        runtime._http = cast(Any, client)
+        transcript, current = await runtime._poll_original('chat_original')
+        self.assertTrue(transcript['original'])
+        self.assertFalse(current['busy'])
+        self.assertEqual(client.read_messages.call_args_list[0].args, ('chat_original',))
+        self.assertEqual(client.read_messages.call_args_list[1].args, ('chat_original',))
+        self.assertFalse(self.intents)
+        self.credential.assert_not_called()
+        self.ledger.begin_attempt.assert_not_called()
+        for phase, error in (('shape', timeout), ('headers', timeout)):
+            error.session_diagnostic = _diagnostic('sessions', phase, TimeoutError())
+            client.read_messages = AsyncMock(side_effect=error)
+            with self.assertRaises(OrxSessionError):
+                await runtime._poll_original('chat_original')
+            client.read_messages.assert_awaited_once()
+
+    async def test_get_timeout_retries_never_extend_run_deadline_or_resend_message(self):
+        from agent_factory.orx_research_session import OrxSessionError, _diagnostic
+        runtime = self.runtime(poll_seconds=0.01)
+        timeout = OrxSessionError()
+        timeout.session_diagnostic = _diagnostic('sessions', 'request', TimeoutError())
+        client = SimpleNamespace(_request=AsyncMock(return_value={'sessions': []}),
+            create_session=AsyncMock(return_value={'id': 'chat_original'}), rename_session=AsyncMock(),
+            send_message=AsyncMock(return_value={'turnId': 'turn_original'}),
+            read_messages=AsyncMock(side_effect=timeout), read_session=AsyncMock())
+        self.body['deadline'] = time.time() + 0.2
+        with patch('agent_factory.autoresearch_runtime.OpenResearchSessionHTTP', return_value=client):
+            with self.assertRaises(TimeoutError):
+                await runtime.run()
+        client.create_session.assert_awaited_once()
+        client.rename_session.assert_awaited_once()
+        client.send_message.assert_awaited_once()
+        self.assertGreater(client.read_messages.await_count, 1)
+        self.assertLess(client.read_messages.await_count, 30)
+        self.credential.assert_not_called()
+        self.assertTrue(await runtime.stop())
 
     async def test_stop_proof_persisted_before_reclaim_and_failed_reclaim_only_retried(self):
         runtime = self.runtime()
