@@ -3,17 +3,17 @@
 ## Bounded candidate/recovery implementation — 2026-10-07
 
 External operator scripts continue PR56 without changing the installed scientific
-runtime or replaying the accepted baseline. Implementation is in progress; no GPU
+runtime or replaying the accepted baseline. Implementation and local acceptance are complete; final exact-head CI is pending. No GPU
 run, candidate improvement, or target recovery acceptance is claimed.
 
 | Owner / exclusive scope | Dependency | Acceptance / blocker |
 |---|---|---|
-| root | Shared state composition, integration, handoff, strict CI and draft PR | Baseline evidence reauthentication and all-stage recovery integration pending |
-| candidate_support_audit | Candidate assembly, original-provider reopening | Assembly unit checks pass; recovery provider reconstruction in progress |
-| toolchain_path_fix | Single-candidate CLI and isolated CLI tests | One consumed attempt/stage and unchanged comparison identity; authentication hook pending |
-| target_recovery_audit | Durable invocation journal and stop-only recovery | 17 focused tests pass; shared deadline persists across reopen, no replay |
-| toolchain_path_review | Retained baseline original-custody validation | Needs exact original provider and native policy reconstruction; JSON score alone rejected |
-| pr52_ci_monitor | Required native/PostgreSQL acceptance and independent journal/CLI review | Local PostgreSQL unavailable; required CI runner rejects every skip |
+| root | Shared state composition, integration, handoff, strict CI and draft PR | Integrated commands and handoff; draft PR57; final exact-head CI pending |
+| candidate_support_audit | Candidate assembly, original-provider reopening | Original preparation/training/evaluation provider fingerprints verified; no installed runtime changes |
+| toolchain_path_fix | Single-candidate CLI and isolated CLI tests | One consumed attempt/stage, exact comparison identity, real baseline custody gate and advisory assessment |
+| target_recovery_audit | Durable invocation journal and stop-only recovery | 19 focused tests pass including repeated cancellation; shared deadline persists across reopen, no replay |
+| toolchain_path_review | Retained baseline original-custody validation | Original provider/native policy/checkpoint/output rechecked; substituted JSON score rejected |
+| pr52_ci_monitor | Required native/PostgreSQL acceptance and independent journal/CLI review | Eight required cases executed serially with real local PostgreSQL; scientific fixture boundaries explicit; CI rejects every skip |
 
 Heavy database tests remain serial. Numeric resource limits come from the retained
 operator configuration; no example limits authorize a new target run.

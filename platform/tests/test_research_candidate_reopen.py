@@ -1,6 +1,7 @@
 """Real reconstructed provider fingerprints, mocked source/DB; no GPU dispatch."""
 import importlib.util
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ reopen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(reopen)
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux private provider construction')
 class CandidateReopenTests(unittest.TestCase):
     def setUp(self):
         self.case = fixture.CandidateAssemblyTests()

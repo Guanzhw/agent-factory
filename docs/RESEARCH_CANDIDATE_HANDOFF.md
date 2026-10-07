@@ -109,6 +109,14 @@ cancellation, strict config, lost ACK lookup after deadline, original provider
 fingerprints, retained baseline tampering, and native stop identity checks.
 Required PostgreSQL tests use real native queues and stdlib child processes with
 explicit synthetic device evidence; they do not execute Torch or a GPU workload.
+The top-level execution test injects baseline authentication, preparation,
+scientific source/environment adaptation and synthetic target assembly; its
+controllers, checkpoint import and independent evaluator custody are real. The
+top-level recovery test injects synthetic target reconstruction while exercising
+the actual journal, existing-database state, original process stop and native
+cancellation. Separate tests verify reconstructed provider fingerprints. These
+are orchestration tests, not an unmocked scientific bootstrap or a demonstrated
+OS-process crash/restart on the target machine.
 The CI runner fails if any required case is skipped. Exact CI outcomes are
 recorded on the draft PR after the final commit.
 

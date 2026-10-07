@@ -2,7 +2,7 @@
 from copy import deepcopy
 import importlib.util
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 import unittest
 from unittest.mock import patch
@@ -155,7 +155,8 @@ class BaselineSnapshotTests(unittest.TestCase):
         self.files['/synthetic/original/' + relative] = json.dumps(value).encode()
 
     def build(self):
-        with patch('run_research_baseline.read_private', side_effect=lambda path, *_args, **_kwargs: self.files[str(path)]), \
+        with patch.object(module, 'Path', PurePosixPath), \
+             patch('run_research_baseline.read_private', side_effect=lambda path, *_args, **_kwargs: self.files[str(path)]), \
              patch('run_research_baseline.identity', return_value={'device': 1, 'inode': 2}), \
              patch('agent_factory.research_profile.verify_upstream_source'), \
              patch('audit_released_research_custody.journal_read', side_effect=lambda path:
