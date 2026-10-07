@@ -1,5 +1,26 @@
 # Cloud integration task board
 
+## Package data path compatibility — 2026-10-07
+
+Target reports actual online install, full-copy and dependency check PASS: all95
+versions and the original PR47 135 Factory source files match. Inventory/capture
+then rejected legitimate setuptools data filenames containing spaces/parentheses.
+DB preflight remains NOT RUN. This is a deterministic code defect, not a damaged
+installation; no dependency downloads or environment rebuild are needed.
+
+| Owner / exclusive scope | Dependency | Acceptance |
+|---|---|---|
+| root | Shared observer path policy, verifier overlay identity, integration/docs/exact CI | 467 research tests (21 skipped), 14 verifier tests, Ruff/Pyright and npm check/audit pass; final CI pending |
+| at10 | Cross-layer package-path regression only | Old regex RED; six tests GREEN through inventory/capture/manifest/observer, mutation and symlink fail closed |
+| factory_flow | Standalone repair prepare/check helper and tests | 11 helper tests pass; actual offline Factory-wheel swap on synthetic95 fixture preserves all non-Factory bytes |
+| reviewer | Independent security and deployment review | Final implementation approved: shared path boundary, exact wheel overlay, private backup and unchanged non-Factory bytes |
+| original local worker | Target Factory-only update, fresh derived identity, DB preflight | Await reviewed fixed delivery; no duplicate cloud target executor |
+
+The base PR47 source/wheel and historical evidence stay immutable. The explicit
+repair identity records the sole observer payload replacement and both wheels;
+base lock provenance is distinct from the patched installed payload. No changes
+to manifest logical-ID validation, startup allowlists or nofollow/link checks.
+
 ## Full-copy installation compatibility — 2026-10-06
 
 Known target ext4 reports FICLONE/ENOTSUP; free space permits independent copies.

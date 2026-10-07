@@ -143,8 +143,12 @@ def _read(path, pin, *, collect=False, observations=None, collect_limit=1024**2)
 
 
 def _relative(path):
-    _require(type(path) is str and len(path) <= 512 and all(re.fullmatch(r'[A-Za-z0-9_.+-]+', part)
-        and part not in {'.', '..'} for part in path.split('/')))
+    # Package data uses ordinary literal names (including spaces/parentheses).
+    # Validate canonical POSIX components, not Python/module identifiers. Never
+    # strip, decode or normalize a name; descriptor walks still reject symlinks.
+    _require(type(path) is str and 0 < len(path) <= 512 and path.isprintable()
+             and '\\' not in path and ':' not in path
+             and all(part not in {'', '.', '..'} for part in path.split('/')))
     return path
 
 

@@ -16,6 +16,9 @@ import zipfile
 
 HEAD = '6d6eb9f5fbd3ead921a82b1226edbe6f3d96c12f'
 MANIFEST = '2cf5e58120ec707d24cf5014cd869f370c856ee4c495b5bc4befe123cd09bb24'
+PATH_FIX_FILE = 'agent_factory/research_environment_observer.py'
+PATH_FIX_BASE = '1ab79c9ea87decd576c27d3ab8ea67121bc61e4d55943f6d5af597d80e7d8a66'
+PATH_FIX_SHA256 = 'ee479cf871534572d62b292bdd616e7e657ddc2a93e1d2713e26af78c91bc587'
 
 def need(ok):
     if not ok:
@@ -53,10 +56,41 @@ def source(args):
             ast.parse((args.source/'platform'/name).read_bytes())
     return rows
 
+def expected_payload(rows, package_path_fix):
+    rows = dict(rows)
+    if package_path_fix:
+        need(rows.get(PATH_FIX_FILE) == PATH_FIX_BASE)
+        rows[PATH_FIX_FILE] = PATH_FIX_SHA256
+    return rows
+
+def verify_wheel(path, rows):
+    with zipfile.ZipFile(path) as z:
+        dist = 'department_agent_factory-0.2.0.dist-info/'
+        need(len(z.namelist()) == len(set(z.namelist())))
+        need(all(n.startswith(('agent_factory/', dist)) and '..' not in Path(n).parts for n in z.namelist()))
+        metadata = BytesParser().parsebytes(z.read(dist+'METADATA'))
+        need(metadata['Name'] == 'department-agent-factory' and metadata['Version'] == '0.2.0')
+        names = [n for n in z.namelist() if n.startswith('agent_factory/') and not n.endswith('/')]
+        need(set(names) == set(rows) and len(names) == len(rows))
+        need(all(hashlib.sha256(z.read(n)).hexdigest() == rows[n] for n in rows))
+
+def verify_repaired_wheel(base_wheel, wheel, base_rows):
+    verify_wheel(base_wheel, base_rows)
+    verify_wheel(wheel, expected_payload(base_rows, True))
+    # Metadata/entrypoints/dependencies must stay identical. RECORD changes
+    # because it records the one repaired source file's hash and size.
+    with zipfile.ZipFile(base_wheel) as old, zipfile.ZipFile(wheel) as new:
+        need(set(old.namelist()) == set(new.namelist()))
+        for name in old.namelist():
+            if name not in {PATH_FIX_FILE, 'department_agent_factory-0.2.0.dist-info/RECORD'}:
+                need(old.read(name) == new.read(name))
+
 def main():
     a = argparse.ArgumentParser()
     a.add_argument('mode', choices=['snapshot', 'wheel', 'final'])
-    for key in ['old-site', 'evidence', 'source', 'manifest', 'wheel', 'project', 'venv', 'config']:
+    a.add_argument('--package-path-fix', action='store_true',
+                   help='Require the pinned one-file package-path repair on top of PR47; never accept an arbitrary patch.')
+    for key in ['old-site', 'evidence', 'source', 'manifest', 'wheel', 'base-wheel', 'project', 'venv', 'config']:
         a.add_argument('--'+key, type=Path)
     args = a.parse_args()
     if args.mode == 'snapshot':
@@ -66,18 +100,20 @@ def main():
         save(args.evidence/'constraints.txt', ''.join(f'{k}=={v[k]}\n' for k in sorted(v)).encode())
         print('OLD_95_VERSIONS_CAPTURED')
         return
-    rows = source(args)
-    with zipfile.ZipFile(args.wheel) as z:
-        dist = 'department_agent_factory-0.2.0.dist-info/'
-        need(all(n.startswith(('agent_factory/', dist)) and '..' not in Path(n).parts for n in z.namelist()))
-        metadata = BytesParser().parsebytes(z.read(dist+'METADATA'))
-        need(metadata['Name'] == 'department-agent-factory' and metadata['Version'] == '0.2.0')
-        names = [n for n in z.namelist() if n.startswith('agent_factory/') and not n.endswith('/')]
-        need(set(names) == set(rows) and len(names) == len(rows))
-        need(all(hashlib.sha256(z.read(n)).hexdigest() == rows[n] for n in rows))
+    base_rows = source(args)
+    rows = expected_payload(base_rows, args.package_path_fix)
+    if args.package_path_fix:
+        need(args.base_wheel is not None)
+        verify_repaired_wheel(args.base_wheel, args.wheel, base_rows)
+    patch_identity = ({'path': PATH_FIX_FILE, 'baseSha256': PATH_FIX_BASE,
+                       'sha256': PATH_FIX_SHA256} if args.package_path_fix else None)
+    payload_sha = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    verify_wheel(args.wheel, rows)
     if args.mode == 'wheel':
         save(args.evidence/'wheel-verification.json', {'head':HEAD,'wheelSha256':sha(args.wheel),
-             'sourceManifestSha256':MANIFEST,'packageFiles':len(rows),'sourceFiles':585})
+             'sourceManifestSha256':MANIFEST,'packageFiles':len(rows),'sourceFiles':585,
+             'baseWheelSha256':sha(args.base_wheel) if args.package_path_fix else None,
+             'sourcePatch':patch_identity,'packagePayloadSha256':payload_sha})
         print('EXACT_SOURCE_WHEEL_PASS')
         return
     need(sys.dont_write_bytecode and sys.version_info[:3] == (3,12,13))
@@ -142,6 +178,8 @@ def main():
     contract = capture_interpreter_contract(**inv['captureKwargs'])
     save(args.evidence/'interpreter-contract.json',contract.encode())
     save(args.evidence/'installation-identity.json',{'head':HEAD,'wheelSha256':sha(args.wheel),
+         'sourcePatch':patch_identity,'packagePayloadSha256':payload_sha,
+         'baseWheelSha256':sha(args.base_wheel) if args.package_path_fix else None,
          'packageFiles':len(rows),'packageCount':len(versions(site)),'packageVersions':versions(site),'importsChecked':sorted(roots),
          'projectRoot':str(args.project),'venvRoot':str(args.venv),
          'pins':{n:sha(p) for n,p in {'pyproject':args.project/'pyproject.toml','uvLock':args.project/'uv.lock',

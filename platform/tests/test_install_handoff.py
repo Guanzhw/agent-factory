@@ -105,3 +105,46 @@ class InstallHandoffTests(unittest.TestCase):
         self.assertEqual(value['head'], closure.HEAD)
         self.assertEqual(len(value['files']), 585)
         self.assertNotIn('scripts/verify_closure.py', {r['path'] for r in value['files']})
+
+    def test_path_fix_is_explicit_single_file_overlay_on_exact_base(self):
+        rows = {closure.PATH_FIX_FILE: closure.PATH_FIX_BASE, 'agent_factory/other.py': 'a' * 64}
+        self.assertEqual(closure.expected_payload(rows, False), rows)
+        fixed = closure.expected_payload(rows, True)
+        self.assertEqual(fixed[closure.PATH_FIX_FILE], closure.PATH_FIX_SHA256)
+        self.assertEqual(fixed['agent_factory/other.py'], rows['agent_factory/other.py'])
+        self.assertEqual(rows[closure.PATH_FIX_FILE], closure.PATH_FIX_BASE)
+        with self.assertRaises(ValueError):
+            closure.expected_payload({closure.PATH_FIX_FILE: 'b' * 64}, True)
+
+    def test_path_fix_pin_matches_reviewed_runtime_file(self):
+        runtime = Path(__file__).parents[1] / closure.PATH_FIX_FILE
+        self.assertEqual(closure.sha(runtime), closure.PATH_FIX_SHA256)
+
+    def test_patch_mode_requires_original_wheel(self):
+        rows = {closure.PATH_FIX_FILE: closure.PATH_FIX_BASE}
+        with patch('sys.argv', ['verify_closure.py', 'wheel', '--package-path-fix']), \
+                patch.object(closure, 'source', return_value=rows), self.assertRaises(ValueError):
+            closure.main()
+
+    def test_wheel_payload_change_outside_reviewed_patch_rejected(self):
+        rows = {'agent_factory/__init__.py': hashlib.sha256(b'# exact\n').hexdigest()}
+        with self.assertRaises(ValueError):
+            closure.verify_wheel(self.wheel(stale=True), rows)
+
+    def test_repaired_wheel_preserves_dependency_and_entrypoint_metadata(self):
+        old, new = self.root / 'old.whl', self.root / 'new.whl'
+        metadata = b'Name: department-agent-factory\nVersion: 0.2.0\n'
+        def write(path, content, extra=b''):
+            with zipfile.ZipFile(path, 'w') as z:
+                z.writestr(closure.PATH_FIX_FILE, content)
+                z.writestr('department_agent_factory-0.2.0.dist-info/METADATA', metadata + extra)
+                z.writestr('department_agent_factory-0.2.0.dist-info/RECORD', content)
+        write(old, b'original')
+        write(new, b'repaired')
+        base = hashlib.sha256(b'original').hexdigest()
+        with patch.object(closure, 'PATH_FIX_BASE', base), \
+                patch.object(closure, 'PATH_FIX_SHA256', hashlib.sha256(b'repaired').hexdigest()):
+            closure.verify_repaired_wheel(old, new, {closure.PATH_FIX_FILE: base})
+            write(new, b'repaired', b'Requires-Dist: unexpected-package\n')
+            with self.assertRaises(ValueError):
+                closure.verify_repaired_wheel(old, new, {closure.PATH_FIX_FILE: base})
