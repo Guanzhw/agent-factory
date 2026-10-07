@@ -61,6 +61,8 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
+      - name: Required candidate PostgreSQL acceptance (no skips)
+        run: uv run python scripts/check_candidate_postgres.py
       - name: PostgreSQL suite (bounded diagnostic log)
         shell: bash
         run: |

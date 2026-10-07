@@ -1,5 +1,23 @@
 # Cloud integration task board
 
+## Bounded candidate/recovery implementation — 2026-10-07
+
+External operator scripts continue PR56 without changing the installed scientific
+runtime or replaying the accepted baseline. Implementation is in progress; no GPU
+run, candidate improvement, or target recovery acceptance is claimed.
+
+| Owner / exclusive scope | Dependency | Acceptance / blocker |
+|---|---|---|
+| root | Shared state composition, integration, handoff, strict CI and draft PR | Baseline evidence reauthentication and all-stage recovery integration pending |
+| candidate_support_audit | Candidate assembly, original-provider reopening | Assembly unit checks pass; recovery provider reconstruction in progress |
+| toolchain_path_fix | Single-candidate CLI and isolated CLI tests | One consumed attempt/stage and unchanged comparison identity; authentication hook pending |
+| target_recovery_audit | Durable invocation journal and stop-only recovery | 17 focused tests pass; shared deadline persists across reopen, no replay |
+| toolchain_path_review | Retained baseline original-custody validation | Needs exact original provider and native policy reconstruction; JSON score alone rejected |
+| pr52_ci_monitor | Required native/PostgreSQL acceptance and independent journal/CLI review | Local PostgreSQL unavailable; required CI runner rejects every skip |
+
+Heavy database tests remain serial. Numeric resource limits come from the retained
+operator configuration; no example limits authorize a new target run.
+
 ## Bounded candidate/recovery preparation — 2026-10-07
 
 Based on the completed baseline, [the next-step handoff](RESEARCH_CANDIDATE_RECOVERY_PLAN.md)
