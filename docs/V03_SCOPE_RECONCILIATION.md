@@ -54,6 +54,52 @@ claim to have revalidated every clause in those documents. See the
 [assembly contract](MATERIAL_ASSEMBLY.md), [backend contracts](BACKEND_CONTRACTS.md)
 and [production inputs](PRODUCTION_DECISIONS.md).
 
+## Deferred roadmap: personal agents and always-on management
+
+Status: **Deferred / unscheduled / not implemented in this stage**. Added on
+2026-10-07 at the user's request to record a future direction, not to authorize
+implementation or change the current delivery scope. Consultation estimates are
+not deadlines or delivery commitments.
+
+Future scope to evaluate:
+
+- Long-lived personal-agent identity, user preferences and cross-task memory,
+  including provenance, correction/deletion, retention and sharing permissions.
+- Always-on service operation with durable external event intake, timed and
+  heartbeat wakeups, bounded admission and reliable user notifications. Reuse
+  existing persistent scheduling and lifecycle observation; continuous
+  availability does not require a permanently running model loop per user.
+- Agent Manager controls for personal-agent registration, configuration,
+  lifecycle, goals, schedules, channels and inspectable execution history.
+- AgentScope and QwenPaw as candidate integrations for selected interfaces or
+  harness capabilities. Neither is a selected dependency or approved replacement
+  for Agno; exact versions, compatibility, authority boundaries and upstream
+  license/notice obligations require evaluation before any adoption.
+
+Factory remains the authority for identity, current authorization, immutable
+plans, budgets and resource custody. Any external adapter must preserve those
+checks and original task/receipt identities. Each task has one scheduling and
+execution owner: external managers must not introduce competing orchestration,
+automatic retries or cancellation chains. Prefer a thin adapter over replacing
+the selected Agno execution platform; no engine migration is planned here.
+
+The material library and governed assembly, remote runtime/resource attachment,
+multi-user ownership and isolation remain foundational. Personal memory and
+channel identity must not grant new capabilities or bypass tenant boundaries.
+Retain the approximately twenty-user Linux single-host targets of 32 cores/64 GB
+or 54 cores/192 GB, bounded shared workers and on-demand remote execution; actual
+capacity and isolation still require target-host acceptance.
+
+Current implementation and acceptance continue under the original full-feature
+Factory plan, with AutoResearch as the first application. The real scientific
+baseline and original resource-release evidence remain the immediate priority;
+this roadmap entry does not close or supersede their outstanding acceptance.
+In particular, missing framework `RECLAIMED` and GPU `RELEASED` evidence cannot
+be replaced by OS-idle observations or a new attempt. Follow the
+[original-custody recovery procedure](ORIGINAL_RESEARCH_CUSTODY_RECOVERY.md).
+No runtime, dependency, deployment or new implementation is authorized by this
+deferred entry.
+
 ## Delivered mechanisms and remaining work
 
 | Area | Implemented evidence | Implementable code gap / next acceptance |
