@@ -158,11 +158,17 @@ class ProcessRuntimeService:
         if lease["state"] == "RECLAIMED":
             return lease
         snapshot = await self.resources._provider(target).inspect(lease_id, lease["ownerId"])
-        fresh, current, _, _ = self._custody(lease_id)
-        _require(current is target)
-        changes = self.resources.process_snapshot(fresh, snapshot)
+        # Validate the response against the custody that issued this read. A
+        # concurrent observer may already have persisted the original release
+        # while this older provider observation was in flight.
+        self.resources.process_snapshot(lease, snapshot)
         state = snapshot.get("state")
         _require(state in TERMINAL | {"ACCEPTED", "RUNNING", "UNKNOWN", "RECLAIMED"})
+        fresh, current, _, _ = self._custody(lease_id)
+        _require(current is target)
+        if fresh["state"] == "RECLAIMED":
+            return fresh
+        changes = self.resources.process_snapshot(fresh, snapshot)
         return self.resources._update(fresh["ownerId"], lease_id, state,
             {**changes, "snapshotAt": now(), "connected": True, "observedStatus": state})
 

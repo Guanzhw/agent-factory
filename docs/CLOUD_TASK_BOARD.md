@@ -55,6 +55,16 @@ module setup and host-native synthetic absolute path. The same import failure
 was reproduced locally (2273 tests, one error, 431 expected skips). Old CI runs
 were canceled after diagnosis; replacement exact-head CI is required.
 
+Replacement head `ba56543` passed all eight frontend/Python jobs, but both
+required PostgreSQL gates exposed the same concurrent observation race: an older
+GPU HELD snapshot returned after another observer persisted RECLAIMED/RELEASED.
+The read now validates the response against its original request custody, then
+rechecks current custody and preserves an already reclaimed original lease.
+Other snapshots still undergo current-custody validation. GPU validators and
+release-proof requirements are unchanged. Six deterministic tests using real process/GPU validators passed, including
+corruption and identity rejection. The local full required gate is running;
+replacement exact-head CI remains required.
+
 Production identity, existing authorized bidirectional trust/connectivity, a real
 GPU candidate, live literature retrieval and target-host capacity acceptance remain
 external requirements. New controlled evidence must never relabel them as passed.
