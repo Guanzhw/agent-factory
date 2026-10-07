@@ -1,5 +1,25 @@
 # Cloud integration task board
 
+## First real local baseline COMPLETE — 2026-10-07 09:48 UTC
+
+The local owner verified PR54 runner + sealed PR50 runtime: RTX 5070/SDPA/
+microbatch1, counted training302.587995s after11warmup, full fixed evaluation
+val_bpb1.6711944975804394. Both stages COMPLETED/exit0, audits PASS, all original
+lease/allocation/GPU/native claims RELEASED; no residual process/claim artifacts.
+See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for exact identities, digest provenance and remaining priorities.
+
+| Owner / scope | Dependency | Acceptance / boundary |
+|---|---|---|
+| original local execution owner | Fixed source/data/tokenizer/evaluator and real target | Single successful attempt, zero retries; checkpoint and independent evaluation verified; unknown/missing ACKs preserved |
+| root | Sanitized acceptance/handoff reconciliation, documentation draft PR | Documentation only; no cloud GPU, feature, merge, deployment or optimization campaign |
+| independent reviewer | Existing roadmap/closure map and sanitized reported evidence | Review remaining original-plan items without reclassifying implemented flows as missing code |
+
+Earlier failure, pending and UNKNOWN entries below are dated stage records, not
+the current terminal status of this completed run. Older attempts remain intact.
+Production identity, scientific-provider synthesis, candidate improvement,
+remote-host enforcement and department capacity/operations remain unclosed.
+Personal-agent/24-hour work stays deferred.
+
 ## Executed GPU baseline compiler PATH repair — 2026-10-07
 
 Accepted PR50 installation/preflights reached actual Torch/GPU, then Inductor

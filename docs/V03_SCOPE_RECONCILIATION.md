@@ -1,5 +1,15 @@
 # Factory v0.3 scope reconciliation — 2026-10-04
 
+## Latest local evidence — 2026-10-07
+
+The [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) closes the selected pinned autoresearch
+baseline's actual training/checkpoint/independent evaluation and released custody.
+The selected non-toy adapter is implemented; older rows below that call all
+non-toy contracts/adapter work missing are historical. Real candidate improvement,
+production scientific synthesis, identity, remote-host and department-capacity
+acceptance remain open as reconciled in that milestone and the closure map.
+Personal-agent/24-hour work remains deferred ([PR51](https://github.com/Guanzhw/agent-factory/pull/51)).
+
 ## Current scope — 2026-10-04
 
 Current implementation coverage is reconciled in the

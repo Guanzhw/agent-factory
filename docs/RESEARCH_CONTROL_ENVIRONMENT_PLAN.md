@@ -127,4 +127,5 @@ runner 或科研任务，尚未调用时须明确记为待验证。该 helper �
 
 完成上述小范围步骤不等于 combined 环境或训练已准入。资源 probe 的测量、真实空间与完整
 环境准入，以及训练/独立评价总 wall 预算均齐备后，原 local worker 才执行既有三阶段入口。
-当前 baseline 完成数仍为0，`val_bpb` 仍为null。
+本阶段当时 baseline 完成数为0、`val_bpb: null`；后续真实完成结果见
+[2026-10-07 本地验收](RESEARCH_BASELINE_ACCEPTANCE.md)。

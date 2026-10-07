@@ -1,5 +1,11 @@
 # Operator-owned local research adapter
 
+Latest outcome, 2026-10-07: [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) records completed
+local training, checkpoint, independent fixed evaluation and released custody.
+The earlier stage's readiness/no-live-execution statements below are historical;
+its fixtures do not become live evidence. Production, real candidate comparison
+and broader target-host acceptance remain separate.
+
 This adapter composes the existing immutable-plan, resource lease, original
 process journal, checkpoint custody, and independent evaluator interfaces. It
 adds no HTTP endpoint, queue, launch loop, dependency installer, or alternate

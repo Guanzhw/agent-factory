@@ -5,9 +5,11 @@
 复用 Factory 的素材发布、方案审批、原生任务、进程租约及证据存储。
 它不安装依赖、不创建数据库、不开放远程服务，也不购买模型或计算资源。
 
-**当前真实目标 baseline 完成数为 0，`val_bpb` 为 `null`，尚未完成真实训练/科研验收。**
-合成 tokenizer、真实 PostgreSQL/原生进程测试及模拟设备观察，只证明各自测试覆盖的控制流程。
-本文提供可执行入口与输入契约，不把这些测试换算成目标训练成功。
+**2026-10-07 09:48 UTC：首个真实本地 baseline 已完成，`val_bpb = 1.6711944975804394`。**
+[验收记录](RESEARCH_BASELINE_ACCEPTANCE.md)保留固定源码、计时、checkpoint 摘要、独立评价及释放证明。
+本地 owner 已核验；云端没有重跑 GPU。该结果不等于生产、部门容量、跨主机或自主候选改进验收。
+以下输入契约继续保留；安装采用后来已验收的 PR50 full-copy 路径，
+入口使用 [PR54 固定 PATH runner](RESEARCH_TOOLCHAIN_PATH_HANDOFF.md)。
 
 ## 运行前已有的事实与材料
 
@@ -57,7 +59,8 @@ Linux/WSL 的名称、磁盘格式名称或另一个目录的成功结果都不�
 完整克隆还须实际成功、独立 inode、完整哈希复核及保留私有 clone receipt。
 clone 只处理一棵无符号链接的普通文件树，不是整个 uv venv 布局的自动迁移器。
 解释器链接、项目文件、实际 site 路径与 Factory 安装仍须与最终配置一致。
-**尚未得到目标实际 CoW 结果时，该条件就是未验证；没有 full-copy 或 hardlink fallback。**
+历史 CoW-only 路径不代表当前唯一安装路径。目标文件系统不支持 CoW 后，已通过
+[PR50 独立 full-copy 安装](PR50_RELEASED_CUSTODY_HANDOFF.md)；这不是 hardlink fallback。
 失败或未封存的目标目录保留供核对，不重置后隐瞒重试。
 
 完整环境使用 `complete-venv-32768-v1`，不能裁剪库、dist-info、顶层模块、`.pth` 或字节码
@@ -357,4 +360,6 @@ graph and AgentOS construction without inspecting exception text.
 
 Cloud regressions use synthetic/SQLite fixtures and existing installed packages.
 They do not claim to reproduce the target's exact 95-package combined environment,
-which remains unchanged and awaits actual target confirmation after reconnection.
+which was still awaiting target confirmation at that diagnostic stage. The later
+[accepted local baseline](RESEARCH_BASELINE_ACCEPTANCE.md) supplies the actual
+target outcome without rewriting those cloud fixture results.

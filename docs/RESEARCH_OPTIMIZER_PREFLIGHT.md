@@ -67,4 +67,5 @@ env -u OPENCODE_GO "$RESEARCH_PYTHON" -I -B \
 
 先审阅实际阶段结果与剩余空间，再制定完整 warmup、训练、独立评价各自 wall 预算。
 若300秒内只有部分阶段，保留部分证据，不默认调高额度继续。控制依赖/数据库另见
-[控制环境计划](RESEARCH_CONTROL_ENVIRONMENT_PLAN.md)。当前真实 baseline 完成数0，`val_bpb: null`。
+[控制环境计划](RESEARCH_CONTROL_ENVIRONMENT_PLAN.md)。本阶段当时 baseline 完成数为0、`val_bpb: null`；后续真实完成结果见
+[2026-10-07 本地验收](RESEARCH_BASELINE_ACCEPTANCE.md)。

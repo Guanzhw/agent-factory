@@ -1,5 +1,14 @@
 # v0.3 final requirement audit
 
+## Subsequent evidence — 2026-10-07
+
+The [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) supersedes this October 4 audit's broad
+claim that a selected non-toy adapter and all actual experiment execution are
+still missing: the pinned local baseline, independent evaluation and release
+have now completed. This does not close production scientific-provider work,
+real candidate comparison or the external acceptance rows. The original audit
+below remains a dated source review, not a fresh audit of all later code.
+
 Read-only source audit on 2026-10-04, starting from checked-out `e0f74ec` and
 concurrent schedule-diagnostics work. This report adds no requirements and makes
 no new runtime acceptance claim. Existing tests were inspected, not rerun by this

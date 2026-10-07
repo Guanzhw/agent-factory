@@ -66,6 +66,19 @@ See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [archi
 
 ## Current acceptance and remaining work
 
+On 2026-10-07 the local owner verified the [first real autoresearch baseline](docs/RESEARCH_BASELINE_ACCEPTANCE.md):
+302.587995 counted training seconds, independent fixed evaluation
+`val_bpb=1.6711944975804394`, checkpoint and released custody. This uses the PR54
+runner and sealed PR50 runtime; it does not certify production, department capacity,
+multi-host operation or autonomous candidate improvement. See the
+[current matrix](docs/ACCEPTANCE.md#current-matrix) and
+[remaining original-plan priorities](docs/RESEARCH_BASELINE_ACCEPTANCE.md#what-this-closes-and-what-remains).
+
+### Historical PR15/diagnostics-stage status
+
+The following stage record predates later Go/PubMed and baseline acceptance.
+Its then-current gaps and UNKNOWN results are preserved, not today's backlog.
+
 The preceding exact-head baseline is `45eeb6b88046a40f8743e01e69d10353be386499`
 ([Draft PR15](https://github.com/Guanzhw/agent-factory/pull/15)): push/PR CI passed
 all ten jobs, observed twice 106.515 seconds apart; each PG suite ran 650 tests

@@ -1,5 +1,11 @@
 # karpathy/autoresearch integration milestone
 
+Latest outcome, 2026-10-07: [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) records completed
+local training, checkpoint, independent fixed evaluation and released custody.
+The earlier stage's readiness/no-live-execution statements below are historical;
+its fixtures do not become live evidence. Production, real candidate comparison
+and broader target-host acceptance remain separate.
+
 Status: **contract and host-readiness assessment only**, 2026-10-06. No training, dependency installation, dataset download, GPU allocation, or live Factory training acceptance is established by this document. Factory integration was inspected at `7509e26`; the existing controlled comparison and ORX toy remain separate profiles with unchanged pins.
 
 ## Selected upstream and provenance

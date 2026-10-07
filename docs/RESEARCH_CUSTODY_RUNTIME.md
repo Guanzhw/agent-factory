@@ -1,5 +1,11 @@
 # Research custody runtime integration handoff
 
+Latest outcome, 2026-10-07: [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) records completed
+local training, checkpoint, independent fixed evaluation and released custody.
+The earlier stage's readiness/no-live-execution statements below are historical;
+its fixtures do not become live evidence. Production, real candidate comparison
+and broader target-host acceptance remain separate.
+
 Status: implemented contract helpers and native lifecycle integration with a controlled test driver; **no live GPU driver or verified scientific result**. This document describes the current code, not completed hardware acceptance. The local combined acceptance run passed 19 PostgreSQL/native tests: ten research cases and nine existing process regressions. The research driver remains inert; no pass count establishes hardware execution.
 
 ## Implemented boundaries

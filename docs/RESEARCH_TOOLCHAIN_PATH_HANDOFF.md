@@ -1,5 +1,14 @@
 # Canonical research compiler search path repair
 
+## Completed local result — 2026-10-07 09:48 UTC
+
+The local owner verified training and independent evaluation complete with
+`val_bpb=1.6711944975804394`, both stage audits PASS and resource claims RELEASED.
+See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for exact pins, timings, hashes and remaining boundaries.
+The failure/UNKNOWN and launch-blocking statements below describe the earlier
+handoff state; they are preserved, not the current status of the completed run.
+This result requires no automatic rerun.
+
 The target reports a real Torch/GPU launch on PR50, followed after approximately
 207 seconds by an Inductor compiler failure before checkpoint/evaluation:
 `collect2` could not find `ld`, although `/usr/bin/ld` exists. This is a failed

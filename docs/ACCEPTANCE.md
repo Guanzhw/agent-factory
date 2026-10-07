@@ -1,6 +1,6 @@
 # Acceptance ledger
 
-## Current scope — 2026-10-04
+## Current scope — 2026-10-07
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
@@ -10,8 +10,10 @@ ongoing development while production identity remains fail-closed. Existing
 receiver/runtime attachment is required; machine/cloud provisioning is optional.
 Aggregate cgroup integration has fake/offline validation only: this container's
 read-only cgroup mount supplies **no real aggregate enforcement acceptance**.
-Linux is selected; target runtime/delegation, non-toy scientific acceptance and
-target-machine acceptance remain open. Older continuation summaries below are
+The [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) now records one completed
+RTX 5070 training/checkpoint/independent evaluation with released custody.
+Production scientific synthesis, real candidate comparison, separate-host
+runtime/delegation and department target-capacity acceptance remain open. Older continuation summaries below are
 historical and do not certify current integration or its exact-head CI.
 
 ## Current matrix
@@ -30,7 +32,7 @@ including the separately reviewed historical checkpoint bridge.
 | Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
 | Production identity | Pinned access-token validation, managed SQL identities/roles, current revocation/owner isolation and PKCE browser sessions with durable logout | Pinned RS256 access-token entry and subject mapping pass synthetic production-mode/native-queue tests; PKCE login/logout passes synthetic HTTPS desktop/mobile tests. Real IdP/TLS and production deployment acceptance remain open; explicitly authorized mock/demo login supports continued development |
 | Literature | Fixed installed query, source IDs/URLs/hash/excerpts/locators, missing-text states and downloadable report/package; controlled-source native tests; owner-scoped validated evidence projection and Chinese source/zero-source/failed-retrieval panel; standalone report provenance | Historical container attempt failed with zero sources. New explicit host PubMed native retrieval succeeded with two abstracts; governed source-bound native synthesis passed with a controlled model. No live scientific synthesis or scientific-validity claim; new questions need governed contracts |
-| Non-toy research | Fixed reviewed toy and deterministic evidence orchestration | Reviewed dataset/source/evaluator/workspace contracts, candidate-change approval and real synthesis/evaluation workflow still need implementation plus a chosen question, versions/licences and metrics |
+| Non-toy research | Selected pinned autoresearch local adapter and first actual RTX 5070 baseline completed; fixed independent evaluation val_bpb 1.6711944975804394, checkpoint and released custody verified by local owner | Real governed candidate comparison, target recovery matrix, broader workload adapters and scientific-provider/domain acceptance remain distinct; see [milestone and remaining priorities](RESEARCH_BASELINE_ACCEPTANCE.md) |
 | Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Shared weighted admission, task-owned workspace and cooperative process allocation, native identity binding, positive stop-only release and UNKNOWN holds are implemented. Required existing-receiver attachment is implemented. Aggregate cgroup integration has fake/offline validation only; this read-only cgroup environment provides no real enforcement acceptance. Machine/cloud provisioning is optional, outside the required baseline. Linux target runtime/delegation, external-host TLS/stop proof and target capacity remain unverified |
 | Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
 | Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |

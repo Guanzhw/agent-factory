@@ -1,6 +1,6 @@
 # Production and research decisions still needed
 
-## Current scope — 2026-10-04
+## Current scope — 2026-10-07
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
@@ -10,8 +10,9 @@ ongoing development while production identity remains fail-closed. Existing
 receiver/runtime attachment is required; machine/cloud provisioning is optional.
 Aggregate cgroup integration has fake/offline validation only: this container's
 read-only cgroup mount supplies **no real aggregate enforcement acceptance**.
-Linux is selected; target runtime/delegation, non-toy scientific acceptance and
-target-machine acceptance remain open. Older continuation summaries below are
+The [selected local baseline](RESEARCH_BASELINE_ACCEPTANCE.md) now has real
+training/evaluation/release acceptance. Production scientific synthesis, real
+candidate improvement, separate-host receiver and department capacity remain open. Older continuation summaries below are
 historical and do not certify current integration or its exact-head CI.
 
 This is a read-only integration assessment, not a request to change accounts or
@@ -22,7 +23,7 @@ supply secrets. Collect the following choices for production integration while i
 | Browser identity entry | Existing OIDC provider or trusted authentication gateway; public issuer/discovery URL, audience/client ID, site/callback domain, session/logout expectations. Say none if none exists. | Pinned public-JWKS RS256 access-token entry now maps existing SQL owners. Actual issuer/audience/public keys/subject mapping and TLS are deployment inputs; browser callback/PKCE/session/CSRF/logout are implemented with controlled HTTPS acceptance. Development uses the explicitly selected mock/demo login; real IdP acceptance is a production gate only. No automatic identity provisioning. |
 | Identity and responsibilities | Stable provider subject to Factory owner mapping; pilot researcher, material author and separate reviewer IDs; who disables users; remote origin/receiver owner mapping and audience if needed. | SQL roles remain authoritative; no automatic production users/admins, no roles granted solely by JWT, and current revocation remains checked. No shared signing secrets requested. |
 | First real research question | One public non-toy question, domain/time scope, allowed sources/full-text licences, desired deliverable and minimum success criteria (source count/comparison dimensions/citations), domain reviewer. | Installed literature query IDs are immutable; a new question requires a governed query contract. Historical container retrieval returned zero sources; the new explicit host profile retrieved two public abstracts. Controlled synthesis does not establish scientific validity. |
-| Experiment or literature only | Choose literature-only, or provide public repo + pinned commit, dataset version/licence, baseline command, metric/threshold, target CPU/RAM/GPU/runtime/network allowlist (Linux OS is already selected), mutable-file scope and approver. | Existing experiment is a fixed reviewed toy. Real workspace/evaluator/version/licence governance still needs implementation and acceptance. |
+| Experiment or literature only | Choose literature-only, or provide public repo + pinned commit, dataset version/licence, baseline command, metric/threshold, target CPU/RAM/GPU/runtime/network allowlist (Linux OS is already selected), mutable-file scope and approver. | The selected fixed autoresearch baseline and local adapter now have actual training/evaluation/release acceptance. Scope new candidate changes or other workloads explicitly; real paired improvement and domain validity remain separate. |
 
 Existing production model-provider selection remains separate from the Go coding
 profile. Go coding uses the authorized subscription-only campaign; actual invoice amounts
