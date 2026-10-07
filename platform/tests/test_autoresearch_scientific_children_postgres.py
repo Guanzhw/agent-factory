@@ -90,6 +90,13 @@ print(json.dumps({'schema':1,'evaluationContractSha256':hashlib.sha256(contract)
         'evidenceKind': 'controlled-stdlib-source-generation-fixture'}}
 
 
+def write_private_input(path, raw):
+    """Synthetic input files obey staging custody independently of caller umask."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'wb') as stream:
+        stream.write(raw)
+
+
 @unittest.skipUnless(sys.platform == 'linux' and os.getenv('FACTORY_TEST_DATABASE_URL'),
                      'Requires disposable PostgreSQL and Linux stdlib guardian')
 class ScientificChildrenPostgresTests(unittest.TestCase):
@@ -432,14 +439,14 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
         for label, key, raw in (('environment-lockfile', 'lockfileSha256', lock),
                 ('environment-inventory', 'installedInventory', b'controlled inventory'),
                 ('environment-kernel', 'runtimeKernel', b'controlled kernel')):
-            (folder / label).write_bytes(raw)
+            write_private_input(folder / label, raw)
             environment.append(InputPin(label, 'environment', str(folder), RootIdentity(**identity(folder)), pin_bytes(label, raw)))
             manifest['environment'][key] = artifact(raw)['sha256'] if key == 'lockfileSha256' else artifact(raw)
-        (folder / 'tokenizer.json').write_bytes(tokenizer())
+        write_private_input(folder / 'tokenizer.json', tokenizer())
         manifest['tokenizer'] = {'tokenizer': artifact(tokenizer()), 'tokenBytes': {k: token_pin[k] for k in ('sha256', 'sizeBytes')}}
         shards = []
         for name in ('train', 'validation'):
-            raw = name.encode(); basename = name + '.bin'; (folder / basename).write_bytes(raw)
+            raw = name.encode(); basename = name + '.bin'; write_private_input(folder / basename, raw)
             shards.append({'id': name, 'basename': basename, **artifact(raw)})
         manifest['dataset']['shards'] = [{k: row[k] for k in ('id', 'sha256', 'sizeBytes')} for row in shards]
         manifest['dataset']['validationShardIds'] = ['validation']

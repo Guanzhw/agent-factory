@@ -1,5 +1,12 @@
 # Cloud integration task board
 
+Exact head `22d710720eb5b1e5ebafa606979fd6780ab1450b` was rejected by both
+PostgreSQL CI runs: the new fixture created input files using ambient umask, so
+GitHub produced 0644 while staging correctly requires 0600. Local umask was 0077.
+Explicit private fixture input creation and an umask regression now pass; the
+required seven-case suite passed under umask 022 in 306.895 seconds, zero skips.
+Production file-mode guards remain unchanged; replacement exact CI is pending.
+
 ## Current compact-candidate and scientific custody integration
 
 Root continues beyond earlier draft checkpoints. Actual Go now chose and submitted
