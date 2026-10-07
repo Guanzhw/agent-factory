@@ -10,7 +10,7 @@ installation; no dependency downloads or environment rebuild are needed.
 
 | Owner / exclusive scope | Dependency | Acceptance |
 |---|---|---|
-| root | Shared observer path policy, verifier overlay identity, integration/docs/exact CI | 467 research tests (21 skipped), 14 verifier tests, Ruff/Pyright and npm check/audit pass; final CI pending |
+| root | Shared observer path policy, verifier overlay identity, integration/docs/exact CI | 467 research tests (21 skipped), 14 verifier tests, Ruff/Pyright and npm check/audit pass; first Windows run exposed CRLF checkout of pinned observer, fixed with explicit LF; new exact CI pending |
 | at10 | Cross-layer package-path regression only | Old regex RED; six tests GREEN through inventory/capture/manifest/observer, mutation and symlink fail closed |
 | factory_flow | Standalone repair prepare/check helper and tests | 11 helper tests pass; actual offline Factory-wheel swap on synthetic95 fixture preserves all non-Factory bytes |
 | reviewer | Independent security and deployment review | Final implementation approved: shared path boundary, exact wheel overlay, private backup and unchanged non-Factory bytes |

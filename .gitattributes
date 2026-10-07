@@ -6,3 +6,7 @@ scripts/install-handoff.sh text eol=lf
 scripts/verify_closure.py text eol=lf
 docs/PR47_INSTALL_HANDOFF.md text eol=lf
 scripts/copy_install_site.py text eol=lf
+# Package-path repair payload and portable delivery pins must survive Windows checkout.
+platform/agent_factory/research_environment_observer.py text eol=lf
+scripts/repair_factory_wheel.py text eol=lf
+docs/PR47_PACKAGE_PATH_REPAIR.md text eol=lf
