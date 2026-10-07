@@ -6,6 +6,13 @@ dataset, training budget or retry policy. No generic new permission gate is
 introduced. Cloud validation uses synthetic fixtures; actual target results
 must be recorded separately.
 
+Execute the snippets in one reviewed Bash session with `set -euo pipefail` so
+failed audits, derivation or preflight commands stop before subsequent actions:
+
+```sh
+set -euo pipefail
+```
+
 ## Original task: verify completed release, do not repeat it
 
 The target's read-only report now contains positive original lease/provider
