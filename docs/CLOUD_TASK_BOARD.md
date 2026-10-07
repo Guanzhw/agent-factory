@@ -1,5 +1,28 @@
 # Cloud integration task board
 
+## Current compact-candidate and scientific custody integration
+
+Root continues beyond earlier draft checkpoints. Actual Go now chose and submitted
+a compact public parameter candidate (12,361 tokens, three SETTLED calls, original
+task terminal, effects DONE, original stop/reclaim). No experiment was authorized.
+Scientific presets keep full source host-side and accept only the prior eleven
+literal parameters, using the same full candidate validator.
+
+The stronger native integration fixture identified two real wiring gaps now fixed:
+preparation must verify retained baseline bytes rather than re-export a new
+producer-bound file, and the evaluator service must be constructed after its
+actual target is registered. The original producer's current policy/adapter
+compatibility is retained; the research parent's preparation permission is read-only.
+
+| Owner | Scope | Acceptance / dependency |
+|---|---|---|
+| root | Shared service, tool contract, lifecycle integration, final CI | Original six PG cases passed after read-only preparation change (102.658s); snapshot CAS/stop-only restore/revoked cleanup integrated; three-stage v14 passed (339.595s), including completed-custody registry reconstruction; required seven-case suite passed (324.218s, zero skips); final exact CI pending |
+| at10 | Compact candidate builder; original preparation assembler/child; late evaluator binding | Compact inputs and per-parent/phase namespaces implemented; thirteen namespace/recovery light tests and Linux/Windows static checks passed; files frozen |
+| factory_flow | Actual PG/native three-stage fixture | Source/environment/device seams explicit; v13 completed all three phases and reclaimed allocations, but final verification exceeded the fixture parent budget; v14 passed with an explicit synthetic 900/600-second envelope and completed-custody registry reconstruction; original process limits unchanged |
+| candidate_final_review | Independent original custody, repeated-goal and recovery review | Original custody, revoked cleanup, directory replacement and transaction/retention separation reviewed; fixture recovery assertions reviewed as same-process completed-custody reconstruction; v14 terminal proof passed; not process-restart or live scientific acceptance |
+| ci_final_review | Exact CI | Prior 8b head had eight successful non-PG jobs; PG runs stopped as superseded, never accepted |
+
+
 Final post-fix actual Go diagnostic passed: public context plus final reply, three
 SETTLED requests (8,877 tokens), both context/session effects DONE, zero held
 provider tokens and exact original container stop/reclaim. Rejected decision

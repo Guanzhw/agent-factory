@@ -62,6 +62,20 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         self.config.baseline_reader.return_value = {**self.observation, 'comparisonIdentitySha256': 'f'*64}
         with self.assertRaises(ValueError): preset.context_reader()
 
+    def test_compact_builder_rereads_verified_source_and_keeps_existing_validation(self):
+        preset = self.preset()
+        self.config.upstream_reader.reset_mock()
+        generated = preset.candidate_builder({'EMBEDDING_LR': .25, 'ADAM_BETAS': [.8, .99]})
+        self.config.upstream_reader.assert_called_once()
+        self.assertEqual(generated, self.files['train.py'].decode().replace('\nEMBEDDING_LR = 0.5',
+            '\nEMBEDDING_LR = 0.25').replace('ADAM_BETAS = (0.8, 0.95)', 'ADAM_BETAS = (0.8, 0.99)'))
+        self.assertFalse(preset.candidate_validator(generated)['executionVerified'])
+        info = preset.context_reader()
+        self.assertNotIn('trainPy', info)
+        self.assertEqual(len(info['candidateParameters']['allowedParameters']), 11)
+        with patch.object(module, 'verify_upstream_source', side_effect=ValueError('original-source-changed')):
+            with self.assertRaises(ValueError): preset.candidate_builder({'EMBEDDING_LR': .3})
+
     async def test_subordinate_guard_and_custody_verifier_required_original_references(self):
         executor, verifier = AsyncMock(return_value={'untrusted': 'receipt-reference'}), AsyncMock(return_value=self.result())
         preset = self.preset(subordinate_executor=executor, result_verifier=verifier)

@@ -122,12 +122,14 @@ def reconstruct_research_target(state, config, snapshot, *, candidate=True, owne
 
 
 def make_preparation_snapshot(*, program_root, program_identity, custody_root, executable,
-                              executable_sha256, tokenizer_json, preparation_manifest_sha256):
+                              executable_sha256, tokenizer_json, preparation_manifest_sha256, preflight_seconds=0):
     """Persist the original preparation inputs before its native dispatch."""
+    _require(type(preflight_seconds) is int and 0 <= preflight_seconds <= 30)
     return deepcopy({'schema': 1, 'stage': 'preparation', 'programRoot': str(program_root),
         'programIdentity': program_identity, 'custodyRoot': str(custody_root), 'executable': executable,
         'executableSha256': executable_sha256, 'tokenizerHex': tokenizer_json.hex(),
-        'preparationManifestSha256': preparation_manifest_sha256})
+        'preparationManifestSha256': preparation_manifest_sha256,
+        **({'preflightSeconds': preflight_seconds} if preflight_seconds else {})})
 
 
 def reconstruct_preparation_target(state, snapshot, *, owner='alice'):
@@ -135,10 +137,12 @@ def reconstruct_preparation_target(state, snapshot, *, owner='alice'):
     from agent_factory.process_enforcement import ProcessLimits, ProcessSpec
     from agent_factory.research_preparation_driver import PreparationDriver
     from agent_factory.research_preparation_provider import PreparationProvider
-    _require(type(snapshot) is dict and set(snapshot) == {'schema', 'stage', 'programRoot', 'programIdentity',
+    _require(type(snapshot) is dict and set(snapshot) - {'preflightSeconds'} == {'schema', 'stage', 'programRoot', 'programIdentity',
         'custodyRoot', 'executable', 'executableSha256', 'tokenizerHex', 'preparationManifestSha256'}
         and snapshot['schema'] == 1 and snapshot['stage'] == 'preparation')
     snapshot = cast(dict[str, Any], snapshot)
+    preflight = snapshot.get('preflightSeconds', 0)
+    _require(type(preflight) is int and 0 <= preflight <= 30)
     _require(type(snapshot['tokenizerHex']) is str and len(snapshot['tokenizerHex']) <= 2 * 1024**2)
     for name in ('programRoot', 'custodyRoot'):
         path = Path(snapshot[name])
@@ -150,8 +154,8 @@ def reconstruct_preparation_target(state, snapshot, *, owner='alice'):
     spec = ProcessSpec(snapshot['executable'], snapshot['executableSha256'],
         ('-I', '-B', str(root / 'prepare.py'), str(root / 'run-config.json')))
     limits = ProcessLimits(file_size_bytes=65536, wall_seconds=5)
-    provider = PreparationProvider(state['store'], Path(snapshot['custodyRoot']), spec, limits, driver=driver)
+    provider = PreparationProvider(state['store'], Path(snapshot['custodyRoot']), spec, limits, driver=driver, preflight_seconds=preflight)
     target = RemoteTarget('Task-local safe tokenizer preparation', 'compute', frozenset({owner}),
         provider=provider, synthetic_fixture=False, max_cpu=1, max_memory_mb=128,
-        max_disk_mb=4, max_seconds=5, capacity_pool=ComputePool('research-preparation', 1, 128, 4, 1, 1))
+        max_disk_mb=4, max_seconds=5 + preflight, capacity_pool=ComputePool('research-preparation', 1, 128, 4, 1, 1))
     return {'target': target, 'driver': driver, 'reference': 'preparation'}

@@ -44,8 +44,10 @@ def _require(value):
 class ProcessResourceProvider:
     effect_key = "bounded-process-run-v1"
 
-    def __init__(self, store, root: Path, spec: ProcessSpec | ResearchProcessSpec, limits: ProcessLimits | ResearchProcessLimits, *, required_isolation=(), aggregate_config=None):
+    def __init__(self, store, root: Path, spec: ProcessSpec | ResearchProcessSpec, limits: ProcessLimits | ResearchProcessLimits, *, required_isolation=(), aggregate_config=None, preflight_seconds=0):
         # Operator-only requirements: fail before root creation or allocation.
+        _require(type(preflight_seconds) is int and 0 <= preflight_seconds <= 30)
+        self.preflight_seconds = preflight_seconds
         self.aggregate_config = aggregate_config
         if aggregate_config is None:
             require_isolation(required_isolation)
@@ -72,6 +74,7 @@ class ProcessResourceProvider:
     def configuration_fingerprint(self):
         return digest({"namespace": self.capacity_namespace, "spec": asdict(self.spec),
                        "limits": asdict(self.limits), "revision": "process-provider-v1",
+                       **({"preflightSeconds": self.preflight_seconds} if self.preflight_seconds else {}),
                        **({"requiredIsolation": list(self.required_isolation)} if self.required_isolation else {}),
                        **({"aggregateConfig": self.aggregate_config.to_dict()} if self.aggregate_config is not None else {})})
 
@@ -118,7 +121,7 @@ class ProcessResourceProvider:
         budgets = cast(dict[str, int], budgets)
         _require(budgets["cpu"] >= 1 and budgets["memoryMb"] >= self.limits.address_space_mb
                  and budgets["diskMb"] >= math.ceil(getattr(self.limits, "disk_bytes", self.limits.file_size_bytes) / (1024 * 1024))
-                 and budgets["seconds"] >= self.limits.wall_seconds)
+                 and budgets["seconds"] >= math.ceil(self.limits.wall_seconds) + self.preflight_seconds)
         if self.aggregate_config is not None:
             config = self.aggregate_config
             _require(config.cpu_quota_us <= budgets["cpu"] * config.cpu_period_us

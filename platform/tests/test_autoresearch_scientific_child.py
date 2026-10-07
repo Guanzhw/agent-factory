@@ -19,26 +19,29 @@ def context(phase):
     pin = {'targetRef': 'original-' + phase, 'comparisonManifest': manifest,
         'comparisonManifestSha256': manifest_fingerprint(manifest), 'variantSha256': 'b'*64}
     return BindingContext(SimpleNamespace(demo=True, temporary_policy='admin-review'),
-        SimpleNamespace(autoresearch_children=SimpleNamespace(require_child=Mock(return_value=pin)),
+        SimpleNamespace(autoresearch_children=SimpleNamespace(require_child=Mock(return_value=pin),
+                verify_preparation=AsyncMock(return_value={'execution': {'taskId': 'original-producer'}, 'artifact': {'id': 'retained'}})),
             authorize_tool=Mock(), process_runtime=SimpleNamespace(run=AsyncMock(return_value={'originalLeaseId': 'lease'}))),
         {'ownerId': 'alice', 'application': profile.APPLICATION_ID, 'applicationRef': {'id': profile.APPLICATION_ID},
-         'mode': profile.MODE_NAMES[phase], 'tools': [profile.TOOLS[phase]], 'capabilities': ['compute:local'],
+         'mode': profile.MODE_NAMES[phase], 'tools': [profile.TOOLS[phase]], 'capabilities': [profile.CAPABILITIES[phase]],
          'delegation': {'parentTaskId': 'parent', 'rootTaskId': 'parent', 'depth': 1}},
         RunContext(user_id='alice', session_id='original-child', run_id='original-child-run'),
         {'config': {'presetId': 'project', 'phase': phase}})
 
 
 class ScientificChildProfileTests(unittest.IsolatedAsyncioTestCase):
-    async def test_preparation_routes_original_runtime_and_rechecks_durable_parent(self):
+    async def test_preparation_reads_original_artifact_without_launch_and_rechecks_parent(self):
         ctx = context('preparation')
-        entry = next(e for e in profile.registrations('project') if e.kind == 'tool' and e.tool_name == 'bounded_process_run')
+        entry = next(e for e in profile.registrations('project') if e.kind == 'tool' and e.tool_name == 'research_preparation_verify')
         tool = entry.factory(ctx)
         await tool.entrypoint(run_context=ctx.run_context)
-        ctx.store.process_runtime.run.assert_awaited_once_with(ctx.run_context, {'targetRef': 'original-preparation'})
+        ctx.store.autoresearch_children.verify_preparation.assert_awaited_once_with(ctx)
+        ctx.store.process_runtime.run.assert_not_awaited()
         self.assertEqual(ctx.store.autoresearch_children.require_child.call_count, 3)
         ctx.store.autoresearch_children.require_child.side_effect = PermissionError('parent revoked')
         with self.assertRaises(PermissionError): await tool.entrypoint(run_context=ctx.run_context)
-        ctx.store.process_runtime.run.assert_awaited_once()
+        ctx.store.process_runtime.run.assert_not_awaited()
+        ctx.store.autoresearch_children.verify_preparation.assert_awaited_once()
 
     def test_training_evaluation_preserve_external_requirement_and_exact_manifest(self):
         for phase in ('training', 'evaluation'):
@@ -80,7 +83,7 @@ class ScientificChildProfileTests(unittest.IsolatedAsyncioTestCase):
                 MaterialDefinition.model_validate(row)
                 self.assertNotIn(row['id'], ids); ids.add(row['id'])
             tool = next(row for row in rows if row['kind'] == 'tool')
-            self.assertEqual(tool['content'], profile.TOOLS[phase]); self.assertEqual(tool['permissions'], ['compute:local'])
+            self.assertEqual(tool['content'], profile.TOOLS[phase]); self.assertEqual(tool['permissions'], [profile.CAPABILITIES[phase]])
         prices = profile.pricing_registrations()
         self.assertEqual(len(prices), 3)
         self.assertTrue(all(p.local_model_type is profile.ScientificChildControlModel for p in prices))

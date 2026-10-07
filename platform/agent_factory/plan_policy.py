@@ -47,7 +47,8 @@ def tools_for_contract(contract: ToolContract) -> dict[str, str]:
     if contract == "autoresearch-session-v1":
         return {**{name: "compute:local" if name == "research_experiment" else "research:read" for name in
             ("research_context", "research_candidate", "research_experiment", "research_result", "research_decision")},
-            "autoresearch_session_run": "research:read", "bounded_process_run": "compute:local",
+            "autoresearch_session_run": "research:read", "research_preparation_verify": "research:read",
+            "bounded_process_run": "compute:local",
             "research_process_run": "compute:local"}
     if contract == "legacy-v1":
         return dict(LEGACY_TOOLS)

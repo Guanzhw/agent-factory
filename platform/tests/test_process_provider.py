@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 from types import SimpleNamespace
+from typing import Any, cast
 import unittest
 from unittest.mock import Mock, patch
 
@@ -15,7 +16,7 @@ from sqlalchemy import create_engine, text
 
 from agent_factory.process_enforcement import ProcessLimits, ProcessSpec
 from agent_factory.process_provider import ProcessResourceProvider
-from agent_factory.store import canonical
+from agent_factory.store import canonical, digest
 
 
 class FakeProcess:
@@ -117,6 +118,54 @@ class ProcessProviderTests(unittest.IsolatedAsyncioTestCase):
 
     def process(self):
         return FakeProcess.records[str(self.root / 'lease1' / 'custody.sqlite')]
+
+    async def test_preflight_zero_preserves_legacy_configuration_and_nonzero_changes_identity(self):
+        legacy = digest({'namespace': self.provider.capacity_namespace, 'spec': asdict(self.spec),
+                         'limits': asdict(self.limits), 'revision': 'process-provider-v1'})
+        explicit_zero = ProcessResourceProvider(self.store, self.root, self.spec, self.limits, preflight_seconds=0)
+        padded = ProcessResourceProvider(self.store, self.root, self.spec, self.limits, preflight_seconds=7)
+        self.assertEqual(self.provider.configuration_fingerprint, legacy)
+        self.assertEqual(explicit_zero.configuration_fingerprint, legacy)
+        self.assertNotEqual(padded.configuration_fingerprint, legacy)
+        self.assertEqual(padded.capacity_namespace, self.provider.capacity_namespace)
+        self.assertEqual(padded.limits, self.limits)
+        for invalid in (True, False, -1, 31, 1.5, '1', None):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                ProcessResourceProvider(self.store, self.root, self.spec, self.limits, preflight_seconds=cast(Any, invalid))
+        self.assertEqual(self.count(), 0)
+        self.assertEqual(FakeProcess.launched, 0)
+
+    async def test_binding_reserves_preflight_plus_wall_without_altering_process_wall(self):
+        padded = ProcessResourceProvider(self.store, self.root, self.spec, self.limits, preflight_seconds=7)
+        for seconds in (3, 9):
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                padded._binding({**self.lease, 'limits': {**self.lease['limits'], 'seconds': seconds}})
+        value = padded._binding({**self.lease, 'limits': {**self.lease['limits'], 'seconds': 10}})
+        self.assertEqual(value['limits']['seconds'], 10)
+        self.assertEqual(padded.limits.wall_seconds, 3)
+        self.assertEqual(FakeProcess.created, 0)
+
+    async def test_preflight_budget_does_not_bypass_original_expiry_guard_after_prepare(self):
+        padded = ProcessResourceProvider(self.store, self.root, self.spec, self.limits, preflight_seconds=30)
+        self.lease['limits']['seconds'] = 33
+        with self.store.engine.begin() as conn:
+            conn.execute(text('UPDATE af_leases SET body=:body WHERE id=:id'),
+                         {'body': canonical(self.lease), 'id': self.lease['id']})
+        clock = [0]
+        original_deadline = 33
+        def guard():
+            if clock[0] >= original_deadline:
+                raise PermissionError('LEASE_EXPIRED')
+        # Deterministic preparation consumes the original lease; extra declared
+        # reservation must not reset its authority deadline before actual spawn.
+        FakeProcess.create_observer = Mock(side_effect=lambda: clock.__setitem__(0, original_deadline))
+        result = await padded.allocate_bound(self.lease, before_effect=guard)
+        self.assertTrue(result['capacityHeld'])
+        self.assertEqual(FakeProcess.created, 1)
+        self.assertEqual(FakeProcess.launched, 0)
+        self.assertEqual(self.process()['state'], 'PREPARED')
+        self.assertEqual(self.process()['limits']['wall_seconds'], 3)
+        self.assertEqual(clock[0], original_deadline)
 
     async def test_durable_bound_allocation_reopen_terminal_hold_explicit_reclaim(self):
         FakeProcess.create_observer = Mock(side_effect=lambda: self.assertEqual(self.count(), 1))

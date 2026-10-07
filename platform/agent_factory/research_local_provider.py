@@ -22,7 +22,7 @@ class ResearchLocalProvider(ProcessResourceProvider):
     effect_key = 'research-process-run-v1'
 
     def __init__(self, store, root, spec, limits, *, gpu_binding, source_fingerprint,
-                 manifest_fingerprint, observer, program_verifier, **kwargs):
+                 manifest_fingerprint, observer, program_verifier, stop_only=False, **kwargs):
         _require(type(gpu_binding) is GpuBinding and callable(observer) and callable(program_verifier)
                  and type(spec) in {ResearchProcessSpec, UvResearchProcessSpec} and type(limits) is ResearchProcessLimits)
         for value in (source_fingerprint, manifest_fingerprint, getattr(observer, 'configuration_fingerprint', None)):
@@ -30,6 +30,8 @@ class ResearchLocalProvider(ProcessResourceProvider):
         _require(getattr(program_verifier, 'configuration_fingerprint', None) == source_fingerprint)
         _require(callable(getattr(program_verifier, 'validate_spec', None)))
         program_verifier.validate_spec(spec)
+        _require(type(stop_only) is bool)
+        self._stop_only = stop_only
         self._program_verifier = program_verifier
         self.gpu_binding = gpu_binding
         self._source = source_fingerprint
@@ -43,6 +45,12 @@ class ResearchLocalProvider(ProcessResourceProvider):
         return digest({'base': super().configuration_fingerprint, 'revision': 'research-local-provider-v1',
             'gpuBinding': self.gpu_binding.to_dict(), 'sourceSha256': self._source,
             'manifestSha256': self._manifest, 'observerSha256': self._observer_pin})
+
+    async def allocate_bound(self, lease: dict, *, before_effect):
+        # Recovery reduces authority without changing the original custody identity.
+        if self._stop_only:
+            raise ValueError("RESEARCH_RESTORED_DISPATCH_FORBIDDEN")
+        return await super().allocate_bound(lease, before_effect=before_effect)
 
     def _observe_device(self, record, snapshot, operation):
         _require(self._observer.configuration_fingerprint == self._observer_pin)

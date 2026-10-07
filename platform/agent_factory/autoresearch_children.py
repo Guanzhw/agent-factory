@@ -51,11 +51,15 @@ def positive_lease(lease: dict[str, Any], task: dict[str, Any], *, gpu):
 
 
 class AutoResearchChildren:
-    def __init__(self, store, auth, service, *, phase_config, preparation, checkpoints, evaluation, poll_seconds=.1):
+    def __init__(self, store, auth, service, *, phase_config, preparation, checkpoints, poll_seconds=.1):
         require(callable(phase_config) and callable(getattr(phase_config, 'register_phase', None))
-                and callable(getattr(phase_config, 'verify_phase', None)) and type(poll_seconds) in {int, float} and .01 <= poll_seconds <= 1)
+                and callable(getattr(phase_config, 'verify_phase', None))
+                and callable(getattr(phase_config, 'verify_authority', None))
+                and callable(getattr(phase_config, 'preparation_receipt', None))
+                and callable(getattr(phase_config, 'evaluation_service', None))
+                and callable(getattr(phase_config, 'restore_phase', None)) and type(poll_seconds) in {int, float} and .01 <= poll_seconds <= 1)
         self.store, self.auth, self.service = store, auth, service
-        self.phase_config, self.preparation, self.checkpoints, self.evaluation = phase_config, preparation, checkpoints, evaluation
+        self.phase_config, self.preparation, self.checkpoints = phase_config, preparation, checkpoints
         self.poll_seconds = poll_seconds
         store.sql('''CREATE TABLE IF NOT EXISTS af_autoresearch_experiments (
             parent_run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, parent_task_id TEXT NOT NULL REFERENCES af_tasks(id),
@@ -82,7 +86,46 @@ class AutoResearchChildren:
         for phase, entry in body['phases'].items():
             require(phase in PHASES and digest(entry['config']) == entry['configSha256']
                     and entry['requestId'] == 'ar-child:' + digest({'binding': pin, 'phase': phase}))
+        for entry in body['phases'].values():
+            snapshot = entry.get('runtimeSnapshot')
+            if snapshot is not None:
+                require(type(snapshot) is dict and set(snapshot) == {'sha256', 'body'}
+                        and type(snapshot['body']) is dict and digest(snapshot['body']) == snapshot['sha256'])
         return body
+
+    def _persist_snapshot(self, ctx, phase, config, snapshot):
+        require(type(snapshot) is dict and len(canonical(snapshot).encode()) <= 40 * 1024**2)
+        body = self._bound(ctx)
+        entry = body['phases'][phase]
+        require(entry['config'] == config)
+        wrapped = {'sha256': digest(snapshot), 'body': deepcopy(snapshot)}
+        if 'runtimeSnapshot' in entry:
+            require(entry['runtimeSnapshot'] == wrapped)
+            return deepcopy(snapshot)
+        original = canonical(body)
+        require(entry['state'] == 'DISPATCH_UNKNOWN' and 'child' not in entry)
+        entry['runtimeSnapshot'] = wrapped
+        updated = self.store.sql('''UPDATE af_autoresearch_experiments SET body=CAST(:body AS JSONB)
+            WHERE parent_run_id=:run AND body=CAST(:original AS JSONB) RETURNING parent_run_id''',
+            run=ctx.run_context.run_id, original=original, body=canonical(body))
+        require(len(updated) == 1)
+        return deepcopy(snapshot)
+
+    def _restore_phase(self, ctx, phase, body):
+        entry = body['phases'][phase]
+        resources = self.store.process_runtime.resources
+        if entry['config']['targetRef'] in resources.targets:
+            return
+        # Reconstruction is an explicit outer custody operation, never work
+        # performed from a transaction-scoped authority callback.
+        require(self.store._connection.get() is None)
+        snapshot = entry.get('runtimeSnapshot')
+        require(snapshot and digest(snapshot['body']) == snapshot['sha256'])
+        prior = {key: deepcopy(body['phases'][key]) for key in PHASES[:PHASES.index(phase)]}
+        target = self.phase_config.restore_phase(ctx, phase, deepcopy(body['candidate']), prior,
+            phase_pin(entry['config']), deepcopy(snapshot['body']))
+        require(not inspect.isawaitable(target)
+                and resources._target_fingerprint(target) == entry['targetFingerprint'])
 
     def _write(self, run, body):
         self.store.sql('UPDATE af_autoresearch_experiments SET body=CAST(:body AS JSONB) WHERE parent_run_id=:run',
@@ -167,17 +210,42 @@ class AutoResearchChildren:
                 and ctx.plan.get('mode') == 'scientific-' + phase)
         pin = phase_pin(entry['config'])
         resources = self.store.process_runtime.resources
+        self._restore_phase(context, phase, body)
         target = resources._authorize(run.user_id, pin['targetRef'])
         require(resources._target_fingerprint(target) == entry['targetFingerprint'])
-        self._verify_phase(context, phase, body, target)
+        # Authority resolution also runs inside checkpoint metadata transactions.
+        # Artifact retention belongs to registration, original launch and result
+        # verification, never nested inside this identity/mandate check.
+        self._verify_phase(context, phase, body, target, authority_only=True)
         return pin
 
-    def _verify_phase(self, ctx, phase, body, target):
+    def _verify_phase(self, ctx, phase, body, target, *, authority_only=False):
         self._preset_manifest(self.service.current(ctx), body['phases'][phase]['config'])
         prior = {key: deepcopy(body['phases'][key]) for key in PHASES[:PHASES.index(phase)]}
-        result = self.phase_config.verify_phase(phase, deepcopy(body['candidate']), prior,
+        verify = self.phase_config.verify_authority if authority_only else self.phase_config.verify_phase
+        result = verify(phase, deepcopy(body['candidate']), prior,
             phase_pin(body['phases'][phase]['config']), target)
         require(not inspect.isawaitable(result))
+
+    async def verify_preparation(self, ctx):
+        """Read the original retained producer artifact; never create a new export."""
+        self.require_child(ctx, 'preparation')
+        self.store.authorize_tool(ctx.run_context, 'research_preparation_verify')
+        receipt = self.phase_config.preparation_receipt()
+        require(type(receipt) is dict and set(receipt) == {'execution', 'artifact'})
+        receipt = cast(dict[str, Any], receipt)
+        self.require_child(ctx, 'preparation')
+        return deepcopy(receipt)
+
+    def _preparation_receipt(self, child):
+        receipt = self.phase_config.preparation_receipt()
+        require(type(receipt) is dict and set(receipt) == {'execution', 'artifact'})
+        receipt = cast(dict[str, Any], receipt)
+        # Producer IDs remain original. The read-only verifier is a distinct child.
+        require(receipt['execution']['taskId'] != child['id']
+                and receipt['execution']['nativeRunId'] != child['run_id'])
+        return {**deepcopy(receipt), 'verification': {'taskId': child['id'],
+            'nativeRunId': child['run_id'], 'planId': child['plan_id']}}
 
     async def _wait(self, ctx):
         self._bound(ctx)
@@ -196,12 +264,8 @@ class AutoResearchChildren:
             if ticket and ticket['status'] in {'failed', 'cancelled', 'canceled'}:
                 raise ValueError('AUTORESEARCH_CHILD_FAILED')
             if phase == 'preparation' and ticket and ticket['status'] == ticket['persistedRunStatus'] == 'completed':
-                original = runtime._original(child['id']); require(original is not None)
-                lease = runtime.resources.inspect(owner, original['lease_id'])
-                positive_lease(lease, child, gpu=False)
-                artifact = self.preparation.import_completed(owner, lease['id'])
-                self.preparation.input_pin(owner, child['id'], artifact['id'])
-                return self._receipt(child, lease, artifact)
+                require(runtime._original(child['id']) is None)
+                return self._preparation_receipt(child)
             if phase != 'preparation' and ticket and ticket['status'] == ticket['persistedRunStatus'] == 'paused':
                 _, manifest, variant = runtime._config(child, self.store.plan(child['plan_id'], owner))
                 requirement = runtime._paused(child, manifest, variant)
@@ -209,7 +273,12 @@ class AutoResearchChildren:
                 # Only this fresh invocation may submit; re-entry never reaches _drive.
                 lease = await runtime.submit(owner, child['id'])
                 while lease['state'] != 'RECLAIMED':
-                    if lease['state'] == 'UNKNOWN' or lease.get('preDispatchFailure') is not None:
+                    # A pinned original guardian may still be accepting dispatch.
+                    # Observe that same job within the original parent deadline;
+                    # never allocate again or call this state completion.
+                    dispatching = (lease.get('executionStatus') == 'DISPATCHING'
+                        and type(lease.get('providerJobId')) is str and bool(lease['providerJobId']))
+                    if (lease['state'] == 'UNKNOWN' and not dispatching) or lease.get('preDispatchFailure') is not None:
                         raise ValueError('AUTORESEARCH_CHILD_PROCESS_UNKNOWN')
                     await self._wait(ctx)
                     lease = await runtime.inspect_task(owner, child['id'])
@@ -254,9 +323,10 @@ class AutoResearchChildren:
             async with asyncio.timeout(timeout_seconds):
                 while True:
                     complete = True
-                    for phase in body['phases'].values():
+                    for name, phase in body['phases'].items():
+                        self._restore_phase(ctx, name, body)
                         child = self._child(run.user_id, parent['id'], phase)
-                        facts = await self.store.delegation._facts(child)
+                        facts = self.store.lifecycle_observer._facts(child)
                         if facts.get('stopped') is not True or facts.get('unknown') is not False:
                             complete = False
                             self.store.request_cancel(child['id'])
@@ -295,7 +365,7 @@ class AutoResearchChildren:
         try:
             for phase in PHASES:
                 body = self._bound(ctx)
-                config = self.phase_config(phase, deepcopy(candidate), deepcopy(body['phases']))
+                config = self.phase_config(phase, deepcopy(candidate), deepcopy(body['phases']), context=ctx)
                 require(not inspect.isawaitable(config))
                 config = phase_pin(config)
                 self._preset_manifest(self.service.current(ctx), config)
@@ -305,13 +375,15 @@ class AutoResearchChildren:
                 prior = deepcopy(body['phases'])
                 body['phases'][phase] = entry; self._write(task['run_id'], body)
                 self._bound(ctx)
-                registered = self.phase_config.register_phase(ctx, phase, deepcopy(candidate), prior, config)
+                registered = self.phase_config.register_phase(ctx, phase, deepcopy(candidate), prior, config,
+                    persist_snapshot=lambda snapshot: self._persist_snapshot(ctx, phase, config, snapshot))
                 require(not inspect.isawaitable(registered))
                 resources = self.store.process_runtime.resources
                 target = resources._authorize(task['owner_id'], config['targetRef'])
                 self._verify_phase(ctx, phase, body, target)
+                body = self._bound(ctx); entry = body['phases'][phase]
                 entry['targetFingerprint'] = resources._target_fingerprint(target)
-                body = self._bound(ctx); body['phases'][phase] = entry; self._write(task['run_id'], body)
+                self._write(task['run_id'], body)
                 if parent_guard is not None:
                     require(not inspect.isawaitable(parent_guard()))
                 self._bound(ctx)
@@ -342,11 +414,19 @@ class AutoResearchChildren:
         owner, parent = ctx.run_context.user_id, ctx.run_context.session_id
         for phase in PHASES:
             entry = body['phases'][phase]
+            self._restore_phase(ctx, phase, body)
             require(entry['state'] == 'COMPLETED')
             child = self._child(owner, parent, entry)
             ticket = self.store.lifecycle_observer._binding(child)
             require(ticket and ticket['status'] == ticket['persistedRunStatus'] == 'completed')
-            runtime = self.store.process_runtime if phase == 'preparation' else self.store.research_runtime
+            if phase == 'preparation':
+                require(self.store.process_runtime._original(child['id']) is None)
+                require(entry['receipt'] == self._preparation_receipt(child))
+                target = self.store.process_runtime.resources._authorize(owner, entry['config']['targetRef'])
+                require(self.store.process_runtime.resources._target_fingerprint(target) == entry['targetFingerprint'])
+                self._verify_phase(ctx, phase, body, target)
+                continue
+            runtime = self.store.research_runtime
             original = runtime._original(child['id']); require(original is not None)
             lease = runtime.resources.inspect(owner, original['lease_id'])
             positive_lease(lease, child, gpu=phase != 'preparation')
@@ -366,7 +446,10 @@ class AutoResearchChildren:
                 'checkpoint': {'artifactId': metadata['id'], **checkpoint}},
             'evaluatorExecution': evaluate['receipt']['execution']}
         require(evaluate['config']['comparisonManifestSha256'] == train['config']['comparisonManifestSha256'])
-        evaluation = await self.evaluation.verify(owner, contract)
+        from .research_evaluation_service import ResearchEvaluationService
+        verifier = self.phase_config.evaluation_service(evaluate['config'])
+        require(type(verifier) is ResearchEvaluationService)
+        evaluation = await verifier.verify(owner, contract)
         self._bound(ctx)
         keys = ('taskId', 'nativeRunId', 'planId', 'leaseId', 'providerJobId')
         references = {phase: {key: body['phases'][phase]['receipt']['execution'][key] for key in keys}

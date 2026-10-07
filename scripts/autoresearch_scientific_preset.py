@@ -15,6 +15,7 @@ from agent_factory.research_assessment import assess_observations
 from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
 from agent_factory.research_profile import verify_upstream_source
 from agent_factory.research_training_adapter import build_training_bundle
+from agent_factory.autoresearch_candidate_patch import build_candidate, parameter_context
 
 ERROR = 'AUTORESEARCH_SCIENTIFIC_PRESET_INVALID'
 
@@ -78,9 +79,15 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
     def context_reader():
         files = upstream()
         return {'schema': 1, 'evidenceKind': 'approved-scientific-project-context',
-            'programMd': files['program.md'].decode('utf-8'), 'trainPy': files['train.py'].decode('utf-8'),
+            'programMd': files['program.md'].decode('utf-8'),
+            'trainSha256': hashlib.sha256(files['train.py']).hexdigest(),
+            'candidateParameters': parameter_context(files['train.py'], microbatch=config.microbatch),
             'baselineObservation': baseline(), 'comparisonManifestSha256': fingerprint,
             'scientificConclusionVerified': False}
+
+    def candidate_builder(changes):
+        files = upstream()
+        return build_candidate(files['train.py'], changes, microbatch=config.microbatch)
 
     def candidate_validator(train_py):
         require(type(train_py) is str and 0 < len(train_py) <= 4 * 1024**2)
@@ -131,5 +138,5 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
     return ResearchPreset(id=config.id, name=config.name, default_goal=config.default_goal,
         owner_id=config.owner_id, instructions='Read research_context before proposing an eleven-literal-only candidate.',
         manifest=manifest, limits=deepcopy(config.limits), runtime_factory=runtime_factory,
-        context_reader=context_reader, candidate_validator=candidate_validator, experiment=experiment,
+        context_reader=context_reader, candidate_validator=candidate_validator, candidate_builder=candidate_builder, experiment=experiment,
         review_owner=config.review_owner, blockers=tuple(blockers), external_session=True)

@@ -14,6 +14,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 import unittest
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from agent_factory.autoresearch import ResearchPreset
@@ -30,7 +31,7 @@ from test_research_manifest import example_manifest
 
 
 @unittest.skipUnless(sys.platform == 'linux' and os.getenv('FACTORY_TEST_DATABASE_URL'),
-                     'Requires disposable PostgreSQL and Linux bounded synthetic process')
+                     'Requires disposable PostgreSQL and Linux native queue fixture')
 class ExternalSessionPostgresTests(unittest.TestCase):
     state: dict[str, Any]
     store: Any
@@ -69,7 +70,7 @@ class ExternalSessionPostgresTests(unittest.TestCase):
                 testcase.assertEqual(ticket['max_attempts'], 1)
                 evidence['parentBeforeChild'] = dict(ticket)
                 child = await testcase.store.delegation.create('alice', parent['id'],
-                    'Run the fixed controlled preparation process', 'scientific-preparation', 'single-worker-child')
+                    'Verify a retained preparation reference', 'scientific-preparation', 'single-worker-child')
                 evidence['child'] = child['childTask']
                 end = time.monotonic() + 45
                 while time.monotonic() < end:
@@ -125,7 +126,8 @@ class ExternalSessionPostgresTests(unittest.TestCase):
             self.assertEqual(ctx.plan['delegation']['rootTaskId'], evidence['ctx'].run_context.session_id)
             self.assertEqual(ctx.run_context.user_id, 'alice')
             return pin
-        self.store.autoresearch_children = SimpleNamespace(require_child=require_child)
+        self.store.autoresearch_children = SimpleNamespace(require_child=require_child,
+            verify_preparation=AsyncMock(return_value={'originalSourceTask': 'synthetic-producer', 'scientificConclusionVerified': False}))
         self.login('alice')
         request = str(uuid4())
         result = self.post('/api/factory/autoresearch/runs', {'presetId': preset.id, 'requestId': request}, 202)
@@ -153,9 +155,6 @@ class ExternalSessionPostgresTests(unittest.TestCase):
         links = self.store.sql('SELECT * FROM af_delegation_links WHERE parent_id=:parent', parent=parent['id'])
         self.assertEqual(len(links), 1)
         allocations = self.store.sql('SELECT * FROM af_process_allocations')
-        self.assertEqual(len(allocations), 1)
-        snapshot = asyncio.run(provider.inspect(allocations[0]['id'], 'alice'))
-        self.assertEqual(snapshot['state'], 'RECLAIMED')
-        self.assertFalse(snapshot['capacityHeld'])
+        self.assertEqual(len(allocations), 0)  # preparation verification never exports/reseals
         repeat = self.post('/api/factory/autoresearch/runs', {'presetId': preset.id, 'requestId': request}, 202)
         self.assertEqual(repeat['id'], parent['id'])

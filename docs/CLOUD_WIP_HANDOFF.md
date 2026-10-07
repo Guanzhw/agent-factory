@@ -1,5 +1,13 @@
 # Cloud WIP checkpoint handoff — 2026-10-02
 
+Latest continuation adds compact model-selected parameter candidates and retains
+original preparation custody through a read-only verification child. Evaluator
+construction is delayed until its exact target exists. The three-stage actual
+native fixture passed in 339.595 seconds, including same-process completed-custody
+registry reconstruction with unchanged original identities and no redispatch.
+The required seven-case suite passed in 324.218 seconds with zero skips. Earlier eight-green/PG-pending
+CI is superseded and is not final acceptance. Read the top of CLOUD_TASK_BOARD.md.
+
 Final post-fix actual Go diagnostic passed: public context plus final reply, three
 SETTLED requests (8,877 tokens), both context/session effects DONE, zero held
 provider tokens and exact original container stop/reclaim. Rejected decision

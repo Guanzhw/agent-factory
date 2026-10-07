@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import nullcontext
 import hashlib
 import os
@@ -48,6 +49,15 @@ def fixture():
 
 
 class LocalProviderTests(unittest.TestCase):
+    def test_reopened_provider_denies_allocation_before_journal_or_authority(self):
+        provider, observer, _, _ = fixture()
+        provider._stop_only = True
+        with patch('agent_factory.research_local_provider.ProcessResourceProvider.allocate_bound') as allocate:
+            with self.assertRaisesRegex(ValueError, 'RESTORED_DISPATCH_FORBIDDEN'):
+                asyncio.run(provider.allocate_bound({}, before_effect=lambda: self.fail('no new authority')))
+            allocate.assert_not_called()
+        self.assertEqual(observer.calls, [])
+
     def test_busy_and_unknown_block_launch(self):
         for state in ('BUSY', 'UNKNOWN', 'RELEASED'):
             provider, observer, record, snapshot = fixture()

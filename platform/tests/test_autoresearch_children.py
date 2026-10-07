@@ -27,7 +27,7 @@ class MemoryStore:
         self.plan_value: dict[str, Any] = {'id': 'parent-plan', 'fingerprint': '2' * 64}
         self.lifecycle_observer = SimpleNamespace(_binding=Mock(return_value={'status': 'paused', 'persistedRunStatus': 'paused'}))
         self.delegation = SimpleNamespace(create=AsyncMock(side_effect=ConnectionError('controlled lost acknowledgment')))
-        self.process_runtime = SimpleNamespace(resources=SimpleNamespace(_authorize=Mock(return_value='target'), _target_fingerprint=Mock(return_value='3' * 64)))
+        self.process_runtime = SimpleNamespace(resources=SimpleNamespace(targets={'operator-target': 'target'}, _authorize=Mock(return_value='target'), _target_fingerprint=Mock(return_value='3' * 64)))
         self.research_runtime = self.process_runtime
     def task(self, identifier, owner):
         if identifier != self.task_value['id'] or owner != self.task_value['owner_id']:
@@ -49,7 +49,9 @@ class MemoryStore:
             return [deepcopy(self.row)] if self.row is not None else []
         if statement.startswith('UPDATE'):
             assert self.row is not None
-            self.row['body'] = json.loads(values['body']); return []
+            if 'original' in values and self.row['body'] != json.loads(values['original']): return []
+            self.row['body'] = json.loads(values['body'])
+            return [{'parent_run_id': values['run']}] if 'RETURNING' in statement else []
         raise AssertionError('Unexpected synthetic SQL')
 
 
@@ -63,7 +65,58 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='parent', run_id='native-parent'))
         self.config = Mock(return_value=pin())
         self.children = AutoResearchChildren(self.store, Mock(), self.service,
-            phase_config=self.config, preparation=Mock(), checkpoints=Mock(), evaluation=Mock())
+            phase_config=self.config, preparation=Mock(), checkpoints=Mock())
+
+    async def test_original_dispatching_job_is_observed_without_second_allocation(self):
+        child = {'id': 'child', 'owner_id': 'alice', 'run_id': 'child-run', 'plan_id': 'child-plan'}
+        finished = {'id': 'lease', 'state': 'RECLAIMED', 'ownerId': 'alice', 'localTaskId': 'child',
+            'nativeRunId': 'child-run', 'planId': 'child-plan', 'capacityHeld': False,
+            'executionStatus': 'COMPLETED', 'exitCode': 0, 'providerJobId': 'original-job',
+            'stopEvidence': {'allStopped': True}, 'gpuEvidence': {'state': 'RELEASED'}}
+        runtime = SimpleNamespace(_config=Mock(return_value=('ref', {}, 'variant')),
+            _paused=Mock(return_value={'id': 'requirement', 'version': 1}),
+            submit=AsyncMock(return_value={**finished, 'state': 'UNKNOWN', 'executionStatus': 'DISPATCHING', 'capacityHeld': True}),
+            inspect_task=AsyncMock(return_value=finished))
+        self.store.research_runtime = runtime
+        self.store.plan = Mock(return_value={'id': 'child-plan'})
+        self.children._bound = Mock()
+        self.children._child = Mock(return_value=child)
+        self.children._wait = AsyncMock()
+        self.children._receipt = Mock(return_value={'original': True})
+        self.service.commands = SimpleNamespace(submit=AsyncMock())
+        self.store.lifecycle_observer._binding.side_effect = [
+            {'status': 'paused', 'persistedRunStatus': 'paused'},
+            {'status': 'completed', 'persistedRunStatus': 'completed'}]
+        self.assertEqual(await self.children._drive(self.ctx, 'training', {'requestId': 'original-request'}), {'original': True})
+        runtime.submit.assert_awaited_once_with('alice', 'child')
+        runtime.inspect_task.assert_awaited_once_with('alice', 'child')
+        self.service.commands.submit.assert_awaited_once()
+        self.store.lifecycle_observer._binding.side_effect = None
+        self.store.lifecycle_observer._binding.return_value = {'status': 'paused', 'persistedRunStatus': 'paused'}
+        for extra in ({'providerJobId': None}, {'preDispatchFailure': {'dispatchAttempted': False}}):
+            runtime.submit.return_value = {**finished, 'state': 'UNKNOWN', 'executionStatus': 'DISPATCHING', **extra}
+            runtime.inspect_task.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'CHILD_PROCESS_UNKNOWN'):
+                await self.children._drive(self.ctx, 'training', {'requestId': 'original-request'})
+            runtime.inspect_task.assert_not_awaited()
+
+    async def test_preparation_verification_reads_original_and_never_dispatches(self):
+        self.children.require_child = Mock(return_value=pin())
+        self.store.authorize_tool = Mock()
+        receipt = {'execution': {'taskId': 'original-producer', 'nativeRunId': 'original-run'},
+                   'artifact': {'id': 'original-artifact'}}
+        self.config.preparation_receipt.return_value = receipt
+        self.assertEqual(await self.children.verify_preparation(self.ctx), receipt)
+        self.assertEqual(self.children.require_child.call_count, 2)
+        self.store.authorize_tool.assert_called_once_with(self.ctx.run_context, 'research_preparation_verify')
+        self.store.delegation.create.assert_not_awaited()
+        self.assertIsNone(self.store.row)
+        child = {'id': 'verifier', 'run_id': 'verifier-run', 'plan_id': 'verifier-plan'}
+        combined = self.children._preparation_receipt(child)
+        self.assertEqual(combined['execution']['taskId'], 'original-producer')
+        self.assertEqual(combined['verification']['taskId'], 'verifier')
+        with self.assertRaises(ValueError):
+            self.children._preparation_receipt({**child, 'id': 'original-producer'})
 
     async def test_commit_before_delegation_and_lost_ack_never_replays(self):
         async def lost(*args):
@@ -147,14 +200,47 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConnectionError): await self.children.experiment(self.ctx, self.candidate, 'original')
         child = {'id': 'original-child'}
         self.children._child = Mock(return_value=child)
-        self.store.delegation._facts = AsyncMock(return_value={'stopped': True, 'unknown': False})
+        self.store.lifecycle_observer._facts = Mock(return_value={'stopped': True, 'unknown': False})
         self.service.current.side_effect = PermissionError('revoked')
         self.assertTrue(await self.children.cleanup(self.ctx))
-        self.store.delegation._facts.assert_awaited_once_with(child)
+        self.store.lifecycle_observer._facts.assert_called_once_with(child)
         self.assertEqual(self.store.delegation.create.await_count, 1)
 
+    async def test_cleanup_cancels_original_without_owner_read_or_run_grants(self):
+        with self.assertRaises(ConnectionError): await self.children.experiment(self.ctx, self.candidate, 'original')
+        child = {'id': 'original-child'}
+        self.children._child = Mock(return_value=child)
+        self.store.delegation._facts = AsyncMock(side_effect=PermissionError('read revoked'))
+        self.service.current.side_effect = PermissionError('run revoked')
+        self.store.lifecycle_observer._facts = Mock(side_effect=[{'stopped': False, 'unknown': True},
+            {'stopped': True, 'unknown': False}])
+        self.store.lifecycle_observer.observe_root = AsyncMock()
+        self.store.request_cancel = Mock()
+        self.assertTrue(await self.children.cleanup(self.ctx))
+        self.store.request_cancel.assert_called_once_with('original-child')
+        self.store.lifecycle_observer.observe_root.assert_awaited_once_with('parent')
+        self.store.delegation._facts.assert_not_awaited()
+        self.assertEqual(self.store.delegation.create.await_count, 1)
+
+    async def test_runtime_snapshot_is_durable_immutable_and_preserved_after_registration(self):
+        snapshot = {'schema': 1, 'binding': {'parentRunId': 'native-parent'}, 'source': 'synthetic'}
+        def register(ctx, phase, candidate, prior, config, *, persist_snapshot):
+            self.assertEqual(persist_snapshot(snapshot), snapshot)
+            self.assertEqual(persist_snapshot(deepcopy(snapshot)), snapshot)
+            with self.assertRaises(ValueError):
+                persist_snapshot({**snapshot, 'source': 'replacement'})
+        self.config.register_phase.side_effect = register
+        with self.assertRaises(ConnectionError):
+            await self.children.experiment(self.ctx, self.candidate, 'original')
+        body = self.children._read('native-parent')
+        self.assertEqual(body['phases']['preparation']['runtimeSnapshot'],
+                         {'sha256': digest(snapshot), 'body': snapshot})
+        self.assertEqual(body['phases']['preparation']['targetFingerprint'], '3' * 64)
+        self.store.row['body']['phases']['preparation']['runtimeSnapshot']['body']['source'] = 'tampered'
+        with self.assertRaises(ValueError): self.children._read('native-parent')
+
     async def test_concrete_registration_after_intent_and_provider_rejection_before_dispatch(self):
-        def registered(ctx, phase, candidate, prior, config):
+        def registered(ctx, phase, candidate, prior, config, *, persist_snapshot):
             body = self.children._read('native-parent')
             self.assertEqual(body['phases'][phase]['config'], config)
             self.assertEqual(candidate, self.candidate)
@@ -201,30 +287,37 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
             receipt = self.children._receipt(child, lease, {'id': 'artifact-' + phase} if phase != 'evaluation' else None)
             phases[phase] = {'state': 'COMPLETED', 'config': pin(), 'targetFingerprint': '3' * 64,
                 'receipt': receipt, 'requestId': phase}
+        original = deepcopy(phases['preparation']['receipt'])
+        original['execution'].update(taskId='original-preparation', nativeRunId='original-preparation-run')
+        self.config.preparation_receipt.return_value = original
+        phases['preparation']['receipt'] = self.children._preparation_receipt(children['preparation'])
         body = {'candidate': self.candidate, 'phases': phases, 'state': 'DONE'}
         self.children._bound = Mock(return_value=body)
         self.children._child = Mock(side_effect=lambda owner, parent, entry: children[entry['requestId']])
         self.store.lifecycle_observer._binding.return_value = {'status': 'completed', 'persistedRunStatus': 'completed'}
         resources = self.store.process_runtime.resources
         resources.inspect = Mock(side_effect=lambda owner, lease: deepcopy(leases[lease]))
-        self.store.process_runtime._original = Mock(side_effect=lambda child: {'lease_id': 'lease-' + child})
+        self.store.process_runtime._original = Mock(side_effect=lambda child: None if child == 'preparation' else {'lease_id': 'lease-' + child})
         self.store.research_runtime = self.store.process_runtime
         self.children.checkpoints.identity.return_value = ({'id': 'artifact-training'}, {'sha256': '7' * 64, 'sizeBytes': 100})
-        self.children.evaluation.verify = AsyncMock(return_value={'evaluatorCustodyVerified': True})
+        from agent_factory.research_evaluation_service import ResearchEvaluationService
+        verifier = object.__new__(ResearchEvaluationService)
+        verifier.verify = AsyncMock(return_value={'evaluatorCustodyVerified': True})
+        self.config.evaluation_service.return_value = verifier
         result = await self.children._verified_result(self.ctx, body)
         body['result'] = result
         self.assertEqual(result['originalReferences']['checkpoint'], {'artifactId': 'artifact-training', 'sha256': '7' * 64})
         self.assertEqual(result['originalReferences']['training']['providerJobId'], 'job-training')
         self.assertEqual(await self.children.result_verifier(self.ctx, result), result)
         self.assertEqual(self.config.verify_phase.call_count, 6)
-        self.children.preparation.input_pin.assert_called_with('alice', 'preparation', 'artifact-preparation')
+        self.children.preparation.input_pin.assert_called_with('alice', 'original-preparation', 'artifact-preparation')
         with self.assertRaises(ValueError): await self.children.result_verifier(self.ctx, {**result, 'scientificConclusionVerified': True})
         leases['lease-training']['capacityHeld'] = True
         with self.assertRaises(ValueError): await self.children.result_verifier(self.ctx, result)
-        self.assertEqual(self.children.evaluation.verify.await_count, 2)
+        self.assertEqual(verifier.verify.await_count, 2)
 
     async def test_current_preset_manifest_mismatch_blocks_self_consistent_phase_before_dispatch(self):
-        def changed_config(*args):
+        def changed_config(*args, **kwargs):
             self.preset.manifest = {**example_manifest(), 'baselineSourceManifestSha256': 'a' * 64}
             return pin()
         self.config.side_effect = changed_config
@@ -274,9 +367,12 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
         self.children._child = Mock(return_value=child)
         ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='child', run_id='child-native'),
             plan=child_plan, spec={'config': {'presetId': self.preset.id, 'phase': 'training'}})
+        self.config.verify_phase.reset_mock()
+        self.config.verify_phase.side_effect = RuntimeError('Retention lock must precede metadata transaction')
         self.assertEqual(self.children.require_child_custody(ctx, 'training'), pin())
         self.store.delegation.authorize_child.assert_not_called()
-        self.config.verify_phase.assert_called()
+        self.config.verify_authority.assert_called_once()
+        self.config.verify_phase.assert_not_called()
         with self.assertRaises(PermissionError): self.children.require_child(ctx, 'training')
         self.store.delegation._link.return_value['root_id'] = 'foreign'
         with self.assertRaises(ValueError): self.children.require_child_custody(ctx, 'training')

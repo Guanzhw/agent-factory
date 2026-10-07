@@ -1,7 +1,7 @@
 """Ancestor-bound scientific orchestration profiles; never standalone launchers.
 
 Each factory resolves a durable child pin through the operator service. The
-preparation tool reuses ProcessRuntimeService; training/evaluation retain native
+preparation tool verifies retained original preparation evidence; training/evaluation retain native
 external-execution requirements and ResearchProcessRuntimeService admission.
 Deterministic models select a single control action, never scientific decisions.
 """
@@ -23,7 +23,8 @@ PHASES = ('preparation', 'training', 'evaluation')
 MODE_NAMES = {phase: 'scientific-' + phase for phase in PHASES}
 PROVIDER_ID = 'controlled-scientific-child-orchestration'
 MODEL_ID = 'scientific-child-control-v1'
-TOOLS = {'preparation': 'bounded_process_run', 'training': 'research_process_run', 'evaluation': 'research_process_run'}
+CAPABILITIES = {phase: ('research:read' if phase == 'preparation' else 'compute:local') for phase in PHASES}
+TOOLS = {'preparation': 'research_preparation_verify', 'training': 'research_process_run', 'evaluation': 'research_process_run'}
 
 
 def _require(value):
@@ -49,7 +50,7 @@ def child_pin(ctx, phase, *, custody=False):
         and (ctx.plan.get('applicationRef') or {}).get('id') == APPLICATION_ID
         and ctx.plan.get('mode') == MODE_NAMES[phase] and not ctx.plan.get('remoteHandoff')
         and ctx.plan.get('ownerId') == ctx.run_context.user_id
-        and ctx.plan.get('tools') == [TOOLS[phase]] and ctx.plan.get('capabilities') == ['compute:local'])
+        and ctx.plan.get('tools') == [TOOLS[phase]] and ctx.plan.get('capabilities') == [CAPABILITIES[phase]])
     # The service verifies persisted ancestry, parent/preset/candidate fingerprints,
     # phase and exact original child identity, plus current authority. Never cache.
     resolve = (ctx.store.autoresearch_children.require_child_custody if custody
@@ -96,7 +97,7 @@ def registrations(preset_id):
             checked(ctx); return ScientificChildControlModel(ctx, phase)
         def environment(ctx):
             checked(ctx)
-            return EnvironmentLimits(runtime_id='research-process-v1' if phase != 'preparation' else 'bounded-process-v1',
+            return EnvironmentLimits(runtime_id='research-process-v1' if phase != 'preparation' else 'autoresearch-session-v1',
                 timeout_seconds=30, memory_bytes=128 * 1024**2, output_bytes=1024**2)
         def knowledge(ctx):
             pin = checked(ctx)
@@ -106,15 +107,15 @@ def registrations(preset_id):
             checked(ctx)
             if phase == 'preparation':
                 @tool
-                async def bounded_process_run(run_context: RunContext) -> str:
+                async def research_preparation_verify(run_context: RunContext) -> str:
                     _require(all(getattr(run_context, key) == getattr(ctx.run_context, key)
                         for key in ('user_id', 'session_id', 'run_id')))
-                    pin = checked(ctx)
-                    ctx.store.authorize_tool(run_context, 'bounded_process_run')
-                    result = await ctx.store.process_runtime.run(run_context, {'targetRef': pin['targetRef']})
+                    checked(ctx)
+                    ctx.store.authorize_tool(run_context, 'research_preparation_verify')
+                    result = await ctx.store.autoresearch_children.verify_preparation(ctx)
                     checked(ctx)
                     return json.dumps(result, sort_keys=True, allow_nan=False)
-                return bounded_process_run
+                return research_preparation_verify
             @tool(external_execution=True)
             def research_process_run(run_context: RunContext) -> str:
                 checked(ctx)
@@ -122,7 +123,7 @@ def registrations(preset_id):
             return research_process_run
         for kind, factory in (('model', model), ('environment', environment), ('knowledge', knowledge), ('tool', runner)):
             entries.append(AdapterRegistration(kind, adapter_id(phase, kind), '1', factory, validator=config,
-                demo_only=True, **({'tool_name': TOOLS[phase], 'permissions': ('compute:local',)} if kind == 'tool' else {})))
+                demo_only=True, **({'tool_name': TOOLS[phase], 'permissions': (CAPABILITIES[phase],)} if kind == 'tool' else {})))
     for phase in PHASES: phase_entries(phase)
     return entries
 
@@ -141,7 +142,7 @@ def material_drafts(preset_id, phase):
             'description': 'Ancestor-bound original candidate control; not a scientific decision or execution proof.',
             'content': TOOLS[phase] if kind == 'tool' else 'Perform one governed original ' + phase + ' control action.',
             'license': 'MIT', 'compatibility': ['agno:3.1.0'], 'dependencies': [],
-            'permissions': ['compute:local'] if kind == 'tool' else [],
+            'permissions': [CAPABILITIES[phase]] if kind == 'tool' else [],
             'provenance': {'kind': 'original', 'notice': 'Deterministic orchestration; original provider/evaluator receipts establish custody.'}}
         if kind != 'prompt':
             row['runtimeBinding'] = {'adapterId': adapter_id(phase, kind), 'revision': '1',
@@ -153,5 +154,5 @@ def material_drafts(preset_id, phase):
 def mode_definition(materials, phase, *, limits):
     _require(phase in PHASES)
     return {'materialRefs': [{key: row[key] for key in ('id', 'version', 'sha256')} for row in materials],
-        'capabilities': ['compute:local'], 'toolOrder': [TOOLS[phase]], 'config': {},
+        'capabilities': [CAPABILITIES[phase]], 'toolOrder': [TOOLS[phase]], 'config': {},
         'connectionRequirements': [], 'budget': deepcopy(limits)}

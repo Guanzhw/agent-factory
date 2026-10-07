@@ -209,6 +209,49 @@ class AutoResearchServiceTests(unittest.IsolatedAsyncioTestCase):
         h.store.composition.propose.assert_not_called()
         h.bridge.submit.assert_not_called()
 
+    async def test_compact_candidate_uses_original_bytes_validator_and_replays_without_builder(self):
+        h = Harness()
+        builder = Mock(return_value='approved source with selected parameter')
+        h.preset = replace(h.preset, candidate_builder=builder)
+        h.service.presets['preset'] = h.preset
+        h.service.saved['body']['presetFingerprint'] = h.preset.fingerprint
+        payload = {'_factoryCallId': 'compact', 'hypothesis': 'bounded change', 'changes': {'EMBEDDING_LR': 0.25}}
+        result = await h.service.tool(h.ctx, 'research_candidate', payload)
+        builder.assert_called_once_with({'EMBEDDING_LR': 0.25})
+        h.validator.assert_called_once_with('approved source with selected parameter')
+        candidate = h.service.saved['body']['candidates'][result['candidateId']]
+        self.assertEqual(candidate['trainPy'], 'approved source with selected parameter')
+        builder.side_effect = AssertionError('must not build another candidate')
+        self.assertEqual(await h.service.tool(h.ctx, 'research_candidate', payload), result)
+        with self.assertRaisesRegex(ValueError, 'EFFECT_CONFLICT'):
+            await h.service.tool(h.ctx, 'research_candidate', {**payload, 'changes': {'EMBEDDING_LR': 0.5}})
+        self.assertEqual(builder.call_count, 1)
+
+    async def test_compact_candidate_rejects_mixed_or_unavailable_builder_before_effect(self):
+        for extra in ({}, {'trainPy': 'inert'}):
+            h = Harness()
+            with self.assertRaisesRegex(ValueError, 'RESEARCH_CANDIDATE_'):
+                await h.service.tool(h.ctx, 'research_candidate', {'_factoryCallId': 'compact',
+                    'hypothesis': 'bounded', 'changes': {'EMBEDDING_LR': 0.25}, **extra})
+            self.assertEqual(h.effects, {})
+            h.validator.assert_not_called()
+
+    async def test_compact_candidate_builder_failure_does_not_reserve_and_unknown_never_rebuilds(self):
+        h = Harness()
+        builder = Mock(side_effect=ValueError('INVALID_PARAMETER'))
+        h.preset = replace(h.preset, candidate_builder=builder)
+        h.service.presets['preset'] = h.preset
+        h.service.saved['body']['presetFingerprint'] = h.preset.fingerprint
+        payload = {'_factoryCallId': 'compact', 'hypothesis': 'bounded', 'changes': {'EMBEDDING_LR': 0.25}}
+        with self.assertRaisesRegex(ValueError, 'INVALID_PARAMETER'):
+            await h.service.tool(h.ctx, 'research_candidate', payload)
+        self.assertEqual(h.effects, {})
+        h.store.effect_reserve('run', 'autoresearch-tool:compact', {'tool': 'research_candidate',
+            'payload': {key: value for key, value in payload.items() if key != '_factoryCallId'}})
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_TOOL_ORIGINAL_UNKNOWN'):
+            await h.service.tool(h.ctx, 'research_candidate', payload)
+        self.assertEqual(builder.call_count, 1)
+
     async def test_candidate_identity_preserves_distinct_bytes_even_if_validator_summary_matches(self):
         h = Harness()
         one = await h.service.tool(h.ctx, 'research_candidate', {'_factoryCallId': 'one',

@@ -110,6 +110,35 @@ class CandidateReopenTests(unittest.TestCase):
         self.assertEqual(restored['driver'].configuration_fingerprint, original.configuration_fingerprint)
         self.assertEqual(restored['target'].provider.configuration_fingerprint, provider.configuration_fingerprint)
         self.assertEqual(restored['reference'], 'preparation')
+        self.assertNotIn('preflightSeconds', snapshot)
+        self.assertEqual(set(snapshot), {'schema', 'stage', 'programRoot', 'programIdentity', 'custodyRoot',
+            'executable', 'executableSha256', 'tokenizerHex', 'preparationManifestSha256'})
+        arguments = dict(program_root=root, program_identity=identity, custody_root=custody,
+            executable=executable, executable_sha256=self.case.interpreter.sha,
+            tokenizer_json=prep_fixture.tokenizer(), preparation_manifest_sha256='d' * 64)
+        self.assertEqual(reopen.make_preparation_snapshot(**arguments, preflight_seconds=0), snapshot)
+        for padding in (7, 30):
+            with self.subTest(padding=padding):
+                padded_snapshot = reopen.make_preparation_snapshot(**arguments, preflight_seconds=padding)
+                self.assertEqual(padded_snapshot, {**snapshot, 'preflightSeconds': padding})
+                padded_provider = PreparationProvider(training['state']['store'], custody, spec,
+                    ProcessLimits(file_size_bytes=65536, wall_seconds=5), driver=original,
+                    preflight_seconds=padding)
+                padded = reopen.reconstruct_preparation_target(training['state'], padded_snapshot)
+                self.assertEqual(padded['target'].provider.configuration_fingerprint,
+                                 padded_provider.configuration_fingerprint)
+                self.assertNotEqual(padded['target'].provider.configuration_fingerprint,
+                                    provider.configuration_fingerprint)
+                self.assertEqual(padded['target'].max_seconds, 5 + padding)
+                self.assertEqual(padded['target'].provider.limits.wall_seconds, 5)
+                self.assertEqual(padded['driver'].configuration_fingerprint, original.configuration_fingerprint)
+        for invalid in (True, False, -1, 31, 1.5, '7', None):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, 'RESEARCH_CANDIDATE_REOPEN_INVALID'):
+                    reopen.make_preparation_snapshot(**arguments, preflight_seconds=invalid)
+                with self.assertRaisesRegex(ValueError, 'RESEARCH_CANDIDATE_REOPEN_INVALID'):
+                    reopen.reconstruct_preparation_target(training['state'], {**snapshot, 'preflightSeconds': invalid})
+
 
     def test_invalid_stage_or_manifest_rejected(self):
         training, snapshot = self.application()

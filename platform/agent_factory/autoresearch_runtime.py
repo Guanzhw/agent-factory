@@ -45,6 +45,18 @@ _SCHEMAS = {
 }
 
 
+def _input_schema(name, preset):
+    properties = _SCHEMAS[name]
+    if name == 'research_candidate' and callable(getattr(preset, 'candidate_builder', None)):
+        from .research_training_adapter import ALLOWED_PARAMETERS
+        changes = {key: ({'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}
+            if key == 'ADAM_BETAS' else {'type': 'integer' if key in {'TOTAL_BATCH_SIZE', 'DEVICE_BATCH_SIZE'} else 'number'})
+            for key in sorted(ALLOWED_PARAMETERS)}
+        properties = {'hypothesis': properties['hypothesis'], 'changes': {'type': 'object',
+            'properties': changes, 'additionalProperties': False, 'minProperties': 1, 'maxProperties': 11}}
+    return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
+
+
 def _require(value):
     if not value:
         raise ValueError(ERROR)
@@ -187,8 +199,7 @@ class AutoResearchRuntime:
                 elif method == 'tools/list':
                     _require(not params)
                     result = {'tools': [{'name': name, 'description': DESCRIPTIONS[name],
-                        'inputSchema': {'type': 'object', 'properties': _SCHEMAS[name],
-                            'required': list(_SCHEMAS[name]), 'additionalProperties': False}}
+                        'inputSchema': _input_schema(name, self.service.current(self.ctx))}
                         for name in TOOL_NAMES]}
                 elif method == 'tools/call':
                     _require(set(params) <= {'name', 'arguments', '_meta'} and params.get('name') in TOOL_NAMES)

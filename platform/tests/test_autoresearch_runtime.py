@@ -53,6 +53,21 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             return await client.post('/mcp', json=value,
                 headers={'Authorization': 'Bearer ' + (capability or runtime.capability)})
 
+    async def test_scientific_mcp_advertises_compact_parameters_without_full_source(self):
+        self.service.current.return_value.candidate_builder = lambda changes: 'not invoked by listing'
+        runtime = self.runtime()
+        response = await self.rpc(runtime, {'jsonrpc': '2.0', 'id': 'list', 'method': 'tools/list'})
+        schema = next(tool['inputSchema'] for tool in response.json()['result']['tools']
+                      if tool['name'] == 'research_candidate')
+        self.assertEqual(set(schema['required']), {'hypothesis', 'changes'})
+        self.assertNotIn('trainPy', schema['properties'])
+        changes = schema['properties']['changes']
+        self.assertEqual(len(changes['properties']), 11)
+        self.assertFalse(changes['additionalProperties'])
+        self.assertEqual(changes['properties']['DEVICE_BATCH_SIZE']['type'], 'integer')
+        self.assertEqual(changes['properties']['ADAM_BETAS']['maxItems'], 2)
+        self.service.tool.assert_not_awaited()
+
     async def test_mcp_real_tool_dispatch_identity_no_permissions_or_builtins_added(self):
         runtime = self.runtime()
         initialized = await self.rpc(runtime, {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',

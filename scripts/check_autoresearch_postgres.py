@@ -14,8 +14,9 @@ def main():
     sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
     suite = unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern='test_autoresearch_postgres.py')
     suite.addTests(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern='test_autoresearch_session_control_postgres.py'))
+    suite.addTests(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern='test_autoresearch_scientific_children_postgres.py'))
     expected = suite.countTestCases()
-    if expected != 6:
+    if expected != 7:
         print('AUTORESEARCH_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)

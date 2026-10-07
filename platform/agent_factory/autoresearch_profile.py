@@ -34,13 +34,13 @@ TOOL_NAMES = ('research_context', 'research_candidate', 'research_experiment', '
 TOOL_IDS = {name: 'autoresearch-' + name.replace('_', '-') + '-v1' for name in TOOL_NAMES}
 PERMISSIONS = ('research:read', 'compute:local')
 SESSION_TOOL = 'autoresearch_session_run'
-SCIENTIFIC_AUTHORITY_TOOLS = ('bounded_process_run', 'research_process_run')
+SCIENTIFIC_AUTHORITY_TOOLS = ('research_preparation_verify', 'research_process_run')
 SCIENTIFIC_TOOLS = (*TOOL_NAMES, SESSION_TOOL, *SCIENTIFIC_AUTHORITY_TOOLS)
 SCIENTIFIC_TOOL_IDS = {name: 'autoresearch-parent-' + name.replace('_', '-') + '-v1'
                        for name in (SESSION_TOOL, *SCIENTIFIC_AUTHORITY_TOOLS)}
 DESCRIPTIONS = {
     'research_context': 'Read the approved project instructions and original research evidence.',
-    'research_candidate': 'Submit candidate bytes and a hypothesis to the existing controlled research workflow.',
+    'research_candidate': 'Submit a hypothesis and candidate using the format advertised by the approved project.',
     'research_experiment': 'Request the controlled candidate experiment through original native confirmation and execution.',
     'research_result': 'Read authoritative evaluation results from original execution custody.',
     'research_decision': 'Record the research reason and next action: stop or continue.',
@@ -205,7 +205,8 @@ def registrations(*, external_session=False):
             return factory
         for name in SCIENTIFIC_AUTHORITY_TOOLS:
             entries.append(AdapterRegistration('tool', SCIENTIFIC_TOOL_IDS[name], '1', authority_factory(name),
-                validator=_config, demo_only=True, tool_name=name, permissions=('compute:local',)))
+                validator=_config, demo_only=True, tool_name=name,
+                permissions=('research:read',) if name == 'research_preparation_verify' else ('compute:local',)))
     return entries
 
 
@@ -249,7 +250,7 @@ def material_drafts(preset_id, *, external_session=False):
             'name': 'AutoResearch · ' + name, 'description': DESCRIPTIONS.get(name, '经审批的研究项目；整轮推理由 ORX 负责，结果以原执行凭据为准。'),
             'content': name if kind == 'tool' else 'Use the approved project instructions and original evidence through the ORX research session.',
             'license': 'MIT', 'compatibility': ['agno:3.1.0'], 'dependencies': [],
-            'permissions': ['compute:local'] if name == 'research_experiment' or name in SCIENTIFIC_AUTHORITY_TOOLS else ['research:read'] if kind == 'tool' else [],
+            'permissions': ['compute:local'] if name in {'research_experiment', 'research_process_run'} else ['research:read'] if kind == 'tool' else [],
             'provenance': {'kind': 'original', 'notice': 'Native governed entry to an ORX-owned research session.'}}
         if kind == 'environment':
             row['description'] = ('ORX 会话固定资源：1 CPU、1024 MiB 内存、64 进程；'

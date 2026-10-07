@@ -37,10 +37,12 @@ def process_reservation(provider):
              and type(limits.file_size_bytes) is int and limits.file_size_bytes > 0
              and type(limits.wall_seconds) in {int, float}
              and math.isfinite(limits.wall_seconds) and limits.wall_seconds > 0)
+    preflight = getattr(provider, "preflight_seconds", 0)
+    _require(type(preflight) is int and 0 <= preflight <= 30)
     mib = 1024 * 1024
     reservation = {"cpu": 1, "memoryMb": limits.address_space_mb,
                    "diskMb": max(1, (limits.file_size_bytes + mib - 1) // mib),
-                   "seconds": math.ceil(limits.wall_seconds)}
+                   "seconds": math.ceil(limits.wall_seconds) + preflight}
     disk_bytes = getattr(limits, "disk_bytes", None)
     if disk_bytes is not None:
         _require(type(disk_bytes) is int and disk_bytes >= limits.file_size_bytes)
@@ -84,20 +86,7 @@ class ProcessRuntimeService:
         _require(bindings is not None)
         specs = bindings.manifest(plan, context=self._context(task)).get("tools", [])
         selected = [item for item in specs if item.get("toolName") == self.tool_name]
-        _require(len(selected) == 1)
-        from .autoresearch_scientific_child import adapter_id, child_pin
-        if selected[0].get("adapterId") == adapter_id('preparation', 'tool'):
-            from .execution_bindings import BindingContext
-            try:
-                pin = child_pin(BindingContext(self.store.settings, self.store, plan,
-                    self._context(task), selected[0]), 'preparation')
-                _require(pin['targetRef'] == target_ref)
-            except ValueError:
-                # Stop the original lease on lost scientific authority. The
-                # maintenance path still requires positive provider stop proof.
-                raise PermissionError('AUTORESEARCH_CHILD_AUTHORITY_ENDED') from None
-        else:
-            _require(selected[0].get("config") == {"targetRef": target_ref})
+        _require(len(selected) == 1 and selected[0].get("config") == {"targetRef": target_ref})
         self.store.authorize_tool(self._context(task), self.tool_name)
 
     def guard_lease(self, lease):

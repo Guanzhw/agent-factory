@@ -92,13 +92,13 @@ already authorized Go project scope, but missing billing evidence is not invente
 
 The durable subordinate path is now implemented in `autoresearch_children.py`,
 `autoresearch_scientific_child.py` and `autoresearch_session_control.py`.
-Approved same-application modes prepare, train and independently evaluate one
-candidate through original DelegationService/native tasks. The first bounded
+Approved same-application modes verify original preparation, train and independently
+evaluate one candidate through original DelegationService/native tasks. The first bounded
 scientific preset admits one experiment/three children; it does not change the
 generic delegation cap. Parent runtime cleanup also checks original child stops.
 
 `scripts/autoresearch_scientific_assembly.py` constructs actual existing
-preparation/local research providers in the same control plane. It binds candidate
+original preparation readers and local research providers in the same control plane. It binds candidate
 bytes and derived variant, original prepared input and training checkpoint to the
 reviewed parent manifest and operator environment/device/limits. A phase intent
 must be committed before a content-addressed target can be registered; existing
@@ -107,8 +107,15 @@ Completed-child artifact reads use a narrow read-only path; they do not renew
 execution permission or bypass cancellation/UNKNOWN.
 
 The operator installs `Settings.autoresearch_children_factory` returning the
-concrete `AutoResearchChildren` service with its assembler, preparation store,
-checkpoint store and existing evaluation service. Preset callbacks call that
+concrete `AutoResearchChildren` service with its assembler, preparation store and
+checkpoint store. The assembler requires `preparation_reference` containing the
+original `taskId` and `artifactId`, as well as the original preparation target.
+The native preparation child only verifies this retained artifact; its own
+identity is kept separately from the original producer receipt. It does not
+re-export or reseal tokenizer bytes, whose entire file hash includes original
+producer metadata. The exact existing evaluator service is constructed only after
+the candidate evaluator target is registered; every use rechecks its fingerprint
+and original checkpoint custody. Preset callbacks call that
 service's `experiment` and `result_verifier`; publication does not create targets,
 start a baseline or grant a new environment. Missing service wiring disables the
 preset. Actual baseline/config/receipt bindings on the existing GPU target remain
@@ -227,3 +234,86 @@ without reserving an effect. Original Docker exit and exact reclaim were verifie
 This verifies the precondition fix in the actual harness. All older UNKNOWN
 records remain unchanged. Invoice verification and scientific acceptance remain
 unverified; no candidate or experiment ran.
+
+## Compact scientific candidate input
+
+Scientific presets advertise `research_candidate` with `hypothesis` and a compact
+`changes` object. The model chooses values; Factory changes only the existing eleven
+allowed literal spans in newly reread, verified upstream bytes. It preserves other
+bytes, including Unicode/CRLF, and validates the full generated candidate through
+the existing adapter. Empty/no-op changes, booleans, non-finite numbers, code
+expressions and ineffective device-batch-only changes are rejected before effect
+reservation. The raw-source legacy input remains separate and cannot be mixed.
+Context supplies current parameters and constraints rather than the 26,230-byte
+source; the parameter context measured 888 bytes. This fits short model outputs
+without enlarging the allowed code-edit surface or choosing a hypothesis for it.
+
+An actual ORX/OpenCode/Go public candidate diagnostic chose `WARMUP_RATIO=0.05`
+with a model-written hypothesis. The original context and candidate tools and
+session effects completed, and Factory terminal state was observed. Three
+streaming requests settled at 2963/61, 3488/250 and 5513/86 input/output tokens
+(12,361 total), with zero held provider tokens and confirmed original stop/reclaim.
+Task `e32e49b3-9c4f-446c-8809-5e927506159a` did not run an experiment or produce an
+independent result. This is real hypothesis/candidate submission evidence, not
+scientific improvement or target execution acceptance.
+
+## Original phase namespaces and recovery
+
+Each original parent run and scientific phase receives distinct program, cache
+and custody directories under the operator's pinned roots. The phase intent is
+committed before directory creation. A bounded immutable snapshot pins sources,
+launch spec, directory identities, limits, device observer, provider and shared
+capacity pool before target registration or delegation. A failed snapshot commit
+leaves the directory unknown; it cannot be reused as a fresh run.
+
+Recovery reconstructs only the original target and checks its saved fingerprints.
+Recovered providers reject allocation before any new journal or authority call;
+the driver also rejects staging and launch. Inspection, cancellation and reclaim
+retain the original lease/job identity. Parent cleanup uses internal original
+native facts and remains available after the owner's read/run grants are revoked.
+Directory creation uses the pinned parent descriptor and validates the resulting
+child identity against the absolute path, rejecting parent replacement races.
+These guards have deterministic regression coverage. Full native three-stage and
+restart evidence is recorded separately; light tests are not GPU acceptance.
+
+
+Transaction-scoped authority resolution is retention-free: it rechecks original
+plans, current mandates, immutable phase pins, provider configuration and trusted
+runtime identities. It does not reopen prerequisite artifacts while a checkpoint
+metadata transaction is held. Complete retained-file verification remains at
+registration, the original launch guard and independent result verification.
+
+Process providers may receive an operator-only `preflight_seconds` allowance
+(integer 0–30, default zero). Nonzero values are bound into the provider identity;
+reservation and binding checks require `ceil(wall_seconds) + preflight_seconds`.
+This reserves lease time for preparation checks, not extra subprocess runtime:
+rlimits and the original wall limit are unchanged, and the lease deadline is
+never reset. Existing resource ceilings still apply. Preparation snapshots retain
+nonzero allowances for exact reconstruction. The native fixture uses 15 seconds
+of preflight allowance plus the original five-second process wall limit.
+
+A pinned original job reporting `DISPATCHING` is observed within the original
+parent deadline. This neither reports completion nor allocates a replacement;
+unknown outcomes without that original job binding still stop orchestration.
+
+
+The stronger PostgreSQL fixture passed all three native child phases and
+completed-custody registry reconstruction in 339.595 seconds. It preserves the
+original producer, task/run/lease/job/delegation identities, verifies independent
+evaluation bytes, observes released resources, and rejects restored-provider
+allocation before its callback. It removes dynamic train/evaluation registrations
+and creates a fresh assembler in the same process; it does not prove process
+restart or in-flight UNKNOWN recovery. Its generated stdlib programs, fixed ORX
+decisions, and device/environment observers are explicitly synthetic.
+
+Earlier v13 completed the three stages and reclaimed their resources but failed
+final verification after its undersized 180-second fixture parent budget. The
+new independent fixture uses an explicit 900-second parent / 600-second experiment
+envelope, with unchanged process limits and production defaults; no old deadline
+was extended and no old UNKNOWN was replayed. The required PostgreSQL runner now
+includes this case and rejects skips across all seven native fixture cases.
+
+The integrated required seven-case PostgreSQL run passed in 324.218 seconds,
+with zero skips and explicit `liveModelVerified=false` /
+`scientificConclusionVerified=false` fixture flags. Final exact-head CI receipts
+are recorded on draft PR59 rather than inferred from superseded runs.

@@ -6,6 +6,7 @@ durable effects, evidence and current authority; it never invents a candidate.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass, field
 import inspect
 import json
@@ -38,6 +39,7 @@ class ResearchPreset:
     runtime_factory: Callable | None = field(default=None, repr=False)
     context_reader: Callable | None = field(default=None, repr=False)
     candidate_validator: Callable | None = field(default=None, repr=False)
+    candidate_builder: Callable | None = field(default=None, repr=False)
     experiment: Callable | None = field(default=None, repr=False)
     # Explicit development operator standing approval, never model/user JSON.
     review_owner: str | None = None
@@ -53,7 +55,8 @@ class ResearchPreset:
         return digest({'id': self.id, 'owner': self.owner_id, 'context': self.public_context(),
             'defaultGoal': self.default_goal, 'limits': self.limits, 'application': self.application_ref,
             'connections': self.connection_refs, 'reviewOwner': self.review_owner,
-            'externalSession': self.external_session})
+            'externalSession': self.external_session,
+            **({'candidateInput': 'parameter-changes-v1'} if callable(self.candidate_builder) else {})})
 
     def unavailable(self):
         return list(self.blockers) + ([] if self.application_ref and all(callable(value) for value in
@@ -334,13 +337,19 @@ class AutoResearchService:
             if preset.context_reader is None:
                 raise ValueError('RESEARCH_CONTEXT_UNAVAILABLE')
         elif name == 'research_candidate':
-            if (set(payload) != {'hypothesis', 'trainPy'} or type(payload['hypothesis']) is not str
-                    or not 1 <= len(payload['hypothesis']) <= 4000):
+            if (set(payload) not in ({'hypothesis', 'trainPy'}, {'hypothesis', 'changes'})
+                    or type(payload['hypothesis']) is not str or not 1 <= len(payload['hypothesis']) <= 4000):
                 raise ValueError('RESEARCH_CANDIDATE_PAYLOAD')
-            if (preset.candidate_validator is None or type(payload['trainPy']) is not str
-                    or len(payload['trainPy'].encode()) > 256 * 1024):
+            if 'changes' in payload:
+                if not callable(preset.candidate_builder) or type(payload['changes']) is not dict:
+                    raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
+                train_py = preset.candidate_builder(deepcopy(payload['changes']))
+            else:
+                train_py = payload['trainPy']
+            if (preset.candidate_validator is None or type(train_py) is not str
+                    or len(train_py.encode()) > 256 * 1024):
                 raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
-            return preset.candidate_validator(payload['trainPy'])
+            return {'trainPy': train_py, 'validated': preset.candidate_validator(train_py)}
         elif name in {'research_experiment', 'research_result'}:
             if (set(payload) != {'candidateId'} or type(payload['candidateId']) is not str
                     or not 1 <= len(payload['candidateId']) <= 200):
@@ -402,14 +411,13 @@ class AutoResearchService:
             result = preset.context_reader()
             self.record(ctx, 'model-instructions', '研究 agent 读取了经审批的项目说明与上下文。', accepted='instructionsRead')
         elif name == 'research_candidate':
-            if set(payload) != {'hypothesis', 'trainPy'} or not isinstance(payload['hypothesis'], str) or not 1 <= len(payload['hypothesis']) <= 4000:
-                raise ValueError('RESEARCH_CANDIDATE_PAYLOAD')
-            if preset.candidate_validator is None or type(payload['trainPy']) is not str or len(payload['trainPy'].encode()) > 256 * 1024:
+            if type(validated) is not dict or set(validated) != {'trainPy', 'validated'}:
                 raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
+            train_py, validated = validated['trainPy'], validated['validated']
             candidate_id = digest({'hypothesis': payload['hypothesis'], 'validated': validated,
-                                   'trainPy': payload['trainPy']})
+                                   'trainPy': train_py})
             self.change(run.user_id, run.session_id, lambda b: b['candidates'].update({candidate_id: {
-                'hypothesis': payload['hypothesis'], 'trainPy': payload['trainPy'], 'validated': validated}}))
+                'hypothesis': payload['hypothesis'], 'trainPy': train_py, 'validated': validated}}))
             self.record(ctx, 'action', payload['hypothesis'], accepted='agentDecision')
             result = {'candidateId': candidate_id, 'validation': validated}
         elif name == 'research_experiment':
