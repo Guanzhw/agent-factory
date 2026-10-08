@@ -59,6 +59,8 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
             return {'probe': self.profile}
         settings = Settings(db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
             temporary_policy='admin-review', runtime_tool_contract='bounded-process-v1',
+            policy_revision='managed-probe-fixture-plan-v1',
+            material_policy_revision='managed-probe-fixture-material-v1',
             managed_orx_profiles_factory=installed_profiles,
             runtime_adapters=[*registrations(target_ref='probe-target'), model_registration('probe-target')],
             remote_targets={'probe-target': target},
