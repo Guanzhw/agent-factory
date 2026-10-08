@@ -13,9 +13,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
+from .native_component import NativeWorkflowPin
+from .input_schema import validate_input_schema, validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
 from .plan_policy import application_tool_catalog
 from .store import canonical, digest, now
@@ -55,6 +57,14 @@ class ConnectionRequirement(BaseModel):
 
 
 class ModeDefinition(BaseModel):
+    nativeComponent: NativeWorkflowPin | None = None
+    inputSchema: dict[str, Any] | None = None
+
+    @field_validator("inputSchema")
+    @classmethod
+    def checked_input_schema(cls, value):
+        return validate_input_schema(value) if value is not None else None
+
     model_config = ConfigDict(extra="forbid")
     materialRefs: list[PinnedRef] = Field(min_length=1, max_length=30)
     materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict, max_length=12)
@@ -261,6 +271,11 @@ class ApplicationService:
                 raise HTTPException(422, "Application mode must be a bounded identifier")
             if not set(mode["capabilities"]) <= set(known_tools.values()):
                 raise HTTPException(422, "Application requests authority outside registered capabilities")
+            native = mode.get("nativeComponent")
+            if native is not None:
+                workflows = getattr(self.store, "native_workflows", None)
+                if workflows is None or workflows.pin(native["id"]) != native:
+                    raise HTTPException(409, "Native workflow registration is unavailable or changed")
             defaults = []
             for slot_name, slot in mode["materialChoices"].items():
                 if not slot_name or len(slot_name) > 100 or slot["defaultRef"] not in mode["materialRefs"] or slot["defaultRef"] not in slot["allowedRefs"] or slot["defaultRef"] in defaults:
@@ -464,6 +479,23 @@ class ApplicationService:
             raise HTTPException(409, "Plan differs from its published application/mode")
         mode = application["modes"][plan["mode"]]
         anchor = plan.get("bindingManifest")
+        if (plan.get("nativeComponent") != mode.get("nativeComponent") or
+                (anchor or {}).get("nativeComponent") != mode.get("nativeComponent")):
+            raise HTTPException(409, "Native component differs from the approved application mode")
+        schema = mode.get('inputSchema')
+        if schema is None:
+            if any(key in plan for key in ('inputSchema', 'inputValues')) or (anchor is not None and
+                    any(key in anchor for key in ('inputSchemaSha256', 'inputValuesSha256'))):
+                raise HTTPException(409, 'Application does not declare structured inputs')
+        else:
+            try:
+                values = validate_input_values(schema, plan.get('inputValues'))
+                if (plan.get('inputSchema') != schema or anchor is None
+                        or anchor.get('inputSchemaSha256') != digest(schema)
+                        or anchor.get('inputValuesSha256') != digest(values)):
+                    raise ValueError('Input binding differs')
+            except ValueError as error:
+                raise HTTPException(409, 'Governed application input binding differs') from error
         if anchor is None:
             # Explicit proved legacy plans have no mutable reconstructed manifest.
             self.require_legacy_demo_plan(plan)
@@ -662,9 +694,9 @@ def demo_definitions(seeds):
                       ["research:read", "question:ask", "experiment:synthetic"], ask=12)
     checksum = mode([*common, "checksum-tool"], ["checksum"], ["checksum:read"])
     return [ApplicationDefinition(id="research", name="Auto-Research", defaultForDiscovery=True,
-                discoveryKeywords=["research", "investigate", "literature", "研究", "调研"], modes={"literature": literature, "experiment": experiment}).model_dump(),
+                discoveryKeywords=["research", "investigate", "literature", "研究", "调研"], modes={"literature": literature, "experiment": experiment}).model_dump(exclude_none=True),
             ApplicationDefinition(id="checksum", name="Checksum", discoveryKeywords=["checksum", "sha256", "校验"],
-                modes={"literature": checksum, "experiment": checksum}).model_dump()]
+                modes={"literature": checksum, "experiment": checksum}).model_dump(exclude_none=True)]
 
 
 class ApplicationCommand(BaseModel):

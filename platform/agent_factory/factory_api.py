@@ -26,6 +26,7 @@ class PlanRequest(Body):
     applicationRef: dict | None = None
     materialChoices: dict = Field(default_factory=dict, max_length=30)
     connectionRefs: dict = Field(default_factory=dict, max_length=30)
+    inputValues: dict | None = None
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
 
 
@@ -207,6 +208,10 @@ class FactoryAPI:
                     "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
                 if status == "waiting_approval":
                     actions.append("approve")
+            elif tool.get('tool_name') == 'workflow_wait' and tool.get('external_execution_required'):
+                scope = '等待原工作流阶段或人工决定；请使用工作流面板核对与继续。'
+                job.update(approvalDetail={'id': requirement['id'], 'version': version, 'scope': scope,
+                    'toolName': 'workflow_wait', 'arguments': tool.get('tool_args', {})}, approval={'scope': scope})
             elif tool.get("tool_name") == "autoresearch_session_run" and tool.get("external_execution_required"):
                 control = getattr(self.store, "autoresearch_session_control", None)
                 if control is not None and status == "waiting_approval":
@@ -390,8 +395,8 @@ class FactoryAPI:
         @router.post("/plans", status_code=201)
         def plan_create(body: PlanRequest, request: Request):
             user = self.user(request)
-            fields = body.model_dump(exclude={"requestId"})
-            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application, application_ref=body.applicationRef, material_choices=body.materialChoices, connection_refs=body.connectionRefs))
+            fields = body.model_dump(exclude={"requestId", *({'inputValues'} if body.inputValues is None else set())})
+            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application, application_ref=body.applicationRef, material_choices=body.materialChoices, connection_refs=body.connectionRefs, **({'input_values': body.inputValues} if body.inputValues is not None else {})))
             return {**plan, "authorization": self.store.plan_policy.status(user["id"], plan)}
 
         @router.post("/instances", status_code=202)

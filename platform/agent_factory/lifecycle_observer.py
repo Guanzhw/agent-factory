@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 from .plan_policy import NativeMandateCompleted
 from .remote_handoff import HandoffCancellationRequested
-from .store import effect_unresolved
+from .store import effect_unresolved, runtime_custody_held
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -48,9 +48,11 @@ class FactoryLifecycleObserver:
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         if not task.get("run_id"):
             return None
+        from .native_component import component_identity
+        kind, component_id = component_identity(plan)
         ticket = self.native_db.get_job(task["run_id"], strict=True)
         expected = {"id": task["run_id"], "session_id": task["id"], "user_id": task["owner_id"],
-                    "component_type": "agent", "component_id": "factory-executor"}
+                    "component_type": kind, "component_id": component_id}
         if not ticket or any(ticket.get(key) != value for key, value in expected.items()) or ticket.get("job_type", "run") != "run":
             raise ValueError("Native ticket differs from the persisted Factory execution binding")
         key = hashlib.sha256(json.dumps({"owner": task["owner_id"], "task": task["id"], "request": task["request_id"]},
@@ -61,12 +63,12 @@ class FactoryLifecycleObserver:
         state = (ticket.get("payload") or {}).get("kwargs", {}).get("session_state")
         if isinstance(state, str):
             state = json.loads(state)
-        session = self.native_db.get_session(task["id"], session_type=SessionType.AGENT, user_id=task["owner_id"])
+        session = self.native_db.get_session(task["id"], session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
         native_status = None
         if session is not None:
-            if session.user_id != task["owner_id"] or session.agent_id != "factory-executor":
+            if session.user_id != task["owner_id"] or getattr(session, kind + "_id", None) != component_id:
                 raise ValueError("Native session differs from its Factory owner/executor")
-            runs = [run for run in session.runs or [] if run.run_id == task["run_id"] and run.agent_id == "factory-executor"]
+            runs = [run for run in session.runs or [] if run.run_id == task["run_id"] and getattr(run, kind + "_id", None) == component_id]
             if len(runs) != 1:
                 raise ValueError("Exact persisted native Factory run is not observable")
             native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
@@ -116,6 +118,9 @@ class FactoryLifecycleObserver:
             if any(effect.get("effect_key") == exact and effect_unresolved(effect)
                    for effect in self.store.effects(task["id"])):
                 return "native-ended-unresolved-experiment"
+            workflow = getattr(self.store, 'workflow', None)
+            if workflow is not None and workflow.task_held(task['id']):
+                return 'native-ended-unfinished-workflow'
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -189,6 +194,9 @@ class FactoryLifecycleObserver:
         # end. Native completion alone cannot prove that tree stopped.
         from .orx_experiment_tools import reclaim_orx_experiment
         await reclaim_orx_experiment(self.store.settings, self.store, task["id"])
+        workflow = getattr(self.store, 'workflow', None)
+        if workflow is not None:
+            await workflow.cancel_task(task['owner_id'], task['id'])
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()
@@ -210,8 +218,7 @@ class FactoryLifecycleObserver:
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
         effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
-        process_runtime = getattr(self.store, "process_runtime", None)
-        effects_unknown = effects_unknown or (process_runtime is not None and process_runtime.task_held(task["id"]))
+        effects_unknown = effects_unknown or runtime_custody_held(self.store, task['id'])
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",

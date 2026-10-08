@@ -20,7 +20,8 @@ class NativeMandateCompletedTests(unittest.TestCase):
                    'component_id': 'factory-executor', 'status': 'completed'} for t in (child, parent)}
         store = Mock()
         store.task.return_value = child
-        store.plan.return_value = parent_plan
+        plans = {'parent-plan': parent_plan, 'child-plan': plan}
+        store.plan.side_effect = lambda plan_id, owner: plans[plan_id] if owner == 'alice' else None
         store.sql.return_value = [{'owner_id': 'alice', 'reclaimed': False}]
         store.has_failures.return_value = False
         store.native_db.get_job.side_effect = lambda run: tickets.get(run)
@@ -35,11 +36,14 @@ class NativeMandateCompletedTests(unittest.TestCase):
             persisted_ancestor_guard(store)('alice', plan, context)
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual((caught.exception.task_id, caught.exception.run_id), ('child', 'child-run'))
-        store.plan.assert_called_once_with('parent-plan', 'alice')
+        self.assertTrue(store.plan.call_args_list)
+        self.assertTrue(all(call.args[1] == 'alice' for call in store.plan.call_args_list))
+        self.assertIn(('parent-plan', 'alice'), [call.args for call in store.plan.call_args_list])
         self.assertEqual([c.args[0] for c in store.native_db.get_job.call_args_list], ['child-run', 'parent-run'])
 
     def test_completed_child_cannot_mask_revoked_failed_missing_or_wider_ancestor(self):
-        for fault in ('cancel', 'rejected', 'failure', 'missing', 'foreign', 'failed', 'unacknowledged', 'narrowing'):
+        for fault in ('cancel', 'rejected', 'failure', 'missing', 'foreign', 'failed', 'unacknowledged', 'narrowing',
+                      'child-component', 'parent-component', 'component-kind'):
             with self.subTest(fault=fault):
                 store, _, parent, plan, parent_plan, tickets, context = self.fixture()
                 if fault == 'cancel': parent['cancel_requested'] = True
@@ -50,6 +54,11 @@ class NativeMandateCompletedTests(unittest.TestCase):
                 elif fault == 'failed': tickets['parent-run']['status'] = 'failed'
                 elif fault == 'unacknowledged': parent['admission'] = 'reserved'
                 elif fault == 'narrowing': parent_plan['tools'] = []
+                elif fault in {'child-component', 'parent-component'}:
+                    selected = plan if fault == 'child-component' else parent_plan
+                    selected['nativeComponent'] = {'kind': 'workflow', 'id': 'approved-workflow',
+                                                   'revision': '1', 'sha256': 'a' * 64}
+                elif fault == 'component-kind': tickets['parent-run']['component_type'] = 'workflow'
                 with self.assertRaises(HTTPException) as caught:
                     persisted_ancestor_guard(store)('alice', plan, context)
                 self.assertNotIsInstance(caught.exception, NativeMandateCompleted)

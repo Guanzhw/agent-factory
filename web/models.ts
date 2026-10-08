@@ -20,6 +20,8 @@ export interface MaterialReview {
 }
 export type FactoryStatus = PlatformInfo;
 export interface Plan {
+  inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
+  inputValues?: import('./applicationInputState.js').ApplicationInputValues;
   id: string;
   fingerprint: string;
   normalizedGoal: string;
@@ -183,6 +185,7 @@ export type { UserConnection, ConnectionRegistration, ConnectionKind, Connection
 
 export interface ApplicationBudget { toolCalls: number; maxDepth: number; maxChildren: number; experimentSeconds: number; outputBytes: number }
 export interface ApplicationMode {
+  inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   materialRefs: MaterialReference[];
   materialChoices: Record<string, { kind: Material['kind']; defaultRef: MaterialReference; allowedRefs: MaterialReference[] }>;
   capabilities: string[]; budget: ApplicationBudget; config: Record<string, unknown>; toolOrder: string[];
@@ -203,11 +206,14 @@ export interface ApplicationReview {
   separateAdministratorRequired: true; taskApprovalSeparate: true;
 }
 export interface CompositionInput {
+  inputValues?: import('./applicationInputState.js').ApplicationInputValues;
   sourceSnapshotRef?: { id: string; fingerprint: string };
   goal: string; mode?: string; application?: string; applicationRef?: MaterialReference;
   materialChoices?: Record<string, MaterialReference>; connectionRefs?: Record<string, string>;
 }
 export interface AssemblyCandidate {
+  inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
+  inputValues?: import('./applicationInputState.js').ApplicationInputValues;
   sourceSnapshotRef?: { id: string; fingerprint: string };
   application: string; applicationRef: MaterialReference; mode: string; normalizedGoal: string;
   materialRefs: MaterialReference[]; materials: FactoryMaterial[]; tools: string[]; capabilities: string[];

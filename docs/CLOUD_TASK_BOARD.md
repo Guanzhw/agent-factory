@@ -1,3 +1,179 @@
+# Semantic continuation correction — 2026-10-08
+
+PR62 is still Draft. Head `47819a12755abbf3d75ca8dbfe77f23d2b9269df` is
+**rejected for acceptance**, regardless of its eventual CI outcome. Real-browser
+review found a completed queue row with three failed downstream steps and only
+three of five expected operations. The earlier gate did not assert those results.
+The stronger regression reproduced that failure before correction.
+
+The correction preserves native runtime UUID lineage, validates missing native
+continuation workflow context against the original ticket, supplies external
+results through Agno RunRequirement, and requires fail-on-error step policies.
+The strengthened serial native PostgreSQL gate passed all10 required cases in
+107.224s, zero skips; boundary58 passed0.512s and Pyright reported0 errors.
+Success now requires six successful leaf results and five once-only closed
+operations. Candidate9 and AutoResearch11 previously passed serially, zero skips;
+frontend217 plus lint/typecheck/build and dependency audits passed. The replacement
+real browser traversed loopback React → Factory HTTP → PostgreSQL native queue,
+passed the stronger five-operation/six-leaf assertions, and desktop/mobile
+screenshots were manually reviewed. It used a synthetic model and SQLite backend,
+not production identity or a domain backend. Exact new-head CI remains required.
+
+The unified application developer guide and README entry ship with this foundation,
+covering local authoring through reviewed publication. Real ConvertD remains the
+user's local implementation. No live provider, production identity, scientific
+data, deployment or target-machine acceptance is claimed.
+
+---
+
+# Native Agno reuse correction — active 2026-10-08
+
+PR62 remains Draft and unmerged. Previous head `79133217bb019b067f7347ef4a2bece2a53283b6`
+and its CI describe the superseded custom workflow implementation, not acceptance
+of this correction. Main baseline `067354e0b95ceba7aa620216fe7a18715b179ac0` and
+its independent completed-success CI37714925242 remain accepted.
+
+Agno 3.1.0 Workflow/Step/Router/Condition/Parallel, WorkflowSession, requirements,
+continue and durable queue own all workflow progress. The duplicate Factory DAG,
+resume and progress service have been removed after native proof. Factory retains
+immutable governance/input/component pins, shared budgets, external-operation
+custody and thin command receipts. Actual ConvertD remains the user's local work.
+
+| Owner | Exclusive scope | Current evidence / dependency |
+|---|---|---|
+| root | API/config/schema/native lifecycle and final integration | Serial PG; exact new-head CI and independent review required before authorized merge |
+| factory_flow | remove old graph; operation contracts; real budget regression migration | 27 lightweight pass; 3 PG skipped locally (not PG acceptance) |
+| go_policy | policy refs/model ledger; candidate read-only state wiring | 25 candidate checks pass; Ruff/Pyright clean |
+| go_adapter | native bridge/control/registration unit tests | Thin command6 and registry17 pass; included in boundary50 pass |
+| candidate_support_audit | input/UI and native handoff docs | Schema2 mock browser pass; docs updating |
+| at10 | real native queue/restart and startup accounting fixtures | FactoryPG3 pass47.568s; startupPG3 pass40.538s, zero skips |
+| candidate_final_review | independent reuse/correctness review | Function/active executor/schema integrity and identifier contract findings fixed; eligible for exact CI |
+| ci_final_review | exact CI read-only observation | Historical b6 push failed old withdrawn-custody assertion; preserve new native regression |
+
+Evidence retained: pure native proof3 passed4.266s. First Factory integration
+attempt had2 pass/1 failure89.932s: the native external-wait helper was omitted
+from approved tools. The fixture now approves it explicitly; replacement3 passed.
+A subsequent command accidentally omitted the PG variable and skipped3; that is
+not acceptance and was followed by the explicit database run above. New registration
+integrity changes passed the nine-case mandatory gate in113.417s, zero skips.
+The gate now requires10 cases, adding original owner/withdrawal/UNKNOWN custody.
+First ten-case attempt had9 pass/1 fixture error98.392s: the denial correctly
+returned409 but the test expected `detail` instead of Factory's `code/message`.
+Corrected exact-code assertion passed the isolated new case13.566s. Final ten-case
+gate passed177.103s, zero skips. Candidate gate9 passed101.137s, zero skips. Boundary54 passed0.635s, frontend217 passed with lint/typecheck/build,
+Ruff/Pyright passed. npm audit found0 vulnerabilities; pip-audit found no known
+vulnerabilities (local project is not on PyPI). Read-only cache errors were resolved
+using workspace cache directories. The first corrected head `9a958a0` CI failed one stale mock assertion requiring
+exactly one parent-plan read; native component validation now legitimately reads
+child and parent plans. The fixture now returns each exact plan and checks owner,
+ancestor validation and component mismatch rather than an implementation call count.
+A further budget regression binds external wait call IDs to original native step IDs:
+different child Agents cannot evade a second debit by reusing a local provider call ID.
+Real SQL4 budget checks and native pause/restart/continue1 passed26.752s. Independent
+review has no remaining blocker. AutoResearch11 is running serially; full regression
+and replacement exact final CI remain pending. No live model/backend/data/deployment claims.
+
+---
+
+## Historical pre-correction phase (superseded below)
+
+# Governed workflow agent extension — 2026-10-08
+
+Base: PR60 exact `cd9522f9da1daec5c9ec69d5d43717b910da1740` (ten exact CI jobs
+accepted twice). Branch: `feat/governed-workflow-agents-20261008`.
+This phase implements generic workflow-agent boundaries, not real ConvertD
+integration. Authorized GitHub lookup found no verified ConvertD repository/spec;
+only supplied six-phase names, FAILURE_JSON/B routing, resume-from and parallel
+join requirements inform a harmless representative fixture. No backend,
+notification, new credential, externally exposed listener, paid call or deployment.
+The user subsequently authorized normal merge into main after engineering checks,
+and requested the already accepted baseline be synchronized first via PR61.
+PR61 merged the accepted baseline into main at
+`067354e0b95ceba7aa620216fe7a18715b179ac0` after explicit user confirmation
+of the draft-to-ready step. Main CI37714925242 attempt1 passed all five jobs:
+candidate9/9, AutoResearch11/11 (zero skips), full PG2281 tests (63 skips).
+This is an independently completed baseline milestone; no protection bypass.
+Current workflow edits remain separate in draft PR62. All 51 covered historical
+stage PRs are resolved with exact ancestry evidence; independent #8/#41/#51 remain open.
+
+| Owner | Exclusive files / interfaces | Acceptance / dependencies |
+|---|---|---|
+| root | Settings/main/store/native lifecycle/control/API glue, docs, final integration | Original task/approval/budget/cleanup preserved; exact CI final responsibility |
+| go_policy | tool_policy_registry, plan_policy, material_governance + tests | New operator policies, exact adapters, withdrawal/version drift; legacy identity unchanged |
+| go_adapter | workflow_contracts + tests | Bounded graph/runtime observation, original handles, read-only lookup |
+| factory_flow | workflow_service/profile + tests | Durable intent/state/commands, waits, fanout/join, B routing, cancellation, no unknown replay |
+| candidate_support_audit | input_schema, applications/composition + tests | Bounded schema and immutable inputs; old apps unchanged |
+| ci_final_review | workflow/input UI, client/types/templates + tests | Server-authoritative stages, stale decision rejection, stable recovery commands |
+| at10 | independent source/spec and correctness review | Synthetic labeling, failure-edge reachability, restart/unknown/concurrency review |
+
+Required new acceptance: actual native agent/tool invocation with synthetic model
+outputs explicitly labeled; persistent pause and same-run continuation; fresh
+process restart over original DB; duplicate submission/event; lost ACK and
+no redispatch; FAILURE_JSON-to-B; bounded parallel tasks and join; human decision
+version/owner checks; cancellation retaining unknown custody; input/schema and
+policy drift denial. Existing AutoResearch tests remain. Heavy local database
+checks run serially. Implementation is integrated but final acceptance is pending.
+
+Current evidence: frontend218 tests/build/typecheck/lint and actual browser with
+mock API transport passed. Existing required AutoResearch native gate passed11/11
+with zero skips in677.994s. npm/Python dependency audits report no known issues.
+The first workflow native gate passed3/3, but later stricter recovery checks
+exposed a race: ordinary adapter ConnectionError records protected tool failure
+and cancels original custody before durable pause. Earlier reconcile HTTP500 had
+no captured exact stack and is not claimed resolved merely by waiting.
+A narrow typed unknown-acknowledgement contract now allows durable UNKNOWN
+observation; generic failures/cancellation still propagate. Final four-case gate
+adds a distinct service-exit-before-pause fault injection.
+CI at178e998 failed on stale test mocks and readonly reconstruction missing the
+workflow guard. Fixes preserve production validation, use a pure no-DDL guard,
+and close SQLite handles before temporary fixture deletion. External native
+wait completion now charges the original tool-call ID; actual ledger acceptance
+is being verified independently. Service25 and lifecycle10 focused tests pass.
+Candidate regression passed9/9 with zero skips in133.456s. Complete portable
+suite passed2342 tests (435 expected environment skips) in208.663s, followed by
+updated control15 and actual SQLite ledger3 checks with ResourceWarning treated
+as an error. Independent core review found no blocker. The pre-pause exit gate
+captured a GET snapshot500 from RunCancelledException; snapshot now retains
+owner-readable custody with no execution actions, covered by regression tests.
+Final four-case native/PostgreSQL rerun passed4/4 with zero skips in120.497s.
+Ruff and Linux/Windows Pyright passed; changed-file credential-pattern scan found
+zero matches. CI at bd7bb21 passed all PR portable/frontend jobs, but push
+Windows failed one existing synthetic ORX concurrent-status test (COMMAND_FAILED;
+original subprocess stderr was not captured). The same-head pass does not erase
+that failure. The fixture now locks only shared JSON state I/O across processes;
+a deterministic partial-publication regression proves the old reader's JSON
+failure, and published corrupt state still fails closed without another launch.
+No production retry/deadline is relaxed. Final exact CI and workflow merge remain
+pending; PR62 records the immutable commit and terminal observations.
+
+CI at ea23c6 passed all eight portable/frontend jobs but push native cancellation
+revealed a real custody omission: API/delegation reads could mark the task
+terminal while its workflow still held original operations, excluding it from
+later lifecycle cleanup. Store terminal/admission, descendant accounting and
+remote stop proofs now include workflow custody; user cascade cancellation
+attempts cleanup of original workflow handles. Known paused waits remain
+continuable while native-terminal held work reports UNKNOWN. Startup repairs
+matching original accounting only, and first custody publication locks the task
+row against terminal release. Metadata reads/transactions reuse Store connections.
+Deterministic native cancellation now stops the observer and injects UNKNOWN
+cancel ACK: task/disk/root capacity cannot release before positive original stop.
+Four native scenarios passed4/4 zero skips in111.918s; three dedicated startup/
+pool checks passed3/3 zero skips in58.476s, run serially. The mandatory gate now
+includes all seven native/startup cases; discovery confirms seven. Updated
+portable suite passed2358 tests (435 skips), followed by focused checks for the
+latest transaction/paused-state changes. Independent source review found no
+concrete lock inversion. Final exact CI and workflow merge remain pending.
+
+Local handoff scope is explicit: the user owns real ConvertD development locally.
+The existing workflow guide now includes a minimal definition/Settings assembly,
+material and application publication, runtime/interaction schemas, recovery/cancel
+contracts and runnable validation entry points. This follow-up changes docs only;
+its successor commit must receive its own exact CI acceptance before merge.
+
+See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
+
+---
+
 # Cloud integration task board
 
 ## Active remote scientific bootstrap implementation

@@ -58,6 +58,8 @@ class AuthService:
         self.authorization.define_role("factory-user", [
             f"agents:{EXECUTOR_ID}:read", f"agents:{EXECUTOR_ID}:run",
             "components:read", "registry:read", "sessions:read", "filesystem:read",
+            *[scope for entry in getattr(self.settings, "native_workflows", ())
+              for scope in (f"workflows:{entry.component.id}:read", f"workflows:{entry.component.id}:run")],
         ])
         personas = {**_PERSONAS, **({"manager2": ("Second manager / reviewer", "factory-manager")}
             if getattr(self.settings, "development_mock_login", False) else {})}

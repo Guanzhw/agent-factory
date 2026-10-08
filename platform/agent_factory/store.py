@@ -41,6 +41,12 @@ def effect_unresolved(effect):
     return False
 
 
+def runtime_custody_held(store, task_id):
+    """Native termination cannot release original process or workflow custody."""
+    return any(service is not None and service.task_held(task_id)
+               for service in (getattr(store, 'process_runtime', None), getattr(store, 'workflow', None)))
+
+
 class Store:
     def __init__(self, url, settings):
         self.engine = create_engine(url, pool_pre_ping=True)
@@ -71,6 +77,10 @@ class Store:
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
         self.process_runtime: Any = None
+        self.workflow: Any = None
+        self.workflow_control: Any = None
+        self.native_workflows: Any = None
+        self.external_execution_handlers: dict[str, Any] = {}
         self.autoresearch: Any = None
         self.autoresearch_session_control: Any = None
         self.autoresearch_children: Any = None
@@ -269,8 +279,8 @@ class Store:
                         text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
                         {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
-                    process_held = self.process_runtime is not None and self.process_runtime.task_held(candidate["id"])
-                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not process_held:
+                    custody_held = runtime_custody_held(self, candidate["id"])
+                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not custody_held:
                         conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
                         if self.storage is not None:
                             self.storage.release(candidate["id"])
@@ -431,7 +441,7 @@ class Store:
             self._observed_locked(rows[0], status, terminal)
 
     def _observed_locked(self, task, status, terminal):
-        if terminal and self.process_runtime is not None and self.process_runtime.task_held(task["id"]):
+        if terminal and runtime_custody_held(self, task["id"]):
             terminal = False
         if terminal and self.storage is not None:
             self.storage.release(task["id"])

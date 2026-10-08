@@ -1,3 +1,55 @@
+# Semantic continuation correction — 2026-10-08
+
+PR62 is still Draft. Head `47819a12755abbf3d75ca8dbfe77f23d2b9269df` is
+**rejected for acceptance**, regardless of its eventual CI outcome. Real-browser
+review found a completed queue row with three failed downstream steps and only
+three of five expected operations. The earlier gate did not assert those results.
+The stronger regression reproduced that failure before correction.
+
+The correction preserves native runtime UUID lineage, validates missing native
+continuation workflow context against the original ticket, supplies external
+results through Agno RunRequirement, and requires fail-on-error step policies.
+The strengthened serial native PostgreSQL gate passed all10 required cases in
+107.224s, zero skips; boundary58 passed0.512s and Pyright reported0 errors.
+Success now requires six successful leaf results and five once-only closed
+operations. Candidate9 and AutoResearch11 previously passed serially, zero skips;
+frontend217 plus lint/typecheck/build and dependency audits passed. The replacement
+real browser traversed loopback React → Factory HTTP → PostgreSQL native queue,
+passed the stronger five-operation/six-leaf assertions, and desktop/mobile
+screenshots were manually reviewed. It used a synthetic model and SQLite backend,
+not production identity or a domain backend. Exact new-head CI remains required.
+
+The unified application developer guide and README entry ship with this foundation,
+covering local authoring through reviewed publication. Real ConvertD remains the
+user's local implementation. No live provider, production identity, scientific
+data, deployment or target-machine acceptance is claimed.
+
+---
+
+# Current continuation — native Agno workflow correction (2026-10-08)
+
+Active branch: `feat/governed-workflow-agents-20261008`, Draft PR62. Main baseline
+`067354e0b95ceba7aa620216fe7a18715b179ac0` has independently successful CI37714925242.
+Read the **top** of [CLOUD_TASK_BOARD.md](CLOUD_TASK_BOARD.md) and
+[GOVERNED_WORKFLOW_AGENTS.md](GOVERNED_WORKFLOW_AGENTS.md) before historical text.
+
+The pre-correction PR62 implementation duplicated Agno workflow progress and is
+superseded. Current work uses native Agno Workflow/Step/Router/Condition/Parallel,
+persistent requirements and original-run continuation. Factory adds governance,
+immutable component/input pins, shared budgets, external-operation custody and
+command receipts only. Old graph/profile/resume implementation is removed.
+The operator must explicitly commit the reviewed implementation fingerprint;
+function-name serialization alone is not a code integrity commitment.
+
+Native proof and Factory PostgreSQL tests use public synthetic models and an inert
+SQLite operation backend. These do not validate actual ConvertD, production
+identity, live scientific sources, target-host capacity or backend safety. Real
+ConvertD integration remains local user work. No live provider requests or
+new costs were incurred for this correction. Final corrected-head CI and merge
+are pending; prior-head CI must not be substituted. All earlier text is historical.
+
+---
+
 # Cloud WIP checkpoint handoff — 2026-10-02
 
 ## Active continuation — remote scientific bootstrap (2026-10-07)

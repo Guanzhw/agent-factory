@@ -101,3 +101,17 @@ describe('guided application template contract', () => {
     expect(inspectTemplate(updateTemplate(draft(), { kind: 'metadata', field: 'discoveryKeywords', value: [''] }, catalog), catalog).errors.join('')).toContain('关键词');
   });
 });
+
+describe('optional application input schema editing', () => {
+  it('keeps existing definitions unchanged and roundtrips a bounded per-mode schema', () => {
+    const original = draft();
+    const inputSchema = { type: 'object', additionalProperties: false, properties: { topic: { type: 'string', maxLength: 100 } }, required: ['topic'] };
+    const next = updateTemplate(original, { kind: 'inputSchema', mode: 'literature', value: inputSchema }, catalog);
+    expect(inspectTemplate(next, catalog).errors).toEqual([]);
+    expect(inspectTemplate(next, catalog).guided).toBe(true);
+    expect((next.modes as FactoryApplication['modes']).literature.inputSchema).toEqual(inputSchema);
+    expect((original.modes as FactoryApplication['modes']).literature.inputSchema).toBeUndefined();
+    expect(updateTemplate(next, { kind: 'inputSchema', mode: 'literature', value: undefined }, catalog)).toEqual(original);
+    expect(() => updateTemplate(original, { kind: 'inputSchema', mode: 'literature', value: { ...inputSchema, default: {} } }, catalog)).toThrow();
+  });
+});

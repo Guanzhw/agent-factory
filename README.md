@@ -10,6 +10,17 @@ fixed baseline/candidate comparisons and schedule diagnostics, use the
 The [final requirements audit](docs/V03_FINAL_REQUIREMENT_AUDIT.md) distinguishes
 implemented development flows from input-dependent code and real acceptance.
 
+## Build a new application
+
+Start with the [application development guide](docs/APPLICATION_DEVELOPMENT.md).
+It separates developer implementation from administrator registration/publication,
+and covers the smallest material-driven application, trusted tool/model/runtime
+factories, bounded Pydantic inputs, native Agno Workflow/HITL, permissions, budgets
+and executable checks. The [workflow governance reference](docs/GOVERNED_WORKFLOW_AGENTS.md)
+explains original-operation custody and native continuation. Agno owns workflow
+progress; Factory supplies governance and thin receipts. Real ConvertD remains a
+user-implemented local application, not a bundled or live-validated backend.
+
 ## Start locally
 
 Requires Node 24+, Python 3.12+, uv and existing PostgreSQL binaries. Tested locally on Windows with Python 3.14.3 and PostgreSQL 17.11. Dependency versions and CI action/image revisions are pinned.

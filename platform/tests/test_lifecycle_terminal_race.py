@@ -19,6 +19,7 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         actions = []
         store = Mock()
         store.process_runtime = None
+        store.workflow = None
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []
