@@ -112,10 +112,10 @@ function WorkflowSession({ ownerId, taskId, api, disabled }: { ownerId: string; 
       {view.allowedActions.some(item => item.action === 'reconcile') && <p className="quiet">核对原执行会查询原操作；等待条件满足时，可继续原已授权任务。</p>}
       <div className="button-row">{view.allowedActions.map(item => {
         const version = view.workflow.version; const scope = item.stageId ? ` ${item.stageId}` : '';
-        return item.action === 'decide' ? <div key={`decide:${item.stageId}`}><p>决定阶段{scope}</p><button disabled={blocked} onClick={() => void submit({ ...item, approved: true, version })}>同意本阶段</button><button className="secondary" disabled={blocked} onClick={() => void submit({ ...item, approved: false, version })}>不同意本阶段</button></div>
+        return item.action === 'decide' ? <div key={`decide:${item.stageId}`}><p>决定阶段{scope}</p><button className="primary" disabled={blocked} onClick={() => void submit({ ...item, approved: true, version })}>同意本阶段</button><button className="secondary" disabled={blocked} onClick={() => void submit({ ...item, approved: false, version })}>不同意本阶段</button></div>
           : <button key={`${item.action}:${item.stageId ?? ''}`} className={item.action === 'cancel' ? 'secondary danger' : 'secondary'} disabled={['reconcile', 'cancel'].includes(item.action) ? disabled || busy || !ready : blocked} onClick={() => void submit({ ...item, ...(['resume', 'reconcile'].includes(item.action) ? { version } : {}) })}>{item.action === 'resume' ? `继续阶段${scope}` : item.action === 'cancel' ? '请求取消工作流' : `核对原执行${scope}`}</button>;
       })}</div></>}
-    {pending && <div className="state-note"><p>保留了一条待核对的原命令。在确认前不能提交新的人工决定或继续阶段；仍可核对原执行。</p><button disabled={disabled || busy} onClick={() => void lookup()}>读取原命令回执</button>{notRecorded && <button disabled={disabled || busy || !ready || !view?.available} onClick={() => void submit(pending, true)}>提交同一原命令</button>}</div>}
+    {pending && <div className="state-note"><p>保留了一条待核对的原命令。在确认前不能提交新的人工决定或继续阶段；仍可核对原执行。</p><button className="secondary" disabled={disabled || busy} onClick={() => void lookup()}>读取原命令回执</button>{notRecorded && <button className="secondary" disabled={disabled || busy || !ready || !view?.available} onClick={() => void submit(pending, true)}>提交同一原命令</button>}</div>}
     <button className="text-button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>读取工作流最新记录</button>
   </section>;
 }

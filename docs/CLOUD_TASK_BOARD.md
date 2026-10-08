@@ -40,7 +40,10 @@ subsequent controller recovery/withdrawal changes still require its final rerun.
 Old AutoResearch gate is running serially. Independent review found and fixed
 lost-ACK cancellation lookup, mutable continuation proof, removed-registration
 custody and native-completed unfinished-workflow cleanup. npm audit is clear.
-Final full regression, actual browser behavior, exact CI and merge remain pending.
+Mock-transport browser interaction passed, including UNKNOWN reload/GET recovery,
+versioned decisions, retained cancel uncertainty and 390px layout. Actual backend
+behavior is separately tested by the native/PostgreSQL gate.
+Final full regression, exact CI and workflow merge remain pending.
 See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
 
 ---

@@ -122,3 +122,9 @@ custody, stable native requirements and read-only command recovery. Existing
 AutoResearch and candidate PostgreSQL gates remain mandatory. Final exact commit,
 CI outcomes and independent review are recorded in the PR/task board; a passing
 synthetic gate is never a claim of live business acceptance.
+
+`scripts/accept_workflow_browser.py` exercises the real React components in a
+browser with an injected synthetic API, including versioned decisions, preserved
+UNKNOWN intent after reload, GET receipt recovery, explicit same-payload retry
+after 404, pending cancellation and a 390-pixel viewport. It does not replace the
+separate native/PostgreSQL checks or certify a live backend.
