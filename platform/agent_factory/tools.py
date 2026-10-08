@@ -13,6 +13,8 @@ import threading
 import time
 from typing import Any
 
+from .application_schema import time_budget
+
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 from agno.tools import tool
@@ -106,7 +108,7 @@ def _experiment(settings, store, ctx, plan, stop_signal, authority_check=None):
         memory_cap = min(1024 * 1024 * 1024, max(64 * 1024 * 1024, int(getattr(settings, 'experiment_memory_bytes', 256 * 1024 * 1024))))
         process_cap = min(8, max(1, int(getattr(settings, 'experiment_process_limit', 4))))
         cpu_percent = min(100, max(1, int(getattr(settings, 'experiment_cpu_percent', 10))))
-        timeout = min(timeout, plan.get('budget', {}).get('experimentSeconds', timeout))
+        timeout = min(timeout, time_budget(plan, timeout))
         output_cap = min(output_cap, plan.get('budget', {}).get('outputBytes', output_cap))
         bindings = getattr(store, 'execution_bindings', None)
         selected_runtime = 'local-python-bounded-v1'

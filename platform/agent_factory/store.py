@@ -30,21 +30,8 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def effect_unresolved(effect):
-    """Native terminal state does not prove an ORX process tree has stopped."""
-    if effect.get("status") not in {"DONE", "CANCELLED"}:
-        return True
-    if str(effect.get("effect_key", "")).endswith(":orx-experiment-launch-v1"):
-        result = effect.get("result")
-        proof = result.get("stopEvidence") if isinstance(result, dict) else None
-        return not isinstance(proof, dict) or proof.get("allStopped") is not True
-    return False
-
-
-def runtime_custody_held(store, task_id):
-    """Native termination cannot release original process or workflow custody."""
-    return any(service is not None and service.task_held(task_id)
-               for service in (getattr(store, 'process_runtime', None), getattr(store, 'workflow', None)))
+# Compatibility exports: custody/evidence semantics belong to trusted adapters.
+from .runtime_hooks import effect_unresolved, runtime_custody_held, reconcile_runtime_capacity
 
 
 class Store:
@@ -187,14 +174,7 @@ class Store:
         ]
         for statement in statements:
             self.sql(statement)
-        # Upgrade safety: a pre-fix DONE row without kernel stop proof must not
-        # retain a released slot merely because the application was restarted.
-        # Preserve immutable effect/result hashes; only re-hold task capacity.
-        self.sql("""UPDATE af_tasks task SET terminal=FALSE WHERE task.terminal AND EXISTS(
-            SELECT 1 FROM af_effects effect WHERE effect.task_id=task.id
-            AND effect.effect_key=task.run_id || :suffix
-            AND effect.result->'stopEvidence'->'allStopped' IS DISTINCT FROM 'true'::jsonb)""",
-            suffix=":orx-experiment-launch-v1")
+        reconcile_runtime_capacity(self)
         mode = "demo" if self.settings.demo else "production"
         self.sql("INSERT INTO af_bootstrap VALUES('mode',:mode) ON CONFLICT DO NOTHING", mode=mode)
         if self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")[0]["mode"] != mode:
@@ -441,7 +421,8 @@ class Store:
             self._observed_locked(rows[0], status, terminal)
 
     def _observed_locked(self, task, status, terminal):
-        if terminal and runtime_custody_held(self, task["id"]):
+        if terminal and (runtime_custody_held(self, task["id"])
+                         or any(effect_unresolved(effect) for effect in self.effects(task["id"]))):
             terminal = False
         if terminal and self.storage is not None:
             self.storage.release(task["id"])
@@ -475,7 +456,7 @@ class Store:
     def effect_complete(self, run_id, key, result):
         status = "CANCELLED" if isinstance(result, dict) and result.get("cancelled") else "DONE"
         if effect_unresolved({"effect_key": run_id + ":" + key, "status": status, "result": result}):
-            raise ValueError("ORX terminal effect requires positive process-stop evidence")
+            raise ValueError("Terminal effect requires positive adapter stop evidence")
         self.sql("UPDATE af_effects SET status=:status,result=CAST(:result AS JSONB) WHERE effect_key=:key", key=run_id + ":" + key, status=status, result=canonical(result))
 
     def effects(self, task_id):
@@ -488,7 +469,7 @@ class Store:
             raise ValueError("Artifact exceeds task output budget")
         if len(name) > 120 or any(char in name for char in "/\\\r\n"):
             raise ValueError("Artifact name must be a single safe filename")
-        provenance: dict[str, Any] = dict(metadata or {"syntheticFixture": True})
+        provenance: dict[str, Any] = dict(metadata) if metadata is not None else {"evidenceKind": "unverified", "verificationStatus": "unverified"}
         if self.remote_bindings is not None:
             plan = self.plan(task["plan_id"], task["owner_id"])
             context = SimpleNamespace(session_id=task["id"], run_id=task["run_id"], user_id=task["owner_id"],

@@ -582,7 +582,10 @@ class PlanPolicyService:
                 self._scope(ancestor, scope_config)
                 if not set(current_plan["tools"]) <= set(ancestor["tools"]) or not set(current_plan["capabilities"]) <= set(ancestor["capabilities"]):
                     raise HTTPException(403, "Child exceeds ancestor approval scope")
-                for key in ("toolCalls", "experimentSeconds", "outputBytes", "maxDepth", "maxChildren"):
+                from .application_schema import time_budget_key
+                if current_plan.get("contractVersion", 1) != ancestor.get("contractVersion", 1):
+                    raise HTTPException(403, "Child cannot change its ancestor's budget contract")
+                for key in ("toolCalls", time_budget_key(current_plan), "outputBytes", "maxDepth", "maxChildren"):
                     value, ceiling = current_plan.get("budget", {}).get(key), ancestor.get("budget", {}).get(key)
                     if type(value) is not int or type(ceiling) is not int or not 0 < value <= ceiling:
                         raise HTTPException(403, "Child exceeds ancestor approval budget")

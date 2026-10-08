@@ -1,4 +1,9 @@
-# OpenResearch tool adapter
+# OpenResearch tool adapter (legacy CLI boundary)
+
+This document describes the narrow CLI adapter only. It does not describe the
+current ORX-owned research session loop; see [AUTORESEARCH_SESSION.md](AUTORESEARCH_SESSION.md)
+and the [platform/application/workload contract](FACTORY_OPENRESEARCH_CONTRACT.md).
+The Factory-owned model-loop wording below applies only to this legacy adapter.
 
 `platform/agent_factory/openresearch.py` implements a bounded CLI adapter for
 the selected AgentOS runtime. A narrow `orx_discover` factory is registered by the core, but execution requires an explicitly reviewed runtime-tool contract, approved material/application, owner connection and trusted operator adapter provider. The default startup configures none of those live ORX handles. Synthetic contract tests exercise OS subprocesses; one actual bounded public OpenAlex discovery is verified below. Registered native integration uses labeled controlled transport. Real integrated model-driven literature tasks and ORX experiment execution remain unverified.

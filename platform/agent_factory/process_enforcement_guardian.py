@@ -201,7 +201,7 @@ def main(path):
         # Keep the root unreaped until group cleanup so its birth ID fences
         # killpg even when the trusted executable left group descendants.
         root = birth(child)
-        if not same_birth(root, identity):
+        if root is None or not same_birth(root, identity):
             raise ValueError("Child custody changed")
         if cause or root["state"] == "Z":
             if "aggregateConfig" in body:
@@ -249,7 +249,7 @@ if __name__ == "__main__":
         # work. Failed cleanup remains UNKNOWN; never signal a recycled PID.
         if CHILD_ID is not None:
             current = birth(CHILD_ID["pid"])
-            if same_birth(current, CHILD_ID) and current["group"] == CHILD_ID["pid"]:
+            if current is not None and same_birth(current, CHILD_ID) and current["group"] == CHILD_ID["pid"]:
                 try:
                     getattr(os, "killpg")(CHILD_ID["pid"], getattr(signal, "SIGKILL"))
                     os.waitpid(CHILD_ID["pid"], 0)

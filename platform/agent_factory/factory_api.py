@@ -9,6 +9,8 @@ from .catalog import create_plan
 from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
 from .store import effect_unresolved, canonical
+from .runtime_hooks import (execution_classification, project_runtime_evidence,
+    project_runtime_requirement, project_runtime_recovery, runtime_policy_projection)
 
 
 class Body(BaseModel):
@@ -182,7 +184,7 @@ class FactoryAPI:
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
                 "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": bool({"run_experiment", "orx_experiment_run"} & set(plan["tools"]))}, "published": False, "createdAt": plan["createdAt"]}
+            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": runtime_policy_projection(plan)["allowExperiment"]}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -195,8 +197,10 @@ class FactoryAPI:
             "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
             "runtime": "demo" if self.settings.demo else "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
-            "allowedActions": actions, "validationStatus": "执行链路已验证；研究数据为合成示例" if self.settings.demo else "注册适配器执行记录；研究结论需按产物证据验证",
-            "evidenceKind": "合成示例" if self.settings.demo else "按产物来源分别验证"}
+            "allowedActions": actions, "validationStatus": "执行与结论需按产物证据分别验证",
+            "deploymentMode": "demo" if self.settings.demo else "production",
+            "executionKind": execution_classification(plan)["executionKind"],
+            "verificationStatus": "unverified", "evidenceKind": "unverified"}
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)
@@ -212,57 +216,19 @@ class FactoryAPI:
                 scope = '等待原工作流阶段或人工决定；请使用工作流面板核对与继续。'
                 job.update(approvalDetail={'id': requirement['id'], 'version': version, 'scope': scope,
                     'toolName': 'workflow_wait', 'arguments': tool.get('tool_args', {})}, approval={'scope': scope})
-            elif tool.get("tool_name") == "autoresearch_session_run" and tool.get("external_execution_required"):
-                control = getattr(self.store, "autoresearch_session_control", None)
-                if control is not None and status == "waiting_approval":
-                    try:
-                        await control.completion(task, requirement)
-                    except (ValueError, HTTPException):
-                        pass
-                    else:
-                        scope = "原 ORX 会话和受管子任务已结束；继续同一原生运行，接收原始结果。"
-                        job.update(approvalDetail={"id": requirement["id"], "version": version,
-                            "scope": scope, "toolName": "autoresearch_session_run", "arguments": {}}, approval={"scope": scope})
-                        actions.append("approve")
-            elif tool.get("tool_name") == "research_process_run" and tool.get("external_execution_required"):
-                runtime = getattr(self.store, "research_runtime", None)
-                original = runtime._original(task["id"]) if runtime is not None else None
-                if original is not None and runtime is not None:
-                    lease = runtime.resources.inspect(task["owner_id"], original["lease_id"])
-                    job["researchExecution"] = {"leaseId": lease["id"], "state": lease["state"],
-                        "capacityHeld": lease["capacityHeld"], "gpuExecutionVerified": False,
-                        "scientificConclusionVerified": False}
-                    if (status == "waiting_approval" and lease["state"] == "RECLAIMED"
-                            and lease.get("executionStatus") == "COMPLETED" and lease.get("exitCode") == 0
-                            and lease.get("gpuEvidence", {}).get("state") == "RELEASED"):
-                        scope = "原研究进程已停止并释放租约；继续同一运行，仅接收执行凭据，不代表科研评分已验证。"
-                        job.update(approvalDetail={"id": requirement["id"], "version": version,
-                            "scope": scope, "toolName": "research_process_run", "arguments": {}}, approval={"scope": scope})
-                        actions.append("approve")
+            elif await project_runtime_requirement(self.store, task, requirement, version, status, job, actions):
+                pass
             elif tool.get("requires_user_input") and not tool.get("answered"):
-                question = {"id": requirement["id"], "version": version, "text": "请补充这次研究的具体问题或范围。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
+                question = {"id": requirement["id"], "version": version, "text": "请补充本任务所需的信息。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
                 job.update(questionDetail=question, question=question["text"])
                 if status == "waiting_input":
                     actions.append("answer")
             elif tool.get("requires_confirmation") and tool.get("confirmed") is None:
-                approval = {"id": requirement["id"], "version": version, "scope": f"运行本任务的固定本地合成实验：最长 {self.settings.experiment_timeout_seconds} 秒，输出最多 {self.settings.experiment_output_bytes // 1024} KB；不调用付费模型。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
+                approval = {"id": requirement["id"], "version": version, "scope": f"批准本任务已绑定的工具 {tool.get('tool_name')}，参数与权限以已批准计划为准。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
-        if (str((snapshot.get("run", snapshot)).get("status")).lower() in {"paused", "runstatus.paused"}
-                and (snapshot.get("queue") or {}).get("status") == "paused"
-                and any((r.get("tool_execution") or {}).get("tool_name") == "orx_experiment_run"
-                        for r in native_requirements(snapshot))):
-            try:
-                recovery = await self.commands.approved_recovery(task, snapshot)
-            except Exception:
-                # Eligibility is advisory; absent/unverifiable original proof
-                # cannot grant a repair or erase the existing paused receipt.
-                pass
-            else:
-                job["recoveryDetail"] = recovery["recoveryDetail"]
-                actions[:] = [action for action in actions if action != "approve"]
-                actions.append("resume_approved")
+        await project_runtime_recovery(self.commands, task, snapshot, native_requirements(snapshot), job, actions)
         if delegation_scope and delegation_scope.get("executionUnavailable"):
             job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
         try:
@@ -271,38 +237,15 @@ class FactoryAPI:
             if error.status_code != 403:
                 raise
             job["allowedActions"] = ["inspect"]
-        evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
-        from .orx_experiment_tools import inspect_orx_experiment
-        experiment = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
-        from .literature_evidence import APPLICATION_TOOLS, inspect_literature_evidence
-        literature = (inspect_literature_evidence(self.store, task["owner_id"], task["id"])
-                      if plan.get("application") in APPLICATION_TOOLS else None)
-        from .synthesis_runtime import inspect_synthesis_evidence
-        synthesis = inspect_synthesis_evidence(self.store, task["owner_id"], task["id"])
-        comparison = self.store.comparisons.inspect(task["owner_id"], task["id"]) if self.store.comparisons is not None else None
+        evidence, evaluation = project_runtime_evidence(self.settings, self.store, task, plan, events, job)
         ledger = getattr(self.store, "usage_ledger", None)
         usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
-        if synthesis is not None:
-            job.update(validationStatus="受控综合；引用结构检查不等于科研结论验证", evidenceKind="controlled_model_synthesis")
-        if comparison is not None:
-            job.update(validationStatus="合成开发数据的受控比较；未验证科学结论", evidenceKind="controlled_comparison")
-        if literature is not None:
-            labels = {"ready": "书目与摘录已保存；不代表科研结论", "no-sources": "执行已结束，但未取得文献来源",
-                      "pending": "等待文献证据产物", "invalid": "文献证据未通过完整性核对"}
-            job.update(validationStatus=labels[literature["status"]], evidenceKind=literature["evidenceKind"])
-        if experiment is not None:
-            job.update(validationStatus="真实 ORX 本地 toy 实验；未调用模型服务", evidenceKind="toy_local_evaluation")
-            if job.get("approvalDetail", {}).get("toolName") == "orx_experiment_run":
-                provenance = experiment.get("provenance", {})
-                limits = provenance.get("environment", {})
-                scope = ("运行已封存的任务自有 ORX toy 实验："
-                         f"最长 {limits.get('timeoutSeconds', '?')} 秒，"
-                         f"输出上限 {limits.get('outputBytes', '?')} 字节；"
-                         "源码和命令哈希见下方实验凭证。金额批准为零，无模型服务调用。")
-                job["approvalDetail"]["scope"] = scope
-                job["approval"]["scope"] = scope
-        return {**({"comparisonEvidence": comparison} if comparison is not None else {}), **({"synthesisEvidence": synthesis} if synthesis is not None else {}), **({"literatureEvidence": literature} if literature is not None else {}), "inferenceWait": inference_wait, "orxExperiment": experiment, "usageLedger": usage, "job": job, "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
-                "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope, "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"), "planFingerprint": plan["fingerprint"], "effects": effects, "syntheticFixture": self.settings.demo}}
+        return {**evidence, "inferenceWait": inference_wait, "usageLedger": usage, "job": job,
+                "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+                "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
+                    "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
+                    "planFingerprint": plan["fingerprint"], "effects": effects,
+                    "syntheticFixture": execution_classification(plan)["syntheticFixture"]}}
 
     def routes(self):
         router = self.router
@@ -314,6 +257,7 @@ class FactoryAPI:
             return {"mode": "demo" if self.settings.demo else "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
                     "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
                     "liveEnabled": not self.settings.demo, "liveIntegrationVerified": False,
+                    "deploymentMode": "demo" if self.settings.demo else "production", "verificationStatus": "unverified",
                     "admissionMode": "per-plan-preflight", "observedMetrics": True}
 
         @router.post("/demo/login")

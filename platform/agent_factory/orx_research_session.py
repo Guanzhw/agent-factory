@@ -102,24 +102,14 @@ def _json(raw):
         raise OrxSessionError() from None
 
 
-class OpenResearchSessionHTTP:
-    """Operator-installed connection, not a public URL or credential resolver.
-
-    Optional transport is a trusted test injection. No environment proxy, auth,
-    redirects, retry middleware, arbitrary paths, or server error bodies are used.
-    """
-    def __init__(self, port: int, *, project_id: str, harness: str, model: str,
-                 permission_mode: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
+class OpenResearchHTTP:
+    """Bounded operator-loopback transport shared by native project/session reads."""
+    def __init__(self, port: int, *, transport: httpx.AsyncBaseTransport | None = None,
                  timeout_seconds: float = 10):
         _require(type(port) is int and 1 <= port <= 65535)
         _require(type(timeout_seconds) in {int, float} and 0 < timeout_seconds <= 30)
-        _id(project_id); _id(harness)
-        _require(type(model) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,159}', model) is not None)
-        if permission_mode is not None:
-            _id(permission_mode)
         self._base = f'http://127.0.0.1:{port}'
-        self.project_id, self.harness, self.model = project_id, harness, model
-        self.permission_mode, self._transport, self._timeout = permission_mode, transport, timeout_seconds
+        self._transport, self._timeout = transport, timeout_seconds
 
     def _client(self):
         return httpx.AsyncClient(base_url=self._base, transport=self._transport or httpx.AsyncHTTPTransport(retries=0),
@@ -128,7 +118,8 @@ class OpenResearchSessionHTTP:
 
     async def _request(self, method, path, *, body=None, params=None):
         # Route labels never include IDs, URLs, query parameters or payloads.
-        route = ('sessions' if path == '/api/chat/sessions' else
+        route = ('projects' if path == '/api/projects' or path.startswith('/api/projects/') else
+                 'sessions' if path == '/api/chat/sessions' else
                  'messages' if path.endswith('/messages') else
                  'message' if path.endswith('/message') else
                  'interrupt' if path.endswith('/interrupt') else 'session-update')
@@ -155,6 +146,32 @@ class OpenResearchSessionHTTP:
             failure.session_diagnostic = _diagnostic(route, phase, error, status)
             raise failure from None
 
+
+class OpenResearchSessionHTTP(OpenResearchHTTP):
+    """Operator-installed connection, not a public URL or credential resolver.
+
+    Optional transport is a trusted test injection. No environment proxy, auth,
+    redirects, retry middleware, arbitrary paths, or server error bodies are used.
+    """
+    def __init__(self, port: int, *, project_id: str, harness: str, model: str,
+                 permission_mode: str | None = None, service_tier: str | None = None,
+                 reasoning_level: str | None = None, plan_mode: bool | None = None, transport: httpx.AsyncBaseTransport | None = None,
+                 timeout_seconds: float = 10):
+        _require(type(port) is int and 1 <= port <= 65535)
+        _require(type(timeout_seconds) in {int, float} and 0 < timeout_seconds <= 30)
+        _id(project_id); _id(harness)
+        _require(type(model) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,159}', model) is not None)
+        if permission_mode is not None:
+            _id(permission_mode)
+        for value in (service_tier, reasoning_level):
+            if value is not None:
+                _id(value)
+        _require(plan_mode is None or type(plan_mode) is bool)
+        super().__init__(port, transport=transport, timeout_seconds=timeout_seconds)
+        self.service_tier, self.reasoning_level, self.plan_mode = service_tier, reasoning_level, plan_mode
+        self.project_id, self.harness, self.model = project_id, harness, model
+        self.permission_mode, self._transport, self._timeout = permission_mode, transport, timeout_seconds
+
     def _session(self, row, session_id=None):
         _require(type(row) is dict)
         identifier = _id(row.get('id'))
@@ -164,8 +181,14 @@ class OpenResearchSessionHTTP:
                  and type(row.get('archived')) is bool)
         if self.permission_mode is not None:
             _require(row.get('permissionMode') == self.permission_mode)
-        return {'id': identifier, 'projectId': self.project_id, 'harness': self.harness, 'model': self.model,
+        for field, expected in self._optional_pins().items():
+            _require(row.get(field) == expected and (field != 'planMode' or type(row.get(field)) is bool))
+        return {**self._optional_pins(), 'id': identifier, 'projectId': self.project_id, 'harness': self.harness, 'model': self.model,
             'busy': row['busy'], 'archived': row['archived'], 'usageKnown': False, 'stoppedProof': False}
+
+    def _optional_pins(self):
+        return {key: value for key, value in {'serviceTier': self.service_tier,
+            'reasoningLevel': self.reasoning_level, 'planMode': self.plan_mode}.items() if value is not None}
 
     async def read_session(self, session_id: str):
         try:
@@ -190,7 +213,7 @@ class OpenResearchSessionHTTP:
         intent = MappingProxyType({'operation': operation, 'key': key,
             'requestHash': hashlib.sha256(_encoded({'origin': self._base, 'projectId': self.project_id,
                 'harness': self.harness, 'model': self.model, 'permissionMode': self.permission_mode,
-                'path': path, 'body': body})).hexdigest(),
+                **self._optional_pins(), 'path': path, 'body': body})).hexdigest(),
             'sessionId': session_id, 'clientTurnId': client_turn_id})
         # Caller must durably reject an already admitted key, including UNKNOWN.
         # Errors here happen before HTTP and are NOT recategorized as lost ACK.
@@ -211,7 +234,7 @@ class OpenResearchSessionHTTP:
             raise failure from None
 
     async def create_session(self, *, key: str, commit_intent: Callable):
-        body = {'projectId': self.project_id, 'harness': self.harness, 'model': self.model}
+        body = {'projectId': self.project_id, 'harness': self.harness, 'model': self.model, **self._optional_pins()}
         if self.permission_mode is not None:
             body['permissionMode'] = self.permission_mode
         return await self._mutation('create', key, '/api/chat/sessions', body,

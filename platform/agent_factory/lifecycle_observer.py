@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from .plan_policy import NativeMandateCompleted
 from .remote_handoff import HandoffCancellationRequested
 from .store import effect_unresolved, runtime_custody_held
+from .runtime_hooks import native_ended_reason, cancel_owned_runtime
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -114,13 +115,9 @@ class FactoryLifecycleObserver:
         if ticket and (ticket["status"] == "cancelled" or ticket.get("persistedRunStatus") == "cancelled"):
             return "native-ended"
         if ticket and ticket["status"] == "completed":
-            exact = task.get("run_id", "") + ":orx-experiment-launch-v1"
-            if any(effect.get("effect_key") == exact and effect_unresolved(effect)
-                   for effect in self.store.effects(task["id"])):
-                return "native-ended-unresolved-experiment"
-            workflow = getattr(self.store, 'workflow', None)
-            if workflow is not None and workflow.task_held(task['id']):
-                return 'native-ended-unfinished-workflow'
+            reason = native_ended_reason(self.store, task)
+            if reason:
+                return reason
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -192,11 +189,7 @@ class FactoryLifecycleObserver:
         # Detached experiment supervision belongs to the same persisted task.
         # Cleanup validates its original handle/source/limits even after grants
         # end. Native completion alone cannot prove that tree stopped.
-        from .orx_experiment_tools import reclaim_orx_experiment
-        await reclaim_orx_experiment(self.store.settings, self.store, task["id"])
-        workflow = getattr(self.store, 'workflow', None)
-        if workflow is not None:
-            await workflow.cancel_task(task['owner_id'], task['id'])
+        await cancel_owned_runtime(self.store, task)
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()

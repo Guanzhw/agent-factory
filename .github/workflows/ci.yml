@@ -67,6 +67,8 @@ jobs:
         run: uv run python scripts/check_autoresearch_postgres.py
       - name: Required synthetic workflow native mechanisms (no skips)
         run: uv run python scripts/check_workflow_postgres.py
+      - name: Required platform/application boundaries (no skips)
+        run: uv run python scripts/check_boundaries_postgres.py
       - name: PostgreSQL suite (bounded diagnostic log)
         shell: bash
         run: |
