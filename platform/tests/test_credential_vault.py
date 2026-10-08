@@ -301,6 +301,7 @@ if __name__ == "__main__": unittest.main()
 
 class VaultBoundedPoolTests(unittest.TestCase):
     def test_current_connection_authority_reads_reuse_one_slot_without_borrowing_writes(self):
+        from contextlib import ExitStack
         from contextvars import ContextVar
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -309,10 +310,10 @@ class VaultBoundedPoolTests(unittest.TestCase):
         from agent_factory.connections import ConnectionService
         from agent_factory.personal_remote_provider import CAPABILITIES, OpenCodeServeProvider
         from test_personal_remote_connections import Auth, Probe
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
             engine = create_engine('sqlite:///' + str(Path(directory) / 'metadata.db'),
                 pool_size=1, max_overflow=0, pool_timeout=.1)
-            self.addCleanup(engine.dispose)
+            cleanup.callback(engine.dispose)
             metadata = MetaData()
             Table('af_audit', metadata, Column('id', Integer, primary_key=True), Column('actor_id', String),
                 Column('action', String), Column('target_id', String), Column('body', JSON), Column('created_at', String))
