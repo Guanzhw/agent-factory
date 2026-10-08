@@ -10,7 +10,7 @@ export interface ApplicationTemplateEditorProps {
   onChange: (next: Record<string, unknown>) => void;
   disabled?: boolean;
 }
-const budgetNames: Record<string, string> = { toolCalls: '工具调用次数', maxDepth: '委派深度', maxChildren: '累计子任务数', experimentSeconds: '实验时长（秒）', outputBytes: '产物大小（字节）' };
+const budgetNames: Record<string, string> = { toolCalls: '工具调用次数', maxDepth: '委派深度', maxChildren: '累计子任务数', experimentSeconds: '实验时长（秒）', operationSeconds: '单次操作时限（秒）', outputBytes: '产物大小（字节）' };
 const configNames: Record<string, string> = { experimentDurationSeconds: '单次实验时长（秒）', askScopeBelowLength: '目标少于多少字符时询问范围' };
 const reference = (ref: MaterialReference) => `${ref.id}@${ref.version}:${ref.sha256}`;
 function InputSchemaEditor({ value, disabled, onChange }: { value: unknown; disabled: boolean; onChange: (value: unknown) => void }) {

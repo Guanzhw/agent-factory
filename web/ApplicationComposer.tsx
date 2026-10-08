@@ -16,7 +16,7 @@ type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const message = (e: unknown) => e instanceof Error ? e.message : '装配状态无法确认。';
 const refKey = (ref: MaterialReference) => `${materialKey(ref)}:${ref.sha256}`;
 const modeName = (value: string) => ({ literature: '文献与证据', experiment: '实验探索', success: '真实 ORX toy 成功评估', evaluator_failure: '真实 ORX 评估器失败验收', cancellable: '真实 ORX 运行中取消验收' } as Record<string, string>)[value] ?? value;
-const budgetNames: Record<string, string> = { toolCalls: '工具调用', maxDepth: '最大委派深度', maxChildren: '累计子任务', experimentSeconds: '实验秒数', outputBytes: '产物字节' };
+const budgetNames: Record<string, string> = { toolCalls: '工具调用', maxDepth: '最大委派深度', maxChildren: '累计子任务', experimentSeconds: '实验秒数', operationSeconds: '单次操作时限（秒）', outputBytes: '产物字节' };
 
 function adapterNames(bindings: Record<string, unknown> | null): string[] {
   if (!bindings) return [];

@@ -1,39 +1,57 @@
 # Factory, OpenResearch, and research workloads
 
-Status: bounded implementation available in this branch; baseline `f869ab5`. This contract is authoritative for the additive boundary-correction APIs. Historical acceptance reports remain historical evidence, not claims about this change.
+Status: reviewable implementation in this branch, based on `f869ab5`. This is the authoritative product boundary; implementation, controlled integration evidence, and live acceptance are separate. Historical acceptance reports remain historical evidence.
 
 ## Ownership
 
-- **Factory platform** owns authenticated actors, immutable approved definitions/plans, scoped connections, resource and tool budgets, native Agno durable dispatch, task identities, audit, cancellation, and evidence-based resource release. It does not decide research hypotheses.
-- **OpenResearch application** owns a user's projects, research sessions, instructions, project/session context, and result navigation. Factory's application catalog is the entry into the workspace, not a second application selector inside it. General material composition is a developer/administrator surface.
-- **Agent harness** owns the actual model/tool decision loop and native context. The existing deterministic Agno session controller is not a second model loop.
-- **Karpathy autoresearch** is one workload with training inputs and an independent evaluator. The current controlled eleven-literal candidate profile remains a bounded workload, not the definition of all OpenResearch.
+- **Factory platform** owns authenticated actors, immutable approved definitions/plans, owner connections, native Agno task/command dispatch, audit, platform budgets, and managed resource custody. It does not invent research decisions.
+- **OpenResearch application** keeps its actual upstream projects, sessions, transcripts, harness/model configuration and native tool loop. Factory stores owner/connection/native-ID mappings and observations, not replacement projects or another research inference loop. Its UI is entered from the Factory catalog without a second application selector.
+- **OpenCode runtime** can also be connected directly as a platform capability. Direct OpenCode sessions are not labelled OpenResearch projects or first-application acceptance.
+- **Karpathy autoresearch** is one workload with training inputs and an independent evaluator. Its controlled eleven-literal candidate profile remains a workload, not the definition of every research application.
 
-## Supported boundary in this increment
+## Explicit connection modes
 
-1. Explicit v2 application contracts use generic budgets and app-owned configuration. Existing v1 immutable versions and plan hashes remain readable and executable through a named compatibility path. Existing web clients stay compatible.
-2. Trusted runtime adapters own evidence projection and stop/held interpretation. Core authority and original task identity remain mandatory; an interrupt acknowledgement or missing effect never proves that every process stopped.
-3. Personal remote-agent onboarding targets an **existing OpenCode serve HTTPS endpoint**, not cloud compute provisioning and not an OpenResearch server. A platform-installed provider enforces network/identity/capability policy. Users create their own configuration and scoped binding; administrators do not pre-register each user's endpoint.
-4. Credentials are owner- and destination-scoped secret references resolved only by a trusted backend. A missing secret backend means onboarding is unavailable. No API, SQL row, prompt, diagnostic or audit field accepts plaintext credentials.
-5. OpenResearch workspace project/session records are owner-scoped. Executable workload sessions must use the existing approved Factory task admission and original task/run identity. A project record or a verified agent connection does not on its own grant execution or prove general OpenResearch compatibility.
-6. Deployment mode, execution kind, evidence kind and verification status are separate. A controlled development deployment can run a real provider; fixtures never prove real research completion.
+### Ordinary personal mode (personal-resource default)
+
+The user owns an existing remote service and its model credentials/billing. Factory verifies scoped service access, admits the exact command through its existing plan/review/native-task path, and preserves original upstream identities. Native tools and inference stay at the remote service. Reported usage is advisory; command acceptance and observed assistant output are not hard budget enforcement, provider billing proof, independent scientific validation, or verified process termination. Interrupt remains best effort and stopped state stays unverified.
+
+This is a separate trusted execution contract, `personal-external-v1`. It cannot be selected as a bypass flag on a managed plan. It receives no shared Factory model credential and allocates no managed remote lease. A local command task succeeding means command acceptance/observation, not that the remote process stopped. Existing configured temporary-plan review policy remains in force; personal mode does not silently auto-approve it.
+
+Supported ordinary providers are `opencode-personal-session-v1` and `openresearch-personal-session-v1`. The latter uses real pinned ORX project/session/message/interrupt APIs and preserves the native OpenResearch tool loop. Existing project/session attachment performs native reads only. Unknown POST acknowledgements never automatically replay; ORX unknown acknowledgements cannot be recovered from similar transcript text. Known-ack ORX transcript correlation is explicitly inferred, not exact turn-table proof.
+
+### Managed mode (optional stronger guarantees)
+
+Shared Factory credentials/budgets and managed capacity require the existing broker, shared ledger and positive original-process stop evidence. An independently installed supervisor/control reader must prove task/session ownership, broker-only egress and original cleanup scope. A remote health response or signed usage self-report is not such proof.
+
+The implemented managed attachment profile is currently an advanced single-turn, text-only connection probe, with one provider request and native tools disabled. It preserves the original project/session and yields a bounded native response artifact. It is not the complete managed research application. Managed multi-step research still needs the existing governed MCP tools to be wired through an installed supervisor, with source/workload attestation and shared accounting; no new reasoning loop is proposed.
+
+## Common contracts
+
+1. V2 applications use neutral budgets and app-owned configuration. V1 immutable definitions/hashes and plans remain on their explicit compatibility path. Remote Factory handoff v2 remains unsupported rather than falling back to broader v1 ceilings.
+2. Trusted adapters own evidence and stop interpretation. Core identity/authority/idempotency remain mandatory. Nothing in ordinary mode changes managed positive-stop release rules.
+3. Users configure their own endpoint records. Administrators install provider implementations, global network policy and publish shared capabilities, not each user's personal endpoint.
+4. The secure vault is opt-in: an external master key or organizational vault is required. Stored service credentials are ciphertext; owner/provider/destination/revision are bound cryptographically. Remote configuration, plans and prompts carry opaque references only. Known authentication echoes are rejected before remote metadata/transcripts are persisted.
+5. Configuration, verification, binding, rotation/revocation, and exact request recovery are distinct. A new verification or credential revision does not silently retarget an approved plan. Explicit renewal/rebind preserves original native IDs and historical command pins, rejects wider scope, and stays blocked when a pending/UNKNOWN turn cannot safely be reconciled.
+6. Deployment mode, execution kind, evidence kind and verification status are separate. Development can call a real provider; fixture results still do not prove live research.
 
 ## Acceptance matrix
 
-| Capability | Baseline | Required evidence before claiming ready |
+| Capability | Implemented contract | Evidence/remaining gate |
 |---|---|---|
-| Existing ORX/OpenCode session adapter and broker | Implemented, previously exercised narrowly | Preserve identity, unknown-ack and stop tests |
-| Generic v2 application contract | Implemented; local unit/native loop passed, PostgreSQL CI required | Unit and real PostgreSQL plan/dispatch tests; v1 hash compatibility |
-| Adapter-owned lifecycle/evidence | Implemented; controlled regressions passed | Existing cancellation/custody regressions plus adapter tests |
-| Personal remote agent configuration/verification/binding/revoke | Implemented provider contract; controlled tests passed, live/vault gate remains | Controlled HTTP tests, cross-owner/SSRF/secret-redaction/revoke tests; real PostgreSQL persistence |
-| User credential onboarding into a deployment's secure vault | Opt-in encrypted backend and secure form implemented; real master key/deployment absent | Explicitly authorized secret backend integration and verification |
-| OpenResearch project/session product API | Owner mappings + controlled task sessions + actual native read/attach implemented; native attached-session admission unavailable | Owner isolation, idempotency, original task linkage and honest capability tests |
-| General upstream ORX project creation, worktrees, playbooks and arbitrary harness/model selection | Not yet supported by this increment | Explicit adapter capability and integration evidence; no inferred readiness |
-| Live resource → project/session → model decision → managed tool/result → next decision → cancel/restart | Not accepted | Authorized real endpoint/model/runtime and exact evidence for every step |
-| Browser/UI acceptance | UI implemented with mounted component tests; visual/browser acceptance remains unavailable | User-owned UI branch integration; actual browser evidence |
+| Generic v2 application contract | Neutral limits/config; exact v1 compatibility | Unit/native loop and required real-PG tests |
+| Adapter-owned lifecycle/evidence | Original identity, no replay, positive managed stop | Existing custody/cancel regressions and required PG cases |
+| Secure owner remote onboarding | Configure → verify → scoped bind → status/revoke; opt-in encrypted vault | Synthetic credential/probe tests and real-PG concurrency/wiring; real vault deployment not performed |
+| Ordinary direct OpenCode sessions | Original native project/session, multi-turn tools/results, interrupt/recovery | Controlled HTTP/native-task fixtures; not ORX application proof |
+| Ordinary OpenResearch application | Actual upstream project/session attach, native tool-loop transcripts, further turns, interrupt/recovery | Controlled ORX-shaped wire + required native queue/PG first-app fixture; live compatibility unverified |
+| Explicit same-session renewal | Fresh verified pin + same native identity + explicit CAS/history; no pending-turn bypass | Controlled expiry/rotation, races, history, and UI tests; deployment validation required |
+| Managed native attachment | One-turn text-only probe using shared broker/ledger/custody | Controlled protocol/resource/accounting tests; real supervisor/kernel enforcement unverified |
+| Managed multi-step research | Existing governed tool bridge is the intended extension | Not complete; do not substitute the probe or checksum |
+| General new ORX project creation | Not enabled; upstream creation unconditionally warms a model and can inherit GitHub sync | Separate explicit side-effect consent/guarantee design; no implicit warmup/publication |
+| UI | Catalog → application workspace; resource setup; plans/tasks/results; ordinary/managed distinction | Mounted component/navigation/recovery tests; browser visual acceptance unavailable here |
+| Live resource → native research decisions/tools/results → continue/cancel/restart | Not accepted | Requires exact authorized real endpoint, credential handoff, execution/cost scope and collected evidence |
 
-Tests will be recorded by kind (unit, real PostgreSQL, controlled end-to-end, live external). Passing a checksum or synthetic workflow is never substituted for the live first-application chain. No new deployment exposure, credential grant, paid call, merge or production connection is authorized by this document. See [UI integration contract](OPENRESEARCH_UI_INTEGRATION.md) for exact routes and unsupported states.
+No merge, deployment exposure, real credential grant, remote execution or paid model call has been performed by this implementation. Tests distinguish unit, real PostgreSQL, controlled wire/native runtime, and live external evidence. Passing checksum or synthetic workflows never substitutes for the live first-app chain.
 
-## Upstream reference
+See [UI/API integration](OPENRESEARCH_UI_INTEGRATION.md), [personal remote connections](PERSONAL_REMOTE_CONNECTIONS.md), [ordinary native OpenResearch](PERSONAL_OPENRESEARCH.md), and [managed attachment requirements](NATIVE_ORX_ATTACHMENT.md).
 
-OpenResearch is pinned separately to `f336b121525d99364e2dee4fe90b2784894a54e6` (0.2.13). Its project/session capabilities exceed the current controlled Factory workload profile. The legacy CLI-only description in `OPENRESEARCH.md` describes a historical narrow adapter; `AUTORESEARCH_SESSION.md` describes the current session path.
+OpenResearch's native contract is pinned to `f336b121525d99364e2dee4fe90b2784894a54e6` (0.2.13). `OPENRESEARCH.md` documents the legacy CLI adapter; `AUTORESEARCH_SESSION.md` describes the controlled research-session workload path. Neither alone defines the full product.

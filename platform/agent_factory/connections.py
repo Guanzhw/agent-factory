@@ -457,10 +457,10 @@ class ConnectionService:
                 required_capabilities=required_capabilities, task_id=task_id)
             handle = trusted.opaque_handle
             if _row["registration_ref"].startswith("remote-"):
-                handle = handle.guarded(lambda: self.preflight(owner, reference, expected_kind,
+                handle = handle.guarded(lambda operation_capabilities=(): self.preflight(owner, reference, expected_kind,
                     expected_revision=trusted.revision, expected_fingerprint=_row["fingerprint"],
                     expected_version=_row["version"], expected_adapter_ref=trusted.adapter_ref,
-                    required_capabilities=trusted.capabilities, task_id=task_id))
+                    required_capabilities=self._caps(required_capabilities) | self._caps(operation_capabilities), task_id=task_id))
             return handle
 
 

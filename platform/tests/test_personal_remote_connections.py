@@ -113,6 +113,30 @@ class PersonalRemoteTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.service.request_result('bob', 'bind-request')
 
+    def test_successful_response_cannot_persist_known_authentication_echo(self):
+        import base64
+        from agent_factory.personal_remote_provider import reject_credential_echo
+        lease = self.secrets.resolve(owner='alice', reference='synthetic-vault-ref', revision='v1',
+            destination='https://runtime.example.com')
+        encoded = base64.b64encode((lease.username + ':' + lease.password).encode()).decode()
+        for value in ({'text': lease.password}, {lease.password: 'key'}, [{'text': encoded}],
+                {'text': 'Bearer ' + lease.password}):
+            with self.assertRaisesRegex(RemoteConnectionError, '^REMOTE_CREDENTIAL_ECHO_REJECTED$'):
+                reject_credential_echo(value, lease)
+        original = self.probe.get
+        def echo(destination, address, path, credentials=None):
+            if path == '/agent' and credentials is not None:
+                return 200, [{'name': credentials.password}]
+            return original(destination, address, path, credentials)
+        self.probe.get = echo
+        created = self.create()
+        with self.assertRaises(HTTPException):
+            self.personal.verify('alice', created['registrationRef'], 'auth-echo-request')
+        with self.engine.connect() as conn:
+            records = [dict(row) for row in conn.execute(self.personal.resources.select()).mappings()]
+        self.assertNotIn(lease.password, repr(records))
+        self.assertFalse(self.personal.inspect('alice', created['registrationRef'])['available'])
+
     def test_create_verify_bind_resolve_revoke_and_restart(self):
         created = self.create()
         self.assertEqual(created["status"], "configured")

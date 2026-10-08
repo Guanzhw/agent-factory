@@ -6,6 +6,8 @@ owner requests. The API must run behind the authenticated browser/CSRF bridge.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import hmac
 import secrets
@@ -69,6 +71,7 @@ class EncryptedCredentialVault:
                     for provider, policy in self._policies.items()):
                 raise CredentialVaultError()
             self.engine = engine
+            self._read_context: ContextVar | None = None
             metadata = MetaData()
             self.credentials = Table("af_encrypted_credentials", metadata,
                 Column("reference", String, primary_key=True), Column("owner_id", String, nullable=False),
@@ -84,6 +87,23 @@ class EncryptedCredentialVault:
 
     def __repr__(self):
         return "EncryptedCredentialVault(master_key=<redacted>)"
+
+    def bind_read_context(self, context):
+        """Trusted startup hook; join metadata reads, never credential writes."""
+        if not isinstance(context, ContextVar) or self._read_context not in (None, context):
+            raise CredentialVaultError()
+        self._read_context = context
+
+    @contextmanager
+    def _read(self):
+        borrowed = self._read_context.get() if self._read_context is not None else None
+        if borrowed is not None:
+            if borrowed.engine is not self.engine or borrowed.closed:
+                raise CredentialVaultError()
+            yield borrowed
+        else:
+            with self.engine.connect() as conn:
+                yield conn
 
     @staticmethod
     def _identifier(value):
@@ -144,7 +164,7 @@ class EncryptedCredentialVault:
         try:
             if not self._identifier(owner):
                 raise CredentialRequestRejected()
-            with self.engine.connect() as conn:
+            with self._read() as conn:
                 rows = conn.execute(select(*(self.credentials.c[key] for key in
                     ("reference", "revision", "provider_id", "destination", "state")))
                     .where(self.credentials.c.owner_id == owner)
@@ -163,7 +183,7 @@ class EncryptedCredentialVault:
 
     def recover(self, *, owner, request_id):
         try:
-            with self.engine.connect() as conn:
+            with self._read() as conn:
                 previous = self._command(conn, owner, request_id)
                 return previous["result"] if previous else None
         except CredentialRequestRejected:
@@ -247,7 +267,7 @@ class EncryptedCredentialVault:
 
     def authorize(self, *, owner, reference, revision, provider_id, destination):
         try:
-            with self.engine.connect() as conn:
+            with self._read() as conn:
                 row = self._row(conn, owner, reference, revision)
                 return (row["provider_id"], row["destination"]) == (provider_id, self._destination(provider_id, destination))
         except Exception:
@@ -255,7 +275,7 @@ class EncryptedCredentialVault:
 
     def resolve(self, *, owner, reference, revision, provider_id, destination):
         try:
-            with self.engine.connect() as conn:
+            with self._read() as conn:
                 row = self._row(conn, owner, reference, revision)
                 if (row["provider_id"], row["destination"]) != (provider_id, self._destination(provider_id, destination)):
                     raise CredentialVaultError()

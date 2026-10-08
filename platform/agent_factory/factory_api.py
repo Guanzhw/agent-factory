@@ -123,6 +123,38 @@ class FactoryAPI:
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
+    async def instantiate(self, owner, body: InstanceRequest):
+        """Shared governed admission, including durable unknown-ack handling."""
+        self.auth.require(owner, "run")
+        self.store.require_current_policy()
+        plan = self.store.plan(body.planId, owner)
+        if plan.get("delegation") or plan.get("remoteHandoff"):
+            raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
+        if plan["status"] != "ready":
+            raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
+        self.store.require_plan_execution(owner, plan)
+        if body.executionTargetRef:
+            if self.remote is None:
+                raise HTTPException(503, "Trusted remote execution is unavailable")
+            return await self.remote.instantiate(owner, plan["id"], body.executionTargetRef, body.requestId)
+        task, fresh = self.store.reserve_task(plan, body.requestId)
+        if self.remote and self.remote.placed(task):
+            raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
+        if fresh:
+            try:
+                receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, owner, body.requestId)
+                self.store.accept(task["id"], receipt["run_id"])
+                self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
+            except HTTPException as error:
+                if error.status_code >= 500:
+                    self.store.admission_unknown(task["id"])
+                else:
+                    self.store.admission_failed(task["id"], "Native admission rejected")
+                    raise error
+            except Exception:
+                self.store.admission_unknown(task["id"])
+        return (await self.detail(self.store.task(task["id"], owner))) ["job"]
+
     def user(self, request, action="run"):
         user = self.auth.user(request)
         self.auth.require(user["id"], "components:write" if action == "write" else action)
@@ -218,6 +250,12 @@ class FactoryAPI:
                     'toolName': 'workflow_wait', 'arguments': tool.get('tool_args', {})}, approval={'scope': scope})
             elif await project_runtime_requirement(self.store, task, requirement, version, status, job, actions):
                 pass
+            elif tool.get("external_execution_required") and tool.get("tool_name") in getattr(self.store, "external_execution_handlers", {}) and tool.get("result") is None:
+                scope = "Continue this exact approved external execution within its existing budget and original custody."
+                job.update(approvalDetail={"id": requirement["id"], "version": version, "scope": scope,
+                    "toolName": tool["tool_name"], "arguments": tool.get("tool_args", {})}, approval={"scope": scope})
+                if status == "waiting_approval":
+                    actions.append("approve")
             elif tool.get("requires_user_input") and not tool.get("answered"):
                 question = {"id": requirement["id"], "version": version, "text": "请补充本任务所需的信息。", "fields": requirement.get("user_input_schema") or tool.get("user_input_schema") or []}
                 job.update(questionDetail=question, question=question["text"])
@@ -346,34 +384,7 @@ class FactoryAPI:
         @router.post("/instances", status_code=202)
         async def instantiate(body: InstanceRequest, request: Request):
             user = self.user(request)
-            self.store.require_current_policy()
-            plan = self.store.plan(body.planId, user["id"])
-            if plan.get("delegation") or plan.get("remoteHandoff"):
-                raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
-            if plan["status"] != "ready":
-                raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
-            self.store.require_plan_execution(user["id"], plan)
-            if body.executionTargetRef:
-                if self.remote is None:
-                    raise HTTPException(503, "Trusted remote execution is unavailable")
-                return await self.remote.instantiate(user["id"], plan["id"], body.executionTargetRef, body.requestId)
-            task, fresh = self.store.reserve_task(plan, body.requestId)
-            if self.remote and self.remote.placed(task):
-                raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
-            if fresh:
-                try:
-                    receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, user["id"], body.requestId)
-                    self.store.accept(task["id"], receipt["run_id"])
-                    self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
-                except HTTPException as error:
-                    if error.status_code >= 500:
-                        self.store.admission_unknown(task["id"])
-                    else:
-                        self.store.admission_failed(task["id"], "Native admission rejected")
-                        raise error
-                except Exception:
-                    self.store.admission_unknown(task["id"])
-            return (await self.detail(self.store.task(task["id"], user["id"]))) ["job"]
+            return await self.instantiate(user["id"], body)
 
         @router.get("/requests/{request_id}")
         def request_receipt(request_id: str, request: Request):

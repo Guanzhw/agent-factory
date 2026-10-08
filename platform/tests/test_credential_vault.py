@@ -297,3 +297,40 @@ class CredentialVaultTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class VaultBoundedPoolTests(unittest.TestCase):
+    def test_current_connection_authority_reads_reuse_one_slot_without_borrowing_writes(self):
+        from contextvars import ContextVar
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, create_engine
+        from agent_factory.connections import ConnectionService
+        from agent_factory.personal_remote_provider import CAPABILITIES, OpenCodeServeProvider
+        from test_personal_remote_connections import Auth, Probe
+        with TemporaryDirectory() as directory:
+            engine = create_engine('sqlite:///' + str(Path(directory) / 'metadata.db'),
+                pool_size=1, max_overflow=0, pool_timeout=.1)
+            self.addCleanup(engine.dispose)
+            metadata = MetaData()
+            Table('af_audit', metadata, Column('id', Integer, primary_key=True), Column('actor_id', String),
+                Column('action', String), Column('target_id', String), Column('body', JSON), Column('created_at', String))
+            metadata.create_all(engine)
+            context = ContextVar('vault-pool-one', default=None)
+            vault = EncryptedCredentialVault(engine, b's' * 32, {PROVIDER_ID: origin})
+            vault.bind_read_context(context)
+            value = vault.create(owner='alice', provider_id=PROVIDER_ID, destination='https://runtime.example.com',
+                username='synthetic-user', password='synthetic-password', request_id='pool-credential')
+            provider = OpenCodeServeProvider(vault.secret_provider(PROVIDER_ID), probe=Probe())
+            connections = ConnectionService(SimpleNamespace(engine=engine, _connection=context), Auth(),
+                personal_providers={PROVIDER_ID: provider})
+            config = {'origin': value['destination'], 'projectId': 'project-fixture',
+                'credentialRef': value['credentialRef'], 'credentialRevision': value['credentialRevision']}
+            remote = connections.personal.configure('alice', PROVIDER_ID, config, 'pool-configure')
+            connections.personal.verify('alice', remote['registrationRef'], 'pool-verify')
+            bound = connections.bind('alice', remote['registrationRef'], 'pool-bind', capabilities=list(CAPABILITIES))
+            handle = connections.resolve('alice', bound['ref'], 'environment', required_capabilities=CAPABILITIES)
+            self.assertEqual(handle.inspect_identity()['projectId'], 'project-fixture')
+            self.assertEqual(connections.preflight('alice', bound['ref'], 'environment')['status'], 'active')
+            self.assertEqual(engine.pool.checkedout(), 0)

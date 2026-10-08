@@ -18,9 +18,15 @@ def main():
         'test_openresearch_workspace_postgres.WorkspacePostgresTests',
         'test_credential_vault_postgres.CredentialVaultPostgresTests',
         'test_credential_vault_wiring_postgres.CredentialVaultWiringPostgresTests',
+        'test_managed_workspace_postgres.ManagedWorkspacePostgresTests',
+        'test_managed_orx_attachment_postgres.ManagedORXPostgresTests',
+        'test_personal_command_postgres.PersonalCommandPostgresTests',
+        'test_personal_orx_postgres.PersonalOrxPostgresTests',
+        'test_lifecycle_observer_postgres.LifecycleObserverPostgresTests.test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection',
+        'test_remote_authority.OriginAuthorityPostgresTests.test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider',
     ]
     suite = unittest.defaultTestLoader.loadTestsFromNames(names)
-    expected = 6
+    expected = 13
     if suite.countTestCases() != expected:
         print('BOUNDARIES_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

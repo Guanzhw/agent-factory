@@ -11,7 +11,7 @@ Two project kinds must remain visibly distinct:
 - `factory-workspace`: Factory-owned grouping metadata over existing controlled-workload tasks. Its name/description does not rewrite the workload's repository, model or instructions. `upstreamProjectId` is null and session `contextSource` is `approved-workload-preset`.
 - `native-openresearch`: a mapping to an actual upstream project observed through an owner-scoped trusted ORX adapter. `upstreamProjectId` and `nativeProject.projectIdentityHash` identify the original project/path/version mapping. This hash is **not** a repository content hash or scientific provenance proof. Native metadata is not copied into a new upstream project.
 
-An OpenCode serve connection is an agent/harness environment, not an ORX workspace. Connecting it does not turn on the native OpenResearch project API or automatically authorize inference.
+An OpenCode serve connection is a platform agent/harness environment, not an ORX workspace. The separate ordinary OpenResearch provider uses native ORX project/session APIs; it is not a renamed direct OpenCode connection. Neither connection automatically authorizes inference. See [ordinary OpenResearch](PERSONAL_OPENRESEARCH.md) and [governed personal commands](PERSONAL_NATIVE_COMMANDS.md) for the normal personal-mode path.
 
 ## Additive endpoints
 
@@ -33,13 +33,13 @@ All routes are authenticated under `/api/factory/openresearch`; authority is rec
 
 Create/attach and session requests are idempotent by owner and request ID. Reusing an ID for changed intent returns 409. Never generate a replacement request ID automatically after an unknown response. Keep the original project/session and offer read-only reconciliation. Cancellation acknowledgment is not proof of stopped resources.
 
-A selected connection must be the connection the controlled preset actually uses. Mismatches return `OPENRESEARCH_WORKLOAD_CONNECTION_MISMATCH`. Native attached projects currently return `NATIVE_PROJECT_GOVERNED_SESSION_BINDING_REQUIRED` for session admission: the code does not quietly dispatch a different preset's project. Full project-specific governed session/model selection remains a subsequent integration gate.
+A selected connection must be the connection the controlled preset actually uses. Mismatches return `OPENRESEARCH_WORKLOAD_CONNECTION_MISMATCH`. The legacy controlled-workload route rejects native attached projects with `NATIVE_PROJECT_GOVERNED_SESSION_BINDING_REQUIRED`; it never dispatches a different preset's project. Ordinary native OpenResearch sessions use the separate `/personal-agent` command flow and actual ORX adapter. Explicitly installed managed profiles use the separately labelled one-turn probe preparation/start endpoints; they do not imply full managed research availability.
 
 ## Resource onboarding
 
 See [PERSONAL_REMOTE_CONNECTIONS.md](PERSONAL_REMOTE_CONNECTIONS.md). Read available providers before showing a connect form. No provider/secret backend is installed by default. Entering an endpoint does not verify it. Configure → verify → bind is explicit; only immutable active scoped bindings are selectable for a plan. Show expired/changed/revoked states and preserve identity across recovery.
 
-The current native ORX read/attach handle is a trusted compatibility adapter with owner-exclusive server and source-path pins. It is not yet a self-service ORX remote provider. Existing OpenCode onboarding verifies read-only health/project/agent capabilities; it neither allocates compute nor starts a session.
+The legacy managed native ORX read/attach handle retains owner-exclusive server and source-path pins. The separate ordinary ORX provider is self-service after globally installed capability/vault configuration, with explicit service Bearer-token or Basic-proxy authentication. Read verification is separate from owner-granted session API scope; no compute is provisioned. Ordinary mode preserves remote model credentials/billing and labels usage and interrupt outcomes as unverified/advisory.
 
 ## Truthful evidence
 
@@ -49,7 +49,7 @@ Use `deploymentMode`, `executionKind`, `evidenceKind`, and `verificationStatus` 
 
 The pinned upstream [create endpoint](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1411-L1522) unconditionally calls `local::starter::warm`, which makes a model call. `githubSyncEnabled` is an explicit request override; upstream otherwise has a configuration default. The adapter does not invoke create, `/open`, harness probes, warmup or GitHub synchronization during read/attach.
 
-Before enabling creation, the product must disclose the exact model provider/cost ceiling and any repository publication, obtain the corresponding user authorization, and enforce accounting through the shared Factory budget. A client approval boolean alone does not satisfy that requirement. No supported upstream flag suppresses warmup in the pinned revision.
+Before enabling project creation, the product must disclose its model warmup and any repository publication and obtain the corresponding user authorization. Managed/shared-budget creation must enforce the shared accounting contract; ordinary owner-funded creation must retain its explicit remote-cost guarantee boundary. Neither is enabled by a client bypass boolean. No supported upstream flag suppresses warmup in the pinned revision.
 
 ## Versioned developer composition
 

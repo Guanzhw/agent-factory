@@ -183,8 +183,9 @@ export interface EventPage {
 
 export type { UserConnection, ConnectionRegistration, ConnectionKind, ConnectionStatus } from '../shared/types.js';
 
-export interface ApplicationBudget { toolCalls: number; maxDepth: number; maxChildren: number; experimentSeconds: number; outputBytes: number }
+export interface ApplicationBudget { toolCalls: number; maxDepth: number; maxChildren: number; experimentSeconds?: number; operationSeconds?: number; outputBytes: number }
 export interface ApplicationMode {
+  configSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   materialRefs: MaterialReference[];
   materialChoices: Record<string, { kind: Material['kind']; defaultRef: MaterialReference; allowedRefs: MaterialReference[] }>;
@@ -192,6 +193,7 @@ export interface ApplicationMode {
   connectionRequirements: { name: string; kind: import('../shared/types.js').ConnectionKind; requiredCapabilities: string[]; required: boolean }[];
 }
 export interface FactoryApplication {
+  contractVersion?: 2;
   id: string; version: number; sha256: string; name: string; description: string;
   discoveryKeywords: string[]; defaultForDiscovery: boolean; defaultMode: string; modes: Record<string, ApplicationMode>;
 }
@@ -212,6 +214,7 @@ export interface CompositionInput {
   materialChoices?: Record<string, MaterialReference>; connectionRefs?: Record<string, string>;
 }
 export interface AssemblyCandidate {
+  contractVersion?: 2;
   inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   inputValues?: import('./applicationInputState.js').ApplicationInputValues;
   sourceSnapshotRef?: { id: string; fingerprint: string };

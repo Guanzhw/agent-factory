@@ -35,7 +35,7 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
   })}</div>;
 }
 
-export function ConnectionsPanel({ user, jobs, busy, act, onNotice }: { user: User; jobs: FactoryJob[]; busy: string; act: Act; onNotice: (message: string) => void }) {
+export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onTask }: { user: User; jobs: FactoryJob[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void }) {
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [registrations, setRegistrations] = useState<ConnectionRegistration[]>([]);
   const [registrationRef, setRegistrationRef] = useState('');
@@ -102,7 +102,7 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice }: { user: Us
     });
   }
   return <section className="connections-page"><div className="page-heading"><div><h1>我的资源连接</h1><p>配置自己的远程服务，并管理资源绑定与执行租约。</p></div><button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div>
-    <PersonalRemotes key={user.id} user={user} jobs={jobs} onChanged={() => setRefresh(n => n + 1)} />
+    <PersonalRemotes key={user.id} user={user} jobs={jobs} onTask={onTask} onChanged={() => setRefresh(n => n + 1)} />
     <details><summary>高级：绑定已有可信登记</summary><p className="state-note">兼容管理员已配置的资源登记；不创建云资源。可用状态不代表真实提供商已验证。</p>
     {error && <div role="alert" className="error-message">{error}</div>}
     <form className="material-editor" onSubmit={event => { event.preventDefault(); void bind(); }}><h2>绑定可信资源</h2><div className="editor-grid"><label>可信登记<select aria-label="可信登记" value={registrationRef} disabled={!!busy || !ready} onChange={event => selectRegistration(event.target.value)}><option value="">选择已授权登记</option>{registrations.map(item => <option key={item.registrationRef} value={item.registrationRef} disabled={!item.available || !item.allowedActions.includes('bind')}>{names[item.kind]} · {item.registrationRef} · {states[item.status]}</option>)}</select></label><label>任务范围<select aria-label="连接任务范围" value={taskId} disabled={!!busy || !ready} onChange={event => setTaskId(event.target.value)}><option value="">我的用户范围</option>{activeJobs.map(job => <option key={job.id} value={job.id}>{job.input.topic}</option>)}</select></label></div>

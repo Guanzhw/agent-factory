@@ -52,14 +52,23 @@ class WorkspaceSessionCreate(BaseModel):
         return value
 
 
+class WorkspaceManagedPrepare(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requestId: str = Field(min_length=8, max_length=100, pattern=ID)
+    profileId: str = Field(min_length=1, max_length=100, pattern=ID)
+    goal: str = Field(min_length=2, max_length=2000)
+
+
 class WorkspaceCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: str = Field(min_length=8, max_length=100, pattern=ID)
 
 
 class OpenResearchWorkspace:
-    def __init__(self, store, auth, research):
+    def __init__(self, store, auth, research, *, factory=None, managed_profiles=None):
         self.store, self.auth, self.research = store, auth, research
+        import copy
+        self.factory, self.managed_profiles = factory, copy.deepcopy(managed_profiles or {})
         self.db = GovernedStorage(store, 'af_openresearch_workspace_v1')
         metadata = MetaData()
         self.projects = Table('af_openresearch_workspace_projects', metadata,
@@ -179,6 +188,161 @@ class OpenResearchWorkspace:
             raise HTTPException(409, 'OPENRESEARCH_NATIVE_PROJECT_CHANGED')
         return {**project, 'nativeProject': native}
 
+    def _managed_profile(self, owner, project, profile_id):
+        """Resolve only operator-installed original custody; never accept JSON proof."""
+        from .managed_orx_attachment import ManagedORXSessionProvider
+        self.auth.require(owner, 'run')
+        if project['kind'] != 'native-openresearch':
+            raise HTTPException(409, 'OPENRESEARCH_NATIVE_PROJECT_REQUIRED')
+        value = self.managed_profiles.get(profile_id)
+        if not value or value.get('ownerId') != owner:
+            raise HTTPException(404, 'OPENRESEARCH_MANAGED_PROFILE_NOT_FOUND')
+        ref, pin = project['connectionRefs']['workspace'], project['connectionPins']['workspace']
+        adapter, current = self._native_adapter(owner, ref, pin)
+        target = self.store.process_runtime.resources.targets.get(value['targetRef'])
+        provider = getattr(target, 'provider', None)
+        if type(provider) is not ManagedORXSessionProvider or owner not in target.owners or target.axis != 'compute':
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_PROVIDER_UNAVAILABLE')
+        contract = provider.contract
+        expected = {'ownerId': owner, 'connectionRef': ref, 'connectionFingerprint': current['fingerprint'],
+            'connectionRevision': current['revision'], 'connectionVersion': current['version'],
+            'projectId': project['upstreamProjectId'], 'projectIdentityHash': project['nativeProject']['projectIdentityHash']}
+        profiles = adapter.describe(owner)['sessionProfiles']
+        native_profile = next((p for p in profiles if p['id'] == value['nativeProfileId']), None)
+        if (any(contract.get(k) != v for k, v in expected.items())
+                or value['connectionPin'] != pin or value['contractSha256'] != digest(contract)
+                or value['sessionId'] != contract['sessionId']
+                or native_profile is None or {k: v for k, v in native_profile.items() if k != 'id'} != contract['profile']):
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_ATTACHMENT_CHANGED')
+        application = self.store.applications.require_current(value['applicationRef'])
+        from .managed_orx_profile import exact_input_schema
+        mode = application.get('modes', {}).get(value['mode'], {})
+        if mode.get('inputSchema') != exact_input_schema(contract):
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_APPLICATION_SCHEMA_CHANGED')
+        # Pure composition preflight: list only currently executable installed
+        # bindings with a real usage commitment. It does not persist a proposal.
+        inputs = self.store.composition._input('Verify original managed attachment', value['mode'], None,
+            value['applicationRef'], None, value.get('connectionRefs', {}), input_values={'managedAttachment': contract})
+        candidate = self.store.composition._candidate(owner, inputs, application)
+        if candidate.get('status') != 'ready':
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_PROFILE_UNAVAILABLE')
+        self._validate_managed_plan(candidate, value, contract)
+        return value, contract
+
+    @staticmethod
+    def _validate_managed_plan(plan, profile, contract):
+        bindings = plan.get('executionBindings') or {}
+        model = bindings.get('model', {})
+        if (plan.get('inputValues', {}).get('managedAttachment') != contract
+                or plan.get('applicationRef') != profile['applicationRef']
+                or model.get('adapterId') != 'managed-orx-pause-model-v1'
+                or model.get('config', {}).get('targetRef') != profile['targetRef']
+                or plan.get('tools') != ['bounded_process_run']
+                or any(spec.get('config', {}).get('targetRef') != profile['targetRef']
+                    for spec in [bindings.get('environment', {}), *bindings.get('tools', [])])):
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_PLAN_BINDING_INVALID')
+
+    async def list_managed_profiles(self, owner, project_id):
+        self.auth.require(owner, 'read')
+        project = await self.refresh_native_project(owner, project_id)
+        result = []
+        for identifier in self.managed_profiles:
+            try:
+                profile, contract = self._managed_profile(owner, project, identifier)
+            except (HTTPException, ValueError):
+                continue
+            result.append({'id': identifier, 'name': profile.get('name', identifier),
+                'applicationRef': profile['applicationRef'], 'nativeProfileId': profile['nativeProfileId'],
+                'upstreamSessionId': contract['sessionId'], 'profile': contract['profile'],
+                'executionContract': 'managed-native-attachment-v1', 'liveEndToEndVerified': False,
+                'kind': 'managed-connection-probe', 'modelRequests': 1, 'nativeTools': 'disabled',
+                'nativeResearchAvailable': False})
+        return result
+
+    async def prepare_managed(self, owner, project_id, body):
+        self.auth.require(owner, 'run')
+        fp = digest({'action': 'managed-prepare', 'projectId': project_id, 'payload': body.model_dump(exclude={'requestId'})})
+        with self.db.read() as conn:
+            old = self.db.old(conn, self.commands, owner, body.requestId, fp)
+        if old:
+            return self.session(owner, project_id, old['id'])
+        project = await self.refresh_native_project(owner, project_id)
+        profile, contract = self._managed_profile(owner, project, body.profileId)
+        # One transaction joins composition intent, immutable plan and session.
+        # No plan review decision, native admission, allocation or provider call.
+        with self.db.write() as conn:
+            old = self.db.old(conn, self.commands, owner, body.requestId, fp)
+            if old:
+                return self.session(owner, project_id, old['id'])
+            key = digest({'owner': owner, 'request': body.requestId})
+            proposal = self.store.composition.propose(owner, body.goal, mode=profile['mode'],
+                application_ref=profile['applicationRef'], connection_refs=profile.get('connectionRefs', {}),
+                request_id='or-propose:' + key, input_values={'managedAttachment': contract})
+            plan = self.store.composition.accept(owner, proposal['id'], 'or-accept:' + key)
+            self._validate_managed_plan(plan, profile, contract)
+            identifier = 'ors-' + uuid4().hex
+            value = {'id': identifier, 'projectId': project_id, 'goal': body.goal,
+                'managedProfileId': body.profileId, 'nativeProfileId': profile['nativeProfileId'],
+                'managedProfileSha256': digest(profile),
+                'managedContractSha256': digest(contract), 'planId': plan['id'],
+                'executionContract': 'managed-native-attachment-v1',
+                'nativeRequestId': 'or-session:' + digest({'owner': owner, 'session': identifier}),
+                'contextSource': 'original-native-project-session', 'upstreamSessionId': contract['sessionId'],
+                'createdAt': now()}
+            conn.execute(self.sessions.insert().values(id=identifier, owner_id=owner, project_id=project_id,
+                body=value, state='prepared', task_id=None, created_at=value['createdAt']))
+            self.db.record(conn, self.commands, owner, body.requestId, fp, 'managed-prepare', {'id': identifier})
+        return self.session(owner, project_id, identifier)
+
+    async def start_managed(self, owner, project_id, session_id, request_id):
+        from .factory_api import InstanceRequest
+        if self.factory is None:
+            raise HTTPException(503, 'OPENRESEARCH_MANAGED_ADMISSION_UNAVAILABLE')
+        self.auth.require(owner, 'run')
+        with self.db.read() as conn:
+            row = dict(self._session(conn, owner, project_id, session_id))
+        if row['body'].get('executionContract') != 'managed-native-attachment-v1':
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_SESSION_REQUIRED')
+        project = await self.refresh_native_project(owner, project_id)
+        profile, contract = self._managed_profile(owner, project, row['body']['managedProfileId'])
+        if digest(profile) != row['body']['managedProfileSha256'] or digest(contract) != row['body']['managedContractSha256']:
+            raise HTTPException(409, 'OPENRESEARCH_MANAGED_ATTACHMENT_CHANGED')
+        plan = self.store.plan(row['body']['planId'], owner)
+        self.store.require_plan_execution(owner, plan)
+        fp = digest({'action': 'managed-start', 'projectId': project_id, 'sessionId': session_id})
+        with self.db.write() as conn:
+            old = self.db.old(conn, self.commands, owner, request_id, fp)
+            current = self._session(conn, owner, project_id, session_id)
+            fresh = old is None and current['state'] == 'prepared'
+            if old is None:
+                self.db.record(conn, self.commands, owner, request_id, fp, 'managed-start', {'id': session_id})
+            if fresh:
+                conn.execute(self.sessions.update().where(self.sessions.c.id == session_id,
+                    self.sessions.c.owner_id == owner).values(state='dispatch-intent'))
+        if fresh:
+            try:
+                result = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=row['body']['nativeRequestId']))
+                self._link_managed(owner, session_id, result['id'])
+            except BaseException:
+                with self.db.write() as conn:
+                    conn.execute(self.sessions.update().where(self.sessions.c.id == session_id,
+                        self.sessions.c.owner_id == owner).values(state='unknown'))
+                raise
+        return self.reconcile(owner, project_id, session_id)
+
+    def _link_managed(self, owner, session_id, task_id):
+        task = self.store.task(task_id, owner)
+        with self.db.write() as conn:
+            row = conn.execute(select(self.sessions).where(self.sessions.c.id == session_id,
+                self.sessions.c.owner_id == owner)).mappings().first()
+            if row is None:
+                raise HTTPException(404, 'OPENRESEARCH_SESSION_NOT_FOUND')
+            if (task['plan_id'] != row['body']['planId'] or task['request_id'] != row['body']['nativeRequestId']
+                    or row['task_id'] not in (None, task_id)):
+                raise HTTPException(409, 'OPENRESEARCH_SESSION_IDENTITY_CHANGED')
+            conn.execute(self.sessions.update().where(self.sessions.c.id == session_id,
+                self.sessions.c.owner_id == owner).values(task_id=task_id, state='task-linked'))
+
     def _project(self, conn, owner, project_id):
         row = conn.execute(select(self.projects).where(self.projects.c.id == project_id,
             self.projects.c.owner_id == owner)).mappings().first()
@@ -240,6 +404,28 @@ class OpenResearchWorkspace:
     def _projection(self, owner, row):
         result = {**row['body'], 'state': row['state'], 'taskId': row['task_id'],
             'verificationStatus': 'not-live-verified', 'upstreamSessionId': None}
+        if row['body'].get('executionContract') == 'managed-native-attachment-v1':
+            plan = self.store.plan(row['body']['planId'], owner)
+            try:
+                authorization = self.store.plan_policy.status(owner, plan)
+            except HTTPException as error:
+                if error.status_code != 403:
+                    raise
+                # Read permission remains sufficient to inspect the original
+                # mapping after execution authority is revoked. Never grant a
+                # replacement execution/review capability from this projection.
+                authorization = {'executionAllowed': False, 'reviewRequired': False,
+                    'reviewRequestSupported': False, 'nativeToolConfirmationRequired': True,
+                    'policy': self.store.plan_policy.current(), 'reason': 'Current execution permission is unavailable',
+                    'code': 'EXECUTION_PERMISSION_REVOKED', 'approval': None}
+            result.update(upstreamSessionId=row['body']['upstreamSessionId'], plan=plan,
+                authorization=authorization, taskUrl=None)
+            if row['task_id']:
+                task = self.store.task(row['task_id'], owner)
+                result.update(state=task['body'].get('lastStatus', task['admission']),
+                    admission=task['admission'], outcomeSource='persisted_factory_observation',
+                    taskUrl='/jobs/' + task['id'])
+            return result
         if row['task_id']:
             run = self.research.projection(owner, row['task_id'])
             result.update(state=run['status'], research=run)
@@ -326,6 +512,16 @@ class OpenResearchWorkspace:
         self.auth.require(owner, 'read')
         with self.db.read() as conn:
             row = dict(self._session(conn, owner, project_id, session_id))
+        if row['body'].get('executionContract') == 'managed-native-attachment-v1':
+            if row['task_id'] is None and row['state'] != 'prepared':
+                try:
+                    task = self.store.task_for_request(row['body']['nativeRequestId'], owner)
+                except HTTPException as error:
+                    if error.status_code != 404:
+                        raise
+                else:
+                    self._link_managed(owner, session_id, task['id'])
+            return self.session(owner, project_id, session_id)
         if row['task_id'] is None:
             run = self.research.recover(owner, row['body']['nativeRequestId'])
             if run is not None:
@@ -337,7 +533,13 @@ class OpenResearchWorkspace:
         value = self.reconcile(owner, project_id, session_id)
         if value['taskId'] is None:
             raise HTTPException(409, 'OPENRESEARCH_DISPATCH_RECONCILIATION_REQUIRED')
-        await self.research.cancel(owner, value['taskId'], request_id)
+        if value.get('executionContract') == 'managed-native-attachment-v1':
+            from .control_commands import ControlCommand
+            if self.factory is None:
+                raise HTTPException(503, 'OPENRESEARCH_MANAGED_ADMISSION_UNAVAILABLE')
+            await self.factory.commands.submit(owner, value['taskId'], ControlCommand(commandId=request_id, action='cancel'))
+        else:
+            await self.research.cancel(owner, value['taskId'], request_id)
         return self.session(owner, project_id, session_id)
 
 
@@ -375,6 +577,18 @@ def openresearch_workspace_router(auth, service):
     @router.get('/projects/{project_id}')
     def project(project_id: str, request: Request):
         return service.project(auth.user(request)['id'], project_id)
+
+    @router.get('/projects/{project_id}/managed-profiles')
+    async def managed_profiles(project_id: str, request: Request):
+        return await service.list_managed_profiles(auth.user(request)['id'], project_id)
+
+    @router.post('/projects/{project_id}/sessions/prepare-managed', status_code=201)
+    async def prepare_managed(project_id: str, body: WorkspaceManagedPrepare, request: Request):
+        return await service.prepare_managed(auth.user(request)['id'], project_id, body)
+
+    @router.post('/projects/{project_id}/sessions/{session_id}/start', status_code=202)
+    async def start_managed(project_id: str, session_id: str, body: WorkspaceCommand, request: Request):
+        return await service.start_managed(auth.user(request)['id'], project_id, session_id, body.requestId)
 
     @router.get('/projects/{project_id}/sessions')
     def sessions(project_id: str, request: Request):

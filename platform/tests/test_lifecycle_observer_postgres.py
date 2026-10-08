@@ -537,7 +537,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             with self.subTest(state=state):
                 result = {"status": state, "cancelled": state == "cancelled",
                           "stopEvidence": {"allStopped": False, "activeProcesses": 1}}
-                with self.assertRaisesRegex(ValueError, "positive process-stop"):
+                with self.assertRaisesRegex(ValueError, "positive adapter stop evidence"):
                     self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY, result)
                 # Reproduce pre-fix persisted DONE, rather than claiming a real
                 # Windows orphan on this portable controlled-metadata fixture.

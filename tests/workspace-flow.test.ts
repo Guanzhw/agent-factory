@@ -4,9 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Workspace } from '../web/App.js';
 import { api } from '../web/api.js';
+import { personalAgentApi } from '../web/personalAgentApi.js';
+import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { openresearchApi } from '../web/openresearchApi.js';
 import type { User } from '../web/models.js';
 vi.mock('../web/openresearchApi.js', () => ({ openresearchApi: { capabilities: vi.fn(), projects: vi.fn() } }));
+vi.mock('../web/personalAgentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalAgentApi.js')>(); return { ...original, personalAgentApi: { ...original.personalAgentApi, capabilities: vi.fn(), sessions: vi.fn() } }; });
+vi.mock('../web/personalRemoteApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalRemoteApi.js')>(); return { ...original, personalRemoteApi: { ...original.personalRemoteApi, list: vi.fn() } }; });
 vi.mock('../web/ControlRecovery.js', () => ({ ControlRecovery: () => null, commandNotice: () => '' }));
 vi.mock('../web/CompositionInbox.js', () => ({ CompositionInbox: () => createElement('p', null, '历史提案内容') }));
 vi.mock('../web/ApplicationGovernance.js', () => ({ ApplicationGovernance: () => createElement('p', null, '应用管理内容') }));
@@ -33,6 +37,7 @@ beforeEach(() => {
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2 } as Awaited<ReturnType<typeof api.status>>);
   vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue([]); vi.mocked(api.executionTargets).mockResolvedValue([]);
   vi.mocked(api.session).mockResolvedValue(alice); vi.mocked(api.applications).mockResolvedValue([]); vi.mocked(api.userConnections).mockResolvedValue([]);
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([]); vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true }); vi.mocked(personalRemoteApi.list).mockResolvedValue([]);
   vi.mocked(openresearchApi.capabilities).mockResolvedValue({ contractVersion: 1, nativeProjectAttachment: true, upstreamProjectCreation: false, liveEndToEndVerified: false, workloads: [] }); vi.mocked(openresearchApi.projects).mockResolvedValue([]);
   vi.mocked(api.autoresearch.presets).mockResolvedValue([]); vi.mocked(api.detail).mockRejectedValue(new Error('任务不存在或无权访问'));
 });
@@ -52,10 +57,10 @@ describe('workspace mounted application boundaries', () => {
   it('enters OpenResearch from the catalog without a second application selector or controlled runner', async () => {
     await render(); await click('进入 OpenResearch');
     expect(window.location.search).toContain('tab=openresearch');
-    expect(host.querySelector('h1')?.textContent).toBe('研究工作区');
+    expect(host.querySelector('h1')?.textContent).toBe('OpenResearch 普通模式');
     expect(host.querySelector('#application-selector')).toBeNull();
     expect(host.querySelector('#autoresearch-title')).toBeNull();
-    expect(openresearchApi.projects).toHaveBeenCalled();
+    expect(openresearchApi.projects).not.toHaveBeenCalled();
     expect(api.applications).not.toHaveBeenCalled();
     await click('Factory 应用目录');
     expect(host.querySelector('h1')?.textContent).toBe('选择你的工作区');

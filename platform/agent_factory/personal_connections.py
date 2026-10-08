@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,7 +52,7 @@ class PersonalRemoteConnections:
         provider = self.providers.get(body["providerId"])
         if provider is None or provider.provider_id != body["providerId"]:
             raise HTTPException(409, "REMOTE_PROVIDER_UNAVAILABLE")
-        if provider.policy_revision != body["policyRevision"]:
+        if provider.policy_revision != body["policyRevision"] or provider.kind != body.get("kind", "environment"):
             raise HTTPException(409, "REMOTE_POLICY_CHANGED")
         return provider
 
@@ -66,7 +67,7 @@ class PersonalRemoteConnections:
                 status = {"REMOTE_VERIFICATION_EXPIRED": "expired", "REMOTE_CREDENTIAL_UNAVAILABLE": "credential_unavailable",
                           "REMOTE_POLICY_CHANGED": "policy_changed"}.get(str(error.detail), "unavailable")
         can_run = self.connections._can_bind(owner)
-        return {"registrationRef": reference, "providerId": body["providerId"], "kind": "environment",
+        return {"registrationRef": reference, "providerId": body["providerId"], "kind": body.get("kind", "environment"),
             "configRevision": body["revision"], "status": status, "available": status == "verified",
             "origin": body["configuration"]["origin"], "projectId": body["configuration"]["projectId"],
             "capabilities": verified["capabilities"] if verified and status == "verified" else [],
@@ -104,7 +105,10 @@ class PersonalRemoteConnections:
         self.connections.auth.require(owner, "read")
         return [{"providerId": key, "kind": provider.kind, "capabilities": sorted(provider.capabilities),
                  "policyRevision": provider.policy_revision, "requiresCredentialReference": True,
-                 "provisionsCompute": False} for key, provider in sorted(self.providers.items())]
+                 "provisionsCompute": False, "namespace": getattr(provider, "namespace", "opencode"),
+                 "authModes": list(getattr(provider, "auth_modes", ())),
+                 "sessionTemplateSupported": bool(getattr(provider, "session_template_supported", False))}
+                for key, provider in sorted(self.providers.items())]
 
     def configure(self, owner, provider_id, configuration, request_id, *, reference=None):
         service = self.connections
@@ -137,7 +141,7 @@ class PersonalRemoteConnections:
                 reference = "remote-" + uuid4().hex
             revision = uuid4().hex
             body = {"registrationRef": reference, "ownerId": owner, "revision": revision,
-                "providerId": provider_id, "policyRevision": provider.policy_revision, "configuration": normalized}
+                "providerId": provider_id, "kind": provider.kind, "policyRevision": provider.policy_revision, "configuration": normalized}
             conn.execute(self.configs.insert().values(registration_ref=reference, revision=revision,
                 owner_id=owner, body=body, fingerprint=digest(body)))
             values = dict(config_revision=revision, state="CONFIGURED", verification=None,
@@ -259,6 +263,8 @@ class ConfigureRemoteRequest(BaseModel):
     credentialRef: str = Field(min_length=1, max_length=200)
     credentialRevision: str = Field(min_length=1, max_length=200)
     projectId: str = Field(min_length=1, max_length=200)
+    authMode: Literal["bearer", "basic-proxy"] | None = None
+    sessionTemplateId: str | None = Field(default=None, min_length=1, max_length=160)
     requestId: str = Field(min_length=1, max_length=200)
 
 
@@ -279,7 +285,7 @@ def personal_connection_router(auth, service):
         return service.list(owner(request))
     @router.post("", status_code=201)
     def create(body: ConfigureRemoteRequest, request: Request):
-        values = body.model_dump()
+        values = body.model_dump(exclude_none=True)
         return service.configure(owner(request), values.pop("providerId"),
             {key: value for key, value in values.items() if key != "requestId"}, body.requestId)
     @router.get("/requests/{request_id}")
@@ -290,7 +296,7 @@ def personal_connection_router(auth, service):
         return service.inspect(owner(request), reference)
     @router.post("/{reference}/configure")
     def configure(reference: str, body: ConfigureRemoteRequest, request: Request):
-        values = body.model_dump()
+        values = body.model_dump(exclude_none=True)
         return service.configure(owner(request), values.pop("providerId"),
             {key: value for key, value in values.items() if key != "requestId"}, body.requestId, reference=reference)
     @router.post("/{reference}/verify")

@@ -52,6 +52,8 @@ class Settings:
     research_evaluators: dict = field(default_factory=dict)
     # Trusted operator presets; never populated from request JSON.
     autoresearch_presets: dict = field(default_factory=dict)
+    personal_agent_commands_enabled: bool = False
+    managed_orx_profiles_factory: Callable | None = field(default=None, repr=False)
     autoresearch_children_factory: Callable | None = field(default=None, repr=False)
     remote_scientific_factory: Callable | None = field(default=None, repr=False)
     handoff_targets: dict = field(default_factory=dict)
@@ -79,6 +81,16 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if type(self.personal_agent_commands_enabled) is not bool:
+            raise ValueError('Personal command enablement must be an explicit boolean')
+        if self.personal_agent_commands_enabled:
+            from .personal_command_profile import registrations, tool_policy, pricing
+            entries = registrations()
+            if any(a.adapter_id in {e.adapter_id for e in entries} for a in self.runtime_adapters):
+                raise ValueError('Personal command adapters cannot be replaced')
+            self.runtime_adapters = [*self.runtime_adapters, *entries]
+            self.tool_policies = (*self.tool_policies, tool_policy())
+            self.usage_pricing = (*self.usage_pricing, pricing())
         from .tool_policy_registry import validate_tool_policies
         self.tool_policies = validate_tool_policies(self.tool_policies, self.runtime_adapters)
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:

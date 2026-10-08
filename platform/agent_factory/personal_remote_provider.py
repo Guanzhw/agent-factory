@@ -44,6 +44,36 @@ class SecretLease:
             raise RemoteConnectionError("REMOTE_CREDENTIAL_INVALID")
 
 
+def reject_credential_echo(value, lease):
+    """Reject known authentication material before any remote JSON is persisted.
+
+    This guards exact known service credentials, not arbitrary transformations or
+    unrelated private file contents returned by a remote agent. Never echo the
+    matched value in a diagnostic, and never retain a partially redacted result.
+    """
+    if lease is None:
+        return
+    if not isinstance(lease, SecretLease):
+        raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
+    encoded = base64.b64encode((lease.username + ':' + lease.password).encode()).decode()
+    needles = (lease.password, encoded, 'Basic ' + encoded, 'Bearer ' + lease.password)
+    pending, seen, count = [(value, 0)], set(), 0
+    while pending:
+        item, depth = pending.pop()
+        count += 1
+        if count > 100000 or depth > 32:
+            raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
+        if isinstance(item, str):
+            if any(secret in item for secret in needles):
+                raise RemoteConnectionError('REMOTE_CREDENTIAL_ECHO_REJECTED')
+        elif isinstance(item, (dict, list)):
+            if id(item) in seen:
+                raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
+            seen.add(id(item))
+            children = [*item.keys(), *item.values()] if isinstance(item, dict) else item
+            pending.extend((child, depth + 1) for child in children)
+
+
 class SecretProvider(Protocol):
     def authorize(self, *, owner: str, reference: str, revision: str, destination: str) -> bool:
         """Metadata-only check. Must reject another owner's reference and rotation."""
@@ -214,7 +244,9 @@ class PinnedHTTPSProbe:
             # Error bodies are neither decoded nor surfaced.
             if response.status != 200:
                 return response.status, None
-            return response.status, json.loads(raw)
+            value = json.loads(raw)
+            reject_credential_echo(value, lease)
+            return response.status, value
         except RemoteConnectionError:
             raise
         except Exception:
@@ -283,6 +315,7 @@ class OpenCodeServeProvider:
             status, value = self.probe.get(destination, address, path, lease)
             if status != 200:
                 raise RemoteConnectionError("REMOTE_VERIFICATION_FAILED")
+            reject_credential_echo(value, lease)
             results[path] = value
         health, project, agents = (results[path] for path in ("/global/health", "/project/current", "/agent"))
         if (not isinstance(health, dict) or health.get("healthy") is not True
@@ -314,8 +347,8 @@ class VerifiedRemoteHandle:
     def inspect_identity(self):
         """Read-only; workload execution remains behind governed Factory dispatch."""
         if self.recheck is not None:
-            self.recheck()
+            self.recheck(CAPABILITIES)
         evidence = self.provider.verify(self.owner, self.configuration)
         if self.recheck is not None:
-            self.recheck()
+            self.recheck(CAPABILITIES)
         return evidence

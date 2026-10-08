@@ -106,6 +106,9 @@ def create_app(settings=None, *, diagnostics=None):
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     at('PREPARATION_APP_CONNECTIONS')
     credential_vault = settings.credential_vault_factory(store.engine) if settings.credential_vault_factory else None
+    bind_vault_reads = getattr(credential_vault, 'bind_read_context', None)
+    if callable(bind_vault_reads):
+        bind_vault_reads(store._connection)
     personal_providers = dict(settings.personal_connection_providers)
     for provider_id, factory in settings.personal_connection_provider_factories.items():
         if credential_vault is None or provider_id in personal_providers or not callable(factory):
@@ -236,6 +239,10 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
+    if settings.personal_agent_commands_enabled:
+        from .personal_command_api import PersonalCommandAPI
+        personal_commands = PersonalCommandAPI(store, auth, factory_api)
+        base.include_router(personal_commands.router)
     from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
     # Durable custody remains readable even after operator registrations end.
@@ -246,7 +253,7 @@ def create_app(settings=None, *, diagnostics=None):
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
     base.include_router(autoresearch_router(auth, store.autoresearch))
     from .openresearch_workspace import OpenResearchWorkspace, openresearch_workspace_router
-    openresearch_workspace = OpenResearchWorkspace(store, auth, store.autoresearch)
+    openresearch_workspace = OpenResearchWorkspace(store, auth, store.autoresearch, factory=factory_api)
     base.include_router(openresearch_workspace_router(auth, openresearch_workspace))
     from .autoresearch_session_control import AutoResearchSessionControl
     async def complete_research_session(task, requirement):
@@ -261,6 +268,21 @@ def create_app(settings=None, *, diagnostics=None):
     from .process_runtime import ProcessRuntimeService
     at('PREPARATION_APP_PROCESS_RUNTIME')
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
+    if settings.managed_orx_profiles_factory is not None:
+        import copy
+        profiles = settings.managed_orx_profiles_factory(store, auth, resources)
+        if type(profiles) is not dict or any(type(k) is not str or type(v) is not dict for k, v in profiles.items()):
+            raise ValueError('OPENRESEARCH_MANAGED_PROFILES_INVALID')
+        required = {'ownerId', 'targetRef', 'applicationRef', 'mode', 'nativeProfileId',
+            'connectionPin', 'contractSha256', 'sessionId'}
+        if any(not required.issubset(value) for value in profiles.values()):
+            raise ValueError('OPENRESEARCH_MANAGED_PROFILE_PIN_REQUIRED')
+        # A trusted installer may add an existing-store provider only after
+        # process service construction; reapply the normal target/pool checks.
+        resources.targets = PersistentResourceService(store, auth, resources.targets).targets
+        openresearch_workspace.managed_profiles = copy.deepcopy(profiles)
+        from .managed_orx_profile import install_completion_handler
+        install_completion_handler(store)
     from .research_runtime import ResearchProcessRuntimeService
     at('PREPARATION_APP_RESEARCH_RUNTIME')
     store.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
