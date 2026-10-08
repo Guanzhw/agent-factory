@@ -81,7 +81,7 @@ installed profile does not hide historical task/session inspection.
 - `test_managed_workspace_postgres.ManagedWorkspacePostgresTests`: 2 required
   real-PostgreSQL cases for published schema/composition, native auth, independent
   plan review, shared Factory admission, durable unknown task recovery, and
-  user-supplied proof rejection. The class has no skip decorator; run only with
+  user-supplied proof rejection. Portable runs skip this class; the required gate rejects skips and requires
   `FACTORY_TEST_DATABASE_URL` pointing to a disposable fixture database.
 - Existing controlled-workload workspace endpoints are unchanged.
 

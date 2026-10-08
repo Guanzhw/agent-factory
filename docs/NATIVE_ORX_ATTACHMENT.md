@@ -11,10 +11,19 @@ Implemented: bounded native project list/read, owner-scoped attach, exact projec
 identity refresh, and validated inert session-profile options. Controlled wire tests
 cover these contracts. They do not prove a live provider or end-to-end model run.
 
-## Managed attachment is required before session admission
+## Execution mode determines the admission requirements
 
-A read/attach connection cannot yet execute a governed native session. Its
-capability projection explicitly reports:
+The original `openresearch-workspace-v1` read/attach connection alone does not
+execute sessions. Ordinary personal execution now uses the separate
+`openresearch-personal-session-v1` adapter and actual upstream project/session
+APIs; see [ordinary native OpenResearch](PERSONAL_OPENRESEARCH.md). It preserves
+native identity, leaves model credentials/billing upstream, reports advisory
+usage and sends best-effort interrupts. Its controlled multi-turn, renewal and
+recovery tests do not establish hard budgets, process-stop proof or live
+compatibility.
+
+For shared Factory credentials/budgets and managed execution, read/attach alone
+still cannot authorize a research session. The original gap projection identifies:
 
 - `NATIVE_PROJECT_APPROVED_PLAN_BINDING_REQUIRED`: an immutable reviewed Factory
   plan must bind this exact native project identity, original connection revision,
@@ -35,7 +44,16 @@ broker capability, reserves/settles actual provider requests, and checks origina
 container exit before reclamation. It creates a fresh isolated project/store; it
 does not attach an existing owner server. Reusing its controller therefore requires
 a real managed-attachment enforcement contract, not a new shadow inference loop or
-an approval boolean. No native attached-project session is admitted by this change.
+an approval boolean. The implemented [managed connection probe](managed-openresearch-probe.md)
+now admits one text-only provider request with native tools disabled. It does not
+implement managed multi-step research.
+
+The minimum remaining managed implementation is to connect the existing governed
+ORX MCP tools to the attached native harness, reserve/settle every provider request
+through the same broker/ledger, and retain tool receipts plus original-session and
+process custody through cancellation/restart. It depends on an independently
+installed supervisor that can prove broker-only egress and control the original
+tool/descendant process scope. Raising the probe's request limit is insufficient.
 
 Copying/importing the project into that isolated runtime would change native
 identity and requires a separate product choice; this implementation does not do it.
@@ -47,7 +65,15 @@ unconditionally starts `local::starter::warm`, which can make a model call. The
 endpoint has no request-budget parameter or warmup suppression flag. It also defaults
 GitHub synchronization from local configuration when omitted. A future approved
 creation flow must explicitly disable GitHub synchronization unless separately
-authorized and account for warmup through bounded shared usage controls. The current
+authorized and account for warmup through bounded shared usage controls where
+hard enforcement is promised. The minimum remaining application flow needs explicit
+path/repository/paper inputs, disclosure and approval of model warmup and repository
+writes, durable create intent and read-only reconciliation of unknown acknowledgments.
+Upstream support must either suppress warmup or enforce its approved budget for
+managed creation; an ordinary remote-funded alternative would need explicit
+advisory-cost consent. `githubSync=false` must be verified as honored before offering
+a no-publication create path. These are unimplemented capabilities, not merely
+missing endpoint configuration. The current
 adapter sends no create request, clones no repository and makes no model call.
 
 Sources: pinned upstream [project projection/list](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1255-L1281),
