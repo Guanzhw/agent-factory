@@ -246,6 +246,13 @@ class ControlCommands:
             requirement["user_input_schema"] = fields
             tool.update(user_input_schema=fields, answered=True)
         else:
+            handler = getattr(self.store, 'external_execution_handlers', {}).get(tool.get('tool_name'))
+            if handler is not None:
+                if decision['approved'] is not True:
+                    raise HTTPException(409, 'EXTERNAL_WAIT_DECLINE: cancel the original task instead')
+                receipt = await handler(task, requirement)
+                tool['result'] = canonical(receipt)
+                return {'requirements': requirements, 'toolsSha256': digest([r.get('tool_execution', r) for r in requirements])}
             from .autoresearch_session_control import TOOL as SESSION_TOOL
             if tool.get("tool_name") == SESSION_TOOL:
                 receipt = await self.store.autoresearch_session_control.completion(task, requirement)

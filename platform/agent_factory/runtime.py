@@ -59,6 +59,8 @@ def build_runtime(settings, store, native_db):
         text = plan.get('instructions', [])
         if isinstance(text, str): text = [text]
         context = {key:plan.get(key) for key in ['id','application','mode','normalizedGoal','config','tools']}
+        if 'inputValues' in plan:
+            context['inputValues'] = plan['inputValues']
         knowledge = bindings.knowledge_for(plan, run_context)
         if sum(len(item.content.encode()) for item in knowledge) > 65536:
             raise InputCheckError('Selected knowledge exceeds its bounded native context budget')

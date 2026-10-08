@@ -7,7 +7,7 @@ module starts no tool, interpreter, installer, model or external connection.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import json
 import math
 import re
@@ -20,7 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
 from .catalog import SEEDS
-from .plan_policy import ToolContract, tools_for_contract
+from .plan_policy import ToolContract, tools_for_contract, reserved_tool_names
+from .tool_policy_registry import (ToolPolicyRegistration, normalize_tool_policies, merged_tools,
+    policy_body, require_installed_policies, require_material_policy)
 from .store import digest, now
 
 KINDS = Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
@@ -144,9 +146,12 @@ class GovernanceConfig:
     revision: str = "material-governance-v1"
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
+    tool_policies: tuple[ToolPolicyRegistration, ...] = ()
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
+        object.__setattr__(self, "tool_policies", normalize_tool_policies(self.tool_policies))
+        merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
         if self.tool_contract != "legacy-v1" and self.revision == "material-governance-v1":
@@ -158,7 +163,7 @@ class GovernanceConfig:
 
     @property
     def fingerprint(self):
-        body = asdict(self)
+        body = policy_body(self)
         if not self.source_synthesis_enabled:
             del body["source_synthesis_enabled"]
         if self.tool_contract == "legacy-v1":
@@ -168,7 +173,8 @@ class GovernanceConfig:
 
     @property
     def known_tools(self) -> dict[str, str]:
-        return {**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})}
+        return merged_tools({**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})},
+                            self.tool_policies, reserved=reserved_tool_names())
 
 
 class MaterialGovernance:
@@ -210,6 +216,7 @@ class MaterialGovernance:
                 raise ValueError("Material governance configuration differs from persisted current revision")
 
     def _mode(self, config):
+        require_installed_policies(self.store, config.tool_policies)
         if config.review_mode == "demo-self-review" and not self.store.settings.demo:
             raise ValueError("Self-review compatibility is restricted to explicitly configured demo mode")
 
@@ -244,7 +251,7 @@ class MaterialGovernance:
         if row and row["hash"] != config.fingerprint:
             raise ValueError("A governance revision cannot be rebound")
         if not row:
-            conn.execute(self.configs.insert().values(revision=config.revision, hash=config.fingerprint, body=asdict(config)))
+            conn.execute(self.configs.insert().values(revision=config.revision, hash=config.fingerprint, body=policy_body(config)))
 
     def _config(self, conn):
         row = conn.execute(select(self.configs).join(self.current_config,
@@ -260,7 +267,7 @@ class MaterialGovernance:
     def current(self):
         with self._read() as conn:
             config = self._config(conn)
-        return {**asdict(config), "fingerprint": config.fingerprint, "demoCompatibility": config.review_mode == "demo-self-review",
+        return {**policy_body(config), "fingerprint": config.fingerprint, "demoCompatibility": config.review_mode == "demo-self-review",
                 "taskApprovalSeparate": True, "importExecutesCode": False}
 
     def replace_configuration(self, config: GovernanceConfig, *, expected_revision: str):
@@ -327,7 +334,9 @@ class MaterialGovernance:
             if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
                 raise HTTPException(422, "Provenance source must be a credential-free HTTPS reference")
         with self._read() as conn:
-            known_tools = self._config(conn).known_tools
+            config = self._config(conn)
+            known_tools = config.known_tools
+            require_material_policy(value, config.tool_policies)
         if "runtimeBinding" in value and value["kind"] not in {"tool", "model", "knowledge", "environment"}:
             raise HTTPException(422, "Runtime bindings are limited to tool, model, knowledge and environment materials")
         if not set(value["permissions"]) <= set(known_tools.values()):
@@ -377,6 +386,7 @@ class MaterialGovernance:
             raise HTTPException(404, "Scoped material governance record not found")
 
     def _active(self, conn, material, config):
+        require_material_policy(material["body"], config.tool_policies)
         body = material["body"]
         if body.get("kind") == "tool" and (body.get("content") not in config.known_tools or
                 set(body.get("permissions", [])) != {config.known_tools.get(body.get("content"))}):

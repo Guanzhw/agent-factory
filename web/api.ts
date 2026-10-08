@@ -1,4 +1,6 @@
 import { sameSourceSnapshot, sourceSnapshotReference } from './sourcePlanState.js';
+import { applicationInputSchema, applicationInputValues, sameApplicationInputs } from './applicationInputState.js';
+import { workflowCommand as validateWorkflowCommand, type WorkflowCommand } from './workflowState.js';
 import type { SynthesisCreate } from './synthesisJourneyState.js';
 import { authEpoch, assertAuthEpoch, browserCsrf, BrowserAuthError, expireBrowserSession } from './browserAuth.js';
 import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
@@ -207,6 +209,7 @@ function application(value: unknown): FactoryApplication {
     if (!record(mode) || !Array.isArray(mode.materialRefs) || !mode.materialRefs.every(reference) || !record(mode.materialChoices)
         || !strings(mode.capabilities) || !record(mode.budget) || Object.values(mode.budget).some(item => typeof item !== 'number' || !Number.isFinite(item) || item < 0)
         || !record(mode.config) || !strings(mode.toolOrder) || !Array.isArray(mode.connectionRequirements)) throw invalid('应用装配范围无法核对。');
+    if (mode.inputSchema !== undefined) applicationInputSchema(mode.inputSchema);
     for (const slot of Object.values(mode.materialChoices)) if (!record(slot) || !['skill', 'tool', 'prompt', 'knowledge', 'model', 'environment'].includes(String(slot.kind))
         || !reference(slot.defaultRef) || !Array.isArray(slot.allowedRefs) || !slot.allowedRefs.every(reference)) throw invalid('应用材料选项无法核对。');
     for (const requirement of mode.connectionRequirements) if (!record(requirement) || typeof requirement.name !== 'string'
@@ -233,6 +236,11 @@ function proposal(value: unknown, ownerId?: string): AssemblyProposal {
       || !['pending', 'revised', 'rejected', 'accepted'].includes(String(value.state)) || typeof value.fingerprint !== 'string'
       || !value.allowedActions.every(item => ['revise', 'reject', 'accept'].includes(item))) throw invalid('装配提案无法核对。');
   const c = value.candidate;
+  if (c.inputSchema !== undefined) {
+    const schema = applicationInputSchema(c.inputSchema);
+    applicationInputValues(schema, c.inputValues);
+    if (!sameApplicationInputs(c.inputValues, value.input.inputValues ?? {})) throw invalid('应用输入与提案固定范围不一致。');
+  } else if (c.inputValues !== undefined || value.input.inputValues !== undefined) throw invalid('提案输入缺少固定定义。');
   const snapshot = value.input.sourceSnapshotRef;
   if (snapshot !== undefined && (!sourceSnapshotReference(snapshot) || !sourceSnapshotReference(c.sourceSnapshotRef) || !record(c.bindingManifest)
       || !sourceSnapshotReference(c.bindingManifest.sourceSnapshotRef) || !sameSourceSnapshot(snapshot, c.sourceSnapshotRef)
@@ -251,6 +259,8 @@ function sealedPlan(value: unknown): Plan {
   if (!record(value) || typeof value.id !== 'string' || typeof value.fingerprint !== 'string' || typeof value.normalizedGoal !== 'string'
       || !reference(value.applicationRef) || !Array.isArray(value.materialRefs) || !value.materialRefs.every(reference)
       || !strings(value.capabilities) || !strings(value.missing) || !['ready', 'blocked'].includes(String(value.status))) throw invalid('最终方案无法核对；暂时不能创建任务。');
+  if (value.inputSchema !== undefined) applicationInputValues(applicationInputSchema(value.inputSchema), value.inputValues);
+  else if (value.inputValues !== undefined) throw invalid('方案输入缺少固定定义。');
   if (value.sourceSnapshotRef !== undefined && (!sourceSnapshotReference(value.sourceSnapshotRef) || !record(value.bindingManifest)
       || !sameSourceSnapshot(value.sourceSnapshotRef, value.bindingManifest.sourceSnapshotRef))) throw invalid('方案来源快照绑定无法核对。');
   if (value.sourceSnapshotRef === undefined && record(value.bindingManifest) && value.bindingManifest.sourceSnapshotRef !== undefined) throw invalid('方案来源快照绑定缺失。');
@@ -286,11 +296,17 @@ async function recoverProposal(id: string, signal?: AbortSignal): Promise<{ prop
       || !('historical' in raw) || raw.historical !== true || !('executionAuthorized' in raw) || raw.executionAuthorized !== false) throw invalid('历史方案恢复凭据无法核对。');
   const item = proposal(raw.proposal), plan = raw.plan === null ? null : sealedPlan(raw.plan);
   if (item.id !== id || (item.state === 'accepted') !== (plan !== null)
-      || plan && (plan.id !== item.planId || !('ownerId' in plan) || plan.ownerId !== item.ownerId || plan.normalizedGoal !== item.candidate.normalizedGoal)) throw invalid('原提案与方案范围不一致。');
+      || plan && (plan.id !== item.planId || !('ownerId' in plan) || plan.ownerId !== item.ownerId || plan.normalizedGoal !== item.candidate.normalizedGoal
+        || !sameApplicationInputs(plan.inputSchema, item.candidate.inputSchema) || !sameApplicationInputs(plan.inputValues, item.candidate.inputValues))) throw invalid('原提案与方案范围不一致。');
   return { proposal: item, plan };
 }
 
 export const api = {
+  workflows: {
+    get: (taskId: string, signal?: AbortSignal) => request<unknown>(`/workflows/${segment(taskId)}`, 'GET', undefined, signal),
+    commandStatus: (taskId: string, commandId: string, signal?: AbortSignal) => request<unknown>(`/workflows/${segment(taskId)}/commands/${segment(commandId)}`, 'GET', undefined, signal),
+    command: (taskId: string, command: WorkflowCommand) => request<unknown>(`/workflows/${segment(taskId)}/commands`, 'POST', validateWorkflowCommand(command)),
+  },
   autoresearch: {
     presets: (signal?: AbortSignal) => request<unknown>('/autoresearch/presets', 'GET', undefined, signal),
     start: (input: { presetId: string; goal?: string; requestId: string }, signal?: AbortSignal) => request<unknown>('/autoresearch/runs', 'POST', input, signal),

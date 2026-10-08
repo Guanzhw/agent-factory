@@ -1,3 +1,50 @@
+# Governed workflow agent extension — 2026-10-08
+
+Base: PR60 exact `cd9522f9da1daec5c9ec69d5d43717b910da1740` (ten exact CI jobs
+accepted twice). Branch: `feat/governed-workflow-agents-20261008`.
+This phase implements generic workflow-agent boundaries, not real ConvertD
+integration. Authorized GitHub lookup found no verified ConvertD repository/spec;
+only supplied six-phase names, FAILURE_JSON/B routing, resume-from and parallel
+join requirements inform a harmless representative fixture. No backend,
+notification, new credential, externally exposed listener, paid call or deployment.
+The user subsequently authorized normal merge into main after engineering checks,
+and requested the already accepted baseline be synchronized first via PR61.
+PR61 merged the accepted baseline into main at
+`067354e0b95ceba7aa620216fe7a18715b179ac0` after explicit user confirmation
+of the draft-to-ready step; main CI is pending. No protection bypass.
+Current workflow edits remain separate; covered historical PRs are being closed
+with exact ancestry evidence, leaving independent #8/#41/#51 open.
+
+| Owner | Exclusive files / interfaces | Acceptance / dependencies |
+|---|---|---|
+| root | Settings/main/store/native lifecycle/control/API glue, docs, final integration | Original task/approval/budget/cleanup preserved; exact CI final responsibility |
+| go_policy | tool_policy_registry, plan_policy, material_governance + tests | New operator policies, exact adapters, withdrawal/version drift; legacy identity unchanged |
+| go_adapter | workflow_contracts + tests | Bounded graph/runtime observation, original handles, read-only lookup |
+| factory_flow | workflow_service/profile + tests | Durable intent/state/commands, waits, fanout/join, B routing, cancellation, no unknown replay |
+| candidate_support_audit | input_schema, applications/composition + tests | Bounded schema and immutable inputs; old apps unchanged |
+| ci_final_review | workflow/input UI, client/types/templates + tests | Server-authoritative stages, stale decision rejection, stable recovery commands |
+| at10 | independent source/spec and correctness review | Synthetic labeling, failure-edge reachability, restart/unknown/concurrency review |
+
+Required new acceptance: actual native agent/tool invocation with synthetic model
+outputs explicitly labeled; persistent pause and same-run continuation; fresh
+process restart over original DB; duplicate submission/event; lost ACK and
+no redispatch; FAILURE_JSON-to-B; bounded parallel tasks and join; human decision
+version/owner checks; cancellation retaining unknown custody; input/schema and
+policy drift denial. Existing AutoResearch tests remain. Heavy local database
+checks run serially. Implementation is integrated but final acceptance is pending.
+
+Current evidence: registry5, input9+legacy12, contracts8, service/profile19,
+control9 focused checks passed; frontend218 tests/build/typecheck/lint passed.
+The first real PostgreSQL/native-process gate passed3/3 with zero skips in89.234s;
+subsequent controller recovery/withdrawal changes still require its final rerun.
+Old AutoResearch gate is running serially. Independent review found and fixed
+lost-ACK cancellation lookup, mutable continuation proof, removed-registration
+custody and native-completed unfinished-workflow cleanup. npm audit is clear.
+Final full regression, actual browser behavior, exact CI and merge remain pending.
+See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
+
+---
+
 # Cloud integration task board
 
 ## Active remote scientific bootstrap implementation

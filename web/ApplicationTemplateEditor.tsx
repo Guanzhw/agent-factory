@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { applicationInputSchema } from './applicationInputState.js';
 import { MaterialPicker } from './MaterialPicker.js';
 import { budgetBounds, configBounds, inspectTemplate, updateTemplate, type TemplateChange } from './applicationTemplateState.js';
 import { kindNames, type ApplicationMode, type FactoryMaterial, type MaterialReference } from './models.js';
@@ -12,6 +13,15 @@ export interface ApplicationTemplateEditorProps {
 const budgetNames: Record<string, string> = { toolCalls: '工具调用次数', maxDepth: '委派深度', maxChildren: '累计子任务数', experimentSeconds: '实验时长（秒）', outputBytes: '产物大小（字节）' };
 const configNames: Record<string, string> = { experimentDurationSeconds: '单次实验时长（秒）', askScopeBelowLength: '目标少于多少字符时询问范围' };
 const reference = (ref: MaterialReference) => `${ref.id}@${ref.version}:${ref.sha256}`;
+function InputSchemaEditor({ value, disabled, onChange }: { value: unknown; disabled: boolean; onChange: (value: unknown) => void }) {
+  const [text, setText] = useState(value === undefined ? '' : JSON.stringify(value, null, 2));
+  const [error, setError] = useState('');
+  return <details><summary>高级：可选应用输入定义</summary><p>使用有界 JSON 对象定义任务输入字段。字符串和数组必须限制长度；只支持内联字段，不支持引用或执行逻辑。</p>
+    <label>输入定义 JSON<textarea aria-label="输入定义 JSON" value={text} rows={8} maxLength={32768} disabled={disabled} onChange={event => { setText(event.target.value); setError(''); }}/></label>
+    <button type="button" className="secondary" disabled={disabled} onClick={() => { try { const next = text.trim() ? applicationInputSchema(JSON.parse(text)) : undefined; onChange(next); setError(''); } catch { setError('输入定义无效，请核对有界字段结构。'); } }}>应用输入定义</button>
+    <p className="quiet">留空并应用会移除本方式的自定义输入。此修改仍需独立审查发布。</p>{error && <p role="alert">{error}</p>}
+  </details>;
+}
 export function ApplicationTemplateEditor({ definition, materials, onChange, disabled = false }: ApplicationTemplateEditorProps) {
   const inspection = inspectTemplate(definition, materials);
   const [selectedMode, setSelectedMode] = useState('');
@@ -46,6 +56,7 @@ export function ApplicationTemplateEditor({ definition, materials, onChange, dis
         <label><input type="checkbox" checked={definition.defaultForDiscovery === true} onChange={event => change({ kind: 'metadata', field: 'defaultForDiscovery', value: event.target.checked })}/>作为默认发现候选</label>
       </fieldset>
       {mode && modeDefinition && <fieldset disabled={disabled}><legend>这项任务可以做什么</legend>
+        <InputSchemaEditor key={`${mode.name}:${JSON.stringify(modeDefinition.inputSchema)}`} value={modeDefinition.inputSchema} disabled={disabled} onChange={value => change({ kind: 'inputSchema', mode: mode.name, value })}/>
         <label>编辑执行方式<select aria-label="编辑执行方式" value={mode.name} onChange={event => { setSelectedMode(event.target.value); setChangeError(''); }}>{inspection.modes.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         <MaterialPicker label="固定材料" materials={materials} selected={modeDefinition.materialRefs} disabled={disabled} onChange={refs => change({ kind: 'modeRefs', mode: mode.name, refs })}/>
         <p className="quiet">选择固定版本，不自动添加依赖或扩大能力。材料缺失、版本变更和依赖问题需要先解决；最终由服务端检查发布条件。</p>

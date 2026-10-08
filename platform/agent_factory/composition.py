@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
+from .input_schema import bounded_json, validate_input_values
 from .applications import ApplicationService, GovernedStorage
 from .material_governance import MaterialGovernance, PinnedRef
 from .plan_policy import application_tool_catalog
@@ -32,7 +33,7 @@ class CompositionService:
         self.commands = self.db.command_table("af_composition_commands", metadata)
         metadata.create_all(store.engine)
 
-    def _input(self, goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref=None):
+    def _input(self, goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref=None, input_values=None):
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000:
             raise HTTPException(422, "Goal must contain 2–2000 characters")
         values = {"goal": goal.strip(), "mode": mode, "application": application, "applicationRef": application_ref,
@@ -42,6 +43,13 @@ class CompositionService:
                 values["sourceSnapshotRef"] = SourceSnapshotRef.model_validate(source_snapshot_ref).model_dump()
             except ValidationError as error:
                 raise HTTPException(422, "Exact source snapshot reference required") from error
+        if input_values is not None:
+            try:
+                if type(input_values) is not dict:
+                    raise ValueError('Inputs must be an object')
+                values['inputValues'] = bounded_json(input_values)
+            except ValueError as error:
+                raise HTTPException(422, 'Bounded structured application inputs required') from error
         MaterialGovernance._safe_data(values)
         for field in ("mode", "application"):
             if values[field] is not None and (not isinstance(values[field], str) or not 1 <= len(values[field]) <= 100):
@@ -130,6 +138,15 @@ class CompositionService:
         mode = application["modes"].get(mode_name)
         if mode is None:
             raise HTTPException(422, "Mode is outside the approved application configuration")
+        inputs = None
+        schema = mode.get('inputSchema')
+        try:
+            if schema is not None:
+                inputs = validate_input_values(schema, values.get('inputValues', {}))
+            elif 'inputValues' in values:
+                raise ValueError('Mode has no input schema')
+        except ValueError as error:
+            raise HTTPException(422, 'Application inputs differ from the selected mode schema') from error
         missing, materials = [], []
         selected_refs = self.applications.chosen_refs(mode, values["materialChoices"])
         try:
@@ -195,6 +212,8 @@ class CompositionService:
                     "executionBindingsSha256": execution.get("sha256") if execution else None, "connections": connection_pins}
         if values.get("sourceSnapshotRef") is not None:
             manifest["sourceSnapshotRef"] = copy.deepcopy(values["sourceSnapshotRef"])
+        if inputs is not None:
+            manifest.update(inputSchemaSha256=digest(schema), inputValuesSha256=digest(inputs))
         manifest["sha256"] = digest(manifest)
         config = {"askScope": "ask_scope" in tools and len(values["goal"]) < mode["config"]["askScopeBelowLength"],
                   "sample": values["goal"], "experimentDurationSeconds": min(mode["config"]["experimentDurationSeconds"], budget["experimentSeconds"]), "toolOrder": tools}
@@ -206,6 +225,8 @@ class CompositionService:
                      "budget": budget, "policy": policy, "syntheticFixture": bool(self.store.settings.demo),
                      "executionBindings": execution, "bindingManifest": manifest, "missing": missing,
                      "status": "blocked" if missing else "ready"}
+        if inputs is not None:
+            candidate.update(inputSchema=copy.deepcopy(schema), inputValues=copy.deepcopy(inputs))
         if values.get("sourceSnapshotRef") is not None:
             candidate["sourceSnapshotRef"] = copy.deepcopy(values["sourceSnapshotRef"])
         if execution is not None and not missing:
@@ -251,9 +272,9 @@ class CompositionService:
             return self._projection(self._row(conn, owner, proposal_id), conn=conn)
 
     def propose(self, owner, goal, mode=None, application=None, application_ref=None, material_choices=None,
-                connection_refs=None, *, request_id, parent_id=None, source_snapshot_ref=None):
+                connection_refs=None, *, request_id, parent_id=None, source_snapshot_ref=None, input_values=None):
         self.auth.require(owner, "run")
-        values = self._input(goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref)
+        values = self._input(goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref, input_values)
         fingerprint = digest({"action": "propose", "input": values, "parentId": parent_id})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
@@ -275,9 +296,9 @@ class CompositionService:
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, "composition.propose", result)
 
     def revise(self, owner, proposal_id, goal, mode=None, application=None, application_ref=None,
-               material_choices=None, connection_refs=None, *, request_id, source_snapshot_ref=None):
+               material_choices=None, connection_refs=None, *, request_id, source_snapshot_ref=None, input_values=None):
         return self.propose(owner, goal, mode, application, application_ref, material_choices, connection_refs,
-                            request_id=request_id, parent_id=proposal_id, source_snapshot_ref=source_snapshot_ref)
+                            request_id=request_id, parent_id=proposal_id, source_snapshot_ref=source_snapshot_ref, input_values=input_values)
 
     def reject(self, owner, proposal_id, request_id):
         self.auth.require(owner, "run")
@@ -330,7 +351,7 @@ class CompositionService:
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, "composition.accept", plan)
 
     def create_plan(self, owner, goal, mode, application="research", *, application_ref=None, material_choices=None,
-                    connection_refs=None, request_id=None, plan_store=None):
+                    connection_refs=None, request_id=None, plan_store=None, input_values=None):
         key = request_id or str(uuid4())
         MaterialGovernance._key(key)
         ancestors = getattr(plan_store, "ancestors", None)
@@ -353,7 +374,7 @@ class CompositionService:
                     connection_refs = {name: pin["ref"] for name, pin in parent.get("bindingManifest", {}).get("connections", {}).items()
                                        if name in required and pin.get("taskId") is None}
         proposal = self.propose(owner, goal, mode, application if application_ref is None else None,
-            application_ref, material_choices, connection_refs, request_id=digest({"key": key, "action": "direct-propose"}))
+            application_ref, material_choices, connection_refs, input_values=input_values, request_id=digest({"key": key, "action": "direct-propose"}))
         return self.accept(owner, proposal["id"], digest({"key": key, "action": "direct-accept"}), plan_store=plan_store)
 
 
@@ -370,6 +391,7 @@ class ProposalRequest(BaseModel):
     application: str | None = Field(default=None, max_length=100)
     applicationRef: PinnedRef | None = None
     sourceSnapshotRef: SourceSnapshotRef | None = None
+    inputValues: dict[str, Any] | None = None
     materialChoices: dict[str, PinnedRef] = Field(default_factory=dict, max_length=12)
     connectionRefs: dict[str, str] = Field(default_factory=dict, max_length=12)
     requestId: str = Field(min_length=1, max_length=200)
@@ -389,7 +411,8 @@ def composition_router(auth, service):
                 "application_ref": body.applicationRef.model_dump() if body.applicationRef else None,
                 "material_choices": {name: ref.model_dump() for name, ref in body.materialChoices.items()},
                 "connection_refs": body.connectionRefs, "request_id": body.requestId,
-                "source_snapshot_ref": body.sourceSnapshotRef.model_dump() if body.sourceSnapshotRef else None}
+                "source_snapshot_ref": body.sourceSnapshotRef.model_dump() if body.sourceSnapshotRef else None,
+                "input_values": body.inputValues}
     @router.post("", status_code=201)
     def propose(body: ProposalRequest, request: Request):
         return service.propose(auth.user(request)["id"], **kwargs(body))

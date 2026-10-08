@@ -60,6 +60,10 @@ class Settings:
     # Same-process operator registrations; never populated from user JSON/env secrets.
     trusted_connections: dict = field(default_factory=dict)
     runtime_adapters: list = field(default_factory=list)
+    tool_policies: tuple = field(default_factory=tuple)
+    # Trusted workflow definitions/runtime implementations; never request-loaded.
+    workflow_definitions: dict = field(default_factory=dict)
+    workflow_runtimes: dict = field(default_factory=dict)
     runtime_tool_contract: str = "legacy-v1"
     # Explicit coding-development profile; never credential discovery or production default.
     development_profile: str = "disabled"
@@ -70,6 +74,8 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        from .tool_policy_registry import validate_tool_policies
+        self.tool_policies = validate_tool_policies(self.tool_policies, self.runtime_adapters)
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")
         if type(self.source_synthesis_enabled) is not bool or (self.source_synthesis_enabled

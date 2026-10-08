@@ -173,6 +173,10 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         if not receiver:
             store.remote_scientific.validate_source(plan, scientific_envelope)
     optional = {'usageBudget'} | ({'delegation'} if scientific else set())
+    if 'inputSchema' in plan or 'inputValues' in plan:
+        if not {'inputSchema', 'inputValues', *ASSEMBLY_KEYS}.issubset(plan):
+            raise HTTPException(409, 'Remote application inputs require complete governed assembly')
+        optional |= {'inputSchema', 'inputValues'}
     if set(plan) - optional not in (PLAN_KEYS, PLAN_KEYS | ASSEMBLY_KEYS) or plan.get("ownerId") != owner or plan.get("status") != "ready" or plan.get("missing"):
         raise HTTPException(409, "Remote handoff requires a complete ready root plan owned by the origin user")
     if plan.get("fingerprint") != digest({key: value for key, value in plan.items()
@@ -187,6 +191,9 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     policy_service = getattr(store, "plan_policy", None)
     contract = policy_service.current()["tool_contract"] if policy_service else store.settings.runtime_tool_contract
     known_tools = tools_for_contract(contract)
+    from .tool_policy_registry import merged_tools
+    from .plan_policy import reserved_tool_names
+    known_tools = merged_tools(known_tools, getattr(store.settings, 'tool_policies', ()), reserved=reserved_tool_names())
     tools, caps, budget = plan.get("tools"), plan.get("capabilities"), plan.get("budget")
     if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in known_tools for name in tools):
         raise HTTPException(422, "Manifest contains an unregistered remote tool")

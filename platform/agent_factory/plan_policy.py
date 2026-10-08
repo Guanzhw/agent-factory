@@ -8,10 +8,10 @@ protected boundaries; merely constructing the service does not enforce policy.
 from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import re
-from typing import Any, Callable, Literal, Mapping, cast
+from typing import Any, Callable, Literal, Mapping, cast, get_args
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,6 +21,8 @@ from sqlalchemy import Column, ForeignKey, Integer, JSON, MetaData, String, Tabl
 from sqlalchemy.engine import Connection
 
 from .store import digest
+from .tool_policy_registry import (ToolPolicyRegistration, normalize_tool_policies, merged_tools,
+    policy_body, require_installed_policies, require_plan_policies)
 
 PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
 LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
@@ -73,11 +75,18 @@ def tools_for_contract(contract: ToolContract) -> dict[str, str]:
     raise ValueError("Unsupported registered tool contract")
 
 
+def reserved_tool_names():
+    return {name for contract in get_args(ToolContract) for name in tools_for_contract(contract)}
+
+
 def application_tool_catalog(store):
     """Preserve the existing catalog; new tools require an explicit operator contract."""
     contract = getattr(getattr(store, "settings", None), "runtime_tool_contract", "legacy-v1")
-    return {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
+    policies = getattr(getattr(store, 'settings', None), 'tool_policies', ())
+    require_installed_policies(store, policies)
+    base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
             **({"save_literature_synthesis": "research:read"} if getattr(getattr(store, "settings", None), "source_synthesis_enabled", False) else {})}
+    return merged_tools(base, policies, reserved=reserved_tool_names())
 
 
 @dataclass(frozen=True)
@@ -87,9 +96,12 @@ class PlanPolicyConfig:
     review_ttl_seconds: int = 3600
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
+    tool_policies: tuple[ToolPolicyRegistration, ...] = ()
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
+        object.__setattr__(self, "tool_policies", normalize_tool_policies(self.tool_policies))
+        merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
         if self.tool_contract != "legacy-v1" and self.revision == "plan-policy-v1":
@@ -103,22 +115,27 @@ class PlanPolicyConfig:
 
     @property
     def fingerprint(self) -> str:
-        body = asdict(self)
+        body = policy_body(self)
         if not self.source_synthesis_enabled:
             del body["source_synthesis_enabled"]
         if self.tool_contract == "legacy-v1":
             del body["tool_contract"]
         return digest({**body, "knownTools": self.known_tools,
                        "readOnlyTools": sorted(self.read_only_tools),
-                       "readOnlyCapabilities": sorted(READ_ONLY_CAPABILITIES)})
+                       "readOnlyCapabilities": sorted(self.read_only_capabilities)})
 
     @property
     def known_tools(self) -> dict[str, str]:
-        return {**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})}
+        return merged_tools({**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})},
+                            self.tool_policies, reserved=reserved_tool_names())
 
     @property
     def read_only_tools(self) -> frozenset[str]:
-        return self._base_read_only_tools | ({"save_literature_synthesis"} if self.source_synthesis_enabled else set())
+        return self._base_read_only_tools | ({"save_literature_synthesis"} if self.source_synthesis_enabled else set()) | {item.name for item in self.tool_policies if item.read_only}
+
+    @property
+    def read_only_capabilities(self) -> frozenset[str]:
+        return READ_ONLY_CAPABILITIES | {item.capability for item in self.tool_policies if item.read_only}
 
     @property
     def _base_read_only_tools(self) -> frozenset[str]:
@@ -247,6 +264,7 @@ class PlanPolicyService:
         return at.astimezone(timezone.utc)
 
     def _validate_mode(self, config):
+        require_installed_policies(self.store, config.tool_policies)
         if config.name == "bounded-synthetic" and not self.store.settings.demo:
             raise ValueError("bounded-synthetic plan approval is demo-only")
 
@@ -256,7 +274,7 @@ class PlanPolicyService:
             raise ValueError("A policy revision cannot be rebound to different approval rules")
         if not row:
             conn.execute(self.configs.insert().values(revision=config.revision,
-                         policy_hash=config.fingerprint, body=asdict(config)))
+                         policy_hash=config.fingerprint, body=policy_body(config)))
 
     def _current(self, conn) -> PlanPolicyConfig:
         row = conn.execute(select(self.configs.c.body, self.configs.c.policy_hash).join(
@@ -282,15 +300,16 @@ class PlanPolicyService:
         else:
             with self.store.engine.connect() as conn:
                 config = self._current(conn)
-        return {**asdict(config), "fingerprint": config.fingerprint,
+        return {**policy_body(config), "fingerprint": config.fingerprint,
                 "nativeToolConfirmationSeparate": True}
 
     def status(self, owner: str, plan: str | Mapping, *, run_context: Any = None) -> dict:
         self.auth.require(owner, "run")
         stored = self._plan(owner, plan)
         policy = self.current()
-        read_only = (set(stored.get("tools", [])) <= (LEGACY_READ_ONLY_TOOLS if policy["tool_contract"] == "legacy-v1" else READ_ONLY_TOOLS) and
-                     set(stored.get("capabilities", [])) <= READ_ONLY_CAPABILITIES and
+        configured = PlanPolicyConfig(**{key: value for key, value in policy.items() if key in PlanPolicyConfig.__dataclass_fields__})
+        read_only = (set(stored.get("tools", [])) <= configured.read_only_tools and
+                     set(stored.get("capabilities", [])) <= configured.read_only_capabilities and
                      stored.get("mode") != "experiment")
         review_required = policy["name"] == "admin-review" or policy["name"] == "read-only-auto" and not read_only
         result = {"ownerId": owner, "planId": stored["id"], "planDigest": digest(stored),
@@ -343,7 +362,9 @@ class PlanPolicyService:
 
     @staticmethod
     def _scope(plan, config: PlanPolicyConfig | None = None):
-        known = (config or PlanPolicyConfig()).known_tools
+        selected_config = config or PlanPolicyConfig()
+        known = selected_config.known_tools
+        require_plan_policies(plan, selected_config.tool_policies)
         tools, caps = plan.get("tools"), plan.get("capabilities")
         if not isinstance(tools, list) or not tools or any(not isinstance(t, str) or t not in known for t in tools):
             raise HTTPException(409, "PLAN_SCOPE_INVALID: plan contains an unregistered tool")
@@ -573,7 +594,7 @@ class PlanPolicyService:
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")
                 approval = {"source": "bounded-synthetic", "reviewId": None}
-            elif config.name == "read-only-auto" and set(review_plan["tools"]) <= config.read_only_tools and set(review_plan["capabilities"]) <= READ_ONLY_CAPABILITIES and review_plan.get("mode") != "experiment":
+            elif config.name == "read-only-auto" and set(review_plan["tools"]) <= config.read_only_tools and set(review_plan["capabilities"]) <= config.read_only_capabilities and review_plan.get("mode") != "experiment":
                 approval = {"source": "read-only-auto", "reviewId": None}
             else:
                 row = conn.execute(select(self.reviews, self.decisions.c.decision).join(

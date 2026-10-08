@@ -93,7 +93,7 @@ def create_app(settings=None, *, diagnostics=None):
         seed_catalog(store)
     at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, GovernanceConfig(
-        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled))
+        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=settings.tool_policies))
     at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
@@ -174,7 +174,7 @@ def create_app(settings=None, *, diagnostics=None):
     at('PREPARATION_APP_PLAN_POLICY')
     policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled), ancestor_guard=persisted_ancestor_guard(store))
+        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=settings.tool_policies), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
     at('PREPARATION_APP_HANDOFF')
     handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
@@ -207,6 +207,14 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
+    from .workflow_service import WorkflowService
+    from .workflow_control import WorkflowControl, workflow_router
+    # Durable custody remains readable even after operator registrations end.
+    store.workflow = WorkflowService(store, auth, definitions=settings.workflow_definitions, runtimes=settings.workflow_runtimes)
+    store.register_execution_guard('workflow-definition', store.workflow.require_plan_current)
+    store.workflow_control = WorkflowControl(store.workflow, factory_api)
+    store.external_execution_handlers['workflow_wait'] = store.workflow_control.completion
+    base.include_router(workflow_router(auth, store.workflow_control))
     from .autoresearch import AutoResearchService, autoresearch_router
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
     base.include_router(autoresearch_router(auth, store.autoresearch))

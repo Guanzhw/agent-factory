@@ -71,6 +71,9 @@ class Store:
         self.remote_bindings: Any = None
         self.usage_ledger: Any = None
         self.process_runtime: Any = None
+        self.workflow: Any = None
+        self.workflow_control: Any = None
+        self.external_execution_handlers: dict[str, Any] = {}
         self.autoresearch: Any = None
         self.autoresearch_session_control: Any = None
         self.autoresearch_children: Any = None

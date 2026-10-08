@@ -116,6 +116,9 @@ class FactoryLifecycleObserver:
             if any(effect.get("effect_key") == exact and effect_unresolved(effect)
                    for effect in self.store.effects(task["id"])):
                 return "native-ended-unresolved-experiment"
+            workflow = getattr(self.store, 'workflow', None)
+            if workflow is not None and workflow.task_held(task['id']):
+                return 'native-ended-unfinished-workflow'
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -189,6 +192,9 @@ class FactoryLifecycleObserver:
         # end. Native completion alone cannot prove that tree stopped.
         from .orx_experiment_tools import reclaim_orx_experiment
         await reclaim_orx_experiment(self.store.settings, self.store, task["id"])
+        workflow = getattr(self.store, 'workflow', None)
+        if workflow is not None:
+            await workflow.cancel_task(task['owner_id'], task['id'])
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()
@@ -212,6 +218,8 @@ class FactoryLifecycleObserver:
         effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
         process_runtime = getattr(self.store, "process_runtime", None)
         effects_unknown = effects_unknown or (process_runtime is not None and process_runtime.task_held(task["id"]))
+        workflow = getattr(self.store, 'workflow', None)
+        effects_unknown = effects_unknown or (workflow is not None and workflow.task_held(task['id']))
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",

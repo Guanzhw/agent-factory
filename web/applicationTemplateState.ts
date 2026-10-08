@@ -1,4 +1,5 @@
 import type { FactoryApplication, FactoryMaterial, MaterialReference } from './models.js';
+import { applicationInputSchema } from './applicationInputState.js';
 
 export const budgetBounds: Record<string, readonly [number, number]> = {
   toolCalls: [1, 128], maxDepth: [1, 8], maxChildren: [1, 64], experimentSeconds: [1, 600], outputBytes: [1024, 1048576],
@@ -11,7 +12,8 @@ export type TemplateChange =
   | { kind: 'modeRefs'; mode: string; refs: MaterialReference[] }
   | { kind: 'slotDefault'; mode: string; slot: string; ref: MaterialReference }
   | { kind: 'budget' | 'config'; mode: string; field: string; value: number }
-  | { kind: 'toolOrder'; mode: string; tools: string[] };
+  | { kind: 'toolOrder'; mode: string; tools: string[] }
+  | { kind: 'inputSchema'; mode: string; value: unknown };
 export interface TemplateModeView {
   name: string;
   materials: { ref: MaterialReference; material: FactoryMaterial | null }[];
@@ -75,7 +77,10 @@ export function inspectTemplate(value: unknown, catalog: FactoryMaterial[]): Tem
         || !record(mode.budget) || !record(mode.config) || !strings(mode.toolOrder)
         || !record(mode.materialChoices) || !Array.isArray(mode.connectionRequirements)) { unsupported(`方式 ${name} 的结构无法核对`); continue; }
     const capabilities = mode.capabilities;
-    keys(mode, ['materialRefs', 'materialChoices', 'capabilities', 'budget', 'config', 'toolOrder', 'connectionRequirements'], `方式 ${name}`);
+    keys(mode, ['materialRefs', 'materialChoices', 'capabilities', 'budget', 'config', 'toolOrder', 'connectionRequirements', 'inputSchema'], `方式 ${name}`);
+    if (mode.inputSchema !== undefined) {
+      try { applicationInputSchema(mode.inputSchema); } catch { result.errors.push(`方式 ${name} 的输入定义须使用有界对象结构。`); }
+    }
     if (!mode.materialRefs.length || mode.materialRefs.length > 30 || new Set(mode.materialRefs.map(templateRefKey)).size !== mode.materialRefs.length) result.errors.push(`方式 ${name} 需要 1–30 项不重复的精确材料。`);
     if (!mode.capabilities.length || mode.capabilities.length > 30) result.errors.push(`方式 ${name} 的能力范围数量无效。`);
     numeric(mode.budget, budgetBounds, `${name} 预算`); numeric(mode.config, configBounds, `${name} 配置`);
@@ -134,7 +139,10 @@ export function updateTemplate(definition: Record<string, unknown>, change: Temp
   }
   if (!record(next.modes) || !Object.hasOwn(next.modes, change.mode) || !record(next.modes[change.mode])) throw new Error('只能修改模板已有执行方式。');
   const mode = next.modes[change.mode] as Record<string, unknown>;
-  if (change.kind === 'budget' || change.kind === 'config') {
+  if (change.kind === 'inputSchema') {
+    if (change.value === undefined) delete mode.inputSchema;
+    else mode.inputSchema = applicationInputSchema(change.value);
+  } else if (change.kind === 'budget' || change.kind === 'config') {
     const bounds = change.kind === 'budget' ? budgetBounds : configBounds;
     if (!Object.hasOwn(bounds, change.field) || !record(mode[change.kind]) || typeof change.value !== 'number') throw new Error('未知预算或配置字段须高级编辑。');
     (mode[change.kind] as Record<string, unknown>)[change.field] = change.value;
