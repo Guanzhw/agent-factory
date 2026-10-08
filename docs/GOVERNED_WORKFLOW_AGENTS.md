@@ -57,6 +57,9 @@ no replacement run is created. When an explicit reconcile or human decision
 makes that original requirement ready, the existing durable ControlCommands
 protocol continues the same task/run/tool-call identity. The completion signal
 is stable across unrelated stage updates; the model then reads current state.
+External continuation debits the shared tool ledger using the original native
+tool-call ID, because Agno external execution does not run the normal tool hook.
+Repeated preparation reuses that identity; receipt reads do not debit it.
 Human approval is an owner-scoped versioned API command, not an agent tool.
 
 A runtime implements `start(context, operation_id, inputs)`,
@@ -68,6 +71,11 @@ An absent handle, failed lookup or timeout never means stopped. UNKNOWN is held;
 start is never retried automatically. Cancellation may recover an original
 handle through lookup and then stop it, including after authority has ended.
 Missing original adapters leave custody held rather than releasing capacity.
+An adapter can explicitly raise `WorkflowAcknowledgementUnknown` when a start
+may have reached its backend but no acknowledgement is available. The service
+rechecks current authority and returns its durable UNKNOWN intent for a native
+pause and later original-ID lookup. Ordinary exceptions still trigger protected
+failure cleanup; cancellation is never converted into a successful observation.
 
 This protocol does not implement an arbitrary runtime engine, sandbox, compute
 allocator or notifications backend. Installed adapters remain trusted code and
@@ -105,7 +113,7 @@ results, not resetting or replaying a failed/unknown stage.
 ## Engineering evidence and limits
 
 `test_workflow_native_postgres.py` and the mandatory
-`scripts/check_workflow_postgres.py` gate run three synthetic cases with zero
+`scripts/check_workflow_postgres.py` gate run four synthetic cases with zero
 allowed skips. They execute real PostgreSQL records, native Agno queued tool
 invocation, loopback HTTP and an actual server-process restart using the same
 persisted database. A durable SQLite fixture represents external operations;
@@ -115,6 +123,10 @@ stages and join, versioned human decision, structured failure-to-B routing,
 lost ACK lookup without duplicate starts, owner isolation, revocation and
 cancellation. They do not produce or validate real ConvertD outputs, scientific
 results, production identity, cross-host execution or target capacity.
+The separate pre-pause exit case terminates the server after UNKNOWN is durable
+but before the native pause is committed. Conservative cancellation is allowed;
+original starts must remain unique, and capacity release requires positive stop
+evidence. This differs from the already-paused lost-acknowledgement recovery case.
 
 Unit checks separately cover strict schemas and immutable input hashes,
 registered policies, failure graph rules, terminal monotonicity, missing-adapter

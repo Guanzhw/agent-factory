@@ -78,6 +78,7 @@ def _verification_services(store, auth, settings):
     from agent_factory.remote_bindings import RemoteBindingService
     from agent_factory.remote_handoff import TrustedHandoffClient
     from agent_factory.usage_ledger import UsageLedger, default_zero_prices
+    from agent_factory.workflow_service import require_workflow_plan_current
 
     # Existing configuration must be present before any service constructor.
     for table, expected in (('af_plan_policy_state', settings.policy_revision),
@@ -93,7 +94,8 @@ def _verification_services(store, auth, settings):
         raise ValueError('RESEARCH_CANDIDATE_STORAGE_MISSING')
     governance = store.material_governance = MaterialGovernance(store, auth, GovernanceConfig(
         review_mode=settings.material_review_mode, revision=settings.material_policy_revision,
-        tool_contract=settings.runtime_tool_contract, source_synthesis_enabled=settings.source_synthesis_enabled))
+        tool_contract=settings.runtime_tool_contract, source_synthesis_enabled=settings.source_synthesis_enabled,
+        tool_policies=settings.tool_policies))
     store.register_execution_guard('material-governance',
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     connections = store.connections = ConnectionService(store, auth, settings.trusted_connections)
@@ -109,10 +111,15 @@ def _verification_services(store, auth, settings):
         lambda owner, plan, context, tool: bindings.recheck(plan, context), tool_independent=True)
     store.register_execution_guard('application-governance',
         lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
+    store.register_execution_guard('workflow-definition',
+        lambda owner, plan, context, tool: require_workflow_plan_current(owner, plan,
+            definitions=settings.workflow_definitions, runtimes=settings.workflow_runtimes,
+            tool_name=tool, run_context=context))
     store.plan_policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=settings.temporary_policy, revision=settings.policy_revision,
         review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=settings.runtime_tool_contract,
-        source_synthesis_enabled=settings.source_synthesis_enabled), ancestor_guard=persisted_ancestor_guard(store))
+        source_synthesis_enabled=settings.source_synthesis_enabled,
+        tool_policies=settings.tool_policies), ancestor_guard=persisted_ancestor_guard(store))
     store.delegation = DelegationService(settings, store, auth, NativeBridge(settings, store.native_db, auth))
     TrustedHandoffClient(store, auth, settings.handoff_targets).install_guard()
     prices = {(price.adapter_id, price.adapter_revision): price for price in default_zero_prices()}

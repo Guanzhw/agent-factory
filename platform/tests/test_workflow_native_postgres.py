@@ -6,6 +6,7 @@ model uses ordinary Model.invoke tool calls. SQLite represents a durable inert
 external backend; no model/provider network or subprocess tool is available.
 """
 from contextlib import ExitStack
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -29,7 +30,7 @@ from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLim
 from agent_factory.main import create_app
 from agent_factory.tool_policy_registry import ToolPolicyRegistration
 from agent_factory.usage_ledger import PricingRevision
-from agent_factory.workflow_contracts import workflow_fingerprint
+from agent_factory.workflow_contracts import WorkflowAcknowledgementUnknown, workflow_fingerprint
 from agent_factory.workflow_profile import PERMISSION, TOOLS, registrations
 from pg_fixture import IsolatedPostgres
 
@@ -82,8 +83,13 @@ class DurableOperations:
             # A duplicate start is observable and fails, not hidden by an UPSERT.
             conn.execute('INSERT INTO operations VALUES(?,?,?,1,0,0)',
                 (operation_id, context.stage_id, json.dumps(result)))
+        if inputs['values']['scenario'] == 'exit-before-pause' and context.stage_id == 'analyze':
+            # Real native execution remains in flight after durable external
+            # admission. Only fixture process shutdown interrupts this await;
+            # there is no timer, busy loop, or second attempt.
+            await asyncio.Event().wait()
         if inputs['values']['scenario'] == 'lost-ack' and context.stage_id == 'analyze':
-            raise ConnectionError('CONTROLLED_ACK_LOSS')
+            raise WorkflowAcknowledgementUnknown()
         return result
 
     async def inspect(self, context, handle):
@@ -141,6 +147,10 @@ class WorkflowFixtureModel(Model):
         if 'stages' not in body:
             return call('workflow_read', requestId='open')
         stages = body['stages']
+        if (body['inputValues']['scenario'] == 'explicit-resume'
+                and stages['ingest']['state'] == 'PENDING'
+                and not any(message.tool_name == 'workflow_wait' for message in tools)):
+            return call('workflow_wait', stageId='ingest')
         for stage in body['definition']['stages']:
             name = stage['id']; entry = stages[name]
             if name == 'alternative' and stages['convert']['state'] != 'FAILED':
@@ -222,7 +232,7 @@ def publish(state):
             'materialRefs': refs, 'toolOrder': list(TOOLS), 'capabilities': [PERMISSION], 'config': {},
             'inputSchema': {'type': 'object', 'additionalProperties': False, 'required': ['scenario'],
                 'properties': {'scenario': {'type': 'string', 'maxLength': 20,
-                    'enum': ['success', 'failure', 'lost-ack']}}},
+                    'enum': ['success', 'failure', 'lost-ack', 'explicit-resume', 'exit-before-pause']}}},
             'connectionRequirements': [], 'budget': {'toolCalls': 32, 'maxDepth': 1, 'maxChildren': 1,
                 'experimentSeconds': 30, 'outputBytes': 65536}}}}
     application = apps.create_draft('manager', value, APP + ':draft')
@@ -250,9 +260,20 @@ def serve(configuration):
         control(request)
         store = state['store']
         task = store.task(taskId, 'alice') if taskId else None
+        held = store.workflow.task_held(taskId) if taskId else False
+        failures = store.sql("SELECT type,data FROM af_events WHERE task_id=:id AND type IN "
+            "('tool_failed','protected_denied','lifecycle_cleanup_requested') ORDER BY id LIMIT 20",
+            id=taskId) if taskId else []
         return {'application': application, 'operations': backend.rows(), 'pid': os.getpid(),
+            'failureEvents': [{'type': row['type'],
+                'errorType': row['data'].get('errorType') if row['data'].get('errorType') in
+                    {'ConnectionError', 'ValueError', 'RunCancelledException', 'WorkflowAcknowledgementUnknown'} else None,
+                'reason': row['data'].get('reason') if row['data'].get('reason') in
+                    {'protected-failure', 'cancel-requested', 'native-failure', 'native-ended',
+                     'current-authority-ended', 'native-ended-unfinished-workflow'} else None} for row in failures],
             'task': task, 'native': store.native_db.get_job(task['run_id']) if task and task['run_id'] else None,
             'workflow': store.workflow.snapshot_task('alice', taskId) if taskId else None,
+            'workflowHeld': held,
             'nativeCount': store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id', id=taskId)[0]['n'] if taskId else 0}
 
     @app.app.post('/__workflow_fixture/control')
@@ -300,7 +321,7 @@ class WorkflowServer:
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise AssertionError('Controlled workflow server failed: ' + (self.root / 'server.log').read_text(errors='replace')[-6000:])
+                raise AssertionError('Controlled workflow server failed: ' + self.diagnostic_tail())
             try:
                 if httpx.get(self.url + '/api/health', timeout=1, trust_env=False).status_code == 200:
                     return
@@ -319,6 +340,19 @@ class WorkflowServer:
                 self.process.wait(5)
         if self.log:
             self.log.close()
+
+    def diagnostic_tail(self):
+        """Only failed synthetic fixtures expose a bounded, credential-redacted tail."""
+        path = self.root / 'server.log'
+        if not path.exists():
+            return 'CONTROLLED_SERVER_LOG_UNAVAILABLE'
+        with path.open('rb') as source:
+            source.seek(0, 2)
+            source.seek(max(0, source.tell() - 12000))
+            result = source.read(12000).decode('utf-8', errors='replace')
+        for key in ('jwtKey', 'controlKey', 'dbUrl'):
+            result = result.replace(self.configuration[key], '[REDACTED_FIXTURE_VALUE]')
+        return result
 
     def request(self, method, path, body=None, *, owner='alice', fixture=False):
         import jwt
@@ -357,10 +391,17 @@ class WorkflowNativePostgresTests(unittest.TestCase):
 
     def request(self, method, path, body=None, *, owner='alice', expected=None):
         response = self.server.request(method, '/api/factory' + path, body, owner=owner)
+        diagnostic = response.text
+        if response.status_code >= 500:
+            # Uvicorn can emit its exception traceback after sending the 500.
+            # This request is already a failed fixture: stop/reap this owned
+            # server before reading, rather than retrying the mutation.
+            self.server.stop()
+            diagnostic += '\n' + self.server.diagnostic_tail()
         if expected is None:
-            self.assertTrue(response.is_success, response.text)
+            self.assertTrue(response.is_success, diagnostic)
         else:
-            self.assertEqual(response.status_code, expected, response.text)
+            self.assertEqual(response.status_code, expected, diagnostic)
         return response.json()
 
     def post(self, path, body=None, **kwargs):
@@ -384,7 +425,9 @@ class WorkflowNativePostgresTests(unittest.TestCase):
             if predicate(last):
                 return last
             time.sleep(.15)
-        self.fail('Original workflow observation deadline: ' + json.dumps(last, default=str))
+        self.server.stop()
+        self.fail('Original workflow observation deadline: ' + json.dumps(last, default=str)
+            + '\n' + self.server.diagnostic_tail())
 
     def paused(self, task):
         return self.until(task, lambda value: value['native'] and value['native']['status'] == 'paused')
@@ -425,8 +468,28 @@ class WorkflowNativePostgresTests(unittest.TestCase):
         return facts
 
     def test_parallel_pause_process_restart_same_native_and_report(self):
-        task = self.start_task()
-        original = self.paused(task)
+        task = self.start_task('explicit-resume')
+        before = self.paused(task)
+        self.assertEqual(before['workflow']['stages']['ingest']['state'], 'PENDING')
+        self.assertEqual(before['operations'], [])
+        command = {'commandId': str(uuid4()), 'action': 'resume', 'stageId': 'ingest',
+            'version': before['workflow']['version']}
+        path = '/workflows/' + task['id'] + '/commands'
+        receipt = self.request('POST', path, command)
+        self.assertEqual(receipt['status'], 'completed', receipt)
+        self.assertEqual(self.request('POST', path, command), receipt)
+        self.assertEqual(self.request('GET', path + '/' + command['commandId']), receipt)
+        self.request('POST', path, {**command, 'version': command['version'] + 1}, expected=409)
+        original = self.until(task, lambda value: value['native']['status'] == 'paused'
+            and value['workflow']['stages']['analyze']['state'] == 'RUNNING'
+            and value['workflow']['stages']['validate']['state'] == 'RUNNING')
+        self.assertEqual(original['nativeCount'], 1)
+        self.assertEqual(original['task']['run_id'], before['task']['run_id'])
+        self.assertEqual(original['task']['plan_id'], before['task']['plan_id'])
+        self.assertEqual(original['workflow']['id'], before['workflow']['id'])
+        ingest = [row for row in original['operations'] if row['stage'] == 'ingest']
+        self.assertEqual(len(ingest), 1)
+        self.assertEqual(ingest[0]['starts'], 1)
         self.assertEqual({row['stage'] for row in original['operations']}, {'ingest', 'analyze', 'validate'})
         self.assertEqual(original['workflow']['stages']['analyze']['state'], 'RUNNING')
         self.assertEqual(original['workflow']['stages']['validate']['state'], 'RUNNING')
@@ -460,7 +523,8 @@ class WorkflowNativePostgresTests(unittest.TestCase):
         self.assertEqual(final['workflow']['stages']['alternative']['state'], 'COMPLETED')
         lost = self.start_task('lost-ack')
         observed = self.until(lost, lambda value: value['workflow'] is not None and
-            value['workflow']['stages']['analyze']['state'] == 'UNKNOWN')
+            value['workflow']['stages']['analyze']['state'] == 'UNKNOWN' and
+            value['native'] is not None and value['native']['status'] == 'paused')
         self.server.stop()
         self.server.start()
         self.workflow_post(lost, 'reconcile', {'stageId': 'analyze'})
@@ -483,6 +547,47 @@ class WorkflowNativePostgresTests(unittest.TestCase):
         final = self.assert_once(task, original)
         self.assertEqual(len(final['operations']), len(original['operations']))
         self.assertTrue(final['task']['cancel_requested'])
+
+    def test_exit_before_native_pause_preserves_original_unknown_custody(self):
+        task = self.start_task('exit-before-pause')
+        original = self.until(task, lambda value: value['workflow'] is not None
+            and value['workflow']['stages']['analyze']['state'] == 'UNKNOWN'
+            and value['native'] is not None and value['native']['status'] == 'running'
+            and any(row['stage'] == 'analyze' for row in value['operations']))
+        self.assertTrue(original['workflowHeld'])
+        self.assertNotEqual(original['native']['status'], 'paused')
+        self.assertFalse(original['workflow']['stages']['analyze']['handle'])
+        self.assertEqual([row['observation']['state'] for row in original['operations']
+            if row['stage'] == 'analyze'], ['RUNNING'])
+        self.server.stop()
+        self.server.start()
+        self.assertNotEqual(self.server.pids[-1], self.server.pids[-2])
+        restored = self.assert_once(task, original)
+        self.assertEqual({row['operationId'] for row in restored['operations']},
+            {row['operationId'] for row in original['operations']})
+        # A failed native run may deny admission-oriented reconciliation. Its
+        # explicit receipt is still required, never an unclassified HTTP 500.
+        receipt = self.workflow_post(task, 'reconcile', {'stageId': 'analyze'})
+        self.assertIn(receipt['status'], {'completed', 'unknown', 'rejected', 'recorded'})
+        projection = self.request('GET', '/workflows/' + task['id'])
+        self.assertTrue(projection['available'])
+        self.assertIsInstance(projection['allowedActions'], list)
+        current = self.assert_once(task, original)
+        stopped = all(row['observation']['allStopped'] for row in current['operations'])
+        if not stopped:
+            self.assertTrue(current['workflowHeld'], 'Uncertain external work must retain custody')
+            self.assertFalse(current['task']['terminal'], 'Native cancellation alone cannot release custody')
+        # Explicit operator cancellation is original-only even if the native
+        # worker was cancelled during shutdown; no synthetic replacement task.
+        cancel = self.workflow_post(task, 'cancel')
+        self.assertIn(cancel['status'], {'completed', 'unknown', 'rejected', 'recorded'})
+        final = self.assert_once(task, original)
+        self.assertEqual({row['operationId'] for row in final['operations']},
+            {row['operationId'] for row in original['operations']})
+        if not final['workflowHeld'] or final['task']['terminal']:
+            self.assertTrue(all(row['observation']['allStopped'] for row in final['operations']))
+        else:
+            self.assertIn(final['workflow']['stages']['analyze']['state'], {'UNKNOWN', 'RUNNING', 'WAITING'})
 
 
 if __name__ == '__main__':

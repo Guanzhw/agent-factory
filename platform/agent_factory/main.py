@@ -213,7 +213,7 @@ def create_app(settings=None, *, diagnostics=None):
     store.workflow = WorkflowService(store, auth, definitions=settings.workflow_definitions, runtimes=settings.workflow_runtimes)
     store.register_execution_guard('workflow-definition', store.workflow.require_plan_current)
     store.workflow_control = WorkflowControl(store.workflow, factory_api)
-    store.external_execution_handlers['workflow_wait'] = store.workflow_control.completion
+    store.external_execution_handlers['workflow_wait'] = store.workflow_control.complete_external
     base.include_router(workflow_router(auth, store.workflow_control))
     from .autoresearch import AutoResearchService, autoresearch_router
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)

@@ -12,8 +12,8 @@ and requested the already accepted baseline be synchronized first via PR61.
 PR61 merged the accepted baseline into main at
 `067354e0b95ceba7aa620216fe7a18715b179ac0` after explicit user confirmation
 of the draft-to-ready step; main CI is pending. No protection bypass.
-Current workflow edits remain separate; covered historical PRs are being closed
-with exact ancestry evidence, leaving independent #8/#41/#51 open.
+Current workflow edits remain separate in draft PR62. All 51 covered historical
+stage PRs are resolved with exact ancestry evidence; independent #8/#41/#51 remain open.
 
 | Owner | Exclusive files / interfaces | Acceptance / dependencies |
 |---|---|---|
@@ -33,17 +33,31 @@ version/owner checks; cancellation retaining unknown custody; input/schema and
 policy drift denial. Existing AutoResearch tests remain. Heavy local database
 checks run serially. Implementation is integrated but final acceptance is pending.
 
-Current evidence: registry5, input9+legacy12, contracts8, service/profile19,
-control9 focused checks passed; frontend218 tests/build/typecheck/lint passed.
-The first real PostgreSQL/native-process gate passed3/3 with zero skips in89.234s;
-subsequent controller recovery/withdrawal changes still require its final rerun.
-Old AutoResearch gate is running serially. Independent review found and fixed
-lost-ACK cancellation lookup, mutable continuation proof, removed-registration
-custody and native-completed unfinished-workflow cleanup. npm audit is clear.
-Mock-transport browser interaction passed, including UNKNOWN reload/GET recovery,
-versioned decisions, retained cancel uncertainty and 390px layout. Actual backend
-behavior is separately tested by the native/PostgreSQL gate.
-Final full regression, exact CI and workflow merge remain pending.
+Current evidence: frontend218 tests/build/typecheck/lint and actual browser with
+mock API transport passed. Existing required AutoResearch native gate passed11/11
+with zero skips in677.994s. npm/Python dependency audits report no known issues.
+The first workflow native gate passed3/3, but later stricter recovery checks
+exposed a race: ordinary adapter ConnectionError records protected tool failure
+and cancels original custody before durable pause. Earlier reconcile HTTP500 had
+no captured exact stack and is not claimed resolved merely by waiting.
+A narrow typed unknown-acknowledgement contract now allows durable UNKNOWN
+observation; generic failures/cancellation still propagate. Final four-case gate
+adds a distinct service-exit-before-pause fault injection.
+CI at178e998 failed on stale test mocks and readonly reconstruction missing the
+workflow guard. Fixes preserve production validation, use a pure no-DDL guard,
+and close SQLite handles before temporary fixture deletion. External native
+wait completion now charges the original tool-call ID; actual ledger acceptance
+is being verified independently. Service25 and lifecycle10 focused tests pass.
+Candidate regression passed9/9 with zero skips in133.456s. Complete portable
+suite passed2342 tests (435 expected environment skips) in208.663s, followed by
+updated control15 and actual SQLite ledger3 checks with ResourceWarning treated
+as an error. Independent core review found no blocker. The pre-pause exit gate
+captured a GET snapshot500 from RunCancelledException; snapshot now retains
+owner-readable custody with no execution actions, covered by regression tests.
+Final four-case native/PostgreSQL rerun passed4/4 with zero skips in120.497s.
+Ruff and Linux/Windows Pyright passed; changed-file credential-pattern scan found
+zero matches. Exact final CI and workflow merge remain pending; PR62 records
+the final immutable commit and terminal CI observations.
 See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
 
 ---

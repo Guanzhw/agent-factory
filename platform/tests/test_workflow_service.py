@@ -1,16 +1,17 @@
 """SQLite durable journal with inert runtime: no model/process/live execution."""
 from copy import deepcopy
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from fastapi import HTTPException
 
-from agent_factory.workflow_contracts import workflow_fingerprint
-from agent_factory.workflow_service import WorkflowService
+from agent_factory.workflow_contracts import WorkflowAcknowledgementUnknown, workflow_fingerprint
+from agent_factory.workflow_service import WorkflowService, require_workflow_plan_current
 
 
 def stage(identifier, deps=(), routes=None, human=False):
@@ -40,8 +41,13 @@ class Runtime:
 
 class WorkflowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.engine = create_engine('sqlite:///' + str(Path(self.temp.name) / 'journal.db')); self.addCleanup(self.engine.dispose)
+        self.resources = ExitStack()
+        self.addCleanup(self.resources.close)
+        self.directory = self.resources.enter_context(tempfile.TemporaryDirectory())
+        self.engine = create_engine('sqlite:///' + str(Path(self.directory) / 'journal.db'))
+        # Register immediately, before creating any journal or test double.
+        # LIFO closes pooled SQLite handles before removing the directory.
+        self.resources.callback(self.engine.dispose)
         self.runtime = Runtime(); self.auth = SimpleNamespace(require=Mock())
         self.ctx = SimpleNamespace(user_id='alice', session_id='task', run_id='native')
         self.task = {'id': 'task', 'owner_id': 'alice', 'run_id': 'native', 'plan_id': 'plan', 'terminal': False, 'cancel_requested': False}
@@ -56,6 +62,8 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
             stages = [stage('A', routes={'BAD_INPUT': 'B'}), stage('B', ['A'])]
             if self._testMethodName == 'test_recovered_failure_satisfies_join_and_finish':
                 stages.append(stage('join', ['A']))
+        elif self._testMethodName == 'test_cancel_failure_does_not_skip_other_original_handles':
+            stages = [stage('A'), stage('B')]
         elif self._testMethodName == 'test_human_version_idempotency':
             stages = [stage('A', human=True)]
         elif self._testMethodName == 'test_parallel_join_and_capacity':
@@ -211,3 +219,127 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
         mixed['tools'].append('workflow_export')
         mixed['executionBindings']['tools'].extend(business['executionBindings']['tools'])
         self.assertEqual(self.service.require_plan_current('alice', mixed), self.definition)
+
+    async def test_cancel_failure_does_not_skip_other_original_handles(self):
+        self.runtime.outcome = 'RUNNING'
+        await self.service.choose(self.ctx, 'A', 'a')
+        original = await self.service.choose(self.ctx, 'B', 'b')
+        original_cancel = self.runtime.cancel
+        attempted = []
+        async def cancel(context, handle):
+            attempted.append(context.stage_id)
+            if context.stage_id == 'A':
+                raise ConnectionError('controlled unknown cancellation acknowledgment')
+            return await original_cancel(context, handle)
+        setattr(self.runtime, 'cancel', cancel)
+        self.assertFalse(await self.service.cancel_task('alice', 'task'))
+        self.assertEqual(attempted, ['A', 'B'])
+        current = self.service.read('alice', self.body['id'])
+        self.assertEqual(current['stages']['A']['state'], 'RUNNING')
+        self.assertEqual(current['stages']['B']['state'], 'CANCELLED')
+        for stage_id in ('A', 'B'):
+            self.assertEqual(current['stages'][stage_id]['handle'], original['stages'][stage_id]['handle'])
+        self.assertTrue(self.service.task_held('task'))
+        self.assertEqual(len(self.runtime.starts), 2)
+
+    async def test_nested_fixture_failed_setup_disposes_sqlite_before_directory_removal(self):
+        nested = WorkflowTests('test_original_inputs_dependencies_and_command_replay')
+        closed = []
+        real_service = WorkflowService
+        def fail_after_database_open(*args, **kwargs):
+            real_service(*args, **kwargs)
+            event.listen(nested.engine, 'close', lambda connection, record: closed.append(Path(nested.directory).exists()))
+            raise RuntimeError('controlled setup failure after SQLite journal creation')
+        try:
+            with patch(__name__ + '.WorkflowService', side_effect=fail_after_database_open):
+                with self.assertRaisesRegex(RuntimeError, 'controlled setup failure'):
+                    nested.setUp()
+            self.assertTrue(Path(nested.directory, 'journal.db').is_file())
+            nested.resources.close()
+            self.assertEqual(closed, [True], 'Close SQLite while its directory still exists, before deleting files')
+            self.assertFalse(Path(nested.directory).exists())
+            nested.resources.close()  # Explicit owner cleanup is idempotent.
+        finally:
+            nested.resources.close()
+
+    async def test_readonly_plan_guard_never_constructs_service_or_touches_database(self):
+        with patch('agent_factory.workflow_service.WorkflowService.__init__', side_effect=AssertionError('No service construction')), \
+                patch.object(self.engine, 'begin', side_effect=AssertionError('No transactions')), \
+                patch.object(self.engine, 'connect', side_effect=AssertionError('No database reads')):
+            result = require_workflow_plan_current('alice', self.plan,
+                definitions={'work': self.definition}, runtimes={('inert', '1'): self.runtime})
+            self.assertEqual(result, self.definition)
+            assert result is not None
+            result['revision'] = 'detached'
+            self.assertEqual(self.definition['revision'], '1')
+            self.assertIsNone(require_workflow_plan_current('alice', {'tools': ['workflow_export']}, definitions={}, runtimes={}))
+            with self.assertRaises(HTTPException) as error:
+                require_workflow_plan_current('alice', self.plan, definitions={}, runtimes={})
+            self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(self.runtime.starts, [])
+
+    def typed_unknown_start(self, after_start=lambda: None):
+        original = self.runtime.start
+        async def uncertain(context, operation_id, inputs):
+            await original(context, operation_id, inputs)
+            after_start()
+            raise WorkflowAcknowledgementUnknown()
+        setattr(self.runtime, 'start', uncertain)
+
+    async def test_typed_start_unknown_retains_original_identity_and_lookup_recovers(self):
+        self.typed_unknown_start()
+        unknown = await self.service.choose(self.ctx, 'A', 'original')
+        operation_id = unknown['stages']['A']['operationId']
+        self.assertEqual(unknown['stages']['A']['state'], 'UNKNOWN')
+        self.assertIsNone(unknown['stages']['A']['handle'])
+        self.assertTrue(self.service.task_held('task'))
+        self.assertEqual(await self.service.choose(self.ctx, 'A', 'original'), unknown)
+        with self.assertRaises(ValueError): await self.service.choose(self.ctx, 'A', 'replacement')
+        self.assertEqual(len(self.runtime.starts), 1)
+        recovered = await self.service.reconcile(self.ctx, 'A', 'lookup-original', expected_version=unknown['version'])
+        self.assertEqual(recovered['stages']['A']['operationId'], operation_id)
+        self.assertEqual(recovered['stages']['A']['state'], 'COMPLETED')
+        self.assertEqual(recovered['stages']['A']['handle']['id'], operation_id)
+        self.assertEqual(len(self.runtime.starts), 1)
+
+    async def test_typed_unknown_does_not_swallow_fresh_authority_revocation(self):
+        denied = PermissionError('controlled authority revoked after dispatch')
+        self.typed_unknown_start(lambda: setattr(self.store.authorize_tool, 'side_effect', denied))
+        with self.assertRaises(PermissionError) as caught:
+            await self.service.choose(self.ctx, 'A', 'original')
+        self.assertIs(caught.exception, denied)
+        self.assertTrue(self.service.task_held('task'))
+        self.assertEqual(len(self.runtime.starts), 1)
+
+    async def test_typed_unknown_does_not_swallow_current_task_cancel(self):
+        self.typed_unknown_start(lambda: self.task.update(cancel_requested=True))
+        with self.assertRaises(ValueError): await self.service.choose(self.ctx, 'A', 'original')
+        retained = self.service.read('alice', self.body['id'])
+        self.assertEqual(retained['stages']['A']['state'], 'UNKNOWN')
+        self.assertTrue(self.service.task_held('task'))
+
+    async def test_ordinary_start_error_propagates_exact_exception(self):
+        error = ConnectionError('controlled ordinary transport failure')
+        original = self.runtime.start
+        async def failed(context, operation_id, inputs):
+            await original(context, operation_id, inputs)
+            raise error
+        setattr(self.runtime, 'start', failed)
+        with self.assertRaises(ConnectionError) as caught:
+            await self.service.choose(self.ctx, 'A', 'original')
+        self.assertIs(caught.exception, error)
+        self.assertTrue(self.service.task_held('task'))
+
+    async def test_start_cancellation_propagates_exact_exception(self):
+        import asyncio
+        error = asyncio.CancelledError()
+        original = self.runtime.start
+        async def cancelled(context, operation_id, inputs):
+            await original(context, operation_id, inputs)
+            raise error
+        setattr(self.runtime, 'start', cancelled)
+        with self.assertRaises(asyncio.CancelledError) as caught:
+            await self.service.choose(self.ctx, 'A', 'original')
+        self.assertIs(caught.exception, error)
+        self.assertTrue(self.service.task_held('task'))
+        self.assertEqual(len(self.runtime.starts), 1)

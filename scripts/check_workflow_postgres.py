@@ -15,7 +15,7 @@ def main():
     suite = unittest.defaultTestLoader.discover(str(root / 'platform/tests'),
         pattern='test_workflow_native_postgres.py')
     expected = suite.countTestCases()
-    if expected != 3:
+    if expected != 4:
         print('WORKFLOW_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)

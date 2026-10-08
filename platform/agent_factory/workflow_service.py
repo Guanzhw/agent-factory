@@ -14,7 +14,7 @@ from sqlalchemy import text
 from fastapi import HTTPException
 
 from .store import canonical, digest
-from .workflow_contracts import WorkflowContext, validate_runtime_observation, validate_workflow_definition, workflow_fingerprint
+from .workflow_contracts import WorkflowAcknowledgementUnknown, WorkflowContext, validate_runtime_observation, validate_workflow_definition, workflow_fingerprint
 
 ERROR = 'WORKFLOW_CUSTODY_INVALID'
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED'}
@@ -28,6 +28,34 @@ def require(value):
 
 def decoded(value):
     return json.loads(value) if isinstance(value, str) else deepcopy(value)
+
+
+def require_workflow_plan_current(owner, plan, *, definitions, runtimes, tool_name=None, run_context=None):
+    """Nonrecursive execution guard; historical reads and cleanup remain separate."""
+    selected = [name for name in plan.get('tools', []) if isinstance(name, str) and name in WORKFLOW_TOOLS]
+    if not selected:
+        return None
+    try:
+        require(plan.get('ownerId') == owner and type(plan.get('applicationRef')) is dict)
+        specs = [spec for spec in plan.get('executionBindings', {}).get('tools', [])
+                 if spec.get('toolName') in WORKFLOW_TOOLS]
+        require(len(specs) == len(selected) and {spec.get('toolName') for spec in specs} == set(selected))
+        config = specs[0].get('config')
+        require(type(config) is dict and set(config) == {'workflowId', 'workflowSha256'})
+        for spec in specs:
+            name = spec.get('toolName')
+            require(name in WORKFLOW_TOOLS
+                    and spec.get('adapterId') == 'workflow-' + name.removeprefix('workflow_') + '-v1'
+                    and spec.get('revision') == '1' and spec.get('config') == config)
+        definition = definitions.get(config['workflowId'])
+        require(definition is not None and config['workflowSha256'] == workflow_fingerprint(definition))
+        definition = cast(dict, definition)
+        for stage in definition['stages']:
+            runtime = runtimes.get((stage['adapterId'], stage['revision']))
+            require(runtime is not None and all(callable(getattr(runtime, method, None)) for method in ('start', 'inspect', 'cancel')))
+        return deepcopy(definition)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HTTPException(409, 'WORKFLOW_CURRENT_DEFINITION_UNAVAILABLE') from None
 
 
 class WorkflowService:
@@ -67,31 +95,8 @@ class WorkflowService:
                      {'body': canonical(body), 'id': body['id'], 'owner': body['ownerId']})
 
     def require_plan_current(self, owner, plan, tool_name=None, run_context=None):
-        """Nonrecursive execution guard; historical reads and cleanup remain separate."""
-        selected = [name for name in plan.get('tools', []) if isinstance(name, str) and name in WORKFLOW_TOOLS]
-        if not selected:
-            return None
-        try:
-            require(plan.get('ownerId') == owner and type(plan.get('applicationRef')) is dict)
-            specs = [spec for spec in plan.get('executionBindings', {}).get('tools', [])
-                     if spec.get('toolName') in WORKFLOW_TOOLS]
-            require(len(specs) == len(selected) and {spec.get('toolName') for spec in specs} == set(selected))
-            config = specs[0].get('config')
-            require(type(config) is dict and set(config) == {'workflowId', 'workflowSha256'})
-            for spec in specs:
-                name = spec.get('toolName')
-                require(name in WORKFLOW_TOOLS
-                        and spec.get('adapterId') == 'workflow-' + name.removeprefix('workflow_') + '-v1'
-                        and spec.get('revision') == '1' and spec.get('config') == config)
-            definition = self.definitions.get(config['workflowId'])
-            require(definition is not None and config['workflowSha256'] == workflow_fingerprint(definition))
-            definition = cast(dict, definition)
-            for stage in definition['stages']:
-                runtime = self.runtimes.get((stage['adapterId'], stage['revision']))
-                require(runtime is not None and all(callable(getattr(runtime, method, None)) for method in ('start', 'inspect', 'cancel')))
-            return deepcopy(definition)
-        except (ValueError, TypeError, KeyError, AttributeError):
-            raise HTTPException(409, 'WORKFLOW_CURRENT_DEFINITION_UNAVAILABLE') from None
+        return require_workflow_plan_current(owner, plan, definitions=self.definitions, runtimes=self.runtimes,
+                                             tool_name=tool_name, run_context=run_context)
 
     def _current(self, ctx, tool='workflow_read'):
         plan = self.store.authorize_tool(ctx, tool)
@@ -241,7 +246,12 @@ class WorkflowService:
         runtime = self.runtimes[(stage['adapterId'], stage['revision'])]
         inputs = {'values': body['inputValues'], 'stage': stage['inputs'],
                   'dependencies': {dep: body['stages'][dep]['observation'] for dep in stage['dependencies']}}
-        result = await runtime.start(self._runtime_context(body, stage), body['stages'][stage_id]['operationId'], deepcopy(inputs))
+        try:
+            result = await runtime.start(self._runtime_context(body, stage), body['stages'][stage_id]['operationId'], deepcopy(inputs))
+        except WorkflowAcknowledgementUnknown:
+            # Only an explicit adapter ambiguity is a recoverable observation.
+            # Read current custody again: cancellation/authority loss still fails.
+            return self._bound(ctx, 'workflow_choose')
         return self._accept(body, stage_id, result)
 
     async def inspect(self, ctx, stage_id):
@@ -320,7 +330,9 @@ class WorkflowService:
                     result = await runtime.cancel(self._runtime_context(body, stage), deepcopy(entry['handle']))
                     body = self._accept(body, stage['id'], result)
             except Exception:
-                return False
+                # One uncertain adapter must not prevent stopping independent
+                # original handles. Its persisted state continues to hold custody.
+                continue
         with self._transaction() as conn:
             body = self._load(conn, identifier, owner)
             stopped = all(entry['operationId'] is None or entry['state'] in TERMINAL for entry in body['stages'].values())

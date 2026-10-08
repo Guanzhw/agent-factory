@@ -6,6 +6,7 @@ never dispatched again; the original runtime operation remains in custody.
 from types import SimpleNamespace
 from typing import Literal
 
+from agno.exceptions import RunCancelledException
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 from sqlalchemy import text
@@ -50,6 +51,29 @@ class WorkflowControl:
         self.store.execution_bindings.recheck(plan, context)
         return context
 
+    async def require_paused(self, task, stage_id):
+        """Explicit resume may only select the stage of the original parked wait."""
+        from .auth import EXECUTOR_ID
+        from .factory_api import native_requirements
+        snapshot = await self.api.bridge.detail(task['run_id'], task['id'], task['owner_id'])
+        ticket = snapshot.get('queue') or {}; run = snapshot.get('run', snapshot)
+        require(ticket.get('status') == 'paused' and str(run.get('status')).lower() in {'paused', 'runstatus.paused'}
+                and ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+                and ticket.get('user_id') == task['owner_id'] and ticket.get('component_type') == 'agent'
+                and ticket.get('component_id') == EXECUTOR_ID and ticket.get('job_type', 'run') == 'run'
+                and run.get('run_id') == task['run_id']
+                and run.get('session_id', task['id']) == task['id']
+                and run.get('user_id', task['owner_id']) == task['owner_id']
+                and run.get('agent_id', EXECUTOR_ID) == EXECUTOR_ID)
+        requirements = [item for item in native_requirements(snapshot)
+                        if (item.get('tool_execution') or {}).get('external_execution_required') is True
+                        and (item.get('tool_execution') or {}).get('result') is None]
+        require(len(requirements) == 1)
+        tool = requirements[0].get('tool_execution') or {}
+        require(tool.get('tool_name') == 'workflow_wait' and tool.get('tool_args') == {'stageId': stage_id}
+                and bool(tool.get('tool_call_id')) and bool(requirements[0].get('id')))
+        self.context(self.store.task(task['id'], task['owner_id']))
+
     async def completion(self, task, requirement):
         from .factory_api import native_requirements, requirement_version
         fresh = self.store.task(task['id'], task['owner_id'])
@@ -70,6 +94,14 @@ class WorkflowControl:
         require(entry['state'] in {'COMPLETED', 'FAILED', 'CANCELLED', 'SKIPPED'} or self.service.admissible(body, stage_id))
         return {'schema': 1, 'workflowId': body['id'], 'nativeRunId': body['nativeRunId'],
                 'stageId': stage_id, 'requirementId': original['id'], 'ready': True}
+
+    async def complete_external(self, task, requirement):
+        """Mutating continuation boundary; native external tools skip pre-hooks."""
+        result = await self.completion(task, requirement)
+        context = self.context(self.store.task(task['id'], task['owner_id']))
+        self.store.delegation.consume_tool_budget(context,
+            requirement['tool_execution']['tool_call_id'], 'workflow_wait')
+        return result
 
     async def continue_ready(self, task):
         from .factory_api import native_requirements, requirement_version
@@ -106,7 +138,7 @@ class WorkflowControl:
                         actions.append({'action': 'resume', 'stageId': identifier})
                     if entry['operationId'] is not None:
                         actions.append({'action': 'reconcile', 'stageId': identifier})
-        except (ValueError, HTTPException):
+        except (ValueError, HTTPException, PermissionError, RunCancelledException):
             pass
         return {'available': True, 'workflow': body, 'allowedActions': actions}
 
@@ -146,7 +178,7 @@ class WorkflowControl:
                         receipt = {**receipt, 'status': 'completed', 'workflow': body}
         return receipt
 
-    def preflight(self, task, command):
+    async def preflight(self, task, command):
         if command.action == 'cancel':
             return
         context = self.context(task)
@@ -156,6 +188,7 @@ class WorkflowControl:
         entry = body['stages'][command.stageId]
         if command.action == 'resume':
             require(self.service.admissible(body, command.stageId))
+            await self.require_paused(task, command.stageId)
         elif command.action == 'decide':
             require(self.service._stage(body, command.stageId)['humanGate'] and entry['state'] in {'PENDING', 'HUMAN_WAIT'} and entry['operationId'] is None)
         else:
@@ -167,8 +200,10 @@ class WorkflowControl:
         fingerprint = digest({'taskId': task_id, 'runId': task['run_id'], 'planId': task['plan_id'], 'command': command.model_dump()})
         rejected = False
         try:
-            self.preflight(task, command)
-        except (ValueError, HTTPException):
+            await self.preflight(task, command)
+        except Exception:
+            # No dispatch, budget debit or workflow mutation has occurred at
+            # this boundary, including native mandate/guardrail refusals.
             rejected = True
         with self.service._transaction() as conn:
             row = conn.execute(text('SELECT task_id,fingerprint,body FROM af_workflow_actions WHERE owner_id=:owner AND command_id=:id'),
@@ -193,10 +228,13 @@ class WorkflowControl:
                 if command.action == 'decide':
                     self.service.decide(context, command.stageId, command.approved, command.commandId, expected_version=command.version)
                 elif command.action == 'resume':
+                    await self.require_paused(task, command.stageId)
                     # Native calls debit through the existing pre-hook; explicit
                     # user resumes share that exact root budget ledger.
                     self.store.delegation.consume_tool_budget(context, 'workflow-command:' + command.commandId, 'workflow_choose')
-                    await self.service.resume(context, command.stageId, command.commandId, expected_version=command.version)
+                    resumed = await self.service.resume(context, command.stageId, command.commandId, expected_version=command.version)
+                    if resumed['stages'][command.stageId]['state'] == 'UNKNOWN':
+                        raise ValueError('WORKFLOW_ACKNOWLEDGEMENT_UNKNOWN')
                 else:
                     await self.service.reconcile(context, command.stageId, command.commandId, expected_version=command.version)
                 continuation = await self.continue_ready(task)

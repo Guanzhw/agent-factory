@@ -132,7 +132,7 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         governance = object.__new__(MaterialGovernance)
         governance._read = Mock(side_effect=lambda: nullcontext(None))
         catalog = tools_for_contract('autoresearch-session-v1')
-        governance._config = Mock(return_value=SimpleNamespace(known_tools=catalog))
+        governance._config = Mock(return_value=SimpleNamespace(known_tools=catalog, tool_policies=()))
         registered = {entry.tool_name: entry for entry in profile.registrations() if entry.kind == 'tool'}
         for material in profile.material_drafts('approved-project'):
             checked = governance.validate_definition(material)

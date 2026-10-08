@@ -20,6 +20,15 @@ STATES = frozenset({'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'UNKNOWN', 'CAN
 TERMINAL = frozenset({'COMPLETED', 'FAILED', 'CANCELLED'})
 
 
+class WorkflowAcknowledgementUnknown(Exception):
+    """Adapter explicitly cannot confirm its original start acknowledgement.
+
+    The operation may exist. Keep its durable identity and capacity; never retry
+    start. Reconciliation must look up that same identity. Ordinary adapter
+    errors and cancellation retain their existing failure semantics.
+    """
+
+
 class FailureJSON(TypedDict):
     schema: int
     code: str
