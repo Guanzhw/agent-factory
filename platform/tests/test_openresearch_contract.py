@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from typing import Any
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -22,6 +23,7 @@ from agent_factory.openresearch import (
 
 FIXTURE = r'''
 import json, os, pathlib, subprocess, sys, time, uuid
+from contextlib import contextmanager
 root = pathlib.Path.cwd()
 args = sys.argv[1:]
 # Every actual subprocess publishes one complete, independent record. Shared
@@ -35,9 +37,49 @@ with pending.open('x', encoding='utf-8') as f:
 os.replace(pending, events / (event_name + '.json'))
 args = [a for a in args if a != '--no-telemetry']
 state_path = root / 'synthetic-state.json'
-state = json.loads(state_path.read_text()) if state_path.exists() else {}
+
+@contextmanager
+def state_lock():
+    # Lock only state I/O, never discovery or a detached child's lifetime.
+    with (root / 'synthetic-state.lock').open('a+b') as lock:
+        lock.seek(0, os.SEEK_END)
+        if lock.tell() == 0:
+            lock.write(b'0')
+            lock.flush()
+        lock.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+def write_state(value):
+    with state_lock():
+        state_path.write_text(json.dumps(value), encoding='utf-8')
+
+with state_lock():
+    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
 mode = (root / 'synthetic-mode').read_text() if (root / 'synthetic-mode').exists() else ''
-if args == ['--version']:
+if args == ['fixture-state-publication']:
+    with state_lock():
+        with state_path.open('w', encoding='utf-8') as stream:
+            stream.write('{"run_id":')
+            stream.flush()
+            print('SYNTHETIC_PARTIAL_READY', flush=True)
+            if sys.stdin.readline() != 'release\n':
+                sys.exit(9)
+            stream.write('"synthetic-run-1","status":"running"}')
+            stream.flush()
+elif args == ['--version']:
     print('orx 0.2.10' if mode == 'old-version' else 'orx 0.2.13')
 elif args[0] == 'discover':
     if args[2] == 'overflow':
@@ -70,7 +112,7 @@ elif args[:2] == ['exp', 'run']:
     if mode == 'unknown-before-effect':
         sys.exit(7)
     state.update(run_id='synthetic-run-1', status='running')
-    state_path.write_text(json.dumps(state))
+    write_state(state)
     if mode == 'unknown-after-effect':
         sys.exit(7)
     if mode == 'detached':
@@ -79,12 +121,12 @@ elif args[:2] == ['exp', 'run']:
                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, **kwargs)
         state['child_pid'] = child.pid
-        state_path.write_text(json.dumps(state))
+        write_state(state)
     print('SYNTHETIC detached launch accepted')
 elif args[:2] == ['exp', 'wait']:
     if state.get('status') != 'cancelled':
         state['status'] = 'failed' if mode == 'failed' else 'done'
-        state_path.write_text(json.dumps(state))
+        write_state(state)
     print(state['run_id'] + ' ' + state['status'])
 elif args[:2] == ['exp', 'cancel']:
     if state.get('child_pid'):
@@ -97,7 +139,7 @@ elif args[:2] == ['exp', 'cancel']:
             try: os.killpg(state['child_pid'], signal.SIGKILL)
             except ProcessLookupError: pass
     state['status'] = 'cancelled'
-    state_path.write_text(json.dumps(state))
+    write_state(state)
     print('SYNTHETIC cancel requested')
 elif args[0] == 'logs':
     print('SYNTHETIC run log')
@@ -107,6 +149,18 @@ else:
 
 
 class SyntheticCLI(OpenResearchAdapter):
+    async def _execute(self, argv, **kwargs):
+        try:
+            return await super()._execute(argv, **kwargs)
+        except OpenResearchError as error:
+            # Finite diagnostic categories only; never print environment, paths,
+            # arbitrary subprocess output or operator values from an exception.
+            stderr = error.result.stderr[:4096] if error.result is not None else ''
+            category = next((name for name in ('JSONDecodeError', 'PermissionError', 'FileNotFoundError',
+                'BlockingIOError', 'OSError') if name in stderr), 'OTHER_SYNTHETIC_COMMAND_FAILURE')
+            error.add_note('Synthetic CLI stderr category: ' + category)
+            raise
+
     async def _spawn(self, argv):
         kwargs = {"cwd": str(self.scope), "env": {**self.env, "PYTHONIOENCODING": "utf-8"},
                   "stdin": asyncio.subprocess.DEVNULL,
@@ -139,7 +193,7 @@ class OpenResearchContractTests(unittest.IsolatedAsyncioTestCase):
         return self.granted
 
     def make_adapter(self, **kwargs):
-        options = dict(binary=self.fixture, scope=self.scope, owner_id="alice", task_id=self.task_id,
+        options: dict[str, Any] = dict(binary=self.fixture, scope=self.scope, owner_id="alice", task_id=self.task_id,
                        authorize=self.authorize, pin=self.pin, enabled=True, binding=self.binding)
         options.update(kwargs)
         return SyntheticCLI(**options)
@@ -252,6 +306,74 @@ class OpenResearchContractTests(unittest.IsolatedAsyncioTestCase):
         result = await self.adapter.wait_experiment(timeout_seconds=2)
         self.assertEqual(result["state"], "failed")
         self.assertIn("SYNTHETIC", (await self.adapter.run_logs()).stdout)
+
+    async def test_state_reader_waits_for_complete_cross_process_publication(self):
+        # The old unguarded reader deterministically sees invalid partial JSON.
+        # The actual status CLI must wait for the narrow state lock instead.
+        await self.adapter.preflight()
+        child_env = {**self.adapter.env, 'PYTHONIOENCODING': 'utf-8'}
+        writer = await asyncio.create_subprocess_exec(sys.executable, str(self.fixture),
+            'fixture-state-publication', cwd=self.scope, env=child_env,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        assert writer.stdin is not None and writer.stdout is not None
+        reader = None
+        status_task = None
+        try:
+            async with asyncio.timeout(5):
+                self.assertEqual((await writer.stdout.readline()).strip(), b'SYNTHETIC_PARTIAL_READY')
+                reader = await asyncio.create_subprocess_exec(sys.executable, '-c',
+                    "import json,pathlib;\ntry: json.loads(pathlib.Path('synthetic-state.json').read_text())\n"
+                    "except json.JSONDecodeError: print('JSONDecodeError')", cwd=self.scope, env=child_env,
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                output, _ = await reader.communicate()
+                self.assertEqual(reader.returncode, 0)
+                self.assertEqual(output.strip(), b'JSONDecodeError')
+                status_task = asyncio.create_task(self.adapter.experiment_status())
+                while not any(event['args'][1:3] == ['exp', 'status'] for event in self.events()):
+                    await asyncio.sleep(.01)
+                self.assertFalse(status_task.done())
+                writer.stdin.write(b'release\n')
+                await writer.stdin.drain()
+                await writer.communicate()
+                self.assertEqual(writer.returncode, 0)
+                self.assertEqual((await status_task)['status'], 'running')
+        finally:
+            if writer.returncode is None:
+                # Always release the deliberately paused publication on failure.
+                try:
+                    writer.stdin.write(b'release\n')
+                    await writer.stdin.drain()
+                    await asyncio.wait_for(writer.communicate(), 1)
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    if writer.returncode is None:
+                        writer.kill()
+                        await writer.communicate()
+                    (self.scope / 'synthetic-state.json').unlink(missing_ok=True)
+            if reader is not None and reader.returncode is None:
+                reader.kill()
+                await reader.communicate()
+            if status_task is not None and not status_task.done():
+                status_task.cancel()
+                await asyncio.gather(status_task, return_exceptions=True)
+
+    async def test_published_corrupt_state_still_fails_closed_without_new_launch(self):
+        await self.adapter.launch_experiment()
+        state_path = self.scope / 'synthetic-state.json'
+        original = state_path.read_bytes()
+        state_path.write_text('{invalid-published-state', encoding='utf-8')
+        try:
+            for adapter in (self.adapter, self.make_adapter()):
+                with self.assertRaises(OpenResearchError) as raised:
+                    await adapter.launch_experiment()
+                self.assertEqual(raised.exception.code, 'COMMAND_FAILED')
+                assert raised.exception.result is not None
+                self.assertIn('JSONDecodeError', raised.exception.result.stderr)
+                self.assertIn('Synthetic CLI stderr category: JSONDecodeError', raised.exception.__notes__)
+            launches = [event for event in self.events() if event['args'][1:3] == ['exp', 'run']]
+            self.assertEqual(len(launches), 1)
+        finally:
+            # Cleanup only: assertions above retain the actual error outcome.
+            state_path.write_bytes(original)
 
     async def test_concurrent_instances_admit_one_launch_intent(self):
         second = self.make_adapter()

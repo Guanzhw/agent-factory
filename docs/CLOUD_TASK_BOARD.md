@@ -56,8 +56,14 @@ captured a GET snapshot500 from RunCancelledException; snapshot now retains
 owner-readable custody with no execution actions, covered by regression tests.
 Final four-case native/PostgreSQL rerun passed4/4 with zero skips in120.497s.
 Ruff and Linux/Windows Pyright passed; changed-file credential-pattern scan found
-zero matches. Exact final CI and workflow merge remain pending; PR62 records
-the final immutable commit and terminal CI observations.
+zero matches. CI at bd7bb21 passed all PR portable/frontend jobs, but push
+Windows failed one existing synthetic ORX concurrent-status test (COMMAND_FAILED;
+original subprocess stderr was not captured). The same-head pass does not erase
+that failure. The fixture now locks only shared JSON state I/O across processes;
+a deterministic partial-publication regression proves the old reader's JSON
+failure, and published corrupt state still fails closed without another launch.
+No production retry/deadline is relaxed. Final exact CI and workflow merge remain
+pending; PR62 records the immutable commit and terminal observations.
 See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
 
 ---
