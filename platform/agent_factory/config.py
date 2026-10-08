@@ -62,7 +62,7 @@ class Settings:
     runtime_adapters: list = field(default_factory=list)
     tool_policies: tuple = field(default_factory=tuple)
     # Trusted workflow definitions/runtime implementations; never request-loaded.
-    workflow_definitions: dict = field(default_factory=dict)
+    native_workflows: tuple = field(default_factory=tuple)
     workflow_runtimes: dict = field(default_factory=dict)
     runtime_tool_contract: str = "legacy-v1"
     # Explicit coding-development profile; never credential discovery or production default.

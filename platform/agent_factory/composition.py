@@ -214,6 +214,8 @@ class CompositionService:
             manifest["sourceSnapshotRef"] = copy.deepcopy(values["sourceSnapshotRef"])
         if inputs is not None:
             manifest.update(inputSchemaSha256=digest(schema), inputValuesSha256=digest(inputs))
+        if mode.get("nativeComponent") is not None:
+            manifest["nativeComponent"] = copy.deepcopy(mode["nativeComponent"])
         manifest["sha256"] = digest(manifest)
         config = {"askScope": "ask_scope" in tools and len(values["goal"]) < mode["config"]["askScopeBelowLength"],
                   "sample": values["goal"], "experimentDurationSeconds": min(mode["config"]["experimentDurationSeconds"], budget["experimentSeconds"]), "toolOrder": tools}
@@ -225,6 +227,8 @@ class CompositionService:
                      "budget": budget, "policy": policy, "syntheticFixture": bool(self.store.settings.demo),
                      "executionBindings": execution, "bindingManifest": manifest, "missing": missing,
                      "status": "blocked" if missing else "ready"}
+        if mode.get("nativeComponent") is not None:
+            candidate["nativeComponent"] = copy.deepcopy(mode["nativeComponent"])
         if inputs is not None:
             candidate.update(inputSchema=copy.deepcopy(schema), inputValues=copy.deepcopy(inputs))
         if values.get("sourceSnapshotRef") is not None:

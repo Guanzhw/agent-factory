@@ -32,21 +32,6 @@ function bounded(value: unknown, maximum: number) {
   // overhead avoids accepting a near-limit value the service would reject.
   if (encoded.length + count * 2 > maximum) fail();
 }
-function matches(schema: ApplicationInputSchema, value: unknown): void {
-  if (schema.type === 'object') {
-    if (!object(value) || Object.keys(value).some(key => !Object.hasOwn(schema.properties!, key)) || schema.required?.some(key => !Object.hasOwn(value, key))) fail();
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) matches(schema.properties![key], child);
-  } else if (schema.type === 'array') {
-    if (!Array.isArray(value) || value.length < (schema.minItems ?? 0) || value.length > schema.maxItems!) fail();
-    (value as unknown[]).forEach(child => matches(schema.items!, child));
-  } else if (schema.type === 'string') {
-    if (typeof value !== 'string' || length(value) < (schema.minLength ?? 0) || length(value) > schema.maxLength!) fail();
-  } else if (schema.type === 'integer' || schema.type === 'number') {
-    if (typeof value !== 'number' || !Number.isFinite(value) || schema.type === 'integer' && !Number.isSafeInteger(value)
-      || schema.minimum !== undefined && Number(value) < schema.minimum || schema.maximum !== undefined && Number(value) > schema.maximum) fail();
-  } else if (schema.type === 'boolean' ? typeof value !== 'boolean' : value !== null) fail();
-  if (schema.enum && !schema.enum.some(item => Object.is(item, value))) fail();
-}
 export function applicationInputSchema(value: unknown): ApplicationInputSchema {
   bounded(value, 32768); let count = 0;
   function node(raw: unknown, depth: number): void {
@@ -70,19 +55,24 @@ export function applicationInputSchema(value: unknown): ApplicationInputSchema {
     }
     if (item.enum !== undefined) {
       if (!Array.isArray(item.enum) || !item.enum.length || item.enum.length > 32 || new Set(item.enum.map(x => JSON.stringify(x))).size !== item.enum.length) fail();
-      const base = { ...item }; delete base.enum;
-      (item.enum as unknown[]).forEach(entry => matches(base as unknown as ApplicationInputSchema, entry));
+      if ((item.enum as unknown[]).some(entry => entry !== null && !['boolean', 'number', 'string'].includes(typeof entry))) fail();
     }
   }
   node(value, 0); if ((value as ApplicationInputSchema).type !== 'object') fail();
   return structuredClone(value) as ApplicationInputSchema;
 }
 export function applicationInputValues(schema: ApplicationInputSchema, value: unknown): ApplicationInputValues {
-  const checked = applicationInputSchema(schema); bounded(value, 65536); matches(checked, value);
+  // Browser checks transport shape and resource bounds only. Published schema
+  // semantics are validated by the server's Pydantic model, not a second engine.
+  applicationInputSchema(schema); bounded(value, 65536); if (!object(value)) fail();
   return structuredClone(value) as ApplicationInputValues;
 }
 export function inputValuesError(schema: ApplicationInputSchema, values: unknown): string {
-  try { applicationInputValues(schema, values); return ''; } catch { return '请填写必需输入，并核对各字段的类型与允许范围。'; }
+  try {
+    const checked = applicationInputValues(schema, values);
+    if (schema.required?.some(key => !Object.hasOwn(checked, key))) return '请填写标为必需的输入；字段类型与范围将在提交时由服务器核对。';
+    return '';
+  } catch { return '输入须为有界 JSON 对象；字段类型与范围将在提交时由服务器核对。'; }
 }
 export function sameApplicationInputs(left: unknown, right: unknown): boolean {
   const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : object(value)

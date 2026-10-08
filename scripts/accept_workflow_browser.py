@@ -33,68 +33,53 @@ const scenario = new URLSearchParams(location.search).get('case') || 'normal';
 const taskId = `controlled-${scenario}`;
 const key = `controlled-browser-harness:${scenario}`;
 const fresh = () => ({
-  workflow: { schema: 1, id: `workflow-${scenario}`, ownerId: 'controlled-owner', taskId,
+  workflow: { schema: 2, id: `workflow-${scenario}`, ownerId: 'controlled-owner', taskId,
     nativeRunId: `native-${scenario}`, planId: `plan-${scenario}`, planSha256: 'a'.repeat(64),
-    definitionSha256: 'b'.repeat(64), version: 4, status: 'ACTIVE', cancelRequested: false,
-    definition: { id: 'synthetic-review', revision: '1', stages: [
-      { id: 'human', adapterId: 'controlled', revision: '1', dependencies: [], failureRoutes: {}, humanGate: true },
-      { id: 'later', adapterId: 'controlled', revision: '1', dependencies: ['human'], failureRoutes: {}, humanGate: true },
-    ] }, stages: {
-      human: { state: 'HUMAN_WAIT', approved: false, operationId: null, handle: null, observation: null },
-      later: { state: 'HUMAN_WAIT', approved: false, operationId: null, handle: null, observation: null },
-    } }, calls: [], receipts: {}, primaryId: null, unrecordedAttempted: false,
+    version: '4'.repeat(64), status: 'paused',
+    steps: [{id:'human',name:'human',status:'paused'},{id:'later',name:'later',status:'pending'}],
+    requirements: [{id:'requirement-human',stepName:'human',kind:scenario==='input'?'input':'confirmation',fields:scenario==='input'?[{name:'answer',type:'str',required:true}]:[]},
+      {id:'requirement-later',stepName:'later',kind:'confirmation'}], operations: [] },
+  calls: [], receipts: {}, primaryId: null, unrecordedAttempted: false,
 });
 let data = JSON.parse(sessionStorage.getItem(key) || 'null') || fresh();
 const save = () => sessionStorage.setItem(key, JSON.stringify(data));
 const copy = value => structuredClone(value);
 const record = (method, body = null) => { data.calls.push({ method, body: copy(body) }); save(); };
-const snapshot = () => {
-  const actions = [{ action: 'cancel' }];
-  for (const [id, stage] of Object.entries(data.workflow.stages)) {
-    if (stage.state === 'HUMAN_WAIT') actions.push({ action: 'decide', stageId: id });
-    if (stage.state === 'PENDING') actions.push({ action: 'resume', stageId: id });
-    if (stage.operationId) actions.push({ action: 'reconcile', stageId: id });
-  }
-  return { available: true, workflow: copy(data.workflow), allowedActions: actions };
-};
+const snapshot = () => ({available:true,workflow:copy(data.workflow),allowedActions:[{action:'cancel'},
+  ...data.workflow.requirements.map(item=>({action:'decide',requirementId:item.id})),
+  ...data.workflow.operations.map(item=>({action:'reconcile',operationId:item.id}))]});
 const api = {
   async get(task) { if (task !== taskId) throw Error('WRONG_TASK'); record('GET'); return snapshot(); },
-  async commandStatus(task, id) {
-    if (task !== taskId) throw Error('WRONG_TASK'); record('GET_RECEIPT', { commandId: id });
-    if (!data.receipts[id]) throw new ApiError('Controlled command not recorded', 404);
+  async commandStatus(task,id) {
+    if(task!==taskId)throw Error('WRONG_TASK'); record('GET_RECEIPT',{commandId:id});
+    if(!data.receipts[id])throw new ApiError('Controlled command not recorded',404);
     return copy(data.receipts[id]);
   },
-  async command(task, command) {
-    if (task !== taskId) throw Error('WRONG_TASK'); record('POST', command);
-    if (data.receipts[command.commandId]) return copy(data.receipts[command.commandId]);
-    if (command.action !== 'cancel' && command.version !== data.workflow.version) throw new ApiError('Controlled stale version', 409);
-    const stage = data.workflow.stages[command.stageId];
-    if (command.action === 'decide') {
-      if (command.approved !== true) throw Error('EXPECTED_EXPLICIT_APPROVAL');
-      stage.approved = true; stage.state = 'PENDING'; data.workflow.version++;
-    } else if (command.action === 'resume') {
-      if (scenario === 'unrecorded' && !data.unrecordedAttempted) {
-        data.unrecordedAttempted = true; save(); throw new ApiError('Controlled lost transport before record', 0);
-      }
-      stage.state = 'UNKNOWN'; stage.operationId = 'original-controlled-operation';
-      data.workflow.version++; data.primaryId = command.commandId;
-      data.receipts[command.commandId] = { commandId: command.commandId, status: 'unknown', workflow: copy(data.workflow) };
-      save(); return copy(data.receipts[command.commandId]);
-    } else if (command.action === 'reconcile') {
-      if (stage.operationId !== 'original-controlled-operation') throw Error('ORIGINAL_IDENTITY_CHANGED');
-      stage.state = 'WAITING'; stage.handle = { adapterId: 'controlled', revision: '1', id: 'original-controlled-handle' };
-      stage.observation = { operationId: stage.operationId, handle: copy(stage.handle), state: 'WAITING', allStopped: false, failure: null };
-      // Retain the older original receipt snapshot deliberately: the UI must not
-      // roll back the newer WAITING observation when reading its completed receipt.
-      data.receipts[data.primaryId].status = 'completed'; data.workflow.version++;
-    } else if (command.action === 'cancel') {
-      if (Object.keys(command).some(k => !['commandId', 'action'].includes(k))) throw Error('CANCEL_PAYLOAD_CHANGED');
-      data.workflow.cancelRequested = true; data.workflow.version++;
-      data.receipts[command.commandId] = { commandId: command.commandId, status: 'recorded', workflow: copy(data.workflow) };
-      save(); return copy(data.receipts[command.commandId]);
+  async command(task,command) {
+    if(task!==taskId)throw Error('WRONG_TASK'); record('POST',command);
+    if(data.receipts[command.commandId])return copy(data.receipts[command.commandId]);
+    if(command.action!=='cancel'&&command.version!==data.workflow.version)throw new ApiError('Controlled stale version',409);
+    if(command.action==='decide') {
+      if(command.requirementId!=='requirement-human'||(scenario==='input'?command.values?.answer!=='公开合成答复':command.approved!==true))throw Error('EXPECTED_ORIGINAL_DECISION');
+      if(scenario==='unrecorded'&&!data.unrecordedAttempted){data.unrecordedAttempted=true;save();throw new ApiError('Controlled lost transport before record',0);}
+      data.workflow.requirements=data.workflow.requirements.filter(item=>item.id!==command.requirementId);
+      data.workflow.operations=[{id:'original-controlled-operation',stepId:'human',state:'UNKNOWN',allStopped:false}];
+      data.workflow.version='5'.repeat(64);data.primaryId=command.commandId;
+      data.receipts[command.commandId]={commandId:command.commandId,status:'unknown',workflow:copy(data.workflow)};
+      save();return copy(data.receipts[command.commandId]);
+    } else if(command.action==='reconcile') {
+      if(command.operationId!=='original-controlled-operation')throw Error('ORIGINAL_IDENTITY_CHANGED');
+      data.workflow.operations[0].state='WAITING';data.workflow.version='6'.repeat(64);
+      // Deliberately retain the historical UNKNOWN snapshot in the receipt.
+      data.receipts[data.primaryId].status='completed';
+    } else if(command.action==='cancel') {
+      if(Object.keys(command).some(k=>!['commandId','action'].includes(k)))throw Error('CANCEL_PAYLOAD_CHANGED');
+      data.workflow.status='cancelled';data.workflow.version='7'.repeat(64);
+      data.receipts[command.commandId]={commandId:command.commandId,status:'recorded',workflow:copy(data.workflow)};
+      save();return copy(data.receipts[command.commandId]);
     }
-    data.receipts[command.commandId] = { commandId: command.commandId, status: 'completed', workflow: copy(data.workflow) };
-    save(); return copy(data.receipts[command.commandId]);
+    data.receipts[command.commandId]={commandId:command.commandId,status:'completed',workflow:copy(data.workflow)};
+    save();return copy(data.receipts[command.commandId]);
   },
 };
 window.__workflowFixture = { read: () => copy(data) };
@@ -127,26 +112,23 @@ def posts(page, action=None):
             if item['method'] == 'POST' and (action is None or item['body']['action'] == action)]
 
 
-def decision(page, stage='human'):
-    return page.locator('.button-row > div').filter(has_text='决定阶段 ' + stage).get_by_role('button', name='同意本阶段', exact=True)
+def decision(page, step='human'):
+    return page.locator('.button-row > div').filter(has_text='确认：' + step).get_by_role('button', name='同意', exact=True)
 
 
 def wait_ready(page):
-    expect(page.get_by_role('button', name='请求取消工作流', exact=True)).to_be_enabled()
+    expect(page.get_by_role('button', name='请求取消原工作流', exact=True)).to_be_enabled()
 
 
-def uncertain_resume(page):
+def uncertain_decision(page):
     expect(decision(page)).to_be_enabled()
     decision(page).click()
-    resume = page.get_by_role('button', name='继续阶段 human', exact=True)
-    expect(resume).to_be_enabled(); resume.click()
     expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_be_visible()
     wait_ready(page)
     expect(decision(page, 'later')).to_be_disabled()
-    approved, resumed = posts(page, 'decide')[0], posts(page, 'resume')[0]
-    assert approved['version'] == 4 and approved['stageId'] == 'human' and approved['approved'] is True
-    assert resumed['version'] == 5 and resumed['stageId'] == 'human'
-    return resumed
+    command = posts(page, 'decide')[0]
+    assert command['version'] == '4' * 64 and command['requirementId'] == 'requirement-human' and command['approved'] is True
+    return command
 
 
 def capture(page, output, name):
@@ -167,8 +149,8 @@ def browser_checks(browser, base, output):
         page.get_by_label('标签（可选） JSON', exact=True).fill('["alpha","beta"]')
         values = json.loads(page.get_by_test_id('input-values').inner_text())
         assert values == {'question': '公开合成输入', 'count': 3, 'confirmed': False, 'tags': ['alpha', 'beta']}
-        original = uncertain_resume(page)
-        assert len(posts(page, 'resume')) == 1
+        original = uncertain_decision(page)
+        assert len(posts(page, 'decide')) == 1
         page.reload(); wait_ready(page)
         expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_be_visible()
         expect(decision(page, 'later')).to_be_disabled()
@@ -177,15 +159,15 @@ def browser_checks(browser, base, output):
         assert len(posts(page)) == count, 'RECEIPT_LOOKUP_REPOSTED'
         assert fixture(page)['calls'][-1]['method'] == 'GET'
         assert any(item['method'] == 'GET_RECEIPT' and item['body']['commandId'] == original['commandId'] for item in fixture(page)['calls'])
-        page.get_by_role('button', name='核对原执行 human', exact=True).click(); wait_ready(page)
+        page.get_by_role('button', name='核对原操作 original-controlled-operation', exact=True).click(); wait_ready(page)
         reconciled = posts(page, 'reconcile')[-1]
-        assert reconciled['version'] == 6 and reconciled['stageId'] == 'human'
-        expect(page.get_by_text('等待外部事件', exact=True)).to_be_visible()
+        assert reconciled['version'] == '5' * 64 and reconciled['operationId'] == 'original-controlled-operation'
+        expect(page.get_by_text('human：等待中；尚未确认停止', exact=True)).to_be_visible()
         page.get_by_role('button', name='读取原命令回执', exact=True).click(); wait_ready(page)
         expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_have_count(0)
         expect(decision(page, 'later')).to_be_enabled()
-        expect(page.get_by_text('等待外部事件', exact=True)).to_be_visible()
-        assert len(posts(page, 'resume')) == 1, 'UNKNOWN_EXECUTION_REPLAYED'
+        expect(page.get_by_text('human：等待中；尚未确认停止', exact=True)).to_be_visible()
+        assert len(posts(page, 'decide')) == 1, 'UNKNOWN_EXECUTION_REPLAYED'
         capture(page, output, 'desktop-recovered')
         page.set_viewport_size({'width': 390, 'height': 844})
         page.get_by_text('输入结构与范围（JSON）', exact=True).click()
@@ -193,33 +175,42 @@ def browser_checks(browser, base, output):
         normal_calls = fixture(page)['calls']
 
         page.goto(base + '/?case=cancel')
-        uncertain_resume(page)
-        page.get_by_role('button', name='请求取消工作流', exact=True).click(); wait_ready(page)
+        uncertain_decision(page)
+        page.get_by_role('button', name='请求取消原工作流', exact=True).click(); wait_ready(page)
         assert len(posts(page, 'cancel')) == 1
         assert set(posts(page, 'cancel')[0]) == {'commandId', 'action'}
-        expect(page.get_by_text('已记录取消请求。', exact=False)).to_be_visible()
-        expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_be_visible()
-        expect(page.get_by_text('本阶段执行已确认停止。', exact=True)).to_have_count(0)
-        expect(page.get_by_text('工作流已取消', exact=True)).to_have_count(0)
+        expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_have_count(2)
+        expect(page.get_by_text('human：状态待核对；尚未确认停止', exact=True)).to_be_visible()
+        expect(page.get_by_text('运行状态：已取消', exact=True)).to_be_visible()
+        page.reload(); wait_ready(page)
+        expect(page.get_by_role('button', name='读取原命令回执', exact=True)).to_have_count(2)
         capture(page, output, 'mobile-pending-cancel')
         cancel_calls = fixture(page)['calls']
 
         page.goto(base + '/?case=unrecorded')
-        unrecorded = uncertain_resume(page)
+        unrecorded = uncertain_decision(page)
         expect(page.get_by_role('button', name='提交同一原命令', exact=True)).to_have_count(0)
         page.get_by_role('button', name='读取原命令回执', exact=True).click(); wait_ready(page)
         replay = page.get_by_role('button', name='提交同一原命令', exact=True)
-        expect(replay).to_be_enabled(); assert len(posts(page, 'resume')) == 1
+        expect(replay).to_be_enabled(); assert len(posts(page, 'decide')) == 1
         replay.click(); wait_ready(page)
-        assert posts(page, 'resume') == [unrecorded, unrecorded], 'RETRY_CHANGED_ORIGINAL_INTENT'
+        assert posts(page, 'decide') == [unrecorded, unrecorded], 'RETRY_CHANGED_ORIGINAL_INTENT'
+        unrecorded_calls = fixture(page)['calls']
+        page.goto(base + '/?case=input')
+        page.get_by_label('human 输入（JSON）', exact=True).fill('{"answer":"公开合成答复","confirmed":false}')
+        page.get_by_role('button', name='提交原要求的输入', exact=True).click(); wait_ready(page)
+        input_command = posts(page, 'decide')[0]
+        assert input_command['requirementId'] == 'requirement-human'
+        assert input_command['values'] == {'answer': '公开合成答复', 'confirmed': False}
+        assert 'approved' not in input_command
         assert not failures, failures
         return {'ok': True, 'inputValuesPreserved': values, 'humanVersionVerified': True,
                 'reconcileVersionVerified': True, 'unknownReceiptGetRecovery': True,
-                'pendingSurvivedReload': True, 'pendingCancelAllowed': True,
+                'pendingSurvivedReload': True, 'pendingCancelAllowed': True, 'nativeRequirementInputsPreserved': True,
                 'cancelNotPromotedToStopped': True, 'explicit404RetrySameIntent': True,
                 'olderReceiptDidNotRegressSnapshot': True, 'mobileHorizontalOverflow': False,
                 'normalCalls': normal_calls, 'cancelCalls': cancel_calls,
-                'unrecordedCalls': fixture(page)['calls'], 'pageErrors': failures}
+                'unrecordedCalls': unrecorded_calls, 'inputCalls': fixture(page)['calls'], 'pageErrors': failures}
     except Exception:
         page.screenshot(path=str(output / 'failure.png'), full_page=True)
         (output / 'failure-state.json').write_text(json.dumps({'fixture': fixture(page), 'pageErrors': failures,
@@ -232,6 +223,7 @@ def browser_checks(browser, base, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--chromium-executable', type=Path, help='Existing operator-selected Chromium binary; never downloaded.')
     args = parser.parse_args()
     output = args.output_dir.resolve(); output.mkdir(parents=True, exist_ok=True)
     if (output / 'evidence.json').exists():
@@ -265,7 +257,8 @@ def main():
                         raise TimeoutError('Temporary Vite harness did not become ready')
                     time.sleep(0.1)
                 with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(headless=True)
+                    browser = playwright.chromium.launch(headless=True,
+                        executable_path=str(args.chromium_executable.resolve(strict=True)) if args.chromium_executable else None)
                     try:
                         evidence.update(browser_checks(browser, base, output))
                     finally:

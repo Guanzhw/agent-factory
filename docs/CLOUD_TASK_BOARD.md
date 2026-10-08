@@ -1,3 +1,46 @@
+# Native Agno reuse correction — active 2026-10-08
+
+PR62 remains Draft and unmerged. Previous head `79133217bb019b067f7347ef4a2bece2a53283b6`
+and its CI describe the superseded custom workflow implementation, not acceptance
+of this correction. Main baseline `067354e0b95ceba7aa620216fe7a18715b179ac0` and
+its independent completed-success CI37714925242 remain accepted.
+
+Agno 3.1.0 Workflow/Step/Router/Condition/Parallel, WorkflowSession, requirements,
+continue and durable queue own all workflow progress. The duplicate Factory DAG,
+resume and progress service have been removed after native proof. Factory retains
+immutable governance/input/component pins, shared budgets, external-operation
+custody and thin command receipts. Actual ConvertD remains the user's local work.
+
+| Owner | Exclusive scope | Current evidence / dependency |
+|---|---|---|
+| root | API/config/schema/native lifecycle and final integration | Serial PG; exact new-head CI and independent review required before authorized merge |
+| factory_flow | remove old graph; operation contracts; real budget regression migration | 27 lightweight pass; 3 PG skipped locally (not PG acceptance) |
+| go_policy | policy refs/model ledger; candidate read-only state wiring | 25 candidate checks pass; Ruff/Pyright clean |
+| go_adapter | native bridge/control/registration unit tests | Thin command6 and registry17 pass; included in boundary50 pass |
+| candidate_support_audit | input/UI and native handoff docs | Schema2 mock browser pass; docs updating |
+| at10 | real native queue/restart and startup accounting fixtures | FactoryPG3 pass47.568s; startupPG3 pass40.538s, zero skips |
+| candidate_final_review | independent reuse/correctness review | Function/active executor/schema integrity and identifier contract findings fixed; eligible for exact CI |
+| ci_final_review | exact CI read-only observation | Historical b6 push failed old withdrawn-custody assertion; preserve new native regression |
+
+Evidence retained: pure native proof3 passed4.266s. First Factory integration
+attempt had2 pass/1 failure89.932s: the native external-wait helper was omitted
+from approved tools. The fixture now approves it explicitly; replacement3 passed.
+A subsequent command accidentally omitted the PG variable and skipped3; that is
+not acceptance and was followed by the explicit database run above. New registration
+integrity changes passed the nine-case mandatory gate in113.417s, zero skips.
+The gate now requires10 cases, adding original owner/withdrawal/UNKNOWN custody.
+First ten-case attempt had9 pass/1 fixture error98.392s: the denial correctly
+returned409 but the test expected `detail` instead of Factory's `code/message`.
+Corrected exact-code assertion passed the isolated new case13.566s. Final ten-case
+gate is running. Boundary50 passed0.386s, frontend217 passed with lint/typecheck/build,
+Ruff/Pyright passed. npm audit found0 vulnerabilities; pip-audit found no known
+vulnerabilities (local project is not on PyPI). Read-only cache errors were resolved
+using workspace cache directories. Full regression and exact final CI remain pending. No live model/backend/data/deployment claims.
+
+---
+
+## Historical pre-correction phase (superseded below)
+
 # Governed workflow agent extension — 2026-10-08
 
 Base: PR60 exact `cd9522f9da1daec5c9ec69d5d43717b910da1740` (ten exact CI jobs

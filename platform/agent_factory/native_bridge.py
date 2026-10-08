@@ -1,10 +1,11 @@
 """Public native AgentOS HTTP lifecycle over the one registered durable executor."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 import hashlib
 import json
+import re
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -24,6 +25,36 @@ class NativeBridge:
     def __init__(self, settings: Any, native_db: Any, auth: Any):
         self.settings, self.native_db, self.auth = settings, native_db, auth
         self._app: Any = None
+        self._component_resolver: Callable[[str, str], Mapping[str, Any]] | None = None
+
+    def configure_components(self, resolver: Callable[[str, str], Mapping[str, Any]]) -> None:
+        """Install the operator's immutable task/plan resolver, never user routing."""
+        if not callable(resolver) or self._component_resolver is not None:
+            raise ValueError("Native component resolver is invalid or already configured")
+        self._component_resolver = resolver
+
+    def _component(self, session_id: str, user_id: str) -> dict[str, Any]:
+        if self._component_resolver is None:
+            return {"kind": "agent", "id": EXECUTOR_ID}
+        value = self._component_resolver(session_id, user_id)
+        if (not isinstance(value, Mapping) or set(value) != {"kind", "id", "revision", "sha256"}
+                or value['kind'] not in {'agent', 'workflow'}
+                or not isinstance(value['id'], str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', value['id'])
+                or not isinstance(value['revision'], str) or not 1 <= len(value['revision']) <= 128
+                or not isinstance(value['sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', value['sha256'])
+                or value['kind'] == 'agent' and value['id'] != EXECUTOR_ID):
+            raise HTTPException(403, "Native component binding is invalid")
+        return dict(value)
+
+    def _component_path(self, run_id: str, component: Mapping[str, Any]) -> str:
+        return f"/{component['kind']}s/{quote(component['id'], safe='')}/runs/{quote(run_id, safe='')}"
+
+    @staticmethod
+    def _ticket(ticket: Any, run_id: str, session_id: str, user_id: str, component: Mapping[str, Any]) -> None:
+        if ticket is not None and (not isinstance(ticket, dict) or ticket.get('id') != run_id
+                or ticket.get('session_id') != session_id or ticket.get('user_id') != user_id
+                or ticket.get('component_type') != component['kind'] or ticket.get('component_id') != component['id']):
+            raise HTTPException(403, "Native ticket identity differs from the task")
 
     def attach(self, app: Any) -> None:
         # Main owns the native lifespan/worker. This bridge never starts a second
@@ -68,12 +99,17 @@ class NativeBridge:
             session_id = str(UUID(str(task_id)))
         except ValueError as error:
             raise HTTPException(400, "A persisted task UUID is required") from error
+        component = self._component(session_id, user_id)
+        declared = plan.get("nativeComponent")
+        if ((component["kind"] == "workflow" or declared is not None)
+                and declared != (component if "revision" in component else None)):
+            raise HTTPException(403, "Plan native component differs from original task binding")
         envelope = {"plan_ref": plan_ref, "user_id": user_id, "task_id": session_id, "request_id": request_id}
         native_key = hashlib.sha256(json.dumps({"owner": user_id, "task": session_id, "request": request_id},
                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return await self._request("POST", f"/agents/{EXECUTOR_ID}/runs", user_id,
+        return await self._request("POST", f"/{component['kind']}s/{quote(component['id'], safe='')}/runs", user_id,
             headers={"Idempotency-Key": native_key},
-            data={"message": "Execute the persisted factory plan.", "session_id": session_id,
+            data={"message": json.dumps(plan.get("inputValues", {}), separators=(",", ":")) if component["kind"] == "workflow" else "Execute the persisted factory plan.", "session_id": session_id,
                   "background": "true", "stream": "false",
                   "session_state": json.dumps({"factory_envelope": envelope}, separators=(",", ":"))})
 
@@ -82,21 +118,24 @@ class NativeBridge:
         return f"/agents/{EXECUTOR_ID}/runs/{quote(run_id, safe='')}"
 
     async def detail(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
+        component = self._component(session_id, user_id)
+        kind, identifier = component["kind"], component["id"]
+        session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
-            result = await self._request("GET", self._run_path(run_id), user_id, params={"session_id": session_id})
+            result = await self._request("GET", self._component_path(run_id, component), user_id, params={"session_id": session_id})
         except HTTPException as error:
-            if error.status_code != 403:
+            if error.status_code != 403 and not (kind == "workflow" and error.status_code == 404):
                 raise
             # Pinned Agno's agent-run GET requires run rights. Its native session
             # GET is the supported owner-scoped read path; no admin token is used.
             result = await self._request("GET", f"/sessions/{quote(session_id, safe='')}/runs/{quote(run_id, safe='')}",
-                user_id, params={"type": "agent", "db_id": self.native_db.id})
-            if result.get("run_id") != run_id or result.get("agent_id") != EXECUTOR_ID:
+                user_id, params={"type": kind, "db_id": self.native_db.id})
+            if result.get("run_id") != run_id or result.get(kind + "_id") != identifier:
                 raise HTTPException(403, "Native session read returned a different executor/run")
-            session = self.native_db.get_session(session_id, session_type=SessionType.AGENT, user_id=user_id)
-            if session is None or session.agent_id != EXECUTOR_ID or session.user_id != user_id:
+            session = self.native_db.get_session(session_id, session_type=session_type, user_id=user_id)
+            if session is None or getattr(session, kind + "_id", None) != identifier or session.user_id != user_id:
                 raise HTTPException(403, "Native session ownership differs from the task")
-            exact = [run for run in session.runs or [] if run.run_id == run_id and run.agent_id == EXECUTOR_ID]
+            exact = [run for run in session.runs or [] if run.run_id == run_id and getattr(run, kind + "_id", None) == identifier]
             if len(exact) != 1:
                 raise HTTPException(404, "Exact native owner-scoped run not found")
             # Native session RunSchema omits requirements. Enrich only after its
@@ -104,7 +143,9 @@ class NativeBridge:
             result = {**exact[0].to_dict(), "readOnly": True}
         # Only query the ticket after native HTTP ownership/resource checks succeed.
         # Preserve requirements and the actual status; no synthetic status translation.
-        result["queue"] = jsonable_encoder(self.native_db.get_job(run_id))
+        ticket = self.native_db.get_job(run_id)
+        self._ticket(ticket, run_id, session_id, user_id, component)
+        result["queue"] = jsonable_encoder(ticket)
         return result
 
     async def find_run(self, session_id: str, user_id: str) -> dict[str, Any] | None:
@@ -114,6 +155,9 @@ class NativeBridge:
         ticket first, without replaying submission or changing native queue state.
         """
         self.auth.require(user_id, "read")
+        component = self._component(session_id, user_id)
+        kind, identifier = component["kind"], component["id"]
+        session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
             engine = self.native_db.db_engine
             table_name = self.native_db.job_table_name
@@ -124,7 +168,7 @@ class NativeBridge:
                 with engine.connect() as connection:
                     tickets = [dict(row) for row in connection.execute(select(table).where(
                         table.c.session_id == session_id, table.c.user_id == user_id,
-                        table.c.component_type == "agent", table.c.component_id == EXECUTOR_ID,
+                        table.c.component_type == kind, table.c.component_id == identifier,
                     ).limit(2)).mappings()]
             if len(tickets) > 1:
                 raise HTTPException(409, "NATIVE_AMBIGUOUS_ADMISSION: multiple native tickets for one task")
@@ -132,10 +176,10 @@ class NativeBridge:
                 ticket = tickets[0]
                 return {"run_id": ticket["id"], "session_id": session_id,
                         "status": ticket["status"], "queue": jsonable_encoder(ticket)}
-            session = self.native_db.get_session(session_id, session_type=SessionType.AGENT, user_id=user_id)
-            if session is None or session.agent_id != EXECUTOR_ID:
+            session = self.native_db.get_session(session_id, session_type=session_type, user_id=user_id)
+            if session is None or getattr(session, kind + "_id", None) != identifier or session.user_id != user_id:
                 return None
-            runs = [run for run in session.runs or [] if run.agent_id == EXECUTOR_ID]
+            runs = [run for run in session.runs or [] if getattr(run, kind + "_id", None) == identifier]
             if len(runs) > 1:
                 raise HTTPException(409, "NATIVE_AMBIGUOUS_ADMISSION: multiple native runs for one task")
             if not runs:
@@ -150,6 +194,14 @@ class NativeBridge:
                            requirements: list[Any], *, command_proof: dict[str, str] | None = None) -> dict[str, Any]:
         # The public native route accepts serialized ToolExecution objects, while
         # detail returns RunRequirement wrappers. Keep the original execution IDs.
+        component = self._component(session_id, user_id)
+        if component['kind'] == 'workflow':
+            steps = [item.to_dict() if hasattr(item, 'to_dict') else item for item in requirements]
+            if not steps or any(not isinstance(item, dict) for item in steps):
+                raise HTTPException(400, "Native workflow requirements must be objects")
+            return await self._request("POST", self._component_path(run_id, component) + "/continue", user_id,
+                data={"session_id": session_id, "background": "true", "stream": "false",
+                      "step_requirements": json.dumps(steps)})
         tools = []
         for requirement in requirements:
             value = requirement.to_dict() if hasattr(requirement, "to_dict") else requirement
@@ -176,6 +228,8 @@ class NativeBridge:
         from .factory_api import native_requirements
         from .store import digest
         self.auth.require(user_id, "run")
+        if self._component(session_id, user_id)["kind"] != "agent":
+            raise HTTPException(409, "APPROVED_RECOVERY_QUEUE: workflow requires its own native step proof")
         worker = getattr(getattr(self._app, "state", None), "queue_worker", None)
         if worker is None:
             raise HTTPException(409, "APPROVED_RECOVERY_QUEUE: original durable queue is unavailable")
@@ -216,5 +270,6 @@ class NativeBridge:
         return {"run_id": run_id, "session_id": session_id, "queue": jsonable_encoder(accepted)}
 
     async def cancel_run(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
-        return await self._request("POST", self._run_path(run_id) + "/cancel", user_id,
+        component = self._component(session_id, user_id)
+        return await self._request("POST", self._component_path(run_id, component) + "/cancel", user_id,
                                    params={"session_id": session_id})

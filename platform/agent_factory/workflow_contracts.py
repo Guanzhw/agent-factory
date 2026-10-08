@@ -1,20 +1,16 @@
-"""Bounded inert workflow commitments; no dispatch, approval, or implicit replay.
+"""Original external operation observations and adapter protocol.
 
-Definitions name operator-registered adapters. Validating a declaration does not
-install that adapter or grant authority. Runtime handles are opaque original
-identities, never URLs or commands. The service binds observations to durable
-run/stage intents and remains responsible for fresh authorization.
+Agno owns workflow topology, progress, human review and continuation. These
+contracts carry only bounded original-effect identity and stop evidence.
 """
 from copy import deepcopy
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 import re
-from typing import Any, Literal, Protocol, TypedDict, cast
+from typing import Any, Literal, Protocol, TypedDict
 
 ERROR = 'WORKFLOW_CONTRACT_INVALID'
-MAX_STAGES = 16
 State = Literal['RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'UNKNOWN', 'CANCELLED']
 STATES = frozenset({'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'UNKNOWN', 'CANCELLED'})
 TERMINAL = frozenset({'COMPLETED', 'FAILED', 'CANCELLED'})
@@ -42,22 +38,8 @@ class AdapterHandle(TypedDict):
     id: str
 
 
-class WorkflowStage(TypedDict):
-    id: str
-    adapterId: str
-    revision: str
-    dependencies: list[str]
-    inputs: dict[str, Any]
-    failureRoutes: dict[str, str]
-    humanGate: bool
 
 
-class WorkflowDefinition(TypedDict):
-    schema: int
-    id: str
-    revision: str
-    maxParallel: int
-    stages: list[WorkflowStage]
 
 
 class RuntimeObservation(TypedDict):
@@ -131,52 +113,8 @@ def validate_failure_json(value):
         raise ValueError(ERROR) from None
 
 
-def validate_workflow_definition(value):
-    try:
-        _keys(value, 'schema id revision maxParallel stages'); _schema(value['schema'])
-        _require(_identifier(value['id']) and _identifier(value['revision'])
-                 and type(value['maxParallel']) is int and 1 <= value['maxParallel'] <= MAX_STAGES
-                 and type(value['stages']) is list and 1 <= len(value['stages']) <= MAX_STAGES)
-        stages = value['stages']; ids = set()
-        for stage in stages:
-            _keys(stage, 'id adapterId revision dependencies inputs failureRoutes humanGate')
-            _require(all(_identifier(stage[key]) for key in ('id', 'adapterId', 'revision'))
-                     and stage['id'] not in ids and type(stage['humanGate']) is bool)
-            ids.add(stage['id'])
-            dependencies = stage['dependencies']; routes = stage['failureRoutes']
-            _require(type(dependencies) is list and len(dependencies) <= MAX_STAGES
-                     and all(_identifier(item) for item in dependencies) and len(set(dependencies)) == len(dependencies)
-                     and type(routes) is dict and len(routes) <= MAX_STAGES
-                     and all(_code(code) and _identifier(target) for code, target in routes.items())
-                     and type(stage['inputs']) is dict)
-            _inert(stage['inputs']); _encoded(stage['inputs'], 16384)
-        graph = {identifier: set() for identifier in ids}
-        for stage in stages:
-            targets = set(stage['dependencies']) | set(stage['failureRoutes'].values())
-            _require(targets <= ids and stage['id'] not in targets)
-            for parent in stage['dependencies']:
-                graph[parent].add(stage['id'])
-            graph[stage['id']].update(stage['failureRoutes'].values())
-        visiting, visited = set(), set()
-        def visit(identifier):
-            _require(identifier not in visiting)
-            if identifier in visited:
-                return
-            visiting.add(identifier)
-            _require(len(graph[identifier]) <= MAX_STAGES)
-            for child in graph[identifier]:
-                visit(child)
-            visiting.remove(identifier); visited.add(identifier)
-        for identifier in ids:
-            visit(identifier)
-        _encoded(value, 65536)
-        return deepcopy(value)
-    except (TypeError, KeyError, ValueError, RecursionError, OverflowError):
-        raise ValueError(ERROR) from None
 
 
-def workflow_fingerprint(value):
-    return hashlib.sha256(_encoded(validate_workflow_definition(value), 65536)).hexdigest()
 
 
 def validate_runtime_observation(value, operation_id, adapter_id, revision, previous_handle=None):
@@ -214,32 +152,6 @@ def validate_runtime_observation(value, operation_id, adapter_id, revision, prev
         raise ValueError(ERROR) from None
 
 
-def validate_resume(definition, from_stage, prior_results):
-    """Select an unstarted stage only after all dependency results are complete.
-
-    Existing results (including UNKNOWN/FAILED) at the selected stage prohibit
-    replay. This does not approve a human gate, authorize dispatch, or verify
-    persisted run lineage; the service checks those independently.
-    """
-    definition = validate_workflow_definition(definition)
-    _require(type(prior_results) is dict and len(prior_results) <= MAX_STAGES)
-    stages = {stage['id']: stage for stage in definition['stages']}
-    _require(_identifier(from_stage) and from_stage in stages and from_stage not in prior_results
-             and set(prior_results) <= set(stages))
-    visited = set()
-    def completed(identifier):
-        if identifier in visited:
-            return
-        visited.add(identifier)
-        stage = stages[identifier]
-        for parent in stage['dependencies']:
-            _require(parent in prior_results and type(prior_results[parent]) is dict)
-            observed = cast(dict[str, Any], prior_results[parent])
-            validate_runtime_observation(observed, observed.get('operationId'), stages[parent]['adapterId'], stages[parent]['revision'])
-            _require(observed['state'] == 'COMPLETED')
-            completed(parent)
-    completed(from_stage)
-    return deepcopy(stages[from_stage])
 
 
 @dataclass(frozen=True)

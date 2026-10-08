@@ -191,9 +191,9 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     policy_service = getattr(store, "plan_policy", None)
     contract = policy_service.current()["tool_contract"] if policy_service else store.settings.runtime_tool_contract
     known_tools = tools_for_contract(contract)
-    from .tool_policy_registry import merged_tools
+    from .tool_policy_registry import merged_tools, resolve_tool_policies
     from .plan_policy import reserved_tool_names
-    known_tools = merged_tools(known_tools, getattr(store.settings, 'tool_policies', ()), reserved=reserved_tool_names())
+    known_tools = merged_tools(known_tools, resolve_tool_policies(getattr(store.settings, 'tool_policies', ()), getattr(store.settings, 'runtime_adapters', ())), reserved=reserved_tool_names())
     tools, caps, budget = plan.get("tools"), plan.get("capabilities"), plan.get("budget")
     if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in known_tools for name in tools):
         raise HTTPException(422, "Manifest contains an unregistered remote tool")

@@ -6,66 +6,59 @@ import { WorkflowPanel, WorkflowStages } from '../web/WorkflowPanel.js';
 import { currentWorkflowAfterReceipt, sameWorkflowLineage, workflowCommand, workflowCommandReceipt, workflowCommandSettled, workflowPointer, workflowSnapshot, workflowView, WorkflowResponses, type WorkflowSnapshot } from '../web/workflowState.js';
 
 function fixture(): WorkflowSnapshot {
-  const handle = { adapterId: 'controlled', revision: 'v1', id: 'original-handle' };
-  return { schema: 1, id: 'workflow-one', ownerId: 'alice', taskId: 'task-one', nativeRunId: 'native-one', planId: 'plan-one', planSha256: 'a'.repeat(64), definitionSha256: 'b'.repeat(64), version: 4, status: 'ACTIVE', cancelRequested: false,
-    definition: { id: 'controlled-flow', revision: 'v1', stages: [
-      { id: 'prepare', adapterId: 'controlled', revision: 'v1', dependencies: [], failureRoutes: { INVALID: 'review' }, humanGate: false },
-      { id: 'review', adapterId: 'controlled', revision: 'v1', dependencies: ['prepare'], failureRoutes: {}, humanGate: true },
-    ] }, stages: {
-      prepare: { state: 'FAILED', operationId: 'original-operation', handle, approved: true, observation: { operationId: 'original-operation', handle, state: 'FAILED', allStopped: true, failure: { code: 'INVALID', messageCode: 'CONTROLLED_FAILURE', retryable: false } } },
-      review: { state: 'HUMAN_WAIT', operationId: null, handle: null, observation: null, approved: false },
-    } };
+  return { schema: 2, id: 'native-workflow', ownerId: 'alice', taskId: 'task-one', nativeRunId: 'native-one',
+    planId: 'plan-one', planSha256: 'a'.repeat(64), version: 'b'.repeat(64), status: 'completed',
+    steps: [{ id: 'prepare', name: '准备资料', status: 'completed' }, { id: 'review', name: '人工审核', status: 'paused' }],
+    requirements: [{ id: 'original-requirement', stepName: '人工审核', kind: 'confirmation' }],
+    operations: [{ id: 'original-operation', stepId: 'prepare', state: 'UNKNOWN', allStopped: false }] };
 }
 afterEach(() => vi.unstubAllGlobals());
-describe('owner-bound workflow projection and commands', () => {
-  it('renders actual waits, structured failure route and stop proof without fabricated progress or raw output', () => {
-    const raw = fixture(); const value = workflowSnapshot(raw, 'alice', 'task-one'); raw.stages.prepare.state = 'COMPLETED';
+describe('native workflow projection and original commands', () => {
+  it('shows native completion separately from physical stop without reconstructing a DAG', () => {
+    const raw = fixture(); const value = workflowSnapshot(raw, 'alice', 'task-one'); raw.operations[0].allStopped = true;
     const html = renderToStaticMarkup(createElement(WorkflowStages, { workflow: value }));
-    expect(html).toContain('执行失败'); expect(html).toContain('等待人工决定'); expect(html).toContain('INVALID'); expect(html).toContain('匹配本次失败'); expect(html).toContain('本阶段执行已确认停止');
-    expect(html).not.toContain('100%'); expect(html).not.toContain('original-handle'); expect(html).not.toContain('alice');
-    expect(value.stages.prepare.state).toBe('FAILED');
+    expect(html).toContain('已完成'); expect(html).toContain('等待确认'); expect(html).toContain('尚未确认停止');
+    expect(html).toContain('原生运行结束不代表外部操作已停止'); expect(html).not.toContain('100%');
+    expect(html).not.toContain('失败处理路径'); expect(value.operations[0].allStopped).toBe(false);
   });
-  it('rejects foreign owner/task, mismatched operation or handle, invalid proof and unsupported states', () => {
+  it('rejects foreign identity, invalid digests and duplicate native records', () => {
     expect(() => workflowSnapshot(fixture(), 'bob', 'task-one')).toThrow();
-    expect(() => workflowSnapshot(fixture(), 'alice', 'other-task')).toThrow();
-    for (const edit of [(x: WorkflowSnapshot) => { x.stages.prepare.observation!.operationId = 'other'; }, (x: WorkflowSnapshot) => { x.stages.prepare.observation!.allStopped = false; }, (x: WorkflowSnapshot) => { x.stages.prepare.handle!.adapterId = 'other'; }, (x: WorkflowSnapshot) => { x.version = -1; }]) {
-      const raw = fixture(); edit(raw); expect(() => workflowSnapshot(raw, 'alice', 'task-one')).toThrow();
-    }
-    const raw = fixture(); expect(() => workflowSnapshot({ ...raw, stages: { ...raw.stages, extra: raw.stages.prepare } }, 'alice', 'task-one')).toThrow();
+    expect(() => workflowSnapshot(fixture(), 'alice', 'other')).toThrow();
+    for (const changed of [{ ...fixture(), schema: 1 }, { ...fixture(), version: 3 },
+      { ...fixture(), operations: [{ id: 'op', stepId: 'prepare', state: 'RUNNING', allStopped: 'yes' }] },
+      { ...fixture(), operations: [fixture().operations[0], fixture().operations[0]] }])
+      expect(() => workflowSnapshot(changed, 'alice', 'task-one')).toThrow();
+    expect(workflowSnapshot({ ...fixture(), steps: [fixture().steps[0], fixture().steps[0]] }, 'alice', 'task-one').steps).toHaveLength(2);
+    // Native statuses are projections, not an invented finite-state engine.
+    expect(workflowSnapshot({ ...fixture(), status: 'future-native-status' }, 'alice', 'task-one').status).toBe('future-native-status');
   });
-  it('accepts only server-projected stage actions and never grants resume to a failed original stage', () => {
-    const raw = { available: true, workflow: fixture(), allowedActions: [{ action: 'decide', stageId: 'review' }, { action: 'reconcile', stageId: 'prepare' }] };
+  it('accepts only server actions bound to projected requirement or operation identities', () => {
+    const raw = { available: true, workflow: fixture(), allowedActions: [
+      { action: 'decide', requirementId: 'original-requirement' }, { action: 'reconcile', operationId: 'original-operation' }, { action: 'cancel' }] };
     expect(workflowView(raw, 'alice', 'task-one')).toMatchObject({ allowedActions: raw.allowedActions });
-    for (const action of [{ action: 'resume', stageId: 'prepare' }, { action: 'decide', stageId: 'missing' }, { action: 'start' }, { action: 'resume' }]) expect(() => workflowView({ ...raw, allowedActions: [action] }, 'alice', 'task-one')).toThrow();
-    expect(workflowView({ available: false }, 'alice', 'task-one')).toEqual({ available: false });
+    for (const action of [{ action: 'resume', stageId: 'prepare' }, { action: 'decide', requirementId: 'missing' },
+      { action: 'reconcile', operationId: 'missing' }, { action: 'cancel', requirementId: 'original-requirement' }])
+      expect(() => workflowView({ ...raw, allowedActions: [action] }, 'alice', 'task-one')).toThrow();
   });
-  it('keeps original run/plan/operation identities and rejects stale or replaced snapshots', () => {
-    const original = fixture(); const next = fixture(); next.version++;
-    expect(sameWorkflowLineage(original, next)).toBe(true);
-    for (const edit of [(x: WorkflowSnapshot) => { x.version--; }, (x: WorkflowSnapshot) => { x.nativeRunId = 'other'; }, (x: WorkflowSnapshot) => { x.planSha256 = 'c'.repeat(64); }, (x: WorkflowSnapshot) => { x.stages.prepare.operationId = 'replacement'; }]) {
-      const changed = fixture(); edit(changed); expect(sameWorkflowLineage(original, changed)).toBe(false);
-    }
+  it('keeps opaque snapshot hashes unordered and never overwrites current GET with a receipt', () => {
+    const current = fixture(); const receipt = { ...fixture(), version: 'f'.repeat(64), status: 'running' };
+    expect(sameWorkflowLineage(current, receipt)).toBe(true);
+    expect(currentWorkflowAfterReceipt(current, receipt)).toBe(current);
+    expect(() => currentWorkflowAfterReceipt(current, { ...receipt, nativeRunId: 'replacement' })).toThrow();
+    expect(currentWorkflowAfterReceipt(undefined, receipt)).toBe(receipt);
   });
-  it('preserves exact bounded decision pointer and distinguishes unknown receipt from completion', () => {
-    const command = { commandId: 'command-one', action: 'decide' as const, stageId: 'review', version: 4, approved: false };
+  it('preserves exact decision/input pointers and rejects legacy stage/resume commands', () => {
+    const command = { commandId: 'command-one', action: 'decide' as const, requirementId: 'original-requirement', version: 'b'.repeat(64), approved: false };
     expect(workflowPointer(JSON.stringify(command))).toEqual(command);
-    expect(workflowPointer(JSON.stringify({ ...command, version: undefined }))).toBeUndefined();
+    expect(workflowCommand({ ...command, approved: undefined, values: { answer: false } }).values).toEqual({ answer: false });
+    for (const changed of [{ ...command, version: 4 }, { ...command, stageId: 'review' }, { ...command, action: 'resume' },
+      { ...command, values: {} }, { ...command, approved: 'false' }, { commandId: 'cancel-one', action: 'cancel', version: command.version }])
+      expect(() => workflowCommand(changed)).toThrow();
     expect(workflowPointer(JSON.stringify({ ...command, secret: 'not allowed' }))).toBeUndefined();
-    expect(() => workflowCommand({ ...command, approved: 'false' })).toThrow();
     expect(workflowCommandReceipt({ commandId: command.commandId, status: 'unknown' }, 'alice', 'task-one', command)).toEqual({ status: 'unknown' });
-    expect(workflowCommandReceipt({ commandId: command.commandId, status: 'recorded', workflow: fixture() }, 'alice', 'task-one', command).status).toBe('recorded');
     expect(workflowCommandSettled('recorded')).toBe(false); expect(workflowCommandSettled('unknown')).toBe(false);
     expect(workflowCommandSettled('rejected')).toBe(true); expect(workflowCommandSettled('completed')).toBe(true);
-    expect(() => workflowCommand({ commandId: 'reconcile-one', action: 'reconcile' })).toThrow();
-    expect(() => workflowCommand({ commandId: 'reconcile-one', action: 'reconcile', version: 4 })).toThrow();
-    expect(workflowCommand({ commandId: 'reconcile-one', action: 'reconcile', stageId: 'prepare', version: 4 }).version).toBe(4);
-    expect(() => workflowCommandReceipt({ commandId: 'different', status: 'completed', workflow: fixture() }, 'alice', 'task-one', command)).toThrow();
-  });
-  it('accepts an older same-lineage command receipt without regressing the current snapshot', () => {
-    const current = fixture(); current.version = 6;
-    expect(currentWorkflowAfterReceipt(current, fixture())).toBe(current);
-    const replacement = fixture(); replacement.nativeRunId = 'different';
-    expect(() => currentWorkflowAfterReceipt(current, replacement)).toThrow();
+    expect(() => workflowCommandReceipt({ commandId: 'different', status: 'completed' }, 'alice', 'task-one', command)).toThrow();
   });
   it('drops delayed reads and errors after a command or identity invalidation', async () => {
     const reads = new WorkflowResponses(); let resolve!: (value: string) => void;

@@ -1,51 +1,65 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCommandKeys } from './commandKeys.js';
 import { ApiError } from './api.js';
-import { currentWorkflowAfterReceipt, sameWorkflowLineage, workflowCommandReceipt, workflowCommandSettled, workflowPointer, workflowStateLabel, workflowView, WorkflowResponses, type WorkflowApi, type WorkflowCommand, type WorkflowSnapshot, type WorkflowView } from './workflowState.js';
+import { currentWorkflowAfterReceipt, sameWorkflowLineage, workflowCommand, workflowCommandReceipt, workflowCommandSettled, workflowStateLabel, workflowView, WorkflowResponses, type WorkflowApi, type WorkflowCommand, type WorkflowRequirement, type WorkflowSnapshot, type WorkflowView } from './workflowState.js';
 
 export function WorkflowStages({ workflow }: { workflow: WorkflowSnapshot }) {
-  return <section aria-label="工作流阶段"><h3>工作流阶段</h3>
-    <p>{({ ACTIVE: '工作流尚未结束', COMPLETED: '工作流执行结束', CANCELLED: '工作流已取消' })[workflow.status]}</p>
-    {workflow.cancelRequested && <p role="status">已记录取消请求。各阶段是否停止，以服务器返回的停止证据为准。</p>}
-    <ol>{workflow.definition.stages.map(stage => {
-      const entry = workflow.stages[stage.id]; const failure = entry.observation?.failure;
-      return <li key={stage.id}><h4>{stage.id}</h4><p>{workflowStateLabel[entry.state]}</p>
-        {entry.state === 'UNKNOWN' && <p>原执行结果尚未确认。请核对原操作；是否继续由服务器按原审批范围决定。</p>}
-        {entry.state === 'WAITING' && <p>等待原执行的外部状态更新。</p>}
-        {entry.state === 'HUMAN_WAIT' && <p>本阶段需要人工决定，尚未获得执行同意。</p>}
-        {stage.dependencies.length > 0 && <p>依赖阶段：{stage.dependencies.join('、')}</p>}
-        {failure && <div role="status"><p>失败代码：{failure.code}</p><p>原因代码：{failure.messageCode}</p></div>}
-        {Object.keys(stage.failureRoutes).length > 0 && <details><summary>已配置的失败处理路径</summary><ul>{Object.entries(stage.failureRoutes).map(([code, target]) => <li key={code}>{code} → {target}{entry.state === 'FAILED' && failure?.code === code ? '（匹配本次失败；目标阶段状态见记录）' : ''}</li>)}</ul></details>}
-        {entry.observation?.allStopped === true && <p>本阶段执行已确认停止。</p>}
-      </li>;
-    })}</ol>
+  return <section aria-label="原生工作流记录"><h3>原生工作流</h3>
+    <p>运行状态：{workflowStateLabel(workflow.status)}</p>
+    <ol>{workflow.steps.map((step, index) => <li key={`${step.id}:${index}`}><strong>{step.name}</strong>：{workflowStateLabel(step.status)}</li>)}</ol>
+    {workflow.requirements.length > 0 && <section aria-label="待处理要求"><h4>待处理要求</h4><ul>{workflow.requirements.map(requirement => <li key={requirement.id}>{requirement.stepName}：{requirement.kind === 'confirmation' ? '等待确认' : requirement.kind === 'input' ? '等待填写输入' : '等待外部结果'}</li>)}</ul></section>}
+    {workflow.operations.length > 0 && <section aria-label="外部操作停止证据"><h4>外部操作</h4><p>原生运行结束不代表外部操作已停止。</p><ul>{workflow.operations.map(operation => <li key={operation.id}>{operation.stepId}：{workflowStateLabel(operation.state)}；{operation.allStopped ? '已确认停止' : '尚未确认停止'}</li>)}</ul></section>}
   </section>;
+}
+function RequirementDecision({ requirement, disabled, decide }: { requirement: WorkflowRequirement; disabled: boolean; decide: (decision: Pick<WorkflowCommand, 'approved' | 'values'>) => void }) {
+  const [text, setText] = useState('{}'); const [error, setError] = useState('');
+  if (requirement.kind === 'confirmation') return <div><p>确认：{requirement.stepName}</p><button className="primary" disabled={disabled} onClick={() => decide({ approved: true })}>同意</button><button className="secondary" disabled={disabled} onClick={() => decide({ approved: false })}>不同意</button></div>;
+  function submit() {
+    try {
+      const values: unknown = JSON.parse(text);
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error();
+      setError(''); decide({ values: values as Record<string, unknown> });
+    } catch { setError('请填写 JSON 对象，字段类型由服务器核对。'); }
+  }
+  return <div><label>{requirement.stepName} 输入（JSON）<textarea aria-label={`${requirement.stepName} 输入（JSON）`} disabled={disabled} rows={4} maxLength={32768} value={text} onChange={event => setText(event.target.value)}/></label>
+    {requirement.fields?.length ? <ul>{requirement.fields.map(field => <li key={field.name}>{field.name}（{field.type}，{field.required ? '必需' : '可选'}）</li>)}</ul> : null}
+    {error && <p role="alert">{error}</p>}<button className="primary" disabled={disabled} onClick={submit}>提交原要求的输入</button></div>;
 }
 export function WorkflowPanel({ ownerId, taskId, api, disabled = false }: { ownerId: string; taskId: string; api: WorkflowApi; disabled?: boolean }) {
   return <WorkflowSession key={`${ownerId}:${taskId}`} ownerId={ownerId} taskId={taskId} api={api} disabled={disabled}/>;
 }
 function WorkflowSession({ ownerId, taskId, api, disabled }: { ownerId: string; taskId: string; api: WorkflowApi; disabled: boolean }) {
-  const storageKey = `factory-workflow-command-v1:${encodeURIComponent(ownerId)}:${encodeURIComponent(taskId)}`;
-  const [pending, setPending] = useState<WorkflowCommand | undefined>(() => { try { return workflowPointer(window.sessionStorage.getItem(storageKey)); } catch { return undefined; } });
+  const storageKey = `factory-workflow-commands-v2:${encodeURIComponent(ownerId)}:${encodeURIComponent(taskId)}`;
+  const [pending, setPending] = useState<WorkflowCommand[]>(() => {
+    try { const saved = window.sessionStorage.getItem(storageKey) ?? '[]'; if (saved.length > 640000) return []; const raw: unknown = JSON.parse(saved); return Array.isArray(raw) && raw.length <= 16 ? raw.map(workflowCommand) : []; } catch { return []; }
+  });
+  const pendingRef = useRef(pending);
   const [view, setView] = useState<WorkflowView>(); const current = useRef<WorkflowView | undefined>(undefined);
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [ready, setReady] = useState(false); const [busy, setBusy] = useState(false); const [refresh, setRefresh] = useState(0);
-  const [notRecorded, setNotRecorded] = useState(false);
+  const [notRecorded, setNotRecorded] = useState<string[]>([]);
   const mutation = useRef(false); const alive = useRef(true); const responses = useRef(new WorkflowResponses());
   const keys = useCommandKeys(ownerId);
-  function remember(value?: WorkflowCommand) {
-    setPending(value); setNotRecorded(false);
-    try { if (value) window.sessionStorage.setItem(storageKey, JSON.stringify(value)); else window.sessionStorage.removeItem(storageKey); } catch { /* Preserve in-page original command when storage is unavailable. */ }
+  function remember(command: WorkflowCommand, remove = false) {
+    const next = pendingRef.current.filter(item => item.commandId !== command.commandId);
+    if (!remove) next.push(command);
+    pendingRef.current = next; setPending(next); setNotRecorded(ids => ids.filter(id => id !== command.commandId));
+    try { if (next.length) window.sessionStorage.setItem(storageKey, JSON.stringify(next)); else window.sessionStorage.removeItem(storageKey); } catch { /* Keep exact unresolved commands in memory. */ }
   }
   function accept(next: WorkflowView) {
     const previous = current.current;
-    if (previous?.available && (!next.available || !sameWorkflowLineage(previous.workflow, next.workflow))) throw new Error('工作流身份或版本发生变化。');
+    if (previous?.available && (!next.available || !sameWorkflowLineage(previous.workflow, next.workflow))) throw new Error('原工作流身份发生变化。');
     current.current = next; setView(next);
   }
   function acceptReceipt(snapshot: WorkflowSnapshot) {
     const before = current.current?.available ? current.current.workflow : undefined;
-    accept({ available: true, workflow: currentWorkflowAfterReceipt(before, snapshot), allowedActions: [] });
+    const next = currentWorkflowAfterReceipt(before, snapshot);
+    if (!before) accept({ available: true, workflow: next, allowedActions: [] });
   }
+  const intent = (value: Omit<WorkflowCommand, 'commandId'>) => {
+    const { action, version, requirementId, operationId, approved, values } = value;
+    return { action, ...(version === undefined ? {} : { version }), ...(requirementId === undefined ? {} : { requirementId }), ...(operationId === undefined ? {} : { operationId }), ...(approved === undefined ? {} : { approved }), ...(values === undefined ? {} : { values }) };
+  };
   useEffect(() => { alive.current = true; return () => { alive.current = false; responses.current.invalidate(); }; }, []);
   useEffect(() => {
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
@@ -55,67 +69,63 @@ function WorkflowSession({ ownerId, taskId, api, disabled }: { ownerId: string; 
           const raw = await responses.current.read(() => api.get(taskId, controller.signal), controller.signal);
           if (!controller.signal.aborted && raw !== undefined) { accept(workflowView(raw, ownerId, taskId)); setReady(true); setError(''); }
         }
-      } catch { if (!controller.signal.aborted) { setReady(false); setError('工作流更新失败，已保留最后确认的记录。请重新读取。'); } }
+      } catch { if (!controller.signal.aborted) { setReady(false); setError('工作流更新失败，已保留最后确认的记录。'); } }
       if (!controller.signal.aborted) timer = setTimeout(() => void read(), 5000);
     }
     void read(); return () => { controller.abort(); clearTimeout(timer); };
   }, [api, ownerId, taskId, refresh]);
-  const intent = (value: Omit<WorkflowCommand, 'commandId'>) => ({ action: value.action, ...(value.stageId === undefined ? {} : { stageId: value.stageId }), ...(value.version === undefined ? {} : { version: value.version }), ...(value.approved === undefined ? {} : { approved: value.approved }) });
-  async function lookup() {
-    if (!pending || mutation.current || disabled) return;
-    mutation.current = true; responses.current.invalidate(); setBusy(true); setError(''); setNotRecorded(false);
+  async function lookup(command: WorkflowCommand) {
+    if (mutation.current || disabled) return;
+    mutation.current = true; responses.current.invalidate(); setBusy(true); setError('');
     try {
-      const receipt = workflowCommandReceipt(await api.commandStatus(taskId, pending.commandId), ownerId, taskId, pending);
+      const receipt = workflowCommandReceipt(await api.commandStatus(taskId, command.commandId), ownerId, taskId, command);
       if (!alive.current) return;
       if (receipt.workflow) acceptReceipt(receipt.workflow);
       if (workflowCommandSettled(receipt.status)) {
-        const key = await keys('workflow-command', { taskId, ...intent(pending) });
+        const key = await keys('workflow-command', { taskId, ...intent(command) });
         if (!alive.current) return;
-        if (key.requestId === pending.commandId) key.acknowledged(); remember();
+        if (key.requestId === command.commandId) key.acknowledged(); remember(command, true);
       }
-      setNotice(receipt.status === 'rejected' ? '服务器已明确拒绝原命令。请读取最新状态后重新决定。' : receipt.status === 'completed' ? '原命令已完成核对，执行结果以阶段记录为准。' : '原命令仍待确认。可核对原执行的状态，不会自动重放原决定。');
+      setNotice(workflowCommandSettled(receipt.status) ? '原命令已核对，请查看最新原生记录。' : '原命令仍待确认，不会自动重放。');
     } catch (error) {
       if (alive.current) {
-        if (error instanceof ApiError && error.status === 404) { setNotRecorded(true); setNotice('服务器未找到这条原命令。可显式提交同一命令，内容和标识保持不变。'); }
-        else setError('原命令记录暂时无法读取，已保留原命令。');
+        if (error instanceof ApiError && error.status === 404) { setNotRecorded(ids => [...new Set([...ids, command.commandId])]); setNotice('服务器未找到原命令。可显式提交同一标识与内容。'); }
+        else setError('原命令回执暂不可读，已保留原命令。');
       }
     } finally { mutation.current = false; if (alive.current) { setReady(false); setBusy(false); setRefresh(value => value + 1); } }
   }
-  async function submit(decision: Omit<WorkflowCommand, 'commandId'>, retry = false) {
-    if (disabled || mutation.current || !ready || !view?.available || pending && !retry && !['reconcile', 'cancel'].includes(decision.action) || retry && (!pending || !notRecorded)) return;
-    if (!retry && !view.allowedActions.some(item => item.action === decision.action && item.stageId === decision.stageId)) return;
+  async function submit(decision: Omit<WorkflowCommand, 'commandId'>, retry?: WorkflowCommand) {
+    if (disabled || mutation.current || !ready || !view?.available || (!retry && pending.length >= (decision.action === 'cancel' ? 16 : 15))
+      || (!retry && pending.length > 0 && decision.action === 'decide') || (retry && !notRecorded.includes(retry.commandId))) return;
+    if (!retry && !view.allowedActions.some(item => item.action === decision.action && item.requirementId === decision.requirementId && item.operationId === decision.operationId)) return;
     mutation.current = true; responses.current.invalidate(); setBusy(true); setError(''); setNotice('');
     try {
-      const payload = intent(decision);
-      const key = await keys('workflow-command', { taskId, ...payload });
+      const payload = intent(decision); const key = await keys('workflow-command', { taskId, ...payload });
       if (!alive.current) return;
-      const command = retry ? pending! : { ...payload, commandId: key.requestId };
-      const preserveEarlier = !!pending && !retry;
-      if (!preserveEarlier) remember(command);
-      let raw: unknown;
-      try { raw = await api.command(taskId, command); }
-      finally { if (command.action === 'reconcile') key.acknowledged(); }
-      const result = workflowCommandReceipt(raw, ownerId, taskId, command);
+      const command = workflowCommand(retry ?? { ...payload, commandId: key.requestId });
+      remember(command);
+      const result = workflowCommandReceipt(await api.command(taskId, command), ownerId, taskId, command);
       if (!alive.current) return;
       if (result.workflow) acceptReceipt(result.workflow);
-      if (workflowCommandSettled(result.status)) { if (!preserveEarlier) remember(); if (key.requestId === command.commandId) key.acknowledged(); }
-      setReady(false); setNotice(result.status === 'rejected' ? '服务器已明确拒绝此命令。请读取最新状态后重新决定。' : result.status === 'unknown' || result.status === 'recorded' ? '命令仍待核对，已保留原命令。可继续核对原执行状态。' : '已收到命令完成回执。执行和停止结果以阶段记录为准。');
-    } catch { if (alive.current) { setReady(false); setError('原命令结果尚未确认。请先读取状态，再核对同一命令；不会自动提交新决定。'); } }
-    finally { mutation.current = false; if (alive.current) { setBusy(false); setRefresh(value => value + 1); } }
+      if (workflowCommandSettled(result.status)) { remember(command, true); if (key.requestId === command.commandId) key.acknowledged(); }
+      setNotice(workflowCommandSettled(result.status) ? '已收到原命令回执，请查看最新记录。' : '命令仍待核对，已保留原标识与内容。');
+    } catch { if (alive.current) setError('命令结果尚未确认。请读取原回执，不会自动重试。'); }
+    finally { mutation.current = false; if (alive.current) { setReady(false); setBusy(false); setRefresh(value => value + 1); } }
   }
-  if (view?.available === false && !pending && !error) return null;
-  const blocked = disabled || busy || !ready || !!pending;
+  if (view?.available === false && !pending.length && !error) return null;
+  const blocked = disabled || busy || !ready;
   return <section className="workflow-panel" aria-label="工作流记录">
     {error && <p role="alert" className="error-message">{error}</p>}{notice && <p role="status">{notice}</p>}
     {!view && !error && <p>正在读取工作流记录…</p>}
-    {view?.available && <><WorkflowStages workflow={view.workflow}/>
-      {view.allowedActions.some(item => item.action === 'reconcile') && <p className="quiet">核对原执行会查询原操作；等待条件满足时，可继续原已授权任务。</p>}
-      <div className="button-row">{view.allowedActions.map(item => {
-        const version = view.workflow.version; const scope = item.stageId ? ` ${item.stageId}` : '';
-        return item.action === 'decide' ? <div key={`decide:${item.stageId}`}><p>决定阶段{scope}</p><button className="primary" disabled={blocked} onClick={() => void submit({ ...item, approved: true, version })}>同意本阶段</button><button className="secondary" disabled={blocked} onClick={() => void submit({ ...item, approved: false, version })}>不同意本阶段</button></div>
-          : <button key={`${item.action}:${item.stageId ?? ''}`} className={item.action === 'cancel' ? 'secondary danger' : 'secondary'} disabled={['reconcile', 'cancel'].includes(item.action) ? disabled || busy || !ready : blocked} onClick={() => void submit({ ...item, ...(['resume', 'reconcile'].includes(item.action) ? { version } : {}) })}>{item.action === 'resume' ? `继续阶段${scope}` : item.action === 'cancel' ? '请求取消工作流' : `核对原执行${scope}`}</button>;
-      })}</div></>}
-    {pending && <div className="state-note"><p>保留了一条待核对的原命令。在确认前不能提交新的人工决定或继续阶段；仍可核对原执行。</p><button className="secondary" disabled={disabled || busy} onClick={() => void lookup()}>读取原命令回执</button>{notRecorded && <button className="secondary" disabled={disabled || busy || !ready || !view?.available} onClick={() => void submit(pending, true)}>提交同一原命令</button>}</div>}
+    {view?.available && <><WorkflowStages workflow={view.workflow}/><div className="button-row">{view.allowedActions.map(item => {
+      const version = view.workflow.version;
+      if (item.action === 'decide') {
+        const requirement = view.workflow.requirements.find(entry => entry.id === item.requirementId)!;
+        return <RequirementDecision key={`${requirement.id}:${version}`} requirement={requirement} disabled={blocked || pending.length > 0} decide={decision => void submit({ ...item, ...decision, version })}/>;
+      }
+      return <button key={`${item.action}:${item.operationId ?? ''}`} className={item.action === 'cancel' ? 'secondary danger' : 'secondary'} disabled={blocked || pending.length >= (item.action === 'cancel' ? 16 : 15)} onClick={() => void submit({ ...item, ...(item.action === 'reconcile' ? { version } : {}) })}>{item.action === 'cancel' ? '请求取消原工作流' : `核对原操作 ${item.operationId}`}</button>;
+    })}</div></>}
+    {pending.map(command => <div className="state-note" key={command.commandId}><p>原命令 {command.commandId} 待核对；未确认前不提交新的人工决定。</p><button className="secondary" disabled={disabled || busy} onClick={() => void lookup(command)}>读取原命令回执</button>{notRecorded.includes(command.commandId) && <button className="secondary" disabled={blocked || !view?.available} onClick={() => void submit(command, command)}>提交同一原命令</button>}</div>)}
     <button className="text-button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>读取工作流最新记录</button>
   </section>;
 }

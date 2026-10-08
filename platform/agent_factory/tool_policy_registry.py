@@ -10,46 +10,78 @@ _IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}')
 
 @dataclass(frozen=True)
 class ToolPolicyRegistration:
-    name: str
-    capability: str
-    revision: str
-    read_only: bool
     adapter_id: str
     adapter_revision: str
+    revision: str
+    read_only: bool
 
     def __post_init__(self):
         if type(self.read_only) is not bool or any(type(value) is not str or not _IDENTIFIER.fullmatch(value)
-            for value in (self.name, self.capability, self.revision, self.adapter_id, self.adapter_revision)):
+            for value in (self.revision, self.adapter_id, self.adapter_revision)):
             raise ValueError('Invalid operator tool policy registration')
 
 
-def normalize_tool_policies(values) -> tuple[ToolPolicyRegistration, ...]:
+@dataclass(frozen=True)
+class ResolvedToolPolicy(ToolPolicyRegistration):
+    """Internal immutable approval projection, derived from a trusted adapter."""
+    name: str
+    capability: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if any(type(value) is not str or not _IDENTIFIER.fullmatch(value)
+               for value in (self.name, self.capability)):
+            raise ValueError('Invalid resolved tool policy')
+
+
+def _normalize(values, cls):
     if type(values) not in (tuple, list) or len(values) > 128:
         raise ValueError('Tool policies require a bounded sequence')
-    entries = tuple(item if type(item) is ToolPolicyRegistration else ToolPolicyRegistration(**item)
-                    if type(item) is dict else None for item in values)
+    try:
+        entries = tuple(item if type(item) is cls else cls(**item)
+                        if type(item) is dict else None for item in values)
+    except TypeError as error:
+        raise ValueError('Tool policy fields must be exact') from error
     if any(item is None for item in entries):
-        raise ValueError('Tool policy descriptors must be exact registrations')
-    checked: tuple[ToolPolicyRegistration, ...] = tuple(item for item in entries if item is not None)
-    if len({item.name for item in checked}) != len(checked):
-        raise ValueError('Tool policy names must be unique')
-    return tuple(sorted(checked, key=lambda item: item.name))
+        raise ValueError('Tool policies must use the correct declaration or projection')
+    entries = tuple(item for item in entries if item is not None)
+    if len({(item.adapter_id, item.adapter_revision) for item in entries}) != len(entries):
+        raise ValueError('Tool policy adapter references must be unique')
+    return tuple(sorted(entries, key=lambda item: (item.adapter_id, item.adapter_revision)))
 
 
-def validate_tool_policies(values, runtime_adapters) -> tuple[ToolPolicyRegistration, ...]:
+def normalize_tool_policies(values) -> tuple[ToolPolicyRegistration, ...]:
+    return _normalize(values, ToolPolicyRegistration)
+
+
+def normalize_resolved_tool_policies(values) -> tuple[ResolvedToolPolicy, ...]:
+    entries = _normalize(values, ResolvedToolPolicy)
+    if len({item.name for item in entries}) != len(entries):
+        raise ValueError('Resolved tool names must be unique')
+    return entries
+
+
+def resolve_tool_policies(values, runtime_adapters) -> tuple[ResolvedToolPolicy, ...]:
     entries = normalize_tool_policies(values)
+    resolved = []
     for policy in entries:
         matches = [adapter for adapter in runtime_adapters if
             getattr(adapter, 'kind', None) == 'tool' and getattr(adapter, 'adapter_id', None) == policy.adapter_id
             and getattr(adapter, 'revision', None) == policy.adapter_revision]
-        if (len(matches) != 1 or matches[0].tool_name != policy.name
-                or tuple(matches[0].permissions) != (policy.capability,)):
-            raise ValueError('Tool policy must match one exact trusted adapter and capability')
-    return entries
+        if len(matches) != 1 or len(matches[0].permissions) != 1:
+            raise ValueError('Tool policy requires one exact trusted adapter and one capability')
+        resolved.append(ResolvedToolPolicy(**asdict(policy), name=matches[0].tool_name,
+                                          capability=matches[0].permissions[0]))
+    return normalize_resolved_tool_policies(resolved)
+
+
+def validate_tool_policies(values, runtime_adapters) -> tuple[ToolPolicyRegistration, ...]:
+    resolve_tool_policies(values, runtime_adapters)
+    return normalize_tool_policies(values)
 
 
 def merged_tools(base, values, *, reserved):
-    entries = normalize_tool_policies(values)
+    entries = normalize_resolved_tool_policies(values)
     if any(item.name in reserved for item in entries):
         raise ValueError('Operator tool policies cannot replace built-in tool identities')
     return {**base, **{item.name: item.capability for item in entries}}
@@ -64,9 +96,12 @@ def policy_body(config):
 
 
 def require_installed_policies(store, policies):
-    entries = normalize_tool_policies(policies)
+    entries = normalize_resolved_tool_policies(policies)
     settings = getattr(store, 'settings', None)
-    configured = normalize_tool_policies(getattr(settings, 'tool_policies', ()))
+    try:
+        configured = resolve_tool_policies(getattr(settings, 'tool_policies', ()), getattr(settings, 'runtime_adapters', ()))
+    except ValueError as error:
+        raise HTTPException(409, 'TOOL_POLICY_ADAPTER_UNAVAILABLE: current trusted adapter differs') from error
     if entries != configured:
         raise HTTPException(409, 'TOOL_POLICY_CHANGED: operator policy differs from current approval configuration')
     if not entries:
@@ -74,7 +109,7 @@ def require_installed_policies(store, policies):
     try:
         bindings = getattr(store, 'execution_bindings', None)
         if bindings is None:
-            validate_tool_policies(entries, getattr(settings, 'runtime_adapters', ()))
+            resolve_tool_policies(getattr(settings, 'tool_policies', ()), getattr(settings, 'runtime_adapters', ()))
             return
         descriptors = bindings.describe()
         for item in entries:
@@ -90,7 +125,7 @@ def require_installed_policies(store, policies):
 def require_material_policy(material: dict[str, Any], policies):
     if material.get('kind') != 'tool':
         return
-    policy = next((item for item in normalize_tool_policies(policies) if item.name == material.get('content')), None)
+    policy = next((item for item in normalize_resolved_tool_policies(policies) if item.name == material.get('content')), None)
     if policy is None:
         return
     binding = material.get('runtimeBinding') or {}
@@ -100,7 +135,7 @@ def require_material_policy(material: dict[str, Any], policies):
 
 
 def require_plan_policies(plan, policies):
-    selected = [item for item in normalize_tool_policies(policies) if item.name in plan.get('tools', [])]
+    selected = [item for item in normalize_resolved_tool_policies(policies) if item.name in plan.get('tools', [])]
     specs = (plan.get('executionBindings') or {}).get('tools', [])
     for item in selected:
         found = [spec for spec in specs if spec.get('toolName') == item.name]

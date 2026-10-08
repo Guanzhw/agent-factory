@@ -12,12 +12,20 @@ from agent_factory.plan_policy import (PlanPolicyConfig, PlanPolicyService, Tool
     application_tool_catalog, tools_for_contract)
 from agent_factory.store import digest
 from agent_factory.tool_policy_registry import (ToolPolicyRegistration, normalize_tool_policies,
-    validate_tool_policies, policy_body, require_installed_policies, require_material_policy)
+    validate_tool_policies, resolve_tool_policies, policy_body, require_installed_policies, require_material_policy)
+
+
+def raw_registration(**changes):
+    return replace(ToolPolicyRegistration('operator.inventory', '1', 'policy-1', True), **changes)
 
 
 def registration(**changes):
-    return replace(ToolPolicyRegistration('inventory_lookup', 'inventory:read', 'policy-1', True,
-        'operator.inventory', '1'), **changes)
+    name = changes.pop('name', 'inventory_lookup')
+    capability = changes.pop('capability', 'inventory:read')
+    policy = raw_registration(**changes)
+    entry = AdapterRegistration('tool', policy.adapter_id, policy.adapter_revision,
+        lambda _: None, tool_name=name, permissions=(capability,))
+    return resolve_tool_policies((policy,), (entry,))[0]
 
 
 def adapter(policy):
@@ -50,7 +58,7 @@ class ToolPolicyRegistryTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError): policy.read_only = False  # type: ignore[misc]
         for field, value in (('read_only', 1), ('name', 'a b'), ('revision', True), ('capability', '')):
             with self.assertRaises(ValueError): registration(**{field: value})
-        with self.assertRaises(ValueError): normalize_tool_policies((policy, policy))
+        with self.assertRaises(ValueError): normalize_tool_policies((raw_registration(), raw_registration()))
         for contract in get_args(ToolContract):
             name, capability = next(iter(tools_for_contract(contract).items()))
             for cls in (PlanPolicyConfig, GovernanceConfig):
@@ -63,7 +71,7 @@ class ToolPolicyRegistryTests(unittest.TestCase):
         self.assertEqual(config.known_tools[policy.name], policy.capability)
         self.assertIn(policy.name, config.read_only_tools)
         self.assertIn(policy.capability, config.read_only_capabilities)
-        writer = registration(name='inventory_write', read_only=False)
+        writer = registration(name='inventory_write', adapter_id='operator.writer', read_only=False)
         both = replace(config, tool_policies=(writer, policy))
         self.assertNotIn(writer.name, both.read_only_tools)
         self.assertNotEqual(config.fingerprint, PlanPolicyConfig().fingerprint)
@@ -73,11 +81,17 @@ class ToolPolicyRegistryTests(unittest.TestCase):
 
     def test_adapter_identity_capability_and_current_withdrawal(self):
         policy = registration(); entry = adapter(policy)
-        self.assertEqual(validate_tool_policies((policy,), (entry,)), (policy,))
-        for changed in (replace(entry, tool_name='other'), replace(entry, permissions=('other:read',)),
-                        replace(entry, revision='2'), replace(entry, permissions=(policy.capability, 'extra:write'))):
-            with self.assertRaises(ValueError): validate_tool_policies((policy,), (changed,))
-        settings = SimpleNamespace(tool_policies=(policy,), runtime_adapters=[entry], demo=False)
+        raw = raw_registration()
+        self.assertEqual(validate_tool_policies((raw,), (entry,)), (raw,))
+        self.assertEqual(resolve_tool_policies((raw,), (entry,)), (policy,))
+        for changed in (replace(entry, revision='2'), replace(entry, permissions=()),
+                        replace(entry, permissions=(policy.capability, 'extra:write'))):
+            with self.assertRaises(ValueError): validate_tool_policies((raw,), (changed,))
+        for changed in (replace(entry, tool_name='other'), replace(entry, permissions=('other:read',))):
+            derived = resolve_tool_policies((raw,), (changed,))
+            self.assertNotEqual(PlanPolicyConfig(tool_policies=derived).fingerprint,
+                                PlanPolicyConfig(tool_policies=(policy,)).fingerprint)
+        settings = SimpleNamespace(tool_policies=(raw,), runtime_adapters=[entry], demo=False)
         store = SimpleNamespace(settings=settings, execution_bindings=None)
         require_installed_policies(store, (policy,))
         bindings = ExecutionBindings(settings, store)
@@ -89,6 +103,23 @@ class ToolPolicyRegistryTests(unittest.TestCase):
         with self.assertRaises(HTTPException): application_tool_catalog(store)
         settings.tool_policies = ()
         with self.assertRaises(HTTPException): require_installed_policies(store, (policy,))
+
+    def test_declarations_cannot_supply_derived_fields_or_ambiguous_adapters(self):
+        raw = raw_registration()
+        entry = adapter(registration())
+        with self.assertRaises(ValueError):
+            normalize_tool_policies(({**asdict(raw), 'name': 'forged', 'capability': 'forged'},))
+        with self.assertRaises(ValueError):
+            resolve_tool_policies((raw,), (entry, entry))
+        second = raw_registration(adapter_id='operator.second')
+        with self.assertRaises(ValueError):
+            resolve_tool_policies((raw, second), (entry, replace(entry, adapter_id=second.adapter_id)))
+        settings = SimpleNamespace(tool_policies=(raw,), runtime_adapters=[entry])
+        store = SimpleNamespace(settings=settings, execution_bindings=None)
+        approved = resolve_tool_policies((raw,), (entry,))
+        settings.runtime_adapters = [replace(entry, permissions=('inventory:write',))]
+        with self.assertRaises(HTTPException):
+            require_installed_policies(store, approved)
 
     def test_material_and_plan_must_pin_exact_registered_adapter(self):
         policy = registration()

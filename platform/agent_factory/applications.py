@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
+from .native_component import NativeWorkflowPin
 from .input_schema import validate_input_schema, validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
 from .plan_policy import application_tool_catalog
@@ -56,6 +57,7 @@ class ConnectionRequirement(BaseModel):
 
 
 class ModeDefinition(BaseModel):
+    nativeComponent: NativeWorkflowPin | None = None
     inputSchema: dict[str, Any] | None = None
 
     @field_validator("inputSchema")
@@ -269,6 +271,11 @@ class ApplicationService:
                 raise HTTPException(422, "Application mode must be a bounded identifier")
             if not set(mode["capabilities"]) <= set(known_tools.values()):
                 raise HTTPException(422, "Application requests authority outside registered capabilities")
+            native = mode.get("nativeComponent")
+            if native is not None:
+                workflows = getattr(self.store, "native_workflows", None)
+                if workflows is None or workflows.pin(native["id"]) != native:
+                    raise HTTPException(409, "Native workflow registration is unavailable or changed")
             defaults = []
             for slot_name, slot in mode["materialChoices"].items():
                 if not slot_name or len(slot_name) > 100 or slot["defaultRef"] not in mode["materialRefs"] or slot["defaultRef"] not in slot["allowedRefs"] or slot["defaultRef"] in defaults:
@@ -472,6 +479,9 @@ class ApplicationService:
             raise HTTPException(409, "Plan differs from its published application/mode")
         mode = application["modes"][plan["mode"]]
         anchor = plan.get("bindingManifest")
+        if (plan.get("nativeComponent") != mode.get("nativeComponent") or
+                (anchor or {}).get("nativeComponent") != mode.get("nativeComponent")):
+            raise HTTPException(409, "Native component differs from the approved application mode")
         schema = mode.get('inputSchema')
         if schema is None:
             if any(key in plan for key in ('inputSchema', 'inputValues')) or (anchor is not None and

@@ -1,3 +1,27 @@
+# Current continuation — native Agno workflow correction (2026-10-08)
+
+Active branch: `feat/governed-workflow-agents-20261008`, Draft PR62. Main baseline
+`067354e0b95ceba7aa620216fe7a18715b179ac0` has independently successful CI37714925242.
+Read the **top** of [CLOUD_TASK_BOARD.md](CLOUD_TASK_BOARD.md) and
+[GOVERNED_WORKFLOW_AGENTS.md](GOVERNED_WORKFLOW_AGENTS.md) before historical text.
+
+The pre-correction PR62 implementation duplicated Agno workflow progress and is
+superseded. Current work uses native Agno Workflow/Step/Router/Condition/Parallel,
+persistent requirements and original-run continuation. Factory adds governance,
+immutable component/input pins, shared budgets, external-operation custody and
+command receipts only. Old graph/profile/resume implementation is removed.
+The operator must explicitly commit the reviewed implementation fingerprint;
+function-name serialization alone is not a code integrity commitment.
+
+Native proof and Factory PostgreSQL tests use public synthetic models and an inert
+SQLite operation backend. These do not validate actual ConvertD, production
+identity, live scientific sources, target-host capacity or backend safety. Real
+ConvertD integration remains local user work. No live provider requests or
+new costs were incurred for this correction. Final corrected-head CI and merge
+are pending; prior-head CI must not be substituted. All earlier text is historical.
+
+---
+
 # Cloud WIP checkpoint handoff — 2026-10-02
 
 ## Active continuation — remote scientific bootstrap (2026-10-07)

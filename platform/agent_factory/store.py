@@ -79,6 +79,7 @@ class Store:
         self.process_runtime: Any = None
         self.workflow: Any = None
         self.workflow_control: Any = None
+        self.native_workflows: Any = None
         self.external_execution_handlers: dict[str, Any] = {}
         self.autoresearch: Any = None
         self.autoresearch_session_control: Any = None

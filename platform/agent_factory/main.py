@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from .tool_policy_registry import resolve_tool_policies
 from .auth import AuthService, CookieBridge
 from .catalog import seed_catalog
 from .config import Settings
@@ -54,7 +55,10 @@ class NativeIngress:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        protected = scope.get("path", "").startswith(("/agents/factory-executor", "/schedules"))
+        protected = scope.get("path", "").startswith(("/agents/", "/workflows/", "/schedules"))
+        if scope["type"] == "websocket" and protected and not INTERNAL_NATIVE.get():
+            await send({"type": "websocket.close", "code": 1008})
+            return
         if scope["type"] == "http" and protected and not INTERNAL_NATIVE.get():
             await JSONResponse({"message": "Use the scoped factory API", "code": "FACTORY_ENVELOPE_REQUIRED"}, status_code=403)(scope, receive, send)
             return
@@ -93,7 +97,7 @@ def create_app(settings=None, *, diagnostics=None):
         seed_catalog(store)
     at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, GovernanceConfig(
-        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=settings.tool_policies))
+        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)))
     at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
@@ -166,7 +170,11 @@ def create_app(settings=None, *, diagnostics=None):
     at('PREPARATION_APP_NATIVE_GRAPH')
     executor, registry = build_runtime(settings, store, native_db)
     at('PREPARATION_APP_BRIDGE')
+    from .native_workflows import NativeWorkflows
+    store.native_workflows = NativeWorkflows(store, auth, native_db, settings.native_workflows)
+    store.register_execution_guard("native-workflow", store.native_workflows.require_plan_current)
     bridge = NativeBridge(settings, native_db, auth)
+    bridge.configure_components(store.native_workflows.component_for_task)
     at('PREPARATION_APP_DELEGATION')
     delegation = DelegationService(settings, store, auth, bridge)
     delegation.initialize()
@@ -174,7 +182,7 @@ def create_app(settings=None, *, diagnostics=None):
     at('PREPARATION_APP_PLAN_POLICY')
     policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=settings.tool_policies), ancestor_guard=persisted_ancestor_guard(store))
+        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
     at('PREPARATION_APP_HANDOFF')
     handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
@@ -207,13 +215,11 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
-    from .workflow_service import WorkflowService
+    from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
     # Durable custody remains readable even after operator registrations end.
-    store.workflow = WorkflowService(store, auth, definitions=settings.workflow_definitions, runtimes=settings.workflow_runtimes)
-    store.register_execution_guard('workflow-definition', store.workflow.require_plan_current)
+    store.workflow = OperationCustody(store, auth, runtimes=settings.workflow_runtimes)
     store.workflow_control = WorkflowControl(store.workflow, factory_api)
-    store.external_execution_handlers['workflow_wait'] = store.workflow_control.complete_external
     base.include_router(workflow_router(auth, store.workflow_control))
     from .autoresearch import AutoResearchService, autoresearch_router
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
@@ -300,7 +306,7 @@ def create_app(settings=None, *, diagnostics=None):
         return None
 
     at('PREPARATION_APP_AGENTOS')
-    native = AgentOS(id="agent-factory", agents=[executor], db=native_db, registry=registry,
+    native = AgentOS(id="agent-factory", agents=[executor], workflows=store.native_workflows.components, db=native_db, registry=registry,
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
                          max_queue_depth=settings.max_queued,

@@ -1,258 +1,290 @@
-# Governed workflow agents
+# Governed native workflow agents
 
-This extension is a generic workflow mechanism, not a ConvertD implementation.
-No actual ConvertD source, data, backend or environment was supplied. The named
-six-phase business description is design input, not verified business behavior.
-The integration fixture uses synthetic stages and outcomes; it proves only the
-engineering boundaries listed below.
+Agno 3.1 owns workflow progress, step results, routing, human requirements and
+continuation. Factory assembles approved materials around a native `Workflow`,
+pins its identity, checks current authority, accounts for shared budgets and
+retains custody of external effects. Factory does not maintain a second DAG,
+stage scheduler or independent resume engine.
 
-## Registration and application assembly
+This is a generic integration mechanism. The user implements real ConvertD
+locally. No ConvertD source, domain backend or production dataset is supplied by
+this repository's synthetic fixtures. Neither the examples below nor a mock
+browser interaction establishes live backend or business-result acceptance.
 
-An operator installs trusted `AdapterRegistration` objects and exact
-`ToolPolicyRegistration(name, capability, revision, read_only, adapter_id,
-adapter_revision)` descriptors in `Settings`. Existing built-in tool identities
-cannot be overridden. The governance and plan-policy fingerprints include these
-registrations; withdrawal or revision drift rejects new execution. A custom tool
-must pin the corresponding adapter and capability in its published material.
-Application users can select approved materials, but cannot upload executable
-factories, install adapters, enlarge capabilities or publish their own approvals.
+## Execution ownership
 
-A mode may declare a bounded `inputSchema`. Composition accepts `inputValues`
-separately from the existing executor `TaskConfig`, validates them and binds both
-to immutable proposal/plan hashes. The schema subset includes objects with
-`additionalProperties:false`, bounded arrays/strings, numbers, integers, booleans,
-null and scalar enums. References, code and network schema loading are rejected.
-The UI supports simple forms and bounded JSON for nested values. These are
-ordinary application inputs, never a credential provisioning interface. A
-trusted domain adapter must independently authorize referenced files/resources.
+The implementation boundaries are:
 
-An operator installs workflow definitions and runtimes using
-`Settings.workflow_definitions` and `Settings.workflow_runtimes`. The five
-registrations from `workflow_profile.registrations(definitions)` pin
-`workflowId` and `workflowSha256` in tool bindings. Definitions contain a bounded
-acyclic graph (at most 16 stages), exact runtime adapter revisions, dependencies,
-human gates, failure-code routes and a parallel-operation limit. They contain no
-URLs, shell commands or executable modules. Definition withdrawal remains a
-current-policy denial; persisted custody is retained even if all registrations
-are removed at restart.
+| Module | Responsibility |
+| --- | --- |
+| [`native_workflows.py`](../platform/agent_factory/native_workflows.py) | Validate operator-built native components; bind their function and Agent steps to the original owner, plan, envelope and native queue ticket. |
+| [`native_component.py`](../platform/agent_factory/native_component.py) | Immutable `kind/id/revision/sha256` component coordinates; no execution state. |
+| [`workflow_model.py`](../platform/agent_factory/workflow_model.py) | Route a registered decision Agent through the plan's existing model binding, authority and usage accounting. |
+| [`workflow_operations.py`](../platform/agent_factory/workflow_operations.py) | Original external-operation intent, handle, observation and positive stop evidence; no workflow progress. |
+| [`workflow_control.py`](../platform/agent_factory/workflow_control.py) | Owner-scoped native projections and thin, idempotent command receipts for original native requirements. |
 
-## Native execution and durable recovery
+`Settings.native_workflows` accepts
+`NativeWorkflowRegistration(component, revision, tool_names, implementation_sha256)`. `component` is an
+operator-created Agno `Workflow`; `tool_names` lists its governed function-step
+names. `NativeWorkflows.pin(id)` produces the exact pin placed in the published
+application mode's `nativeComponent`. Composition carries it into the plan and
+binding manifest. Native admission uses that registered workflow component,
+not a substitute Factory executor that interprets a graph.
 
-The application's registered Agno model chooses stages through actual native
-calls to `workflow_read`, `workflow_choose`, `workflow_inspect`, `workflow_wait`
-and `workflow_finish`. The platform does not substitute a fixed business script
-for the model. The fixture model is explicitly synthetic and deterministic.
+`implementation_sha256` is a required 64-hex commitment produced by the operator
+from the reviewed implementation and configuration. The operator must define
+and preserve the exact source/configuration manifest used to calculate it;
+changing that implementation requires an updated reviewed registration. Agno's
+`to_dict()` function names are not source-code hashes and do not substitute for
+this commitment. In-process identity checks also bind the exact installed
+wrapped executor, Router selector, Condition evaluator, Agent and model bridge.
+Those checks detect replacement objects; they are not an independent disk-code
+attestation or a sandbox for operator code.
 
-`workflow_read` initializes the original workflow once and reads its state; it
-is not a read-only policy tool. Stage selection writes an original operation ID
-and UNKNOWN intent before calling its trusted runtime. Runtime callbacks execute
-outside workflow SQL locks. Separate choose calls can leave several operations
-running up to `maxParallel`; a dependent join cannot start until its exact
-prerequisites have completed or their matching failure recovery has completed.
-A failed source retains FAILED and its structured failure code. Untriggered
-failure branches are marked SKIPPED only when the model explicitly finishes.
+The permitted native building blocks are `Step`, `Parallel`, `Router`,
+`Condition` and `Steps`. Function steps require `max_retries=0` and explicit,
+unique semantic ASCII `step_id` values. Auto-generated UUID step IDs are
+rejected. Use `max_retries=0` explicitly on all example steps; an unknown external
+acknowledgement is not permission to retry a function. `Loop`, nested `Workflow`
+steps and `Team` executors are not open in this integration.
 
-`workflow_wait` uses Agno's external-execution pause. The native worker is freed;
-no replacement run is created. When an explicit reconcile or human decision
-makes that original requirement ready, the existing durable ControlCommands
-protocol continues the same task/run/tool-call identity. The completion signal
-is stable across unrelated stage updates; the model then reads current state.
-External continuation debits the shared tool ledger using the original native
-tool-call ID, because Agno external execution does not run the normal tool hook.
-Repeated preparation reuses that identity; receipt reads do not debit it.
-Human approval is an owner-scoped versioned API command, not an agent tool.
+Agent steps must have stable IDs and static instructions/system messages. A
+decision Agent is tool-free. Executable Agent hooks, fallback models and extra
+parser/model paths are rejected rather than treated as implied provider grants.
+The exception is an Agent whose only tool is the
+exact installed `factory_wait_operations` external-execution tool. An Agent with
+that tool must be outside `Parallel`.
 
-A runtime implements `start(context, operation_id, inputs)`,
-`inspect(context, original_handle)`, `cancel(context, original_handle)` and,
-for lost-start-ACK recovery, read-only `lookup(context, operation_id)`. Returned
-observations pin the original operation/adapter/revision/handle and bound all
-output/failure data. Terminal results require positive `allStopped` evidence.
-An absent handle, failed lookup or timeout never means stopped. UNKNOWN is held;
-start is never retried automatically. Cancellation may recover an original
-handle through lookup and then stop it, including after authority has ended.
-Missing original adapters leave custody held rather than releasing capacity.
-Task observation, new-task admission, descendant aggregation and remote stop
-receipts all include original workflow custody. A cancelled native ticket alone
-cannot release its task or disk reservation. Startup repairs existing held-work
-accounting against matching owner, plan and native identities without dispatch;
-it does not recreate deleted files or missing storage records. Custody creation
-shares the original task row lock with terminal release.
-An adapter can explicitly raise `WorkflowAcknowledgementUnknown` when a start
-may have reached its backend but no acknowledgement is available. The service
-rechecks current authority and returns its durable UNKNOWN intent for a native
-pause and later original-ID lookup. Ordinary exceptions still trigger protected
-failure cleanup; cancellation is never converted into a successful observation.
+For asynchronous work, put bounded submission function steps inside native
+`Parallel`, then place a wait Agent after the parallel block. Agno joining the
+submission steps means those functions returned; it does not prove their
+external jobs stopped. The wait Agent requests original operation IDs through
+`factory_wait_operations`. Native external execution parks the original run;
+Factory resolves that exact requirement only from matching operation custody.
+No new run or replacement operation is created to continue it.
 
-This protocol does not implement an arbitrary runtime engine, sandbox, compute
-allocator or notifications backend. Installed adapters remain trusted code and
-must apply domain authorization, before-effect rechecks and existing resource,
-wall-time, usage and process custody services appropriate to their effects.
-Native tool calls and explicit stage resumes debit the existing shared tool
-budget. Parallel stage count alone is not a CPU/memory/monetary budget.
+For model-selected branching, use a named, tool-free Agent to produce a bounded
+enum decision, then a native `Router` with an operator-authored selector. The
+selector must validate the response, accept only the declared enum values and
+return registered choices. It must not evaluate model-provided code, import a
+module, construct arbitrary steps or infer a new workflow from free text. Native
+`Condition` can select a reviewed recovery branch from structured outputs.
+Factory's model bridge supplies the existing plan model and checks the registered
+Agent/step against its original workflow root; it does not choose the branch.
 
-## API and frontend
+## Input and tool-policy assembly
 
-- `GET /api/factory/workflows/{taskId}` returns an owner-scoped snapshot and
-  current allowed actions, or `{available:false}` for a non-workflow task.
-- `POST /api/factory/workflows/{taskId}/commands` accepts a stable `commandId`
-  and exactly one action: `decide`, `resume`, `reconcile` or `cancel`. All stage
-  actions require `stageId` and the observed `version`; decide also requires
-  `approved`. Cancel carries no stage/version/decision.
-- `GET /api/factory/workflows/{taskId}/commands/{commandId}` reads and reconciles
-  that original receipt from positive journal/native evidence. It never starts
-  an operation or dispatches a native continuation.
+A published mode may contain the bounded declaration `inputSchema`; composition
+accepts `inputValues` separately from executor `TaskConfig`. The declaration
+supports closed objects, bounded arrays/strings, finite numbers, integers,
+booleans, null and scalar enums. References, network schema loading, defaults and
+executable extensions are outside the admitted declaration.
 
-Known pre-dispatch refusal is recorded as `rejected`. Once dispatch may have
-happened, errors remain `unknown` or `recorded` until original evidence resolves
-them. Exact duplicate submissions do not repeat effects; changed content under
-the same command ID conflicts. `completed` describes handling of the command,
-not proof that the whole workflow or all external processes stopped.
-
-The frontend retains unresolved command identity across refresh, reads its exact
-receipt, and allows scoped reconciliation/cancellation while blocking new
-stage decisions. Only a receipt lookup returning 404 permits an explicit retry
-of the exact original payload. Reconcile inspects an original operation and may
-continue the original ready native wait; it does not restart that operation.
-Resume means selecting an admissible, unstarted stage with retained prerequisite
-results, not resetting or replaying a failed/unknown stage.
-
-## Engineering evidence and limits
-
-The mandatory `scripts/check_workflow_postgres.py` gate runs four native scenarios
-and three startup-custody checks with zero
-allowed skips. They execute real PostgreSQL records, native Agno queued tool
-invocation, loopback HTTP and an actual server-process restart using the same
-persisted database. A durable SQLite fixture represents external operations;
-no real provider/backend/notification is called. Cases cover original task/run
-and operation identities after restart, a freed single native worker, parallel
-stages and join, versioned human decision, structured failure-to-B routing,
-lost ACK lookup without duplicate starts, owner isolation, revocation and
-cancellation. They do not produce or validate real ConvertD outputs, scientific
-results, production identity, cross-host execution or target capacity.
-The separate pre-pause exit case terminates the server after UNKNOWN is durable
-but before the native pause is committed. Conservative cancellation is allowed;
-original starts must remain unique, and capacity release requires positive stop
-evidence. This differs from the already-paused lost-acknowledgement recovery case.
-
-Unit checks separately cover strict schemas and immutable input hashes,
-registered policies, failure graph rules, terminal monotonicity, missing-adapter
-custody, stable native requirements and read-only command recovery. Existing
-AutoResearch and candidate PostgreSQL gates remain mandatory. Final exact commit,
-CI outcomes and independent review are recorded in the PR/task board; a passing
-synthetic gate is never a claim of live business acceptance.
-
-`scripts/accept_workflow_browser.py` exercises the real React components in a
-browser with an injected synthetic API, including versioned decisions, preserved
-UNKNOWN intent after reload, GET receipt recovery, explicit same-payload retry
-after 404, pending cancellation and a 390-pixel viewport. It does not replace the
-separate native/PostgreSQL checks or certify a live backend.
-
-## 本地开发者接入最短路径
-
-通用底座提供受治理的应用组装、原生 agent 工具调用与工作流 custody；真实 ConvertD 的模型、领域授权、执行环境和结果验证由本地开发者实现。下面沿用已测试接口，不增加新平台功能。
-
-固定版本参考：[底座说明](https://github.com/Guanzhw/agent-factory/blob/b6cba6231b0baa9ff7d68d9abd9cea2f35e3dd2e/docs/GOVERNED_WORKFLOW_AGENTS.md)、[完整 native 示例](https://github.com/Guanzhw/agent-factory/blob/b6cba6231b0baa9ff7d68d9abd9cea2f35e3dd2e/platform/tests/test_workflow_native_postgres.py)。后者是合成测试，不是部署入口；不要把测试身份、固定决策模型或 fixture 控制路由部署到真实环境。
-
-### 1. 从最小应用定义开始
-
-以下对象可交给 `validate_workflow_definition` 校验。`local-domain` 是待注册的可信 runtime ID，不是模块名或可执行命令。
+[`input_model(schema)`](../platform/agent_factory/input_schema.py) maps that
+admitted declaration to an actual strict Pydantic `BaseModel` class. Pass the
+class to `Workflow(input_schema=...)`. Pydantic validates values; the declaration
+boundary adds resource limits and a narrow compatibility check for typed enums.
+The application schema and native component schema must match. Composition pins
+the original schema and values and their hashes; it does not replace omitted
+values with defaults.
 
 ```python
-workflow = {
-    "schema": 1, "id": "local-example", "revision": "1", "maxParallel": 1,
-    "stages": [
-        {"id": "analyze", "adapterId": "local-domain", "revision": "1",
-         "dependencies": [], "inputs": {}, "failureRoutes": {}, "humanGate": False},
-        {"id": "review", "adapterId": "local-domain", "revision": "1",
-         "dependencies": ["analyze"], "inputs": {}, "failureRoutes": {}, "humanGate": True},
-    ],
+from agent_factory.input_schema import input_model
+
+INPUT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["documentRef"],
+    "properties": {
+        "documentRef": {"type": "string", "minLength": 1, "maxLength": 120}
+    },
 }
+NativeInput = input_model(INPUT_SCHEMA)
+checked = NativeInput.model_validate({"documentRef": "owned-public-fixture"})
+values = checked.model_dump(by_alias=True, exclude_unset=True)
 ```
 
-人工批准仅使 `review` 阶段可执行；它不会自动生成领域结果，也不代表整个应用完成。应用的注册模型使用五个 workflow 工具读取状态、选择阶段、等待和结束。先用合成模型验证接线，再换成本地明确授权的模型适配器及其 usage/pricing 配置；不要沿用 fixture 的零成本声明。
+`by_alias=True, exclude_unset=True` preserves original JSON field names and
+omission. Plain `model_dump()` can introduce optional `None` defaults and must
+not be used to reconstruct immutable input values. The browser supplies forms,
+bounded JSON and required-field hints; it is not a second schema authority.
+A document reference does not itself grant file access. Domain adapters must
+check the original owner's current access to the referenced resource.
 
-### 2. 注册工具、策略和领域 runtime
-
-参照 native 示例的 `settings(configuration, backend)`：
+Tool policy declarations have exactly four fields:
 
 ```python
-from dataclasses import replace
-from agent_factory.workflow_profile import registrations, PERMISSION
 from agent_factory.tool_policy_registry import ToolPolicyRegistration
 
-definitions = {workflow["id"]: workflow}
-tools = registrations(definitions)
-policies = tuple(
-    ToolPolicyRegistration(t.tool_name, PERMISSION, "1", False, t.adapter_id, "1")
-    for t in tools
-)
-# base_settings 是尚未注册 workflow 工具的本地启动配置。
-# replace 会重新执行 Settings 校验；在 create_app(settings) 前完成装配。
-settings = replace(
-    base_settings,
-    runtime_adapters=[*base_settings.runtime_adapters, *tools],
-    tool_policies=(*base_settings.tool_policies, *policies),
-    workflow_definitions=definitions,
-    workflow_runtimes={("local-domain", "1"): backend},
+policy = ToolPolicyRegistration(
+    adapter_id="local-analyze-v1",
+    adapter_revision="1",
+    revision="1",
+    read_only=False,
 )
 ```
 
-这里 `backend` 必须是你实现的 runtime 实例；以上不是完整启动脚本。还需注册 model/environment/knowledge 的 `AdapterRegistration`，其接口形状见示例 `settings()`。同名内置工具不可覆盖；多个定义共享同一组 workflow 工具注册，应一次调用 `registrations(definitions)`，避免逐应用重复注册工具 ID。`workflow_read` 会初始化持久记录，所以这组策略中的 `read_only` 为 `False`。
+Name and capability come from one exact trusted `AdapterRegistration` with one
+permission; they are not repeated in a user-editable policy declaration. The
+resolved projection is approval evidence, not a second registration API. Built-in
+tool identities cannot be overridden. Published tool materials pin the matching
+adapter ID/revision and permission. The policy, current registrations and
+material bindings are rechecked before execution.
 
-### 3. 发布材料及应用，再实例化
+Native function wrappers debit the shared tool ledger using the stable native
+step ID. Decision Agents use the existing model dispatch and usage ledger under
+the original workflow root. External-execution continuation separately debits
+`factory_wait_operations` using the original native tool-call ID because that
+pause/resolution path bypasses the ordinary tool pre-hook. Reading a snapshot or
+command receipt is not a budget debit. A tool-budget receipt is not proof that an
+external effect completed, and native parallelism is not a CPU, memory or price
+limit.
 
-沿用 native 示例 `publish(state)` 的治理流程，替换测试身份为真实授权的作者、审批者：材料 `create_draft → request_publication → decide_publication`，再按相同步骤发布应用。需要 prompt、skill、knowledge、model、environment 和五个工具材料。工具的 `runtimeBinding.config` 必须包含实际 `workflowId` 与 `workflow_fingerprint(workflow)`；应用 mode 的 `materialRefs` 使用已批准材料的精确 `id/version/sha256`，并设置 `toolOrder`、`capabilities`、`budget` 和 `connectionRequirements`。
+## Complete synthetic wiring reference
 
-最小输入 schema 可放在该 mode 的 `inputSchema`：
+Use the checked-in
+[`test_native_workflow_factory_postgres.py`](../platform/tests/test_native_workflow_factory_postgres.py)
+as the complete Factory assembly reference. It contains executable fixture
+code, not a deployment command or real ConvertD implementation:
 
-```json
-{"type":"object","additionalProperties":false,"required":["documentRef"],"properties":{"documentRef":{"type":"string","minLength":1,"maxLength":120}}}
+1. `INPUT_SCHEMA` / `WorkflowInput` construct the Pydantic native input class.
+2. `build_workflow(holder)` builds actual Agno steps with semantic IDs and zero
+   function retries, parallel submissions, a wait Agent after the join, native
+   `HumanReview` and a final function step.
+3. `settings(configuration, backend, holder)` registers model, environment,
+   knowledge and tool adapters; four-field tool policies;
+   `NativeWorkflowRegistration` including its reviewed implementation hash;
+   original-operation runtime pins; and explicit
+   fixture model pricing. The `holder` is populated after `create_app` so trusted
+   executors can access the configured Store; it does not create a new queue.
+4. `publish(state)` creates and separately reviews prompt, skill, knowledge,
+   model, environment and tool materials. It publishes the application with
+   exact material references, `nativeComponent`, `inputSchema`, capabilities,
+   tool order and budgets.
+5. The fixture's task-creation helpers follow composition proposal → acceptance
+   → plan review/decision → instance admission. They do not bypass governance by
+   inserting completed task rows.
+
+The separate
+[`test_native_workflow_reuse_postgres.py`](../platform/tests/test_native_workflow_reuse_postgres.py)
+shows native Agent enum output → `Router`, structured failure recovery via
+`Condition`, `Parallel` and original-run continuation. It is a native Agno
+mechanism fixture, not evidence that every combination has passed the Factory
+integration gate. Its standalone component examples must be adapted to the
+Factory registration constraints above, including semantic step IDs.
+
+Replace fixture identities, deterministic models, zero-price declarations and
+SQLite operation backend with explicitly authorized local implementations.
+Never deploy fixture control endpoints or copy a synthetic pricing assertion to
+a live provider. Preserve the installed native execution owner rather than
+reintroducing `workflow_read/choose/finish` tools, a custom graph definition or
+an application-defined resume scheduler.
+
+## External-operation custody
+
+A trusted function step calls:
+
+```python
+record = await store.workflow.start(
+    run_context,
+    step_id="analyze",
+    effect_slot="original",
+    adapter_pin={
+        "adapterId": "local-domain",
+        "revision": "1",
+        "configFingerprint": reviewed_backend_fingerprint,
+    },
+    inputs={"values": plan["inputValues"]},
+)
 ```
 
-`documentRef` 只是受限字符串，不授予读取文件的权限。runtime 应自行验证引用的所有者、版本和当前访问权限；不要传任意路径、凭据或可执行文本。
+`store.workflow` here is `OperationCustody`, not a workflow engine. Register its
+backend under
+`Settings.workflow_runtimes[(adapter_id, revision, config_fingerprint)]`. The
+trusted runtime implements all four methods: `start(context, operation_id,
+inputs)`, `lookup(context, operation_id)`, `inspect(context, original_handle)`
+and `cancel(context, original_handle)`. Inputs are the explicitly supplied,
+bounded object, not reconstructed DAG dependency outputs.
 
-实例创建顺序见示例 `start_task()`：`POST /api/factory/compositions/proposals`（goal、精确 applicationRef、mode、inputValues、requestId）→ proposal accept → plan review/decision → `POST /api/factory/instances`。部署使用的身份、CSRF 和审批策略保持既有 API 约束；不通过修改数据库跳过批准。
+Factory durably reserves the effect slot and original operation ID before
+calling `start`, then rechecks current authority outside the transaction. A
+repeat of the same slot returns its original record; changed inputs or adapter
+pins conflict. A typed `WorkflowAcknowledgementUnknown` retains UNKNOWN for
+original-ID lookup. It must not be used to conceal arbitrary failures. Neither
+missing handles nor failed lookup authorize replacement starts or stop claims.
 
-### 4. 实现可恢复的 runtime
+The shared `WorkflowContext` type retains compatibility field names. For this
+custody service, `workflow_id` carries the original Factory task ID,
+`run_id` the native workflow run ID, `stage_id` the semantic native step ID and
+`definition_sha256` the original plan hash. Adapters must bind these identities,
+not infer a new workflow definition from the field names.
 
-参照示例 `DurableOperations` 的接口与持久操作表，替换其合成返回值：
+An observation binds the original operation, adapter revision and handle.
+`COMPLETED`, `FAILED` or `CANCELLED` observations require positive `allStopped`
+evidence; UNKNOWN remains held. Known handles cannot be replaced. Output and
+failure data remain bounded, and structured failures carry symbolic codes, not
+secrets or unbounded exception text. Domain adapters remain responsible for
+real resource limits, before-effect checks and backend/process stop evidence.
 
-- `async start(context, operation_id, inputs)`：`inputs` 包含应用 `values`、当前 `stage` 输入及 `dependencies` 原 observations。后端持久绑定 owner、workflow、run、stage 和 operation ID，在副作用前验证领域权限与资源预算。
-- `async inspect(context, original_handle)`：只查询原操作。
-- `async lookup(context, operation_id)`：按原 ID 找回 lost-ACK 操作；找不到返回 UNKNOWN，不能启动替代操作。
-- `async cancel(context, original_handle)`：取消并确认原操作停止；停止未确认时保持 UNKNOWN。清理不能以重新获得执行许可为前提。
+Inspection and cleanup target original custody rather than minting a new
+execution grant. Missing original adapters or uncertain stop retain the hold.
+Native task termination alone cannot release unresolved external operations.
+Factory admission, lifecycle, delegation and remote accounting must consult
+this custody; the external-operation table never claims native step progress.
 
-`WorkflowContext`、`RuntimeObservation`、`AdapterHandle` 的准确字段见 `platform/agent_factory/workflow_contracts.py`。例如完成返回：
+## Native API and browser behavior
 
-```json
-{"schema":1,"operationId":"ORIGINAL_ID","handle":{"adapterId":"local-domain","revision":"1","id":"ORIGINAL_BACKEND_ID"},"state":"COMPLETED","allStopped":true,"output":{"artifactRef":"verified-original-result"},"failure":null}
-```
+`GET /api/factory/workflows/{taskId}` returns `{available:false}` or a schema-2
+projection containing original component/owner/task/run/plan identities, native
+status, step outputs, unresolved native requirements and separate external
+operation stop evidence. `version` is a 64-hex snapshot digest, not a sortable
+stage counter. `allowedActions` comes from the server.
 
-只有确认原工作停止后才能返回 terminal + `allStopped:true`。FAILED 需结构化 `failure`，`retryable` 固定为 false；UNKNOWN 可没有 handle，但必须 `allStopped:false`。已知 handle 不得替换。输出不超过 16 KiB，完整 observation 不超过 32 KiB，且受 inert 数据规则限制；返回领域 artifact 引用，不能塞异常堆栈、secret 或任意 URL。
+`POST /api/factory/workflows/{taskId}/commands` accepts one stable `commandId`:
 
-仅在明确“请求可能已到后端、ACK 不可确认”时抛 `WorkflowAcknowledgementUnknown`。普通异常仍触发受保护失败清理，不能把所有连接失败都改成该类型。适配器负责真实进程/远端作业的资源、时限及正向停止证明；`maxParallel` 只限制并行操作数量。
+| Action | Additional fields |
+| --- | --- |
+| `decide` | Current `version`, exact `requirementId`, and either `approved` for native confirmation or `values` for native user input. |
+| `reconcile` | Current `version` and original `operationId`. |
+| `cancel` | None. |
 
-### 5. 接入人工交互与原操作恢复
+There is no stage-selection or `resume` endpoint. Human decisions resolve the
+original Agno `StepRequirement`. Reconciliation reads an original operation and,
+when its exact external requirement is ready and authority remains current,
+continues that same native run. The bridge uses native queue continuation; it
+does not rebuild step results or enqueue a replacement workflow.
 
-从 `GET /api/factory/workflows/{taskId}` 获取最新 workflow version。提交至其 `/commands`：
+`GET /api/factory/workflows/{taskId}/commands/{commandId}` reads original command
+evidence without starting operations or dispatching continuation. Receipts use
+`recorded`, `unknown`, `completed` and `rejected`; handling a command is distinct
+from completion or physical stop of the workflow. Changed contents under the
+same command ID conflict. UNKNOWN must be reconciled from original evidence.
 
-```json
-{"commandId":"review-001","action":"decide","stageId":"review","version":3,"approved":true}
-```
+The browser stores bounded unresolved original command pointers, reads their
+receipts, and permits explicit same-payload submission only after an exact 404.
+It preserves concurrent pending cleanup pointers, blocks new human decisions
+while commands are unresolved, and does not order snapshot digests. Historical
+receipts cannot replace an already displayed GET snapshot. Native steps and
+requirements are rendered as supplied; no client DAG infers dependencies,
+branch completion or eligibility. External `allStopped` is displayed separately
+from native status.
 
-`reconcile`/`resume` 同样带 stageId/version，不带 approved；`cancel` 仅带 commandId/action。版本 3 只是示例，实际使用刚读取的版本。UNKNOWN 时保存原 commandId/payload，读取 `/commands/{commandId}`；不要换 ID 重发启动。resume 仅针对原生已停在该阶段、尚未启动且满足依赖的阶段，不是重跑失败操作。当前人工交互是布尔批准/拒绝，没有任意领域表单回答 schema；需要额外表单时应单独实现并验证接入，不能假定本版本已有。
+## Validation and delivery boundary
 
-### 6. 本地验证与交付界限
+Technical examples and check entrypoints are source references, not claims that
+the current commit has passed tests or CI. Use the repository's current CI and
+`scripts/check_workflow_postgres.py` configuration for the selected native gates;
+do not reuse counts from the removed graph-engine test suite. PostgreSQL tests
+require a dedicated `FACTORY_TEST_DATABASE_URL`; skipped tests are not acceptance.
 
-在仓库根目录执行（Python 依赖按项目安装说明准备）：
+[`accept_workflow_browser.py`](../scripts/accept_workflow_browser.py) exercises
+real React components with synthetic API transport on loopback. It covers input,
+command recovery and narrow/mobile layouts. It does not exercise a live Factory
+backend, PostgreSQL or real native execution. It accepts an optional existing
+`--chromium-executable`; this is not a backend or deployment option.
 
-```sh
-uv run python -m unittest discover -s platform/tests -p 'test_workflow_*.py' -v
-uv run python scripts/check_workflow_postgres.py
-npm run check
-uv run --with playwright python scripts/accept_workflow_browser.py --output-dir /tmp/workflow-browser-evidence
-```
-
-PostgreSQL gate 需要事先设置指向专用测试数据库的 `FACTORY_TEST_DATABASE_URL`；不要使用生产数据库。它要求 7 个 native/custody 用例且零 skip。无数据库时 unittest 中的 PG skip 不能当成验收通过。浏览器检查还需安装对应 Chromium（`uv run --with playwright python -m playwright install chromium`）及系统依赖，并先按项目说明安装 npm 依赖；API 为合成输入。另保留 CI 中现有 AutoResearch/candidate gates，见 `.github/workflows/ci.yml`。
-
-增加本地域用例：实际 start/inspect/cancel；lost ACK 后 lookup 不第二次启动；进程重启原身份不变；撤权和取消后正向停止；旧 version/跨 owner 拒绝；资源和模型预算耗尽；领域结果验证。底座工程测试不验证真实 ConvertD 输出、跨主机资源隔离或生产容量。最终可用性需要本地开发者对实际后端另行验收。
+Local ConvertD acceptance still needs the user's implementation, authorized
+identity/provider configuration, resource environment and domain result checks.
+Validate actual start/lookup/inspect/cancel, lost acknowledgements, restart,
+revocation, positive stop, shared budgets and original-input/output identity.
+Nothing in this document certifies real ConvertD outputs, target-host capacity,
+production identity, cross-host execution or a live model connection.

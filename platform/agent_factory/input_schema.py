@@ -2,7 +2,9 @@
 from copy import deepcopy
 import json
 import math
-from typing import Any
+from typing import Annotated, Any, Union
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, TypeAdapter, create_model, model_validator
 
 ERROR = 'APPLICATION_INPUT_INVALID'
 
@@ -38,24 +40,52 @@ def bounded_json(value, *, maximum=65536):
         raise ValueError(ERROR) from None
 
 
-def _matches(schema, value):
+class _BoundedInputs(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def bounded_values(cls, value: Any) -> Any:
+        return bounded_json(value)
+
+
+def _annotation(schema, *, root=False) -> Any:
+    """Map the admitted declaration to Pydantic's strict validation primitives."""
     kind = schema['type']
+    metadata = {key: schema[key] for key in ('title', 'description') if key in schema}
     if kind == 'object':
-        require(type(value) is dict and not set(value) - set(schema['properties'])
-                and set(schema.get('required', [])) <= set(value))
-        for key, child in value.items(): _matches(schema['properties'][key], child)
-    elif kind == 'array':
-        require(type(value) is list and schema.get('minItems', 0) <= len(value) <= schema['maxItems'])
-        for child in value: _matches(schema['items'], child)
+        required = set(schema.get('required', []))
+        fields = {}
+        for index, (name, child) in enumerate(schema['properties'].items()):
+            # Aliases preserve arbitrary JSON property names without colliding
+            # with BaseModel methods or protected/internal field names.
+            fields['field_' + str(index)] = (_annotation(child), Field(
+                default=... if name in required else None, alias=name,
+                **{key: child[key] for key in ('title', 'description') if key in child}))
+        return create_model('ApplicationInputs', __base__=_BoundedInputs if root else BaseModel, __config__=ConfigDict(strict=True, extra='forbid',
+            populate_by_name=False, validate_default=False), **fields)
+    if kind == 'array':
+        annotation = list[_annotation(schema['items'])]
+        metadata.update(min_length=schema.get('minItems', 0), max_length=schema['maxItems'])
     elif kind == 'string':
-        require(type(value) is str and schema.get('minLength', 0) <= len(value) <= schema['maxLength'])
+        annotation = StrictStr
+        metadata.update(min_length=schema.get('minLength', 0), max_length=schema['maxLength'])
     elif kind in ('number', 'integer'):
-        require(type(value) in ((int,) if kind == 'integer' else (int, float)) and math.isfinite(value))
-        require(('minimum' not in schema or value >= schema['minimum']) and ('maximum' not in schema or value <= schema['maximum']))
+        annotation = StrictInt if kind == 'integer' else Union[StrictInt, StrictFloat]
+        metadata.update({target: schema[source] for source, target in (('minimum', 'ge'), ('maximum', 'le')) if source in schema})
+        if kind == 'number': metadata['allow_inf_nan'] = False
     else:
-        require((kind == 'boolean' and type(value) is bool) or (kind == 'null' and value is None))
+        annotation = StrictBool if kind == 'boolean' else type(None)
     if 'enum' in schema:
-        require(any(type(value) is type(item) and value == item for item in schema['enum']))
+        metadata['json_schema_extra'] = {'enum': deepcopy(schema['enum'])}
+    result = Annotated[annotation, Field(**metadata)]
+    if 'enum' in schema:
+        choices = deepcopy(schema['enum'])
+        def typed_enum(value):
+            # Pydantic Literal follows equality (e.g. 1 == True == 1.0).
+            # Existing immutable schemas distinguish their exact JSON types.
+            require(any(type(value) is type(item) and value == item for item in choices))
+            return value
+        result = Annotated[result, AfterValidator(typed_enum)]
+    return result
 
 
 def validate_input_schema(schema):
@@ -91,7 +121,7 @@ def validate_input_schema(schema):
         if 'enum' in item:
             require(type(item['enum']) is list and 1 <= len(item['enum']) <= 32)
             base = {key: val for key, val in item.items() if key != 'enum'}
-            for entry in item['enum']: _matches(base, entry)
+            for entry in item['enum']: TypeAdapter(_annotation(base)).validate_python(entry, strict=True)
             require(len({json.dumps(v, sort_keys=True) for v in item['enum']}) == len(item['enum']))
     try:
         node(value, 0)
@@ -101,11 +131,22 @@ def validate_input_schema(schema):
         raise ValueError(ERROR) from None
 
 
+def input_model(schema) -> type[BaseModel]:
+    """Return an Agno-compatible Pydantic model for the bounded declaration.
+
+    Serialize with model_dump(by_alias=True, exclude_unset=True): optional
+    omitted fields must never become explicit defaults in immutable inputs.
+    """
+    return _annotation(validate_input_schema(schema), root=True)
+
+
 def validate_input_values(schema, values):
-    checked = validate_input_schema(schema)
+    model = input_model(schema)
     value = bounded_json(values)
     try:
-        _matches(checked, value)
+        model.model_validate(value, strict=True)
+        # Preserve the exact reviewed input representation rather than injecting
+        # omitted fields or serializing Pydantic's numeric normalization.
         return value
     except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
         raise ValueError(ERROR) from None

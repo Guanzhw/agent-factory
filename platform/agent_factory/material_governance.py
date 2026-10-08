@@ -21,7 +21,7 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 
 from .catalog import SEEDS
 from .plan_policy import ToolContract, tools_for_contract, reserved_tool_names
-from .tool_policy_registry import (ToolPolicyRegistration, normalize_tool_policies, merged_tools,
+from .tool_policy_registry import (ResolvedToolPolicy, normalize_resolved_tool_policies, merged_tools,
     policy_body, require_installed_policies, require_material_policy)
 from .store import digest, now
 
@@ -146,11 +146,11 @@ class GovernanceConfig:
     revision: str = "material-governance-v1"
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
-    tool_policies: tuple[ToolPolicyRegistration, ...] = ()
+    tool_policies: tuple[ResolvedToolPolicy, ...] = ()
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
-        object.__setattr__(self, "tool_policies", normalize_tool_policies(self.tool_policies))
+        object.__setattr__(self, "tool_policies", normalize_resolved_tool_policies(self.tool_policies))
         merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")

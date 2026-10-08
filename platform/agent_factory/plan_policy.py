@@ -21,8 +21,8 @@ from sqlalchemy import Column, ForeignKey, Integer, JSON, MetaData, String, Tabl
 from sqlalchemy.engine import Connection
 
 from .store import digest
-from .tool_policy_registry import (ToolPolicyRegistration, normalize_tool_policies, merged_tools,
-    policy_body, require_installed_policies, require_plan_policies)
+from .tool_policy_registry import (ResolvedToolPolicy, normalize_resolved_tool_policies, merged_tools,
+    policy_body, require_installed_policies, require_plan_policies, resolve_tool_policies)
 
 PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
 LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
@@ -82,7 +82,8 @@ def reserved_tool_names():
 def application_tool_catalog(store):
     """Preserve the existing catalog; new tools require an explicit operator contract."""
     contract = getattr(getattr(store, "settings", None), "runtime_tool_contract", "legacy-v1")
-    policies = getattr(getattr(store, 'settings', None), 'tool_policies', ())
+    settings = getattr(store, 'settings', None)
+    policies = resolve_tool_policies(getattr(settings, 'tool_policies', ()), getattr(settings, 'runtime_adapters', ()))
     require_installed_policies(store, policies)
     base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
             **({"save_literature_synthesis": "research:read"} if getattr(getattr(store, "settings", None), "source_synthesis_enabled", False) else {})}
@@ -96,11 +97,11 @@ class PlanPolicyConfig:
     review_ttl_seconds: int = 3600
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
-    tool_policies: tuple[ToolPolicyRegistration, ...] = ()
+    tool_policies: tuple[ResolvedToolPolicy, ...] = ()
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
-        object.__setattr__(self, "tool_policies", normalize_tool_policies(self.tool_policies))
+        object.__setattr__(self, "tool_policies", normalize_resolved_tool_policies(self.tool_policies))
         merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
@@ -193,7 +194,10 @@ def persisted_ancestor_guard(store: Any):
                 raise HTTPException(409, "Current delegation application mandate failed")
             run_id = context.run_id if current["id"] == task["id"] else current["run_id"]
             native = store.native_db.get_job(run_id) or {}
-            if native.get("session_id") != current["id"] or native.get("user_id") != owner or native.get("component_id") != "factory-executor":
+            from .native_component import component_identity
+            kind, component_id = component_identity(store.plan(current["plan_id"], owner))
+            if (native.get("session_id") != current["id"] or native.get("user_id") != owner
+                    or native.get("component_id") != component_id or native.get("component_type", "agent") != kind):
                 raise HTTPException(403, "Native delegation ticket differs from owner/task/executor")
             if current["id"] == task["id"] and str(native.get("status", "")).lower() == "completed":
                 # Finish validating ancestors before exposing the narrow normal

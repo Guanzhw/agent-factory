@@ -176,7 +176,10 @@ class DelegationService:
         ticket = db.get_job(task["run_id"])
         if not ticket:
             raise HTTPException(503, "Persisted native ticket is unavailable")
-        if ticket.get("session_id") != task["id"] or ticket.get("user_id") != task["owner_id"] or ticket.get("component_id") != "factory-executor":
+        from .native_component import component_identity
+        kind, component_id = component_identity(self.store.plan(task["plan_id"], task["owner_id"]))
+        if (ticket.get("session_id") != task["id"] or ticket.get("user_id") != task["owner_id"]
+                or ticket.get("component_id") != component_id or ticket.get("component_type", "agent") != kind):
             raise HTTPException(403, "Native ticket identity differs from delegation binding")
         return ticket
 

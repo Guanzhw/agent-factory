@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ApplicationInputs } from '../web/ApplicationInputs.js';
-import { applicationInputSchema, applicationInputValues, sameApplicationInputs } from '../web/applicationInputState.js';
+import { applicationInputSchema, applicationInputValues, inputValuesError, sameApplicationInputs } from '../web/applicationInputState.js';
 
 const schema = () => ({ type: 'object', additionalProperties: false, required: ['question', 'count', 'confirm'], properties: {
   question: { type: 'string', title: '问题', minLength: 1, maxLength: 100 }, count: { type: 'integer', minimum: 1, maximum: 3 },
@@ -17,9 +17,14 @@ describe('bounded application inputs', () => {
     expect(sameApplicationInputs({ a: false, b: [] }, { b: [], a: false })).toBe(true);
     expect(sameApplicationInputs(undefined, {})).toBe(false);
   });
-  it('rejects unknown/required fields, coercion, nonfinite numbers, enums and nested overflow', () => {
-    const checked = applicationInputSchema(schema()); const values = { question: 'q', count: 2, confirm: false };
-    for (const value of [{ ...values, extra: true }, { count: 2, confirm: false }, { ...values, count: '2' }, { ...values, count: 1.5 }, { ...values, count: Infinity }, { ...values, confirm: 'false' }, { ...values, choice: 'c' }, { ...values, metadata: { tags: ['a', 'b', 'c'] } }]) expect(() => applicationInputValues(checked, value)).toThrow();
+  it('leaves semantic validation to the server while enforcing bounded transport and required hints', () => {
+    const checked = applicationInputSchema(schema());
+    for (const value of [{ extra: true }, { count: '2', confirm: false }, { choice: 'c' }, { metadata: { tags: ['a', 'b', 'c'] } }])
+      expect(applicationInputValues(checked, value)).toEqual(value);
+    for (const value of [[], null, { count: Infinity }, { question: 'x'.repeat(16001) }])
+      expect(() => applicationInputValues(checked, value)).toThrow();
+    expect(inputValuesError(checked, {})).toContain('必需');
+    expect(inputValuesError(checked, { question: 'q', count: 2, confirm: false })).toBe('');
   });
   it('rejects executable or unbounded schema extensions while leaving original snapshots intact', () => {
     for (const raw of [{ ...schema(), $ref: 'https://example.org' }, { ...schema(), additionalProperties: true }, { ...schema(), default: {} }, { ...schema(), properties: { text: { type: 'string' } } }, { ...schema(), properties: { files: { type: 'array', items: { type: 'string', maxLength: 10 } } } }]) expect(() => applicationInputSchema(raw)).toThrow();

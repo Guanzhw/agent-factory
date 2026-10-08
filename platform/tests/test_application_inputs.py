@@ -4,7 +4,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from agent_factory.input_schema import bounded_json, validate_input_schema, validate_input_values
+from agent_factory.input_schema import bounded_json, input_model, validate_input_schema, validate_input_values
 from agent_factory.store import digest
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
@@ -54,6 +54,42 @@ class InputSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate_input_schema(nested)
         for value in (cycle, {'x': object()}, {'x': '中' * 16000}, {'x': 10 ** 1000}):
             with self.assertRaises(ValueError): bounded_json(value)
+
+    def test_pydantic_native_model_omission_is_not_explicit_null_or_default(self):
+        declaration = schema()
+        value = {'subject': 'public'}
+        model = input_model(declaration)
+        result = model.model_validate(value)
+        self.assertEqual(result.model_dump(by_alias=True, exclude_unset=True), value)
+        self.assertEqual(digest(validate_input_values(declaration, value)), digest(value))
+        for key in ('tags', 'count', 'enabled', 'choice'):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                model.model_validate({**value, key: None})
+        self.assertEqual(model.model_validate({**value, 'empty': None}).model_dump(by_alias=True, exclude_unset=True),
+                         {**value, 'empty': None})
+
+    def test_pydantic_aliases_do_not_expose_internal_or_reserved_model_fields(self):
+        declaration = {'type': 'object', 'additionalProperties': False, 'required': ['model_dump', '_private'],
+            'properties': {'model_dump': {'type': 'string', 'maxLength': 8}, '_private': {'type': 'boolean'}}}
+        model = input_model(declaration)
+        value = {'model_dump': 'public', '_private': False}
+        self.assertEqual(model.model_validate(value).model_dump(by_alias=True, exclude_unset=True), value)
+        with self.assertRaises(ValueError): model.model_validate({'field_0': 'public', 'field_1': False})
+
+    def test_pydantic_nested_bounds_strict_numbers_and_typed_enum_compatibility(self):
+        declaration = {'type': 'object', 'additionalProperties': False, 'properties': {
+            'nested': {'type': 'object', 'additionalProperties': False, 'required': ['values'], 'properties': {
+                'values': {'type': 'array', 'minItems': 1, 'maxItems': 2,
+                    'items': {'type': 'number', 'minimum': 0, 'maximum': 2}}}},
+            'choice': {'type': 'number', 'enum': [1]}}}
+        model = input_model(declaration)
+        for value in ({'nested': {'values': []}}, {'nested': {'values': [True]}}, {'nested': {'values': [3]}},
+                      {'nested': {'values': [float('inf')]}}, {'nested': {'values': [1], 'extra': 1}},
+                      {'choice': True}, {'choice': 1.0}):
+            with self.subTest(value=value), self.assertRaises(ValueError): model.model_validate(value)
+        value = {'nested': {'values': [1, 1.5]}, 'choice': 1}
+        self.assertEqual(model.model_validate(value).model_dump(by_alias=True, exclude_unset=True), value)
+        self.assertEqual(model.model_json_schema()['properties']['choice']['enum'], [1])
 
 
 class GovernedInputTests(ApplicationCompositionFixture):
