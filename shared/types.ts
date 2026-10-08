@@ -36,3 +36,17 @@ export interface Artifact { id: string; jobId: string; name: string; mediaType: 
 export interface AuditEntry { id: number; actorId: string; action: string; targetId: string; details: Record<string, unknown>; createdAt: string }
 export interface Schedule { id: string; ownerId: string; definitionId: string; input: JobInput; connectionId?: string; everyHours: number; nextRunAt: string; enabled: boolean }
 export interface PlatformInfo { mode: 'demo' | 'live'; maxWorkers: number; activeWorkers: number; queuedJobs: number; integration: string; liveEnabled: boolean }
+
+export type ConnectionKind = 'model' | 'tool' | 'knowledge' | 'environment' | 'orx';
+export type ConnectionStatus = 'active' | 'unavailable' | 'expired' | 'revoked' | 'changed' | 'missing' | 'task_ended';
+export interface UserConnection {
+  ref: string; ownerId: string; version: 1; fingerprint: string; kind: ConnectionKind;
+  revision: string; capabilities: string[]; taskId: string | null; registrationRef: string;
+  expiresAt: string | null; createdAt: string; revokedAt: string | null;
+  status: ConnectionStatus; available: boolean; allowedActions: ('inspect' | 'revoke')[];
+}
+export interface ConnectionRegistration {
+  registrationRef: string; kind: ConnectionKind; revision: string; capabilities: string[];
+  expiresAt: string | null; status: 'available' | 'unavailable' | 'expired' | 'changed';
+  available: boolean; allowedActions: ('inspect' | 'bind')[];
+}

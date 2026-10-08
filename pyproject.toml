@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "department-agent-factory"
+version = "0.2.0"
+description = "Scoped departmental factory over the native Agno AgentOS runtime"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "agno==3.1.0",
+  "fastapi==0.142.2",
+  "uvicorn==0.54.0",
+  "sqlalchemy[asyncio]==2.1.1",
+  "psycopg[binary]==3.3.6",
+  "httpx==0.28.1",
+  "pyjwt[crypto]==2.15.1",
+  "cryptography==50.0.2",
+  "python-multipart==0.0.32",
+  "croniter==6.2.4",
+  "pytz==2026.4",
+]
+
+[project.scripts]
+agent-factory = "agent_factory.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["platform/agent_factory"]
+
+[dependency-groups]
+dev = ["ruff==0.15.8", "pyright==1.1.408"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402", "E701", "E702"]
+
+[tool.pyright]
+include = ["platform/agent_factory"]
+# Sealed standalone evaluator files are copied as a four-file experiment bundle.
+exclude = ["platform/agent_factory/orx_toy"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"

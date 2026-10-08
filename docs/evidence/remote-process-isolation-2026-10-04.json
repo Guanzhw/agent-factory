@@ -1,0 +1,191 @@
+{
+  "schema": 1,
+  "stage": "remote-process-isolation",
+  "date": "2026-10-04",
+  "baseCommit": "2e66b50fdd3ef27ca8b36b2f27b39a287d7df8eb",
+  "transport": "existing-Factory-handoff",
+  "samePhysicalHost": true,
+  "independentServiceProcesses": 2,
+  "realLoopbackHttp": true,
+  "independentPostgresDatabases": 2,
+  "modelExecution": "controlled-fixture",
+  "goKeyRead": false,
+  "goCalls": 0,
+  "persistentCredentialsCreated": false,
+  "hostSecurityNetworkCgroupChanged": false,
+  "containersCreated": 0,
+  "deployed": false,
+  "merged": false,
+  "aggregateBackendImplemented": false,
+  "aggregateEnforcementVerified": false,
+  "targetHostCapacityVerified": false,
+  "isolationCapabilities": {
+    "schema": 1,
+    "backend": "cooperative-process-v1",
+    "observationMode": "read-only-prerequisites",
+    "cooperativeRuntimeAvailable": true,
+    "supportedScopes": [
+      "per-process-cpu-time",
+      "per-process-address-space",
+      "per-file-size",
+      "cooperative-process-group-wall-time"
+    ],
+    "unsupportedScopes": [
+      "aggregate-cpu",
+      "aggregate-memory",
+      "aggregate-pids",
+      "aggregate-io",
+      "aggregate-disk",
+      "network-isolation",
+      "hostile-code-isolation"
+    ],
+    "aggregateEnforcementVerified": false,
+    "taskOwnedBackendSupported": false,
+    "containerRuntimeEnforcementVerified": false,
+    "observations": {
+      "linux": true,
+      "posixProcessFacilitiesObserved": true,
+      "rlimitFacilitiesObserved": true,
+      "procIdentityReadable": true,
+      "cgroupV2Observed": true,
+      "cgroupReadOnlyMountObserved": true,
+      "delegatedSubtreeWritableObserved": false,
+      "cpuControllerObserved": true,
+      "memoryControllerObserved": true,
+      "pidsControllerObserved": true,
+      "userSystemdBusObserved": false,
+      "containerSocketAccessObserved": true
+    },
+    "prerequisiteReasons": [
+      "AGGREGATE_BACKEND_NOT_IMPLEMENTED",
+      "TASK_CGROUP_ENFORCEMENT_UNVERIFIED",
+      "IO_DISK_NETWORK_ISOLATION_NOT_IMPLEMENTED",
+      "CGROUP_MOUNT_READ_ONLY",
+      "DELEGATED_SUBTREE_WRITE_AUTHORITY_NOT_OBSERVED",
+      "USER_SYSTEMD_BUS_NOT_OBSERVED",
+      "CONTAINER_DAEMON_ACCESS_IS_NOT_TASK_ISOLATION_PROOF"
+    ]
+  },
+  "tests": {
+    "firstRealRemoteCase": {
+      "passed": 1,
+      "seconds": 32.528
+    },
+    "initialFullRemote": {
+      "total": 10,
+      "passed": 8,
+      "failed": 2,
+      "seconds": 259.656,
+      "failures": "CANCELLED versus guardian LIMIT_STOPPED expectation; late post-reconnect cancel count. Causal diagnostics confirmed original lease expiry; final focused assertions passed without deadline extension (see remoteFocusedFinal)."
+    },
+    "frontend": 106,
+    "npmKnownVulnerabilities": 0,
+    "linuxPyrightErrors": 0,
+    "windowsPyrightErrors": 0
+  },
+  "exactHeadCI": "Pending at commit time; final exact push/PR two-round evidence belongs to the draft PR.",
+  "browser": {
+    "schema": 1,
+    "evidenceKind": "actual-origin-browser-separate-services-controlled-process",
+    "transport": "same-host-loopback-HTTP",
+    "independentFixturePerWorkload": true,
+    "cases": [
+      {
+        "workload": "normal",
+        "originTaskId": "5d9cc34c-ca3a-4a06-915a-0e16ae676126",
+        "originPlanId": "3395cbf4-af78-4305-8193-deb1f5db57da",
+        "receiverTaskId": "b5bbe4ed-186a-4b03-a697-6f5d1cfba5c3",
+        "receiverRunId": "9e707748-bc4a-4965-bc63-218625d936a1",
+        "receiverPlanId": "c1a9430d-457d-4c3d-b428-43c461136c1d",
+        "receiverOwnerId": "fixture-receiver-user",
+        "receiverLeaseId": "5f56f8e5-21c6-4a0f-8c92-dd979196cdc7",
+        "providerJobId": "8443e2ff-667d-4625-abb3-e08b42d10cab",
+        "poolId": "fixture-process-pool",
+        "state": "RECLAIMED",
+        "capacityHeld": false,
+        "originalReceiverIdentityPreserved": true,
+        "browserMutationRequests": 0,
+        "browserTriggeredLaunches": 0,
+        "receiverLaunchAttempts": 1,
+        "pageErrors": 0,
+        "mobileHorizontalOverflow": false,
+        "otherOwnerDenied": true,
+        "originNativeTickets": 0,
+        "originComputeLeases": 0
+      },
+      {
+        "workload": "unknown",
+        "originTaskId": "f12b74c5-e88c-4650-ba1d-00d4b82886a6",
+        "originPlanId": "e6fd8939-d716-456c-841b-0d003f5a0eda",
+        "receiverTaskId": "fb8effa1-0f92-4f65-be63-5e3acffa12bc",
+        "receiverRunId": "761ee03b-9e46-44dc-8003-f6d411c4179f",
+        "receiverPlanId": "2de82264-307c-47b9-a3ad-c2a7edcf40bc",
+        "receiverOwnerId": "fixture-receiver-user",
+        "receiverLeaseId": "56297e3a-0118-493d-9fa6-06058d3a65d7",
+        "providerJobId": "a44fc680-65f4-4c4a-bbff-84d0b3890c5e",
+        "poolId": "fixture-process-pool",
+        "state": "UNKNOWN",
+        "capacityHeld": true,
+        "originalReceiverIdentityPreserved": true,
+        "browserMutationRequests": 0,
+        "browserTriggeredLaunches": 0,
+        "receiverLaunchAttempts": 1,
+        "pageErrors": 0,
+        "mobileHorizontalOverflow": false,
+        "otherOwnerDenied": true,
+        "originNativeTickets": 0,
+        "originComputeLeases": 0
+      }
+    ],
+    "routeMocks": false,
+    "interHostTLSValidated": false,
+    "aggregateQuotaValidated": false,
+    "productionCapacityValidated": false,
+    "elapsedSeconds": 69.678,
+    "rootScreenshotReview": "normal/UNKNOWN desktop/mobile full-page and cropped detail inspected"
+  },
+  "independentReview": {
+    "lightTests": 34,
+    "passed": 34,
+    "seconds": 0.252,
+    "productionBlockers": 0,
+    "finalCausalAndBrowserReview": "passed; no blocker"
+  },
+  "remoteFocusedFinal": {
+    "tests": 2,
+    "passed": 2,
+    "seconds": 57.397,
+    "cases": [
+      "08 fixed deadline with causal unsuccessful outcome",
+      "10 real failed-read boundary before deadline and no cancellation; later expiry causally proved"
+    ],
+    "disconnectBoundaryUtc": "2026-10-04T13:21:50.124873+00:00",
+    "originalDeadlineUtc": "2026-10-04T13:21:51.350596+00:00",
+    "actualExpiryCancellationUtc": "2026-10-04T13:21:51.453736+00:00"
+  },
+  "enhancedUnknownRestart": {
+    "passed": true,
+    "originAndReceiverTaskDiskCapacityHeld": true,
+    "otherOwnerPoolProbeHttpStatus": 429
+  },
+  "localPython": {
+    "total": 1058,
+    "passed": 717,
+    "skipped": 341,
+    "seconds": 53.654,
+    "postgresEnabled": false
+  },
+  "initialCiWindowsFailure": {
+    "sha": "a6e268061f0229f171f580f23fc4a3f84207f0d4",
+    "pushRun": 37205514227,
+    "pullRequestRun": 37205535203,
+    "failures": 1,
+    "errors": 1,
+    "cause": "Synthetic Linux paths were interpreted with Windows path semantics; program fixture was not native absolute.",
+    "correction": "Tests use PurePosixPath for mocked Linux probe and native resolved program path; all assertions retained, production unchanged.",
+    "localFocusedTests": 10,
+    "localFocusedPassed": 10,
+    "independentFocusedPassed": 10,
+    "supersededRunsCancelled": true
+  }
+}

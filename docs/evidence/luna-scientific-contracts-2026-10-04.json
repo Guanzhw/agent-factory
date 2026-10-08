@@ -1,0 +1,315 @@
+{
+  "schema": 1,
+  "date": "2026-10-04",
+  "baseCommit": "a5173379ce7f119fdcf3540239fd82cb19ff86ab",
+  "liveLunaRevision2": {
+    "model": "gpt-6-luna",
+    "status": "completed",
+    "taskId": "d16f2346-e532-43bd-bb6e-74b575dcd0ed",
+    "planId": "fdd8ec17-2a13-41f0-9736-a5d857e700ee",
+    "requestId": "53e053ea-6640-4fa8-99b8-1669c20e91df",
+    "receiptVerified": true,
+    "usage": {
+      "attempts": [
+        {
+          "state": "SETTLED"
+        },
+        {
+          "state": "SETTLED"
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "task",
+          "settledTokens": 4332,
+          "heldTokens": 0
+        }
+      ],
+      "pricingBasis": "operator-nominal-not-invoice",
+      "invoiceVerified": false,
+      "actualCostStatus": "UNKNOWN"
+    },
+    "research": {
+      "mode": "public-code-development-example",
+      "sourceEvidenceMode": "live-public-fetch",
+      "sourceCount": 2,
+      "answer": "The client keeps HTTPX’s environment proxy mounts and `NO_PROXY` behavior by leaving the default transport in place and setting `trust_env=True` when no custom transport is supplied; `verify=True` retains certificate verification. A request hook restricts HTTPS destinations to `opencode.ai` on the permitted port and requires an allowed method/path, while rejecting credentials, queries, and fragments. Redirects are disabled, and the default transport has zero retries. [S1]\n\n**Tested:** a proxy connection failure raises without retry or direct fallback. [S2] The supplied test does not itself verify CA behavior or the destination and redirect restrictions.\n\nSHA-256: `a9642da7ebb756f1b0e0c15578b576e30f75fd542ab6fbb0d4702a3da18dcde4`",
+      "citationPresenceVerified": true,
+      "semanticReview": "required-separately",
+      "sourceSetId": "agent-factory-go-http-914de54-v1"
+    },
+    "artifactSha256": "8a8e7b27d296c6f7801f8fb318ef7ac22bbe97f244baa4337acff193daf15349",
+    "nativeAttempts": 1
+  },
+  "publicPubMedNative": {
+    "phase": "retrieval",
+    "ownerId": "alice",
+    "status": "completed",
+    "scientificProviderCalled": false,
+    "scientificEndToEndAccepted": false,
+    "taskId": "56a3e88e-20f1-4796-a575-3b69a7b86ac1",
+    "planId": "57948e4a-ab17-48ae-bdd0-ce498755d95c",
+    "requestId": "bb33c1c3-c936-47a6-a41f-a38670dcf562",
+    "receiptVerified": true,
+    "nativeStatus": "completed",
+    "artifacts": [
+      {
+        "id": "e584e49c-edef-4310-8353-f509c0ce9351",
+        "name": "literature-sources-297176f267bd2cbd.json",
+        "sha256": "f150feb874071dcc170cd3f5d216e96dd2cfd29c6e9e3e3c91717546bd9bb264"
+      },
+      {
+        "id": "2b38905b-4c93-4014-adf3-c923cd311a11",
+        "name": "literature-report-297176f267bd2cbd.md",
+        "sha256": "042e72859d79fa750ad09c3e9d70aa9807db46e833f72b002256dcab1beea323"
+      },
+      {
+        "id": "7c5198c6-9a48-4dc2-9ab7-6524119d6e6f",
+        "name": "literature-evidence-297176f267bd2cbd.zip",
+        "sha256": "d84acdb98fac4097f92a6b2759d3fbaae5dac28345b7bf1ed7b11191d13c96f6"
+      }
+    ],
+    "literatureEvidence": {
+      "schema": 1,
+      "status": "ready",
+      "evidenceKind": "public_literature_excerpt",
+      "mode": "bibliography-excerpts-no-provider",
+      "sourceCount": 2,
+      "sources": [
+        {
+          "sourceId": "42828563",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/42828563/",
+          "title": "OsteoCHAT: real-world patient evaluation and benchmarking of a guideline-grounded osteoporosis chatbot.",
+          "textStatus": "abstract_only",
+          "fullTextAvailable": false,
+          "sha256": "f9284cfb3eb9432f0583f1d4d1540844432a9232d986b34056d6afa8e8c488e5",
+          "excerpt": "Patients with osteoporosis have information needs that routine care inconsistently addresses. In this multicenter real-world evaluation, the LLM-based, guidelin",
+          "locator": {
+            "endExclusive": 160,
+            "field": "abstract",
+            "kind": "unicode_character_range",
+            "line": 1,
+            "start": 0
+          },
+          "hashScope": "metadata_abstract",
+          "missingFullTextReason": "abstract_only"
+        },
+        {
+          "sourceId": "42826496",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/42826496/",
+          "title": "RAGCell: Retrieval-Augmented Generation as Supervision for Versatile Single-cell Analysis.",
+          "textStatus": "abstract_only",
+          "fullTextAvailable": false,
+          "sha256": "4ce15f0ecf2b310e777c978dfad4da6f4f3f07868e11922d37b8ab435be0b81c",
+          "excerpt": "Single-cell foundation models (scFMs) are transforming computational biology by enabling generalizable, task-agnostic representations for versatile single-cell ",
+          "locator": {
+            "endExclusive": 160,
+            "field": "abstract",
+            "kind": "unicode_character_range",
+            "line": 1,
+            "start": 0
+          },
+          "hashScope": "metadata_abstract",
+          "missingFullTextReason": "abstract_only"
+        }
+      ],
+      "retrievalErrors": [],
+      "reportArtifactId": "2b38905b-4c93-4014-adf3-c923cd311a11",
+      "bundleArtifactId": "7c5198c6-9a48-4dc2-9ab7-6524119d6e6f"
+    },
+    "usage": {
+      "attemptStates": [
+        "SETTLED",
+        "SETTLED"
+      ],
+      "taskScopes": [
+        {
+          "settledTokens": 0,
+          "heldTokens": 0
+        }
+      ],
+      "providerCalled": false
+    }
+  },
+  "realSourcesControlledSynthesis": {
+    "phase": "synthesis-fixture",
+    "ownerId": "alice",
+    "status": "completed",
+    "scientificProviderCalled": false,
+    "scientificEndToEndAccepted": false,
+    "sourceEvidenceSha256": "15a59363d788675f4e3fd4ebb38577048011a987479d372db37eb271c328c0e0",
+    "sourceTaskId": "56a3e88e-20f1-4796-a575-3b69a7b86ac1",
+    "modelExecution": "controlled-fixture",
+    "sourceEvidenceKind": "public_literature_excerpt",
+    "taskId": "14cebbf4-09e8-4949-ac55-b6643f29d045",
+    "planId": "4826c304-6257-4c34-b18a-fcc055d5dccf",
+    "requestId": "b4c8d4e7-dd87-409b-8a84-056bf03067be",
+    "receiptVerified": true,
+    "nativeStatus": "completed",
+    "artifacts": [
+      {
+        "id": "c5371908-d893-4386-b16e-5ab8dfc46930",
+        "name": "literature-synthesis.json",
+        "sha256": "59afa2bf568c5b5dd8178852d5e21b26596fc129f6ecddafdaaef354a8f119eb"
+      },
+      {
+        "id": "83f2fb5c-d807-4e2b-b91c-59a1c5cd345d",
+        "name": "literature-synthesis.md",
+        "sha256": "0204c8ed5038401ad8a45fb0dd1d541999c24282067c561bbbc713966c6e128a"
+      }
+    ],
+    "synthesis": {
+      "citationIntegrityVerified": true,
+      "citationStructureVerified": true,
+      "evidenceKind": "controlled_model_synthesis",
+      "executionMode": "controlled-fixture",
+      "generatedBy": "controlled-fixture",
+      "modelExecution": "controlled-fixture",
+      "providerId": "controlled-scientific-fixture",
+      "report": {
+        "claims": [
+          {
+            "quotes": [
+              {
+                "sourceId": "42828563",
+                "text": "Patients with osteoporosis have information needs that routine care inconsistently addresses. In this multicenter real-world evaluation, the LLM-based, guidelin"
+              }
+            ],
+            "sourceIds": [
+              "42828563"
+            ],
+            "text": "The selected source record titled OsteoCHAT: real-world patient evaluation and benchmarking of a guideline-grounded osteoporosis chatbot. contains the quoted limited excerpt; this is not a scientific finding."
+          }
+        ],
+        "limitations": [
+          "Only the supplied bounded excerpt was inspected; full text may be missing.",
+          "Deterministic controlled fixture, not scientific synthesis quality validation. Independent semantic review is required."
+        ],
+        "schema": 1
+      },
+      "schema": 1,
+      "scientificConclusionVerified": false,
+      "semanticReview": "required",
+      "snapshotSha256": "73fb94e95e0d027aa418dbf9711400b0050c24ebd9399818e01c256653bc5b78",
+      "sourceEvidenceKind": "public_literature_excerpt"
+    },
+    "usage": {
+      "attemptStates": [
+        "SETTLED",
+        "SETTLED"
+      ],
+      "taskScopes": [
+        {
+          "settledTokens": 0,
+          "heldTokens": 0
+        }
+      ],
+      "providerCalled": false
+    }
+  },
+  "history": {
+    "total": 18,
+    "states": {
+      "UNKNOWN": 6,
+      "SETTLED": 12
+    },
+    "status": "ACTIVE",
+    "prior14TicketsUnchanged": true,
+    "originalSevenFilesBytesAndMtimeUnchanged": true,
+    "newTickets": [
+      {
+        "id": "be5e97dc-3514-42b7-af09-e311669aac7e",
+        "ordinal": 15,
+        "model": "gpt-6-luna",
+        "purpose": "product",
+        "session": "84b573f5-b589-48b2-97be-499752824c6e",
+        "state": "SETTLED",
+        "output_cap": 256,
+        "created": 1791105086.5956924,
+        "input_tokens": 1900,
+        "output_tokens": 57,
+        "total_tokens": 1957,
+        "error_code": null,
+        "actual_model": "gpt-6-luna"
+      },
+      {
+        "id": "758eec9c-15b7-46ca-a70b-88bf22bb6091",
+        "ordinal": 16,
+        "model": "gpt-6-luna",
+        "purpose": "product",
+        "session": "84b573f5-b589-48b2-97be-499752824c6e",
+        "state": "UNKNOWN",
+        "output_cap": 256,
+        "created": 1791105089.4909008,
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "error_code": "UNKNOWN",
+        "actual_model": null
+      },
+      {
+        "id": "587a87ea-4681-43b2-bff3-ba508824dc65",
+        "ordinal": 17,
+        "model": "gpt-6-luna",
+        "purpose": "product",
+        "session": "d16f2346-e532-43bd-bb6e-74b575dcd0ed",
+        "state": "SETTLED",
+        "output_cap": 512,
+        "created": 1791105739.4624085,
+        "input_tokens": 1899,
+        "output_tokens": 50,
+        "total_tokens": 1949,
+        "error_code": null,
+        "actual_model": "gpt-6-luna"
+      },
+      {
+        "id": "cb99430a-3d6e-4c30-b9ce-27793a734d5a",
+        "ordinal": 18,
+        "model": "gpt-6-luna",
+        "purpose": "product",
+        "session": "d16f2346-e532-43bd-bb6e-74b575dcd0ed",
+        "state": "SETTLED",
+        "output_cap": 512,
+        "created": 1791105743.1098614,
+        "input_tokens": 2009,
+        "output_tokens": 374,
+        "total_tokens": 2383,
+        "error_code": null,
+        "actual_model": "gpt-6-luna"
+      }
+    ],
+    "original17JournalRowsUnchanged": true
+  },
+  "newIncompleteObservation": {
+    "ordinal": 16,
+    "reason": "MAX_OUTPUT_TOKENS",
+    "reportedUsage": {
+      "inputTokens": 2010,
+      "outputTokens": 256,
+      "totalTokens": 2266
+    },
+    "usageStatus": "provider-incomplete-unsettled",
+    "ledgerState": "UNKNOWN",
+    "heldTokens": 33280,
+    "historicalOrdinal14Reason": "UNKNOWN"
+  },
+  "localChecks": {
+    "python": {
+      "total": 874,
+      "passed": 567,
+      "skipped": 307,
+      "seconds": 48.372
+    },
+    "frontend": {
+      "passed": 78
+    },
+    "scientificLiveProviderAccepted": false
+  },
+  "boundaries": [
+    "Go is coding development only; no scientific provider selected.",
+    "Reported incomplete usage is not settlement or invoice evidence.",
+    "Public PubMed host transport is distinct from the historical failed container retrieval.",
+    "Source input JSON is trusted operator evidence; hash comparison is not a fresh database receipt validation.",
+    "Controlled synthesis verifies source/citation contracts, not scientific truth."
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "stage": "browser-auth-process-enforcement",
+  "date": "2026-10-04",
+  "baseCommit": "a61898a5b92e1584e4adf7cf35bcdcc14b3948b5",
+  "realIdentityProviderVerified": false,
+  "oauthClientsRegistered": false,
+  "persistentCredentialsCreated": false,
+  "productionSystemsAccessed": false,
+  "hostSecurityNetworkCgroupChanged": false,
+  "goCalls": 0,
+  "goKeyRead": false,
+  "deployed": false,
+  "targetCapacityCertified": false,
+  "tests": {
+    "defaultPython": {
+      "total": 986,
+      "passed": 664,
+      "skipped": 322,
+      "seconds": 49.177
+    },
+    "frontend": {
+      "passed": 88
+    },
+    "browserOidcOffline": 9,
+    "browserBoundaryOffline": 19,
+    "browserPostgres": {
+      "passed": 4,
+      "seconds": 7.659
+    },
+    "processEnforcement": {
+      "passed": 8,
+      "actualProcessCases": 7
+    },
+    "linuxPyrightErrors": 0,
+    "windowsPyrightErrors": 0,
+    "independentOffline": 28,
+    "npmKnownVulnerabilities": 0,
+    "lockedPythonAudit": {
+      "dependencies": 49,
+      "knownVulnerabilities": 0
+    }
+  },
+  "browserAcceptance": {
+    "identityMode": "synthetic-loopback-https",
+    "realIdentityProviderVerified": false,
+    "hostTrustChanged": false,
+    "screens": [
+      {
+        "viewport": "desktop",
+        "login": true,
+        "reloadSession": true,
+        "logout": true,
+        "pendingLoginRetry": true,
+        "privateNoStore": true,
+        "httpOnlySecureCookie": true,
+        "horizontalOverflow": false
+      },
+      {
+        "viewport": "mobile",
+        "login": true,
+        "reloadSession": true,
+        "logout": true,
+        "pendingLoginRetry": true,
+        "privateNoStore": true,
+        "httpOnlySecureCookie": true,
+        "horizontalOverflow": false
+      }
+    ],
+    "authorizationCount": 2,
+    "exchangeCount": 2
+  },
+  "processBoundary": {
+    "standalone": true,
+    "resourceLeaseIntegrated": false,
+    "cpu": "per-process RLIMIT_CPU",
+    "memory": "per-process RLIMIT_AS",
+    "disk": "per-file RLIMIT_FSIZE",
+    "wall": "trusted cooperative process-group guardian",
+    "aggregateQuota": false,
+    "hostileCodeSandbox": false,
+    "networkIsolation": false,
+    "unknownNeverReplayed": true
+  },
+  "reviewCorrections": [
+    "logout invalidates committed but undelivered callback session",
+    "completed flow custody retained through issued session expiry",
+    "private no-store authenticated native responses",
+    "awaitable process authority callback denied before spawn",
+    "Windows static capability checks"
+  ],
+  "remaining": [
+    "Selected real public-client IdP/TLS/owner mapping acceptance",
+    "Confidential-client authentication or federated logout if selected IdP requires them",
+    "Resource-pool/runtime integration of bounded process custody",
+    "Remote machine provisioning and aggregate kernel quotas/fencing",
+    "Scientific provider and non-toy acceptance",
+    "Production monitoring and target-host sustained capacity"
+  ],
+  "ci": "Final exact-head push/PR runs and two terminal observations are recorded on stage draft PR."
+}

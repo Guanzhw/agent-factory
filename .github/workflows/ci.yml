@@ -3,7 +3,7 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  check:
+  frontend:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -16,3 +16,60 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+  python:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen
+      - run: uv run ruff check platform scripts
+      - run: uv run pyright
+      - run: uv run python -m unittest discover -s platform/tests -v
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+        env:
+          POSTGRES_USER: factory_ci
+          POSTGRES_PASSWORD: ci-fixture-only
+          POSTGRES_DB: factory_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # This credential belongs only to this disposable synthetic CI service.
+      FACTORY_TEST_DATABASE_URL: postgresql+psycopg://factory_ci:ci-fixture-only@127.0.0.1:5432/factory_test
+      AGNO_TELEMETRY: 'false'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen
+      - name: Required candidate PostgreSQL acceptance (no skips)
+        run: uv run python scripts/check_candidate_postgres.py
+      - name: Required AutoResearch native fixtures (no skips)
+        run: uv run python scripts/check_autoresearch_postgres.py
+      - name: PostgreSQL suite (bounded diagnostic log)
+        shell: bash
+        run: |
+          set +e
+          uv run python -m unittest discover -s platform/tests -v > "$RUNNER_TEMP/postgres-tests.log" 2>&1
+          test_status=$?
+          tail -n 400 "$RUNNER_TEMP/postgres-tests.log"
+          exit "$test_status"

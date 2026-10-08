@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "role": "controller",
+  "workspace": "/srv/agent-factory-example/controller",
+  "port": 3100,
+  "databaseRef": "CONTROLLER_DATABASE_URL",
+  "jwtRef": "FACTORY_JWT_KEY",
+  "handoffBearerRef": "HANDOFF_BEARER",
+  "project": {
+    "id": "science-project",
+    "name": "Scientific project",
+    "ownerId": "alice",
+    "defaultGoal": "Improve verified result",
+    "manifest": {
+      "schema": 1,
+      "evidenceKind": "offline_research_experiment_manifest",
+      "sourceProfileSha256": "5df644db35e8c66b33a7bbf67e45ade88a534e5e62e41f59e6c9523c22b311d7",
+      "baselineSourceManifestSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "protocol": {
+        "revision": "autoresearch-reviewed-v1",
+        "trainingBudgetSeconds": 300,
+        "totalWallSeconds": 600,
+        "seed": 0,
+        "evaluationBudgetTokens": 20971520,
+        "sequenceLength": 2048
+      },
+      "dataset": {
+        "revision": "synthetic-data-v1",
+        "shards": [
+          {
+            "id": "train-0",
+            "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+            "sizeBytes": 22
+          },
+          {
+            "id": "validation-0",
+            "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+            "sizeBytes": 22
+          }
+        ],
+        "validationShardIds": [
+          "validation-0"
+        ],
+        "sampleSetSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "tokenizer": {
+        "tokenizer": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        },
+        "tokenBytes": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        }
+      },
+      "environment": {
+        "lockfileSha256": "03174c5cce6387418c5b6cc9bbe8f71ad0ae1e1d6fedeaecae5cdcf7321da0a3",
+        "installedInventory": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        },
+        "runtimeKernel": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        }
+      },
+      "device": {
+        "identitySha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "deviceCount": 1
+      },
+      "evaluator": {
+        "code": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        },
+        "configuration": {
+          "sha256": "cff42ed2ceb7eec2e0adab497a1ddffef91b09a691e426491120489cff15d5ae",
+          "sizeBytes": 22
+        },
+        "metric": "val_bpb",
+        "direction": "minimize"
+      },
+      "initialCheckpoint": null,
+      "artifactLimits": {
+        "checkpointBytes": 1024,
+        "logBytes": 1024,
+        "resultBytes": 1024
+      }
+    },
+    "microbatch": 1,
+    "limits": {
+      "totalSeconds": 900,
+      "experimentSeconds": 600,
+      "maxExperiments": 1,
+      "toolCalls": 32,
+      "outputBytes": 65536,
+      "modelRequests": 3,
+      "modelOutputTokens": 512
+    },
+    "upstreamRoot": "/srv/agent-factory-example",
+    "applicationRef": null,
+    "receiver": {
+      "targetRef": "receiver",
+      "originRef": "origin",
+      "baseUrl": "https://receiver.example.invalid",
+      "ownerId": "alice",
+      "revision": "reviewed-v1",
+      "projectPin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "modelCredentialRef": "AUTHORIZED_GO_SUBSCRIPTION",
+    "billingAuthorized": false,
+    "runtimeFilePins": [
+      {
+        "basename": "research_torch_runtime.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_checkpoint.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_manifest.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_evaluation.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_assessment.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_profile.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_candidate.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_training_adapter.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_staging.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_local_driver.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "process_enforcement.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "process_enforcement_guardian.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "research_interpreter.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "store.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      },
+      {
+        "basename": "__init__.py",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 100
+      }
+    ],
+    "orx": {
+      "sessionRoot": "/srv/agent-factory-example",
+      "image": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "orx": {
+        "path": "/srv/agent-factory-example/orx",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "opencode": {
+        "path": "/srv/agent-factory-example/opencode",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "projectId": "00000000-0000-4000-8000-000000000001"
+    },
+    "applicationSnapshot": null
+  },
+  "publication": {
+    "author": "manager",
+    "reviewer": "reviewer"
+  }
+}
