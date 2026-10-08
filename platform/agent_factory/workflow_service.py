@@ -71,10 +71,27 @@ class WorkflowService:
         with store.engine.begin() as conn:
             conn.execute(text('CREATE TABLE IF NOT EXISTS af_workflow_runs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, native_run_id TEXT NOT NULL UNIQUE, body JSONB NOT NULL)'))
             conn.execute(text('CREATE TABLE IF NOT EXISTS af_workflow_commands (workflow_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, body JSONB NOT NULL, PRIMARY KEY(workflow_id,request_id))'))
+            if conn.dialect.name == 'postgresql':
+                # Recover original custody left terminal by a pre-fix observer.
+                # This re-holds accounting only; it never dispatches operations.
+                original_held = """SELECT task.id FROM af_tasks task JOIN af_workflow_runs workflow
+                    ON workflow.task_id=task.id AND workflow.owner_id=task.owner_id
+                    AND workflow.native_run_id=task.run_id
+                    AND workflow.body->>'planId'=task.plan_id
+                    WHERE workflow.body->>'status' NOT IN ('COMPLETED','CANCELLED')"""
+                held = original_held
+                if getattr(store, 'delegation', None) is not None:
+                    held += (' UNION SELECT parent_id FROM af_delegation_links WHERE child_id IN (' + original_held + ')'
+                             ' UNION SELECT root_id FROM af_delegation_links WHERE child_id IN (' + original_held + ')')
+                conn.execute(text('UPDATE af_tasks SET terminal=FALSE WHERE terminal AND id IN (' + held + ')'))
+                conn.execute(text("UPDATE af_disk_holds SET state='HELD' WHERE state='RELEASED' AND task_id IN (" + held + ')'))
+                if getattr(store, 'delegation', None) is not None:
+                    conn.execute(text('UPDATE af_delegation_roots SET reclaimed=FALSE WHERE reclaimed AND (root_id IN (' + held + ') '
+                        'OR root_id IN (SELECT root_id FROM af_delegation_links WHERE child_id IN (' + held + ')))'))
 
     @contextmanager
     def _transaction(self):
-        with self.store.engine.begin() as conn:
+        with self.store.transaction() as conn:
             if conn.dialect.name == 'postgresql':
                 conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_workflow_runs'))"))
             elif conn.dialect.name == 'sqlite':
@@ -134,6 +151,13 @@ class WorkflowService:
     def open(self, ctx, request_id):
         task, plan, definition = self._current(ctx)
         with self._transaction() as conn:
+            if conn.dialect.name == 'postgresql':
+                # Serialize first custody publication with Store terminal release.
+                current = conn.execute(text('SELECT * FROM af_tasks WHERE id=:task FOR UPDATE'),
+                                       {'task': task['id']}).mappings().first()
+                require(current is not None and not current['terminal'] and not current['cancel_requested']
+                        and current['owner_id'] == ctx.user_id and current['run_id'] == ctx.run_id
+                        and current['plan_id'] == task['plan_id'])
             row = conn.execute(text('SELECT id FROM af_workflow_runs WHERE task_id=:task'), {'task': task['id']}).first()
             if row:
                 body = self._load(conn, row[0], ctx.user_id)
@@ -303,9 +327,10 @@ class WorkflowService:
         return self.snapshot_task(owner, task_id)
 
     def task_held(self, task_id):
-        with self.store.engine.connect() as conn:
-            row = conn.execute(text('SELECT body FROM af_workflow_runs WHERE task_id=:task'), {'task': task_id}).first()
-        return row is not None and decoded(row[0])['status'] not in {'COMPLETED', 'CANCELLED'}
+        # Reuse an active Store transaction during admission/terminal checks;
+        # borrowing another metadata connection can deadlock a one-slot pool.
+        rows = self.store.sql('SELECT body FROM af_workflow_runs WHERE task_id=:task', task=task_id)
+        return bool(rows) and decoded(rows[0]['body'])['status'] not in {'COMPLETED', 'CANCELLED'}
 
     async def cancel(self, owner, identifier):
         # Cleanup uses original owned task custody, not a fresh execution grant.

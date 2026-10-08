@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from .catalog import create_plan
-from .store import effect_unresolved, digest, now
+from .store import effect_unresolved, digest, now, runtime_custody_held
 
 ACTIVE = {"queued", "pending", "running", "paused"}
 TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
@@ -288,9 +288,8 @@ class DelegationService:
             if not link["child_id"]:
                 return True
             task = self.store.task(link["child_id"], link["owner_id"])
-            process_runtime = getattr(self.store, "process_runtime", None)
             if (any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
-                    or process_runtime is not None and process_runtime.task_held(task["id"])):
+                    or runtime_custody_held(self.store, task["id"])):
                 return True
             if task["admission"] == "rejected" and not task.get("run_id"):
                 continue
@@ -524,15 +523,21 @@ class DelegationService:
         raw = str(native.get("status") or (snapshot.get("run") or snapshot).get("status") or "").lower().removeprefix("runstatus.")
         effects = self.store.effects(task["id"])
         unresolved_effect = any(effect_unresolved(effect) for effect in effects)
-        process_runtime = getattr(self.store, "process_runtime", None)
-        unresolved_effect = unresolved_effect or (process_runtime is not None and process_runtime.task_held(task["id"]))
+        process_runtime = getattr(self.store, 'process_runtime', None)
+        unresolved_effect = unresolved_effect or (process_runtime is not None and process_runtime.task_held(task['id']))
+        workflow = getattr(self.store, 'workflow', None)
+        workflow_held = workflow is not None and workflow.task_held(task['id'])
         # A reserved effect during known native computation is in flight. It
         # retains capacity, but becomes externally UNKNOWN after native work
         # stops without a confirmed result/cleanup.
-        unknown = unavailable or (unresolved_effect and raw != "running") or (not task.get("run_id") and task["admission"] != "rejected")
+        # A parked workflow wait is a known continuation boundary, while still
+        # holding capacity. A terminated native ticket cannot prove its stop.
+        unknown = (unavailable or (unresolved_effect and raw != "running")
+                   or (workflow_held and raw not in {'running', 'paused', 'pending', 'queued'})
+                   or (not task.get("run_id") and task["admission"] != "rejected"))
         failed = task["admission"] == "rejected" or raw in {"failed", "error"} or self.store.has_failures(task["id"])
         known_rejected_without_ticket = task["admission"] == "rejected" and not task.get("run_id")
-        stopped = not unknown and not unresolved_effect and (raw in TERMINAL or known_rejected_without_ticket)
+        stopped = not unknown and not unresolved_effect and not workflow_held and (raw in TERMINAL or known_rejected_without_ticket)
         return {"taskId": task["id"], "ownerId": task["owner_id"], "planId": task["plan_id"], "runId": task.get("run_id"),
                 "admission": task["admission"], "nativeStatus": raw or None, "snapshot": snapshot, "effects": effects,
                 "cancelRequested": task["cancel_requested"], "unknown": unknown, "failed": failed, "pending": not stopped, "stopped": stopped}
@@ -590,6 +595,9 @@ class DelegationService:
                 native = self._native(task)
                 from .orx_experiment_tools import reclaim_orx_experiment
                 await reclaim_orx_experiment(self.settings, self.store, task["id"])
+                workflow = getattr(self.store, 'workflow', None)
+                if workflow is not None:
+                    await workflow.cancel_task(owner, task['id'])
                 if str(native.get("status", "")).lower() not in TERMINAL:
                     await self.bridge.cancel_run(task["run_id"], task["id"], owner)
                     requested.append(task["id"])

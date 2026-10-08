@@ -71,6 +71,12 @@ An absent handle, failed lookup or timeout never means stopped. UNKNOWN is held;
 start is never retried automatically. Cancellation may recover an original
 handle through lookup and then stop it, including after authority has ended.
 Missing original adapters leave custody held rather than releasing capacity.
+Task observation, new-task admission, descendant aggregation and remote stop
+receipts all include original workflow custody. A cancelled native ticket alone
+cannot release its task or disk reservation. Startup repairs existing held-work
+accounting against matching owner, plan and native identities without dispatch;
+it does not recreate deleted files or missing storage records. Custody creation
+shares the original task row lock with terminal release.
 An adapter can explicitly raise `WorkflowAcknowledgementUnknown` when a start
 may have reached its backend but no acknowledgement is available. The service
 rechecks current authority and returns its durable UNKNOWN intent for a native
@@ -112,8 +118,8 @@ results, not resetting or replaying a failed/unknown stage.
 
 ## Engineering evidence and limits
 
-`test_workflow_native_postgres.py` and the mandatory
-`scripts/check_workflow_postgres.py` gate run four synthetic cases with zero
+The mandatory `scripts/check_workflow_postgres.py` gate runs four native scenarios
+and three startup-custody checks with zero
 allowed skips. They execute real PostgreSQL records, native Agno queued tool
 invocation, loopback HTTP and an actual server-process restart using the same
 persisted database. A durable SQLite fixture represents external operations;

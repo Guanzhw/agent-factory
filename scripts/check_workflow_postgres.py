@@ -12,10 +12,10 @@ def main():
         return 1
     root = Path(__file__).resolve().parents[1]
     sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
-    suite = unittest.defaultTestLoader.discover(str(root / 'platform/tests'),
-        pattern='test_workflow_native_postgres.py')
+    suite = unittest.TestSuite(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern=pattern)
+        for pattern in ('test_workflow_native_postgres.py', 'test_workflow_custody_postgres.py'))
     expected = suite.countTestCases()
-    if expected != 4:
+    if expected != 7:
         print('WORKFLOW_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)

@@ -57,6 +57,7 @@ class DurableOperations:
     """Only this fixture writes its own SQLite operation state, never real work."""
     def __init__(self, path):
         self.path = str(path)
+        self.cancel_ack_unknown = False
         with self.connect() as conn:
             conn.execute('CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, stage TEXT, body TEXT, starts INTEGER, inspections INTEGER, cancels INTEGER)')
 
@@ -113,7 +114,8 @@ class DurableOperations:
     async def cancel(self, context, handle):
         result = await self.inspect(context, handle)
         if result['state'] not in {'COMPLETED', 'FAILED', 'CANCELLED'}:
-            result.update(state='CANCELLED', allStopped=True, output=None, failure=None)
+            result.update(state='UNKNOWN' if self.cancel_ack_unknown else 'CANCELLED',
+                allStopped=not self.cancel_ack_unknown, output=None, failure=None)
         with self.connect() as conn:
             conn.execute('UPDATE operations SET body=?,cancels=cancels+1 WHERE id=?',
                 (json.dumps(result), handle['id']))
@@ -261,6 +263,7 @@ def serve(configuration):
         store = state['store']
         task = store.task(taskId, 'alice') if taskId else None
         held = store.workflow.task_held(taskId) if taskId else False
+        disk = store.sql('SELECT state FROM af_disk_holds WHERE task_id=:id', id=taskId) if taskId else []
         failures = store.sql("SELECT type,data FROM af_events WHERE task_id=:id AND type IN "
             "('tool_failed','protected_denied','lifecycle_cleanup_requested') ORDER BY id LIMIT 20",
             id=taskId) if taskId else []
@@ -274,6 +277,7 @@ def serve(configuration):
             'task': task, 'native': store.native_db.get_job(task['run_id']) if task and task['run_id'] else None,
             'workflow': store.workflow.snapshot_task('alice', taskId) if taskId else None,
             'workflowHeld': held,
+            'diskHold': disk[0]['state'] if disk else None,
             'nativeCount': store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id', id=taskId)[0]['n'] if taskId else 0}
 
     @app.app.post('/__workflow_fixture/control')
@@ -286,6 +290,14 @@ def serve(configuration):
             state['auth'].authorization.unassign('alice', 'factory-user')
         elif value == {'op': 'restore'}:
             state['auth'].authorization.assign('alice', 'factory-user')
+        elif value == {'op': 'observer-stop'}:
+            await state['store'].lifecycle_observer.stop()
+        elif value == {'op': 'observer-start'}:
+            await state['store'].lifecycle_observer.start()
+        elif value == {'op': 'cancel-ack-unknown'}:
+            backend.cancel_ack_unknown = True
+        elif value == {'op': 'confirm-cancel'}:
+            backend.cancel_ack_unknown = False
         else:
             raise HTTPException(400, 'FIXTURE_CONTROL_INVALID')
         return {'ok': True}
@@ -542,11 +554,32 @@ class WorkflowNativePostgresTests(unittest.TestCase):
                 'expectedVersion': original['workflow']['version']}, expected=403)
         finally:
             self.server.control('restore')
-        self.request('POST', '/jobs/' + task['id'] + '/cancel', {})
-        self.until(task, lambda value: all(row['observation']['allStopped'] for row in value['operations']))
+        self.server.control('observer-stop')
+        self.server.control('cancel-ack-unknown')
+        try:
+            self.request('POST', '/jobs/' + task['id'] + '/cancel', {})
+            held = self.assert_once(task, original)
+            self.assertTrue(held['task']['cancel_requested'])
+            self.assertFalse(held['task']['terminal'])
+            self.assertTrue(held['workflowHeld'])
+            self.assertEqual(held['diskHold'], 'HELD')
+            for name in ('analyze', 'validate'):
+                entry = held['workflow']['stages'][name]
+                self.assertEqual(entry['state'], 'UNKNOWN')
+                self.assertEqual(entry['handle'], original['workflow']['stages'][name]['handle'])
+                self.assertFalse(entry['observation']['allStopped'])
+            detail = self.request('GET', '/jobs/' + task['id'])
+            self.assertEqual(detail['job']['status'], 'unknown')
+        finally:
+            self.server.control('confirm-cancel')
+            self.server.control('observer-start')
+        self.until(task, lambda value: all(row['observation']['allStopped'] for row in value['operations'])
+            and not value['workflowHeld'] and value['task']['terminal'])
         final = self.assert_once(task, original)
         self.assertEqual(len(final['operations']), len(original['operations']))
         self.assertTrue(final['task']['cancel_requested'])
+        self.assertFalse(final['workflowHeld'])
+        self.assertEqual(final['diskHold'], 'RELEASED')
 
     def test_exit_before_native_pause_preserves_original_unknown_custody(self):
         task = self.start_task('exit-before-pause')

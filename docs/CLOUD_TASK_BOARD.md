@@ -11,7 +11,9 @@ The user subsequently authorized normal merge into main after engineering checks
 and requested the already accepted baseline be synchronized first via PR61.
 PR61 merged the accepted baseline into main at
 `067354e0b95ceba7aa620216fe7a18715b179ac0` after explicit user confirmation
-of the draft-to-ready step; main CI is pending. No protection bypass.
+of the draft-to-ready step. Main CI37714925242 attempt1 passed all five jobs:
+candidate9/9, AutoResearch11/11 (zero skips), full PG2281 tests (63 skips).
+This is an independently completed baseline milestone; no protection bypass.
 Current workflow edits remain separate in draft PR62. All 51 covered historical
 stage PRs are resolved with exact ancestry evidence; independent #8/#41/#51 remain open.
 
@@ -64,6 +66,25 @@ a deterministic partial-publication regression proves the old reader's JSON
 failure, and published corrupt state still fails closed without another launch.
 No production retry/deadline is relaxed. Final exact CI and workflow merge remain
 pending; PR62 records the immutable commit and terminal observations.
+
+CI at ea23c6 passed all eight portable/frontend jobs but push native cancellation
+revealed a real custody omission: API/delegation reads could mark the task
+terminal while its workflow still held original operations, excluding it from
+later lifecycle cleanup. Store terminal/admission, descendant accounting and
+remote stop proofs now include workflow custody; user cascade cancellation
+attempts cleanup of original workflow handles. Known paused waits remain
+continuable while native-terminal held work reports UNKNOWN. Startup repairs
+matching original accounting only, and first custody publication locks the task
+row against terminal release. Metadata reads/transactions reuse Store connections.
+Deterministic native cancellation now stops the observer and injects UNKNOWN
+cancel ACK: task/disk/root capacity cannot release before positive original stop.
+Four native scenarios passed4/4 zero skips in111.918s; three dedicated startup/
+pool checks passed3/3 zero skips in58.476s, run serially. The mandatory gate now
+includes all seven native/startup cases; discovery confirms seven. Updated
+portable suite passed2358 tests (435 skips), followed by focused checks for the
+latest transaction/paused-state changes. Independent source review found no
+concrete lock inversion. Final exact CI and workflow merge remain pending.
+
 See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
 
 ---

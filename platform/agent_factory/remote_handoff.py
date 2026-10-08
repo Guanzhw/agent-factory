@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from .control_commands import ControlCommand
-from .store import effect_unresolved, canonical, digest, now
+from .store import effect_unresolved, canonical, digest, now, runtime_custody_held
 from .native_bridge import INTERNAL_NATIVE
 from .plan_policy import ToolContract, tools_for_contract
 
@@ -572,6 +572,7 @@ class PreparedHandoffService:
                       applicationStatus=application_status,
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
                                       and not any(effect_unresolved(effect) for effect in effects)
+                                      and not runtime_custody_held(self.store, task['id'])
                                       and (group is None or group["allStopped"])))
         if "processLeases" in result and any(item["capacityHeld"] for item in result["processLeases"]["leases"]):
             result["allStopped"] = False

@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 from .plan_policy import NativeMandateCompleted
 from .remote_handoff import HandoffCancellationRequested
-from .store import effect_unresolved
+from .store import effect_unresolved, runtime_custody_held
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -216,10 +216,7 @@ class FactoryLifecycleObserver:
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
         effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
-        process_runtime = getattr(self.store, "process_runtime", None)
-        effects_unknown = effects_unknown or (process_runtime is not None and process_runtime.task_held(task["id"]))
-        workflow = getattr(self.store, 'workflow', None)
-        effects_unknown = effects_unknown or (workflow is not None and workflow.task_held(task['id']))
+        effects_unknown = effects_unknown or runtime_custody_held(self.store, task['id'])
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",

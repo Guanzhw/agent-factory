@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from fastapi import HTTPException
 
 from agent_factory.workflow_contracts import WorkflowAcknowledgementUnknown, workflow_fingerprint
@@ -52,8 +52,14 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = SimpleNamespace(user_id='alice', session_id='task', run_id='native')
         self.task = {'id': 'task', 'owner_id': 'alice', 'run_id': 'native', 'plan_id': 'plan', 'terminal': False, 'cancel_requested': False}
         self.plan = {'ownerId': 'alice', 'applicationRef': {'id': 'approved', 'version': 1, 'sha256': 'a'*64}, 'inputValues': {'goal': 'synthetic'}}
-        self.store = SimpleNamespace(engine=self.engine, task=self.get_task, authorize_tool=Mock(side_effect=lambda *args: deepcopy(self.plan)))
+        self.store = SimpleNamespace(engine=self.engine, transaction=self.engine.begin, sql=self.sql,
+            task=self.get_task, authorize_tool=Mock(side_effect=lambda *args: deepcopy(self.plan)))
         self.build([stage('A'), stage('B', ['A'])])
+    def sql(self, query, **params):
+        # Use the actual SQLite journal, including the durable task hold lookup.
+        with self.engine.connect() as conn:
+            return [dict(row) for row in conn.execute(text(query), params).mappings()]
+
     def get_task(self, identifier, owner):
         if identifier != 'task' or owner != 'alice': raise PermissionError('owner')
         return deepcopy(self.task)
