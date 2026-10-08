@@ -41,7 +41,7 @@ class WorkflowDecisionModel(DelegatingModel):
             # current registered step, queue, plan, owner and envelope checks.
             if (original.parent_run_id not in (None, root.run_id)
                     or original.workflow_id not in (None, self.workflow_id)
-                    or original.workflow_step_id not in (None, self.step_id)):
+                    or original.workflow_step_id != (root.metadata or {}).get('factory_native_step_id')):
                 raise InputCheckError('Workflow decision lineage differs')
             return root
 
@@ -61,8 +61,8 @@ class WorkflowDecisionModel(DelegatingModel):
 
         def checked_current():
             latest = validated_root()
-            if (latest.run_id, latest.session_id, latest.user_id, latest.session_state) != (
-                    root.run_id, root.session_id, root.user_id, root.session_state):
+            if (latest.run_id, latest.session_id, latest.user_id, latest.session_state, latest.metadata) != (
+                    root.run_id, root.session_id, root.user_id, root.session_state, root.metadata):
                 raise InputCheckError('Workflow root binding changed')
             current()
 

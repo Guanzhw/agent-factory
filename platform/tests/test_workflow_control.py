@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 from agno.exceptions import RunCancelledException
+from agno.run.requirement import RunRequirement
 from agno.workflow.types import StepRequirement
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -145,6 +146,17 @@ class WorkflowControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.inspections, [])
         self.assertTrue(self.service.read('alice', operation['id'])['closed'])
         self.assertEqual(self.bridge.continue_run.await_count, 1)
+        submitted = self.bridge.continue_run.call_args.args[3][0]['executor_requirements'][0]
+        self.assertTrue(RunRequirement.from_dict(submitted).is_resolved())
+        original = self.requirement['executor_requirements'][0]
+        self.assertEqual(submitted['id'], original['id'])
+        execution = submitted['tool_execution']
+        self.assertEqual(execution['tool_call_id'], original['tool_execution']['tool_call_id'])
+        self.assertEqual(execution['tool_args'], original['tool_execution']['tool_args'])
+        self.assertIs(execution['external_execution_required'], True)
+        self.assertEqual(json.loads(execution['result']), {'operations': [
+            self.service.read('alice', operation['id'])['observation']]})
+        self.assertIsNone(original['tool_execution']['result'])
         args = self.store.delegation.consume_tool_budget.call_args.args
         self.assertEqual(args[1:], ('native-wait:' + digest({'stepId': 'wait', 'toolCallId': 'original-native-call'}), 'factory_wait_operations'))
         self.assertEqual(self.store.delegation.consume_tool_budget.call_count, 1)

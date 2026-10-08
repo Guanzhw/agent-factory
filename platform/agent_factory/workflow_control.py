@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
+from agno.run.requirement import RunRequirement
 from agno.workflow.types import StepRequirement
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -189,9 +190,11 @@ class WorkflowControl:
         require(all(op['taskId'] == task['id'] and op['nativeRunId'] == task['run_id'] for op in operations))
         if not all(op['closed'] for op in operations):
             return None
-        execution['result'] = canonical({'operations': [op['observation'] for op in operations]})
-        execution['external_execution_required'] = False
-        wrapper['tool_execution'] = execution
+        resolved = RunRequirement.from_dict(wrapper)
+        resolved.set_external_execution_result(canonical({'operations': [op['observation'] for op in operations]}))
+        # Agno consumes the original external-execution flag to insert the tool
+        # result message. Clearing it here would silently discard that result.
+        updated['executor_requirements'] = [resolved.to_dict()]
         return updated
 
     async def submit(self, owner, task_id, command):

@@ -67,9 +67,16 @@ def _configuration(registration):
     if type(registration.tool_names) is not tuple or len(set(registration.tool_names)) != len(registration.tool_names):
         raise ValueError('Unique workflow tool names required')
     names, ids, decisions = [], set(), []
+    step_names, agent_ids = set(), set()
     for node in _nodes(component.steps):
         if isinstance(node, Step):
             identifier = _identifier(node.step_id)
+            if node.skip_on_failure or node.human_review.on_error != 'fail':
+                raise ValueError('Native steps must fail on execution errors')
+            name = _identifier(node.name)
+            if name in step_names:
+                raise ValueError('Unique native step names required')
+            step_names.add(name)
             # Agno generates UUIDs for omitted step_id; require an explicit semantic ID.
             if re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', identifier):
                 raise ValueError('Explicit semantic step_id required')
@@ -85,6 +92,9 @@ def _configuration(registration):
                 if (tools and (type(tools) is not list or len(tools) != 1 or tools[0] is not factory_wait_operations)) or not node.agent.id:
                     raise ValueError('Decision agents must be tool-free and named')
                 agent = node.agent
+                if agent.id in agent_ids:
+                    raise ValueError('Unique native decision agent IDs required')
+                agent_ids.add(agent.id)
                 if callable(agent.instructions) or callable(agent.system_message):
                     raise ValueError('Decision instructions must be static')
                 forbidden = ('pre_hooks', 'post_hooks', 'tool_hooks', 'fallback_config', 'fallback_models',
@@ -243,7 +253,38 @@ class NativeWorkflows:
             registration = self.registrations[identifier]
             if not any(node is step for node in _nodes(registration.component.steps)) or response.agent_id != step.agent.id:
                 raise PermissionError('Original registered decision step required')
-            return self._root(identifier, response)
+            root = self._root(identifier, response)
+            actual_step_id = response.workflow_step_id
+            if actual_step_id is not None:
+                # Agno's OS copies mint runtime step UUIDs; continuation restores
+                # those original UUIDs. A declaration ID is not that runtime ID.
+                from agno.db.base import SessionType
+                session = self.native_db.get_session(root.session_id,
+                    session_type=SessionType.WORKFLOW, user_id=root.user_id)
+                if session is None or session.session_id != root.session_id or session.user_id != root.user_id or session.workflow_id != identifier:
+                    raise PermissionError('Original native workflow session required')
+                runs = [run for run in session.runs or [] if run.run_id == root.run_id and run.workflow_id == identifier
+                    and run.session_id == root.session_id and run.user_id == root.user_id]
+                if len(runs) != 1:
+                    raise PermissionError('Original native workflow run required')
+                run = runs[0]
+                children = [child for child in run.step_executor_runs or [] if child.run_id == response.run_id]
+                if not children or any(child.agent_id != step.agent.id or child.parent_run_id != root.run_id
+                        or child.session_id != root.session_id or child.user_id != root.user_id
+                        or child.workflow_step_id != actual_step_id for child in children):
+                    raise PermissionError('Original native executor continuation required')
+                def results(items):
+                    for item in items or []:
+                        yield item
+                        yield from results(getattr(item, 'steps', None))
+                matched = any(item.step_id == actual_step_id and item.step_name == step.name
+                    for item in results(run.step_results)) or any(req.step_id == actual_step_id
+                    and req.step_name == step.name and req.executor_run_id == response.run_id
+                    and req.executor_id == step.agent.id for req in run.step_requirements or [])
+                if not matched:
+                    raise PermissionError('Original registered native step required')
+            root.metadata = {'factory_native_step_id': actual_step_id}
+            return root
         return validate
 
     def _wrap(self, identifier, step):
@@ -251,7 +292,7 @@ class NativeWorkflows:
         accepts_context = 'run_context' in inspect.signature(original).parameters
 
         def authorize(run_context):
-            if not isinstance(run_context, RunContext) or run_context.workflow_id != identifier:
+            if not isinstance(run_context, RunContext) or run_context.workflow_id not in (None, identifier):
                 raise PermissionError('Native workflow context required')
             root = self._root(identifier, run_context)
             if root.run_id != run_context.run_id:

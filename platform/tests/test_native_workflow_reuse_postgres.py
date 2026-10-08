@@ -115,6 +115,28 @@ def status(value):
     return str(getattr(value.status, 'value', value.status)).lower()
 
 
+def require_successful_native_results(output):
+    """Queue completion alone is not proof that native step executors succeeded."""
+    if output is None or status(output) != 'completed' or not output.step_results:
+        raise AssertionError('FIXTURE_COMPLETED_NATIVE_RESULTS_REQUIRED')
+    diagnostics = []
+    def walk(items, depth=0):
+        if depth > 8:
+            raise AssertionError('FIXTURE_NATIVE_RESULT_DEPTH')
+        for item in items:
+            if len(diagnostics) >= 64:
+                raise AssertionError('FIXTURE_NATIVE_RESULT_COUNT')
+            value = item.to_dict() if hasattr(item, 'to_dict') else item
+            diagnostics.append({'step': value.get('step_name'), 'success': value.get('success'),
+                                'paused': value.get('is_paused')})
+            walk(value.get('steps') or [], depth + 1)
+    walk(output.step_results)
+    # A structured domain FAILURE_JSON can be a successfully returned result;
+    # it is the executor's success/paused flags, not content, that are checked.
+    if any(item['success'] is not True or item['paused'] for item in diagnostics):
+        raise AssertionError('FIXTURE_NATIVE_STEP_FAILED ' + json.dumps(diagnostics))
+
+
 def child_continue(payload):
     """Fresh-process native reload, no preexisting run object or Factory journal."""
     engine = create_engine(payload['database'])
@@ -142,6 +164,10 @@ def child_continue(payload):
         completed = workflow.continue_run(run_id=payload['runId'], session_id=payload['sessionId'], step_requirements=requirements)
         if completed.run_id != payload['runId'] or status(completed) != 'completed':
             raise ValueError('FIXTURE_ORIGINAL_CONTINUATION_FAILED')
+        persisted = workflow.get_run_output(run_id=payload['runId'], session_id=payload['sessionId'])
+        if persisted is None or persisted.run_id != payload['runId']:
+            raise AssertionError('FIXTURE_ORIGINAL_PERSISTED_RUN_REQUIRED')
+        require_successful_native_results(persisted)
         print('NATIVE_REUSE_RESULT ' + json.dumps({'runId': completed.run_id, 'status': status(completed)}), flush=True)
     finally:
         db.db_engine.dispose(); engine.dispose()
@@ -187,7 +213,10 @@ class NativeWorkflowReusePostgresTests(unittest.TestCase):
         self.assertEqual(after[:len(before)], before)
         self.assertCountEqual([row['stage'] for row in after], ['failure', 'recovery', 'submit_left', 'submit_right', 'reviewed', 'final_report'])
         fresh = build_workflow(self.db, self.engine, 'failure')
-        self.assertEqual(status(fresh.get_run_output(run_id=paused.run_id, session_id=session)), 'completed')
+        persisted = fresh.get_run_output(run_id=paused.run_id, session_id=session)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted.run_id, paused.run_id)
+        require_successful_native_results(persisted)
     def test_rejected_original_human_review_cancels_without_following_effects(self):
         _, paused, session = self.paused('primary')
         before = self.effects()
@@ -225,7 +254,10 @@ class NativeWorkflowReusePostgresTests(unittest.TestCase):
         self.assertEqual(after, [{**row, 'state': 'COMPLETED'} for row in before])
         self.assertCountEqual([row['stage'] for row in self.effects()], ['primary', 'final_report'])
         fresh = build_workflow(self.db, self.engine, 'primary', external_wait=True)
-        self.assertEqual(status(fresh.get_run_output(run_id=paused.run_id, session_id=session)), 'completed')
+        persisted = fresh.get_run_output(run_id=paused.run_id, session_id=session)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted.run_id, paused.run_id)
+        require_successful_native_results(persisted)
 
 
 if __name__ == '__main__' and sys.argv[1:] == ['--continue-original']:

@@ -1,3 +1,31 @@
+# Semantic continuation correction — 2026-10-08
+
+PR62 is still Draft. Head `47819a12755abbf3d75ca8dbfe77f23d2b9269df` is
+**rejected for acceptance**, regardless of its eventual CI outcome. Real-browser
+review found a completed queue row with three failed downstream steps and only
+three of five expected operations. The earlier gate did not assert those results.
+The stronger regression reproduced that failure before correction.
+
+The correction preserves native runtime UUID lineage, validates missing native
+continuation workflow context against the original ticket, supplies external
+results through Agno RunRequirement, and requires fail-on-error step policies.
+The strengthened serial native PostgreSQL gate passed all10 required cases in
+107.224s, zero skips; boundary58 passed0.512s and Pyright reported0 errors.
+Success now requires six successful leaf results and five once-only closed
+operations. Candidate9 and AutoResearch11 previously passed serially, zero skips;
+frontend217 plus lint/typecheck/build and dependency audits passed. The replacement
+real browser traversed loopback React → Factory HTTP → PostgreSQL native queue,
+passed the stronger five-operation/six-leaf assertions, and desktop/mobile
+screenshots were manually reviewed. It used a synthetic model and SQLite backend,
+not production identity or a domain backend. Exact new-head CI remains required.
+
+The unified application developer guide and README entry ship with this foundation,
+covering local authoring through reviewed publication. Real ConvertD remains the
+user's local implementation. No live provider, production identity, scientific
+data, deployment or target-machine acceptance is claimed.
+
+---
+
 # Native Agno reuse correction — active 2026-10-08
 
 PR62 remains Draft and unmerged. Previous head `79133217bb019b067f7347ef4a2bece2a53283b6`

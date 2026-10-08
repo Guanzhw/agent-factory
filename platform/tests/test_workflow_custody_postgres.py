@@ -117,6 +117,7 @@ class WorkflowCustodyPostgresTests(unittest.TestCase):
         self.fixture.command(completed, 'decide', requirementId=view['requirements'][0]['id'], approved=True)
         self.fixture.until(completed, lambda value: value['native']['status'] == 'completed'
             and not value['workflowHeld'])
+        self.fixture.assert_completed_native(completed)
         cancelled = self.fixture.start_task()
         self.fixture.paused(cancelled)
         self.fixture.request('POST', '/jobs/' + cancelled['id'] + '/cancel', {})

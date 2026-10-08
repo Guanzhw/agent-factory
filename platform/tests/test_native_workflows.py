@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agent_factory.workflow_model import WorkflowDecisionModel
 from agno.workflow.workflow import Workflow
 from agno.workflow.step import Step
+from agno.workflow.types import HumanReview, OnError
 from agno.workflow.loop import Loop
 from fastapi import HTTPException
 from agent_factory.native_workflows import NativeWorkflowRegistration, NativeWorkflows
@@ -23,7 +24,7 @@ class NativeWorkflowsTests(TestCase):
 
     def registration(self):
         return NativeWorkflowRegistration(Workflow(id='test-workflow', name='Test', steps=[
-            Step(name='protected', step_id='protected-v1', executor=operation, max_retries=0)]), '1', ('protected',), 'a' * 64)
+            Step(name='protected', step_id='protected-v1', executor=operation, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), '1', ('protected',), 'a' * 64)
 
     def test_pin_excludes_runtime_database_session(self):
         registration = self.registration()
@@ -45,7 +46,7 @@ class NativeWorkflowsTests(TestCase):
             elif change == 'loop':
                 registration.component.steps = [Loop(steps=registration.component.steps)]
             else:
-                registration.component.steps = [Step(name='protected', executor=operation, max_retries=0)]
+                registration.component.steps = [Step(name='protected', executor=operation, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]
             with self.assertRaises(ValueError):
                 NativeWorkflows(SimpleNamespace(), self.auth, None, [registration])
 
@@ -103,7 +104,7 @@ class NativeWorkflowsTests(TestCase):
     def test_decision_model_replaced_and_instruction_drift_rejected(self):
         agent = Agent(id='decision-agent', instructions=['Choose a route'])
         registration = NativeWorkflowRegistration(Workflow(id='decision-workflow', steps=[
-            Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0)]), '1', (), 'a' * 64)
+            Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), '1', (), 'a' * 64)
         bridge = NativeWorkflows(SimpleNamespace(execution_bindings=SimpleNamespace()), self.auth, None, [registration])
         self.assertIsInstance(agent.model, WorkflowDecisionModel)
         bridge.pin('decision-workflow')
@@ -116,7 +117,7 @@ class NativeWorkflowsTests(TestCase):
         from agno.tools import tool
         from agent_factory.native_external_wait import factory_wait_operations
         agent = Agent(id='wait-agent', tools=[factory_wait_operations])
-        step = Step(name='wait', step_id='wait-v1', agent=agent, max_retries=0)
+        step = Step(name='wait', step_id='wait-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))
         registration = NativeWorkflowRegistration(Workflow(id='wait-workflow', steps=[step]), '1', (), 'a' * 64)
         bridge = NativeWorkflows(SimpleNamespace(execution_bindings=SimpleNamespace()), self.auth, None, [registration])
         bridge.pin('wait-workflow')
@@ -163,7 +164,7 @@ class NativeWorkflowsTests(TestCase):
         from agent_factory.native_external_wait import factory_wait_operations
         agent = Agent(id='wait-agent', tools=[factory_wait_operations])
         registration = NativeWorkflowRegistration(Workflow(id='wait-workflow', steps=[
-            Step(name='wait', step_id='wait-v1', agent=agent, max_retries=0)]), '1', (), 'a' * 64)
+            Step(name='wait', step_id='wait-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), '1', (), 'a' * 64)
         bridge = NativeWorkflows(SimpleNamespace(execution_bindings=SimpleNamespace()), self.auth, None, [registration])
         plan = {'nativeComponent': bridge.pin('wait-workflow'), 'tools': []}
         with self.assertRaises(HTTPException) as raised:
@@ -204,7 +205,7 @@ class NativeWorkflowsTests(TestCase):
             with self.subTest(field=field):
                 agent = Agent(id='decision-agent', instructions=['Fixed decision'])
                 registration = NativeWorkflowRegistration(Workflow(id='decision-workflow', steps=[
-                    Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0)]), '1', (), 'a' * 64)
+                    Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), '1', (), 'a' * 64)
                 bridge = NativeWorkflows(SimpleNamespace(execution_bindings=SimpleNamespace()), self.auth, None, [registration])
                 bridge.pin('decision-workflow')
                 setattr(agent, field, value)
@@ -263,9 +264,109 @@ class NativeWorkflowsTests(TestCase):
                 agent = Agent(id='decision-agent')
                 setattr(agent, field, Original)
                 registration = NativeWorkflowRegistration(Workflow(id='decision-workflow', steps=[
-                    Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0)]), '1', (), 'a' * 64)
+                    Step(name='decision', step_id='decision-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), '1', (), 'a' * 64)
                 bridge = NativeWorkflows(SimpleNamespace(execution_bindings=SimpleNamespace()), self.auth, None, [registration])
                 bridge.pin('decision-workflow')
                 setattr(agent, field, Replacement)
                 with self.assertRaises(HTTPException):
                     bridge.pin('decision-workflow')
+
+    def test_continuation_without_workflow_id_still_requires_original_ticket(self):
+        effects = []
+        registration = self.registration()
+        def execute(step_input, run_context):
+            effects.append(run_context)
+        registration.component.steps[0].executor = execute
+        task = {'id': 'task', 'plan_id': 'plan', 'run_id': 'run', 'owner_id': 'alice', 'request_id': 'request'}
+        plan = {'tools': ['protected']}
+        store = SimpleNamespace(task=lambda *args: task, plan=lambda *args: plan,
+            bind_run=Mock(), authorize_tool=Mock(),
+            delegation=SimpleNamespace(consume_tool_budget=Mock()))
+        ticket = {'id': 'run', 'session_id': 'task', 'user_id': 'alice',
+                  'component_type': 'workflow', 'component_id': 'test-workflow', 'status': 'running'}
+        bridge = NativeWorkflows(store, self.auth, SimpleNamespace(get_job=lambda run: ticket), [registration])
+        plan['nativeComponent'] = bridge.pin('test-workflow')
+        context = RunContext(run_id='run', session_id='task', user_id='alice', workflow_id=None,
+            session_state={'factory_envelope': {'plan_ref': 'plan', 'user_id': 'alice',
+                           'task_id': 'task', 'request_id': 'request'}})
+        registration.component.steps[0].executor(None, context)
+        self.assertEqual(effects[0].workflow_id, 'test-workflow')
+        self.assertIsNone(context.workflow_id)
+        for field in ('id', 'session_id', 'user_id', 'component_type', 'component_id', 'status'):
+            before = ticket[field]; ticket[field] = 'foreign'
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                registration.component.steps[0].executor(None, context)
+            ticket[field] = before
+        context.workflow_id = 'foreign'
+        with self.assertRaises(PermissionError):
+            registration.component.steps[0].executor(None, context)
+        context.workflow_id = None
+        context.session_state['factory_envelope']['request_id'] = 'replacement'
+        with self.assertRaises(PermissionError):
+            registration.component.steps[0].executor(None, context)
+        self.assertEqual(len(effects), 1)
+        self.assertEqual(store.delegation.consume_tool_budget.call_count, 1)
+
+    def test_dynamic_step_uuid_requires_original_persisted_native_lineage(self):
+        from agno.db.base import SessionType
+        from agno.run.agent import RunOutput
+        from agno.run.workflow import WorkflowRunOutput
+        from agno.session.workflow import WorkflowSession
+        from agno.workflow.types import StepOutput, StepRequirement
+        actual = '8b08d4df-b54e-46ba-9527-c9104826bb7a'
+        agent = Agent(id='decision-agent')
+        step = Step(name='decision', step_id='semantic-decision-v1', agent=agent, max_retries=0, human_review=HumanReview(on_error=OnError.fail))
+        registration = NativeWorkflowRegistration(Workflow(id='decision-workflow', steps=[step]), '1', (), 'a' * 64)
+        task = {'id': 'task', 'plan_id': 'plan', 'run_id': 'root', 'owner_id': 'alice', 'request_id': 'request'}
+        plan = {'tools': []}
+        store = SimpleNamespace(task=lambda *args: task, plan=lambda *args: plan,
+                                bind_run=Mock(), execution_bindings=SimpleNamespace())
+        envelope = {'factory_envelope': {'plan_ref': 'plan', 'user_id': 'alice', 'task_id': 'task', 'request_id': 'request'}}
+        child = RunOutput(run_id='child', parent_run_id='root', session_id='task', user_id='alice',
+            agent_id='decision-agent', workflow_id='decision-workflow', workflow_step_id=actual,
+            session_state=deepcopy(envelope))
+        result = StepOutput(step_id=actual, step_name='decision', step_run_id='child')
+        run = WorkflowRunOutput(run_id='root', workflow_id='decision-workflow', session_id='task', user_id='alice',
+                                step_executor_runs=[deepcopy(child)], step_results=[result])
+        session = WorkflowSession(session_id='task', user_id='alice', workflow_id='decision-workflow', runs=[run])
+        db = SimpleNamespace(get_session=Mock(return_value=session), get_job=Mock(return_value={
+            'id': 'root', 'session_id': 'task', 'user_id': 'alice', 'component_type': 'workflow',
+            'component_id': 'decision-workflow', 'status': 'running'}))
+        bridge = NativeWorkflows(store, self.auth, db, [registration])
+        plan['nativeComponent'] = bridge.pin('decision-workflow')
+        validate = bridge._validator('decision-workflow', step)
+        trusted = validate(child, task, plan)
+        self.assertEqual(trusted.metadata, {'factory_native_step_id': actual})
+        db.get_session.assert_called_with('task', session_type=SessionType.WORKFLOW, user_id='alice')
+        # Require both original child identity and registered step-name evidence.
+        mutations = [(child, 'run_id'), (child, 'agent_id'), (child, 'workflow_step_id'),
+                     (run, 'run_id'), (run, 'session_id'), (run, 'user_id'),
+                     (run.step_executor_runs[0], 'session_id'), (run.step_executor_runs[0], 'user_id'),
+                     (result, 'step_name'), (session, 'user_id'),
+                     (session, 'workflow_id'), (session, 'session_id')]
+        for target, field in mutations:
+            original = getattr(target, field)
+            setattr(target, field, 'foreign')
+            with self.subTest(field=field, target=type(target).__name__), self.assertRaises(PermissionError):
+                validate(child, task, plan)
+            setattr(target, field, original)
+        # A persisted paused requirement supplies the same proof when no step result exists yet.
+        run.step_results = []
+        run.step_requirements = [StepRequirement(step_id=actual, step_name='decision',
+            requires_executor_input=True, executor_run_id='child', executor_id='decision-agent')]
+        self.assertEqual(validate(child, task, plan).metadata['factory_native_step_id'], actual)
+        run.step_requirements[0].executor_run_id = 'foreign'
+        with self.assertRaises(PermissionError):
+            validate(child, task, plan)
+
+    def test_guard_error_cannot_be_configured_as_successful_skip(self):
+        for field in ('skip_on_failure', 'on_error'):
+            with self.subTest(field=field):
+                registration = self.registration()
+                step = registration.component.steps[0]
+                if field == 'skip_on_failure':
+                    step.skip_on_failure = True
+                else:
+                    step.human_review.on_error = OnError.skip
+                with self.assertRaises(ValueError):
+                    NativeWorkflows(SimpleNamespace(), self.auth, None, [registration])

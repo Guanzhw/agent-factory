@@ -31,7 +31,7 @@ from agno.tools import tool
 from agno.workflow import Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
-from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnError, OnReject, StepInput, StepOutput
 from agent_factory.input_schema import input_model
 from agent_factory.config import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits, KnowledgeContext
@@ -164,13 +164,13 @@ def build_workflow(holder):
             plan = store.plan(task['plan_id'], run_context.user_id)
             record = await store.workflow.start(run_context, name, 'original', PIN, {'values': plan['inputValues']})
             return StepOutput(content=json.dumps({'operationId': record['id'], 'modelLive': False}))
-        return Step(name=name, step_id=name, executor=cast(Any, execute), max_retries=0)
+        return Step(name=name, step_id=name, executor=cast(Any, execute), max_retries=0, human_review=HumanReview(on_error=OnError.fail))
     review = step('fixture_review')
-    review.human_review = HumanReview(requires_confirmation=True, on_reject=OnReject.cancel)
+    review.human_review = HumanReview(requires_confirmation=True, on_reject=OnReject.cancel, on_error=OnError.fail)
     return Workflow(id=APP, name='Representative native Workflow', input_schema=WorkflowInput,
         steps=cast(Any, [step('fixture_prepare'), Parallel(cast(Any, step('fixture_left')), cast(Any, step('fixture_right')), name='parallel-original'),
             Step(name='original_wait', step_id='original_wait', agent=Agent(id='native-original-wait',
-                tools=[factory_wait_operations], telemetry=False), max_retries=0),
+                tools=[factory_wait_operations], telemetry=False), max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
             review, step('fixture_report')]), telemetry=False)
 
 
@@ -230,6 +230,34 @@ def publish(state):
     return application
 
 
+def persisted_steps(store, task, configuration):
+    """Bounded diagnostics from original persisted native results, no replay."""
+    if not task or not task['run_id']:
+        return []
+    component = store.native_workflows.registrations[APP].component
+    output = component.get_run_output(run_id=task['run_id'], session_id=task['id'])
+    if output is None:
+        return []
+    projected = []
+    def collect(items, depth=0):
+        if depth > 4:
+            raise AssertionError('FIXTURE_STEP_DIAGNOSTIC_DEPTH')
+        for item in items or []:
+            if len(projected) >= 32:
+                raise AssertionError('FIXTURE_STEP_DIAGNOSTIC_COUNT')
+            value = item.to_dict() if hasattr(item, 'to_dict') else item
+            content = value.get('content')
+            content = content if type(content) is str else json.dumps(content, default=lambda _: 'UNSUPPORTED')
+            for key in ('jwtKey', 'controlKey', 'dbUrl', 'workspace'):
+                content = content.replace(configuration[key], '[REDACTED_FIXTURE_VALUE]')
+            content = ''.join(char for char in content[:2048] if char.isprintable() or char == '\n')
+            projected.append({'stepId': value.get('step_id'), 'name': value.get('step_name'),
+                'success': value.get('success'), 'paused': value.get('is_paused'), 'content': content})
+            collect(value.get('steps'), depth + 1)
+    collect(output.step_results)
+    return projected
+
+
 def serve(configuration):
     import uvicorn
     from fastapi import HTTPException, Request
@@ -267,6 +295,7 @@ def serve(configuration):
             'commands': [{'commandId': row['command_id'], 'status': row['body'].get('receipt', {}).get('status'),
                 'errorCode': row['body'].get('receipt', {}).get('errorCode')} for row in
                 store.sql('SELECT command_id,body FROM af_native_workflow_commands WHERE task_id=:id ORDER BY command_id LIMIT 32', id=taskId)] if taskId else [],
+            'nativeSteps': persisted_steps(store, task, configuration),
             'task': task, 'native': store.native_db.get_job(task['run_id']) if task and task['run_id'] else None,
             'custody': [store.workflow.read('alice', row['id']) for row in store.sql('SELECT id FROM af_external_operations WHERE task_id=:id ORDER BY id', id=taskId)] if taskId else [],
             'workflowHeld': held,
@@ -465,6 +494,21 @@ class NativeWorkflowFactoryPostgresTests(unittest.TestCase):
             all(record['closed'] for record in facts['custody']) and
             any(req['kind'] == 'confirmation' for req in self.view(task)['requirements']))
 
+    def assert_completed_native(self, task, facts=None):
+        facts = facts or self.server.facts(task['id'])
+        diagnostic = json.dumps({'nativeSteps': facts['nativeSteps'], 'custody': facts['custody']}, default=str)
+        self.assertEqual(facts['native']['status'], 'completed', diagnostic)
+        self.assertEqual({record['stepId'] for record in facts['custody']}, set(FUNCTION_TOOLS), diagnostic)
+        self.assertEqual(len(facts['custody']), len(FUNCTION_TOOLS), diagnostic)
+        original_ids = {record['id'] for record in facts['custody']}
+        operations = [row for row in facts['operations'] if row['operationId'] in original_ids]
+        self.assertEqual({row['stage'] for row in operations}, set(FUNCTION_TOOLS), diagnostic)
+        self.assertTrue(all(row['starts'] == 1 for row in operations), diagnostic)
+        self.assertTrue(all(record['closed'] for record in facts['custody']), diagnostic)
+        leaves = [step for step in facts['nativeSteps'] if step['name'] in {*FUNCTION_TOOLS, 'original_wait'}]
+        self.assertEqual({step['name'] for step in leaves}, {*FUNCTION_TOOLS, 'original_wait'}, diagnostic)
+        self.assertTrue(all(step['success'] is True and not step['paused'] for step in facts['nativeSteps']), diagnostic)
+
     def test_single_worker_pause_restart_same_run_continue(self):
         task = self.start_task()
         original = self.paused(task)
@@ -491,7 +535,7 @@ class NativeWorkflowFactoryPostgresTests(unittest.TestCase):
         self.request('POST', path, {**command, 'approved': False}, expected=409)
         self.until(task, lambda facts: facts['native']['status'] == 'completed')
         final = self.assert_original(task, original)
-        self.assertTrue(all(row['closed'] for row in final['custody']))
+        self.assert_completed_native(task, final)
         self.request('GET', '/workflows/' + task['id'], owner='bob', expected=404)
 
     def test_unknown_lookup_original_operation_external_wait(self):

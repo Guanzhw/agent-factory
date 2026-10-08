@@ -74,3 +74,25 @@ class WorkflowDecisionModelTests(TestCase):
         with patch.object(DelegatingModel, '_prepare_selection', side_effect=prepare):
             bridge._prepare_selection((None,) * 6 + (original,), {}, streaming=True)
         self.assertEqual(original.run_id, 'child')
+
+    def test_dynamic_native_step_uses_trusted_validator_metadata(self):
+        bridge, original, context, _, _, _ = self.setup_bridge()
+        original.workflow_id = 'workflow'
+        original.parent_run_id = 'root'
+        original.workflow_step_id = '8b08d4df-b54e-46ba-9527-c9104826bb7a'
+        context.metadata = {'factory_native_step_id': original.workflow_step_id}
+        def prepare(arguments, kwargs, **unused):
+            return kwargs['run_response'], {}, context, Mock(), Mock(), object()
+        with patch.object(DelegatingModel, '_prepare_selection', side_effect=prepare) as dispatch:
+            bridge._prepare_selection((), {'run_response': original})
+            self.assertEqual(dispatch.call_count, 1)
+            # The registered semantic ID is not evidence for a different actual step.
+            original.workflow_step_id = bridge.step_id
+            with self.assertRaises(InputCheckError):
+                bridge._prepare_selection((), {'run_response': original})
+            self.assertEqual(dispatch.call_count, 1)
+            original.workflow_step_id = '8b08d4df-b54e-46ba-9527-c9104826bb7a'
+            context.metadata = {}
+            with self.assertRaises(InputCheckError):
+                bridge._prepare_selection((), {'run_response': original})
+            self.assertEqual(dispatch.call_count, 1)

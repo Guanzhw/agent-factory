@@ -43,8 +43,15 @@ attestation or a sandbox for operator code.
 
 The permitted native building blocks are `Step`, `Parallel`, `Router`,
 `Condition` and `Steps`. Function steps require `max_retries=0` and explicit,
-unique semantic ASCII `step_id` values. Auto-generated UUID step IDs are
-rejected. Use `max_retries=0` explicitly on all example steps; an unknown external
+unique semantic ASCII `step_id` values and unique step names. Every step must
+set `HumanReview(on_error=OnError.fail)` and keep `skip_on_failure=False`; the
+default error-skip policy can otherwise leave failed steps under a completed
+workflow. Structured domain failure outputs can still select reviewed recovery
+branches through native `Condition` or `Router`. Auto-generated UUID declarations
+are rejected. Agno creates and persists runtime step UUIDs when it copies a
+workflow; these differ from declaration IDs. Continuation validates the original
+owner-scoped WorkflowSession, root run, child Agent and persisted runtime step
+identity. It must not compare a restored runtime UUID with a declaration ID. Use `max_retries=0` explicitly on all example steps; an unknown external
 acknowledgement is not permission to retry a function. `Loop`, nested `Workflow`
 steps and `Team` executors are not open in this integration.
 
@@ -63,7 +70,10 @@ external jobs stopped. The wait Agent requests original operation IDs through
 and provider tool-call ID, so different Agent steps cannot share a debit accidentally.
 Native external execution parks the original run;
 Factory resolves that exact requirement only from matching operation custody.
-No new run or replacement operation is created to continue it.
+The result is supplied with native `RunRequirement.set_external_execution_result`;
+Agno consumes the external-execution flag and result itself. Clearing that flag
+before continuation loses the result. No new run or replacement operation is
+created to continue it.
 
 For model-selected branching, use a named, tool-free Agent to produce a bounded
 enum decision, then a native `Router` with an operator-authored selector. The
@@ -132,8 +142,8 @@ tool identities cannot be overridden. Published tool materials pin the matching
 adapter ID/revision and permission. The policy, current registrations and
 material bindings are rechecked before execution.
 
-Native function wrappers debit the shared tool ledger using the stable native
-step ID. Decision Agents use the existing model dispatch and usage ledger under
+Native function wrappers debit the shared tool ledger using the semantic
+registered step ID. Decision Agents use the existing model dispatch and usage ledger under
 the original workflow root. External-execution continuation separately debits
 `factory_wait_operations` using the original native tool-call ID because that
 pause/resolution path bypasses the ordinary tool pre-hook. Reading a snapshot or
@@ -271,6 +281,14 @@ branch completion or eligibility. External `allStopped` is displayed separately
 from native status.
 
 ## Validation and delivery boundary
+
+A completed native queue row is insufficient acceptance. The synthetic end-to-end
+fixture also requires all six expected leaf step results to succeed and all five
+expected external operations to start exactly once and positively stop. Preserve
+these assertions across pause, process restart and original-run continuation.
+Function continuation may omit `RunContext.workflow_id` in Agno 3.1; Factory
+rebinds it only after validating the original ticket, owner, run, plan and envelope.
+A conflicting workflow ID is rejected.
 
 Technical examples and check entrypoints are source references, not claims that
 the current commit has passed tests or CI. Use the repository's current CI and
