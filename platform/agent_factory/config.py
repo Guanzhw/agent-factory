@@ -62,6 +62,8 @@ class Settings:
     # Globally installed safe providers; users own their endpoint configurations.
     # No default secret backend or implicit remote-access grant.
     personal_connection_providers: dict = field(default_factory=dict)
+    credential_vault_factory: Callable | None = field(default=None, repr=False)
+    personal_connection_provider_factories: dict = field(default_factory=dict, repr=False)
     runtime_adapters: list = field(default_factory=list)
     tool_policies: tuple = field(default_factory=tuple)
     # Trusted workflow definitions/runtime implementations; never request-loaded.

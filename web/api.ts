@@ -391,3 +391,5 @@ export const api = {
   reconcile: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/reconcile`, 'POST'),
   artifactUrl: (jobId: string, artifactId: string) => `${base}/jobs/${segment(jobId)}/artifacts/${segment(artifactId)}`,
 };
+
+export { request as factoryRequest };

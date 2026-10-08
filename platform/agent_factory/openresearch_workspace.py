@@ -83,6 +83,28 @@ class OpenResearchWorkspace:
             'liveEndToEndVerified': False,
             'workloads': [{**p, 'kind': 'controlled-workload'} for p in self.research.list_presets(owner)]}
 
+    def request_result(self, owner, request_id):
+        """Read-only recovery of an acknowledged or in-flight owner command."""
+        self.auth.require(owner, 'read')
+        from .material_governance import MaterialGovernance
+        MaterialGovernance._key(request_id)
+        with self.db.read() as conn:
+            command = conn.execute(select(self.commands).where(self.commands.c.actor_id == owner,
+                self.commands.c.request_id == request_id)).mappings().first()
+            if command is None:
+                raise HTTPException(404, 'OPENRESEARCH_REQUEST_NOT_FOUND')
+            identifier = command['result']['id']
+            action = command['action']
+            if action in {'project-create', 'native-project-attach'}:
+                return {'requestId': request_id, 'action': action,
+                    'project': dict(self._project(conn, owner, identifier)['body'])}
+            row = conn.execute(select(self.sessions).where(self.sessions.c.id == identifier,
+                self.sessions.c.owner_id == owner)).mappings().first()
+            if row is None:
+                raise HTTPException(409, 'OPENRESEARCH_REQUEST_INTEGRITY')
+            session = dict(row)
+        return {'requestId': request_id, 'action': action, 'session': self._projection(owner, session)}
+
     def _native_adapter(self, owner, reference, pin=None):
         from .orx_workspace_adapter import ADAPTER_ID, OpenResearchWorkspaceAdapter
         expected = {} if pin is None else {'expected_revision': pin['revision'],
@@ -325,6 +347,10 @@ def openresearch_workspace_router(auth, service):
     @router.get('/capabilities')
     def capabilities(request: Request):
         return service.capabilities(auth.user(request)['id'])
+
+    @router.get('/requests/{request_id}')
+    def request_result(request_id: str, request: Request):
+        return service.request_result(auth.user(request)['id'], request_id)
 
     @router.get('/projects')
     def projects(request: Request):

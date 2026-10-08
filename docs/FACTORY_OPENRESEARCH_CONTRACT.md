@@ -26,11 +26,11 @@ Status: bounded implementation available in this branch; baseline `f869ab5`. Thi
 | Generic v2 application contract | Implemented; local unit/native loop passed, PostgreSQL CI required | Unit and real PostgreSQL plan/dispatch tests; v1 hash compatibility |
 | Adapter-owned lifecycle/evidence | Implemented; controlled regressions passed | Existing cancellation/custody regressions plus adapter tests |
 | Personal remote agent configuration/verification/binding/revoke | Implemented provider contract; controlled tests passed, live/vault gate remains | Controlled HTTP tests, cross-owner/SSRF/secret-redaction/revoke tests; real PostgreSQL persistence |
-| User credential onboarding into a deployment's secure vault | Deployment-dependent, not enabled here | Explicitly authorized secret backend integration and verification |
+| User credential onboarding into a deployment's secure vault | Opt-in encrypted backend and secure form implemented; real master key/deployment absent | Explicitly authorized secret backend integration and verification |
 | OpenResearch project/session product API | Owner mappings + controlled task sessions + actual native read/attach implemented; native attached-session admission unavailable | Owner isolation, idempotency, original task linkage and honest capability tests |
 | General upstream ORX project creation, worktrees, playbooks and arbitrary harness/model selection | Not yet supported by this increment | Explicit adapter capability and integration evidence; no inferred readiness |
 | Live resource → project/session → model decision → managed tool/result → next decision → cancel/restart | Not accepted | Authorized real endpoint/model/runtime and exact evidence for every step |
-| Browser/UI acceptance | Deferred for coordination | User-owned UI branch integration; actual browser evidence |
+| Browser/UI acceptance | UI implemented with mounted component tests; visual/browser acceptance remains unavailable | User-owned UI branch integration; actual browser evidence |
 
 Tests will be recorded by kind (unit, real PostgreSQL, controlled end-to-end, live external). Passing a checksum or synthetic workflow is never substituted for the live first-application chain. No new deployment exposure, credential grant, paid call, merge or production connection is authorized by this document. See [UI integration contract](OPENRESEARCH_UI_INTEGRATION.md) for exact routes and unsupported states.
 

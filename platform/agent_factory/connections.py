@@ -342,6 +342,17 @@ class ConnectionService:
                 .order_by(self.references.c.created_at.desc(), self.references.c.ref).limit(100)).scalars()
             return [self._project(conn, owner, self._row(conn, owner, reference)) for reference in rows]
 
+    def request_result(self, owner, request_id):
+        self.auth.require(owner, 'read')
+        self._key(request_id)
+        with self._read() as conn:
+            command = conn.execute(select(self.commands).where(self.commands.c.owner_id == owner,
+                self.commands.c.request_id == request_id)).mappings().first()
+            if command is None or command['action'] not in {'bind', 'revoke'}:
+                raise HTTPException(404, 'CONNECTION_REQUEST_NOT_FOUND')
+            return {'requestId': request_id, 'action': command['action'],
+                'connection': self._project(conn, owner, self._row(conn, owner, command['result_ref']))}
+
     def _command(self, conn, owner, request_id, fingerprint):
         row = conn.execute(select(self.commands).where(self.commands.c.owner_id == owner,
             self.commands.c.request_id == request_id)).mappings().first()
@@ -536,6 +547,10 @@ def connection_router(auth, service):
     def bind(body: BindConnectionRequest, request: Request):
         return service.bind(owner(request), body.registrationRef, body.requestId,
             capabilities=body.capabilities, task_id=body.taskId)
+
+    @router.get("/requests/{request_id}")
+    def request_result(request_id: str, request: Request):
+        return service.request_result(owner(request), request_id)
 
     @router.get("/{reference}")
     def inspect(reference: str, request: Request):

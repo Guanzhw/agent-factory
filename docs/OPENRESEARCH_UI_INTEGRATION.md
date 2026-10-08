@@ -1,6 +1,6 @@
 # Backend contract for the OpenResearch workspace UI
 
-The current UI is being edited independently. This increment does not edit `web/` or `shared/`. Existing application, task, preset and connection endpoints remain compatible; new endpoints are additive.
+The independently authorized UI now follows this additive backend contract. Existing application, task, preset and connection endpoints remain compatible. Changes are confined to this development branch; no user-local files were edited.
 
 ## Product navigation
 
@@ -19,6 +19,7 @@ All routes are authenticated under `/api/factory/openresearch`; authority is rec
 
 | Method/path | Meaning |
 |---|---|
+| GET `/requests/{requestId}` | Read-only exact original owner command recovery after an interrupted response |
 | GET `/capabilities` | Exact support flags and available controlled workloads; render unsupported features as unavailable |
 | GET/POST `/projects` | List/create owner-only Factory grouping metadata; POST takes `requestId`, `name`, optional `description`, optional exact `connectionRefs` |
 | GET `/projects/{id}` | Read the owner mapping; no provider call or execution claim |

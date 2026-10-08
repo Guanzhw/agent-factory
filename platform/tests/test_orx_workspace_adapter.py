@@ -101,6 +101,21 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.requests, [])
         self.assertFalse(adapter.describe('alice')['projectCreationAvailable'])
 
+    def test_attachment_metadata_cannot_claim_governed_session_admission(self):
+        adapter = self.adapter()
+        description = adapter.describe('alice')
+        self.assertFalse(description['sessionAdmissionAvailable'])
+        self.assertEqual(description['sessionAdmissionBlockers'], [
+            'NATIVE_PROJECT_APPROVED_PLAN_BINDING_REQUIRED',
+            'NATIVE_SESSION_BROKER_ACCOUNTING_REQUIRED',
+            'NATIVE_SESSION_ORIGINAL_CUSTODY_REQUIRED'])
+        self.assertEqual(adapter.capabilities, ('project:read',))
+        self.assertFalse(description['liveIntegrationVerified'])
+        # A consumer cannot remove the actual requirements by changing a copy.
+        description['sessionAdmissionBlockers'].clear()
+        self.assertEqual(len(adapter.describe('alice')['sessionAdmissionBlockers']), 3)
+        self.assertEqual(self.requests, [])
+
     async def test_original_project_profile_client_requires_durable_intent(self):
         client = await self.adapter().session_client('alice', 'native-project', 'reviewed')
         intents = []

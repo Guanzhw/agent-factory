@@ -16,9 +16,11 @@ def main():
         'test_application_contract_v2.NeutralChecksumNativeTests.test_neutral_checksum_native_artifact',
         'test_personal_remote_postgres.PersonalRemotePostgresTests.test_actual_http_auth_scope_bind_restart_and_native_grant_revocation',
         'test_openresearch_workspace_postgres.WorkspacePostgresTests',
+        'test_credential_vault_postgres.CredentialVaultPostgresTests',
+        'test_credential_vault_wiring_postgres.CredentialVaultWiringPostgresTests',
     ]
     suite = unittest.defaultTestLoader.loadTestsFromNames(names)
-    expected = 4
+    expected = 6
     if suite.countTestCases() != expected:
         print('BOUNDARIES_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

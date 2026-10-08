@@ -102,3 +102,22 @@
 @media(max-width:760px) { .sidebar nav .nav-group-label { flex-basis: 100%; padding: 6px 11px 0; } }
 
 .composer-steps [aria-current="step"] { color: var(--blue); font-weight: 650; }
+
+/* Application-owned OpenResearch workspace. */
+.workspace-crumbs, .or-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.workspace-crumbs { color: var(--muted, #66716c); margin-bottom: 20px; font-size: 13px; }
+.or-catalog-grid, .or-project-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.or-catalog-card { padding: 32px; border: 1px solid #dfe5df; border-radius: 16px; background: #fff; min-height: 240px; }
+.or-catalog-card h2 { margin: 16px 0; font-size: 27px; }
+.or-catalog-card p { line-height: 1.8; }
+.or-development-card { background: #f5f7f4; }
+.or-project-card { width: 100%; display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 12px; padding: 22px; margin: 12px 0; background: #fff; border: 1px solid #dfe5df; border-radius: 12px; }
+.or-project-card:hover { border-color: #68836e; background: #f7faf6; }
+.or-project-card strong { font-size: 18px; }
+.or-native-row, .or-session-row { border-top: 1px solid #dfe5df; padding: 20px 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.or-native-row small { display: block; overflow-wrap: anywhere; }
+.openresearch-workspace .material-editor { margin: 20px 0; }
+.openresearch-workspace label { display: grid; gap: 8px; margin: 16px 0; }
+.openresearch-workspace .state-note { overflow-wrap: anywhere; }
+.openresearch-workspace textarea { min-height: 110px; }
+@media (max-width: 900px) { .or-catalog-grid, .or-project-layout { grid-template-columns: 1fr; } }

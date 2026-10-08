@@ -181,3 +181,18 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
             goal='  A valid goal  ').goal, 'A valid goal')
         with self.assertRaises(ValidationError):
             WorkspaceSessionCreate(requestId='space-request', workloadPresetId='controlled', goal='    ')
+
+    async def test_request_recovery_is_read_only_owner_scoped_and_covers_unknown_intent(self):
+        recovered = self.service.request_result('alice', 'project-request')
+        self.assertEqual(recovered['project']['id'], self.project['id'])
+        with self.assertRaises(HTTPException) as caught:
+            self.service.request_result('bob', 'project-request')
+        self.assertEqual(caught.exception.status_code, 404)
+        self.research.start.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError):
+            await self.service.create_session('alice', self.project['id'], self.body)
+        recovered = self.service.request_result('alice', 'session-request')
+        self.assertEqual(recovered['session']['state'], 'unknown')
+        self.assertIsNone(recovered['session']['taskId'])
+        self.research.recover.assert_not_called()
+        self.research.start.assert_awaited_once()

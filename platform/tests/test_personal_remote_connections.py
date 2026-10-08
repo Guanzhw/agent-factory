@@ -94,6 +94,25 @@ class PersonalRemoteTests(unittest.TestCase):
         return self.service.bind("alice", verified["registrationRef"], uuid4().hex,
                                  capabilities=["runtime:health"])
 
+    def test_read_only_request_recovery_is_owner_scoped_and_action_partitioned(self):
+        created = self.personal.configure('alice', PROVIDER_ID, self.config, 'configure-request')
+        recovered = self.personal.request_result('alice', 'configure-request')
+        self.assertEqual(recovered['remote']['registrationRef'], created['registrationRef'])
+        with self.assertRaises(HTTPException):
+            self.personal.request_result('bob', 'configure-request')
+        with self.assertRaises(HTTPException):
+            self.service.request_result('alice', 'configure-request')
+        self.personal.verify('alice', created['registrationRef'], 'verify-request')
+        bound = self.service.bind('alice', created['registrationRef'], 'bind-request', capabilities=['runtime:health'])
+        self.probe.calls.clear()
+        recovered = self.service.request_result('alice', 'bind-request')
+        self.assertEqual(recovered['connection']['ref'], bound['ref'])
+        self.assertEqual(self.probe.calls, [])
+        with self.assertRaises(HTTPException):
+            self.personal.request_result('alice', 'bind-request')
+        with self.assertRaises(HTTPException):
+            self.service.request_result('bob', 'bind-request')
+
     def test_create_verify_bind_resolve_revoke_and_restart(self):
         created = self.create()
         self.assertEqual(created["status"], "configured")

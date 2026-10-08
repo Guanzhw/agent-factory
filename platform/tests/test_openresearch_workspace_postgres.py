@@ -35,6 +35,8 @@ class WorkspacePostgresTests(unittest.TestCase):
     def test_native_auth_owner_project_persistence_and_no_fake_readiness(self):
         self.assertEqual(self.client.get(self.root + '/projects').status_code, 401)
         self.login('alice')
+        self.assertEqual(self.client.get('/api/factory/personal-credentials/capabilities').json(),
+            {'enabled': False, 'providerIds': []})
         request = {'requestId': 'project-request', 'name': 'Controlled workspace'}
         response = self.client.post(self.root + '/projects', json=request)
         self.assertEqual(response.status_code, 201, response.text)

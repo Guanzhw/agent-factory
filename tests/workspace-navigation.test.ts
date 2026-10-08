@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkspaceRoute, workspaceUrl, sameWorkspaceRoute } from '../web/workspaceNavigation.js';
 const read = (query: string, manager = false) => readWorkspaceRoute(new URL(`https://factory.test/${query}`), manager);
-describe('task-first workspace navigation', () => {
-  it('opens a usable task entry without depending on Auto-Research presets', () => {
-    expect(read('')).toEqual({ tab: 'research', task: '', run: '' });
+describe('Factory application workspace navigation', () => {
+  it('opens the application catalog without depending on controlled presets', () => {
+    expect(read('')).toEqual({ tab: 'catalog', task: '', run: '' });
     expect(read('?tab=unknown')).toEqual(read(''));
   });
   it('restores task and research deep links on reload', () => {
-    for (const query of ['?tab=research&task=task-one', '?tab=autoresearch&run=run-one']) {
+    for (const query of ['?tab=research&task=task-one', '?tab=autoresearch&run=run-one', '?tab=openresearch&project=orp-one']) {
       const route = read(query); const href = workspaceUrl(new URL('https://factory.test/'), route);
       expect(read(href)).toEqual(route);
     }
@@ -17,7 +17,7 @@ describe('task-first workspace navigation', () => {
   });
   it('does not show administrator views to ordinary users', () => {
     for (const tab of ['materials', 'applications', 'reviews']) {
-      expect(read(`?tab=${tab}`).tab).toBe('research');
+      expect(read(`?tab=${tab}`).tab).toBe('catalog');
       expect(read(`?tab=${tab}`, true).tab).toBe(tab);
     }
   });

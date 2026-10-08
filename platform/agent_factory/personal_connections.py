@@ -88,6 +88,18 @@ class PersonalRemoteConnections:
         with self.connections._read() as conn:
             return self._projection(conn, owner, reference)
 
+    def request_result(self, owner, request_id):
+        self.connections.auth.require(owner, 'read')
+        self.connections._key(request_id)
+        with self.connections._read() as conn:
+            command = conn.execute(select(self.connections.commands).where(
+                self.connections.commands.c.owner_id == owner,
+                self.connections.commands.c.request_id == request_id)).mappings().first()
+            if command is None or command['action'] not in {'remote.configure', 'remote.verify', 'remote.revoke'}:
+                raise HTTPException(404, 'REMOTE_REQUEST_NOT_FOUND')
+            return {'requestId': request_id, 'action': command['action'],
+                'remote': self._projection(conn, owner, command['result_ref'])}
+
     def available_providers(self, owner):
         self.connections.auth.require(owner, "read")
         return [{"providerId": key, "kind": provider.kind, "capabilities": sorted(provider.capabilities),
@@ -270,6 +282,9 @@ def personal_connection_router(auth, service):
         values = body.model_dump()
         return service.configure(owner(request), values.pop("providerId"),
             {key: value for key, value in values.items() if key != "requestId"}, body.requestId)
+    @router.get("/requests/{request_id}")
+    def request_result(request_id: str, request: Request):
+        return service.request_result(owner(request), request_id)
     @router.get("/{reference}")
     def inspect(reference: str, request: Request):
         return service.inspect(owner(request), reference)

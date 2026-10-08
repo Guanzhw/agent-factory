@@ -29,6 +29,11 @@ from .orx_research_session import (
 
 ADAPTER_ID = 'openresearch-workspace-v1'
 CAPABILITIES = ('project:read',)
+SESSION_ADMISSION_BLOCKERS = (
+    'NATIVE_PROJECT_APPROVED_PLAN_BINDING_REQUIRED',
+    'NATIVE_SESSION_BROKER_ACCOUNTING_REQUIRED',
+    'NATIVE_SESSION_ORIGINAL_CUSTODY_REQUIRED',
+)
 
 
 def _source_path(value):
@@ -132,7 +137,9 @@ class OpenResearchWorkspaceAdapter:
             'projectCreationSideEffects': ['starter-prompt-model-call'],
             'githubPublicationAvailable': False, 'liveIntegrationVerified': False,
             'sessionProfiles': [{'id': ref, **profile.options()} for ref, profile in self._profiles.items()],
-            'sessionAdmission': 'requires-original-governed-factory-binding'}
+            'sessionAdmission': 'requires-original-governed-factory-binding',
+            'sessionAdmissionAvailable': False,
+            'sessionAdmissionBlockers': list(SESSION_ADMISSION_BLOCKERS)}
 
     def _project(self, value, expected=None):
         _require(type(value) is dict)
