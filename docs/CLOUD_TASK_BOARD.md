@@ -85,6 +85,12 @@ portable suite passed2358 tests (435 skips), followed by focused checks for the
 latest transaction/paused-state changes. Independent source review found no
 concrete lock inversion. Final exact CI and workflow merge remain pending.
 
+Local handoff scope is explicit: the user owns real ConvertD development locally.
+The existing workflow guide now includes a minimal definition/Settings assembly,
+material and application publication, runtime/interaction schemas, recovery/cancel
+contracts and runnable validation entry points. This follow-up changes docs only;
+its successor commit must receive its own exact CI acceptance before merge.
+
 See [workflow contracts and evidence limits](GOVERNED_WORKFLOW_AGENTS.md).
 
 ---

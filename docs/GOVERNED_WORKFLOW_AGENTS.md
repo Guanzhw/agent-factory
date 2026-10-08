@@ -146,3 +146,113 @@ browser with an injected synthetic API, including versioned decisions, preserved
 UNKNOWN intent after reload, GET receipt recovery, explicit same-payload retry
 after 404, pending cancellation and a 390-pixel viewport. It does not replace the
 separate native/PostgreSQL checks or certify a live backend.
+
+## 本地开发者接入最短路径
+
+通用底座提供受治理的应用组装、原生 agent 工具调用与工作流 custody；真实 ConvertD 的模型、领域授权、执行环境和结果验证由本地开发者实现。下面沿用已测试接口，不增加新平台功能。
+
+固定版本参考：[底座说明](https://github.com/Guanzhw/agent-factory/blob/b6cba6231b0baa9ff7d68d9abd9cea2f35e3dd2e/docs/GOVERNED_WORKFLOW_AGENTS.md)、[完整 native 示例](https://github.com/Guanzhw/agent-factory/blob/b6cba6231b0baa9ff7d68d9abd9cea2f35e3dd2e/platform/tests/test_workflow_native_postgres.py)。后者是合成测试，不是部署入口；不要把测试身份、固定决策模型或 fixture 控制路由部署到真实环境。
+
+### 1. 从最小应用定义开始
+
+以下对象可交给 `validate_workflow_definition` 校验。`local-domain` 是待注册的可信 runtime ID，不是模块名或可执行命令。
+
+```python
+workflow = {
+    "schema": 1, "id": "local-example", "revision": "1", "maxParallel": 1,
+    "stages": [
+        {"id": "analyze", "adapterId": "local-domain", "revision": "1",
+         "dependencies": [], "inputs": {}, "failureRoutes": {}, "humanGate": False},
+        {"id": "review", "adapterId": "local-domain", "revision": "1",
+         "dependencies": ["analyze"], "inputs": {}, "failureRoutes": {}, "humanGate": True},
+    ],
+}
+```
+
+人工批准仅使 `review` 阶段可执行；它不会自动生成领域结果，也不代表整个应用完成。应用的注册模型使用五个 workflow 工具读取状态、选择阶段、等待和结束。先用合成模型验证接线，再换成本地明确授权的模型适配器及其 usage/pricing 配置；不要沿用 fixture 的零成本声明。
+
+### 2. 注册工具、策略和领域 runtime
+
+参照 native 示例的 `settings(configuration, backend)`：
+
+```python
+from dataclasses import replace
+from agent_factory.workflow_profile import registrations, PERMISSION
+from agent_factory.tool_policy_registry import ToolPolicyRegistration
+
+definitions = {workflow["id"]: workflow}
+tools = registrations(definitions)
+policies = tuple(
+    ToolPolicyRegistration(t.tool_name, PERMISSION, "1", False, t.adapter_id, "1")
+    for t in tools
+)
+# base_settings 是尚未注册 workflow 工具的本地启动配置。
+# replace 会重新执行 Settings 校验；在 create_app(settings) 前完成装配。
+settings = replace(
+    base_settings,
+    runtime_adapters=[*base_settings.runtime_adapters, *tools],
+    tool_policies=(*base_settings.tool_policies, *policies),
+    workflow_definitions=definitions,
+    workflow_runtimes={("local-domain", "1"): backend},
+)
+```
+
+这里 `backend` 必须是你实现的 runtime 实例；以上不是完整启动脚本。还需注册 model/environment/knowledge 的 `AdapterRegistration`，其接口形状见示例 `settings()`。同名内置工具不可覆盖；多个定义共享同一组 workflow 工具注册，应一次调用 `registrations(definitions)`，避免逐应用重复注册工具 ID。`workflow_read` 会初始化持久记录，所以这组策略中的 `read_only` 为 `False`。
+
+### 3. 发布材料及应用，再实例化
+
+沿用 native 示例 `publish(state)` 的治理流程，替换测试身份为真实授权的作者、审批者：材料 `create_draft → request_publication → decide_publication`，再按相同步骤发布应用。需要 prompt、skill、knowledge、model、environment 和五个工具材料。工具的 `runtimeBinding.config` 必须包含实际 `workflowId` 与 `workflow_fingerprint(workflow)`；应用 mode 的 `materialRefs` 使用已批准材料的精确 `id/version/sha256`，并设置 `toolOrder`、`capabilities`、`budget` 和 `connectionRequirements`。
+
+最小输入 schema 可放在该 mode 的 `inputSchema`：
+
+```json
+{"type":"object","additionalProperties":false,"required":["documentRef"],"properties":{"documentRef":{"type":"string","minLength":1,"maxLength":120}}}
+```
+
+`documentRef` 只是受限字符串，不授予读取文件的权限。runtime 应自行验证引用的所有者、版本和当前访问权限；不要传任意路径、凭据或可执行文本。
+
+实例创建顺序见示例 `start_task()`：`POST /api/factory/compositions/proposals`（goal、精确 applicationRef、mode、inputValues、requestId）→ proposal accept → plan review/decision → `POST /api/factory/instances`。部署使用的身份、CSRF 和审批策略保持既有 API 约束；不通过修改数据库跳过批准。
+
+### 4. 实现可恢复的 runtime
+
+参照示例 `DurableOperations` 的接口与持久操作表，替换其合成返回值：
+
+- `async start(context, operation_id, inputs)`：`inputs` 包含应用 `values`、当前 `stage` 输入及 `dependencies` 原 observations。后端持久绑定 owner、workflow、run、stage 和 operation ID，在副作用前验证领域权限与资源预算。
+- `async inspect(context, original_handle)`：只查询原操作。
+- `async lookup(context, operation_id)`：按原 ID 找回 lost-ACK 操作；找不到返回 UNKNOWN，不能启动替代操作。
+- `async cancel(context, original_handle)`：取消并确认原操作停止；停止未确认时保持 UNKNOWN。清理不能以重新获得执行许可为前提。
+
+`WorkflowContext`、`RuntimeObservation`、`AdapterHandle` 的准确字段见 `platform/agent_factory/workflow_contracts.py`。例如完成返回：
+
+```json
+{"schema":1,"operationId":"ORIGINAL_ID","handle":{"adapterId":"local-domain","revision":"1","id":"ORIGINAL_BACKEND_ID"},"state":"COMPLETED","allStopped":true,"output":{"artifactRef":"verified-original-result"},"failure":null}
+```
+
+只有确认原工作停止后才能返回 terminal + `allStopped:true`。FAILED 需结构化 `failure`，`retryable` 固定为 false；UNKNOWN 可没有 handle，但必须 `allStopped:false`。已知 handle 不得替换。输出不超过 16 KiB，完整 observation 不超过 32 KiB，且受 inert 数据规则限制；返回领域 artifact 引用，不能塞异常堆栈、secret 或任意 URL。
+
+仅在明确“请求可能已到后端、ACK 不可确认”时抛 `WorkflowAcknowledgementUnknown`。普通异常仍触发受保护失败清理，不能把所有连接失败都改成该类型。适配器负责真实进程/远端作业的资源、时限及正向停止证明；`maxParallel` 只限制并行操作数量。
+
+### 5. 接入人工交互与原操作恢复
+
+从 `GET /api/factory/workflows/{taskId}` 获取最新 workflow version。提交至其 `/commands`：
+
+```json
+{"commandId":"review-001","action":"decide","stageId":"review","version":3,"approved":true}
+```
+
+`reconcile`/`resume` 同样带 stageId/version，不带 approved；`cancel` 仅带 commandId/action。版本 3 只是示例，实际使用刚读取的版本。UNKNOWN 时保存原 commandId/payload，读取 `/commands/{commandId}`；不要换 ID 重发启动。resume 仅针对原生已停在该阶段、尚未启动且满足依赖的阶段，不是重跑失败操作。当前人工交互是布尔批准/拒绝，没有任意领域表单回答 schema；需要额外表单时应单独实现并验证接入，不能假定本版本已有。
+
+### 6. 本地验证与交付界限
+
+在仓库根目录执行（Python 依赖按项目安装说明准备）：
+
+```sh
+uv run python -m unittest discover -s platform/tests -p 'test_workflow_*.py' -v
+uv run python scripts/check_workflow_postgres.py
+npm run check
+uv run --with playwright python scripts/accept_workflow_browser.py --output-dir /tmp/workflow-browser-evidence
+```
+
+PostgreSQL gate 需要事先设置指向专用测试数据库的 `FACTORY_TEST_DATABASE_URL`；不要使用生产数据库。它要求 7 个 native/custody 用例且零 skip。无数据库时 unittest 中的 PG skip 不能当成验收通过。浏览器检查还需安装对应 Chromium（`uv run --with playwright python -m playwright install chromium`）及系统依赖，并先按项目说明安装 npm 依赖；API 为合成输入。另保留 CI 中现有 AutoResearch/candidate gates，见 `.github/workflows/ci.yml`。
+
+增加本地域用例：实际 start/inspect/cancel；lost ACK 后 lookup 不第二次启动；进程重启原身份不变；撤权和取消后正向停止；旧 version/跨 owner 拒绝；资源和模型预算耗尽；领域结果验证。底座工程测试不验证真实 ConvertD 输出、跨主机资源隔离或生产容量。最终可用性需要本地开发者对实际后端另行验收。
