@@ -54,7 +54,7 @@ describe('AutoResearch owner-bound projections', () => {
     const unavailable = async () => { throw new Error('must not call during render'); };
     const api: AutoResearchApi = { presets: unavailable, start: unavailable, get: unavailable, recover: unavailable, cancel: unavailable };
     const html = renderToStaticMarkup(createElement(AutoResearch, { ownerId: 'private-owner', api }));
-    expect(html).toContain('AutoResearch'); expect(html).toContain('正在读取研究设置');
+    expect(html).toContain('Auto-Research 实验'); expect(html).toContain('正在读取研究设置');
     expect(html).not.toContain('private-owner'); expect(html).not.toContain('/api/');
   });
 });
