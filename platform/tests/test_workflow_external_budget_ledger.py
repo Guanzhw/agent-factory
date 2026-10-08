@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 from agent_factory.delegation import DelegationService
 from agent_factory.store import canonical, digest
-from agent_factory.workflow_control import WorkflowControl
+from agent_factory.workflow_control import WorkflowCommand, WorkflowControl
 import test_workflow_control as fixtures
 
 
@@ -57,13 +57,13 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         first = self.rows()
         self.assertEqual(len(first), 1)
         self.assertEqual((first[0]['call_id'], first[0]['tool_name']),
-                         ('original-native-call', 'factory_wait_operations'))
+                         ('native-wait:' + digest({'stepId': 'wait', 'toolCallId': 'original-native-call'}), 'factory_wait_operations'))
         self.reopen()
         await self.control.submit('alice', 'task', command)
         self.assertEqual(self.rows(), first)
         context = self.control.context(self.store.task('task', 'alice'))
         self.assertFalse(self.store.delegation.consume_tool_budget(context,
-            'original-native-call', 'factory_wait_operations')['charged'])
+            first[0]['call_id'], 'factory_wait_operations')['charged'])
         with self.assertRaises(PermissionError):
             self.store.delegation.consume_tool_budget(context, 'replacement-call', 'factory_wait_operations')
         self.assertEqual(self.rows(), first)
@@ -98,3 +98,26 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(first), 1)
         self.assertFalse(self.store.sql('SELECT reclaimed FROM af_delegation_roots')[0]['reclaimed'])
         self.assertEqual(self.runtime.starts, [operation['id'], second['id']])
+
+    async def test_different_wait_step_same_provider_call_cannot_borrow_first_charge(self):
+        operation, command = await self.external()
+        await self.control.submit('alice', 'task', command)
+        original_rows = self.rows()
+        self.assertEqual(len(original_rows), 1)
+        self.assertEqual(self.bridge.continue_run.await_count, 1)
+        self.reopen()
+        # The provider may reuse its own call ID in a different native Agent step.
+        # The original completed operation is readable, but this is a new wait.
+        requirement = deepcopy(self.requirement)
+        requirement['step_id'] = 'second-wait'
+        self.native['step_requirements'] = [requirement]
+        view = (await self.control.snapshot('alice', 'task'))['workflow']
+        second = WorkflowCommand(commandId='second-wait-command', action='reconcile',
+                                 version=view['version'], operationId=operation['id'])
+        result = await self.control.submit('alice', 'task', second)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(self.rows(), original_rows)
+        self.assertEqual(self.bridge.continue_run.await_count, 1)
+        self.assertEqual(self.runtime.starts, [operation['id']])
+        record = self.control._load('alice', 'task', second.commandId)
+        self.assertEqual(record['errorType'], 'PermissionError')

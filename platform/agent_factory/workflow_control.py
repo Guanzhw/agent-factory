@@ -284,7 +284,9 @@ class WorkflowControl:
                     for item in submitted:
                         for requirement in item.get('executor_requirements') or []:
                             execution = requirement.get('tool_execution') or {}
-                            self.store.delegation.consume_tool_budget(self.context(task), execution['tool_call_id'], 'factory_wait_operations')
+                            call_id = 'native-wait:' + digest({'stepId': item['step_id'],
+                                'toolCallId': execution['tool_call_id']})
+                            self.store.delegation.consume_tool_budget(self.context(task), call_id, 'factory_wait_operations')
                     await self.api.bridge.continue_run(task['run_id'], task_id, owner, submitted)
                     row['receipt']['status'] = 'unknown'
         except Exception as error:

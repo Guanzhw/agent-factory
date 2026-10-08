@@ -146,7 +146,7 @@ class WorkflowControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.service.read('alice', operation['id'])['closed'])
         self.assertEqual(self.bridge.continue_run.await_count, 1)
         args = self.store.delegation.consume_tool_budget.call_args.args
-        self.assertEqual(args[1:], ('original-native-call', 'factory_wait_operations'))
+        self.assertEqual(args[1:], ('native-wait:' + digest({'stepId': 'wait', 'toolCallId': 'original-native-call'}), 'factory_wait_operations'))
         self.assertEqual(self.store.delegation.consume_tool_budget.call_count, 1)
 
     async def test_final_original_requirement_change_blocks_continue_and_debit(self):

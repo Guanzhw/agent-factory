@@ -59,7 +59,9 @@ For asynchronous work, put bounded submission function steps inside native
 `Parallel`, then place a wait Agent after the parallel block. Agno joining the
 submission steps means those functions returned; it does not prove their
 external jobs stopped. The wait Agent requests original operation IDs through
-`factory_wait_operations`. Native external execution parks the original run;
+`factory_wait_operations`. Wait budget debits bind the original native step ID
+and provider tool-call ID, so different Agent steps cannot share a debit accidentally.
+Native external execution parks the original run;
 Factory resolves that exact requirement only from matching operation custody.
 No new run or replacement operation is created to continue it.
 

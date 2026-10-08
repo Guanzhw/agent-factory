@@ -32,10 +32,18 @@ The gate now requires10 cases, adding original owner/withdrawal/UNKNOWN custody.
 First ten-case attempt had9 pass/1 fixture error98.392s: the denial correctly
 returned409 but the test expected `detail` instead of Factory's `code/message`.
 Corrected exact-code assertion passed the isolated new case13.566s. Final ten-case
-gate is running. Boundary50 passed0.386s, frontend217 passed with lint/typecheck/build,
+gate passed177.103s, zero skips. Candidate gate9 passed101.137s, zero skips. Boundary54 passed0.635s, frontend217 passed with lint/typecheck/build,
 Ruff/Pyright passed. npm audit found0 vulnerabilities; pip-audit found no known
 vulnerabilities (local project is not on PyPI). Read-only cache errors were resolved
-using workspace cache directories. Full regression and exact final CI remain pending. No live model/backend/data/deployment claims.
+using workspace cache directories. The first corrected head `9a958a0` CI failed one stale mock assertion requiring
+exactly one parent-plan read; native component validation now legitimately reads
+child and parent plans. The fixture now returns each exact plan and checks owner,
+ancestor validation and component mismatch rather than an implementation call count.
+A further budget regression binds external wait call IDs to original native step IDs:
+different child Agents cannot evade a second debit by reusing a local provider call ID.
+Real SQL4 budget checks and native pause/restart/continue1 passed26.752s. Independent
+review has no remaining blocker. AutoResearch11 is running serially; full regression
+and replacement exact final CI remain pending. No live model/backend/data/deployment claims.
 
 ---
 
