@@ -83,3 +83,22 @@
 .autoresearch .composer dd { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
 .autoresearch-progress { padding: 24px; margin-bottom: 18px; min-height: auto; }
 .autoresearch-progress li { margin-bottom: 8px; }
+
+/* Task-first hierarchy: use the existing palette and components. */
+.nav-group-label { color: #b8cadd; font-size: 11px; padding: 12px 12px 0; }
+.sidebar { overflow-y: auto; }
+.sidebar-context { padding-top: 24px; }
+.new-task-layout { grid-template-columns: minmax(0, 920px); }
+.new-task-layout .research-left { grid-template-columns: minmax(0, 1fr); }
+.new-task-layout > .task-panel { min-height: 0; }
+.new-task-layout > .task-panel .empty-state { padding: 24px; max-width: none; }
+.new-task-layout .empty-glyph { display: none; }
+.new-task-layout > .task-panel .empty-state p { max-width: none; }
+.composer-steps { list-style: none; padding-left: 0; display: flex; flex-wrap: wrap; gap: 8px 28px; color: var(--muted); font-size: 13px; margin: 12px 0 24px; }
+.composer-history, .composer-advanced { margin: 18px 0; border-top: 1px solid var(--line); padding-top: 14px; }
+.composer-history > summary, .composer-advanced > summary { cursor: pointer; font-size: 13px; font-weight: 550; margin-bottom: 12px; }
+.composer-history > summary:focus-visible, .composer-advanced > summary:focus-visible, .technical-detail > summary:focus-visible { outline: 3px solid #81add4; outline-offset: 3px; }
+.composer .primary, .composer .secondary { white-space: normal; }
+@media(max-width:760px) { .sidebar nav .nav-group-label { flex-basis: 100%; padding: 6px 11px 0; } }
+
+.composer-steps [aria-current="step"] { color: var(--blue); font-weight: 650; }
