@@ -4,7 +4,7 @@ This does not approve shared resources, publication, platform models, arbitrary
 code, remote Factory placement, or permissions not granted by native identity.
 """
 from fastapi import HTTPException
-from sqlalchemy import Column, MetaData, String, Table, select
+from sqlalchemy import Column, MetaData, String, Table, select, text
 
 from .byok_model import ADAPTER_ID, CAPABILITY
 from .store import digest, now
@@ -83,6 +83,10 @@ class OwnerSubmissions:
         if stored != plan or stored['status'] != 'ready': raise HTTPException(409, 'OWNER_SUBMISSION_PLAN_CHANGED')
         self._scope(owner, stored)
         with self.store.transaction() as conn:
+            # Approval precedes task admission. Serialize this plan in the DB,
+            # including requests from other service processes/connection pools.
+            conn.execute(text('SELECT pg_advisory_xact_lock(hashtext(:key))'),
+                {'key': 'owner-submission:' + plan['id']})
             old = conn.execute(select(self.submissions).where(self.submissions.c.plan_id == plan['id'])).mappings().first()
             if old:
                 if old['owner_id'] != owner or old['plan_hash'] != digest(stored):

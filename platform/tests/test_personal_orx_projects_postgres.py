@@ -38,6 +38,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
                     personal_agent_commands_enabled=True, temporary_policy='admin-review',
                     policy_revision='project-create-ci-v1', material_policy_revision='project-create-ci-v1',
                     personal_connection_providers={PERSONAL_ORX_PROVIDER_ID: fixture.fx.provider}))
+                self.app = app
                 state = app.app.state.factory; self.store, self.auth = state['store'], state['auth']
                 self.auth.directory.upsert('project-reviewer', name='Synthetic project reviewer')
                 self.auth.authorization.assign('project-reviewer', 'factory-manager')
@@ -308,3 +309,98 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.auth.authorization.unassign('alice', 'factory-user')
             self.request('POST', '/personal-agent/commands/start', {'planId': revoked['plan']['id']}, expected=403)
             self.assertEqual(self.wire.creation_posts, 1)
+
+    def test_independent_workers_serialize_first_owner_approval_and_original_effect(self):
+        with self.fixture() as fixture:
+            key, prepared = self.prepare(fixture.values)
+            self.approve(key, prepared)  # Exact creation consent; no plan/admin approval.
+            plan_id = prepared['plan']['id']
+            self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_owner_submissions')[0]['n'], 0)
+            second_app = create_app(self.store.settings)
+            second_store = second_app.app.state.factory['store']
+            try:
+                with TestClient(second_app) as second_client:
+                    self.assertIsNot(self.store.engine, second_store.engine)
+                    self.assertIsNot(self.store.owner_submissions, second_store.owner_submissions)
+                    self.assertIsNot(self.app.app.state.queue_worker, second_app.app.state.queue_worker)
+                    scope_barrier = threading.Barrier(2, timeout=15)
+                    first_read, release_read = threading.Event(), threading.Event()
+                    first_pid = []
+                    read_mutex = threading.Lock()
+                    scopes = []
+                    # Both independent services finish preflight before either
+                    # reads approval. No API/worker or process-local lock is shared.
+                    for service in (self.store.owner_submissions, second_store.owner_submissions):
+                        original_scope = service._scope
+                        scopes.append((service, original_scope))
+                        once = [False]
+                        def synchronized_scope(owner, plan, *, original=original_scope, once=once, **kwargs):
+                            result = original(owner, plan, **kwargs)
+                            if plan['id'] == plan_id and not once[0]:
+                                once[0] = True
+                                scope_barrier.wait()
+                            return result
+                        service._scope = synchronized_scope
+
+                    def hold_first_approval_read(conn, cursor, statement, parameters, context, executemany):
+                        if (not statement.startswith('SELECT af_owner_submissions.')
+                                or plan_id not in parameters.values()): return
+                        with read_mutex:
+                            if first_pid: return
+                            first_pid.append(conn.connection.driver_connection.info.backend_pid)
+                            first_read.set()
+                        self.assertTrue(release_read.wait(20), 'Original approval read was not released')
+
+                    for engine in (self.store.engine, second_store.engine):
+                        event.listen(engine, 'after_cursor_execute', hold_first_approval_read)
+                    try:
+                        headers = {'Authorization': 'Bearer ' + self.auth._issue_native_token('alice')}
+                        path = '/api/factory/personal-agent/project-commands/' + key + '/submit'
+                        body = {'previewHash': prepared['receipt']['preview']['previewHash'], 'approved': True}
+                        with ThreadPoolExecutor(max_workers=2) as pool:
+                            pending = [pool.submit(client.post, path, json=body, headers=headers)
+                                for client in (self.client, second_client)]
+                            try:
+                                self.assertTrue(first_read.wait(15), 'Neither independent service reached approval')
+                                deadline = time.monotonic() + 10
+                                blocked = []
+                                while time.monotonic() < deadline:
+                                    blocked = self.store.sql('''SELECT waiting.pid FROM pg_locks held
+                                        JOIN pg_locks waiting ON waiting.locktype=held.locktype
+                                            AND waiting.database=held.database AND waiting.classid=held.classid
+                                            AND waiting.objid=held.objid AND waiting.objsubid=held.objsubid
+                                        WHERE held.locktype='advisory' AND held.pid=:pid AND held.granted
+                                            AND NOT waiting.granted AND waiting.pid<>held.pid''', pid=first_pid[0])
+                                    if blocked: break
+                                    time.sleep(.01)
+                                self.assertTrue(blocked, 'The other service must wait in PostgreSQL before its approval read')
+                                self.assertTrue(all(not future.done() for future in pending))
+                            finally:
+                                release_read.set()
+                            responses = [future.result(timeout=30) for future in pending]
+                        for response in responses:
+                            self.assertEqual(response.status_code, 202, response.text)
+                        tasks = [response.json() for response in responses]
+                        self.assertEqual(tasks[0]['id'], tasks[1]['id'])
+                        self.until(tasks[0], 'completed')
+                        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_owner_submissions WHERE plan_id=:id',
+                            id=plan_id)[0]['n'], 1)
+                        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_tasks WHERE plan_id=:id',
+                            id=plan_id)[0]['n'], 1)
+                        effects = self.store.sql("SELECT status FROM af_effects WHERE task_id=:id AND effect_key LIKE :suffix",
+                            id=tasks[0]['id'], suffix='%:personal-agent-command-v1')
+                        self.assertEqual([row['status'] for row in effects], ['DONE'])
+                        self.assertEqual(self.wire.creation_posts, 1)
+                        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
+                        recovered = second_client.get('/api/factory/personal-agent/commands/requests/' + key, headers=headers)
+                        self.assertEqual(recovered.status_code, 200, recovered.text)
+                        self.assertEqual(recovered.json()['job']['id'], tasks[0]['id'])
+                        self.assertEqual(recovered.json()['receipt']['factoryIdentity']['taskId'], tasks[0]['id'])
+                    finally:
+                        release_read.set()
+                        for engine in (self.store.engine, second_store.engine):
+                            event.remove(engine, 'after_cursor_execute', hold_first_approval_read)
+                        for service, original_scope in scopes: service._scope = original_scope
+            finally:
+                second_store.engine.dispose()
+                second_store.native_db.db_engine.dispose()

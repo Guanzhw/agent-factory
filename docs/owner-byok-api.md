@@ -93,6 +93,11 @@ task/custody and never blind-resends an UNKNOWN remote operation. A lost respons
 should first be recovered with GET; a revoked/expired original pin still denies
 a new execution attempt. Concurrent double-clicks use the existing admission
 locks and effects. No extra queue, remote retry or replacement model is added.
+The owner-submission row itself is serialized per plan with a PostgreSQL
+transaction advisory lock before its existence check/insert. Independent API
+workers cannot race that approval before task admission. The required boundary
+suite holds the first approval read while a second independent app/worker waits
+in PostgreSQL, then verifies both return the original task and one remote effect.
 
 ## Setup and capabilities
 
