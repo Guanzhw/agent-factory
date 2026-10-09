@@ -113,7 +113,7 @@ it('ordinary expired history keeps results and submits one explicit followup wit
   expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
   expect(host.querySelector('dialog')).toBeNull();
 });
-it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED'])('known pre-admission409 %s unlocks selection and keeps the goal without recovery or replay', async code => {
+it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'])('known pre-admission409 %s unlocks selection and keeps the goal without recovery or replay', async code => {
   const expired = { ...observed, bindingStatus: 'expired' };
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
   localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
@@ -137,7 +137,7 @@ it('a temporary pre-admission health failure allows only an explicit new retry w
   const expired = { ...observed, bindingStatus: 'expired' };
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
   localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
-  vi.mocked(personalAgentApi.submit).mockRejectedValueOnce(new ApiError('temporary health failure', 409, 'REMOTE_VERIFICATION_FAILED')).mockResolvedValue(job);
+  vi.mocked(personalAgentApi.submit).mockRejectedValueOnce(new ApiError('temporary health failure', 409, 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED')).mockResolvedValue(job);
   await journey(); await goal('Retain this goal through a temporary health outage');
   await act(async () => button('继续研究').click());
   const failedRequest = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
@@ -151,11 +151,11 @@ it('a temporary pre-admission health failure allows only an explicit new retry w
   expect(next).toMatchObject({ action: 'prompt', sessionId: expired.id, text: 'Retain this goal through a temporary health outage' });
   expect(vi.mocked(personalAgentApi.recover).mock.calls.some(call => call[0] === failedRequest)).toBe(false);
 });
-it('an unrelated409 retains the original pending pointer and never enables a replay', async () => {
+it.each(['IDEMPOTENCY_CONFLICT', 'REMOTE_VERIFICATION_FAILED'])('an ambiguous409 %s retains the original pending pointer and never enables a replay', async code => {
   const expired = { ...observed, bindingStatus: 'expired' };
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
   localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
-  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('ambiguous conflict', 409, 'IDEMPOTENCY_CONFLICT'));
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('ambiguous conflict', 409, code));
   await journey(); await goal('Retain the original ambiguous request');
   await act(async () => button('继续研究').click());
   expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);

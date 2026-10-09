@@ -31,7 +31,7 @@ class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(caught.exception, error)
 
     async def test_post_admission_start_error_is_never_reclassified_as_nonexecution(self):
-        for code in ('REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED'):
+        for code in ('REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED', {'code': 'REMOTE_VERIFICATION_FAILED'}):
             api = Mock()
             api.prepare = Mock(return_value={'plan': {'id': 'already-admitted-plan'}})
             error = HTTPException(409, code)
@@ -56,7 +56,7 @@ class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
                     else {'sessionId': 'original-session', 'text': 'Preserve original goal'}))
             with self.assertRaises(HTTPException) as caught:
                 PersonalCommandAPI.prepare(api, 'alice', body, refresh_lease=True)
-            self.assertEqual(caught.exception.detail['code'], 'REMOTE_VERIFICATION_FAILED')
+            self.assertEqual(caught.exception.detail['code'], 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED')
             api.store.admit_plan.assert_not_called()
 
     def test_same_health_code_after_admission_retains_its_original_error(self):
@@ -64,14 +64,16 @@ class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
         api.store.sql.return_value = []
         api.store.connections.inspect.return_value = {'kind': 'orx', 'available': True}
         api.sessions.project.return_value = {'nativeProjectId': 'native-project', 'connectionPin': {}}
-        error = HTTPException(409, 'REMOTE_VERIFICATION_FAILED')
-        api._prepared.side_effect = error
         body = PrepareCommand(requestId='health-after-admission', action='create',
             connectionRef='active-connection', nativeProjectId='native-project')
-        with self.assertRaises(HTTPException) as caught:
-            PersonalCommandAPI.prepare(api, 'alice', body, refresh_lease=True)
-        self.assertIs(caught.exception, error)
-        api.store.admit_plan.assert_called_once()
+        for detail in ('REMOTE_VERIFICATION_FAILED', {'code': 'REMOTE_VERIFICATION_FAILED'}):
+            error = HTTPException(409, detail)
+            api._prepared.side_effect = error
+            api.store.admit_plan.reset_mock()
+            with self.assertRaises(HTTPException) as caught:
+                PersonalCommandAPI.prepare(api, 'alice', body, refresh_lease=True)
+            self.assertIs(caught.exception, error)
+            api.store.admit_plan.assert_called_once()
 
 
 class LeaseTests(unittest.TestCase):

@@ -100,7 +100,7 @@ class PersonalCommandAPI:
                 # Only this lease-check phase proves that no plan was admitted.
                 # The same code after admission must retain the original request.
                 if error.status_code == 409 and error.detail == 'REMOTE_VERIFICATION_FAILED':
-                    raise HTTPException(409, {'code': error.detail,
+                    raise HTTPException(409, {'code': 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED',
                         'message': '连接健康检查暂时失败。研究目标未提交，草稿和原结果保留。'}) from None
                 raise
         if body.action == 'create':

@@ -157,10 +157,10 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       let result;
       try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) {
         const leaseRejected = researchJourney && error instanceof ApiError && error.status === 409
-          && ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED'].includes(error.code ?? '');
+          && ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'].includes(error.code ?? '');
         if (current(epoch) && error instanceof ApiError && (definitivelyRejected(error.status) || leaseRejected)) {
           remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; }
-          setNotice(error.code === 'REMOTE_VERIFICATION_FAILED'
+          setNotice(error.code === 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'
             ? '研究未提交：连接健康检查暂时失败，草稿和原回复保留。恢复后可明确重试；原请求不会重发。'
             : '研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。');
           if (leaseRejected) setSetupOpen(true); return;

@@ -49,8 +49,9 @@ identity again under the final owner lock. A concurrent verification cannot
 substitute a new service identity. Only the explicit pre-admission lease rejection
 codes unlock the research draft for a new connection selection; other HTTP409
 responses retain the original request pointer and never imply nonexecution.
-`REMOTE_VERIFICATION_FAILED` is coded as a safe refusal only in the lease-check
-phase before plan admission. A temporary health failure preserves the goal and
+`REMOTE_VERIFICATION_FAILED` becomes `ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED`
+only in the lease-check phase before plan admission; the raw code remains ambiguous.
+A temporary health failure preserves the goal and
 allows an explicit new retry after recovery; it never replays the failed request.
 
 - `POST /api/factory/personal-agent/connections/{ref}/refresh`:
