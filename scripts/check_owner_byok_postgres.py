@@ -14,8 +14,9 @@ def main():
     sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
     suite = unittest.defaultTestLoader.loadTestsFromNames([
         'test_billing_mode.BillingModeTests', 'test_byok_model.ByokModelTests',
-        'test_personal_models_postgres.PersonalModelsPostgresTests'])
-    expected = 11
+        'test_personal_models_postgres.PersonalModelsPostgresTests',
+        'test_remote_bindings_postgres.RemoteBindingPostgresTests.test_effective_nonlocal_receiver_mapping_obeys_default_off_before_factory'])
+    expected = 13
     if suite.countTestCases() != expected:
         print('OWNER_BYOK_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

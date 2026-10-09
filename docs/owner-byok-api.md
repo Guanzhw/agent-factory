@@ -5,6 +5,17 @@ submit a research goal. The backend uses Agno 3.1.0's native Model, tool loop,
 durable AgentOS queue, immutable plans, and existing owner authorization.
 OpenCode/OpenResearch remote runtimes remain optional, separate integrations.
 
+**Product scope:** `/personal-research` is an optional generic native Agno
+template submission service, not the native ORX application. Its bundled
+installer is a synthetic literature demo with no internet retrieval or research
+experiment. Do not use this endpoint as the default AutoResearch/OpenResearch
+product entrypoint or fall back to it when an ORX connection is unavailable.
+The existing `/personal-agent/project-commands` and `/personal-agent/commands`
+paths retain native ORX project/session execution. This BYOK model registration
+does not configure or transfer a key to an ORX remote harness. Actual owner BYOK
+integration into that harness/workload and real research tools are not delivered
+by this template; native remote compatibility remains unverified.
+
 ## Setup and capabilities
 
 `GET /api/factory/status` exposes `feeManagementEnabled` and
@@ -178,7 +189,7 @@ accounting are denied while disabled, including managed ORX and AutoResearch's
 platform-paid profile; disabling the ledger is not a claim of a preserved hard
 budget. Owner BYOK stays outside that ledger even on an enabled legacy host.
 
-Required acceptance: `scripts/check_owner_byok_postgres.py` (11 cases, zero skips)
+Required acceptance: `scripts/check_owner_byok_postgres.py` (13 cases, zero skips)
 and existing `scripts/check_boundaries_postgres.py`. Supply only an independent,
 disposable loopback PG server through `FACTORY_TEST_DATABASE_URL`; fixtures create
 and remove their own unique databases. Tests use static synthetic secret fixtures

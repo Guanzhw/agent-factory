@@ -9,6 +9,7 @@ from .catalog import create_plan
 from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
 from .store import effect_unresolved, canonical
+from .billing_mode import ledger_for_plan
 from .runtime_hooks import (execution_classification, project_runtime_evidence,
     project_runtime_requirement, project_runtime_recovery, runtime_policy_projection)
 
@@ -283,7 +284,7 @@ class FactoryAPI:
                 raise
             job["allowedActions"] = ["inspect"]
         evidence, evaluation = project_runtime_evidence(self.settings, self.store, task, plan, events, job)
-        ledger = getattr(self.store, "usage_ledger", None)
+        ledger = ledger_for_plan(self.store, plan)
         usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
         return {**evidence, "inferenceWait": inference_wait, "usageLedger": usage, "job": job,
                 "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),

@@ -38,6 +38,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             return httpx.Response(200, json={'choices': [{'finish_reason': reason, 'message': message}]})
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.folder.name), max_workers=1,
             temporary_policy='admin-review',
+            fee_management_enabled=self._testMethodName == 'test_legacy_enabled_host_byok_job_reads_without_commitment',
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b's' * 32, {PROVIDER_ID: origin}),
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         self.app = create_app(self.settings)
@@ -123,6 +124,37 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException): handle.credential()
         with self.assertRaises(HTTPException): restarted.personal_models.default('alice')
         self.assertEqual(self.calls, [])
+
+    def test_legacy_enabled_host_byok_job_reads_without_commitment(self):
+        # Exercise actual startup accounting configuration, native admission and
+        # public reads; a composition-only check cannot catch detail's inspect.
+        self.assertIsNotNone(self.store.usage_ledger)
+        self.assertTrue(self.request('GET', '/status')['feeManagementEnabled'])
+        self.assertFalse(self.settings.platform_paid_models_enabled)
+        self.configured()
+        self.request('POST', '/personal-research', {
+            'topic': 'Synthetic legacy-host read fixture', 'requestId': 'legacy-byok-read'}, expected=202)
+        task = self.store.task_for_request('legacy-byok-read', 'alice')
+        plan = self.store.plan(task['plan_id'], 'alice')
+        self.assertNotIn('usageBudget', plan)
+        progress = self.request('GET', '/jobs/' + task['id'])
+        self.assertIsNone(progress['usageLedger'])
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            native = self.store.native_db.get_job(task['run_id']) or {}
+            if native.get('status') in {'completed', 'failed'}: break
+            time.sleep(.05)
+        self.assertEqual(native.get('status'), 'completed', native)
+        detail = self.request('GET', '/jobs/' + task['id'])
+        self.assertEqual(detail['job']['status'], 'completed')
+        self.assertIsNone(detail['usageLedger'])
+        self.assertTrue(detail['events'])
+        self.assertTrue(detail['artifacts'])
+        self.assertIn(task['id'], [job['id'] for job in self.request('GET', '/jobs')])
+        self.request('GET', '/jobs/' + task['id'], owner='bob', expected=404)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_usage_accounts')[0]['n'], 0)
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_usage_attempts')[0]['n'], 0)
 
     def test_disabling_keeps_historical_ledger_rows_and_byok_needs_no_price(self):
         from agent_factory.usage_ledger import UsageLedger

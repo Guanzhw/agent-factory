@@ -2,8 +2,10 @@
 from fastapi import HTTPException
 
 
-def require_available(settings, plan):
-    spec = (plan.get('executionBindings') or {}).get('model') or {}
+def require_available(settings, plan, *, manifest=None):
+    # Receiver mappings may replace the source model. Gate the adapter that
+    # will actually execute, while retaining the original application guard.
+    spec = (manifest if manifest is not None else plan.get('executionBindings') or {}).get('model') or {}
     from .go_development import MODEL_ADAPTER_IDS
     managed = spec.get('adapterId') in MODEL_ADAPTER_IDS.values()
     for price in getattr(settings, 'usage_pricing', ()):

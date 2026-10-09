@@ -40,7 +40,9 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.source_handle, self.local_handle = object(), object()
         self.source_tool_handle, self.local_tool_handle, self.local_wide_tool_handle = object(), object(), object()
-        settings = Settings(db_url=database.url, workspace=Path(directory.name), trusted_connections={
+        # These existing proof/accounting compatibility fixtures use only local
+        # synthetic models. Platform-paid execution remains disabled.
+        settings = Settings(db_url=database.url, workspace=Path(directory.name), fee_management_enabled=True, trusted_connections={
             "origin-fixture": TrustedConnectionBinding("alice", "model", "origin-fixture-model", frozenset({"checksum:read"}),
                 "origin-connection-v1", available=True, opaque_handle=self.source_handle, handle_ref="origin-handle-v1"),
             "receiver-fixture": TrustedConnectionBinding("bob", "model", "receiver-fixture-model", frozenset({"checksum:read"}),
@@ -169,6 +171,35 @@ class RemoteBindingPostgresTests(unittest.TestCase):
             self.prepare()
         self.assertIn("REMOTE_BINDING_INTEGRITY", str(unregistered.exception.detail))
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_remote_binding_proofs")[0]["n"], 0)
+
+    def test_effective_nonlocal_receiver_mapping_obeys_default_off_before_factory(self):
+        # The persisted source is local. A trusted mapping selects a registered
+        # receiver model carrying a nonlocal tariff; only the actual adapter is
+        # paid. No provider or model factory may run while the flag is disabled.
+        price = PricingRevision('receiver-fixture-model', 'receiver-adapter-v2',
+            'synthetic-paid-provider', 'receiver-proof-fixture-model', 'synthetic-paid-v1',
+            input_micros_per_million=1, output_micros_per_million=1,
+            request_guard=lambda *args: None)
+        self.store.settings.usage_pricing = (price,)
+        self.assertFalse(self.store.settings.platform_paid_models_enabled)
+        proof = self.prepare()
+        plan = self.imported(proof)
+        self.store.save_plan(plan)
+        self.assertEqual(plan['executionBindings']['model']['adapterId'], 'origin-fixture-model')
+        self.assertEqual(self.bindings.manifest(plan)['model']['adapterId'], 'receiver-fixture-model')
+        task = self.store.reserve_task(plan, str(uuid4()))[0]
+        run_id = str(uuid4())
+        self.store.accept(task['id'], run_id)
+        context = SimpleNamespace(user_id='bob', session_id=task['id'], run_id=run_id, session_state={})
+        for fee_enabled in (True, False):
+            self.store.settings.fee_management_enabled = fee_enabled
+            with self.subTest(fee_enabled=fee_enabled):
+                with self.assertRaises(HTTPException) as denied:
+                    self.bindings.model_for(plan, context)
+                self.assertEqual(denied.exception.status_code, 409)
+                self.assertIn('PLATFORM_PAID_MODEL_DISABLED', str(denied.exception.detail))
+        self.assertEqual(self.creations, [])
+        self.assertEqual(self.service.inspect(self.receipt_id, 'bob')['sha256'], proof['sha256'])
 
     def test_03_local_connection_owner_pin_adapter_and_scope_are_exact(self):
         for pin_change in ({"connection": self.source_pin}, {"connection": {**self.local_pin, "fingerprint": "b" * 64}},

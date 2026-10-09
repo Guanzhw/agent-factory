@@ -370,7 +370,7 @@ class ExecutionBindings:
         for kind, spec in self._items(manifest):
             self._connection(owner, self._entry(kind, spec), spec, context, resolve=False)
         from .billing_mode import require_available
-        require_available(self.settings, plan)
+        require_available(self.settings, plan, manifest=manifest)
         from .synthesis_runtime import validate_plan_source
         validate_plan_source(self.store, plan)
         from .comparison_workflow import validate_plan as validate_comparison_plan
