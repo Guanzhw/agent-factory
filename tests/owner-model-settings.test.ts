@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.spyOn(ownerModelApi, 'configure').mockResolvedValue(row);
   vi.spyOn(ownerModelApi, 'default').mockResolvedValue({ ...row, isDefault: true });
   vi.spyOn(personalRemoteApi, 'saveCredential').mockResolvedValue(credential);
+  vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([]);
   vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue(credential);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -102,4 +103,36 @@ it('clears drafts on a server-side owner mismatch in the race after live preflig
   vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new (await import('../web/personalRemoteApi.js')).RemoteRequestError(true, 'EXPECTED_OWNER_MISMATCH'));
   await mount(); await save(); expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(host.textContent).toContain('当前登录账户已改变');
   expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
+});
+
+it('explicitly binds the latest saved credential revision without asking for or replaying a secret', async () => {
+  const stale = { ...row, status: 'credential_unavailable' as const, available: false, isDefault: true };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([stale]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([{ ...credential, credentialRevision: 'rotated-r2' }]);
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, isDefault: true, credentialRevision: 'rotated-r2', connectionRef: 'updated-connection' });
+  await mount(); expect(button('绑定更新后的凭据')).toBeDefined(); await act(async () => button('绑定更新后的凭据').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ credentialRef: credential.credentialRef, credentialRevision: 'rotated-r2' }), row.reference);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('旧任务绑定会按服务端规则重新检查'); expect(JSON.stringify(localStorage)).not.toContain(secret);
+});
+it('creates a new model from an existing matching reference without custody or secret input', async () => {
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([credential, { ...credential, credentialRef: 'wrong-provider', providerId: 'opencode-serve-v1' }, { ...credential, credentialRef: 'other-origin', destination: 'https://other.example.org' }, { ...credential, credentialRef: 'revoked-ref', status: 'revoked' }]);
+  await mount(); await fill('模型名称', row.model);
+  await act(async () => { const select = host.querySelector<HTMLSelectElement>('[aria-label="模型凭据来源"]')!; select.value = 'saved'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
+  const select = host.querySelector<HTMLSelectElement>('[aria-label="已保存的模型凭据"]')!;
+  expect([...select.options].map(o => o.value)).toEqual(['', credential.credentialRef]);
+  await act(async () => { select.value = credential.credentialRef; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => button('保存模型并设为默认').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision }), undefined);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled(); expect(localStorage.getItem(storage)).toBeNull();
+});
+it('retains only metadata when saved-reference configuration acknowledgement is lost', async () => {
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([credential]); vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
+  await mount(); await fill('模型名称', row.model);
+  await act(async () => { const source = host.querySelector<HTMLSelectElement>('[aria-label="模型凭据来源"]')!; source.value = 'saved'; source.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => { const saved = host.querySelector<HTMLSelectElement>('[aria-label="已保存的模型凭据"]')!; saved.value = credential.credentialRef; saved.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => button('保存模型并设为默认').click()); const original = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
+  await act(async () => button('核对并继续原保存').click());
+  expect(ownerModelApi.configure).toHaveBeenNthCalledWith(2, 'alice', original, undefined); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
 });

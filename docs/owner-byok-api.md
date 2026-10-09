@@ -280,7 +280,7 @@ accounting are denied while disabled, including managed ORX and AutoResearch's
 platform-paid profile; disabling the ledger is not a claim of a preserved hard
 budget. Owner BYOK stays outside that ledger even on an enabled legacy host.
 
-Required acceptance: `scripts/check_owner_byok_postgres.py` (14 cases, zero skips)
+Required acceptance: `scripts/check_owner_byok_postgres.py` (15 cases, zero skips)
 and existing `scripts/check_boundaries_postgres.py`. Supply only an independent,
 disposable loopback PG server through `FACTORY_TEST_DATABASE_URL`; fixtures create
 and remove their own unique databases. Tests use static synthetic secret fixtures
@@ -314,3 +314,5 @@ organize research goals, progress, readable results and user decisions around
 actual supplied research data. Structured scientific findings/stages, actual
 research tools and real remote/provider compatibility remain undelivered or
 unverified; synthetic replies are protocol evidence only.
+
+统一凭据的添加、更换、撤销与显式重新绑定入口见 [个人凭据与连接](PERSONAL_CREDENTIALS.md)。

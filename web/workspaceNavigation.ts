@@ -1,7 +1,7 @@
 /** URL pointers are navigation only. Every record still needs server authorization. */
 export const workspaceTabs = {
   catalog: '应用目录', openresearch: 'OpenResearch', models: '我的模型/API', developer: '开发者装配', research: '任务与证据', autoresearch: '受控 Auto-Research 实验',
-  connections: '我的资源连接', comparison: '结果比较', schedules: '计划任务',
+  connections: '我的凭据与连接', comparison: '结果比较', schedules: '计划任务',
   storage: '存储与回收', materials: '共享材料管理', applications: '应用管理', reviews: '方案审查',
 } as const;
 export type WorkspaceTab = keyof typeof workspaceTabs;
