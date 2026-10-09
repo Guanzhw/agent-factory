@@ -21,6 +21,34 @@ The bounded additive HTTP endpoints are:
 
 Creating a completely new upstream project remains a separate disclosed operation: upstream 0.2.13 requires an authorized absolute remote path, and native session creation requires an explicit model-bearing template or configured defaults. The current protocol cannot safely supply those for an empty service. The workspace therefore retains the existing creation/clone preview and owner-consent flow in **New remote project**, preserves the goal draft, and states the missing configuration. It does not claim empty-service two-action setup, silently create/clone resources or use a synthetic replacement. Project creation can request remote model suggestions and incur the remote account's charges; its existing disclosure and exact consent remain intact.
 
+## Continuing after verification expiry
+
+The 15-minute runtime verification TTL remains unchanged. Opening an expired,
+configured project can internally recheck its health and derive a binding with
+exactly the original capabilities. Continuing an expired research uses the same
+native session: an explicit new **Continue research** submission performs the
+bounded health check and guarded local rebind before admitting that new command.
+**Continue viewing research** performs this check without sending any goal.
+There is no routine verify → bind → rebind configuration sequence for unchanged
+owner credentials and targets.
+
+Renewal first proves the original immutable configuration, credential revision,
+provider policy and capability scope, using the existing connection command
+ledger. Revocation, rotation, changed origin/project/template or changed policy
+requires explicit selection. A failed health check can retry only under a
+previously saved same-scope renewal proof. Owner grants and current bindings are
+rechecked; no expired handle is used. Health verification is GET-only. An
+unresolved original turn or unknown interrupt blocks migration; reading its
+original observation never resends it. Original plans, tasks, effects, session
+identity and command snapshots remain unchanged. A replayed command request
+uses its original plan rather than substituting a newly refreshed binding.
+
+- `POST /api/factory/personal-agent/connections/{ref}/refresh`:
+  `{expectedFingerprint}`; same-owner/same-scope local lease maintenance only.
+- `POST /api/factory/personal-agent/sessions/{id}/continue`:
+  `{expectedFingerprint}`; returns current session and `ready`, `waiting` or
+  `unavailable`; does not create projects/sessions or send/interrupt research.
+
 ## Verification scope
 
 Controlled tests use fake credentials, the pinned ORX wire shapes, a supported isolated PostgreSQL fixture and actual Agno native queue, plus real Chromium desktop/390px pixel inspection. They verify configured start/result/continue, first configuration/draft retention, owner isolation, repeated clicks, original receipt recovery, navigation, empty observations and unavailable upstream. The PostgreSQL journey and configuration recovery cases are included in the mandatory boundary gate; required CI rejects every skipped case.

@@ -47,8 +47,12 @@ owner overrides, credential values, private CIDR policy, code or adapter objects
 After verification, the returned registration reference is passed to the existing
 `/api/factory/user-connections` binding endpoint, with optional task scope and a
 narrowed capability set. Verification lasts 15 minutes. A new verification has a
-new immutable binding revision; old plans must rebind/replan rather than silently
-adopting it. The read-only identity handle requires the complete verified
+new immutable binding revision; old plans never silently adopt it. The ordinary
+OpenResearch journey can refresh an unchanged owner's lease and derive an equally
+scoped future binding internally, then use the existing guarded session rebind
+for a new explicit continuation. Rotation, revocation or scope/target/policy change
+requires explicit selection; unknown work is never replayed. See
+`PERSONAL_OPENRESEARCH_JOURNEY.md`. The read-only identity handle requires the complete verified
 capability set, rechecked before and after IO; a narrowed reference cannot read
 extra project or agent metadata. Revocation is local access revocation, not deletion of remote resources
 or proof that already-running upstream processes stopped.

@@ -66,20 +66,51 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     return true;
   }
   function remember(p: Pending | null) { if (p) localStorage.setItem(storage, JSON.stringify(p)); else localStorage.removeItem(storage); setPending(p); }
+  function adoptSession(next: PersonalSession) {
+    setSession(next);
+    if (researchJourney && next.bindingStatus === 'active' && next.connectionPin?.ownerId === ownerId) {
+      setSelected(next.connectionRef);
+      const pin = next.connectionPin;
+      setConnections(all => [...all.filter(item => item.ref !== pin.ref), pin]);
+    }
+  }
+  async function continueViewing() {
+    if (!session?.nativeSessionId || !!busy || rebindActive.current) return; const epoch = navigation.current;
+    await act('continue', async () => {
+      if (!await ownerIsCurrent(epoch)) return;
+      try {
+        const resumed = await personalAgentApi.continueResearch(session);
+        if (!current(epoch)) return;
+        adoptSession(resumed.session);
+        setNotice(resumed.state === 'ready' ? '已继续原研究。结果和原请求保留，可以追问。' : '仍在等待原研究的明确回复；已核对原连接，不会重发研究请求。');
+      } catch (error) {
+        if (current(epoch) && error instanceof ApiError && error.status === 409) { setNotice('原连接的授权或目标无法保持一致，请明确选择研究连接。结果和草稿保留。'); setSetupOpen(true); return; } throw error;
+      }
+    });
+  }
   useEffect(() => {
     const ctrl = new AbortController(); setReady(false);
-    void Promise.all([api.session(ctrl.signal), personalAgentApi.capabilities(ctrl.signal), api.userConnections(ctrl.signal), personalRemoteApi.list(ctrl.signal), personalAgentApi.sessions(undefined, ctrl.signal)]).then(([who, cap, refs, remotes, history]) => {
+    void Promise.all([api.session(ctrl.signal), personalAgentApi.capabilities(ctrl.signal), api.userConnections(ctrl.signal), personalRemoteApi.list(ctrl.signal), personalAgentApi.sessions(undefined, ctrl.signal)]).then(async ([who, cap, refs, remotes, history]) => {
       if (ctrl.signal.aborted) return;
       if (who.id !== ownerId || cap.executionContract !== PERSONAL_CONTRACT || cap.nativeQueue !== true || refs.some(r => r.ownerId !== ownerId)) throw new Error('identity');
       setSessionCatalog(history.filter(item => item.namespace === namespace));
       const personal = new Set(remotes.filter(r => r.providerId === provider).map(r => r.registrationRef));
       setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && r.providerId === provider); return [ref.ref, remote ? `${remote.origin} · 项目 ${remote.projectId || '未指定'} · ${ref.ref.slice(0, 8)}` : `连接 ${ref.ref}`]; })));
-      const usable = refs.filter(r => personal.has(r.registrationRef) && r.kind === (namespace === 'opencode' ? 'environment' : 'orx') && r.status === 'active' && r.available && r.taskId === null && r.capabilities.includes('session:read'));
+      const usable = refs.filter(r => personal.has(r.registrationRef) && r.kind === (namespace === 'opencode' ? 'environment' : 'orx') && (r.status === 'active' && r.available || researchJourney && r.status === 'expired') && r.taskId === null && r.capabilities.includes('session:read'));
       setConnections(usable); setOwnerSubmit(namespace === 'native-openresearch' && cap.ownerSubmit === '/api/factory/personal-agent/commands/submit' && cap.modelConfiguration === 'remote-configured-model' && cap.factoryBYOKForwarded === false);
       if (namespace === 'native-openresearch') {
-        const saved = localStorage.getItem(selectionStorage); const previous = history.find(item => item.id === saved && item.namespace === namespace && usable.some(c => c.ref === item.connectionRef));
+        const saved = localStorage.getItem(selectionStorage); const previous = history.find(item => item.id === saved && item.namespace === namespace && (researchJourney || usable.some(c => c.ref === item.connectionRef)));
         if (previous && !connectionRef) { setSelected(previous.connectionRef); setSession(previous); }
-        else if (usable.length === 1 || researchJourney) setSelected(value => usable.some(c => c.ref === value) ? value : usable[0]?.ref ?? '');
+        else if (usable.length === 1 || researchJourney) {
+          const preferred = usable.find(c => c.ref === selected) ?? usable.find(c => c.available) ?? usable.find(c => c.capabilities.includes('session:create')) ?? usable[0];
+          if (researchJourney && preferred?.status === 'expired' && cap.ownerSubmit && !pending && !attachment) {
+            try {
+              const renewed = await personalAgentApi.refreshConnection(preferred);
+              if (ctrl.signal.aborted) return;
+              setConnections([...usable.filter(c => c.ref !== preferred.ref), renewed]); setSelected(renewed.ref);
+            } catch { if (!ctrl.signal.aborted) { setNotice('暂时无法使用原研究连接。请重试；若授权或目标已变化，请明确选择连接。草稿保留。'); setSetupOpen(true); } }
+          } else setSelected(preferred?.ref ?? '');
+        }
       }
       setReady(true);
     }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setNotice('个人会话功能尚未启用或身份无法核对。旧只读连接不会自动升级。'); } });
@@ -87,7 +118,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   }, [ownerId, namespace, provider, revision, researchJourney, connectionRef]);
   useEffect(() => {
     const ctrl = new AbortController(); setResourceReady(false); setProject(undefined); setSessions([]); setSession(current => current?.connectionRef === selected ? current : undefined); setNativeSessions([]);
-    if (ready && connections.some(c => c.ref === selected)) {
+    if (ready && connections.some(c => c.ref === selected && c.available)) {
       void Promise.all([personalAgentApi.project(selected, ctrl.signal), personalAgentApi.sessions(selected, ctrl.signal), namespace === 'native-openresearch' ? personalAgentApi.nativeSessions(selected, ctrl.signal) : Promise.resolve(null)]).then(([p, s, native]) => {
         if (!ctrl.signal.aborted) { if (p.namespace !== namespace || s.some(item => item.namespace !== namespace || item.connectionRef !== selected || item.nativeProjectId !== p.nativeProjectId)) throw new Error('scope'); if (native && (native.namespace !== namespace || native.nativeProjectId !== p.nativeProjectId)) throw new Error('scope'); setProject(p); setSessions(s); if (native) setNativeSessions(native.sessions); setResourceReady(true); }
       }).catch(() => { if (!ctrl.signal.aborted) setNotice('无法核对原生项目与会话。请刷新资源状态。'); });
@@ -100,7 +131,13 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     const generation = observationGeneration.current; const ctrl = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') ? '' : value); } }
-      catch { if (!ctrl.signal.aborted && generation === observationGeneration.current) { setSession(current => current && current.id === sessionId ? { ...current, bindingStatus: 'unavailable' } : current); setNotice('远程观察暂不可用。保留原会话与请求；不能据此认定已停止。'); } }
+      catch {
+        if (!ctrl.signal.aborted && generation === observationGeneration.current) {
+          try { const snapshot = await personalAgentApi.snapshot(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current && snapshot.connectionPin?.ownerId === ownerId && snapshot.namespace === namespace) setSession(snapshot); }
+          catch { if (!ctrl.signal.aborted) setSession(current => current && current.id === sessionId ? { ...current, bindingStatus: 'unavailable' } : current); }
+          if (!ctrl.signal.aborted) setNotice('研究结果和原请求已保留。继续研究时会检查原连接；无法确认授权或目标时会停止。');
+        }
+      }
       if (!ctrl.signal.aborted) timer = setTimeout(() => void poll(), 4000);
     }
     void poll(); return () => { ctrl.abort(); clearTimeout(timer); };
@@ -111,14 +148,14 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     finally { lock.current = false; if (current(epoch)) setBusy(''); }
   }
   async function submit(next: PersonalAction) {
-    if (researchJourney && researchText.length > 16000 || !ownerSubmit || disabled || rebindActive.current || !project || next !== 'create' && (!sessionWritable || !session?.nativeSessionId || !session.connectionPin?.capabilities.includes(`session:${next}`)) || next === 'prompt' && (!(researchJourney ? researchText : text).trim() || session?.activeRequestId)) return;
+    if (researchJourney && researchText.length > 16000 || !ownerSubmit || disabled || rebindActive.current || !project && !researchJourney || next !== 'create' && (!sessionWritable && !(next === 'prompt' && leaseContinuation) || !session?.nativeSessionId || !session.connectionPin?.capabilities.includes(`session:${next}`)) || next === 'prompt' && (!(researchJourney ? researchText : text).trim() || session?.activeRequestId)) return;
     const epoch = navigation.current;
     await act('submit', async () => {
       if (!await ownerIsCurrent(epoch)) return;
       const requestId = crypto.randomUUID(); remember({ requestId, submitAttempt: true });
-      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
+      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project!.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
       let result;
-      try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未提交：请检查连接或当前权限，草稿保留。'); return; } throw error; }
+      try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。'); if (error.code === 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED' || error.code === 'REMOTE_CREDENTIAL_UNAVAILABLE') setSetupOpen(true); return; } throw error; }
       if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') { setText(''); if (researchJourney) { setResearchGoal(''); setMaterials(''); } }
@@ -181,11 +218,11 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       else {
         remember({ requestId: pending.requestId, planId: result.plan.id, startPlanId: result.plan.id, ...(pending.submitAttempt ? { submitAttempt: true as const } : {}) }); setShowReview(false);
         if (result.receipt) {
-          setSession(result.receipt.session); localStorage.setItem(selectionStorage, result.receipt.session.id);
+          adoptSession(result.receipt.session); localStorage.setItem(selectionStorage, result.receipt.session.id);
           if (result.receipt.state !== 'ack_unknown') {
             const next = followup.current; followup.current = null;
             const createdSession = result.receipt.session;
-            if (result.receipt.action === 'create' && next && current(next.epoch) && createdSession.nativeSessionId && !createdSession.activeRequestId && connections.some(c => c.ref === createdSession.connectionRef && c.fingerprint === createdSession.connectionPin?.fingerprint && c.capabilities.includes('session:prompt'))) {
+            if (result.receipt.action === 'create' && next && current(next.epoch) && createdSession.nativeSessionId && !createdSession.activeRequestId && createdSession.connectionPin?.ownerId === ownerId && createdSession.connectionPin.capabilities.includes('session:prompt')) {
               remember({ requestId: next.requestId, submitAttempt: true }); setNewGoal('');
               if (!await ownerIsCurrent(epoch)) return;
               const prompted = await personalAgentApi.submit({ requestId: next.requestId, action: 'prompt', sessionId: createdSession.id, text: next.text }, ...(researchJourney ? [ownerId] : []));
@@ -236,7 +273,8 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     });
   }
   function closeReview() { navigation.current++; setShowReview(false); setAllowed(false); setBusy(''); setNotice('已关闭审阅，未因此启动命令。原请求保留，可继续核对。'); }
-  const disabled = !!busy || !!pending || !!attachment || rebindPending || !resourceReady;
+  const leaseContinuation = researchJourney && !!session?.nativeSessionId && !!session.connectionPin?.capabilities.includes('session:prompt') && ['expired', 'changed', 'unavailable'].includes(session.bindingStatus ?? '');
+  const disabled = !!busy || !!pending || !!attachment || rebindPending || !resourceReady && !leaseContinuation;
   const sessionWritable = session && connections.some(item => item.ref === session.connectionRef && !!session.connectionPin && item.fingerprint === session.connectionPin.fingerprint) && (!session.bindingStatus || session.bindingStatus === 'active');
   const visibleSessions = [...new Map([...sessionCatalog, ...sessions].map(item => [item.id, item])).values()];
   const canCreate = connections.find(c => c.ref === selected)?.capabilities.includes('session:create') === true && (namespace === 'opencode' || project?.sessionCreationSupported === true);
@@ -245,7 +283,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     const latest = answers.at(-1);
     const status = !ready ? '正在读取连接' : pending ? (pending.requestId.endsWith(':create') || followup.current ? '正在确认研究会话' : '研究请求待核对') : session?.activeRequestId ? '等待远端回复' : session?.state === 'ack_unknown' ? '研究请求待核对' : latest ? '已观察到回复' : session ? '尚未取得研究回复' : resourceReady && canCreate ? '可以开始研究' : '需要补齐连接';
     const needsSetup = ready && (!connections.length || !!project && !canCreate && !session);
-    function begin() { if (!resourceReady || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
+    function begin() { if (!resourceReady && !leaseContinuation || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
     const resultPanel = <section className="research-results" aria-label="研究结果"><div className="research-result-heading"><h2>结果与重要发现</h2>{session && <button className="secondary" disabled={disabled || !!session.activeRequestId} onClick={() => { navigation.current++; setSession(undefined); localStorage.removeItem(selectionStorage); setResearchGoal(''); setMaterials(''); }}>开始新的研究</button>}</div>
         {answers.length ? answers.map(m => <article key={m.id} className="research-answer"><p className="quiet">{m.completed ? '远端回复' : '远端回复尚未完成'}</p>{m.events.filter(e => e.type === 'text').map((e, i) => e.type === 'text' && <p key={i} className="research-answer-text">{e.text}</p>)}{!m.events.some(e => e.type === 'text' && e.text.trim()) && <p>已观察到工具活动，但还没有可阅读的研究回复。</p>}</article>) : <div className="research-empty"><strong>{session?.activeRequestId || pending ? '正在等待原研究的回复' : '研究回复会出现在这里'}</strong><p>{session ? '暂未取得可阅读的结果。可刷新核对原请求，或查看过程详情。' : '输入研究目标开始；收到回复后，可以继续追问。'}</p></div>}
         {latest && <details><summary>结果来源</summary><p>来自此 OpenResearch 原生会话的远端回复。{session?.observation?.exactTurnVerified === false && '按会话记录变化关联，精确轮次未验证。'}研究结论需结合原始材料核实。</p></details>}
@@ -257,12 +295,12 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       {notice && <p className="research-notice" role={job?.status === 'failed' ? 'alert' : 'status'}>{notice}</p>}
       {job?.status === 'failed' && <p role="alert">执行任务失败。请核对原请求及任务详情；不能据此认定远端研究已停止。</p>}
       {(pending || session?.state === 'ack_unknown') && <aside className="research-decision"><h3>需要核对原请求</h3><p>尚未取得明确回执。请核对原请求；刷新和返回不会重新发送目标。</p>{pending && <button disabled={!!busy} onClick={() => void recover()}>核对研究请求</button>}</aside>}
-      {session && !sessionWritable && <aside className="research-decision"><h3>需要更新研究连接</h3><p>连接已变更或暂时不可用。已有结果保留，请续接原会话。</p></aside>}
+      {session && !sessionWritable && <aside className="research-decision"><h3>继续原研究</h3><p>已有结果和原请求保留。继续时会检查同一连接；若账户授权或目标变化，会停止要求你明确选择。</p><button disabled={!!busy || !!attachment || rebindPending || !ready || !session.nativeSessionId} onClick={() => void continueViewing()}>继续查看研究</button></aside>}
       {!!answers.length && resultPanel}
       <form className="research-composer" onSubmit={e => { e.preventDefault(); begin(); }}>
         <label htmlFor="research-goal">{session ? '继续研究' : '研究目标'}</label><textarea id="research-goal" aria-label="研究目标" placeholder={session ? '想进一步了解什么？' : '描述你想研究的问题，以及希望得到什么结果…'} maxLength={16000} value={researchGoal} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setResearchGoal(e.target.value)} />
         <details className="research-materials"><summary>补充材料（可选）</summary><label>材料文本或链接<textarea aria-label="补充材料" placeholder="粘贴相关文本或链接；会随目标发送到远端模型。链接不会由 Factory 自动下载。" maxLength={16000} value={materials} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setMaterials(e.target.value)} /></label></details>
-        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{busy ? '正在提交…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
+        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!sessionWritable && !leaseContinuation || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{busy ? '正在提交…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady || session ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
         {researchText.length > 16000 && <p role="alert">目标与材料合计超过 16000 字，请缩短后再开始。</p>}
       </form>
       {(needsSetup || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}

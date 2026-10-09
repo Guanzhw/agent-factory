@@ -6,7 +6,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../web/PersonalAgentSessions.js';
 import { NativeCommandResult } from '../web/NativeCommandResult.js';
 import { api, ApiError } from '../web/api.js';
-import { personalAgentApi, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
+import { personalAgentApi, checkResearchContinuation, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote } from '../web/personalRemoteApi.js';
 import type { FactoryJob, Plan, UserConnection, JobDetail } from '../web/models.js';
 const owner = { id: 'native-owner', name: 'Owner', role: 'user' as const };
@@ -100,6 +100,41 @@ async function journey() {
   await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask: () => undefined })));
 }
 async function goal(text: string, label = '研究目标') { await act(async () => { const field = host.querySelector<HTMLTextAreaElement>(`[aria-label="${label}"]`)!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true })); }); }
+it('ordinary expired history keeps results and submits one explicit followup without technical renewal steps', async () => {
+  const expired = { ...observed, bindingStatus: 'expired' };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  await journey(); await goal('Explicit new followup across expiration');
+  expect(button('继续研究').disabled).toBe(false);
+  await act(async () => { button('继续研究').click(); button('继续研究').click(); });
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({ action: 'prompt', sessionId: expired.id, text: 'Explicit new followup across expiration' }), owner.id);
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
+  expect(host.querySelector('dialog')).toBeNull();
+});
+it('one continue-viewing operation preserves an unresolved original request without sending another prompt', async () => {
+  const expired = { ...observed, bindingStatus: 'expired', activeRequestId: 'unknown-original', state: 'ack_unknown' };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  const resume = vi.spyOn(personalAgentApi, 'continueResearch').mockResolvedValue({ state: 'waiting', session: expired });
+  await journey(); await act(async () => button('继续查看研究').click());
+  expect(resume).toHaveBeenCalledWith(expired); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  expect(button('继续研究').disabled).toBe(true); expect(host.textContent).toContain('不会重发研究请求');
+});
+it('expired restored history does not vanish or perform background connection renewal', async () => {
+  const expired = { ...observed, bindingStatus: 'expired' };
+  const refresh = vi.spyOn(personalAgentApi, 'refreshConnection');
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  await journey();
+  expect(host.textContent).toContain('Only a controlled protocol result'); expect(button('继续查看研究').disabled).toBe(false);
+  expect(refresh).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+it('rejects continuation that changes native identity, original task or enlarges capabilities', () => {
+  const value = { state: 'ready' as const, session: observed };
+  expect(checkResearchContinuation(value, observed)).toEqual(value);
+  for (const changed of [{ ...observed, nativeSessionId: 'other' }, { ...observed, factoryIdentity: identity }, { ...observed, connectionPin: { ...pin, capabilities: [...pin.capabilities, 'project:create'] } }]) expect(() => checkResearchContinuation({ ...value, session: changed }, observed)).toThrow();
+});
 it('ordinary journey starts from one goal action, retains material provenance and hides technical output in details', async () => {
   const createPlan = { ...plan, inputValues: { ...plan.inputValues!, action: 'create' } };
   vi.mocked(personalAgentApi.recover).mockImplementation(async id => ({ ...recovery(id), plan: createPlan, receipt: { requestId: id, action: 'create', state: 'acknowledged', session: { ...session, factoryIdentity: identity }, factoryIdentity: identity } }));

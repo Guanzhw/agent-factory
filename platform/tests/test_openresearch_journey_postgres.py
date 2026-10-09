@@ -1,6 +1,8 @@
 """First-app journey over controlled ORX HTTP and real PG/native queue only."""
 import os
 import unittest
+from copy import deepcopy
+from datetime import timedelta
 from uuid import uuid4
 from unittest.mock import patch
 from fastapi import HTTPException
@@ -10,6 +12,49 @@ import test_personal_orx_projects_postgres as native
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL')
 class ResearchJourneyPostgresTests(unittest.TestCase):
+    def test_controlled_expiry_continue_and_new_research_keep_native_queue_and_old_snapshots(self):
+        fixture = native.OrxProjectPostgresTests('test_personal_orx_registration_uses_shared_contract_without_remote_probe')
+        with fixture.fixture():
+            request = fixture.request
+            selected = request('POST', '/personal-agent/project-selection', {'requestId': 'lease-setup',
+                'connectionRef': fixture.bound['ref'], 'nativeProjectId': 'native-project'})
+            created, _ = fixture.session_command('create', connectionRef=selected['ref'],
+                nativeProjectId='native-project', title='Controlled first research')
+            sid = created['session']['id']
+            fixture.session_command('prompt', sessionId=sid, text='Original controlled goal')
+            first = request('GET', '/personal-agent/sessions/' + sid + '?refresh=true')
+            original_plan = deepcopy(fixture.store.plan(created['factoryIdentity']['planId'], 'alice'))
+            at = fixture.store.connections._at()
+            fixture.store.connections.clock = lambda: at + timedelta(minutes=16)
+            expired = request('GET', '/personal-agent/sessions/' + sid)
+            self.assertEqual(expired['bindingStatus'], 'expired')
+            posts = len([c for c in fixture.wire.calls if c[0] == 'POST'])
+            continued = request('POST', '/personal-agent/sessions/' + sid + '/continue',
+                {'expectedFingerprint': first['connectionPin']['fingerprint']})
+            self.assertEqual(continued['state'], 'ready')
+            self.assertEqual(len([c for c in fixture.wire.calls if c[0] == 'POST']), posts)
+            self.assertEqual(continued['session']['nativeSessionId'], first['nativeSessionId'])
+            fixture.session_command('prompt', sessionId=sid, text='New explicit followup after expiry')
+            second = request('GET', '/personal-agent/sessions/' + sid + '?refresh=true')
+            self.assertEqual(fixture.wire.prompts, 2)
+            self.assertEqual(second['nativeSessionId'], first['nativeSessionId'])
+            self.assertEqual(fixture.store.plan(created['factoryIdentity']['planId'], 'alice'), original_plan)
+            # A later ordinary submit combines health/rebind internally with this
+            # new explicit prompt only. The original request is never reissued.
+            fixture.store.connections.clock = lambda: at + timedelta(minutes=32)
+            fixture.session_command('prompt', sessionId=sid, text='Explicit next followup across second lease')
+            self.assertEqual(fixture.wire.prompts, 3)
+            third = request('GET', '/personal-agent/sessions/' + sid + '?refresh=true')
+            self.assertEqual(third['nativeSessionId'], first['nativeSessionId'])
+            self.assertEqual(len(third['bindingHistory']), 2)
+            # Old selected project refs can refresh to the same proven scope for
+            # an explicit distinct study, without a remote project creation.
+            new, _ = fixture.session_command('create', connectionRef=selected['ref'],
+                nativeProjectId='native-project', title='Explicit separate research after expiry')
+            self.assertNotEqual(new['session']['nativeSessionId'], first['nativeSessionId'])
+            self.assertEqual(fixture.wire.creation_posts, 0)
+            self.assertEqual(fixture.store.plan(created['factoryIdentity']['planId'], 'alice'), original_plan)
+
     def test_configuration_failure_partial_unknown_and_explicit_reselection_recovery(self):
         fixture = native.OrxProjectPostgresTests('test_personal_orx_registration_uses_shared_contract_without_remote_probe')
         with fixture.fixture():

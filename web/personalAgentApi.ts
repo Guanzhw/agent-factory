@@ -45,6 +45,15 @@ export function checkSession(value: PersonalSession): PersonalSession {
   if (value.observation && (value.observation.trustedMetering !== false || value.observation.provenance !== 'remote-reported' || value.observation.sessionId !== value.nativeSessionId || value.observation.projectId !== value.nativeProjectId || !Array.isArray(value.observation.messages))) invalid();
   return value;
 }
+export function checkLeaseConnection(value: UserConnection, original: UserConnection): UserConnection {
+  if (!value || value.ownerId !== original.ownerId || value.kind !== 'orx' || original.kind !== 'orx' || value.registrationRef !== original.registrationRef || value.taskId !== null || value.status !== 'active' || value.available !== true || !/^[a-f0-9]{64}$/.test(value.fingerprint) || !Array.isArray(value.capabilities) || [...value.capabilities].sort().join('\u0000') !== [...original.capabilities].sort().join('\u0000')) invalid();
+  return value;
+}
+export function checkResearchContinuation(value: { state: 'ready' | 'waiting' | 'unavailable'; session: PersonalSession }, original: PersonalSession) {
+  const session = checkSession(value.session); const old = original.connectionPin; const next = session.connectionPin;
+  if (!['ready', 'waiting', 'unavailable'].includes(value.state) || !old || !next || session.id !== original.id || session.namespace !== 'native-openresearch' || session.nativeProjectId !== original.nativeProjectId || session.nativeSessionId !== original.nativeSessionId || JSON.stringify(session.factoryIdentity) !== JSON.stringify(original.factoryIdentity) || next.ownerId !== old.ownerId || next.kind !== old.kind || next.taskId !== old.taskId || !historicalConnectionMatches(session, old) || !Array.isArray(next.capabilities) || next.capabilities.some(cap => !old.capabilities.includes(cap)) || value.state === 'ready' && (session.bindingStatus !== 'active' || !!session.activeRequestId)) invalid();
+  return value;
+}
 export function checkPrepared(value: PersonalPrepared): PersonalPrepared {
   if (!value || value.executionContract !== PERSONAL_CONTRACT || value.commandSuccessMeans !== 'remote-command-acceptance-only' || value.remoteStopVerified !== false || value.remoteBudgetEnforcement !== 'advisory' || !value.plan?.id || !value.plan.fingerprint) invalid();
   return value;
@@ -76,6 +85,9 @@ export const personalAgentApi = {
   session: async (id: string, signal?: AbortSignal) => {
     const s = checkSession(await factoryRequest<PersonalSession>(`${path}/sessions/${ref(id)}?refresh=true`, 'GET', undefined, signal)); if (s.id !== id) invalid(); return s;
   },
+  snapshot: async (id: string, signal?: AbortSignal) => { const s = checkSession(await factoryRequest<PersonalSession>(`${path}/sessions/${ref(id)}`, 'GET', undefined, signal)); if (s.id !== id) invalid(); return s; },
+  refreshConnection: async (original: UserConnection) => checkLeaseConnection(await factoryRequest<UserConnection>(`${path}/connections/${ref(original.ref)}/refresh`, 'POST', { expectedFingerprint: original.fingerprint }, undefined, original.ownerId), original),
+  continueResearch: async (original: PersonalSession) => checkResearchContinuation(await factoryRequest<{ state: 'ready' | 'waiting' | 'unavailable'; session: PersonalSession }>(`${path}/sessions/${ref(original.id)}/continue`, 'POST', { expectedFingerprint: original.connectionPin?.fingerprint }, undefined, original.connectionPin?.ownerId), original),
   nativeSessions: async (connectionRef: string, signal?: AbortSignal) => {
     const value = await factoryRequest<NativePersonalSessions>(`${path}/native-sessions?connectionRef=${ref(connectionRef)}`, 'GET', undefined, signal);
     if (!value || !['opencode', 'native-openresearch'].includes(value.namespace) || value.executionContract !== PERSONAL_CONTRACT || value.connectionPin?.ref !== connectionRef || !value.nativeProjectId || !Array.isArray(value.sessions) || value.sessions.some(s => !s.nativeSessionId || s.nativeProjectId !== value.nativeProjectId || s.namespace && s.namespace !== value.namespace || s.title !== undefined && typeof s.title !== 'string')) invalid();
