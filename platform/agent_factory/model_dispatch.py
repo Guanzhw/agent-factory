@@ -16,6 +16,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 
 from .execution_bindings import BindingContext, ExecutionBindings
+from .billing_mode import ledger_for_plan
 
 
 class DelegatingModel(Model):
@@ -61,7 +62,7 @@ class DelegatingModel(Model):
 
         current()
         from .inference_wait import read as read_wait, observe as check_wait
-        waiting = read_wait(store, task["id"]) if getattr(store, "usage_ledger", None) is not None else None
+        waiting = read_wait(store, task["id"]) if callable(getattr(store, "sql", None)) else None
         if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
             check_wait(store, task, waiting)
         binding = self.bindings.resolve(plan, context)["model"]
@@ -77,7 +78,7 @@ class DelegatingModel(Model):
         # Only this fresh per-response adapter is wrapped. Shared Agent/model
         # state is unchanged, and every provider retry/tool-loop call rechecks.
         self._guard_provider_calls(model, current, local_current=local_current,
-            ledger=getattr(store, "usage_ledger", None), plan=plan, context=context)
+            ledger=ledger_for_plan(store, plan), plan=plan, context=context)
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -302,7 +303,7 @@ class DelegatingModel(Model):
         return True
 
     def _recovered(self, arguments, kwargs, *, streaming=False):
-        if getattr(self.bindings.store, "usage_ledger", None) is None:
+        if not callable(getattr(self.bindings.store, "sql", None)):
             return
         response = kwargs.get("run_response")
         if response is None and len(arguments) > (6 if streaming else 5):

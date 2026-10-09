@@ -57,7 +57,9 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
                 'nativeProfileId': 'probe', 'sessionId': 'original-session', 'contractSha256': digest(self.contract),
                 'applicationRef': {k: self.application[k] for k in ('id', 'version', 'sha256')}, 'mode': 'probe'}
             return {'probe': self.profile}
+        # Explicit accounting compatibility fixture; no model/process IO is installed.
         settings = Settings(db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
+            fee_management_enabled=True, platform_paid_models_enabled=True,
             temporary_policy='admin-review', runtime_tool_contract='bounded-process-v1',
             policy_revision='managed-probe-fixture-plan-v1',
             material_policy_revision='managed-probe-fixture-material-v1',

@@ -101,6 +101,8 @@ class ExternalSessionPostgresTests(unittest.TestCase):
             runtime_factory=runtime_factory, context_reader=lambda: {}, candidate_validator=lambda _: {},
             experiment=forbidden, review_owner='manager', external_session=True)
         self.settings = bootstrap.settings(db_url=database.url, workspace=workspace, preset=preset)
+        # Explicit legacy accounting fixture; all model/provider IO remains controlled.
+        self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
         self.settings.remote_targets = {'original-preparation': target}
         self.assertEqual(self.settings.max_workers, 1)
         self.open_application()

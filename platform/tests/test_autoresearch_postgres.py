@@ -92,6 +92,8 @@ class AutoResearchPostgresTests(unittest.TestCase):
             candidate_validator=lambda _value: {'accepted': False}, experiment=unavailable_experiment,
             review_owner='manager')
         self.settings = bootstrap.settings(db_url=self.database.url, workspace=self.workspace, preset=self.preset)
+        # Explicit legacy accounting fixture; all model/provider IO remains controlled.
+        self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
         original = ORXResearchModel.aresponse
         async def observed_outer(model, *args, **kwargs):
             self.outer_calls.append(model.id)

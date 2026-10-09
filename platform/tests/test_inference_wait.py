@@ -48,6 +48,23 @@ class InferenceWaitContractTests(unittest.TestCase):
             'settledAmountMicros':0,'heldAmountMicros':0,'amountMicrosLimit':0}]}
         with self.assertRaises(HTTPException):wait.current(store,task)
 
+    def test_disabled_money_management_preserves_original_recovery_guards(self):
+        from unittest.mock import Mock
+        task, body, row, store = self.fixture()
+        store.usage_ledger = None
+        check = Mock(return_value={})
+        store.require_plan_execution = check
+        wait.current(store, task, body)
+        check.assert_called_once()
+        task['cancel_requested'] = True
+        with self.assertRaises(RunCancelledException): wait.current(store, task, body)
+        task['cancel_requested'] = False
+        check.side_effect = PermissionError('Original native grant revoked')
+        with self.assertRaises(PermissionError): wait.current(store, task, body)
+        check.side_effect = None
+        body['deadline'] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with self.assertRaises(HTTPException): wait.current(store, task, body)
+
     def test_control_result_and_identity_cannot_be_supplied_or_replayed(self):
         task,body,row,store=self.fixture()
         tool={'tool_name':wait.CONTROL_NAME,'tool_call_id':'control','tool_args':{},'external_execution_required':True}

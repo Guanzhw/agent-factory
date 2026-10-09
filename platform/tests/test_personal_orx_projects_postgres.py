@@ -79,7 +79,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
         result = self.request('POST', '/personal-agent/project-commands/prepare', {
             'requestId': key, 'connectionRef': self.bound['ref'], 'project': values})
         self.assertEqual(result['plan']['status'], 'ready', result['plan'])
-        self.assertTrue(result['authorization']['reviewRequired'])
+        self.assertFalse(result['authorization']['reviewRequired'])
+        self.assertTrue(result['authorization']['ownerSubmissionSupported'])
         self.assertEqual(self.wire.creation_posts, 0)
         return key, result
 
@@ -96,7 +97,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.assertEqual(project['project']['cloneUrl'], bundle['request']['cloneUrl'])
             self.assertEqual(project['effects'], bundle['disclosure'])
             self.assertEqual(project['previewHash'], bundle['previewHash'])
-            self.assertEqual(review['planSummary']['usageBudget'], original['usageBudget'])
+            self.assertNotIn('usageBudget', original)
+            self.assertIsNone(review['planSummary']['usageBudget'])
             self.assertEqual(project['billing']['remoteCostStatus'], 'unknown')
             self.assertEqual(project['billing']['controllerLedgerScope'], 'local-controller-only')
             self.assertFalse(project['billing']['remoteCostIncludedInUsageBudget'])
@@ -186,11 +188,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
             for native_task in (task, session_task, research_task):
                 actual = self.store.task(native_task['id'], 'alice')
                 self.assertIsNotNone(self.store.native_db.get_job(actual['run_id'], strict=True))
-                account = self.store.sql('SELECT settled_tokens,settled_amount FROM af_usage_accounts WHERE id=:id',
-                    id='task:' + native_task['id'])
-                self.assertTrue(account)
-                self.assertEqual(account[0]['settled_tokens'], 0)
-                self.assertEqual(account[0]['settled_amount'], 0)
+                self.assertIsNone(self.store.usage_ledger)
             # A separate cancelled request never dispatches, despite plan review.
             cancelled_key = 'project-' + uuid4().hex
             cancelled = self.request('POST', '/personal-agent/project-commands/prepare', {
@@ -200,9 +198,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.request('POST', '/personal-agent/project-commands/' + cancelled_key + '/decision',
                 {'previewHash': cancelled['receipt']['preview']['previewHash'], 'approved': False})
             self.request('POST', '/personal-agent/commands/start', {'planId': cancelled['plan']['id']}, expected=409)
-            bypassed = self.request('POST', '/instances', {'planId': cancelled['plan']['id'],
-                'requestId': 'cancelled-generic-instance'}, expected=202)
-            self.until(bypassed, 'unknown')
+            self.request('POST', '/instances', {'planId': cancelled['plan']['id'],
+                'requestId': 'cancelled-generic-instance'}, expected=409)
             self.assertEqual(self.wire.creation_posts, 1)
 
     def test_cancellation_cannot_overwrite_dispatch_claim_after_reading_approved(self):
@@ -291,8 +288,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.review(expired['plan']); self.approve(expired_key, expired)
             at = self.store.connections._at()
             self.store.connections.clock = lambda: at + timedelta(minutes=16)
-            task = self.request('POST', '/personal-agent/commands/start', {'planId': expired['plan']['id']})
-            self.until(task, 'unknown')
+            self.request('POST', '/personal-agent/commands/start', {'planId': expired['plan']['id']}, expected=409)
             self.assertEqual(self.wire.creation_posts, 1)
             self.request('GET', '/personal-agent/project-commands/' + key)
             self.request('GET', '/personal-agent/project-commands/' + key + '?refresh=true', expected=409)

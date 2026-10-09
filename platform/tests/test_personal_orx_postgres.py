@@ -56,13 +56,10 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                     prepared = request('POST', '/personal-agent/commands/prepare',
                         {'requestId': key, 'action': action, **values})
                     plan = prepared['plan']; self.assertEqual(plan['status'], 'ready', plan)
-                    self.assertTrue(prepared['authorization']['reviewRequired'])
+                    self.assertFalse(prepared['authorization']['reviewRequired'])
+                    self.assertTrue(prepared['authorization']['ownerSubmissionSupported'])
                     self.assertEqual(prepared['remoteBudgetEnforcement'], 'advisory')
-                    request('POST', '/personal-agent/commands/start', {'planId': plan['id']}, expected=409)
-                    review = request('POST', '/plan-reviews',
-                        {'planId': plan['id'], 'requestId': uuid4().hex}, expected=201)
-                    request('POST', '/plan-reviews/' + review['id'] + '/decision',
-                        {'approved': True, 'requestId': uuid4().hex}, owner='manager')
+                    # Exact normal owner submission needs no administrator review.
                     task = request('POST', '/personal-agent/commands/start', {'planId': plan['id']})
                     return key, task
                 def until(task, status):
@@ -197,8 +194,4 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                     native_task = store.task(task['id'], 'alice')
                     self.assertTrue(native_task['run_id'])
                     self.assertIsNotNone(store.native_db.get_job(native_task['run_id'], strict=True))
-                    accounts = store.sql('SELECT settled_tokens,settled_amount FROM af_usage_accounts WHERE id=:id',
-                        id='task:' + task['id'])
-                    self.assertTrue(accounts)
-                    self.assertEqual(accounts[0]['settled_tokens'], 0)
-                    self.assertEqual(accounts[0]['settled_amount'], 0)
+                    self.assertIsNone(store.usage_ledger)

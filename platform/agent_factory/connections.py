@@ -98,6 +98,7 @@ class ConnectionService:
                  trusted_bindings: Mapping[str, TrustedConnectionBinding] | None = None,
                  clock: Callable[[], datetime] | None = None, *, personal_providers=None):
         self.store, self.auth = store, auth
+        self.owner_models: Any = None
         # Operator configuration can be replaced by trusted in-process code.
         # Re-read this mapping at every preflight/resolve; never accept HTTP edits.
         self.trusted_bindings = trusted_bindings if trusted_bindings is not None else {}
@@ -205,6 +206,8 @@ class ConnectionService:
         self.handle_identities[key] = binding.opaque_handle
 
     def _trusted(self, registration_ref, owner, conn):
+        if registration_ref.startswith('owner-model-') and getattr(self, 'owner_models', None) is not None:
+            return self.owner_models.binding(conn, owner, registration_ref)
         if registration_ref.startswith("remote-"):
             return self.personal.binding(conn, owner, registration_ref)
         binding = self.trusted_bindings.get(registration_ref)

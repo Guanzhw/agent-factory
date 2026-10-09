@@ -77,10 +77,18 @@ class Settings:
     # Operator-only dedicated validation instance; no environment/public API switch.
     development_live_validation: bool = False
     # Frozen operator price/policy registrations, never loaded from model input.
+    fee_management_enabled: bool = False
+    platform_paid_models_enabled: bool = False
+    # Trusted test transport only; never accepted from HTTP or environment.
+    owner_model_transport_factory: Callable | None = field(default=None, repr=False)
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if type(self.fee_management_enabled) is not bool or type(self.platform_paid_models_enabled) is not bool:
+            raise ValueError('Billing enablement requires explicit booleans')
+        if self.platform_paid_models_enabled and not self.fee_management_enabled:
+            raise ValueError('Managed paid profiles require actual hard budget management')
         if type(self.personal_agent_commands_enabled) is not bool:
             raise ValueError('Personal command enablement must be an explicit boolean')
         if self.personal_agent_commands_enabled:

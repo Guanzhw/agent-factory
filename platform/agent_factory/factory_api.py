@@ -132,8 +132,15 @@ class FactoryAPI:
             raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
         if plan["status"] != "ready":
             raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
+        submissions = getattr(self.store, 'owner_submissions', None)
+        if submissions is not None and not body.executionTargetRef:
+            submissions.approve_personal(owner, plan)
         self.store.require_plan_execution(owner, plan)
         if body.executionTargetRef:
+            authorization = self.store.plan_policy.require_execution(owner, plan)
+            if authorization.get('source') == 'owner-submission':
+                raise HTTPException(403, 'OWNER_SUBMISSION_REMOTE_PLACEMENT_DENIED')
+
             if self.remote is None:
                 raise HTTPException(503, "Trusted remote execution is unavailable")
             return await self.remote.instantiate(owner, plan["id"], body.executionTargetRef, body.requestId)
@@ -296,7 +303,10 @@ class FactoryAPI:
                     "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
                     "liveEnabled": not self.settings.demo, "liveIntegrationVerified": False,
                     "deploymentMode": "demo" if self.settings.demo else "production", "verificationStatus": "unverified",
-                    "admissionMode": "per-plan-preflight", "observedMetrics": True}
+                    "admissionMode": "per-plan-preflight", "observedMetrics": True,
+                    "feeManagementEnabled": self.settings.fee_management_enabled,
+                    "platformPaidModelsEnabled": self.settings.platform_paid_models_enabled,
+                    "personalModelSetup": "/api/factory/personal-models"}
 
         @router.post("/demo/login")
         def login(body: Login, response: Response):

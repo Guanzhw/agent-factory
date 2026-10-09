@@ -270,6 +270,8 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
             runtime_factory=runtime_factory, context_reader=lambda: {}, candidate_validator=lambda _: {'controlledFixture': True},
             experiment=experiment, review_owner='manager', external_session=True)
         self.settings = bootstrap.settings(db_url=database.url, workspace=root, preset=preset)
+        # Explicit legacy accounting fixture; all model/provider IO remains controlled.
+        self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
         prep_settings = process_runtime_profile.process_settings(db_url=database.url, workspace=root,
             target_ref='original-preparation', remote_targets={'original-preparation': target})
         self.settings.runtime_adapters.extend(prep_settings.runtime_adapters)

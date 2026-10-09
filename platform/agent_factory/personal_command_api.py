@@ -122,6 +122,7 @@ class PersonalCommandAPI:
         if plan['application'] == PROJECT_APPLICATION_ID:
             command = command_from_plan(plan)
             self.projects.require_approval(owner, command['requestId'], plan_id, command['projectBundle'])
+        self.store.owner_submissions.approve(owner, plan)
         return await self.factory.instantiate(owner, InstanceRequest(planId=plan_id, requestId='personal:' + plan_id))
 
     def routes(self):

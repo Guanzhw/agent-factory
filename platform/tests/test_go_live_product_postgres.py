@@ -90,7 +90,8 @@ class GoLiveProductPostgresTests(unittest.TestCase):
         handle = GoDevelopmentHandle(mode="subscription", credential=self.credential,
             live_campaign=self.campaign, wire_stream=True, native_retries=0)
         self.assertIsNone(handle.async_transport)
-        self.settings = Settings(db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
+        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+            db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
             development_profile="opencode-go", development_live_validation=True, max_workers=1, max_tool_calls=1,
             temporary_policy="read-only-auto", policy_revision="go-live-mock-policy-v1",
             material_policy_revision="go-live-mock-material-v1", runtime_tool_contract="registered-runtime-v1",

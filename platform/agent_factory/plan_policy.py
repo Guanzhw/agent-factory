@@ -324,10 +324,19 @@ class PlanPolicyService:
         try:
             result["approval"] = self.require_execution(owner, stored["id"], run_context=run_context)
             result["executionAllowed"] = True
+            if result['approval'].get('source') == 'owner-submission':
+                result['reviewRequired'] = False
+                result['reviewRequestSupported'] = False
         except HTTPException as error:
             if error.status_code not in {403, 409}:
                 raise
             result["reason"] = str(error.detail)
+        submissions = getattr(self.store, 'owner_submissions', None)
+        if submissions is not None:
+            result['ownerSubmissionSupported'] = stored['status'] == 'ready' and submissions.can_submit(owner, stored)
+            if result['ownerSubmissionSupported']:
+                result['reviewRequired'] = False
+                result['reviewRequestSupported'] = False
         return result
 
     def replace_configuration(self, config: PlanPolicyConfig, *, expected_revision: str) -> dict:
@@ -605,7 +614,10 @@ class PlanPolicyService:
             self._scope(review_plan, config)
             if config.name == "unset":
                 raise HTTPException(409, "POLICY_UNSET: plan execution has no selected approval policy")
-            if config.name == "bounded-synthetic":
+            submissions = getattr(self.store, 'owner_submissions', None)
+            if submissions is not None and submissions.approved(conn, owner, review_plan):
+                approval = {"source": "owner-submission", "reviewId": None}
+            elif config.name == "bounded-synthetic":
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")
                 approval = {"source": "bounded-synthetic", "reviewId": None}
