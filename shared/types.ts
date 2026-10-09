@@ -35,7 +35,7 @@ export interface JobEvent { id: number; jobId: string; type: string; message: st
 export interface Artifact { id: string; jobId: string; name: string; mediaType: string; size: number; sha256: string; createdAt: string }
 export interface AuditEntry { id: number; actorId: string; action: string; targetId: string; details: Record<string, unknown>; createdAt: string }
 export interface Schedule { id: string; ownerId: string; definitionId: string; input: JobInput; connectionId?: string; everyHours: number; nextRunAt: string; enabled: boolean }
-export interface PlatformInfo { mode: 'demo' | 'live'; maxWorkers: number; activeWorkers: number; queuedJobs: number; integration: string; liveEnabled: boolean }
+export interface PlatformInfo { mode: 'demo' | 'live'; maxWorkers: number; activeWorkers: number; queuedJobs: number; integration: string; liveEnabled: boolean; feeManagementEnabled?: boolean; platformPaidModelsEnabled?: boolean }
 
 export type ConnectionKind = 'model' | 'tool' | 'knowledge' | 'environment' | 'orx';
 export type ConnectionStatus = 'active' | 'unavailable' | 'expired' | 'revoked' | 'changed' | 'missing' | 'task_ended';

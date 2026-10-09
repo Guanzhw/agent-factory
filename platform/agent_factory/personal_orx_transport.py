@@ -2,7 +2,8 @@
 
 Pinned source: alphaXiv/OpenResearch f336b121 src/commands/up.rs and
 src/local/chat/mod.rs. Upstream owns projects, sessions, harnesses and tool loops.
-This adapter creates no Factory model key, workload loop, project or playbook.
+This adapter creates no Factory model key, workload loop or playbook. Project
+creation requires a separate explicit creation-only configuration and plan.
 Use the shared PersonalAgentSessions durable command owner: no replay after
 unknown acknowledgement. Usage is unavailable/remote-reported, budgets advisory,
 and native idle/interrupt acknowledgements are never process-stop proof.
@@ -62,6 +63,9 @@ class PersonalOrxHTTPS(PersonalAgentTransport):
             return bool(route in {'/api/health', '/api/projects'} or re.fullmatch(rf'/api/projects/{_ID}', route)
                 or re.fullmatch(rf'/api/chat/sessions/{_ID}/messages', route))
         if method == 'POST':
+            if route == '/api/projects':
+                from .personal_orx_projects import valid_native_request
+                return valid_native_request(payload)
             return bool(route == '/api/chat/sessions' or re.fullmatch(rf'/api/chat/sessions/{_ID}/(?:message|interrupt)', route))
         return bool(method == 'PATCH' and re.fullmatch(rf'/api/chat/sessions/{_ID}', route)
                     and isinstance(payload, dict) and set(payload) == {'title'})
@@ -91,24 +95,39 @@ class PersonalOrxProvider(OpenCodeServeProvider):
 
     @staticmethod
     def configure(configuration):
-        required = {'origin', 'credentialRef', 'credentialRevision', 'projectId', 'authMode'}
+        creation = type(configuration) is dict and configuration.get('projectCreation') is True
+        required = {'origin', 'credentialRef', 'credentialRevision', 'authMode'} | (set() if creation else {'projectId'})
         require(isinstance(configuration, dict) and required <= set(configuration)
-                and set(configuration) <= required | {'sessionTemplateId'}, 'REMOTE_CONFIGURATION_INVALID')
+                and set(configuration) <= required | ({'projectCreation', 'projectId'} if creation else {'sessionTemplateId', 'sessionDefaults'}), 'REMOTE_CONFIGURATION_INVALID')
+        require(not creation or configuration.get('projectId', '') == '', 'REMOTE_CONFIGURATION_INVALID')
         require(configuration['authMode'] in {'bearer', 'basic-proxy'}, 'PERSONAL_ORX_AUTH_MODE_REQUIRED')
         from .connections import _identifier
         try:
             result = {'origin': origin(configuration['origin']), 'authMode': configuration['authMode'],
-                **{key: _identifier(configuration[key]) for key in ('credentialRef', 'credentialRevision', 'projectId')}}
+                **{key: _identifier(configuration[key]) for key in ('credentialRef', 'credentialRevision')}}
+            if creation:
+                return {**result, 'projectCreation': True, 'projectId': ''}
+            result['projectId'] = _identifier(configuration['projectId'])
             require(re.fullmatch(_ID, result['projectId']))
             if 'sessionTemplateId' in configuration:
                 result['sessionTemplateId'] = native_id(configuration['sessionTemplateId'])
                 require(re.fullmatch(_ID, result['sessionTemplateId']))
+            if 'sessionDefaults' in configuration:
+                defaults = configuration['sessionDefaults']
+                require(type(defaults) is dict and set(defaults) == {'harness', 'model'}, 'REMOTE_CONFIGURATION_INVALID')
+                require(defaults['harness'] in {'codex', 'opencode', 'claude-code'} and type(defaults['model']) is str
+                    and 0 < len(defaults['model']) <= 200 and defaults['model'] == defaults['model'].strip(), 'REMOTE_CONFIGURATION_INVALID')
+                require('sessionTemplateId' not in configuration, 'REMOTE_CONFIGURATION_INVALID')
+                result['sessionDefaults'] = dict(defaults)
             return result
         except (TypeError, ValueError):
             raise RemoteConnectionError('REMOTE_CONFIGURATION_INVALID') from None
 
     def transport(self, configuration):
         return self._transports[configuration['authMode']]
+
+    def effective_capabilities(self, configuration):
+        return frozenset({'runtime:health', 'project:read', 'project:create'}) if configuration.get('projectCreation') else self.capabilities
 
     def verify(self, owner, configuration):
         config = self.configure(configuration)
@@ -127,13 +146,18 @@ class PersonalOrxProvider(OpenCodeServeProvider):
         instance = health.get('instanceId')
         require(instance is None or isinstance(instance, str) and re.fullmatch(_ID, instance))
         require(self.authorized(owner, config), 'REMOTE_CREDENTIAL_UNAVAILABLE')
-        status, value = transport.request(config['origin'], address, 'GET', '/api/projects/' + config['projectId'], credential)
+        creation = config.get('projectCreation') is True
+        status, value = transport.request(config['origin'], address, 'GET', '/api/projects' if creation else '/api/projects/' + config['projectId'], credential)
         reject_credential_echo(value, credential)
-        require(status == 200 and type(value) is dict and type(value.get('project')) is dict, 'REMOTE_IDENTITY_MISMATCH')
-        require(cast(dict[str, Any], value)['project'].get('id') == config['projectId'], 'REMOTE_IDENTITY_MISMATCH')
+        require(status == 200 and type(value) is dict, 'REMOTE_IDENTITY_MISMATCH')
+        value = cast(dict[str, Any], value)
+        if creation:
+            require(type(value.get('projects')) is list and len(value['projects']) <= 2048, 'REMOTE_IDENTITY_MISMATCH')
+        else:
+            require(type(value.get('project')) is dict and value['project'].get('id') == config['projectId'], 'REMOTE_IDENTITY_MISMATCH')
         require(self.authorized(owner, config), 'REMOTE_CREDENTIAL_UNAVAILABLE')
         return {'providerVersion': health['version'], 'dashboardProtocol': 2, 'instanceId': instance,
-            'projectId': config['projectId'], 'namespace': self.namespace, 'capabilities': sorted(self.capabilities),
+            'projectId': config['projectId'], 'namespace': self.namespace, 'capabilities': sorted(self.effective_capabilities(config)),
             'agentNames': [], 'identityBasis': 'tls-origin-service-auth-native-project',
             'contractSourceRevision': UPSTREAM_COMMIT, 'sourceRevisionVerified': False,
             'budgetEnforcement': 'advisory', 'stopVerified': False, 'liveEndToEndVerified': False}
@@ -191,6 +215,8 @@ class PersonalOrxHandle:
         require(transport.allows(method, path, payload), 'REMOTE_PATH_DENIED')
         if method == 'GET':
             required = ('runtime:health',) if path == '/api/health' else ('project:read',) if path.startswith('/api/projects') else ('session:read',)
+        elif path == '/api/projects':
+            required = ('project:create',)
         elif method == 'PATCH' or path == '/api/chat/sessions':
             required = ('session:create',)
         else:
@@ -202,6 +228,10 @@ class PersonalOrxHandle:
             require(query == {'projectId': [self.configuration['projectId']]}, 'REMOTE_IDENTITY_MISMATCH')
         if path.startswith('/api/projects/'):
             require(path == '/api/projects/' + self.configuration['projectId'], 'REMOTE_IDENTITY_MISMATCH')
+        if self.configuration.get('projectCreation'):
+            require(path in {'/api/health', '/api/projects'}, 'REMOTE_PATH_DENIED')
+        elif method == 'POST' and path == '/api/projects':
+            require(False, 'REMOTE_PATH_DENIED')
         self._check(required)
         address = transport.addresses(self.configuration['origin'])[0]
         credential = self.provider.secrets.resolve(**self.provider._scope(self.owner, self.configuration))
@@ -229,7 +259,32 @@ class PersonalOrxHandle:
         require(row.get('id') == self.configuration['projectId'], 'REMOTE_IDENTITY_MISMATCH')
         return {'nativeProjectId': row['id'], 'name': str(row.get('name', ''))[:512],
             'namespace': self.namespace, 'executionContract': PERSONAL_CONTRACT,
-            'nativeProjectCreationSupported': False, 'sessionCreationSupported': bool(self.configuration.get('sessionTemplateId'))}
+            'nativeProjectCreationSupported': False, 'sessionCreationSupported': bool(self.configuration.get('sessionTemplateId') or self.configuration.get('sessionDefaults'))}
+
+    def creation_projects(self):
+        require(self.configuration.get('projectCreation') is True, 'PERSONAL_ORX_CREATION_CONNECTION_REQUIRED')
+        value = self.call('GET', '/api/projects')
+        require(type(value) is dict and type(value.get('projects')) is list)
+        value = cast(dict[str, Any], value)
+        require(len(value['projects']) <= 2048)
+        rows = []
+        for project in value['projects']:
+            require(type(project) is dict and re.fullmatch(_ID, native_id(project.get('id'))))
+            rows.append({'nativeProjectId': project['id'], 'name': str(project.get('name', ''))[:512],
+                'path': str(project.get('path', project.get('repoPath', '')))[:512]})
+        require(len({p['nativeProjectId'] for p in rows}) == len(rows))
+        return rows
+
+    def create_project(self, request, *, before_send):
+        require(self.configuration.get('projectCreation') is True, 'PERSONAL_ORX_CREATION_CONNECTION_REQUIRED')
+        value = self.call('POST', '/api/projects', request, before_send=before_send)
+        require(type(value) is dict and type(value.get('project')) is dict)
+        row = cast(dict[str, Any], value['project'])
+        identifier = native_id(row.get('id'))
+        require(re.fullmatch(_ID, identifier) and row.get('name') == request['name'])
+        return {'nativeProjectId': identifier, 'name': row['name'],
+            'path': str(row.get('path', row.get('repoPath', '')))[:512], 'namespace': self.namespace,
+            'githubSyncRequested': False, 'correlationSource': 'native-create-response', 'liveEndToEndVerified': False}
 
     def list_projects(self):
         # This connection is scoped to one chosen native project, not a server-wide grant.
@@ -281,8 +336,10 @@ class PersonalOrxHandle:
 
     def create_session(self, title, *, before_send):
         template = self.configuration.get('sessionTemplateId')
-        require(template is not None, 'PERSONAL_ORX_SESSION_TEMPLATE_REQUIRED')
-        row = self._session_row(template)
+        defaults = self.configuration.get('sessionDefaults')
+        require(template is not None or defaults is not None, 'PERSONAL_ORX_SESSION_TEMPLATE_REQUIRED')
+        row = self._session_row(template) if template else {'projectId': self.configuration['projectId'],
+            **cast(dict, defaults), 'permissionMode': None, 'planMode': False}
         require(type(row.get('model')) is str and bool(row['model']), 'PERSONAL_ORX_EXPLICIT_TEMPLATE_MODEL_REQUIRED')
         client = _NativeSessionClient(self, row, before_send)
         created = asyncio.run(client.create_session(key='personal-create', commit_intent=lambda **_: None))

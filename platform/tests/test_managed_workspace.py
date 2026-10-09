@@ -17,6 +17,7 @@ from agent_factory.managed_orx_profile import exact_input_schema
 class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = SimpleNamespace(engine=create_engine('sqlite://'),
+            settings=SimpleNamespace(fee_management_enabled=True, platform_paid_models_enabled=True),
             _connection=ContextVar('managed-workspace-transaction', default=None),
             composition=Mock(), applications=Mock(), plan_policy=Mock(),
             require_plan_execution=Mock(), plan=Mock(), task=Mock(), task_for_request=Mock())

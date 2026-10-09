@@ -45,7 +45,9 @@ credential revisions, DNS/SSRF policy, TLS hostname validation, bounded body/tim
 no redirects or retry middleware. Exact original Factory admission is rechecked
 after DNS/credential retrieval immediately before every mutation. Only the fixed
 project/session endpoints are allowed; no shell, file, credential, permission-
-approval, project creation or playbook mutation route is exposed.
+approval or playbook mutation route is exposed. Existing project-bound connections
+still reject project creation; a separate explicit creation-only connection and
+owner-approved plan enable the narrowly scoped project POST.
 
 ## Creation and acknowledgement handling
 
@@ -56,8 +58,15 @@ attachment but cannot silently become a new explicit creation choice. Title
 updates are separately labelled unconfirmed if their acknowledgement is lost;
 an acknowledged created session is retained rather than created again.
 
-Project creation is unavailable. Pinned upstream project creation unconditionally
-warms starter prompts and can trigger model calls. Ordinary session prompts may
+An explicitly created project's new connection may instead pin `sessionDefaults`
+with an owner-selected harness/model for its first session; no template is required
+then. This does not change existing template-only configurations.
+
+[Ordinary native project creation](PERSONAL_OPENRESEARCH_PROJECT_CREATION.md)
+has a versioned source/remote-write/model-cost preview and per-request server-side
+consent, followed by existing plan review/native task admission. Upstream starts
+conditional background chat-suggestion generation, which may make a model call.
+GitHub synchronization is explicitly disabled. Ordinary session prompts may
 also cause upstream-owned auxiliary/model/tool work; this adapter claims no hard
 spending or process-stop enforcement.
 

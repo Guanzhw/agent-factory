@@ -114,7 +114,8 @@ class _ChildPlannerStore:
                 budget[key] = min(budget[key], parent["budget"][key])
         plan = {**plan, "delegation": self.binding,
                 "budget": {**budget, "depth": self.binding["depth"]}}
-        ledger = getattr(self.store, "usage_ledger", None)
+        from .billing_mode import ledger_for_plan
+        ledger = ledger_for_plan(self.store, plan)
         if ledger is not None:
             plan["usageBudget"] = ledger.commitment_for_candidate(plan, self)
         plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})

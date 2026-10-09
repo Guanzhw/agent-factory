@@ -160,6 +160,8 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             receiver_config = operator_fixture.config('receiver'); receiver_config['workspace'] = str(receiver_root)
             receiver_config['publication'] = {'author': 'manager', 'reviewer': 'bob'}
             receiver_settings = operator.describe_settings(receiver_config, receiver_db.url)
+            # Controlled accounting compatibility; no real model/service calls.
+            receiver_settings.fee_management_enabled = receiver_settings.platform_paid_models_enabled = True
             prep_settings = process_runtime_profile.process_settings(db_url=baseline_db.url, workspace=baseline_root,
                 target_ref='original-preparation', remote_targets={'original-preparation': target})
             _, baseline, producer = self._app(prep_settings, stack)
@@ -237,6 +239,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 runtime_factory=runtime, context_reader=lambda: {}, candidate_validator=lambda _: {'controlledFixture':True},
                 experiment=experiment, external_session=True, review_owner='manager')
             origin_settings = operator.describe_settings(origin_config, origin_db.url)
+            origin_settings.fee_management_enabled = origin_settings.platform_paid_models_enabled = True
             origin_settings.autoresearch_presets = {project_id:preset}
             origin_settings.handoff_targets = {'receiver':handoff_target}
             variant = derive_local_identities({}, {}, microbatch=1)['identities']['candidate']['sha256']

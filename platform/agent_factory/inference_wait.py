@@ -66,7 +66,11 @@ def execution_owner(store, task):
 
 
 def within_budget(store, task):
-    ledger = store.usage_ledger.inspect(task["owner_id"], task["id"])
+    from .billing_mode import ledger_for_plan
+    service = ledger_for_plan(store, store.plan(task['plan_id'], task['owner_id']))
+    if service is None:
+        return  # Resource custody/deadlines/permission checks still run above.
+    ledger = service.inspect(task["owner_id"], task["id"])
     for scope in ledger["scopes"]:
         if (scope["settledTokens"] + scope["heldTokens"] > scope["tokenLimit"]
                 or scope["settledAmountMicros"] + scope["heldAmountMicros"] > scope["amountMicrosLimit"]):
@@ -232,7 +236,7 @@ def acknowledged_work(store, task):
 
 
 def prepare_pause(store, response, error):
-    if not transient(error) or os.name != "posix" or getattr(store, "usage_ledger", None) is None:
+    if not transient(error) or os.name != "posix":
         return None
     task = store.task(response.session_id, response.user_id)
     work = acknowledged_work(store, task)

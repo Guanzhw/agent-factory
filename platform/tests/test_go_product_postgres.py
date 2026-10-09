@@ -38,7 +38,8 @@ class GoProductPostgresTests(unittest.TestCase):
     def start(self, *, retries=0):
         handle = GoDevelopmentHandle(mode="fixture", async_transport=self.peer.transport,
                                      wire_stream=True, native_retries=retries)
-        self.settings = Settings(db_url=self.database.url, workspace=Path(self.workspace.name),
+        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+            db_url=self.database.url, workspace=Path(self.workspace.name),
             development_profile="opencode-go", max_workers=1, max_tool_calls=3,
             temporary_policy="read-only-auto", policy_revision="go-test-policy-v1",
             material_policy_revision="go-test-material-v1", runtime_tool_contract="registered-runtime-v1",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../web/api.js';
+import { api, factoryRequest } from '../web/api.js';
 import { authEpoch, assertAuthEpoch, authorizationDestination, browserAuthConfig, browserCsrf, clearBrowserSession, configureBrowserAuth, consumeSigninFailure, startBrowserLogin, subscribeSessionExpiry } from '../web/browserAuth.js';
 
 const config = (enabled = true) => ({ enabled, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' });
@@ -106,4 +106,14 @@ describe('browser SSO boundary', () => {
     const before = authEpoch(); clearBrowserSession();
     expect(() => assertAuthEpoch(before)).toThrow();
   });
+});
+
+it('binds a stale-tab mutation to its expected owner even when CSRF is acquired for a replacement cookie', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(json({ authenticated: true, csrfToken: token }))
+    .mockResolvedValueOnce(json({ detail: { code: 'EXPECTED_OWNER_MISMATCH', message: 'Account changed' } }, 403));
+  vi.stubGlobal('fetch', fetch);
+  await expect(factoryRequest('/personal-credentials', 'POST', { password: 'synthetic-only' }, undefined, 'alice'))
+    .rejects.toMatchObject({ status: 403, code: 'EXPECTED_OWNER_MISMATCH' });
+  expect(fetch.mock.calls[1][1]).toMatchObject({ headers: { 'X-Factory-CSRF': token, 'X-Factory-Expected-Owner': 'alice' } });
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

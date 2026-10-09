@@ -48,7 +48,8 @@ describe('workspace mounted application boundaries', () => {
     expect(host.querySelector('h1')?.textContent).toBe('选择你的工作区');
     expect(host.querySelector('#application-selector')).toBeNull();
     expect(text()).toContain('进入 OpenResearch');
-    expect(text()).toContain('Checksum 是开发示例');
+    expect(text()).not.toContain('Checksum 是开发示例'); expect(host.querySelector('.or-development-card')).toBeNull();
+    await click('工具、资源与管理入口');
     await click('开发者装配');
     expect(host.querySelector('#application-selector')).not.toBeNull();
     expect(host.querySelector('nav')?.textContent).not.toContain('应用管理');

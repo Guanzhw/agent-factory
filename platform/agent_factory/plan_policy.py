@@ -324,10 +324,19 @@ class PlanPolicyService:
         try:
             result["approval"] = self.require_execution(owner, stored["id"], run_context=run_context)
             result["executionAllowed"] = True
+            if result['approval'].get('source') == 'owner-submission':
+                result['reviewRequired'] = False
+                result['reviewRequestSupported'] = False
         except HTTPException as error:
             if error.status_code not in {403, 409}:
                 raise
             result["reason"] = str(error.detail)
+        submissions = getattr(self.store, 'owner_submissions', None)
+        if submissions is not None:
+            result['ownerSubmissionSupported'] = stored['status'] == 'ready' and submissions.can_submit(owner, stored)
+            if result['ownerSubmissionSupported']:
+                result['reviewRequired'] = False
+                result['reviewRequestSupported'] = False
         return result
 
     def replace_configuration(self, config: PlanPolicyConfig, *, expected_revision: str) -> dict:
@@ -405,11 +414,17 @@ class PlanPolicyService:
             plan = self._plan(row["owner_id"], row["plan_id"], connection=conn)
             integrity = digest(plan) == row["plan_hash"] and plan["fingerprint"] == row["plan_fingerprint"]
             if integrity:
+                project_creation = None
+                if plan.get('application') == 'personal-orx-project-create-v1':
+                    from .personal_orx_projects import project_review_summary
+                    project_creation = project_review_summary(plan)
                 summary = {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs", "config", "usageBudget")}
+                if project_creation is not None: summary['projectCreation'] = project_creation
         except Exception:
             # A persisted review remains inspectable for diagnosis; a corrupt or
             # unavailable plan cannot become an effective execution approval.
             integrity = False
+            summary = None
         return {"id": row["id"], "ownerId": row["owner_id"], "planId": row["plan_id"],
                 "planDigest": row["plan_hash"], "planFingerprint": row["plan_fingerprint"],
                 "policyRevision": row["policy_revision"], "policyDigest": row["policy_hash"],
@@ -493,6 +508,8 @@ class PlanPolicyService:
             if not projection["currentPolicy"] or projection["expired"] or projection["decision"] != "pending":
                 raise HTTPException(409, "Review is expired, decided or bound to a previous policy")
             if approved:
+                if not projection['planIntegrityMatches'] or projection['planSummary'] is None:
+                    raise HTTPException(409, 'PLAN_REVIEW_SUMMARY_UNAVAILABLE')
                 self.auth.require(row["owner_id"], "run")
                 plan = self._plan(row["owner_id"], row["plan_id"], connection=conn)
                 self._scope(plan, self._current(conn))
@@ -597,7 +614,10 @@ class PlanPolicyService:
             self._scope(review_plan, config)
             if config.name == "unset":
                 raise HTTPException(409, "POLICY_UNSET: plan execution has no selected approval policy")
-            if config.name == "bounded-synthetic":
+            submissions = getattr(self.store, 'owner_submissions', None)
+            if submissions is not None and submissions.approved(conn, owner, review_plan):
+                approval = {"source": "owner-submission", "reviewId": None}
+            elif config.name == "bounded-synthetic":
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")
                 approval = {"source": "bounded-synthetic", "reviewId": None}

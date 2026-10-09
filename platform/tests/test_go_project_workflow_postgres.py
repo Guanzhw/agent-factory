@@ -41,6 +41,12 @@ class GoProjectWorkflowPostgresTests(unittest.TestCase):
     history: list[dict]
 
     def setUp(self):
+        # Opt the strictly fake provider/campaign fixture into compatibility
+        # accounting. The actual operator runner retains disabled defaults.
+        original_settings = runner.Settings
+        settings_patch = patch.object(runner, 'Settings', side_effect=lambda **values:
+            original_settings(**values, fee_management_enabled=True, platform_paid_models_enabled=True))
+        settings_patch.start(); self.addCleanup(settings_patch.stop)
         # Reuse fixture construction only; do not inherit its policy unit tests.
         policy_helpers.ProjectCampaignTests.setUp(self)
         self.campaign = GoProjectCampaign.migrate(self.path, owner_id="alice", confirmation_id="synthetic-project")

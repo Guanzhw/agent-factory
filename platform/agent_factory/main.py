@@ -120,11 +120,16 @@ def create_app(settings=None, *, diagnostics=None):
     connections = ConnectionService(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
+    from .personal_models import PersonalModels, personal_model_router
+    store.personal_models = PersonalModels(store, auth, connections, credential_vault,
+        transport_factory=settings.owner_model_transport_factory)
+    connections.owner_models = store.personal_models
     from .synthesis_sources import SynthesisSourceService
     at('PREPARATION_APP_SYNTHESIS_SOURCES')
     store.synthesis_sources = SynthesisSourceService(store, auth)
     at('PREPARATION_APP_BINDINGS')
     bindings = default_bindings(settings, store, connections)
+    store.personal_models.register(bindings)
     register_orx_adapter(bindings)
     register_literature_adapters(bindings)
     bindings.register("model", LITERATURE_MODEL_ID, "1", lambda context: LiteratureEvidenceModel())
@@ -164,7 +169,10 @@ def create_app(settings=None, *, diagnostics=None):
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
     at('PREPARATION_APP_USAGE_LEDGER')
-    store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
+    if settings.fee_management_enabled:
+        store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
+    from .owner_submission import OwnerSubmissions
+    store.owner_submissions = OwnerSubmissions(store)
     at('PREPARATION_APP_REMOTE_BINDINGS')
     remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
     store.remote_bindings = remote_bindings
@@ -239,6 +247,9 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
+    base.include_router(personal_model_router(auth, store.personal_models))
+    from .personal_research import personal_research_router
+    base.include_router(personal_research_router(auth, store, factory_api))
     if settings.personal_agent_commands_enabled:
         from .personal_command_api import PersonalCommandAPI
         personal_commands = PersonalCommandAPI(store, auth, factory_api)

@@ -45,11 +45,20 @@ The legacy managed native ORX read/attach handle retains owner-exclusive server 
 
 Use `deploymentMode`, `executionKind`, `evidenceKind`, and `verificationStatus` separately. Preserve old fields for old clients, but do not interpret `demo`/development as synthetic evidence. Missing evidence is unverified, not success. A terminal status without positive stop proof must not imply capacity released.
 
-## Upstream project creation blocker
+## Ordinary project creation and side effects
 
-The pinned upstream [create endpoint](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1411-L1522) unconditionally calls `local::starter::warm`, which makes a model call. `githubSyncEnabled` is an explicit request override; upstream otherwise has a configuration default. The adapter does not invoke create, `/open`, harness probes, warmup or GitHub synchronization during read/attach.
+The pinned upstream [create endpoint](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1411-L1522) calls `local::starter::warm` to start conditional background chat-suggestion generation, which may make a model call. The recognized HTTP override is `githubSyncEnabled` (`github_sync_enabled` internally); both are explicitly false in creation requests. Verification/read/attach still never invoke create, `/open`, harness probes, warmup or GitHub synchronization.
 
-Before enabling project creation, the product must disclose its model warmup and any repository publication and obtain the corresponding user authorization. Managed/shared-budget creation must enforce the shared accounting contract; ordinary owner-funded creation must retain its explicit remote-cost guarantee boundary. Neither is enabled by a client bypass boolean. No supported upstream flag suppresses warmup in the pinned revision.
+Ordinary owner-funded creation now uses a separate creation-only connection and
+immutable application plan, the displayed exact source/remote-write/possible-model-
+cost preview, server-side per-request consent and existing plan review/native
+Agno dispatch. No supported upstream flag suppresses warm in the pinned revision;
+ordinary mode discloses it without requiring a managed hard budget. Unknown
+responses only support original-request/candidate reads. Acknowledged projects
+lead to an explicitly selected harness/model and project-scoped connection, then
+the existing native session/research/results flow. See
+[creation API and live gate](PERSONAL_OPENRESEARCH_PROJECT_CREATION.md). Managed
+creation/shared accounting and browser visual acceptance remain outside this change.
 
 ## Versioned developer composition
 

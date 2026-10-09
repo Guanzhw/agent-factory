@@ -21,6 +21,7 @@ from .material_governance import MaterialGovernance, PinnedRef
 from .plan_policy import application_tool_catalog
 from .store import digest, now
 from .runtime_hooks import execution_classification
+from .billing_mode import ledger_for_plan
 
 
 class CompositionService:
@@ -246,7 +247,7 @@ class CompositionService:
                 candidate["missing"].append((code.group(1) + ": " if code else "") +
                     "Current registered execution binding inspection denied")
                 candidate["status"] = "blocked"
-        ledger = getattr(self.store, "usage_ledger", None)
+        ledger = ledger_for_plan(self.store, candidate)
         if ledger is not None and execution is not None and not candidate["missing"]:
             try:
                 candidate["usageBudget"] = ledger.commitment_for(candidate)
@@ -346,7 +347,7 @@ class CompositionService:
                     configured_guard()
                 self.applications.require_plan_current(candidate)
                 self.bindings.inspect(candidate)
-                ledger = getattr(self.store, "usage_ledger", None)
+                ledger = ledger_for_plan(self.store, candidate)
                 if ledger is not None:
                     ledger.validate_commitment(candidate, candidate.get("usageBudget"))
             self.auth.require(owner, "run")

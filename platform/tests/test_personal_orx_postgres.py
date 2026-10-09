@@ -5,6 +5,7 @@ compatibility proof or scientific result. Original native IDs and tool transcrip
 remain distinct from the real Factory plan/task/run admission identities.
 """
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 import json
 import os
@@ -51,19 +52,17 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                         headers={'Authorization': 'Bearer ' + auth._issue_native_token(owner)})
                     self.assertEqual(response.status_code, expected, response.text)
                     return response.json()
+                intents = {}
                 def prepare(action, **values):
                     key = 'orx-native-' + uuid4().hex
-                    prepared = request('POST', '/personal-agent/commands/prepare',
-                        {'requestId': key, 'action': action, **values})
+                    body = {'requestId': key, 'action': action, **values}
+                    intents[key] = body
+                    task = request('POST', '/personal-agent/commands/submit', body, expected=202)
+                    prepared = request('GET', '/personal-agent/commands/requests/' + key)
                     plan = prepared['plan']; self.assertEqual(plan['status'], 'ready', plan)
-                    self.assertTrue(prepared['authorization']['reviewRequired'])
-                    self.assertEqual(prepared['remoteBudgetEnforcement'], 'advisory')
-                    request('POST', '/personal-agent/commands/start', {'planId': plan['id']}, expected=409)
-                    review = request('POST', '/plan-reviews',
-                        {'planId': plan['id'], 'requestId': uuid4().hex}, expected=201)
-                    request('POST', '/plan-reviews/' + review['id'] + '/decision',
-                        {'approved': True, 'requestId': uuid4().hex}, owner='manager')
-                    task = request('POST', '/personal-agent/commands/start', {'planId': plan['id']})
+                    self.assertFalse(prepared['authorization']['reviewRequired'])
+                    self.assertTrue(prepared['authorization']['ownerSubmissionSupported'])
+                    self.assertEqual(task['planId'], plan['id'])
                     return key, task
                 def until(task, status):
                     end = time.monotonic() + 30
@@ -77,6 +76,26 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 choices = request('GET', '/personal-agent/native-sessions?connectionRef=' + bound['ref'])
                 self.assertEqual(choices['namespace'], 'native-openresearch')
                 self.assertEqual(choices['sessions'][0]['nativeSessionId'], 'chat_original')
+                capabilities = request('GET', '/personal-agent/capabilities')
+                self.assertEqual(capabilities['modelConfiguration'], 'remote-configured-model')
+                self.assertFalse(capabilities['factoryBYOKForwarded'])
+                # A trusted/shared registration does not become an owner-owned
+                # registration simply because it grants this owner a handle.
+                with store.connections._read() as conn:
+                    shared = store.connections.personal.binding(conn, 'alice', remote['registrationRef'])
+                shared = replace(shared, opaque_handle=store.connections.resolve('alice', bound['ref'], 'orx'))
+                store.connections.trusted_bindings['shared-orx-fixture'] = shared
+                with store.engine.begin() as conn:
+                    store.connections._register(conn, 'shared-orx-fixture', shared)
+                shared_bound = store.connections.bind('alice', 'shared-orx-fixture', 'bind-shared-orx-fixture')
+                shared_body = {'requestId': 'shared-orx-create', 'action': 'create',
+                    'connectionRef': shared_bound['ref'], 'nativeProjectId': 'native-project'}
+                shared_plan = request('POST', '/personal-agent/commands/prepare', shared_body)
+                self.assertTrue(shared_plan['authorization']['reviewRequired'])
+                self.assertFalse(shared_plan['authorization']['ownerSubmissionSupported'])
+                shared_posts = len(fixture.posts())
+                request('POST', '/personal-agent/commands/submit', shared_body, expected=409)
+                self.assertEqual(len(fixture.posts()), shared_posts)
                 count = len(fixture.posts())
                 attached = request('POST', '/personal-agent/sessions/attach', {
                     'connectionRef': bound['ref'], 'nativeProjectId': 'native-project',
@@ -85,9 +104,15 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 self.assertEqual(attached['session']['upstreamOrxProjectId'], 'native-project')
                 self.assertEqual(len(fixture.posts()), count)  # Read-only native attachment.
                 request('GET', '/personal-agent/sessions/' + sid, owner='bob', expected=404)
+                request('POST', '/personal-agent/commands/submit', {
+                    'requestId': 'foreign-orx-submit', 'action': 'prompt', 'sessionId': sid, 'text': 'Forbidden'},
+                    owner='bob', expected=404)
                 first_key, first_task = prepare('prompt', sessionId=sid, text='Use the original native research tools')
                 until(first_task, 'completed')
                 first = request('GET', '/personal-agent/requests/' + first_key)
+                same = request('POST', '/personal-agent/commands/submit', intents[first_key], expected=202)
+                self.assertEqual(same['id'], first_task['id'])
+                request('POST', '/personal-agent/commands/submit', {**intents[first_key], 'text': 'Changed intent'}, expected=409)
                 self.assertEqual(first['factoryIdentity']['taskId'], first_task['id'])
                 self.assertEqual(first['result']['nativeTurnId'], 'turn_native_1')
                 self.assertIsNone(first['result']['nativeMessageId'])
@@ -174,7 +199,7 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 recovered = request('GET', '/personal-agent/commands/requests/' + lost_key)
                 self.assertEqual(recovered['receipt']['state'], 'ack_unknown')
                 self.assertEqual(recovered['job']['id'], lost_task['id'])
-                same = request('POST', '/personal-agent/commands/start', {'planId': lost_task['planId']})
+                same = request('POST', '/personal-agent/commands/submit', intents[lost_key], expected=202)
                 self.assertEqual(same['id'], lost_task['id'])
                 restarted = PersonalAgentSessions(store.connections, admission=deny_direct_admission)
                 original = restarted.inspect('alice', sid, refresh=True)
@@ -193,12 +218,9 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 self.assertEqual(interrupted['session']['nativeSessionId'], 'chat_original')
                 self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_leases')[0]['n'], 0)
                 self.assertEqual(fixture.wire.prompts, 3)
+                self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
                 for task in (first_task, second_task, lost_task, interrupt_task):
                     native_task = store.task(task['id'], 'alice')
                     self.assertTrue(native_task['run_id'])
                     self.assertIsNotNone(store.native_db.get_job(native_task['run_id'], strict=True))
-                    accounts = store.sql('SELECT settled_tokens,settled_amount FROM af_usage_accounts WHERE id=:id',
-                        id='task:' + task['id'])
-                    self.assertTrue(accounts)
-                    self.assertEqual(accounts[0]['settled_tokens'], 0)
-                    self.assertEqual(accounts[0]['settled_amount'], 0)
+                    self.assertIsNone(store.usage_ledger)

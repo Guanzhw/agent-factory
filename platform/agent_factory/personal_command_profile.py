@@ -20,6 +20,7 @@ from .tool_policy_registry import ToolPolicyRegistration
 from .usage_ledger import PricingRevision
 
 APPLICATION_ID = 'personal-agent-command-v1'
+PROJECT_APPLICATION_ID = 'personal-orx-project-create-v1'
 MODEL_ID = 'personal-command-controller-v1'
 PROVIDER_ID = 'local-no-provider'
 TOOL_ID = 'personal-agent-command-tool-v1'
@@ -64,24 +65,40 @@ def command_scope(ctx, run_context):
     plan = ctx.store.authorize_tool(run_context, TOOL_NAME)
     require(plan['id'] == ctx.plan['id'] and plan.get('applicationRef') == ctx.plan.get('applicationRef')
         and plan.get('inputValues') == ctx.plan.get('inputValues')
-        and plan.get('application') == APPLICATION_ID and plan.get('mode') == 'personal-command'
+        and plan.get('application') in {APPLICATION_ID, PROJECT_APPLICATION_ID} and plan.get('mode') == 'personal-command'
         and plan.get('tools') == [TOOL_NAME] and not plan.get('delegation') and not plan.get('remoteHandoff'))
     return command_from_plan(plan)
 
 
 def command_from_plan(plan):
-    require(plan.get('application') == APPLICATION_ID and plan.get('mode') == 'personal-command'
+    require(plan.get('application') in {APPLICATION_ID, PROJECT_APPLICATION_ID} and plan.get('mode') == 'personal-command'
         and plan.get('tools') == [TOOL_NAME] and not plan.get('delegation') and not plan.get('remoteHandoff'))
     command = deepcopy(plan['inputValues'])
     command['connectionPin'] = json.loads(command['connectionPin'])
     require(type(command['connectionPin']) is dict)
     for key in ('nativeSessionId', 'agent'):
         if command[key] == '': command[key] = None
-    require(command['executionContract'] == CONTRACT and command['action'] in {'create', 'prompt', 'interrupt'})
+    require(command['executionContract'] == CONTRACT)
+    if plan['application'] == PROJECT_APPLICATION_ID:
+        from .personal_orx_projects import PersonalOrxProjects
+        require(command['action'] == 'project_create')
+        command['projectBundle'] = PersonalOrxProjects.validate_bundle(json.loads(command['text']))
+        require(command['projectBundle']['connectionPin'] == command['connectionPin']
+            and command['title'] == command['projectBundle']['request']['name']
+            and not any(command[k] for k in ('nativeProjectId', 'nativeSessionId', 'factorySessionId', 'agent')))
+    else:
+        require(command['action'] in {'create', 'prompt', 'interrupt'})
     return command
 
 
 def validate_intent(command, intent):
+    if command['action'] == 'project_create':
+        expected = {key: command[key] for key in ('executionContract', 'action', 'requestId', 'connectionPin', 'projectBundle')}
+        baseline = intent.get('baselineProjectIds')
+        require(type(baseline) is list and len(baseline) <= 2048 and all(type(i) is str for i in baseline)
+            and len(set(baseline)) == len(baseline))
+        require(set(intent) == set(expected) | {'baselineProjectIds'} and all(intent.get(k) == v for k, v in expected.items()))
+        return
     expected = {key: command[key] for key in ('executionContract', 'action', 'requestId',
         'connectionPin', 'nativeProjectId', 'nativeSessionId')}
     if command['action'] == 'create':
@@ -110,6 +127,10 @@ def admission_for(ctx, run_context, command):
         current = command_scope(ctx, run_context)
         require(owner == run_context.user_id and current == command)
         validate_intent(command, intent)
+        if command['action'] == 'project_create':
+            from .personal_orx_projects import PersonalOrxProjects
+            PersonalOrxProjects(ctx.store.connections, admission=admission).require_approval(
+                owner, command['requestId'], ctx.plan['id'], command['projectBundle'])
         if seen: require(seen[0] == intent)
         else: seen.append(deepcopy(intent))
         return {'executionContract': CONTRACT, 'planId': ctx.plan['id'],
@@ -163,8 +184,11 @@ def registrations():
         def execute_command(run_context: RunContext) -> str:
             from .personal_agent_sessions import PersonalAgentSessions
             command = command_scope(ctx, run_context)
-            service = PersonalAgentSessions(ctx.store.connections,
+            service: Any = PersonalAgentSessions(ctx.store.connections,
                 admission=admission_for(ctx, run_context, command))
+            if command['action'] == 'project_create':
+                from .personal_orx_projects import PersonalOrxProjects
+                service = PersonalOrxProjects(ctx.store.connections, admission=admission_for(ctx, run_context, command))
             effect = ctx.store.effect_reserve(run_context.run_id, EFFECT, command)
             if effect['status'] == 'done': return canonical(effect['result'])
             action, owner, request = command['action'], run_context.user_id, command['requestId']
@@ -177,6 +201,8 @@ def registrations():
                     if error.status_code != 404: raise
                     return canonical({'executionContract': CONTRACT, 'state': 'ack_unknown',
                         'remoteStopVerified': False, 'meaning': 'remote-command-acceptance-only'})
+            elif action == 'project_create':
+                result = service.create(owner, command)
             elif action == 'create':
                 result = service.create(owner, command['connectionPin']['ref'], command['nativeProjectId'], request,
                     title=command['title'])
@@ -221,16 +247,17 @@ def input_schema():
     return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
 
 
-def publish_application(state, *, author, reviewer):
+def publish_application(state, *, author, reviewer, project_creation=False):
     """Explicit trusted installer; independent material/application review required."""
     require(author != reviewer, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
     state['auth'].require(author, 'components:write')
     state['auth'].require(reviewer, 'agent_os:admin')
     governance, applications = state['material_governance'], state['applications']
+    application_id = PROJECT_APPLICATION_ID if project_creation else APPLICATION_ID
     materials = []
     for kind, name, adapter in (('prompt', 'instructions', None), ('model', 'model', MODEL_ID),
             ('tool', TOOL_NAME, TOOL_ID), ('environment', 'environment', ENVIRONMENT_ID)):
-        identifier = APPLICATION_ID + '-' + name
+        identifier = application_id + '-' + name
         definition = {'id': identifier, 'kind': kind, 'name': 'Personal command ' + name,
             'description': INSTRUCTIONS, 'content': INSTRUCTIONS if kind == 'prompt' else name,
             'license': 'MIT', 'compatibility': ['agno:3.1.0'], 'dependencies': [],
@@ -241,13 +268,15 @@ def publish_application(state, *, author, reviewer):
         review = governance.request_publication(author, identifier, material['version'], identifier + ':review')
         governance.decide_publication(reviewer, review['id'], True, identifier + ':approve')
         materials.append(material)
-    definition = {'id': APPLICATION_ID, 'name': 'Personal remote agent commands', 'defaultMode': 'personal-command',
+    schema = input_schema()
+    if project_creation: schema['properties']['action']['enum'] = ['project_create']
+    definition = {'id': application_id, 'name': 'Native OpenResearch project creation' if project_creation else 'Personal remote agent commands', 'defaultMode': 'personal-command',
         'description': INSTRUCTIONS, 'discoveryKeywords': ['personal', 'remote', 'opencode'],
         'modes': {'personal-command': {'materialRefs': [{k: row[k] for k in ('id', 'version', 'sha256')} for row in materials],
             'capabilities': [PERMISSION], 'toolOrder': [TOOL_NAME], 'config': {}, 'connectionRequirements': [],
-            'inputSchema': input_schema(), 'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1,
+            'inputSchema': schema, 'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1,
                 'experimentSeconds': 30, 'outputBytes': 65536}}}}
-    application = applications.create_draft(author, definition, APPLICATION_ID + ':draft')
-    review = applications.request_publication(author, application['id'], application['version'], APPLICATION_ID + ':review')
-    applications.decide_publication(reviewer, review['id'], True, APPLICATION_ID + ':approve')
+    application = applications.create_draft(author, definition, application_id + ':draft')
+    review = applications.request_publication(author, application['id'], application['version'], application_id + ':review')
+    applications.decide_publication(reviewer, review['id'], True, application_id + ':approve')
     return application

@@ -26,4 +26,12 @@ describe('Factory application workspace navigation', () => {
     expect(sameWorkspaceRoute(read('?task=one'), read('?task=one'))).toBe(true);
     expect(sameWorkspaceRoute(read('?task=one'), read('?task=two'))).toBe(false);
   });
+  it('restores the chosen OpenResearch mode and project through navigation', () => {
+    const managed = read('?tab=openresearch&mode=managed&project=orp-one');
+    expect(read(workspaceUrl(new URL('https://factory.test/'), managed))).toEqual(managed);
+    expect(read('?tab=openresearch&mode=personal').mode).toBe('personal');
+    expect(read('?tab=openresearch&mode=unknown').mode).toBeUndefined();
+    expect(sameWorkspaceRoute(managed, { ...managed, mode: 'personal' })).toBe(false);
+    expect(workspaceUrl(new URL('https://factory.test/?mode=managed'), { tab: 'catalog', task: '', run: '' })).not.toContain('mode=');
+  });
 });

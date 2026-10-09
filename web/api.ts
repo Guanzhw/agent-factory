@@ -12,7 +12,7 @@ export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
 }
 const base = '/api/factory';
-async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, expectedOwner?: string): Promise<T> {
   const started = authEpoch();
   let response: Response;
   try {
@@ -20,7 +20,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
     assertAuthEpoch(started);
     response = await fetch(`${base}${path}`, {
       method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
-      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-Factory-CSRF': csrf } : {}) },
+      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-Factory-CSRF': csrf } : {}), ...(expectedOwner === undefined ? {} : { 'X-Factory-Expected-Owner': expectedOwner }) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {

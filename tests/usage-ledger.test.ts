@@ -1,5 +1,7 @@
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement, type ReactNode } from 'react';
+import { renderToStaticMarkup as renderMarkup } from 'react-dom/server';
+import { FeeVisibility } from '../web/FeeVisibility.js';
+const renderToStaticMarkup = (value: ReactNode) => renderMarkup(createElement(FeeVisibility, { enabled: true }, value));
 import { UsageLedgerPanel, UsageCommitmentSummary } from '../web/UsageLedger.js';
 import { describe, expect, it } from 'vitest';
 import { currencyMicros, usageLedgerState, type UsageLedger } from '../web/usageLedgerState.js';
@@ -12,6 +14,11 @@ function ledger(): UsageLedger {
 }
 function detail(value?: unknown): JobDetail { return { job: { id: 'task', ownerId: 'alice' }, events: [], artifacts: [], ...(value === undefined ? {} : { usageLedger: value }) } as unknown as JobDetail; }
 describe('durable usage ledger projection', () => {
+  it('hides fee interfaces by default while retaining explicitly enabled legacy history', () => {
+    expect(renderMarkup(createElement(UsageLedgerPanel, { detail: detail(ledger()) }))).toBe('');
+    expect(renderMarkup(createElement(UsageCommitmentSummary, { value: ledger().commitment }))).toBe('');
+    expect(renderToStaticMarkup(createElement(UsageLedgerPanel, { detail: detail(ledger()) }))).toContain('账本');
+  });
   it('keeps unknown reservations as actual held facts instead of treating zero tariff as zero tokens', () => {
     const state = usageLedgerState(detail(ledger())); expect(state.kind).toBe('verified');
     if (state.kind === 'verified') { expect(state.ledger.hasUnknown).toBe(true); expect(state.ledger.scopes[0].heldTokens).toBe(30); }

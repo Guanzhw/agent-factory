@@ -197,6 +197,8 @@ class OpenResearchWorkspace:
         value = self.managed_profiles.get(profile_id)
         if not value or value.get('ownerId') != owner:
             raise HTTPException(404, 'OPENRESEARCH_MANAGED_PROFILE_NOT_FOUND')
+        if not self.store.settings.fee_management_enabled or not self.store.settings.platform_paid_models_enabled:
+            raise HTTPException(409, 'MANAGED_BUDGET_PROFILE_DISABLED: platform-paid hard-budget profiles are unavailable')
         ref, pin = project['connectionRefs']['workspace'], project['connectionPins']['workspace']
         adapter, current = self._native_adapter(owner, ref, pin)
         target = self.store.process_runtime.resources.targets.get(value['targetRef'])

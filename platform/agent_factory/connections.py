@@ -98,6 +98,7 @@ class ConnectionService:
                  trusted_bindings: Mapping[str, TrustedConnectionBinding] | None = None,
                  clock: Callable[[], datetime] | None = None, *, personal_providers=None):
         self.store, self.auth = store, auth
+        self.owner_models: Any = None
         # Operator configuration can be replaced by trusted in-process code.
         # Re-read this mapping at every preflight/resolve; never accept HTTP edits.
         self.trusted_bindings = trusted_bindings if trusted_bindings is not None else {}
@@ -205,6 +206,8 @@ class ConnectionService:
         self.handle_identities[key] = binding.opaque_handle
 
     def _trusted(self, registration_ref, owner, conn):
+        if registration_ref.startswith('owner-model-') and getattr(self, 'owner_models', None) is not None:
+            return self.owner_models.binding(conn, owner, registration_ref)
         if registration_ref.startswith("remote-"):
             return self.personal.binding(conn, owner, registration_ref)
         binding = self.trusted_bindings.get(registration_ref)
@@ -326,7 +329,19 @@ class ConnectionService:
                     "status": status, "available": status == "available",
                     "allowedActions": ["inspect", "bind"] if can_bind else ["inspect"]})
         # Personal registrations are created by their owner, never by the operator.
-        values.extend(self.personal.list(owner))
+        # Their dedicated lifecycle (configured/verified/revoked and configure/
+        # verify/revoke actions) is not the shared registration-list contract.
+        for remote in self.personal.list(owner):
+            available = remote['status'] == 'verified' and remote['available'] is True
+            status = 'available' if available else {
+                'expired': 'expired', 'credential_unavailable': 'changed',
+                'policy_changed': 'changed',
+            }.get(remote['status'], 'unavailable')
+            values.append({key: remote[key] for key in (
+                'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
+            )} | {'status': status, 'available': available,
+                'allowedActions': ['inspect'] + (['bind'] if available and can_bind
+                    and 'bind' in remote['allowedActions'] else [])})
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):

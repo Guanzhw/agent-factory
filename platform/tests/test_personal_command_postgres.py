@@ -48,12 +48,9 @@ class PersonalCommandPostgresTests(unittest.TestCase):
                     result = request('POST', '/personal-agent/commands/prepare',
                         {'requestId': key, 'action': action, **values})
                     plan = result['plan']; self.assertEqual(plan['status'], 'ready', plan)
-                    self.assertTrue(result['authorization']['reviewRequired'])
-                    # Exact ordinary command remains blocked under current admin-review policy.
-                    request('POST', '/personal-agent/commands/start', {'planId': plan['id']}, expected=409)
-                    review = request('POST', '/plan-reviews', {'planId': plan['id'], 'requestId': uuid4().hex}, expected=201)
-                    request('POST', '/plan-reviews/' + review['id'] + '/decision',
-                        {'approved': True, 'requestId': uuid4().hex}, owner='manager')
+                    self.assertFalse(result['authorization']['reviewRequired'])
+                    self.assertTrue(result['authorization']['ownerSubmissionSupported'])
+                    # Starting this exact owner command is its business approval.
                     task = request('POST', '/personal-agent/commands/start', {'planId': plan['id']})
                     return key, task
                 def terminal(task, status):
@@ -99,9 +96,5 @@ class PersonalCommandPostgresTests(unittest.TestCase):
                 self.assertFalse(interrupted['session']['stopVerified'])
                 self.assertEqual(interrupted['session']['nativeSessionId'], native)
                 self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_leases')[0]['n'], 0)
-                for task in (create_task, first_task, lost_task, interrupt_task):
-                    rows = store.sql('SELECT settled_tokens,settled_amount FROM af_usage_accounts WHERE id=:id',
-                        id='task:' + task['id'])
-                    self.assertTrue(rows)
-                    self.assertEqual(rows[0]['settled_tokens'], 0)
-                    self.assertEqual(rows[0]['settled_amount'], 0)
+                self.assertIsNone(store.usage_ledger)
+                self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)

@@ -61,8 +61,11 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.remote_db.__exit__, None, None, None)
         cls.workspace = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.workspace.cleanup)
-        cls.origin_settings = Settings(db_url=cls.origin_db.url, workspace=Path(cls.workspace.name) / "origin", max_workers=1, max_user_tasks=12, max_total_tasks=24)
-        cls.remote_settings = Settings(db_url=cls.remote_db.url, workspace=Path(cls.workspace.name) / "receiver", max_workers=1, max_user_tasks=12, max_total_tasks=24)
+        # Both controlled zero-priced peers exercise original ledger grant accounting.
+        cls.origin_settings = Settings(db_url=cls.origin_db.url, workspace=Path(cls.workspace.name) / "origin", max_workers=1, max_user_tasks=12, max_total_tasks=24,
+            fee_management_enabled=True)
+        cls.remote_settings = Settings(db_url=cls.remote_db.url, workspace=Path(cls.workspace.name) / "receiver", max_workers=1, max_user_tasks=12, max_total_tasks=24,
+            fee_management_enabled=True)
         cls.origin_app = create_app(cls.origin_settings)
         def capture(*args, **kwargs):
             result = build_runtime(*args, **kwargs)

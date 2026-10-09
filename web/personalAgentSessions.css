@@ -11,3 +11,11 @@
 .personal-session-dialog::backdrop { background: rgb(16 24 40 / 55%); }
 .personal-session-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .personal-session-dialog label { display: block; margin: 16px 0; }
+.personal-command-summary { background: #f5f8fc; border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 16px 0; }
+.personal-command-summary h4 { margin: 0 0 10px; }
+.personal-command-text { white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; border-left: 3px solid var(--blue); padding: 12px; }
+.personal-session-dialog .button-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.personal-session-workspace { min-width: 0; overflow-wrap: anywhere; }
+.personal-session-workspace > article { margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.personal-session-history { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+@media (max-width: 600px) { .personal-session-dialog { padding: 18px; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); } .personal-session-workspace > article { padding: 16px; } }

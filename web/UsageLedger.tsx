@@ -1,6 +1,9 @@
 import { currencyMicros, usageLedgerState, usageCommitment, ledgerBudgetAmount } from './usageLedgerState.js';
 import type { JobDetail } from './models.js';
+import { useFeeManagement } from './FeeVisibility.js';
 export function UsageLedgerPanel({ detail }: { detail: JobDetail }) {
+  const enabled = useFeeManagement();
+  if (!enabled) return null;
   const state = usageLedgerState(detail);
   if (state.kind === 'missing') return <section><h3>令牌与金额账本</h3><p className="list-empty">服务端尚未提供持久化账本；不估算或假定费用为零。</p></section>;
   if (state.kind === 'invalid') return <section><h3>令牌与金额账本</h3><div className="error-message" role="alert">账本归属、固定费率或预留记录无法核对。保留原任务并核对执行状态。</div></section>;
@@ -13,6 +16,8 @@ export function UsageLedgerPanel({ detail }: { detail: JobDetail }) {
 }
 
 export function UsageCommitmentSummary({ value }: { value?: unknown }) {
+  const enabled = useFeeManagement();
+  if (!enabled) return null;
   if (value === undefined || value === null) return <p className="quiet ledger-note">本记录尚未提供新账本的固定承诺；不据此推定任何金额或令牌授权。</p>;
   const c = usageCommitment(value);
   if (!c) return <div className="error-message" role="alert">固定令牌与金额承诺无法核对；应保留方案并刷新授权记录。</div>;
