@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../web/PersonalAgentSessions.js';
 import { NativeCommandResult } from '../web/NativeCommandResult.js';
-import { api } from '../web/api.js';
+import { api, ApiError } from '../web/api.js';
 import { personalAgentApi, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote } from '../web/personalRemoteApi.js';
 import type { FactoryJob, Plan, UserConnection, JobDetail } from '../web/models.js';
@@ -20,7 +20,7 @@ const observed: PersonalSession = { ...session, state: 'result_observed', observ
 function recovery(requestId: string, extra: Partial<PersonalRecovery> = {}): PersonalRecovery { return { requestId, plan, authorization: {} as PersonalRecovery['authorization'], job, nativeRunId: identity.nativeRunId, receipt: { requestId, action: 'prompt', state: 'acknowledged', session, factoryIdentity: identity }, ...extra }; }
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'userConnections').mockResolvedValue([pin]);
   vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([{ registrationRef: pin.registrationRef, providerId: ORX_PERSONAL_PROVIDER } as PersonalRemote]);
@@ -92,4 +92,64 @@ it('reload after session creation recovers the original session without inventin
   vi.mocked(personalAgentApi.recover).mockResolvedValue({ ...recovery('original-create'), plan: createPlan, receipt: { requestId: 'original-create', action: 'create', state: 'acknowledged', session: { ...session, factoryIdentity: identity }, factoryIdentity: identity } });
   await mount(); await act(async () => button('核对原会话命令').click());
   expect(host.textContent).toContain('研究目标尚未发送'); expect(personalAgentApi.submit).not.toHaveBeenCalled(); expect(localStorage.getItem(storage)).toBeNull();
+});
+
+async function journey() {
+  vi.mocked(api.userConnections).mockResolvedValue([{ ...pin, capabilities: [...pin.capabilities, 'session:create'] }]);
+  vi.mocked(personalAgentApi.project).mockResolvedValue({ namespace: session.namespace, executionContract: PERSONAL_CONTRACT, nativeProjectId: session.nativeProjectId, connectionPin: { ref: pin.ref }, upstreamOrxProjectId: session.nativeProjectId, budgetEnforcement: 'advisory', modelCredentialCustody: 'remote', stopGuarantee: 'unverified', sessionCreationSupported: true });
+  await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask: () => undefined })));
+}
+async function goal(text: string, label = '研究目标') { await act(async () => { const field = host.querySelector<HTMLTextAreaElement>(`[aria-label="${label}"]`)!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true })); }); }
+it('ordinary journey starts from one goal action, retains material provenance and hides technical output in details', async () => {
+  const createPlan = { ...plan, inputValues: { ...plan.inputValues!, action: 'create' } };
+  vi.mocked(personalAgentApi.recover).mockImplementation(async id => ({ ...recovery(id), plan: createPlan, receipt: { requestId: id, action: 'create', state: 'acknowledged', session: { ...session, factoryIdentity: identity }, factoryIdentity: identity } }));
+  await journey(); await goal('Compare the supplied papers'); await goal('https://synthetic.example/paper', '补充材料');
+  await act(async () => { button('开始研究').click(); button('开始研究').click(); });
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(personalAgentApi.submit).toHaveBeenNthCalledWith(1, expect.objectContaining({ action: 'create', title: 'Compare the supplied papers' }), owner.id);
+  await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenNthCalledWith(2, expect.objectContaining({ action: 'prompt', text: 'Compare the supplied papers\n\n补充材料（用户提供）：\nhttps://synthetic.example/paper' }), owner.id);
+  expect(host.querySelector('dialog')).toBeNull(); expect(personalAgentApi.prepare).not.toHaveBeenCalled();
+  expect(button('查看任务详情').closest('details')?.open).toBe(false);
+});
+it('ordinary journey keeps owner draft on navigation/reload and unknown requests only permit original reads', async () => {
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new Error('private upstream secret'));
+  await journey(); await goal('Keep my unsent draft'); await act(async () => button('开始研究').click());
+  const id = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
+  await act(async () => root.render(createElement('p')));
+  vi.mocked(personalAgentApi.recover).mockResolvedValue(recovery(id, { receipt: null, job: null, nativeRunId: null }));
+  await journey(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Keep my unsent draft');
+  await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1); expect(button('开始研究').disabled).toBe(true); expect(host.textContent).not.toContain('private upstream secret');
+  expect(localStorage.getItem(storage)).toContain(id);
+});
+it('ordinary journey continues the restored original session and only displays actual remote answers', async () => {
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([observed]); vi.mocked(personalAgentApi.session).mockResolvedValue(observed);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  await journey(); expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result'); expect(host.querySelector('script')).toBeNull();
+  await goal('Continue with limitations'); await act(async () => button('继续研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({ action: 'prompt', sessionId: session.id, text: 'Continue with limitations' }), owner.id);
+  expect(vi.mocked(personalAgentApi.submit).mock.calls.some(([input]) => input.action === 'create')).toBe(false);
+});
+it('ordinary journey rejects stale-account and definitive failed starts while preserving only the right owner draft', async () => {
+  await journey(); await goal('Private owner draft'); vi.mocked(api.session).mockResolvedValue({ ...owner, id: 'another-owner' });
+  await act(async () => button('开始研究').click()); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe(''); expect(host.textContent).toContain('登录账户已变化');
+});
+
+it('an expired stale-tab login clears the visible research draft before any intent is dispatched', async () => {
+  await journey(); await goal('Private unsent text'); vi.mocked(api.session).mockRejectedValue(new ApiError('Expired', 401));
+  await act(async () => button('开始研究').click()); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('');
+  expect(host.textContent).toContain('登录账户已变化');
+});
+it('keeps the authorized goal while native creation is still running with a provisional unknown receipt', async () => {
+  const createPlan = { ...plan, inputValues: { ...plan.inputValues!, action: 'create' } };
+  let done = false;
+  vi.mocked(personalAgentApi.recover).mockImplementation(async id => ({ ...recovery(id), plan: createPlan, job: { ...job, status: done ? 'completed' : 'running' }, receipt: { requestId: id, action: 'create', state: done ? 'acknowledged' : 'ack_unknown', session: { ...session, nativeSessionId: done ? session.nativeSessionId : null, factoryIdentity: identity }, factoryIdentity: identity } }));
+  await journey(); await goal('Authorized goal after creation'); await act(async () => button('开始研究').click());
+  await act(async () => button('核对研究请求').click()); expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain('正在等待原命令的明确回执'); done = true;
+  await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenNthCalledWith(2, expect.objectContaining({ action: 'prompt', text: 'Authorized goal after creation' }), owner.id);
 });

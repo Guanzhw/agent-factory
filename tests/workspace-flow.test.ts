@@ -58,7 +58,7 @@ describe('workspace mounted application boundaries', () => {
   it('enters OpenResearch from the catalog without a second application selector or controlled runner', async () => {
     await render(); await click('进入 OpenResearch');
     expect(window.location.search).toContain('tab=openresearch');
-    expect(host.querySelector('h1')?.textContent).toBe('OpenResearch 普通模式');
+    expect(host.querySelector('h1')?.textContent).toBe('OpenResearch');
     expect(host.querySelector('#application-selector')).toBeNull();
     expect(host.querySelector('#autoresearch-title')).toBeNull();
     expect(openresearchApi.projects).not.toHaveBeenCalled();

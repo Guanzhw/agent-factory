@@ -39,6 +39,9 @@ export function checkOrxProjectPrepared(value: OrxProjectPrepared, requestId: st
   return value;
 }
 export const personalOrxProjectApi = {
+  existing: (connectionRef: string, signal?: AbortSignal) => factoryRequest<{ nativeProjectId: string; name: string; path: string }[]>(`${path}/project-selection?connectionRef=${encodeURIComponent(connectionRef)}`, 'GET', undefined, signal),
+  selectExisting: (connectionRef: string, nativeProjectId: string, requestId: string, ownerId: string) => factoryRequest<UserConnection>(`${path}/project-selection`, 'POST', { connectionRef, nativeProjectId, requestId }, undefined, ownerId),
+  recoverSelected: (requestId: string, ownerId: string) => factoryRequest<UserConnection>(`${path}/project-selection/requests/${encodeURIComponent(requestId)}`, 'GET', undefined, undefined, ownerId),
   prepare: async (input: { requestId: string; connectionRef: string; project: OrxProjectInput }) => checkOrxProjectPrepared(await factoryRequest<OrxProjectPrepared>(`${path}/project-commands/prepare`, 'POST', input), input.requestId),
   decide: async (requestId: string, previewHash: string, approved: boolean) => checkOrxProjectReceipt(await factoryRequest<OrxProjectReceipt>(`${path}/project-commands/${encodeURIComponent(requestId)}/decision`, 'POST', { previewHash, approved }), requestId),
   submit: async (requestId: string, previewHash: string, planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/project-commands/${encodeURIComponent(requestId)}/submit`, 'POST', { previewHash, approved: true }); if (!job?.id || job.planId !== planId) invalid(); return job; },

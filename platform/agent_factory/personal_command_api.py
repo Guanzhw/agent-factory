@@ -154,7 +154,7 @@ class PersonalCommandAPI:
         return await self.start(owner, consent['plan_id'])
 
     def routes(self):
-        from .personal_orx_projects import PrepareProject, ProjectDecision, ConnectProject, prepare_project
+        from .personal_orx_projects import PrepareProject, ProjectDecision, ConnectProject, SelectExistingProject, prepare_project
         def owner(request): return self.auth.user(request)['id']
         @self.router.get('/capabilities')
         def capabilities(request: Request):
@@ -168,6 +168,15 @@ class PersonalCommandAPI:
         def projects(request: Request, connectionRef: str):
             self.auth.require(owner(request), 'read')
             return self.sessions.project(owner(request), connectionRef)
+        @self.router.get('/project-selection')
+        def existing_projects(request: Request, connectionRef: str):
+            return self.projects.existing_projects(owner(request), connectionRef)
+        @self.router.post('/project-selection')
+        def select_existing_project(body: SelectExistingProject, request: Request):
+            return self.projects.select_existing(owner(request), body.connectionRef, body.nativeProjectId, body.requestId)
+        @self.router.get('/project-selection/requests/{request_id}')
+        def selected_project_request(request_id: str, request: Request):
+            return self.projects.selected_request(owner(request), request_id)
         @self.router.get('/native-sessions')
         def native_sessions(request: Request, connectionRef: str):
             return self.sessions.native_sessions(owner(request), connectionRef)

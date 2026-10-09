@@ -84,7 +84,7 @@ export const personalAgentApi = {
   attach: (input: PersonalAttachment) => factoryRequest<AttachmentReceipt>(`${path}/sessions/attach`, 'POST', input),
   recoverAttachment: (requestId: string) => factoryRequest<AttachmentReceipt>(`${path}/requests/${ref(requestId)}`),
   prepare: async (intent: PersonalIntent) => checkPrepared(await factoryRequest<PersonalPrepared>(`${path}/commands/prepare`, 'POST', intent)),
-  submit: async (intent: PersonalIntent) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/submit`, 'POST', intent); if (!job?.id || !job.planId) invalid(); return job; },
+  submit: async (intent: PersonalIntent, ownerId?: string) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/submit`, 'POST', intent, undefined, ownerId); if (!job?.id || !job.planId) invalid(); return job; },
   start: async (planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/start`, 'POST', { planId }); if (!job?.id || job.planId !== planId) invalid(); return job; },
   recover: async (requestId: string, signal?: AbortSignal) => {
     const r = await factoryRequest<PersonalRecovery>(`${path}/commands/requests/${ref(requestId)}`, 'GET', undefined, signal);

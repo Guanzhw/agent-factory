@@ -1,4 +1,5 @@
 import './personalAgentSessions.css';
+import { OpenResearchSetup } from './OpenResearchSetup.js';
 import { PersonalSessionRebind } from './PersonalSessionRebind.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFeeManagement } from './FeeVisibility.js';
@@ -8,7 +9,7 @@ import { personalRemoteApi, definitivelyRejected } from './personalRemoteApi.js'
 import { PERSONAL_CONTRACT, PERSONAL_PROVIDER, ORX_PERSONAL_PROVIDER, personalAgentApi, checkPersonalRecovery, checkAttachment, type PersonalAttachment, type NativePersonalSession, type PersonalNamespace, type PersonalAction, type PersonalIntent, type PersonalProject, type PersonalSession } from './personalAgentApi.js';
 import { statusNames, type FactoryJob, type Plan, type UserConnection } from './models.js';
 
-type Props = { onResources?: () => void; ownerId: string; onTask?: (id: string) => void; connectionRef?: string; namespace?: PersonalNamespace };
+type Props = { onResources?: () => void; ownerId: string; onTask?: (id: string) => void; connectionRef?: string; namespace?: PersonalNamespace; researchJourney?: boolean };
 type Pending = { requestId: string; planId?: string; startPlanId?: string; submitAttempt?: true };
 const labels = { create: '创建 OpenCode 会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' };
 const warning = '会话使用远程服务的模型配置。中断仅尽力而为，停止状态以服务端记录为准。';
@@ -20,7 +21,7 @@ function CommandSummary({ plan }: { plan: Plan }) {
   return <section className="personal-command-summary" aria-label="此次固定命令范围"><h4>此次固定命令范围</h4><dl className="plan-details"><dt>动作</dt><dd>{({ create: '创建原生会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' } as Record<string, string>)[action] ?? '动作未确认，请核对技术快照'}</dd><dt>原生项目 ID</dt><dd>{text('nativeProjectId')}</dd>{action === 'create' ? <><dt>新会话标题</dt><dd>{text('title')}</dd></> : <><dt>原生会话 ID</dt><dd>{text('nativeSessionId')}</dd></>}</dl>{action === 'prompt' && <><h4>将发送的消息</h4><p className="personal-command-text">{text('text')}</p></>}{action === 'interrupt' && <p>仅向原会话请求中断，不证明工具、模型或远端进程已停止。</p>}<details className="technical-detail"><summary>固定方案与连接技术快照</summary><span>方案 {plan.id}</span><pre>{JSON.stringify(values, null, 2)}</pre></details></section>;
 }
 export function PersonalAgentSessions(props: Props) { return <PersonalSessions key={`${props.ownerId}:${props.namespace ?? 'opencode'}`} {...props} />; }
-function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode' }: Props) {
+function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode', researchJourney = false }: Props) {
   const feeManagementEnabled = useFeeManagement();
   const engine = namespace === 'opencode' ? 'OpenCode' : 'OpenResearch';
   const provider = namespace === 'opencode' ? PERSONAL_PROVIDER : ORX_PERSONAL_PROVIDER;
@@ -38,6 +39,13 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const [project, setProject] = useState<PersonalProject>(); const [sessions, setSessions] = useState<PersonalSession[]>([]); const [session, setSession] = useState<PersonalSession>();
   const [ownerSubmit, setOwnerSubmit] = useState(false);
   const [ready, setReady] = useState(false); const [resourceReady, setResourceReady] = useState(false); const [busy, setBusy] = useState(''); const [notice, setNotice] = useState('');
+  const draftStorage = `factory-research-draft:${encodeURIComponent(ownerId)}`;
+  const readDraft = () => { try { const d = JSON.parse(sessionStorage.getItem(draftStorage) ?? '{}'); return { goal: typeof d.goal === 'string' ? d.goal.slice(0, 16000) : '', materials: typeof d.materials === 'string' ? d.materials.slice(0, 16000) : '' }; } catch { return { goal: '', materials: '' }; } };
+  const [researchGoal, setResearchGoal] = useState(() => researchJourney ? readDraft().goal : '');
+  const [materials, setMaterials] = useState(() => researchJourney ? readDraft().materials : '');
+  const [setupOpen, setSetupOpen] = useState(false);
+  const researchText = materials.trim() ? `${researchGoal.trim()}\n\n补充材料（用户提供）：\n${materials.trim()}` : researchGoal.trim();
+  useEffect(() => { if (researchJourney) { try { sessionStorage.setItem(draftStorage, JSON.stringify({ goal: researchGoal, materials })); } catch { /* In-memory draft remains; dispatch still requires durable request storage. */ } } }, [researchJourney, draftStorage, researchGoal, materials]);
   const [title, setTitle] = useState(''); const [newGoal, setNewGoal] = useState(''); const followup = useRef<{ requestId: string; text: string; epoch: number } | null>(null); const [text, setText] = useState(''); const [plan, setPlan] = useState<Plan>(); const [action, setAction] = useState<PersonalAction>();
   const [allowed, setAllowed] = useState(false); const [showReview, setShowReview] = useState(false); const [job, setJob] = useState<FactoryJob>(); const [revision, refresh] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -48,6 +56,15 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     element.showModal(); return () => { element.close(); };
   }, [showReview, plan?.id]);
   const current = (epoch: number) => live.current && navigation.current === epoch;
+  function identityChanged() {
+    if (researchJourney) { followup.current = null; setResearchGoal(''); setMaterials(''); setSession(undefined); setConnections([]); setSessionCatalog([]); setReady(false); setNotice('登录账户已变化，请刷新后继续。'); }
+  }
+  async function ownerIsCurrent(epoch: number) {
+    const who = await api.session();
+    if (!current(epoch)) return false;
+    if (who.id !== ownerId) { identityChanged(); return false; }
+    return true;
+  }
   function remember(p: Pending | null) { if (p) localStorage.setItem(storage, JSON.stringify(p)); else localStorage.removeItem(storage); setPending(p); }
   useEffect(() => {
     const ctrl = new AbortController(); setReady(false);
@@ -61,13 +78,13 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       setConnections(usable); setOwnerSubmit(namespace === 'native-openresearch' && cap.ownerSubmit === '/api/factory/personal-agent/commands/submit' && cap.modelConfiguration === 'remote-configured-model' && cap.factoryBYOKForwarded === false);
       if (namespace === 'native-openresearch') {
         const saved = localStorage.getItem(selectionStorage); const previous = history.find(item => item.id === saved && item.namespace === namespace && usable.some(c => c.ref === item.connectionRef));
-        if (previous) { setSelected(previous.connectionRef); setSession(previous); }
-        else if (usable.length === 1) setSelected(value => value || usable[0].ref);
+        if (previous && !connectionRef) { setSelected(previous.connectionRef); setSession(previous); }
+        else if (usable.length === 1 || researchJourney) setSelected(value => usable.some(c => c.ref === value) ? value : usable[0]?.ref ?? '');
       }
       setReady(true);
     }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setNotice('个人会话功能尚未启用或身份无法核对。旧只读连接不会自动升级。'); } });
     return () => ctrl.abort();
-  }, [ownerId, namespace, provider, revision]);
+  }, [ownerId, namespace, provider, revision, researchJourney, connectionRef]);
   useEffect(() => {
     const ctrl = new AbortController(); setResourceReady(false); setProject(undefined); setSessions([]); setSession(current => current?.connectionRef === selected ? current : undefined); setNativeSessions([]);
     if (ready && connections.some(c => c.ref === selected)) {
@@ -82,7 +99,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     if (!sessionId) return;
     const generation = observationGeneration.current; const ctrl = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace) throw new Error('namespace'); setSession(result); } }
+      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') ? '' : value); } }
       catch { if (!ctrl.signal.aborted && generation === observationGeneration.current) { setSession(current => current && current.id === sessionId ? { ...current, bindingStatus: 'unavailable' } : current); setNotice('远程观察暂不可用。保留原会话与请求；不能据此认定已停止。'); } }
       if (!ctrl.signal.aborted) timer = setTimeout(() => void poll(), 4000);
     }
@@ -90,32 +107,35 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   }, [sessionId, namespace, session?.connectionPin?.fingerprint]);
   async function act(name: string, work: () => Promise<void>) {
     if (lock.current) return; lock.current = true; setBusy(name); const epoch = navigation.current;
-    try { await work(); } catch { if (current(epoch)) setNotice('结果尚未确认。请核对原请求，不会自动提交新的请求或重放远程命令。'); }
+    try { await work(); } catch (error) { if (current(epoch)) { if (researchJourney && error instanceof ApiError && (error.status === 401 || error.code === 'EXPECTED_OWNER_MISMATCH')) identityChanged(); else setNotice('结果尚未确认。请核对原请求，不会自动提交新的请求或重放远程命令。'); } }
     finally { lock.current = false; if (current(epoch)) setBusy(''); }
   }
   async function submit(next: PersonalAction) {
-    if (!ownerSubmit || disabled || rebindActive.current || !project || next !== 'create' && (!sessionWritable || !session?.nativeSessionId || !session.connectionPin?.capabilities.includes(`session:${next}`)) || next === 'prompt' && (!text.trim() || session?.activeRequestId)) return;
+    if (researchJourney && researchText.length > 16000 || !ownerSubmit || disabled || rebindActive.current || !project || next !== 'create' && (!sessionWritable || !session?.nativeSessionId || !session.connectionPin?.capabilities.includes(`session:${next}`)) || next === 'prompt' && (!(researchJourney ? researchText : text).trim() || session?.activeRequestId)) return;
     const epoch = navigation.current;
     await act('submit', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const requestId = crypto.randomUUID(); remember({ requestId, submitAttempt: true });
-      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text } : { requestId, action: next, sessionId: session!.id };
-      const result = await personalAgentApi.submit(intent); if (!current(epoch)) return;
+      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
+      let result;
+      try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未提交：请检查连接或当前权限，草稿保留。'); return; } throw error; }
+      if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
-      remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') setText('');
+      remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') { setText(''); if (researchJourney) { setResearchGoal(''); setMaterials(''); } }
       setNotice('已提交到原生 OpenResearch。正在读取原请求进度与回复；不会自动重发。');
     });
   }
   async function createAndSubmit() {
-    if (!ownerSubmit || !canCreate || disabled || !project || !newGoal.trim() || rebindActive.current) return;
+    if (researchJourney && researchText.length > 16000 || !ownerSubmit || !canCreate || disabled || !project || !(researchJourney ? researchText : newGoal).trim() || rebindActive.current) return;
     const epoch = navigation.current;
     await act('submit', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const journey = crypto.randomUUID(); const requestId = `${journey}:create`;
       remember({ requestId, submitAttempt: true });
       // The goal stays in memory. Reload can recover creation, but cannot resend a goal.
-      followup.current = { requestId: `${journey}:prompt`, text: newGoal, epoch };
-      const created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Research session' });
+      followup.current = { requestId: `${journey}:prompt`, text: researchJourney ? researchText : newGoal, epoch };
+      let created;
+      try { created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: selected, nativeProjectId: project.nativeProjectId, title: researchJourney ? researchGoal.trim().slice(0, 120) : title.trim() || 'Research session' }, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); followup.current = null; if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未启动：请检查连接或当前权限，草稿保留。'); return; } throw error; }
       if (!current(epoch)) return;
       if (created.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: created.planId, startPlanId: created.planId, submitAttempt: true }); setJob(created);
@@ -124,12 +144,12 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   }
   async function prepare(next: PersonalAction) {
     if (next !== 'create' && (!sessionWritable || !session?.connectionPin?.capabilities.includes(`session:${next}`))) return;
-    if (!ready || !resourceReady || pending || attachment || rebindPending || rebindActive.current || lock.current || !project || next !== 'create' && !session?.nativeSessionId || next === 'prompt' && (!text.trim() || session?.activeRequestId)) return;
+    if (!ready || !resourceReady || pending || attachment || rebindPending || rebindActive.current || lock.current || !project || next !== 'create' && !session?.nativeSessionId || next === 'prompt' && (!(researchJourney ? researchText : text).trim() || session?.activeRequestId)) return;
     const epoch = navigation.current;
     await act('prepare', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const requestId = crypto.randomUUID(); remember({ requestId });
-      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text } : { requestId, action: next, sessionId: session!.id };
+      const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
       let result;
       try { result = await personalAgentApi.prepare(intent); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); setNotice('方案请求已明确拒绝，未启动远程命令。请检查权限与配置。'); return; } throw error; }
       if (!current(epoch)) return;
@@ -140,7 +160,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     if (rebindActive.current || !plan || plan.status !== 'ready' || !pending || pending.startPlanId || !allowed || lock.current) return;
     const epoch = navigation.current;
     await act('start', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       remember({ ...pending, startPlanId: plan.id }); setAllowed(false);
       const result = await personalAgentApi.start(plan.id); if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
@@ -150,7 +170,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   async function recover() {
     if (!pending || lock.current) return; const epoch = navigation.current;
     await act('recover', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const result = checkPersonalRecovery(await personalAgentApi.recover(pending.requestId), pending.requestId, pending.planId, pending.startPlanId); if (!current(epoch)) return;
       if (pending.planId && result.plan.id !== pending.planId || result.job && result.job.ownerId !== ownerId || result.receipt && result.receipt.session.namespace !== namespace) throw new Error('scope');
       setPlan(result.plan); setJob(result.job ?? undefined); setAllowed(false);
@@ -167,13 +187,15 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
             const createdSession = result.receipt.session;
             if (result.receipt.action === 'create' && next && current(next.epoch) && createdSession.nativeSessionId && !createdSession.activeRequestId && connections.some(c => c.ref === createdSession.connectionRef && c.fingerprint === createdSession.connectionPin?.fingerprint && c.capabilities.includes('session:prompt'))) {
               remember({ requestId: next.requestId, submitAttempt: true }); setNewGoal('');
-              const prompted = await personalAgentApi.submit({ requestId: next.requestId, action: 'prompt', sessionId: createdSession.id, text: next.text });
+              if (!await ownerIsCurrent(epoch)) return;
+              const prompted = await personalAgentApi.submit({ requestId: next.requestId, action: 'prompt', sessionId: createdSession.id, text: next.text }, ...(researchJourney ? [ownerId] : []));
               if (!current(epoch)) return;
               if (prompted.ownerId !== ownerId) throw new Error('owner');
-              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');
+              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');
             } else { remember(null); setPlan(undefined); setNotice(result.receipt.action === 'create' ? '原生会话已确认。若页面曾刷新或离开，研究目标尚未发送；请在此会话输入并提交。' : result.receipt.action === 'interrupt' ? '原中断请求已核对；远端进程是否停止仍需核对。' : '原消息已受理，正在读取此会话的进度与回复。下一轮须等待原回复完成。'); }
           }
-          else { followup.current = null; setNotice('原远程命令确认未知。保留原请求，不自动重放；请在远程服务核对。'); }
+          else if (['completed', 'failed', 'canceled'].includes(result.job.status)) { followup.current = null; setNotice('原远程命令确认未知。保留原请求，不自动重放；请在远程服务核对。'); }
+          else setNotice('正在等待原命令的明确回执，研究目标保留。不会重发原命令。');
         } else setNotice('已找到原 Factory 命令任务，远程回执尚未就绪。请稍后继续核对原请求。');
       }
     });
@@ -194,7 +216,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   async function attachNative(native: NativePersonalSession) {
     if (rebindActive.current || disabled || !project || native.nativeProjectId !== project.nativeProjectId) return; const epoch = navigation.current;
     await act('attach', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const input = { requestId: crypto.randomUUID(), connectionRef: selected, nativeProjectId: project.nativeProjectId, nativeSessionId: native.nativeSessionId };
       localStorage.setItem(attachStorage, JSON.stringify(input)); setAttachment(input);
       let result;
@@ -207,7 +229,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   async function recoverAttach() {
     if (!attachment || lock.current) return; const epoch = navigation.current;
     await act('recover-attach', async () => {
-      const who = await api.session(); if (!current(epoch) || who.id !== ownerId) return;
+      if (!await ownerIsCurrent(epoch)) return;
       const result = checkAttachment(await personalAgentApi.recoverAttachment(attachment.requestId), attachment, namespace);
       if (!current(epoch)) return;
       localStorage.removeItem(attachStorage); setAttachment(null); setSession(result.session); localStorage.setItem(selectionStorage, result.session.id); setSessions(all => [...all.filter(item => item.id !== result.session.id), result.session]); setNotice('已核对原只读关联请求；未重放关联或发送消息。');
@@ -218,10 +240,46 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const sessionWritable = session && connections.some(item => item.ref === session.connectionRef && !!session.connectionPin && item.fingerprint === session.connectionPin.fingerprint) && (!session.bindingStatus || session.bindingStatus === 'active');
   const visibleSessions = [...new Map([...sessionCatalog, ...sessions].map(item => [item.id, item])).values()];
   const canCreate = connections.find(c => c.ref === selected)?.capabilities.includes('session:create') === true && (namespace === 'opencode' || project?.sessionCreationSupported === true);
+  if (researchJourney) {
+    const answers = session?.observation?.messages.filter(m => m.role === 'assistant') ?? [];
+    const latest = answers.at(-1);
+    const status = !ready ? '正在读取连接' : pending ? (pending.requestId.endsWith(':create') || followup.current ? '正在确认研究会话' : '研究请求待核对') : session?.activeRequestId ? '等待远端回复' : session?.state === 'ack_unknown' ? '研究请求待核对' : latest ? '已观察到回复' : session ? '尚未取得研究回复' : resourceReady && canCreate ? '可以开始研究' : '需要补齐连接';
+    const needsSetup = ready && (!connections.length || !!project && !canCreate && !session);
+    function begin() { if (!resourceReady || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
+    return <section className="research-journey" aria-label="OpenResearch 研究">
+      <div className="research-status" role="status"><span className="research-status-dot" /><strong>{status}</strong><button className="text-button" disabled={!!busy} onClick={() => { setShowReview(false); refresh(n => n + 1); }}>刷新</button></div>
+      {ready && !ownerSubmit && <p role="alert">此部署暂不能直接开始普通研究。已有记录与草稿保留，请联系部署维护者启用个人命令能力。</p>}
+      {session && !session.connectionPin?.capabilities.includes('session:prompt') && <p role="alert">此连接尚未授权发送研究目标，请在连接设置中选择可执行的本人绑定。</p>}
+      {notice && <p className="research-notice" role={job?.status === 'failed' ? 'alert' : 'status'}>{notice}</p>}
+      {job?.status === 'failed' && <p role="alert">执行任务失败。请核对原请求及任务详情；不能据此认定远端研究已停止。</p>}
+      {(pending || session?.state === 'ack_unknown') && <aside className="research-decision"><h3>需要核对原请求</h3><p>尚未取得明确回执。请核对原请求；刷新和返回不会重新发送目标。</p>{pending && <button disabled={!!busy} onClick={() => void recover()}>核对研究请求</button>}</aside>}
+      {session && !sessionWritable && <aside className="research-decision"><h3>需要更新研究连接</h3><p>连接已变更或暂时不可用。已有结果保留，请续接原会话。</p></aside>}
+      <form className="research-composer" onSubmit={e => { e.preventDefault(); begin(); }}>
+        <label htmlFor="research-goal">{session ? '继续研究' : '研究目标'}</label><textarea id="research-goal" aria-label="研究目标" placeholder={session ? '想进一步了解什么？' : '描述你想研究的问题，以及希望得到什么结果…'} maxLength={16000} value={researchGoal} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setResearchGoal(e.target.value)} />
+        <details className="research-materials"><summary>补充材料（可选）</summary><label>材料文本或链接<textarea aria-label="补充材料" placeholder="粘贴相关文本或链接；会随目标发送到远端模型。链接不会由 Factory 自动下载。" maxLength={16000} value={materials} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setMaterials(e.target.value)} /></label></details>
+        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{busy ? '正在提交…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady ? `使用已有 OpenResearch 项目${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
+        {researchText.length > 16000 && <p role="alert">目标与材料合计超过 16000 字，请缩短后再开始。</p>}
+      </form>
+      {(needsSetup || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}
+      <section className="research-results" aria-label="研究结果"><div className="research-result-heading"><h2>结果与重要发现</h2>{session && <button className="secondary" disabled={disabled || !!session.activeRequestId} onClick={() => { navigation.current++; setSession(undefined); localStorage.removeItem(selectionStorage); setResearchGoal(''); setMaterials(''); }}>开始新的研究</button>}</div>
+        {answers.length ? answers.map(m => <article key={m.id} className="research-answer"><p className="quiet">{m.completed ? '远端回复' : '远端回复尚未完成'}</p>{m.events.filter(e => e.type === 'text').map((e, i) => e.type === 'text' && <p key={i} className="research-answer-text">{e.text}</p>)}{!m.events.some(e => e.type === 'text' && e.text.trim()) && <p>已观察到工具活动，但还没有可阅读的研究回复。</p>}</article>) : <div className="research-empty"><strong>{session?.activeRequestId || pending ? '正在等待原研究的回复' : '研究回复会出现在这里'}</strong><p>{session ? '暂未取得可阅读的结果。可刷新核对原请求，或查看过程详情。' : '输入研究目标开始；收到回复后，可以继续追问。'}</p></div>}
+        {latest && <details><summary>结果来源</summary><p>来自此 OpenResearch 原生会话的远端回复。{session?.observation?.exactTurnVerified === false && '按会话记录变化关联，精确轮次未验证。'}研究结论需结合原始材料核实。</p></details>}
+      </section>
+      <details className="research-details"><summary>研究记录与连接设置</summary>
+        <button className="secondary" disabled={disabled || !!session?.activeRequestId} onClick={() => setSetupOpen(v => !v)}>设置研究连接</button>
+        <label>项目连接<select aria-label="个人会话资源" value={selected} disabled={disabled} onChange={e => { navigation.current++; setSelected(e.target.value); setSession(undefined); localStorage.removeItem(selectionStorage); }}><option value="">选择项目</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? c.ref}</option>)}</select></label>
+        <h3>已有研究</h3>{visibleSessions.map(s => <button key={s.id} disabled={disabled} onClick={() => { navigation.current++; localStorage.setItem(selectionStorage, s.id); setSession(s); setSelected(s.connectionRef); }}>{s.observation?.messages.find(m => m.role === 'user')?.events.find(e => e.type === 'text')?.text?.slice(0, 80) || '查看已有研究'}</button>)}
+        {!!nativeSessions.length && <details><summary>已有远端会话</summary>{nativeSessions.map(s => <p key={s.nativeSessionId}>{s.title || '未命名研究'} <button disabled={disabled} onClick={() => void attachNative(s)}>继续此研究</button></p>)}</details>}
+        {session && <><details><summary>过程详情与原始输出</summary><p>项目 {session.nativeProjectId} · 会话 {session.nativeSessionId} · 状态 {session.state}</p>{session.observation?.messages.map(m => <article key={m.id}><h4>{m.role === 'assistant' ? '远端代理' : '你的目标'}</h4>{m.events.map((e, i) => e.type === 'text' ? <p key={i} className="research-answer-text">{e.text}</p> : <details key={i}><summary>工具 {e.tool} · {e.status}</summary><pre>{e.output}</pre></details>)}</article>)}</details><PersonalSessionRebind ownerId={ownerId} namespace={namespace} session={session} candidates={connections} disabled={!!busy || !!attachment || !ready} commandPending={!!pending} onPending={rebindChanged} onRebound={next => { navigation.current++; observationGeneration.current++; setSession(next); setSelected(next.connectionRef); refresh(n => n + 1); }} /><button className="secondary" disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:interrupt')} onClick={() => void submit('interrupt')}>请求中断研究</button></>}
+        {pending && <p>原请求 {pending.requestId}</p>}{attachment && <p>原会话关联待核对 <button disabled={!!busy} onClick={() => void recoverAttach()}>核对原会话关联</button></p>}
+        {job && <p>命令任务 {job.id} · {statusNames[job.status]} {onTask && <button onClick={() => onTask(job.id)}>查看任务详情</button>}</p>}
+      </details>
+    </section>;
+  }
   return <section className="personal-session-workspace" aria-label={`个人 ${engine} 会话`}><h2>{namespace === 'native-openresearch' ? '选择项目与研究会话' : '个人远程会话'}</h2><p>普通模式：连接已有 {engine} 服务，使用它原有的项目与会话。模型密钥留在远程端，无需在 Factory 输入。</p>
     <details className="technical-detail"><summary>模型与执行范围</summary><p>{warning}</p><p>{namespace === 'opencode' ? '这是 OpenCode 原生会话，不是 upstream ORX 项目。' : '这是已有 OpenResearch 项目与原生会话；不是受管单轮文本探测。'}不代表完整科研流程验收或真实端到端兼容性验证。</p></details>
     {notice && <p role="status">{notice}</p>}
-    <label>{namespace === 'native-openresearch' ? '我的 OpenResearch 项目' : '个人会话资源'}<select aria-label="个人会话资源" disabled={!ready || !!busy || !!pending || !!attachment || rebindPending} value={selected} onChange={e => { navigation.current++; setSelected(e.target.value); setPlan(undefined); setText(''); }}><option value="">选择已明确绑定的个人资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? `连接 ${c.ref}`}</option>)}</select></label>
+    <label>{namespace === 'native-openresearch' ? '我的 OpenResearch 项目' : '个人会话资源'}<select aria-label="个人会话资源" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending} value={selected} onChange={e => { navigation.current++; setSelected(e.target.value); setPlan(undefined); setText(''); }}><option value="">选择已明确绑定的个人资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? `连接 ${c.ref}`}</option>)}</select></label>
     {ready && !connections.length && <div className="state-note"><strong>先连接自己的 {engine} 项目</strong><p>在资源设置中选择 {engine}，填写服务地址、原生项目 ID 与远端账户凭据，验证后绑定。设置一次后，在此选择会话并提交研究目标。旧只读绑定不会获得执行能力。</p>{onResources && <button className="primary" onClick={onResources}>设置 {engine} 连接</button>}</div>}
     <div className="personal-session-history" aria-label="已关联会话">{visibleSessions.map(s => <button key={s.id} disabled={!!busy || !!pending || !!attachment || rebindPending} onClick={() => { navigation.current++; localStorage.setItem(selectionStorage, s.id); setSession(s); setSelected(s.connectionRef); setText(''); }}>打开 {engine} 会话 {s.nativeSessionId ?? '创建确认未知'}</button>)}</div>
     {project && <><p>{engine} 原生项目 ID：{project.nativeProjectId}</p>{canCreate && <details open={namespace === 'opencode'} className="technical-detail"><summary>新建研究会话</summary><label>新会话标题<input aria-label="新会话标题" maxLength={120} value={title} disabled={disabled} onChange={e => setTitle(e.target.value)} /></label>{ownerSubmit ? <><label>新会话研究目标<textarea aria-label="新会话研究目标" value={newGoal} maxLength={16000} disabled={disabled} onChange={e => setNewGoal(e.target.value)} /></label><p>在这个项目创建会话，再向该会话发送此目标。创建确认未知时会停下，不重发。</p><button className="primary" disabled={disabled || !newGoal.trim()} onClick={() => void createAndSubmit()}>创建会话并提交研究目标</button></> : <button className="secondary" disabled={disabled} onClick={() => void prepare('create')}>准备创建会话</button>}</details>}</>}

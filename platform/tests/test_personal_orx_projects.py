@@ -93,6 +93,26 @@ class ProjectTests(unittest.TestCase):
         self.service.decide('alice', request, command['projectBundle']['previewHash'], True)
         return command
 
+    def test_existing_project_selection_reuses_real_native_template_without_remote_writes(self):
+        before = self.wire.creation_posts
+        projects = self.service.existing_projects('alice', self.bound['ref'])
+        self.assertEqual(projects[0]['nativeProjectId'], 'native-project')
+        selected = self.service.select_existing('alice', self.bound['ref'], 'native-project', 'select-real-existing')
+        self.assertEqual(selected['ownerId'], 'alice')
+        handle = self.fx.connections.resolve('alice', selected['ref'], 'orx', required_capabilities=['session:read'])
+        self.assertEqual(handle.configuration['sessionTemplateId'], 'chat_original')
+        self.assertTrue(handle.project()['sessionCreationSupported'])
+        self.assertEqual(self.service.selected_request('alice', 'select-real-existing')['ref'], selected['ref'])
+        self.assertEqual(self.wire.creation_posts, before)
+        self.assertFalse(any(call[0] != 'GET' for call in self.wire.calls))
+        with self.assertRaises(HTTPException): self.service.select_existing('bob', self.bound['ref'], 'native-project', 'foreign-selection')
+        with self.assertRaises(HTTPException): self.service.selected_request('bob', 'select-real-existing')
+        with self.assertRaises(HTTPException): self.service.select_existing('alice', self.bound['ref'], 'not-listed', 'unknown-project')
+        replay = self.service.select_existing('alice', self.bound['ref'], 'native-project', 'select-real-existing')
+        self.assertEqual(replay['ref'], selected['ref'])
+        self.fx.connections.revoke('alice', self.bound['ref'], 'revoke-setup-source')
+        with self.assertRaises(HTTPException): self.service.select_existing('alice', self.bound['ref'], 'native-project', 'revoked-selection')
+
     def test_preview_consent_sync_false_and_existing_session_research_chain(self):
         command = self.prepared()
         receipt = self.service.request_result('alice', command['requestId'])
