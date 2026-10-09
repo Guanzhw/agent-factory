@@ -99,6 +99,38 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('GET', '/personal-research/requests/research-submit')
         self.assertNotIn('synthetic-test-password', str(self.store.sql('SELECT * FROM af_encrypted_credentials')))
         self.assertFalse(self.request('GET', '/status')['feeManagementEnabled'])
+        # A separate real production-mode app has no automatic fixture template
+        # or real tool provider. Do not change a demo database's deployment mode.
+        with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as production_db, TemporaryDirectory() as directory:
+            production = create_app(Settings(db_url=production_db.url, demo=False,
+                jwt_key='synthetic-production-fixture-signing-key', workspace=Path(directory)))
+            state = production.app.state.factory
+            production_store, production_auth = state['store'], state['auth']
+            try:
+                production_auth.authorization.define_role('production-fixture-user', [
+                    'agents:factory-executor:read', 'agents:factory-executor:run', 'components:read'])
+                production_auth.directory.upsert('fixture-owner', name='Synthetic production owner')
+                production_auth.authorization.assign('fixture-owner', 'production-fixture-user')
+                headers = {'Authorization': 'Bearer ' + production_auth._issue_native_token('fixture-owner')}
+                with TestClient(production) as client:
+                    response = client.get('/api/factory/personal-research/capabilities', headers=headers)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    support = response.json()
+                    self.assertFalse(support['supported'])
+                    self.assertFalse(support['applicationAvailable'])
+                    self.assertEqual(support['unsupportedReason'], 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED')
+                    response = client.post('/api/factory/personal-research', headers=headers,
+                        json={'topic': 'Do not substitute demo tools', 'requestId': 'production-no-real-tools'})
+                    self.assertEqual(response.status_code, 409, response.text)
+                    self.assertEqual(response.json()['code'], 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED')
+                    with self.assertRaises(HTTPException) as unavailable:
+                        publish_application(state, author='fixture-owner', reviewer='other-fixture')
+                    self.assertEqual(unavailable.exception.detail, 'PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY')
+                    self.assertEqual(production_store.applications.list_active('fixture-owner'), [])
+            finally:
+                production_store.engine.dispose()
+                production_store.native_db.db_engine.dispose()
+        self.assertEqual(len(self.calls), 2)
 
     def test_owner_isolation_rotation_revoke_and_restart_without_secret_resolution(self):
         credential, model = self.configured()

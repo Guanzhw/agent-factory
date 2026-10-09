@@ -128,9 +128,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
 
     def session_command(self, action, **values):
         key = 'session-' + uuid4().hex
-        prepared = self.request('POST', '/personal-agent/commands/prepare', {'requestId': key, 'action': action, **values})
-        self.review(prepared['plan'])
-        task = self.request('POST', '/personal-agent/commands/start', {'planId': prepared['plan']['id']})
+        task = self.request('POST', '/personal-agent/commands/submit',
+            {'requestId': key, 'action': action, **values}, expected=202)
         self.until(task, 'completed')
         return self.request('GET', '/personal-agent/requests/' + key), task
 
@@ -149,16 +148,19 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.assertEqual(recovered_preview['receipt']['consentState'], 'awaiting')
             self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_personal_orx_project_consents')[0]['n'], 0)
             self.assertEqual(self.wire.creation_posts, 0)
-            self.review(prepared['plan'])
-            # Administrative plan approval does not substitute for this owner's
-            # explicit side-effect approval, even via generic instance ingress.
-            self.request('POST', '/personal-agent/commands/start', {'planId': prepared['plan']['id']}, expected=409)
-            self.approve(key, prepared)
-            task = self.request('POST', '/personal-agent/commands/start', {'planId': prepared['plan']['id']})
+            submit_path = '/personal-agent/project-commands/' + key + '/submit'
+            submit_body = {'previewHash': prepared['receipt']['preview']['previewHash'], 'approved': True}
+            self.request('POST', submit_path, submit_body, owner='bob', expected=404)
+            self.request('POST', submit_path, {**submit_body, 'approved': False}, expected=422)
+            self.request('POST', submit_path, {**submit_body, 'previewHash': '0' * 64}, expected=409)
+            task = self.request('POST', submit_path, submit_body, expected=202)
             self.until(task, 'completed')
             receipt = self.request('GET', '/personal-agent/project-commands/' + key)
             self.assertEqual(receipt['state'], 'acknowledged')
             self.assertEqual(receipt['factoryIdentity']['taskId'], task['id'])
+            self.assertEqual(self.wire.creation_posts, 1)
+            replay = self.request('POST', submit_path, submit_body, expected=202)
+            self.assertEqual(replay['id'], task['id'])
             self.assertEqual(self.wire.creation_posts, 1)
             create = next(c for c in self.wire.calls if c[:2] == ('POST', '/api/projects'))
             self.assertIs(create[2]['githubSyncEnabled'], False)
@@ -185,6 +187,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.assertEqual(result['nativeProjectId'], receipt['result']['nativeProjectId'])
             self.assertFalse(result['liveEndToEndVerified'])
             self.assertEqual(self.wire.prompts, 1)
+            self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
             for native_task in (task, session_task, research_task):
                 actual = self.store.task(native_task['id'], 'alice')
                 self.assertIsNotNone(self.store.native_db.get_job(actual['run_id'], strict=True))
@@ -198,6 +201,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.request('POST', '/personal-agent/project-commands/' + cancelled_key + '/decision',
                 {'previewHash': cancelled['receipt']['preview']['previewHash'], 'approved': False})
             self.request('POST', '/personal-agent/commands/start', {'planId': cancelled['plan']['id']}, expected=409)
+            self.request('POST', '/personal-agent/project-commands/' + cancelled_key + '/submit',
+                {'previewHash': cancelled['receipt']['preview']['previewHash'], 'approved': True}, expected=409)
             self.request('POST', '/instances', {'planId': cancelled['plan']['id'],
                 'requestId': 'cancelled-generic-instance'}, expected=409)
             self.assertEqual(self.wire.creation_posts, 1)
@@ -253,7 +258,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(lambda _: self.request('POST', '/personal-agent/project-commands/prepare', body), range(2)))
             self.assertEqual(results[0]['plan']['id'], results[1]['plan']['id'])
-            prepared = results[0]; self.review(prepared['plan']); self.approve(key, prepared)
+            prepared = results[0]
             entered, release = threading.Event(), threading.Event()
             original_request = self.wire.request
             def drop_response(*args, **kwargs):
@@ -262,9 +267,10 @@ class OrxProjectPostgresTests(unittest.TestCase):
                 return original_request(*args, **kwargs)
             self.wire.request = drop_response; self.wire.drop = '/api/projects'
             with ThreadPoolExecutor(max_workers=2) as pool:
-                tasks = list(pool.map(lambda _: self.request('POST', '/personal-agent/commands/start',
-                    {'planId': prepared['plan']['id']}), range(2)))
+                tasks = list(pool.map(lambda _: self.request('POST', '/personal-agent/project-commands/' + key + '/submit',
+                    {'previewHash': prepared['receipt']['preview']['previewHash'], 'approved': True}, expected=202), range(2)))
             self.assertEqual(tasks[0]['id'], tasks[1]['id'])
+            self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
             self.assertTrue(entered.wait(5)); release.set()
             self.until(tasks[0], 'unknown')
             restarted = PersonalOrxProjects(self.store.connections, admission=deny_direct_admission)
@@ -274,7 +280,8 @@ class OrxProjectPostgresTests(unittest.TestCase):
             self.assertEqual(recovered['factoryIdentity']['taskId'], tasks[0]['id'])
             original = self.request('GET', '/personal-agent/commands/requests/' + key)
             self.assertEqual(original['job']['id'], tasks[0]['id'])
-            self.request('POST', '/personal-agent/commands/start', {'planId': prepared['plan']['id']})
+            self.request('POST', '/personal-agent/project-commands/' + key + '/submit',
+                {'previewHash': prepared['receipt']['preview']['previewHash'], 'approved': True}, expected=202)
             self.assertEqual(self.wire.creation_posts, 1)
             self.request('POST', '/personal-agent/project-commands/' + key + '/connect',
                 {'harness': 'opencode', 'model': 'owner/model'}, expected=409)

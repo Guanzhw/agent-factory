@@ -37,6 +37,10 @@ class OwnerSubmissions:
             capability = 'project:create' if command['action'] == 'project_create' else 'session:' + command['action']
             if self.personal_sessions is None: raise HTTPException(403, 'OWNER_SUBMISSION_SCOPE_DENIED')
             self.personal_sessions._handle(owner, pin, capability=capability)
+            with self.store.connections._read() as conn:
+                row = self.store.connections._row(conn, owner, pin['ref'])
+                if not row['registration_ref'].startswith('remote-'):
+                    raise HTTPException(403, 'OWNER_SUBMISSION_SHARED_RESOURCE_DENIED')
             if command['action'] == 'project_create' and require_consent:
                 if self.personal_projects is None: raise HTTPException(403, 'OWNER_SUBMISSION_SCOPE_DENIED')
                 self.personal_projects.require_approval(

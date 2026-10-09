@@ -16,6 +16,84 @@ does not configure or transfer a key to an ORX remote harness. Actual owner BYOK
 integration into that harness/workload and real research tools are not delivered
 by this template; native remote compatibility remains unverified.
 
+## Ordinary native ORX owner submission
+
+Use the existing ORX connection/project/session path for the product journey.
+After one-time resource setup, daily use is two steps: select the existing
+project/session, then enter a goal and Submit. No owner needs to operate
+prepare/request-review/admin-decision/start as separate screens.
+
+`GET /api/factory/personal-agent/capabilities` includes
+`ownerSubmit:"/api/factory/personal-agent/commands/submit"`,
+`modelConfiguration:"remote-configured-model"`, and `factoryBYOKForwarded:false`.
+This connection uses the model/account already configured on its remote ORX
+harness. The Factory BYOK/default saved below is a separate native Agno binding;
+it is not transferred to the remote harness. Model charges may occur on the
+remote owner's account; Factory hard external money limits are not enforced.
+
+`POST /api/factory/personal-agent/commands/submit` (202) transparently performs
+the existing prepare and start for **one** explicitly submitted business action.
+It takes the unchanged prepare schema:
+
+```json
+{"requestId":"owner-orx-prompt-001","action":"prompt","sessionId":"personal-session-ref","text":"Investigate this goal on the original ORX project"}
+```
+
+`action:"create"` instead takes `{requestId,action,connectionRef,nativeProjectId,title?}`;
+`action:"interrupt"` takes `{requestId,action,sessionId}`. This endpoint does not
+chain create with prompt, choose a different harness/model, or invent a project.
+The response is the existing job shape (`id`, `planId`, status, etc.).
+Read `GET /personal-agent/commands/requests/{requestId}` for the persisted
+`{requestId,plan,authorization,job,receipt,nativeRunId}` and existing `/jobs/{id}`
+for progress/results. An acknowledged command is not a verified scientific result
+or remote process stop; the existing native transcript carries observed results.
+
+For an existing native session, the UI can transparently call the existing
+read-only `/sessions/attach` while selecting it, then submit the goal once with
+`action:"prompt"`. If an existing project needs a new session, one explicitly
+labelled "Create session and submit goal" user action may transparently combine
+two ordinary owner commands: submit `action:"create"` with a stable
+`<journeyId>:create` requestId, recover its acknowledged receipt/native session
+identity, then submit `action:"prompt"` with `<journeyId>:prompt` and the returned
+Factory sessionId. Each ID must fit the existing 100-character limit. Stop at an
+UNKNOWN/missing creation acknowledgment; do not invent an ID or recreate the
+session. Recover the prompt request first if its response was lost. The two
+commands retain distinct plans/tasks/effects and do not form an atomic workflow;
+a crash between them can leave the acknowledged session without a prompt. This
+combination uses the owner's native permissions and does not call admin decisions.
+
+Project creation remains a two-step exact owner-consent journey:
+`POST /personal-agent/project-commands/prepare` with the existing
+`{requestId,connectionRef,project}` returns its immutable preview/disclosure.
+After the user sees those writes and possible remote-model charges, a single
+explicit confirmation invokes
+`POST /personal-agent/project-commands/{requestId}/submit` (202) with
+`{previewHash,approved:true}`. The server records that owner's exact consent and
+starts the original plan. A wrong hash/owner, cancelled consent, expired binding,
+or revoked authority denies dispatch. `approved:false` is not a submit; use the
+existing decision endpoint to decline. Existing decision/start APIs remain
+compatible and can also be transparently combined after the same owner action.
+Connecting the created project retains its existing `/connect` contract and
+explicit remote harness/model selection.
+
+The approval shortcut covers owner-created `remote-*` registrations only.
+Operator/shared registrations stay under their existing plan review/policy;
+the server does not assign an administrator role or submit administrator
+decisions on behalf of the user. Shared publication is still independently
+reviewed once. Identity, connection revision, organization scope limits, exact
+plan/effect hashes, request fingerprints, capacity and cancellation guards remain.
+
+The facade is **not one transaction covering remote side effects**. Plan admission,
+owner consent/submission, task reservation and the native effect each keep their
+existing durable boundary. A crash after preparation can leave a plan with no
+task; GET exposes it without dispatch, and retrying the exact submit can continue
+the original admission. The same requestId with changed inputs conflicts. After
+a task/effect crosses native or remote submission, a replay uses the original
+task/custody and never blind-resends an UNKNOWN remote operation. A lost response
+should first be recovered with GET; a revoked/expired original pin still denies
+a new execution attempt. Concurrent double-clicks use the existing admission
+locks and effects. No extra queue, remote retry or replacement model is added.
+
 ## Setup and capabilities
 
 `GET /api/factory/status` exposes `feeManagementEnabled` and
@@ -64,6 +142,14 @@ Production deployments can publish their approved read-only research materials
 with the `owner-chat-completions-v1@1` model adapter and a declared owner model
 connection. Live provider and real scientific research compatibility remain
 unverified.
+The bundled demo installer explicitly refuses production (`demo=False`) with
+`PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY`. It is never run automatically at startup.
+If a production database retains that synthetic template, capabilities report
+`supported:false`, `templateKind:"synthetic-demo"`, and
+`unsupportedReason:"PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED"`; submit returns that
+409 code before a model/provider call. `applicationAvailable` alone indicates
+publication metadata, not actual research support. No synthetic template is
+silently selected as an ORX fallback.
 
 ## Step 1: save a model and choose the default
 

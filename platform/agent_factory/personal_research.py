@@ -9,6 +9,38 @@ APPLICATION_ID = 'personal-research-v1'
 CONNECTION_NAME = 'ownerModel'
 
 
+def template_support(store, owner):
+    application = next((app for app in store.applications.list_active(owner) if app['id'] == APPLICATION_ID), None)
+    if application is None:
+        return {'applicationAvailable': False, 'supported': False, 'unsupportedReason':
+            'PERSONAL_RESEARCH_TEMPLATE_REQUIRED' if store.settings.demo else 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED'}
+    try:
+        materials = store.applications.closure(application['modes']['literature']['materialRefs'])
+    except HTTPException as error:
+        if error.status_code not in {404, 409}: raise
+        return {'applicationAvailable': True, 'supported': False, 'templateKind': 'unavailable',
+            'unsupportedReason': 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED'}
+    tools = [item for item in materials if item['kind'] == 'tool']
+    bindings = store.execution_bindings
+    from .execution_bindings import LEGACY_DEMO
+    adapters, synthetic = [], False
+    for item in tools:
+        binding = item.get('runtimeBinding')
+        if binding is None:
+            # Historical seed tools have no explicit binding. Classify them as
+            # demo-only; execution still performs the existing exact seed check.
+            legacy = LEGACY_DEMO.get(item['id'])
+            binding = {'adapterId': legacy[1], 'revision': '1'} if legacy is not None and legacy[0] == 'tool' else {}
+            synthetic = True
+        entry = bindings._adapters.get(('tool', binding.get('adapterId'), binding.get('revision')))
+        adapters.append(entry)
+        synthetic |= entry is not None and entry.demo_only
+    supported = bool(tools) and all(entry is not None for entry in adapters) and (store.settings.demo or not synthetic)
+    return {'applicationAvailable': True, 'supported': supported,
+        'templateKind': 'synthetic-demo' if synthetic else 'approved-read-only',
+        'unsupportedReason': None if supported else 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED'}
+
+
 class SubmitResearch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     topic: str = Field(min_length=2, max_length=2000)
@@ -21,8 +53,7 @@ def personal_research_router(auth, store, factory):
     def capabilities(request: Request):
         owner = auth.user(request)['id']
         auth.require(owner, 'read')
-        published = any(app['id'] == APPLICATION_ID for app in store.applications.list_active(owner))
-        return {'applicationId': APPLICATION_ID, 'applicationAvailable': published,
+        return {'applicationId': APPLICATION_ID, **template_support(store, owner),
             'modelSetup': '/api/factory/personal-models', 'steps': ['configure-default-model', 'submit-goal'],
             'nativeQueue': True, 'liveCompatibilityVerified': False,
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False}
@@ -33,6 +64,10 @@ def personal_research_router(auth, store, factory):
         # The replayed request keeps its original model pin even if the default
         # changes. A stale/revoked original binding fails current admission.
         def create():
+            support = template_support(store, owner)
+            if not support['supported']:
+                raise HTTPException(409, str(support['unsupportedReason']) +
+                    ': no approved executable research tools; use the configured native ORX personal-agent path')
             model = store.personal_models.default(owner)
             if not any(app['id'] == APPLICATION_ID for app in store.applications.list_active(owner)):
                 raise HTTPException(409, 'PERSONAL_RESEARCH_TEMPLATE_REQUIRED: install the approved research template')
@@ -63,6 +98,8 @@ def publish_application(state, *, author, reviewer):
     adapter. The bundled minimal template retains honest synthetic tool evidence.
     """
     auth = state['auth']
+    if not state['store'].settings.demo:
+        raise HTTPException(409, 'PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY')
     auth.require(author, 'components:write'); auth.require(reviewer, 'agent_os:admin')
     if author == reviewer: raise HTTPException(403, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
     governance, applications, store = state['material_governance'], state['applications'], state['store']

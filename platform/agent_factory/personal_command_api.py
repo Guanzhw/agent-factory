@@ -1,4 +1,5 @@
-"""Preparation/read ingress only; mutations run through shared Factory admission."""
+"""Owner command ingress; mutations run through existing Factory admission."""
+import asyncio
 from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -122,8 +123,35 @@ class PersonalCommandAPI:
         if plan['application'] == PROJECT_APPLICATION_ID:
             command = command_from_plan(plan)
             self.projects.require_approval(owner, command['requestId'], plan_id, command['projectBundle'])
-        self.store.owner_submissions.approve(owner, plan)
+        self.store.owner_submissions.approve_personal(owner, plan)
         return await self.factory.instantiate(owner, InstanceRequest(planId=plan_id, requestId='personal:' + plan_id))
+
+    async def submit(self, owner, body):
+        # The normal explicit submit authorizes this exact business action.
+        # Existing plan/task reservations and native effects own durability;
+        # this facade adds neither a queue nor an external transaction/retry.
+        prepared = await asyncio.to_thread(self.prepare, owner, body)
+        return await self.start(owner, prepared['plan']['id'])
+
+    async def submit_project(self, owner, request_id, body):
+        self.auth.require(owner, 'run')
+        if not body.approved:
+            raise HTTPException(422, 'PERSONAL_PROJECT_OWNER_SUBMISSION_REQUIRED')
+        consent = self.projects.consent(owner, request_id)
+        if consent['bundle']['previewHash'] != body.previewHash:
+            raise HTTPException(409, 'PERSONAL_PROJECT_PREVIEW_CHANGED')
+        if consent['state'] == 'awaiting':
+            try:
+                consent = self.projects.decide(owner, request_id, body.previewHash, True)
+            except HTTPException as error:
+                if error.detail != 'PERSONAL_PROJECT_DECISION_FROZEN': raise
+                # Another identical submit may already have crossed dispatch.
+                # Re-read exact original consent, never overwrite/cancel/resend.
+                consent = self.projects.consent(owner, request_id)
+        # Already-approved/started submissions keep their original consent.
+        # Cancelled requests cannot be revived by a replay.
+        self.projects.require_approval(owner, request_id, consent['plan_id'], consent['bundle'])
+        return await self.start(owner, consent['plan_id'])
 
     def routes(self):
         from .personal_orx_projects import PrepareProject, ProjectDecision, ConnectProject, prepare_project
@@ -132,6 +160,8 @@ class PersonalCommandAPI:
         def capabilities(request: Request):
             self.auth.require(owner(request), 'read')
             return {'executionContract': CONTRACT, 'applicationId': APPLICATION_ID, 'nativeQueue': True,
+                'ownerSubmit': '/api/factory/personal-agent/commands/submit',
+                'modelConfiguration': 'remote-configured-model', 'factoryBYOKForwarded': False,
                 'remoteBudgetEnforcement': 'advisory', 'remoteStopVerified': False, 'liveEndToEndVerified': False,
                 'planPolicy': self.store.plan_policy.current(), 'planReviewDeterminedAtPreparation': True}
         @self.router.get('/projects')
@@ -177,6 +207,8 @@ class PersonalCommandAPI:
         def prepare(body: PrepareCommand, request: Request): return self.prepare(owner(request), body)
         @self.router.post('/commands/start')
         async def start(body: StartCommand, request: Request): return await self.start(owner(request), body.planId)
+        @self.router.post('/commands/submit', status_code=202)
+        async def submit(body: PrepareCommand, request: Request): return await self.submit(owner(request), body)
         @self.router.post('/project-commands/prepare')
         def prepare_creation(body: PrepareProject, request: Request):
             return prepare_project(self, owner(request), body)
@@ -184,6 +216,9 @@ class PersonalCommandAPI:
         def decide_creation(request_id: str, body: ProjectDecision, request: Request):
             self.projects.decide(owner(request), request_id, body.previewHash, body.approved)
             return self.projects.request_result(owner(request), request_id)
+        @self.router.post('/project-commands/{request_id}/submit', status_code=202)
+        async def submit_creation(request_id: str, body: ProjectDecision, request: Request):
+            return await self.submit_project(owner(request), request_id, body)
         @self.router.get('/project-commands/{request_id}')
         def recover_creation(request_id: str, request: Request, refresh: bool = False):
             result = self.projects.request_result(owner(request), request_id, refresh=refresh)
