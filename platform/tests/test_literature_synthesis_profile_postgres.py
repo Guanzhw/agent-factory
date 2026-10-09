@@ -81,6 +81,8 @@ class LiteratureSynthesisProfilePostgresTests(unittest.TestCase):
         self.sources = controlled_sources()
         settings = synthesis_settings(db_url=self.database.url, workspace=Path(self.workspace.name),
             question=self.question, evidence_projection=self.sources)
+        # This controlled zero-priced model fixture also verifies retained accounting.
+        settings.fee_management_enabled = True
         application = create_app(settings)
         self.state = application.app.state.factory
         self.store = self.state["store"]
