@@ -22,9 +22,9 @@ function prepared(requestId = 'original-request', extra: Partial<OrxProjectRecei
 const job = { id: 'task-project', planId: 'plan-project', ownerId: owner.id, status: 'running' } as FactoryJob;
 const identity = { planId: job.planId!, taskId: job.id, nativeRunId: 'run-project', executionContract: 'personal-external-v1' as const };
 const key = `factory-orx-project-create:${owner.id}`;
-let host: HTMLDivElement; let root: Root; const connected = vi.fn();
+let host: HTMLDivElement; let root: Root; const connected = vi.fn(); const navigateTask = vi.fn();
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); connected.mockReset();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); connected.mockReset(); navigateTask.mockReset();
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'userConnections').mockResolvedValue([connection]); vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([remote]);
   vi.spyOn(personalOrxProjectApi, 'prepare').mockImplementation(async input => prepared(input.requestId));
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(personalAgentApi, 'start').mockResolvedValue(job);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId, onConnected: connected }))); }
+async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId, onConnected: connected, onTask: navigateTask }))); }
 function button(text: string) { const value = [...host.querySelectorAll('button')].find(b => b.textContent === text); if (!value) throw new Error('Missing ' + text); return value; }
 async function click(text: string) { await act(async () => button(text).click()); }
 async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`)!; const select = el.tagName === 'SELECT'; Object.getOwnPropertyDescriptor(select ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event(select ? 'change' : 'input', { bubbles: true })); }); }
@@ -47,6 +47,7 @@ it('requires disclosed per-request approval and one submission on double click',
   expect(button('批准并提交此次创建').disabled).toBe(true); await consent();
   await act(async () => { button('批准并提交此次创建').click(); button('批准并提交此次创建').click(); });
   expect(personalOrxProjectApi.decide).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).toHaveBeenCalledTimes(1);
+  expect(navigateTask).not.toHaveBeenCalled(); await click('查看原创建任务进度与结果'); expect(navigateTask).toHaveBeenCalledWith(job.id);
   expect(localStorage.getItem(key)).not.toContain(request.path); expect(localStorage.getItem(key)).not.toContain(request.name);
 });
 it('cancels the exact prepared request without dispatch and releases only proven cancelled consent', async () => {

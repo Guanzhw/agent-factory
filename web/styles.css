@@ -153,3 +153,4 @@
   .openresearch-workspace .page-heading { flex-wrap: wrap; }
   .personal-session-dialog button { min-height: 44px; }
 }
+.project-create-form,.project-disclosure{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:14px 0}.project-create-form summary,.project-disclosure summary{cursor:pointer;font-size:14px;font-weight:600;padding:6px 0}.project-create-form[open] summary,.project-disclosure[open] summary{margin-bottom:16px}.project-request{overflow-wrap:anywhere}.project-request button{display:block;margin-top:8px}.project-created{background:#f1f7f5;border:1px solid #c3dbd0;border-radius:6px;padding:18px;margin:16px 0}.project-created p,.personal-command-summary dd{overflow-wrap:anywhere}
