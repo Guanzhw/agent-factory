@@ -171,7 +171,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
               if (!current(epoch)) return;
               if (prompted.ownerId !== ownerId) throw new Error('owner');
               remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');
-            } else { remember(null); setPlan(undefined); setNotice(result.receipt.action === 'create' ? '原生会话已确认。若页面曾刷新或离开，研究目标尚未发送；请在此会话输入并提交。' : '原命令回执已核对。远程停止仍未经证实；下一轮须等待原回复观察完成。'); }
+            } else { remember(null); setPlan(undefined); setNotice(result.receipt.action === 'create' ? '原生会话已确认。若页面曾刷新或离开，研究目标尚未发送；请在此会话输入并提交。' : result.receipt.action === 'interrupt' ? '原中断请求已核对；远端进程是否停止仍需核对。' : '原消息已受理，正在读取此会话的进度与回复。下一轮须等待原回复完成。'); }
           }
           else { followup.current = null; setNotice('原远程命令确认未知。保留原请求，不自动重放；请在远程服务核对。'); }
         } else setNotice('已找到原 Factory 命令任务，远程回执尚未就绪。请稍后继续核对原请求。');
@@ -239,7 +239,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     <details open={!!session && !sessionWritable} className="technical-detail"><summary>更新连接或续接原会话</summary><PersonalSessionRebind ownerId={ownerId} namespace={namespace} session={session} candidates={connections} disabled={!!busy || !!attachment || !ready} commandPending={!!pending} onPending={rebindChanged} onRebound={next => { navigation.current++; observationGeneration.current++; setSession(next); setSelected(next.connectionRef); setSessions(all => [...all.filter(item => item.id !== next.id), next]); setSessionCatalog(all => [...all.filter(item => item.id !== next.id), next]); setText(''); setPlan(undefined); setShowReview(false); refresh(n => n + 1); }} /></details>
     {attachment && <p role="alert">原只读关联请求：{attachment.requestId}<button disabled={!!busy} onClick={() => void recoverAttach()}>核对原会话关联</button></p>}
     {pending && <p role="alert">原请求：{pending.requestId}<button disabled={!!busy} onClick={() => void recover()}>核对原会话命令</button></p>}
-    {job && <p>Factory 命令任务：{job.id} · {statusNames[job.status] ?? '状态待核对'}。本地成功不证明远程已停止。{onTask && <button onClick={() => onTask(job.id)}>查看命令任务</button>}</p>}
+    {job && <p>Factory 命令任务：{job.id} · {statusNames[job.status] ?? '状态待核对'}。研究进度与回复见上方。{onTask && <button onClick={() => onTask(job.id)}>查看命令任务</button>}</p>}
     <button disabled={!!busy} onClick={() => { navigation.current++; setShowReview(false); setAllowed(false); refresh(n => n + 1); }}>刷新个人资源</button>
     {showReview && plan && <dialog ref={dialog} className="personal-session-dialog" role="dialog" aria-modal="true" aria-label="审阅个人会话命令" onCancel={event => { event.preventDefault(); closeReview(); }}><h3>{action === 'create' ? `创建 ${engine} 会话` : action ? labels[action] : '原个人会话命令'}：确认提交</h3><p>{warning}</p><p>{plan.status === 'ready' ? '命令就绪' : '命令范围尚未通过检查'}</p><CommandSummary plan={plan}/>{plan.missing?.length > 0 && <p>{plan.missing.join('、')}</p>}
       <PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} />
