@@ -86,13 +86,13 @@ export function PersonalRemotes({ user, jobs, onChanged, onTask }: { user: User;
     });
   }
   return <section aria-label="个人远程服务"><h2>连接自己的远程服务</h2>
-    <p>1. 保存个人凭据 → 2. 配置目标 → 3. 验证 → 4. 单独绑定。旧提供方支持 OpenCode 元数据只读访问；个人会话提供方需要单独配置和明确绑定。</p>
+    <p>连接 OpenResearch：1. 保存此服务的个人凭据 → 2. 配置目标 → 3. 只读验证 → 4. 明确绑定。之后回到 OpenResearch 选择项目与会话，准备消息并逐次审批。</p><p className="quiet">OpenCode 是可选的外部 runtime，不是 Factory 或 OpenResearch 接入的必需底座。已有只读连接不会自动获得研究执行或项目创建权限。</p>
     <p className="policy-note">配置与验证不创建计算资源，不执行会话或工具，不调用付费模型。个人会话执行需下方单独审阅和确认；普通 OpenResearch 会话使用独立原生提供方；受管完整研究执行仍需单独验证。验证不是执行兼容性证明。</p>
     {pendingRequest && <p role="alert">待核对原请求 {pendingRequest.requestId}。<button disabled={busy} onClick={() => void recover()}>核对原远程请求</button></p>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {ready && (!providers.length || !vault) && <p className="state-note">此部署尚未启用{!providers.length ? '个人远程提供方' : '安全凭据保险库'}。需要部署管理员配置后才能自助连接；下面仍可查看已登记状态。</p>}
+    {ready && (!providers.length || !vault) && <p className="state-note">此部署尚未启用{!providers.length ? '个人远程提供方' : '安全凭据保险库'}。需要部署管理员配置后才能自助连接；下面仍可查看已登记状态。请联系管理员启用 OpenResearch 个人会话提供方、安全凭据保险库与个人命令能力，并确认允许访问你的 HTTPS 服务目标。需要新建项目时，还须单独启用创建应用和创建连接；现有项目绑定不能替代。</p>}
     {ready && !!providers.length && vault && <div className="material-editor"><h3>{editing ? '重新配置远程服务' : '添加个人远程服务'}</h3>
-      <fieldset disabled={busy || showCredential || !!credential}><label>提供方<select aria-label="远程提供方" value={providerId} onChange={event => { setProviderId(event.target.value); setAuthMode(''); setSessionTemplateId(''); setProjectCreation(false); }}><option value="">选择提供方</option>{providers.map(p => <option key={p.providerId} value={p.providerId}>{p.providerId}</option>)}</select></label>
+      <fieldset disabled={busy || showCredential || !!credential}><label>提供方<select aria-label="远程提供方" value={providerId} onChange={event => { setProviderId(event.target.value); setAuthMode(''); setSessionTemplateId(''); setProjectCreation(false); }}><option value="">选择提供方</option>{providers.map(p => <option key={p.providerId} value={p.providerId}>{p.providerId === ORX_PERSONAL_PROVIDER ? 'OpenResearch 原生项目与会话' : p.providerId === PERSONAL_PROVIDER ? 'OpenCode 原生会话（可选）' : p.providerId}</option>)}</select></label>
       <label>HTTPS 服务源<input aria-label="HTTPS 服务源" value={origin} placeholder="https://remote.example.org" onChange={event => setOrigin(event.target.value)} /></label>{orxProvider && <label>OpenResearch 认证方式<select aria-label="OpenResearch 认证方式" value={authMode} onChange={event => setAuthMode(event.target.value as '' | 'bearer' | 'basic-proxy')}><option value="">明确选择认证方式</option>{chosenProvider?.authModes?.map(mode => <option key={mode} value={mode}>{mode === 'bearer' ? '已有 OpenResearch 服务令牌' : 'HTTPS 反向代理用户名与密码'}</option>)}</select></label>}</fieldset>
       {orxProvider && chosenProvider?.projectCreationSupported && <label><input type="checkbox" aria-label="用于创建新项目" disabled={busy} checked={projectCreation} onChange={event => setProjectCreation(event.target.checked)} />用于创建新项目（无需已有项目 ID；验证只读，实际创建逐次批准）</label>}
       {!projectCreation && <label>预期项目 ID<input aria-label="预期项目 ID" disabled={busy} value={projectId} onChange={event => setProjectId(event.target.value)} /></label>}
@@ -108,6 +108,6 @@ export function PersonalRemotes({ user, jobs, onChanged, onTask }: { user: User;
       <div className="material-actions"><button disabled={busy || !!pendingRequest || !ready || !remote.allowedActions.includes('verify')} onClick={() => void command(remote, 'verify')}>验证远程服务</button><button disabled={busy || !!pendingRequest || !ready || !remoteCanBind(remote)} onClick={() => void command(remote, 'bind')}>{remote.capabilities.includes('project:create') ? '确认绑定项目创建连接' : [PERSONAL_PROVIDER, ORX_PERSONAL_PROVIDER].includes(remote.providerId) ? '确认绑定个人会话连接' : '确认绑定只读连接'}</button>
       <button disabled={busy || !!pendingRequest || !ready || !vault || !!credential || showCredential || !remote.allowedActions.includes('configure')} onClick={() => { setEditing(remote.registrationRef); setProviderId(remote.providerId); setOrigin(remote.origin); setProjectId(remote.projectId); setAuthMode(''); setSessionTemplateId(''); setProjectCreation(!remote.projectId); }}>重新配置</button>
       <button disabled={busy || !!pendingRequest || !ready || !remote.allowedActions.includes('revoke')} onClick={() => void command(remote, 'revoke')}>撤销远程访问</button></div></div></article>)}
-    <PersonalAgentSessions key={`${user.id}:${refresh}`} ownerId={user.id} onTask={onTask} />
+    <details className="technical-detail"><summary>OpenCode 会话（可选外部 runtime）</summary><p>仅用于你已配置的 OpenCode 服务。无需此连接也可使用独立的 OpenResearch 原生提供方。</p><PersonalAgentSessions key={`${user.id}:${refresh}`} ownerId={user.id} onTask={onTask} /></details>
   </section>;
 }

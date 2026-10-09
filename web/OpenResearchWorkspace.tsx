@@ -6,9 +6,15 @@ import { api, ApiError } from './api.js';
 import { openresearchApi, isManagedSession, type NativeProject, type ResearchCapabilities, type ResearchProject, type ResearchSession } from './openresearchApi.js';
 import type { UserConnection } from './models.js';
 
-const message = (e: unknown) => e instanceof ApiError && e.code ? `操作未确认：${e.code}` : '暂时无法核对服务状态，请刷新读取。';
-export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog, selectedProject, onProject }: { selectedProject?: string; onProject?: (id: string) => void; ownerId: string; onTask: (id: string) => void; onResources: () => void; onCatalog: () => void }) {
-  const [mode, setMode] = useState<'personal' | 'managed'>(selectedProject ? 'managed' : 'personal');
+function message(e: unknown) {
+  if (e instanceof ApiError && e.code === 'OFFLINE') return '无法连接服务。上次读取的记录保留；请恢复网络后刷新工作区。未自动重新提交操作。';
+  if (e instanceof ApiError && e.code === 'PLAN_AUTHORIZATION_REQUIRED') return '当前方案缺少有效执行授权。请先完成方案审查；原方案与请求记录保留。（错误标识：PLAN_AUTHORIZATION_REQUIRED）';
+  return `暂时无法核对服务状态。上次读取的记录保留；请刷新工作区，未确认的操作须核对原请求。${e instanceof ApiError && e.code ? `（错误标识：${e.code}）` : ''}`;
+}
+export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog, selectedProject, onProject, selectedMode, onMode }: { selectedMode?: 'personal' | 'managed'; onMode?: (mode: 'personal' | 'managed') => void; selectedProject?: string; onProject?: (id: string) => void; ownerId: string; onTask: (id: string) => void; onResources: () => void; onCatalog: () => void }) {
+  const [localMode, setLocalMode] = useState<'personal' | 'managed'>(selectedProject ? 'managed' : 'personal');
+  const mode = selectedMode ?? localMode;
+  const setMode = (value: 'personal' | 'managed') => { setLocalMode(value); onMode?.(value); };
   const [createdConnection, setCreatedConnection] = useState('');
   const [cap, setCap] = useState<ResearchCapabilities>();
   const [projects, setProjects] = useState<ResearchProject[]>([]);
@@ -89,7 +95,7 @@ export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog,
       if (found.session) { selectProject(await openresearchApi.project(found.session.projectId)); setSessions([found.session]); }
       localStorage.removeItem(storageKey); setPending(''); refresh(n => n + 1);
     })}>核对原请求</button></div>}
-    {!ready && <p role="status">正在核对当前身份、项目和能力；写入暂不可用。</p>}
+    {!ready && !error && <p role="status">正在核对当前身份、项目和能力；写入暂不可用。</p>}
     {!project ? <div className="or-project-layout"><div><h2>我的项目</h2>{!projects.length && ready && <div className="empty-state"><h3>还没有关联项目</h3><p>连接可信 OpenResearch 工作区后，读取并关联现有项目。</p></div>}{projects.map(p => <button key={p.id} className="or-project-card" onClick={() => { selectProject(p); setPreset(''); setGoal(''); }}><strong>{p.name}</strong><span className="quiet">{p.kind === 'native-openresearch' ? '原生 OpenResearch 项目 · 只读关联' : '受控工作负载分组 · Factory'}</span><span>{p.description || (p.kind === 'native-openresearch' ? `原项目 ${p.upstreamProjectId}` : '会话使用已批准预设的上下文')}</span></button>)}</div>
       <div><section className="material-editor"><h2>关联现有 OpenResearch 项目</h2><p className="quiet">只读取已授权原项目；不创建仓库、工作树或触发模型预热。</p><label>我的 OpenResearch 连接<select aria-label="我的 OpenResearch 连接" value={connection} disabled={busy || !ready} onChange={e => { setConnection(e.target.value); setNative([]); }}><option value="">选择可读取项目的连接</option>{refs.map(r => <option key={r.ref} value={r.ref}>{r.ref} · {r.revision}</option>)}</select></label>{ready && !refs.length && <p className="policy-note">尚未配置可用的原生工作区连接。OpenCode 环境连接不能替代 OpenResearch 连接。</p>}<button className="secondary" disabled={busy || !ready || !refs.some(r => r.ref === connection) || !cap?.nativeProjectAttachment} onClick={() => void read(async () => setNative(await openresearchApi.native(connection)))}>读取原生项目</button>{native.map(p => <div className="or-native-row" key={p.id}><strong>{p.name}</strong><small>原项目 {p.id} · 元数据已观察</small><button className="secondary" disabled={disabled} onClick={() => void mutate(async id => { const attached = await openresearchApi.attach(connection, p, id); if (alive.current) selectProject(attached); })}>关联此项目</button></div>)}<p className="quiet">原生项目创建暂不可用：模型调用预算与仓库发布授权尚未接入。</p></section>
       <details className="technical-detail"><summary>受控工作负载分组（独立入口）</summary><p>分组只整理已有受控预设任务，不创建原生 OpenResearch 项目，也不修改预设的仓库、模型或指令。</p><form onSubmit={e => { e.preventDefault(); void mutate(async id => { const p = await openresearchApi.create(name.trim(), id); if (alive.current) { selectProject(p); setName(''); } }); }}><label>分组名称<input aria-label="分组名称" maxLength={120} value={name} onChange={e => setName(e.target.value)} disabled={disabled}/></label><button className="secondary" disabled={disabled || !name.trim()}>创建受控分组</button></form></details></div></div> : <>

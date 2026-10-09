@@ -5,12 +5,19 @@ import { api, ApiError } from './api.js';
 import { PlanReviewGate } from './PlanReviews.js';
 import { personalRemoteApi, definitivelyRejected } from './personalRemoteApi.js';
 import { PERSONAL_CONTRACT, PERSONAL_PROVIDER, ORX_PERSONAL_PROVIDER, personalAgentApi, checkPersonalRecovery, checkAttachment, type PersonalAttachment, type NativePersonalSession, type PersonalNamespace, type PersonalAction, type PersonalIntent, type PersonalProject, type PersonalSession } from './personalAgentApi.js';
-import type { FactoryJob, Plan, UserConnection } from './models.js';
+import { statusNames, type FactoryJob, type Plan, type UserConnection } from './models.js';
 
 type Props = { ownerId: string; onTask?: (id: string) => void; connectionRef?: string; namespace?: PersonalNamespace };
 type Pending = { requestId: string; planId?: string; startPlanId?: string };
 const labels = { create: '创建 OpenCode 会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' };
 const warning = '模型凭据保留在远程服务，模型费用由你与远程服务商结算。Factory 不保证远程硬预算；中断仅尽力而为，停止状态未经证实。';
+const sessionStates: Record<string, string> = { ready: '可准备消息', result_observed: '已观察到远程回复', ack_unknown: '命令回执未确认', pending: '等待回执', creating: '等待创建确认' };
+function CommandSummary({ plan }: { plan: Plan }) {
+  const values = plan.inputValues ?? {};
+  const text = (key: string) => typeof values[key] === 'string' && values[key] ? values[key] as string : '未提供';
+  const action = text('action');
+  return <section className="personal-command-summary" aria-label="此次固定命令范围"><h4>此次固定命令范围</h4><dl className="plan-details"><dt>动作</dt><dd>{({ create: '创建原生会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' } as Record<string, string>)[action] ?? '动作未确认，请核对技术快照'}</dd><dt>原生项目 ID</dt><dd>{text('nativeProjectId')}</dd>{action === 'create' ? <><dt>新会话标题</dt><dd>{text('title')}</dd></> : <><dt>原生会话 ID</dt><dd>{text('nativeSessionId')}</dd></>}</dl>{action === 'prompt' && <><h4>将发送的消息</h4><p className="personal-command-text">{text('text')}</p></>}{action === 'interrupt' && <p>仅向原会话请求中断，不证明工具、模型或远端进程已停止。</p>}<details className="technical-detail"><summary>固定方案与连接技术快照</summary><span>方案 {plan.id}</span><pre>{JSON.stringify(values, null, 2)}</pre></details></section>;
+}
 export function PersonalAgentSessions(props: Props) { return <PersonalSessions key={`${props.ownerId}:${props.namespace ?? 'opencode'}`} {...props} />; }
 function PersonalSessions({ ownerId, onTask, connectionRef, namespace = 'opencode' }: Props) {
   const engine = namespace === 'opencode' ? 'OpenCode' : 'OpenResearch';
@@ -24,6 +31,7 @@ function PersonalSessions({ ownerId, onTask, connectionRef, namespace = 'opencod
   const [sessionCatalog, setSessionCatalog] = useState<PersonalSession[]>([]); const [rebindPending, setRebindPending] = useState(false);
   const rebindChanged = useCallback((value: boolean) => { rebindActive.current = value; setRebindPending(value); }, []);
   const [connections, setConnections] = useState<UserConnection[]>([]); const [selected, setSelected] = useState(connectionRef ?? '');
+  const [connectionNames, setConnectionNames] = useState<Record<string, string>>({});
   const [project, setProject] = useState<PersonalProject>(); const [sessions, setSessions] = useState<PersonalSession[]>([]); const [session, setSession] = useState<PersonalSession>();
   const [ready, setReady] = useState(false); const [resourceReady, setResourceReady] = useState(false); const [busy, setBusy] = useState(''); const [notice, setNotice] = useState('');
   const [title, setTitle] = useState(''); const [text, setText] = useState(''); const [plan, setPlan] = useState<Plan>(); const [action, setAction] = useState<PersonalAction>();
@@ -44,6 +52,7 @@ function PersonalSessions({ ownerId, onTask, connectionRef, namespace = 'opencod
       if (who.id !== ownerId || cap.executionContract !== PERSONAL_CONTRACT || cap.nativeQueue !== true || refs.some(r => r.ownerId !== ownerId)) throw new Error('identity');
       setSessionCatalog(history.filter(item => item.namespace === namespace));
       const personal = new Set(remotes.filter(r => r.providerId === provider).map(r => r.registrationRef));
+      setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && r.providerId === provider); return [ref.ref, remote ? `${remote.origin} · 项目 ${remote.projectId || '未指定'} · ${ref.ref.slice(0, 8)}` : `连接 ${ref.ref}`]; })));
       setConnections(refs.filter(r => personal.has(r.registrationRef) && r.kind === (namespace === 'opencode' ? 'environment' : 'orx') && r.status === 'active' && r.available && r.taskId === null && r.capabilities.includes('session:read'))); setReady(true);
     }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setNotice('个人会话功能尚未启用或身份无法核对。旧只读连接不会自动升级。'); } });
     return () => ctrl.abort();
@@ -154,30 +163,31 @@ function PersonalSessions({ ownerId, onTask, connectionRef, namespace = 'opencod
   const sessionWritable = session && connections.some(item => item.ref === session.connectionRef && !!session.connectionPin && item.fingerprint === session.connectionPin.fingerprint) && (!session.bindingStatus || session.bindingStatus === 'active');
   const visibleSessions = [...new Map([...sessionCatalog, ...sessions].map(item => [item.id, item])).values()];
   const canCreate = connections.find(c => c.ref === selected)?.capabilities.includes('session:create') === true && (namespace === 'opencode' || project?.sessionCreationSupported === true);
-  return <section aria-label={`个人 ${engine} 会话`}><h2>个人远程会话</h2><p>普通模式：连接已有 {engine} 服务，使用它原有的项目与会话。模型密钥留在远程端，无需在 Factory 输入。</p>
+  return <section className="personal-session-workspace" aria-label={`个人 ${engine} 会话`}><h2>个人远程会话</h2><p>普通模式：连接已有 {engine} 服务，使用它原有的项目与会话。模型密钥留在远程端，无需在 Factory 输入。</p>
     <p className="policy-note">{warning}</p><p>{namespace === 'opencode' ? '这是 OpenCode 原生会话，不是 upstream ORX 项目。' : '这是已有 OpenResearch 项目与原生会话；不是受管单轮文本探测。'}不代表完整科研流程验收或真实端到端兼容性验证。</p>
     {notice && <p role="status">{notice}</p>}
-    <label>个人会话资源<select aria-label="个人会话资源" disabled={!ready || !!busy || !!pending || !!attachment || rebindPending} value={selected} onChange={e => { navigation.current++; setSelected(e.target.value); setPlan(undefined); setText(''); }}><option value="">选择已明确绑定的个人资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{c.ref}</option>)}</select></label>
+    <label>个人会话资源<select aria-label="个人会话资源" disabled={!ready || !!busy || !!pending || !!attachment || rebindPending} value={selected} onChange={e => { navigation.current++; setSelected(e.target.value); setPlan(undefined); setText(''); }}><option value="">选择已明确绑定的个人资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? `连接 ${c.ref}`}</option>)}</select></label>
     {ready && !connections.length && <p>请以 {provider} 单独配置、验证并绑定个人资源。旧只读绑定不会获得执行能力。</p>}
-    {project && <><p>{engine} 原生项目 ID：{project.nativeProjectId}</p>{canCreate && <><label>新会话标题<input aria-label="新会话标题" maxLength={120} value={title} disabled={disabled} onChange={e => setTitle(e.target.value)} /></label><button disabled={disabled} onClick={() => void prepare('create')}>准备创建会话</button></>}</>}
+    <div className="personal-session-history" aria-label="已关联会话">{visibleSessions.map(s => <button key={s.id} disabled={!!busy || !!pending || !!attachment || rebindPending} onClick={() => { navigation.current++; setSession(s); setSelected(s.connectionRef); setText(''); }}>打开 {engine} 会话 {s.nativeSessionId ?? '创建确认未知'}</button>)}</div>
+    {project && <><p>{engine} 原生项目 ID：{project.nativeProjectId}</p>{canCreate && <><label>新会话标题<input aria-label="新会话标题" maxLength={120} value={title} disabled={disabled} onChange={e => setTitle(e.target.value)} /></label><button className="secondary" disabled={disabled} onClick={() => void prepare('create')}>准备创建会话</button></>}</>}
     {project && <section aria-label="已有原生会话"><h3>关联已有 {engine} 会话</h3><p>只读取现有会话并保存本地关联，不创建远程会话或调用模型。{!canCreate && '此提供方当前仅支持已有会话；新会话创建未启用。'}</p><button disabled={disabled} onClick={() => void readNative()}>读取已有原生会话</button>{nativeSessions.map(native => <p key={native.nativeSessionId}>{native.title ?? native.nativeSessionId} · 原生 ID {native.nativeSessionId}<button disabled={disabled} onClick={() => void attachNative(native)}>关联原生会话 {native.nativeSessionId}</button></p>)}</section>}
-    <div>{visibleSessions.map(s => <button key={s.id} disabled={!!busy || !!pending || !!attachment || rebindPending} onClick={() => { navigation.current++; setSession(s); setSelected(s.connectionRef); setText(''); }}>打开 {engine} 会话 {s.nativeSessionId ?? '创建确认未知'}</button>)}</div>
-    {session && <article aria-label="原生会话详情"><h3>{engine} 原生会话 ID：{session.nativeSessionId ?? '确认未知'}</h3><p>项目 {session.nativeProjectId} · 状态 {session.state} · 停止未经证实</p>
+
+    {session && <article aria-label="原生会话详情"><h3>{engine} 原生会话 ID：{session.nativeSessionId ?? '确认未知'}</h3><p>项目 {session.nativeProjectId} · 状态 {sessionStates[session.state] ?? '状态待核对'} · 停止未经证实</p>
       {!sessionWritable && <p role="alert">原绑定已到期、撤销或变更，或当前无法核对。保留原结果；请重新验证资源并在下方明确续接同一原生会话。禁止用新会话代替原请求。</p>}
       {session.observation?.correlationSource && <p>回复关联：{session.observation.correlationSource}。精确轮次未验证；不能据此确认科学结论或远程已停止。</p>}
       {session.activeRequestId && <p>原消息仍待核对：{session.activeRequestId}。等待原回复完成后才能继续发送。</p>}
       {session.observation?.messages.map(m => <article key={m.id}>{m.correlationSource && <p>关联来源：{m.correlationSource}，仅为远程观察，不能作为精确轮次或科学结论证明。</p>}<h4>{m.role === 'assistant' ? '远程代理' : '你'} · {m.completed ? '远程报告回复完成' : '未报告完成'}</h4>{m.events.map((event, i) => event.type === 'text' ? <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{event.text}</p> : <details key={i}><summary>工具 {event.tool} · {event.status}</summary><pre>{event.output}</pre></details>)}{m.role === 'assistant' && <p>远程报告用量（未验证，仅供参考，不是共享账本发票）：{m.usageProvenance !== 'unavailable' && m.usage ? JSON.stringify(m.usage) : '未提供'}</p>}</article>)}
-      <label>下一轮消息<textarea aria-label="下一轮消息" value={text} maxLength={16000} disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt') || !!session.activeRequestId || !session.nativeSessionId} onChange={e => setText(e.target.value)} /></label><button disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt') || !!session.activeRequestId || !session.nativeSessionId || !text.trim()} onClick={() => void prepare('prompt')}>准备发送消息</button><button disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:interrupt') || !session.nativeSessionId} onClick={() => void prepare('interrupt')}>准备尽力中断</button>
+      <label>下一轮消息<textarea aria-label="下一轮消息" value={text} maxLength={16000} disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt') || !!session.activeRequestId || !session.nativeSessionId} onChange={e => setText(e.target.value)} /></label><button className="primary" disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:prompt') || !!session.activeRequestId || !session.nativeSessionId || !text.trim()} onClick={() => void prepare('prompt')}>准备发送消息</button><button className="secondary" disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:interrupt') || !session.nativeSessionId} onClick={() => void prepare('interrupt')}>准备尽力中断</button>
     </article>}
     <PersonalSessionRebind ownerId={ownerId} namespace={namespace} session={session} candidates={connections} disabled={!!busy || !!attachment || !ready} commandPending={!!pending} onPending={rebindChanged} onRebound={next => { navigation.current++; observationGeneration.current++; setSession(next); setSelected(next.connectionRef); setSessions(all => [...all.filter(item => item.id !== next.id), next]); setSessionCatalog(all => [...all.filter(item => item.id !== next.id), next]); setText(''); setPlan(undefined); setShowReview(false); refresh(n => n + 1); }} />
     {attachment && <p role="alert">原只读关联请求：{attachment.requestId}<button disabled={!!busy} onClick={() => void recoverAttach()}>核对原会话关联</button></p>}
     {pending && <p role="alert">原请求：{pending.requestId}<button disabled={!!busy} onClick={() => void recover()}>核对原会话命令</button></p>}
-    {job && <p>Factory 命令任务：{job.id} · {job.status}。本地成功不证明远程已停止。{onTask && <button onClick={() => onTask(job.id)}>查看命令任务</button>}</p>}
+    {job && <p>Factory 命令任务：{job.id} · {statusNames[job.status] ?? '状态待核对'}。本地成功不证明远程已停止。{onTask && <button onClick={() => onTask(job.id)}>查看命令任务</button>}</p>}
     <button disabled={!!busy} onClick={() => { navigation.current++; setShowReview(false); setConsent(false); setAllowed(false); refresh(n => n + 1); }}>刷新个人资源</button>
-    {showReview && plan && <dialog ref={dialog} className="personal-session-dialog" role="dialog" aria-modal="true" aria-label="审阅个人会话命令" onCancel={event => { event.preventDefault(); closeReview(); }}><h3>{action === 'create' ? `创建 ${engine} 会话` : action ? labels[action] : '原个人会话命令'}：固定方案</h3><p>{warning}</p><p>方案 {plan.id} · {plan.status === 'ready' ? '就绪' : '阻塞'}</p><pre>{JSON.stringify(plan.inputValues ?? {}, null, 2)}</pre>{plan.missing?.length > 0 && <p>{plan.missing.join('、')}</p>}
+    {showReview && plan && <dialog ref={dialog} className="personal-session-dialog" role="dialog" aria-modal="true" aria-label="审阅个人会话命令" onCancel={event => { event.preventDefault(); closeReview(); }}><h3>{action === 'create' ? `创建 ${engine} 会话` : action ? labels[action] : '原个人会话命令'}：固定方案</h3><p>{warning}</p><p>方案 {plan.id} · {plan.status === 'ready' ? '就绪' : '阻塞'}</p><CommandSummary plan={plan}/>{plan.missing?.length > 0 && <p>{plan.missing.join('、')}</p>}
       <PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} />
       <label><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={!!busy || !!pending?.startPlanId} />我确认此命令可能使用远程付费模型，接受远程自付费用、建议性预算和停止未经证实的限制</label>
-      <button disabled={!!busy || !consent || !allowed || plan.status !== 'ready' || !!pending?.startPlanId} onClick={() => void start()}>确认启动此命令任务</button><button onClick={closeReview}>关闭审阅</button>
+      <div className="button-row"><button className="primary" disabled={!!busy || !consent || !allowed || plan.status !== 'ready' || !!pending?.startPlanId} onClick={() => void start()}>确认启动此命令任务</button><button className="secondary" onClick={closeReview}>关闭审阅</button></div>
     </dialog>}
   </section>;
 }
