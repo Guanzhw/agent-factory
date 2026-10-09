@@ -16,7 +16,7 @@ const connection = { ref: 'creation-binding', registrationRef: 'creation-remote'
 const remote = { registrationRef: connection.registrationRef, providerId: ORX_PERSONAL_PROVIDER } as PersonalRemote;
 const request = { name: 'Synthetic project', path: '/synthetic/new-project', createFolder: true, requireNewFolder: true, initializeGit: true, cloneUrl: null, paperId: null, locale: 'zh', github_sync_enabled: false, githubSyncEnabled: false } as const;
 const preview: ProjectPreview = { previewHash: 'b'.repeat(64), connectionPin: connection, request,
-  disclosure: { version: 'native-orx-create-consent-v1', remotePath: request.path, repository: null, paperId: null, remoteWrites: 'create-new-folder-and-project', clone: false, paperDownload: false, gitInitialization: true, githubSyncEnabled: false, pathResolution: 'upstream-canonical-path-and-enclosing-git-root', starterSuggestions: 'may-request-four-project-chat-suggestions', modelInput: ['README', 'selected-code', 'file-list', 'paper-summary'], modelSelection: 'remote-preferred-or-ready-harness', billing: 'owner-remote-account-possible-cost', hardBudgetEnforced: false, automaticExperiment: false, emptyCacheHitOrNoHarness: 'may-skip-model-request', unknownResponse: 'read-only-reconcile-never-resend' } };
+  disclosure: { version: 'native-orx-create-consent-v2', remotePath: request.path, repository: null, paperId: null, remoteWrites: 'create-new-folder-and-project', clone: false, paperDownload: false, gitInitialization: true, githubSyncEnabled: false, pathResolution: 'upstream-canonical-path-and-enclosing-git-root', starterSuggestions: 'may-request-four-project-chat-suggestions', modelInput: ['README', 'selected-code', 'file-list', 'paper-summary'], modelSelection: 'remote-preferred-or-ready-harness', billing: 'owner-remote-account-possible-cost', hardBudgetEnforced: false, automaticExperiment: false, emptyCacheHitOrNoHarness: 'may-skip-model-request', unknownResponse: 'read-only-reconcile-never-resend' } };
 function receipt(requestId = 'original-request', extra: Partial<OrxProjectReceipt> = {}): OrxProjectReceipt { return { requestId, action: 'project_create', planId: 'plan-project', consentState: 'awaiting', state: 'awaiting', preview, result: null, factoryIdentity: null, candidates: [], candidateCorrelation: 'unproven-does-not-settle-original-request', liveEndToEndVerified: false, ...extra }; }
 function prepared(requestId = 'original-request', extra: Partial<OrxProjectReceipt> = {}): OrxProjectPrepared { const r = receipt(requestId, extra); return { plan: { id: r.planId, fingerprint: 'plan-fingerprint', status: 'ready', applicationRef: { id: 'personal-orx-project-create-v1', version: 1, sha256: 'c'.repeat(64) }, inputValues: { requestId, action: 'project_create', text: JSON.stringify(r.preview) }, missing: [] } as unknown as Plan, authorization: {} as OrxProjectPrepared['authorization'], receipt: r }; }
 const job = { id: 'task-project', planId: 'plan-project', ownerId: owner.id, status: 'running' } as FactoryJob;
@@ -53,6 +53,19 @@ it('cancels the exact prepared request without dispatch and releases only proven
   await previewCreation(); await click('取消此次创建批准');
   expect(personalOrxProjectApi.decide).toHaveBeenCalledWith(expect.any(String), preview.previewHash, false);
   expect(personalAgentApi.start).not.toHaveBeenCalled(); expect(localStorage.getItem(key)).toBeNull(); expect(host.textContent).toContain('已取消此创建批准');
+});
+it('discloses cloning into an existing empty directory and symlink targets before consent', async () => {
+  const cloneRequest = { ...request, initializeGit: false, path: '/synthetic/already-empty', cloneUrl: 'https://github.com/synthetic-fixture/example' };
+  const clonePreview: ProjectPreview = { ...preview, request: cloneRequest, disclosure: { ...preview.disclosure, remotePath: cloneRequest.path, repository: cloneRequest.cloneUrl, clone: true, gitInitialization: false, remoteWrites: 'clone-into-new-or-existing-empty-folder-and-project', pathResolution: 'upstream-clone-target-symlinks-followed-no-new-folder-guarantee' } };
+  vi.mocked(personalOrxProjectApi.prepare).mockImplementation(async input => prepared(input.requestId, { preview: clonePreview }));
+  await enter(); await fill('项目来源', 'clone'); await fill('远端项目绝对路径', cloneRequest.path); await fill('公开仓库 HTTPS URL', cloneRequest.cloneUrl); await click('预览项目创建');
+  expect(host.textContent).toContain(cloneRequest.path); expect(host.textContent).toContain(cloneRequest.cloneUrl);
+  expect(host.textContent).toContain('新目录或已有空目录'); expect(host.textContent).toContain('clone 可能修改已有空目录'); expect(host.textContent).toContain('符号链接'); expect(host.textContent).toContain('Factory 未检查或锁定远端路径');
+  expect(host.textContent).not.toContain('将在远端新建目录并登记项目'); expect(button('批准并提交此次创建').disabled).toBe(true); expect(personalAgentApi.start).not.toHaveBeenCalled();
+  const r = receipt('original-request', { preview: clonePreview });
+  expect(checkOrxProjectReceipt(r, 'original-request', owner.id)).toEqual(r);
+  expect(() => checkOrxProjectReceipt({ ...r, preview: { ...clonePreview, disclosure: { ...clonePreview.disclosure, remoteWrites: 'create-new-folder-and-project' } } }, 'original-request', owner.id)).toThrow();
+  expect(() => checkOrxProjectReceipt({ ...r, preview: { ...clonePreview, disclosure: { ...clonePreview.disclosure, version: 'native-orx-create-consent-v1' } } }, 'original-request', owner.id)).toThrow();
 });
 it('lost preview recovers the original immutable plan read-only and requires fresh consent', async () => {
   vi.mocked(personalOrxProjectApi.prepare).mockRejectedValue(new Error('private service token'));

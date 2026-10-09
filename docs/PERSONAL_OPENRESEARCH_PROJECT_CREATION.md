@@ -37,7 +37,7 @@ Inputs are a name, absolute **remote** path and one source:
 |---|---|
 | Empty | Require a new remote folder, initialize Git, register the project |
 | Existing path | Register the chosen existing remote folder; it is not cloned or implicitly initialized |
-| Public repository | Clone the exact public HTTPS GitHub URL into a required new remote folder, register the project |
+| Public repository | Clone the exact public HTTPS GitHub URL into a new or existing empty remote folder, register the project |
 | Paper | Fetch the explicitly identified arXiv paper/PDF, seed a required new folder, initialize Git, register the project |
 
 The minimal interface does not accept run commands, arbitrary shell options,
@@ -52,8 +52,20 @@ states this; the input should be the intended repository root whose context the
 owner authorizes the remote model to read. The acknowledged native path is kept
 separately from the requested path rather than claiming an unverified path pin.
 
+For clone, the pinned upstream
+[`prepare_path` clone branch](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/local/projects.rs#L85-L99)
+runs before the `require_new_folder` check and accepts an existing empty directory.
+The target and its parent paths may follow symbolic links to the actual write
+location. The request still sends `requireNewFolder: true`, but this does not
+enforce a fresh clone target. Factory neither checks nor locks remote paths and
+makes no freshness/TOCTOU guarantee. The immutable v2 disclosure and UI explicitly
+authorize writes into a new **or existing empty** target and disclose symlink
+resolution. Earlier v1 previews cannot be approved or dispatched after this
+contract change; obtain a new preview and consent with a new request ID.
+
 Pinned source is
-[`CreateProjectReq`/`create_project`](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1392-L1522).
+[`CreateProjectReq`](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1409-L1427) and
+[`create_project`](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1429-L1522).
 The Rust member is `github_sync_enabled`, while `#[serde(rename_all = "camelCase")]`
 makes the recognized HTTP field **`githubSyncEnabled`**. The adapter explicitly
 sends both `github_sync_enabled: false` and `githubSyncEnabled: false` and never
@@ -83,11 +95,32 @@ they never submit automatically. The native tool rechecks current permission,
 exact plan/run identity, original credential/connection revision and consent
 after blocking address/credential IO, immediately before POST.
 
+The existing review request/list/inspect/decision APIs include
+`planSummary.projectCreation` (`schema: native-orx-project-review-v1`) for this
+application. This is a read-only projection of the original persisted plan,
+checked against its review digest and the versioned preview contract. It contains
+`requestId`, `previewHash`, exact `project` (`name`, `path`, source kind,
+`cloneUrl`, `paperId`), original `effects`, `billing`, and
+`ownerConsentSeparate: true`. It never projects raw `inputValues`, connection
+pins, credential references or resolved credentials, and requires no remote IO.
+The TypeScript contract is `PersonalOrxProjectReviewSummary` in `web/models.ts`.
+
+`billing.controllerLedgerScope` is `local-controller-only`;
+`remoteUsageStatus` and `remoteCostStatus` are `unknown`;
+`remoteCostIncludedInUsageBudget` and `hardRemoteBudgetEnforced` are false.
+The existing zero controller commitment remains unchanged and does **not** mean
+that native starter/model work is free. Managers must see the exact creation
+input, writes, possible model-context disclosure and owner-account charges.
+An unavailable or invalid review projection cannot be approved by the server;
+no HTTP input can substitute a summary or alter the immutable reviewed plan.
+
 Consent moves from `awaiting` to `approved` or `cancelled`. Cancelled consent is
 terminal. The last pre-send callback atomically claims `dispatch_started` only
 from `approved`. A cancellation winning that comparison prevents POST; a later
 cancellation cannot claim it undoes a project, clone, paper download or possible
-starter model request. A generic Factory instance endpoint cannot bypass the
+starter model request. Decision updates also compare their previously read
+state atomically, so a cancellation cannot overwrite a dispatch claim that won
+between its read and write; it returns a frozen-decision conflict. A generic Factory instance endpoint cannot bypass the
 tool's consent check. It may create a local UNKNOWN task, but cannot dispatch a
 cancelled/unapproved remote create.
 
@@ -149,10 +182,15 @@ Unit/API tests cover source validation, disabled sync, no fake idempotency,
 per-request approval/cancel, late cancellation, double clicks, lost responses,
 restart, secret echo rejection, expiry and owner isolation. Mounted UI tests
 cover disclosed consent, recovery without replay, candidate warnings and explicit
-session handoff. The two real-PG/native-queue cases are included in
-`scripts/check_boundaries_postgres.py`; its expected case count is 15 and any skip
+session handoff. The three real-PG/native-queue cases are included in
+`scripts/check_boundaries_postgres.py`; its expected case count is 16 and any skip
 fails acceptance. They exercise the create-to-session-to-research-result chain
 and concurrent admission/UNKNOWN/revocation with a controlled ORX-shaped peer.
+The cancellation regression deterministically pauses a decision after its
+approved-state read, lets the native dispatch claim and POST complete, then
+checks that cancellation returns 409 without overwriting `dispatch_started`.
+The controlled clone fixture writes only a synthetic marker into an already
+existing empty temporary directory; it performs no actual Git clone.
 
 Real E2E still requires an owner-authorized compatible endpoint and safe service
 credential handoff, exact repo/path/paper input, permission to write/clone/fetch
@@ -160,5 +198,6 @@ on that remote host, explicit consent to possible starter/model costs, harness
 and model selection, applicable plan reviews, and separately approved research
 messages. Collect actual native IDs/transcripts and recovery evidence. No real
 credential, model request, clone or research execution was used in this change.
-Frontend visual acceptance remains paused; mounted behavior is not browser/live
-acceptance. Managed multi-step execution and general installers are outside scope.
+Browser visual QA is tracked separately, including its outstanding fixes;
+mounted behavior is not browser/live acceptance. Managed multi-step execution
+and general installers are outside scope.

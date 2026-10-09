@@ -5,6 +5,7 @@ remains unknown; recovery reads the original reservation and lists candidates.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 
@@ -16,7 +17,7 @@ from .personal_agent_sessions import PersonalAgentSessions
 from .personal_command_profile import CONTRACT, PROJECT_APPLICATION_ID
 from .store import canonical, digest, now
 
-DISCLOSURE_VERSION = 'native-orx-create-consent-v1'
+DISCLOSURE_VERSION = 'native-orx-create-consent-v2'
 
 
 class ProjectInput(BaseModel):
@@ -69,16 +70,38 @@ def valid_native_request(value):
 
 
 def disclosure(request):
+    clone = bool(request['cloneUrl'])
     return {'version': DISCLOSURE_VERSION, 'remotePath': request['path'], 'repository': request['cloneUrl'],
-        'paperId': request['paperId'], 'remoteWrites': 'register-existing-folder' if not request['createFolder'] else 'create-new-folder-and-project',
-        'clone': bool(request['cloneUrl']), 'paperDownload': bool(request['paperId']),
+        'paperId': request['paperId'], 'remoteWrites': 'clone-into-new-or-existing-empty-folder-and-project' if clone
+            else 'register-existing-folder' if not request['createFolder'] else 'create-new-folder-and-project',
+        'clone': clone, 'paperDownload': bool(request['paperId']),
         'gitInitialization': request['initializeGit'], 'githubSyncEnabled': False,
-        'pathResolution': 'upstream-canonical-path-and-enclosing-git-root',
+        'pathResolution': 'upstream-clone-target-symlinks-followed-no-new-folder-guarantee' if clone
+            else 'upstream-canonical-path-and-enclosing-git-root',
         'starterSuggestions': 'may-request-four-project-chat-suggestions',
         'modelInput': ['README', 'selected-code', 'file-list', 'paper-summary'],
         'modelSelection': 'remote-preferred-or-ready-harness', 'billing': 'owner-remote-account-possible-cost',
         'hardBudgetEnforced': False, 'automaticExperiment': False,
         'emptyCacheHitOrNoHarness': 'may-skip-model-request', 'unknownResponse': 'read-only-reconcile-never-resend'}
+
+
+def project_review_summary(plan):
+    """Read the exact admitted disclosure; never resolve or project credentials."""
+    if plan.get('application') != PROJECT_APPLICATION_ID: return None
+    from .personal_command_profile import command_from_plan
+    command = command_from_plan(plan)
+    bundle = command['projectBundle']; request = bundle['request']
+    source = 'clone' if request['cloneUrl'] else 'paper' if request['paperId'] else 'empty' if request['createFolder'] else 'existing'
+    return {'schema': 'native-orx-project-review-v1', 'requestId': command['requestId'],
+        'previewHash': bundle['previewHash'],
+        'project': {'name': request['name'], 'path': request['path'], 'source': source,
+            'cloneUrl': request['cloneUrl'], 'paperId': request['paperId']},
+        'effects': deepcopy(bundle['disclosure']),
+        'billing': {'controllerLedgerScope': 'local-controller-only',
+            'remoteUsageStatus': 'unknown', 'remoteCostStatus': 'unknown',
+            'remoteBilling': bundle['disclosure']['billing'],
+            'remoteCostIncludedInUsageBudget': False, 'hardRemoteBudgetEnforced': False},
+        'ownerConsentSeparate': True}
 
 
 class PersonalOrxProjects:
@@ -164,8 +187,9 @@ class PersonalOrxProjects:
                 self.consents.c.request_id == request_id)).scalar_one()
             if current != target and current not in {'awaiting', 'approved'}:
                 raise HTTPException(409, 'PERSONAL_PROJECT_DECISION_FROZEN')
-            conn.execute(self.consents.update().where(self.consents.c.owner_id == owner,
-                self.consents.c.request_id == request_id).values(state=target, updated_at=now()))
+            changed = conn.execute(self.consents.update().where(self.consents.c.owner_id == owner,
+                self.consents.c.request_id == request_id, self.consents.c.state == current).values(state=target, updated_at=now()))
+            if changed.rowcount != 1: raise HTTPException(409, 'PERSONAL_PROJECT_DECISION_FROZEN')
         return self.consent(owner, request_id)
 
     def require_approval(self, owner, request_id, plan_id, bundle):

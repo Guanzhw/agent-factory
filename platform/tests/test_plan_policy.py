@@ -155,6 +155,15 @@ class PlanPolicyTests(unittest.TestCase):
         self.assertEqual(conflict.exception.status_code, 409)
         self.assertEqual(len(self.service.list_reviews("alice")), 1)
 
+    def test_missing_verified_review_summary_cannot_be_approved(self):
+        review = self.service.request_review('alice', self.plan['id'], 'summary-unavailable')
+        invalid = {**review, 'planIntegrityMatches': False, 'planSummary': None}
+        with patch.object(self.service, '_project', return_value=invalid), self.assertRaises(HTTPException) as denied:
+            self.service.decide('manager', review['id'], True, 'approve-without-summary')
+        self.assertEqual(denied.exception.status_code, 409)
+        self.assertEqual(denied.exception.detail, 'PLAN_REVIEW_SUMMARY_UNAVAILABLE')
+        self.assertEqual(self.service.inspect('manager', review['id'])['decision'], 'pending')
+
     def test_manager_decision_deduplication_and_no_model_or_user_approval(self):
         review = self.service.request_review("alice", self.plan["id"], "request-first")
         with self.assertRaises(HTTPException) as user:
