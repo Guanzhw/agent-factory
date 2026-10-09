@@ -166,7 +166,17 @@ class PersonalCommandAPI:
         # The normal explicit submit authorizes this exact business action.
         # Existing plan/task reservations and native effects own durability;
         # this facade adds neither a queue nor an external transaction/retry.
-        prepared = await asyncio.to_thread(self.prepare, owner, body, refresh_lease=True)
+        try:
+            prepared = await asyncio.to_thread(self.prepare, owner, body, refresh_lease=True)
+        except HTTPException as error:
+            # These exact lease refusals occur before admitting a business plan.
+            # Emit their codes explicitly; do not classify errors from start()
+            # or an arbitrary conflict as proof that no command was admitted.
+            if error.status_code == 409 and isinstance(error.detail, str) and error.detail in {
+                    'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'}:
+                raise HTTPException(409, {'code': error.detail,
+                    'message': '原研究连接需要明确选择。研究目标未提交，草稿和原结果保留。'}) from None
+            raise
         return await self.start(owner, prepared['plan']['id'])
 
     async def submit_project(self, owner, request_id, body):

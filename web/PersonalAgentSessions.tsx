@@ -155,7 +155,16 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       const requestId = crypto.randomUUID(); remember({ requestId, submitAttempt: true });
       const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project!.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
       let result;
-      try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。'); if (error.code === 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED' || error.code === 'REMOTE_CREDENTIAL_UNAVAILABLE') setSetupOpen(true); return; } throw error; }
+      try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) {
+        const leaseRejected = researchJourney && error instanceof ApiError && error.status === 409
+          && ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'].includes(error.code ?? '');
+        if (current(epoch) && error instanceof ApiError && (definitivelyRejected(error.status) || leaseRejected)) {
+          remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; }
+          setNotice('研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。');
+          if (leaseRejected) setSetupOpen(true); return;
+        }
+        throw error;
+      }
       if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') { setText(''); if (researchJourney) { setResearchGoal(''); setMaterials(''); } }

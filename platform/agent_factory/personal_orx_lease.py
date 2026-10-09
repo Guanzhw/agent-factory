@@ -54,6 +54,7 @@ class PersonalOrxLease:
             raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
         # Compare fresh health identity against the original proof as well. Only
         # the lease timestamp/revision may change, never instance/project/policy.
+        current = verified
         verified = {**verified, 'revision': old['revision'], 'expiresAt': old['expiresAt'],
             'verifiedAt': (datetime.fromisoformat(old['expiresAt']) - timedelta(minutes=15)).isoformat()}
         # Reconstruct metadata only. Never construct or resolve an expired handle.
@@ -63,6 +64,8 @@ class PersonalOrxLease:
             'handleRef': 'remote-handle-' + digest({'configuration': config, 'verification': verified})}
         if digest(trusted) != old['trustedFingerprint']:
             raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
+        return digest({**trusted, 'revision': current['revision'], 'expiresAt': current['expiresAt'],
+            'handleRef': 'remote-handle-' + digest({'configuration': config, 'verification': current})})
 
     def refresh(self, owner, reference, expected_fingerprint, *, depth=0):
         service = self.connections
@@ -110,15 +113,24 @@ class PersonalOrxLease:
             _, verified, checked, current_signature = self._scope(conn, owner, reference, expected_fingerprint)
             if current_signature != signature or checked != config:
                 raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
-            self._original_proof(owner, original['body'], verified, checked)
+            trusted_fingerprint = self._original_proof(owner, original['body'], verified, checked)
             revision = verified['verification']['revision']
-        candidate = service.bind(owner, config['registrationRef'],
-            'orx-lease-bind:' + digest({'old': reference, 'revision': revision})[:40],
-            capabilities=original['body']['capabilities'])
+        try:
+            candidate = service.bind(owner, config['registrationRef'],
+                'orx-lease-bind:' + digest({'old': reference, 'revision': revision})[:40],
+                capabilities=original['body']['capabilities'],
+                expected_trusted_revision=revision, expected_trusted_fingerprint=trusted_fingerprint)
+        except HTTPException as error:
+            if error.status_code == 409 and error.detail == 'CONNECTION_VERIFICATION_CHANGED':
+                raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED') from None
+            raise
         with service._write() as conn:
             service._lock(conn, owner)
-            _, _, _, current_signature = self._scope(conn, owner, reference, expected_fingerprint)
+            _, verified, checked, current_signature = self._scope(conn, owner, reference, expected_fingerprint)
             if current_signature != signature:
+                raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
+            current_proof = self._original_proof(owner, original['body'], verified, checked)
+            if current_proof != trusted_fingerprint or verified['verification']['revision'] != revision:
                 raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
             target = service._row(conn, owner, candidate['ref'])
             service._current(conn, owner, target)

@@ -9,6 +9,7 @@ import { api, ApiError } from '../web/api.js';
 import { personalAgentApi, checkResearchContinuation, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote } from '../web/personalRemoteApi.js';
 import type { FactoryJob, Plan, UserConnection, JobDetail } from '../web/models.js';
+vi.mock('../web/PersonalRemotes.js', () => ({ PersonalRemotes: () => createElement('p', {}, 'Saved service configuration') }));
 const owner = { id: 'native-owner', name: 'Owner', role: 'user' as const };
 const pin = { ref: 'owner-binding', ownerId: owner.id, registrationRef: 'owner-registration', kind: 'orx', taskId: null, available: true, status: 'active', fingerprint: 'a'.repeat(64), capabilities: ['session:read', 'session:prompt', 'session:interrupt'] } as UserConnection;
 const session: PersonalSession = { id: 'factory-session', namespace: 'native-openresearch', executionContract: PERSONAL_CONTRACT, connectionRef: pin.ref, connectionPin: pin, bindingStatus: 'active', nativeProjectId: 'original-project', nativeSessionId: 'original-session', upstreamOrxProjectId: 'original-project', factoryIdentity: null, activeRequestId: null, state: 'ready', observation: null, modelCredentialCustody: 'remote', budgetEnforcement: 'advisory', stopVerified: false, liveEndToEndVerified: false };
@@ -111,6 +112,38 @@ it('ordinary expired history keeps results and submits one explicit followup wit
   expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({ action: 'prompt', sessionId: expired.id, text: 'Explicit new followup across expiration' }), owner.id);
   expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
   expect(host.querySelector('dialog')).toBeNull();
+});
+it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'])('known pre-admission409 %s unlocks selection and keeps the goal without recovery or replay', async code => {
+  const expired = { ...observed, bindingStatus: 'expired' };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  const setupKey = `factory-orx-project-selection:${owner.id}:retained`;
+  localStorage.setItem(setupKey, JSON.stringify(['original-configuration-evidence']));
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('pre-admission lease rejection', 409, code));
+  await journey(); await goal('Preserve this authorized draft after lease rejection');
+  await act(async () => button('继续研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(personalAgentApi.recover).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toBeNull();
+  expect(localStorage.getItem(setupKey)).toBe(JSON.stringify(['original-configuration-evidence']));
+  expect(host.textContent).toContain('original-configuration-evidence');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Preserve this authorized draft after lease rejection');
+  expect(host.textContent).toContain('研究未提交');
+  expect(host.querySelector('.research-setup')).not.toBeNull();
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
+  expect(button('继续研究').disabled).toBe(false);
+});
+it('an unrelated409 retains the original pending pointer and never enables a replay', async () => {
+  const expired = { ...observed, bindingStatus: 'expired' };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('ambiguous conflict', 409, 'IDEMPOTENCY_CONFLICT'));
+  await journey(); await goal('Retain the original ambiguous request');
+  await act(async () => button('继续研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem(storage)).toContain('submitAttempt');
+  expect(button('继续研究').disabled).toBe(true);
+  expect(host.querySelector('.research-setup')).toBeNull();
 });
 it('one continue-viewing operation preserves an unresolved original request without sending another prompt', async () => {
   const expired = { ...observed, bindingStatus: 'expired', activeRequestId: 'unknown-original', state: 'ack_unknown' };

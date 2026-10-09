@@ -43,6 +43,13 @@ original observation never resends it. Original plans, tasks, effects, session
 identity and command snapshots remain unchanged. A replayed command request
 uses its original plan rather than substituting a newly refreshed binding.
 
+Derived binding insertion atomically checks the exact verified revision and
+fingerprint whose service identity matched the original proof, then checks that
+identity again under the final owner lock. A concurrent verification cannot
+substitute a new service identity. Only the explicit pre-admission lease rejection
+codes unlock the research draft for a new connection selection; other HTTP409
+responses retain the original request pointer and never imply nonexecution.
+
 - `POST /api/factory/personal-agent/connections/{ref}/refresh`:
   `{expectedFingerprint}`; same-owner/same-scope local lease maintenance only.
 - `POST /api/factory/personal-agent/sessions/{id}/continue`:

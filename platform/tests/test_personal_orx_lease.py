@@ -2,12 +2,43 @@
 from copy import deepcopy
 from datetime import timedelta
 import unittest
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from agent_factory.personal_orx_lease import PersonalOrxLease
 from agent_factory.personal_orx_transport import PERSONAL_ORX_PROVIDER_ID
 import test_personal_orx_transport as native
+from agent_factory.personal_command_api import PersonalCommandAPI
+
+
+class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
+    async def test_only_exact_pre_admission_lease_refusals_are_explicitly_coded(self):
+        for code in ('ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'):
+            api = Mock()
+            api.prepare = Mock(side_effect=HTTPException(409, code))
+            api.start = AsyncMock()
+            with self.assertRaises(HTTPException) as caught:
+                await PersonalCommandAPI.submit(api, 'alice', object())
+            self.assertEqual(caught.exception.detail['code'], code)
+            api.start.assert_not_called()
+        for detail in ('IDEMPOTENCY_CONFLICT', {'code': 'IDEMPOTENCY_CONFLICT'}):
+            error = HTTPException(409, detail)
+            api.prepare = Mock(side_effect=error)
+            with self.assertRaises(HTTPException) as caught:
+                await PersonalCommandAPI.submit(api, 'alice', object())
+            self.assertIs(caught.exception, error)
+
+    async def test_post_admission_start_error_is_never_reclassified_as_nonexecution(self):
+        api = Mock()
+        api.prepare = Mock(return_value={'plan': {'id': 'already-admitted-plan'}})
+        error = HTTPException(409, 'REMOTE_CREDENTIAL_UNAVAILABLE')
+        api.start = AsyncMock(side_effect=error)
+        with self.assertRaises(HTTPException) as caught:
+            await PersonalCommandAPI.submit(api, 'alice', object())
+        self.assertIs(caught.exception, error)
+        api.start.assert_awaited_once_with('alice', 'already-admitted-plan')
 
 
 class LeaseTests(unittest.TestCase):
@@ -146,6 +177,45 @@ class LeaseTests(unittest.TestCase):
         with self.assertRaisesRegex(HTTPException, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED'): self.refresh()
         self.assertEqual(self.posts(), [])
         self.assertEqual(self.service.inspect('alice', self.session['id'])['connectionPin'], self.session['connectionPin'])
+
+    def test_checked_proof_rollover_before_bind_cannot_create_a_binding_for_new_identity(self):
+        self.advance()
+        with self.connections._read() as conn:
+            before = list(conn.execute(select(self.connections.references.c.ref)).scalars())
+        original = deepcopy(self.service._command('alice', 'original-attach'))
+        bind, verify = self.connections.bind, self.fx.provider.verify
+        def swap_before_bind(*args, **kwargs):
+            self.assertIsNotNone(kwargs['expected_trusted_revision'])
+            self.assertEqual(len(kwargs['expected_trusted_fingerprint']), 64)
+            self.fx.provider.verify = lambda owner, config: {**verify(owner, config), 'instanceId': 'replacement-instance'}
+            self.connections.personal.verify('alice', self.fx.bound['registrationRef'], 'verify-between-proof-and-bind')
+            return bind(*args, **kwargs)
+        self.connections.bind = swap_before_bind
+        with self.assertRaisesRegex(HTTPException, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED'):
+            self.refresh()
+        with self.connections._read() as conn:
+            self.assertEqual(list(conn.execute(select(self.connections.references.c.ref)).scalars()), before)
+        self.assertEqual(self.posts(), [])
+        self.assertEqual(self.service._command('alice', 'original-attach'), original)
+        self.assertEqual(self.service.inspect('alice', self.session['id'])['connectionPin'], self.session['connectionPin'])
+
+    def test_identity_rollover_after_bind_is_denied_before_refresh_receipt_commit(self):
+        self.advance()
+        bind, verify = self.connections.bind, self.fx.provider.verify
+        def swap_after_bind(*args, **kwargs):
+            candidate = bind(*args, **kwargs)
+            self.fx.provider.verify = lambda owner, config: {**verify(owner, config), 'instanceId': 'replacement-instance'}
+            self.connections.personal.verify('alice', self.fx.bound['registrationRef'], 'verify-between-bind-and-refresh-commit')
+            return candidate
+        self.connections.bind = swap_after_bind
+        with self.assertRaisesRegex(HTTPException, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED'):
+            self.refresh()
+        self.assertEqual(self.posts(), [])
+        self.assertEqual(self.service.inspect('alice', self.session['id'])['connectionPin'], self.session['connectionPin'])
+        with self.connections._read() as conn:
+            row = conn.execute(select(self.connections.commands).where(
+                self.connections.commands.c.action == 'orx.lease-refresh')).mappings().one()
+            self.assertEqual(row['result_ref'], self.fx.bound['ref'])
 
     def test_lost_local_bind_response_does_not_replay_research_or_destroy_old_evidence(self):
         self.advance()
