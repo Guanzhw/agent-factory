@@ -61,6 +61,19 @@ class OrxProjectPostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text)
         return response.json()
 
+    def test_personal_orx_registration_uses_shared_contract_without_remote_probe(self):
+        with self.fixture():
+            before = list(self.wire.calls)
+            rows = self.request('GET', '/user-connections/registrations')
+            row = next(item for item in rows if item['registrationRef'] == self.bound['registrationRef'])
+            self.assertEqual(row['status'], 'available')
+            self.assertTrue(row['available'])
+            self.assertEqual(row['kind'], 'orx')
+            self.assertEqual(row['allowedActions'], ['inspect', 'bind'])
+            self.assertEqual(set(row), {'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt', 'status', 'available', 'allowedActions'})
+            self.assertEqual(self.wire.calls, before)
+            self.assertEqual(self.request('GET', '/user-connections/registrations', owner='bob'), [])
+
     def prepare(self, values):
         key = 'project-' + uuid4().hex
         result = self.request('POST', '/personal-agent/project-commands/prepare', {

@@ -94,6 +94,54 @@ class PersonalRemoteTests(unittest.TestCase):
         return self.service.bind("alice", verified["registrationRef"], uuid4().hex,
                                  capabilities=["runtime:health"])
 
+    def registration(self, ref):
+        calls = list(self.probe.calls)
+        response = self.client.get('/api/factory/user-connections/registrations', headers={'x-fixture-owner': 'alice'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.probe.calls, calls, 'Listing registrations must not probe the remote')
+        rows = response.json()
+        for row in rows:
+            self.assertEqual(set(row), {'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt', 'status', 'available', 'allowedActions'})
+            self.assertIn(row['status'], {'available', 'unavailable', 'expired', 'changed'})
+            self.assertEqual(row['available'], row['status'] == 'available')
+            self.assertTrue(set(row['allowedActions']) <= {'inspect', 'bind'})
+            if not row['available']:
+                self.assertNotIn('bind', row['allowedActions'])
+        return next(row for row in rows if row['registrationRef'] == ref)
+
+    def test_registration_endpoint_projects_personal_lifecycle_and_current_permission(self):
+        created = self.create(); ref = created['registrationRef']
+        self.assertEqual(self.registration(ref)['status'], 'unavailable')
+        verified = self.personal.verify('alice', ref, uuid4().hex)
+        row = self.registration(ref)
+        self.assertEqual(row['status'], 'available')
+        self.assertEqual(row['capabilities'], verified['capabilities'])
+        self.assertEqual(row['revision'], verified['revision'])
+        self.assertEqual(row['allowedActions'], ['inspect', 'bind'])
+        # The dedicated personal API retains its separate lifecycle contract.
+        personal = self.personal.list('alice')[0]
+        self.assertEqual(personal['status'], 'verified')
+        self.assertIn('verify', personal['allowedActions'])
+        self.auth.reader = True
+        self.assertEqual(self.registration(ref)['allowedActions'], ['inspect'])
+        self.auth.reader = False
+        self.personal.revoke('alice', ref, uuid4().hex)
+        self.assertEqual(self.registration(ref)['status'], 'unavailable')
+        self.assertEqual(self.client.get('/api/factory/user-connections/registrations', headers={'x-fixture-owner': 'bob'}).json(), [])
+
+    def test_registration_endpoint_projects_expiry_and_changed_authority_without_binding(self):
+        verified = self.verified(); ref = verified['registrationRef']
+        self.at += timedelta(minutes=16)
+        self.assertEqual(self.registration(ref)['status'], 'expired')
+        self.at -= timedelta(minutes=16)
+        self.secrets.enabled = False
+        self.assertEqual(self.registration(ref)['status'], 'changed')
+        self.secrets.enabled = True
+        self.provider.policy_revision = 'synthetic-changed-policy'
+        self.assertEqual(self.registration(ref)['status'], 'changed')
+        with self.assertRaises(HTTPException):
+            self.service.bind('alice', ref, uuid4().hex)
+
     def test_read_only_request_recovery_is_owner_scoped_and_action_partitioned(self):
         created = self.personal.configure('alice', PROVIDER_ID, self.config, 'configure-request')
         recovered = self.personal.request_result('alice', 'configure-request')

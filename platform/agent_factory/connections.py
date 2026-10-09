@@ -326,7 +326,19 @@ class ConnectionService:
                     "status": status, "available": status == "available",
                     "allowedActions": ["inspect", "bind"] if can_bind else ["inspect"]})
         # Personal registrations are created by their owner, never by the operator.
-        values.extend(self.personal.list(owner))
+        # Their dedicated lifecycle (configured/verified/revoked and configure/
+        # verify/revoke actions) is not the shared registration-list contract.
+        for remote in self.personal.list(owner):
+            available = remote['status'] == 'verified' and remote['available'] is True
+            status = 'available' if available else {
+                'expired': 'expired', 'credential_unavailable': 'changed',
+                'policy_changed': 'changed',
+            }.get(remote['status'], 'unavailable')
+            values.append({key: remote[key] for key in (
+                'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
+            )} | {'status': status, 'available': available,
+                'allowedActions': ['inspect'] + (['bind'] if available and can_bind
+                    and 'bind' in remote['allowedActions'] else [])})
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):
