@@ -22,11 +22,12 @@ def main():
         'test_managed_orx_attachment_postgres.ManagedORXPostgresTests',
         'test_personal_command_postgres.PersonalCommandPostgresTests',
         'test_personal_orx_postgres.PersonalOrxPostgresTests',
+        'test_personal_orx_projects_postgres.OrxProjectPostgresTests',
         'test_lifecycle_observer_postgres.LifecycleObserverPostgresTests.test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection',
         'test_remote_authority.OriginAuthorityPostgresTests.test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider',
     ]
     suite = unittest.defaultTestLoader.loadTestsFromNames(names)
-    expected = 13
+    expected = 15
     if suite.countTestCases() != expected:
         print('BOUNDARIES_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

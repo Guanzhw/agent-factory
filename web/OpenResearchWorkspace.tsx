@@ -1,4 +1,5 @@
 import { PersonalAgentSessions } from './PersonalAgentSessions.js';
+import { PersonalOrxProjects } from './PersonalOrxProjects.js';
 import { ManagedNativeProbe, ManagedProbeAdmission } from './ManagedNativeProbe.js';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
@@ -8,6 +9,7 @@ import type { UserConnection } from './models.js';
 const message = (e: unknown) => e instanceof ApiError && e.code ? `操作未确认：${e.code}` : '暂时无法核对服务状态，请刷新读取。';
 export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog, selectedProject, onProject }: { selectedProject?: string; onProject?: (id: string) => void; ownerId: string; onTask: (id: string) => void; onResources: () => void; onCatalog: () => void }) {
   const [mode, setMode] = useState<'personal' | 'managed'>(selectedProject ? 'managed' : 'personal');
+  const [createdConnection, setCreatedConnection] = useState('');
   const [cap, setCap] = useState<ResearchCapabilities>();
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [project, setProject] = useState<ResearchProject>();
@@ -75,7 +77,7 @@ export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog,
   const disabled = busy || !ready || !!pending;
   const unresolvedSession = sessions.some(s => s.taskId === null && s.state !== 'prepared');
   const updateSession = (value: ResearchSession) => setSessions(all => [...all.filter(s => s.id !== value.id), value]);
-  if (mode === 'personal') return <section className="openresearch-workspace"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><div className="page-heading"><div><h1>OpenResearch 普通模式</h1><p>连接你已有的 OpenResearch 服务，保留原生项目、会话、工具与远程模型配置。</p></div><button onClick={onResources}>管理我的资源</button><button onClick={() => setMode('managed')}>切换受管模式（可选）</button></div><PersonalAgentSessions ownerId={ownerId} namespace="native-openresearch" onTask={onTask} /></section>;
+  if (mode === 'personal') return <section className="openresearch-workspace"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><div className="page-heading"><div><h1>OpenResearch 普通模式</h1><p>连接你已有的 OpenResearch 服务，保留原生项目、会话、工具与远程模型配置。</p></div><button onClick={onResources}>管理我的资源</button><button onClick={() => setMode('managed')}>切换受管模式（可选）</button></div><PersonalOrxProjects ownerId={ownerId} onTask={onTask} onConnected={setCreatedConnection} /><PersonalAgentSessions key={`${ownerId}:${createdConnection}`} ownerId={ownerId} connectionRef={createdConnection} namespace="native-openresearch" onTask={onTask} /></section>;
   return <section className="openresearch-workspace">
     <button onClick={() => { selectProject(undefined); setMode('personal'); }}>切换普通模式</button><p className="policy-note">受管模式是独立可选路径。连接探测、受控工作负载与完整原生研究分别标记，不升级普通会话保证。</p>
     <div className="workspace-crumbs"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><span>/ OpenResearch</span>{project && <><span>/</span><button className="text-button" onClick={() => selectProject(undefined)}>项目</button><span>/ {project.name}</span></>}</div>

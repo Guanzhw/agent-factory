@@ -93,6 +93,24 @@ it('recovers unknown binding through original owner-scoped receipt without rebin
 });
 
 it('keeps timeout, conflict, throttling and server errors ambiguous', () => { for (const status of [0, 200, 408, 409, 429, 500, 503]) expect(definitivelyRejected(status)).toBe(false); for (const status of [400, 401, 403, 422]) expect(definitivelyRejected(status)).toBe(true); });
+it('explicitly configures a creation-only ORX connection without requiring an existing project', async () => {
+  const providerId = 'openresearch-personal-session-v1'; const origin = 'https://fixture.example.org';
+  const savedCredential = { ...credential, providerId, destination: origin };
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId, kind: 'orx', capabilities: ['session:read'], authModes: ['bearer'], projectCreationSupported: true }]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]); vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([savedCredential]); vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [providerId] });
+  const configure = vi.spyOn(personalRemoteApi, 'configure').mockResolvedValue({ registrationRef: 'created-service-config' } as PersonalRemote);
+  const command = vi.spyOn(personalRemoteApi, 'command'); const bind = vi.spyOn(api, 'bindConnection');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  async function change(label: string, value: string) { await act(async () => { const field = host.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`)!; const select = field.tagName === 'SELECT'; Object.getOwnPropertyDescriptor(select ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event(select ? 'change' : 'input', { bubbles: true })); }); }
+  await change('远程提供方', providerId); await change('HTTPS 服务源', origin); await change('OpenResearch 认证方式', 'bearer');
+  await act(async () => host.querySelector<HTMLInputElement>('[aria-label="用于创建新项目"]')!.click());
+  expect(host.querySelector('[aria-label="预期项目 ID"]')).toBeNull();
+  await change('已有此目标的凭据', credential.credentialRef); await act(async () => button('确认保存配置').click());
+  await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+  expect(configure).toHaveBeenCalledWith(expect.objectContaining({ providerId, origin, authMode: 'bearer', projectCreation: true }), undefined);
+  expect(configure.mock.calls[0][0]).not.toHaveProperty('projectId'); expect(command).not.toHaveBeenCalled(); expect(bind).not.toHaveBeenCalled();
+});
 it('collects an existing ORX service token without asking for a model key or username', async () => {
   const value = { ...credential, providerId: 'openresearch-personal-session-v1' };
   const save = vi.spyOn(personalRemoteApi, 'saveCredential').mockResolvedValue(value);

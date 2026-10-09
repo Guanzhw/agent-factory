@@ -1,10 +1,10 @@
 import type { UserConnection } from './models.js';
 import { ApiError, factoryRequest } from './api.js';
-export interface RemoteProvider { providerId: string; kind: string; capabilities: string[]; namespace?: 'opencode' | 'native-openresearch'; authModes?: ('bearer' | 'basic-proxy')[]; sessionTemplateSupported?: boolean; }
+export interface RemoteProvider { providerId: string; kind: string; capabilities: string[]; namespace?: 'opencode' | 'native-openresearch'; authModes?: ('bearer' | 'basic-proxy')[]; sessionTemplateSupported?: boolean; projectCreationSupported?: boolean; }
 export interface PersonalRemote { registrationRef: string; providerId: string; configRevision: string; revision: string; status: string; available: boolean; origin: string; projectId: string; capabilities: string[]; expiresAt: string | null; allowedActions: string[]; }
 export interface PersonalCredential { credentialRef: string; credentialRevision: string; providerId: string; destination: string; status: string; }
 export interface CredentialInput { providerId: string; destination: string; username: string; password: string; requestId: string; }
-export interface RemoteConfiguration { providerId: string; origin: string; projectId: string; credentialRef: string; credentialRevision: string; requestId: string; authMode?: 'bearer' | 'basic-proxy'; sessionTemplateId?: string; }
+export interface RemoteConfiguration { providerId: string; origin: string; projectId?: string; projectCreation?: true; credentialRef: string; credentialRevision: string; requestId: string; authMode?: 'bearer' | 'basic-proxy'; sessionTemplateId?: string; }
 export function definitivelyRejected(status: number): boolean { return [400, 401, 403, 404, 405, 413, 415, 422].includes(status); }
 export class RemoteRequestError extends Error {
   constructor(public readonly rejected: boolean) { super(rejected ? '请求已被拒绝，请检查输入和权限后重试。' : '请求结果尚未确认，请核对原请求。'); }

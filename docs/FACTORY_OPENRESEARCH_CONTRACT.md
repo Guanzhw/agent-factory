@@ -46,12 +46,15 @@ The implemented managed attachment profile is currently an advanced single-turn,
 | Explicit same-session renewal | Fresh verified pin + same native identity + explicit CAS/history; no pending-turn bypass | Controlled expiry/rotation, races, history, and UI tests; deployment validation required |
 | Managed native attachment | One-turn text-only probe using shared broker/ledger/custody | Controlled protocol/resource/accounting tests; real supervisor/kernel enforcement unverified |
 | Managed multi-step research | Existing governed tool bridge is the intended extension | Not complete; do not substitute the probe or checksum |
-| General new ORX project creation | Not enabled; upstream creation unconditionally warms a model and can inherit GitHub sync | Separate explicit side-effect consent/guarantee design; no implicit warmup/publication |
+| Ordinary new ORX project creation | Separate creation connection/immutable plan, versioned preview, per-request owner consent, native dispatch and original project/session handoff; GitHub sync explicitly false | Controlled unit/API/UI and required real-PG/native-queue cases; UNKNOWN is never replayed or settled by candidate resemblance; live acceptance unverified |
 | UI | Catalog → application workspace; resource setup; plans/tasks/results; ordinary/managed distinction | Mounted component/navigation/recovery tests; browser visual acceptance unavailable here |
 | Live resource → native research decisions/tools/results → continue/cancel/restart | Not accepted | Requires exact authorized real endpoint, credential handoff, execution/cost scope and collected evidence |
 
 No merge, deployment exposure, real credential grant, remote execution or paid model call has been performed by this implementation. Tests distinguish unit, real PostgreSQL, controlled wire/native runtime, and live external evidence. Passing checksum or synthetic workflows never substitutes for the live first-app chain.
 
 See [UI/API integration](OPENRESEARCH_UI_INTEGRATION.md), [personal remote connections](PERSONAL_REMOTE_CONNECTIONS.md), [ordinary native OpenResearch](PERSONAL_OPENRESEARCH.md), and [managed attachment requirements](NATIVE_ORX_ATTACHMENT.md).
+
+Ordinary creation's disclosure, recognized wire spelling, consent and recovery
+boundaries are detailed in [native project creation](PERSONAL_OPENRESEARCH_PROJECT_CREATION.md).
 
 OpenResearch's native contract is pinned to `f336b121525d99364e2dee4fe90b2784894a54e6` (0.2.13). `OPENRESEARCH.md` documents the legacy CLI adapter; `AUTORESEARCH_SESSION.md` describes the controlled research-session workload path. Neither alone defines the full product.

@@ -107,7 +107,8 @@ class PersonalRemoteConnections:
                  "policyRevision": provider.policy_revision, "requiresCredentialReference": True,
                  "provisionsCompute": False, "namespace": getattr(provider, "namespace", "opencode"),
                  "authModes": list(getattr(provider, "auth_modes", ())),
-                 "sessionTemplateSupported": bool(getattr(provider, "session_template_supported", False))}
+                 "sessionTemplateSupported": bool(getattr(provider, "session_template_supported", False)),
+                 "projectCreationSupported": callable(getattr(provider, "effective_capabilities", None))}
                 for key, provider in sorted(self.providers.items())]
 
     def configure(self, owner, provider_id, configuration, request_id, *, reference=None):
@@ -248,9 +249,10 @@ class PersonalRemoteConnections:
             raise HTTPException(409, "REMOTE_VERIFICATION_EXPIRED")
         if not provider.authorized(owner, body["configuration"]):
             raise HTTPException(409, "REMOTE_CREDENTIAL_UNAVAILABLE")
-        if frozenset(verification["capabilities"]) != provider.capabilities:
+        capabilities = provider.effective_capabilities(body['configuration']) if callable(getattr(provider, 'effective_capabilities', None)) else provider.capabilities
+        if frozenset(verification["capabilities"]) != capabilities:
             raise HTTPException(409, "REMOTE_POLICY_CHANGED")
-        return TrustedConnectionBinding(owner, provider.kind, provider.provider_id, provider.capabilities,
+        return TrustedConnectionBinding(owner, provider.kind, provider.provider_id, capabilities,
             verification["revision"], expires_at=expires.astimezone(timezone.utc), available=True,
             opaque_handle=provider.handle(owner, body["configuration"]),
             handle_ref="remote-handle-" + digest({"configuration": body, "verification": verification}))
@@ -262,7 +264,8 @@ class ConfigureRemoteRequest(BaseModel):
     origin: str = Field(min_length=1, max_length=512)
     credentialRef: str = Field(min_length=1, max_length=200)
     credentialRevision: str = Field(min_length=1, max_length=200)
-    projectId: str = Field(min_length=1, max_length=200)
+    projectId: str | None = Field(default=None, min_length=1, max_length=200)
+    projectCreation: Literal[True] | None = None
     authMode: Literal["bearer", "basic-proxy"] | None = None
     sessionTemplateId: str | None = Field(default=None, min_length=1, max_length=160)
     requestId: str = Field(min_length=1, max_length=200)
