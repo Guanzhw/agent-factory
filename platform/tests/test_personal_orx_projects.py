@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import timedelta
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 import unittest
 from unittest.mock import Mock
@@ -236,6 +238,35 @@ class ProjectTests(unittest.TestCase):
             'connectionPin': bundle['connectionPin'], 'projectBundle': bundle, 'baselineProjectIds': []}
         command = self.prepared(); validate_intent(command, intent)
         with self.assertRaises(HTTPException): validate_intent(command, {**intent, 'projectBundle': {**bundle, 'request': {'githubSyncEnabled': True}}})
+
+    def test_clone_existing_empty_directory_discloses_actual_write_scope(self):
+        # Controlled peer mirrors the upstream clone branch using a marker,
+        # never a Git subprocess, remote repository or project material.
+        with TemporaryDirectory() as folder:
+            target = Path(folder) / 'already-empty'
+            target.mkdir()
+            self.values = {**self.values, 'path': str(target)}
+            command = self.prepared()
+            d = command['projectBundle']['disclosure']
+            self.assertEqual(d['version'], 'native-orx-create-consent-v2')
+            self.assertEqual(d['remotePath'], str(target))
+            self.assertEqual(d['remoteWrites'], 'clone-into-new-or-existing-empty-folder-and-project')
+            self.assertEqual(d['pathResolution'], 'upstream-clone-target-symlinks-followed-no-new-folder-guarantee')
+            self.assertTrue(target.is_dir()); self.assertEqual(list(target.iterdir()), [])
+            original = self.wire.request
+            def clone_into_empty(*args, **kwargs):
+                if args[2:4] == ('POST', '/api/projects'):
+                    payload = args[5]
+                    self.assertEqual(payload['path'], str(target))
+                    self.assertTrue(payload['requireNewFolder'])  # Ignored by upstream clone branch.
+                    self.assertEqual(list(target.iterdir()), [])
+                    (target / 'synthetic-clone-marker').write_text('Controlled clone fixture')
+                return original(*args, **kwargs)
+            self.wire.request = clone_into_empty
+            self.service.decide('alice', command['requestId'], command['projectBundle']['previewHash'], True)
+            self.assertEqual(self.service.create('alice', command)['state'], 'acknowledged')
+            self.assertTrue((target / 'synthetic-clone-marker').is_file())
+            self.assertEqual(self.wire.creation_posts, 1)
 
 
 class ProjectAPITests(unittest.TestCase):
