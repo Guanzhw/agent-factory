@@ -85,16 +85,24 @@ class PersonalCommandAPI:
                 plan = self.store.admit_plan(owner, body.requestId, {'personalCommand': body.model_dump()},
                     lambda: (_ for _ in ()).throw(HTTPException(409, 'PERSONAL_ORIGINAL_PLAN_MISSING')))
                 return self._prepared(owner, plan)
-            if body.action == 'create':
-                original = self.store.connections.inspect(owner, connection_ref)
-                if original['kind'] == 'orx' and not original['available']:
-                    connection_ref = self.leases.refresh(owner, original['ref'], original['fingerprint'])['ref']
-            elif body.action == 'prompt':
-                original = self.sessions.inspect(owner, body.sessionId)
-                if original['namespace'] == 'native-openresearch' and original['bindingStatus'] != 'active':
-                    resumed = self.leases.continue_session(owner, original['id'], original['connectionPin']['fingerprint'])
-                    if resumed['state'] != 'ready':
-                        raise HTTPException(409, resumed.get('blocker', 'PERSONAL_PREVIOUS_TURN_UNRESOLVED'))
+            try:
+                if body.action == 'create':
+                    original = self.store.connections.inspect(owner, connection_ref)
+                    if original['kind'] == 'orx' and not original['available']:
+                        connection_ref = self.leases.refresh(owner, original['ref'], original['fingerprint'])['ref']
+                elif body.action == 'prompt':
+                    original = self.sessions.inspect(owner, body.sessionId)
+                    if original['namespace'] == 'native-openresearch' and original['bindingStatus'] != 'active':
+                        resumed = self.leases.continue_session(owner, original['id'], original['connectionPin']['fingerprint'])
+                        if resumed['state'] != 'ready':
+                            raise HTTPException(409, resumed.get('blocker', 'PERSONAL_PREVIOUS_TURN_UNRESOLVED'))
+            except HTTPException as error:
+                # Only this lease-check phase proves that no plan was admitted.
+                # The same code after admission must retain the original request.
+                if error.status_code == 409 and error.detail == 'REMOTE_VERIFICATION_FAILED':
+                    raise HTTPException(409, {'code': error.detail,
+                        'message': '连接健康检查暂时失败。研究目标未提交，草稿和原结果保留。'}) from None
+                raise
         if body.action == 'create':
             project = self.sessions.project(owner, connection_ref)
             if project['nativeProjectId'] != body.nativeProjectId:

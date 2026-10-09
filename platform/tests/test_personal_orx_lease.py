@@ -10,7 +10,7 @@ from sqlalchemy import select
 from agent_factory.personal_orx_lease import PersonalOrxLease
 from agent_factory.personal_orx_transport import PERSONAL_ORX_PROVIDER_ID
 import test_personal_orx_transport as native
-from agent_factory.personal_command_api import PersonalCommandAPI
+from agent_factory.personal_command_api import PersonalCommandAPI, PrepareCommand
 
 
 class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
@@ -31,14 +31,47 @@ class LeaseIngressTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(caught.exception, error)
 
     async def test_post_admission_start_error_is_never_reclassified_as_nonexecution(self):
+        for code in ('REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED'):
+            api = Mock()
+            api.prepare = Mock(return_value={'plan': {'id': 'already-admitted-plan'}})
+            error = HTTPException(409, code)
+            api.start = AsyncMock(side_effect=error)
+            with self.assertRaises(HTTPException) as caught:
+                await PersonalCommandAPI.submit(api, 'alice', object())
+            self.assertIs(caught.exception, error)
+            api.start.assert_awaited_once_with('alice', 'already-admitted-plan')
+
+    def test_health_failure_is_coded_only_during_pre_admission_lease_checks(self):
+        for action in ('create', 'prompt'):
+            api = Mock()
+            api.store.sql.return_value = []
+            api.store.connections.inspect.return_value = {
+                'kind': 'orx', 'available': False, 'ref': 'old-connection', 'fingerprint': 'a' * 64}
+            api.sessions.inspect.return_value = {'namespace': 'native-openresearch', 'bindingStatus': 'expired',
+                'id': 'original-session', 'connectionPin': {'fingerprint': 'a' * 64}}
+            api.leases.refresh.side_effect = HTTPException(409, 'REMOTE_VERIFICATION_FAILED')
+            api.leases.continue_session.side_effect = HTTPException(409, 'REMOTE_VERIFICATION_FAILED')
+            body = PrepareCommand(requestId='health-refusal-' + action, action=action,
+                **({'connectionRef': 'old-connection', 'nativeProjectId': 'native-project'} if action == 'create'
+                    else {'sessionId': 'original-session', 'text': 'Preserve original goal'}))
+            with self.assertRaises(HTTPException) as caught:
+                PersonalCommandAPI.prepare(api, 'alice', body, refresh_lease=True)
+            self.assertEqual(caught.exception.detail['code'], 'REMOTE_VERIFICATION_FAILED')
+            api.store.admit_plan.assert_not_called()
+
+    def test_same_health_code_after_admission_retains_its_original_error(self):
         api = Mock()
-        api.prepare = Mock(return_value={'plan': {'id': 'already-admitted-plan'}})
-        error = HTTPException(409, 'REMOTE_CREDENTIAL_UNAVAILABLE')
-        api.start = AsyncMock(side_effect=error)
+        api.store.sql.return_value = []
+        api.store.connections.inspect.return_value = {'kind': 'orx', 'available': True}
+        api.sessions.project.return_value = {'nativeProjectId': 'native-project', 'connectionPin': {}}
+        error = HTTPException(409, 'REMOTE_VERIFICATION_FAILED')
+        api._prepared.side_effect = error
+        body = PrepareCommand(requestId='health-after-admission', action='create',
+            connectionRef='active-connection', nativeProjectId='native-project')
         with self.assertRaises(HTTPException) as caught:
-            await PersonalCommandAPI.submit(api, 'alice', object())
+            PersonalCommandAPI.prepare(api, 'alice', body, refresh_lease=True)
         self.assertIs(caught.exception, error)
-        api.start.assert_awaited_once_with('alice', 'already-admitted-plan')
+        api.store.admit_plan.assert_called_once()
 
 
 class LeaseTests(unittest.TestCase):

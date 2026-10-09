@@ -113,7 +113,7 @@ it('ordinary expired history keeps results and submits one explicit followup wit
   expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
   expect(host.querySelector('dialog')).toBeNull();
 });
-it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'])('known pre-admission409 %s unlocks selection and keeps the goal without recovery or replay', async code => {
+it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_VERIFICATION_FAILED'])('known pre-admission409 %s unlocks selection and keeps the goal without recovery or replay', async code => {
   const expired = { ...observed, bindingStatus: 'expired' };
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
   localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
@@ -132,6 +132,24 @@ it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE
   expect(host.querySelector('.research-setup')).not.toBeNull();
   expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
   expect(button('继续研究').disabled).toBe(false);
+});
+it('a temporary pre-admission health failure allows only an explicit new retry with the retained goal', async () => {
+  const expired = { ...observed, bindingStatus: 'expired' };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, expired.id);
+  vi.mocked(personalAgentApi.submit).mockRejectedValueOnce(new ApiError('temporary health failure', 409, 'REMOTE_VERIFICATION_FAILED')).mockResolvedValue(job);
+  await journey(); await goal('Retain this goal through a temporary health outage');
+  await act(async () => button('继续研究').click());
+  const failedRequest = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
+  expect(localStorage.getItem(storage)).toBeNull(); expect(button('继续研究').disabled).toBe(false);
+  expect(host.textContent).toContain('连接健康检查暂时失败');
+  expect(personalAgentApi.recover).not.toHaveBeenCalled(); expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  await act(async () => button('继续研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(2);
+  const next = vi.mocked(personalAgentApi.submit).mock.calls[1][0];
+  expect(next.requestId).not.toBe(failedRequest);
+  expect(next).toMatchObject({ action: 'prompt', sessionId: expired.id, text: 'Retain this goal through a temporary health outage' });
+  expect(vi.mocked(personalAgentApi.recover).mock.calls.some(call => call[0] === failedRequest)).toBe(false);
 });
 it('an unrelated409 retains the original pending pointer and never enables a replay', async () => {
   const expired = { ...observed, bindingStatus: 'expired' };
