@@ -409,9 +409,21 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         review = applications.request_publication("manager", application["id"], 1, "owned-connected-review")
         applications.decide_publication("owned-publication-reviewer", review["id"], True, "owned-connected-approve")
         connection = self.state["connections"].bind("alice", "owned-source-model", "owned-model-binding")
+        # A custom registered model is not proven synthetic merely because the
+        # server is a demo. Exercise this authority fixture through an explicit
+        # reviewed plan instead of weakening the production handoff guard.
+        from agent_factory.plan_policy import PlanPolicyConfig
+        policy = self.state["plan_policy"]
+        self.settings.temporary_policy = "admin-review"
+        policy.replace_configuration(PlanPolicyConfig(name="admin-review", revision="owned-connected-review-v1"),
+            expected_revision=policy.current()["revision"])
         plan = self.state["composition"].create_plan("alice", "Checksum bound connection authority", "literature",
             application_ref={key: application[key] for key in ("id", "version", "sha256")}, connection_refs={"source-model": connection["ref"]})
         self.assertEqual(plan["status"], "ready", plan["missing"])
+        self.assertFalse(plan["syntheticFixture"])
+        self.assertFalse(policy.status("alice", plan)["executionAllowed"])
+        plan_review = policy.request_review("alice", plan["id"], "owned-connected-plan-review")
+        policy.decide("owned-publication-reviewer", plan_review["id"], True, "owned-connected-plan-approve")
         self.placement = self.handoff.reserve("alice", plan["id"], self.target.reference, "owned-connected-placement")
         self.assertEqual(self.call().tools, frozenset({"checksum"}))
         self.state["connections"].revoke("alice", connection["ref"], "owned-revoke-connection")

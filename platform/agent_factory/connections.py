@@ -96,7 +96,7 @@ class TrustedConnectionBinding:
 class ConnectionService:
     def __init__(self, store: Any, auth: Any,
                  trusted_bindings: Mapping[str, TrustedConnectionBinding] | None = None,
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None, *, personal_providers=None):
         self.store, self.auth = store, auth
         # Operator configuration can be replaced by trusted in-process code.
         # Re-read this mapping at every preflight/resolve; never accept HTTP edits.
@@ -120,6 +120,8 @@ class ConnectionService:
             Column("result_ref", String, nullable=False), Column("created_at", String, nullable=False))
         self.audit = Table("af_audit", MetaData(), autoload_with=store.engine)
         metadata.create_all(store.engine)
+        from .personal_connections import PersonalRemoteConnections
+        self.personal = PersonalRemoteConnections(self, personal_providers if personal_providers is not None else {})
         with store.engine.begin() as conn:
             self._lock(conn, "operator")
             for registration_ref, binding in self.trusted_bindings.items():
@@ -203,6 +205,8 @@ class ConnectionService:
         self.handle_identities[key] = binding.opaque_handle
 
     def _trusted(self, registration_ref, owner, conn):
+        if registration_ref.startswith("remote-"):
+            return self.personal.binding(conn, owner, registration_ref)
         binding = self.trusted_bindings.get(registration_ref)
         if binding is None:
             raise HTTPException(404, "CONNECTION_REGISTRATION_NOT_FOUND: trusted owner registration is missing")
@@ -277,7 +281,9 @@ class ConnectionService:
             code = str(error.detail).split(":", 1)[0]
             status = {"CONNECTION_REVOKED": "revoked", "CONNECTION_EXPIRED": "expired",
                 "CONNECTION_UNAVAILABLE": "unavailable", "CONNECTION_NOT_CONFIGURED": "missing",
-                "CONNECTION_CHANGED": "changed", "CONNECTION_TASK_ENDED": "task_ended"}.get(code, "unavailable")
+                "CONNECTION_CHANGED": "changed", "CONNECTION_TASK_ENDED": "task_ended",
+                "REMOTE_VERIFICATION_EXPIRED": "expired", "REMOTE_POLICY_CHANGED": "changed",
+                "REMOTE_REVOKED": "revoked"}.get(code, "unavailable")
         return self._projection(row, status)
 
     @staticmethod
@@ -319,6 +325,8 @@ class ConnectionService:
                     "capabilities": sorted(binding.capabilities), "expiresAt": binding.expires_at.isoformat() if binding.expires_at else None,
                     "status": status, "available": status == "available",
                     "allowedActions": ["inspect", "bind"] if can_bind else ["inspect"]})
+        # Personal registrations are created by their owner, never by the operator.
+        values.extend(self.personal.list(owner))
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):
@@ -333,6 +341,17 @@ class ConnectionService:
             rows = conn.execute(select(self.references.c.ref).where(self.references.c.owner_id == owner)
                 .order_by(self.references.c.created_at.desc(), self.references.c.ref).limit(100)).scalars()
             return [self._project(conn, owner, self._row(conn, owner, reference)) for reference in rows]
+
+    def request_result(self, owner, request_id):
+        self.auth.require(owner, 'read')
+        self._key(request_id)
+        with self._read() as conn:
+            command = conn.execute(select(self.commands).where(self.commands.c.owner_id == owner,
+                self.commands.c.request_id == request_id)).mappings().first()
+            if command is None or command['action'] not in {'bind', 'revoke'}:
+                raise HTTPException(404, 'CONNECTION_REQUEST_NOT_FOUND')
+            return {'requestId': request_id, 'action': command['action'],
+                'connection': self._project(conn, owner, self._row(conn, owner, command['result_ref']))}
 
     def _command(self, conn, owner, request_id, fingerprint):
         row = conn.execute(select(self.commands).where(self.commands.c.owner_id == owner,
@@ -436,7 +455,13 @@ class ConnectionService:
                 expected_revision=expected_revision, expected_fingerprint=expected_fingerprint,
                 expected_version=expected_version, expected_adapter_ref=expected_adapter_ref,
                 required_capabilities=required_capabilities, task_id=task_id)
-            return trusted.opaque_handle
+            handle = trusted.opaque_handle
+            if _row["registration_ref"].startswith("remote-"):
+                handle = handle.guarded(lambda operation_capabilities=(): self.preflight(owner, reference, expected_kind,
+                    expected_revision=trusted.revision, expected_fingerprint=_row["fingerprint"],
+                    expected_version=_row["version"], expected_adapter_ref=trusted.adapter_ref,
+                    required_capabilities=self._caps(required_capabilities) | self._caps(operation_capabilities), task_id=task_id))
+            return handle
 
 
     def cleanup_handle(self, owner, pin, *, adapter_ref, task_id):
@@ -522,6 +547,10 @@ def connection_router(auth, service):
     def bind(body: BindConnectionRequest, request: Request):
         return service.bind(owner(request), body.registrationRef, body.requestId,
             capabilities=body.capabilities, task_id=body.taskId)
+
+    @router.get("/requests/{request_id}")
+    def request_result(request_id: str, request: Request):
+        return service.request_result(owner(request), request_id)
 
     @router.get("/{reference}")
     def inspect(reference: str, request: Request):

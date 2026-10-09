@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 from typing import Any, Callable
 
+from .application_schema import time_budget
+
 from agno.exceptions import RunCancelledException
 from agno.models.base import Model
 from agno.models.response import ModelResponse
@@ -121,7 +123,7 @@ def _limits(settings: Any, plan: dict[str, Any], environment: Any) -> tuple[int,
         raise OpenResearchError("ENVIRONMENT_UNAVAILABLE", "An enforceable selected environment is required")
     budget, policy = plan.get("budget", {}), plan.get("runtimePolicy", {})
     seconds = min(float(environment.timeout_seconds), float(settings.experiment_timeout_seconds),
-                  float(budget.get("experimentSeconds", settings.experiment_timeout_seconds)),
+                  float(time_budget(plan, settings.experiment_timeout_seconds)),
                   float(policy.get("timeoutSeconds", 30)))
     output = min(environment.output_bytes, settings.experiment_output_bytes, budget.get("outputBytes", 65536))
     if not math.isfinite(seconds) or not .1 <= seconds <= 30 or type(output) is not int or output < 8192:

@@ -9,15 +9,14 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 import re
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
-from .native_component import NativeWorkflowPin
-from .input_schema import validate_input_schema, validate_input_values
+from .input_schema import validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
 from .plan_policy import application_tool_catalog
 from .store import canonical, digest, now
@@ -26,64 +25,11 @@ APPLICATION_POLICY = digest({"schema": 1, "separateAdministrator": True, "taskAp
 MATERIAL_KINDS = {"skill", "tool", "prompt", "knowledge", "model", "environment"}
 
 
-class Budget(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    toolCalls: int = Field(default=8, strict=True, ge=1, le=128)
-    maxDepth: int = Field(default=2, strict=True, ge=1, le=8)
-    maxChildren: int = Field(default=4, strict=True, ge=1, le=64)
-    experimentSeconds: int = Field(default=8, strict=True, ge=1, le=600)
-    outputBytes: int = Field(default=65536, strict=True, ge=1024, le=1048576)
-
-
-class TaskConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    askScopeBelowLength: int = Field(default=0, strict=True, ge=0, le=2000)
-    experimentDurationSeconds: int = Field(default=5, strict=True, ge=1, le=600)
-
-
-class MaterialChoice(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
-    defaultRef: PinnedRef
-    allowedRefs: list[PinnedRef] = Field(min_length=1, max_length=8)
-
-
-class ConnectionRequirement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    kind: Literal["model", "tool", "knowledge", "environment", "orx"]
-    requiredCapabilities: list[str] = Field(default_factory=list, max_length=30)
-    required: StrictBool = True
-
-
-class ModeDefinition(BaseModel):
-    nativeComponent: NativeWorkflowPin | None = None
-    inputSchema: dict[str, Any] | None = None
-
-    @field_validator("inputSchema")
-    @classmethod
-    def checked_input_schema(cls, value):
-        return validate_input_schema(value) if value is not None else None
-
-    model_config = ConfigDict(extra="forbid")
-    materialRefs: list[PinnedRef] = Field(min_length=1, max_length=30)
-    materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict, max_length=12)
-    capabilities: list[str] = Field(min_length=1, max_length=30)
-    budget: Budget = Field(default_factory=Budget)
-    config: TaskConfig = Field(default_factory=TaskConfig)
-    toolOrder: list[str] = Field(default_factory=list, max_length=30)
-    connectionRequirements: list[ConnectionRequirement] = Field(default_factory=list, max_length=12)
-
-
-class ApplicationDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    name: str = Field(min_length=1, max_length=120)
-    description: str = Field(default="", max_length=2000)
-    discoveryKeywords: list[str] = Field(default_factory=list, max_length=30)
-    defaultForDiscovery: StrictBool = False
-    defaultMode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    modes: dict[str, ModeDefinition] = Field(min_length=1, max_length=8)
+# Compatibility exports preserve existing application profile imports.
+from .application_schema import (ApplicationDefinition, ApplicationDefinitionV2, ModeDefinition,
+    ModeDefinitionV2, LegacyBudget as Budget, LegacyTaskConfig as TaskConfig,  # noqa: F401
+    MaterialChoice as MaterialChoice, ConnectionRequirement as ConnectionRequirement,
+    definition_model, budget_limits, task_config)
 
 
 class GovernedStorage:
@@ -259,8 +205,8 @@ class ApplicationService:
         known_tools = application_tool_catalog(self.store)
         MaterialGovernance._safe_data(definition)
         try:
-            body = ApplicationDefinition.model_validate(definition).model_dump(exclude_none=True)
-        except ValidationError as error:
+            body = definition_model(definition).model_validate(definition).model_dump(exclude_none=True)
+        except (ValidationError, ValueError, TypeError) as error:
             raise HTTPException(422, "Invalid structured application definition") from error
         if len(canonical(body).encode()) > 131072 or body["defaultMode"] not in body["modes"]:
             raise HTTPException(422, "Application default mode or bounded payload is invalid")
@@ -336,7 +282,10 @@ class ApplicationService:
         self.auth.require(actor, "agent_os:admin")
         self.auth.require(actor, "components:write")
         MaterialGovernance._safe_data(snapshot)
-        fields = set(ApplicationDefinition.model_fields)
+        try:
+            fields = set(definition_model(snapshot).model_fields)
+        except (ValueError, TypeError) as error:
+            raise HTTPException(422, "Unsupported application contract version") from error
         if not isinstance(snapshot, dict) or set(snapshot) != fields | {"version", "createdAt", "schema", "origin", "sha256"}:
             raise HTTPException(422, "Application snapshot requires the complete immutable schema")
         value = deepcopy(snapshot)
@@ -475,6 +424,17 @@ class ApplicationService:
     def require_plan_current(self, plan):
         ref = plan.get("applicationRef") or self.require_legacy_demo_plan(plan)
         application = self.require_current(ref)
+        # Contract selection is governed by the immutable application, never a
+        # caller-supplied plan marker. V1's absent marker is part of its format.
+        marker = application.get("contractVersion")
+        if ((marker is None and "contractVersion" in plan) or
+                (marker is not None and (type(plan.get("contractVersion")) is not int
+                                         or plan["contractVersion"] != marker))):
+            raise HTTPException(403, "Plan contract version differs from its governed application")
+        operator_limits = budget_limits(self.store.settings, marker or 1)
+        if (type(plan.get("budget")) is not dict or
+                set(plan["budget"]) != set(operator_limits) | {"depth"}):
+            raise HTTPException(403, "Plan has fields outside its governed budget contract")
         if plan.get("application") != application["id"] or plan.get("mode") not in application["modes"]:
             raise HTTPException(409, "Plan differs from its published application/mode")
         mode = application["modes"][plan["mode"]]
@@ -522,11 +482,14 @@ class ApplicationService:
             config = plan.get("config", {})
             if config.get("toolOrder") != order or config.get("sample") != plan.get("normalizedGoal"):
                 raise HTTPException(403, "Plan task configuration differs from its governed application")
-            duration = config.get("experimentDurationSeconds")
-            if type(duration) is not int or not 1 <= duration <= min(mode["config"]["experimentDurationSeconds"], plan.get("budget", {}).get("experimentSeconds", 0)):
-                raise HTTPException(403, "Plan environment duration exceeds its governed ceiling")
-        operator_limits = {"toolCalls": self.store.settings.max_tool_calls, "maxDepth": 2, "maxChildren": 4,
-                           "experimentSeconds": self.store.settings.experiment_timeout_seconds, "outputBytes": self.store.settings.experiment_output_bytes}
+            if application.get("contractVersion", 1) == 2:
+                expected = task_config(application, mode, plan["normalizedGoal"], order, plan["budget"])
+                if config != expected or plan.get("contractVersion") != 2:
+                    raise HTTPException(403, "Plan application configuration differs from its governed schema")
+            else:
+                duration = config.get("experimentDurationSeconds")
+                if type(duration) is not int or not 1 <= duration <= min(mode["config"]["experimentDurationSeconds"], plan.get("budget", {}).get("experimentSeconds", 0)):
+                    raise HTTPException(403, "Plan environment duration exceeds its governed ceiling")
         for key, ceiling in mode["budget"].items():
             ceiling = min(ceiling, operator_limits[key])
             if type(plan.get("budget", {}).get(key)) is not int or not 1 <= plan["budget"][key] <= ceiling:
@@ -664,7 +627,7 @@ class ApplicationService:
         # Read historical seed bodies, including withdrawn versions. Bootstrap
         # proof above validates origin/hash/audit and never restores activation.
         seeds = {item["id"]: item for item in self.store.materials() if item["version"] == 1 and item.get("origin") == "factory synthetic fixture"}
-        definitions = demo_definitions(seeds)
+        definitions = [*demo_definitions(seeds), *demo_v2_definitions(seeds)]
         with self.db.write() as conn:
             for definition in definitions:
                 identifier = definition["id"]
@@ -697,6 +660,14 @@ def demo_definitions(seeds):
                 discoveryKeywords=["research", "investigate", "literature", "研究", "调研"], modes={"literature": literature, "experiment": experiment}).model_dump(exclude_none=True),
             ApplicationDefinition(id="checksum", name="Checksum", discoveryKeywords=["checksum", "sha256", "校验"],
                 modes={"literature": checksum, "experiment": checksum}).model_dump(exclude_none=True)]
+
+
+def demo_v2_definitions(seeds):
+    """Additive neutral fixture; historical checksum v1 remains untouched."""
+    return [ApplicationDefinitionV2(contractVersion=2, id="checksum-neutral", name="Checksum (neutral contract)",
+        defaultMode="execute", modes={"execute": ModeDefinitionV2(
+            materialRefs=[PinnedRef.model_validate(ApplicationService.pin(seeds[mid])) for mid in ("demo-model", "local-environment", "checksum-tool")],
+            capabilities=["checksum:read"], toolOrder=["checksum"])}).model_dump(exclude_none=True)]
 
 
 class ApplicationCommand(BaseModel):

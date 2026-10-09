@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .application_schema import time_budget
+
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
@@ -113,7 +115,7 @@ def _effective_limits(settings: Any, plan: dict[str, Any], environment: Any = No
     setting_bytes = int(getattr(settings, "experiment_output_bytes", 65536))
     plan_bytes = budget.get("outputBytes", setting_bytes)
     policy_seconds = policy.get("timeoutSeconds", _MAX_COMMAND_SECONDS)
-    task_seconds = budget.get("experimentSeconds", getattr(settings, "experiment_timeout_seconds", _MAX_COMMAND_SECONDS))
+    task_seconds = time_budget(plan, getattr(settings, "experiment_timeout_seconds", _MAX_COMMAND_SECONDS))
     if type(policy_seconds) not in (int, float) or type(task_seconds) not in (int, float):
         raise OpenResearchError("RESOURCE_LIMIT_INVALID", "The plan has invalid OpenResearch runtime bounds")
     plan_seconds = float(min(policy_seconds, task_seconds))

@@ -162,6 +162,8 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     if set(manifest) != {"plan", "sha256"} or not isinstance(manifest.get("plan"), dict):
         raise HTTPException(422, "An exact immutable plan manifest is required")
     plan = copy.deepcopy(manifest["plan"])
+    if plan.get("contractVersion", 1) != 1:
+        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: neutral v2 plans require a versioned receiver contract")
     if len(canonical(manifest).encode()) > 524288 or digest(plan) != manifest.get("sha256"):
         raise HTTPException(409, "Immutable manifest integrity mismatch")
     scientific = scientific_envelope is not None

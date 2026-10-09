@@ -142,9 +142,11 @@ class AutoResearchService:
                               owner=owner, request=request_id)
         return self.projection(owner, rows[0]['task_id']) if rows else None
 
-    async def start(self, owner, preset_id, goal, request_id):
+    async def start(self, owner, preset_id, goal, request_id, *, expected_preset_fingerprint=None):
         self.auth.require(owner, 'run')
         preset = self.preset(owner, preset_id)
+        if expected_preset_fingerprint is not None and preset.fingerprint != expected_preset_fingerprint:
+            raise HTTPException(409, 'RESEARCH_PRESET_CHANGED')
         goal = goal.strip() if goal and goal.strip() else preset.default_goal
         if not 2 <= len(goal) <= 2000:
             raise HTTPException(422, 'RESEARCH_GOAL_INVALID')

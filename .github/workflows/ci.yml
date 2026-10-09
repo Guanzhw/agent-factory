@@ -61,6 +61,8 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
+      - name: Required platform/application boundaries (no skips)
+        run: uv run python scripts/check_boundaries_postgres.py
       - name: Required candidate PostgreSQL acceptance (no skips)
         run: uv run python scripts/check_candidate_postgres.py
       - name: Required AutoResearch native fixtures (no skips)
@@ -71,7 +73,21 @@ jobs:
         shell: bash
         run: |
           set +e
-          uv run python -m unittest discover -s platform/tests -v > "$RUNNER_TEMP/postgres-tests.log" 2>&1
+          uv run python -m unittest discover -s platform/tests -v > "$RUNNER_TEMP/postgres-tests.log" 2>&1 &
+          test_pid=$!
+          (
+            while kill -0 "$test_pid" 2>/dev/null; do
+              sleep 60
+              if kill -0 "$test_pid" 2>/dev/null; then
+                echo "PostgreSQL suite is still running; recent diagnostic output:"
+                tail -n 8 "$RUNNER_TEMP/postgres-tests.log"
+              fi
+            done
+          ) &
+          progress_pid=$!
+          wait "$test_pid"
           test_status=$?
+          kill "$progress_pid" 2>/dev/null || true
+          wait "$progress_pid" 2>/dev/null || true
           tail -n 400 "$RUNNER_TEMP/postgres-tests.log"
           exit "$test_status"

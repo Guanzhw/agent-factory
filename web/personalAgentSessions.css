@@ -1,0 +1,13 @@
+.personal-session-dialog {
+  color: inherit;
+  background: var(--surface, #fff);
+  border: 1px solid #c9ced7;
+  border-radius: 14px;
+  padding: 24px;
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+}
+.personal-session-dialog::backdrop { background: rgb(16 24 40 / 55%); }
+.personal-session-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.personal-session-dialog label { display: block; margin: 16px 0; }

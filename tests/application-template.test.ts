@@ -18,6 +18,18 @@ const app = (): FactoryApplication => ({ id: 'research', version: 3, sha256: 'c'
 const draft = () => templateDefinition(app(), 'copy');
 
 describe('guided application template contract', () => {
+  it('preserves neutral v2 domain configuration without converting it to legacy research fields', () => {
+    const source = app(); source.contractVersion = 2; source.defaultMode = 'execute';
+    const mode = { ...source.modes.literature, budget: { toolCalls: 3, maxDepth: 1, maxChildren: 1, operationSeconds: 9, outputBytes: 2048 },
+      configSchema: { type: 'object' as const, properties: {}, additionalProperties: false as const }, config: {} };
+    source.modes = { execute: mode };
+    const copied = templateDefinition(source, 'copy');
+    expect(copied.contractVersion).toBe(2);
+    expect(copied.defaultMode).toBe('execute');
+    expect(copied.modes).toEqual({ execute: mode });
+    expect(JSON.stringify(copied)).not.toContain('experimentSeconds');
+    expect(inspectTemplate(copied, catalog).guided).toBe(false);
+  });
   it('roundtrips all definition fields and preserves the exact revision identity without mutating source', () => {
     const source = { ...app(), schema: 1, createdAt: '2026-10-04T00:00:00Z', origin: 'manager-authored' };
     const previous = structuredClone(source);

@@ -105,7 +105,20 @@ def create_app(settings=None, *, diagnostics=None):
     store.register_execution_guard("material-governance",
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     at('PREPARATION_APP_CONNECTIONS')
-    connections = ConnectionService(store, auth, settings.trusted_connections)
+    credential_vault = settings.credential_vault_factory(store.engine) if settings.credential_vault_factory else None
+    bind_vault_reads = getattr(credential_vault, 'bind_read_context', None)
+    if callable(bind_vault_reads):
+        bind_vault_reads(store._connection)
+    personal_providers = dict(settings.personal_connection_providers)
+    for provider_id, factory in settings.personal_connection_provider_factories.items():
+        if credential_vault is None or provider_id in personal_providers or not callable(factory):
+            raise ValueError('Personal provider requires explicit vault and unique trusted factory')
+        provider = factory(credential_vault)
+        if getattr(provider, "provider_id", None) != provider_id:
+            raise ValueError('Personal provider identity differs from trusted registration')
+        personal_providers[provider_id] = provider
+    connections = ConnectionService(store, auth, settings.trusted_connections,
+        personal_providers=personal_providers)
     store.connections = connections
     from .synthesis_sources import SynthesisSourceService
     at('PREPARATION_APP_SYNTHESIS_SOURCES')
@@ -206,6 +219,17 @@ def create_app(settings=None, *, diagnostics=None):
         base.include_router(origin_authority_router(auth, handoff_client))
     base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
+    from .personal_connections import personal_connection_router
+    base.include_router(personal_connection_router(auth, connections.personal))
+    if credential_vault is not None:
+        from .credential_vault import credential_vault_router
+        base.include_router(credential_vault_router(auth, credential_vault))
+    else:
+        @base.get('/api/factory/personal-credentials/capabilities')
+        def credential_capabilities(request: Request):
+            auth.require(auth.user(request)['id'], 'read')
+            return JSONResponse({'enabled': False, 'providerIds': []},
+                headers={'Cache-Control': 'private, no-store'})
     base.include_router(application_router(auth, applications))
     base.include_router(composition_router(auth, composition))
     from .synthesis_api import synthesis_router
@@ -215,6 +239,10 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
+    if settings.personal_agent_commands_enabled:
+        from .personal_command_api import PersonalCommandAPI
+        personal_commands = PersonalCommandAPI(store, auth, factory_api)
+        base.include_router(personal_commands.router)
     from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
     # Durable custody remains readable even after operator registrations end.
@@ -224,6 +252,9 @@ def create_app(settings=None, *, diagnostics=None):
     from .autoresearch import AutoResearchService, autoresearch_router
     store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
     base.include_router(autoresearch_router(auth, store.autoresearch))
+    from .openresearch_workspace import OpenResearchWorkspace, openresearch_workspace_router
+    openresearch_workspace = OpenResearchWorkspace(store, auth, store.autoresearch, factory=factory_api)
+    base.include_router(openresearch_workspace_router(auth, openresearch_workspace))
     from .autoresearch_session_control import AutoResearchSessionControl
     async def complete_research_session(task, requirement):
         from .control_commands import ControlCommand
@@ -237,6 +268,21 @@ def create_app(settings=None, *, diagnostics=None):
     from .process_runtime import ProcessRuntimeService
     at('PREPARATION_APP_PROCESS_RUNTIME')
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
+    if settings.managed_orx_profiles_factory is not None:
+        import copy
+        profiles = settings.managed_orx_profiles_factory(store, auth, resources)
+        if type(profiles) is not dict or any(type(k) is not str or type(v) is not dict for k, v in profiles.items()):
+            raise ValueError('OPENRESEARCH_MANAGED_PROFILES_INVALID')
+        required = {'ownerId', 'targetRef', 'applicationRef', 'mode', 'nativeProfileId',
+            'connectionPin', 'contractSha256', 'sessionId'}
+        if any(not required.issubset(value) for value in profiles.values()):
+            raise ValueError('OPENRESEARCH_MANAGED_PROFILE_PIN_REQUIRED')
+        # A trusted installer may add an existing-store provider only after
+        # process service construction; reapply the normal target/pool checks.
+        resources.targets = PersistentResourceService(store, auth, resources.targets).targets
+        openresearch_workspace.managed_profiles = copy.deepcopy(profiles)
+        from .managed_orx_profile import install_completion_handler
+        install_completion_handler(store)
     from .research_runtime import ResearchProcessRuntimeService
     at('PREPARATION_APP_RESEARCH_RUNTIME')
     store.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
@@ -341,7 +387,7 @@ def create_app(settings=None, *, diagnostics=None):
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
-    native.state.factory.update(resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
+    native.state.factory.update(credential_vault=credential_vault, openresearch_workspace=openresearch_workspace, resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
         research_runtime=store.research_runtime, research_evaluation=store.research_evaluation)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
