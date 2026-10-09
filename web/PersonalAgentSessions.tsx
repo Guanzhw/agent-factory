@@ -14,6 +14,9 @@ type Pending = { requestId: string; planId?: string; startPlanId?: string; submi
 const labels = { create: '创建 OpenCode 会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' };
 const warning = '会话使用远程服务的模型配置。中断仅尽力而为，停止状态以服务端记录为准。';
 const sessionStates: Record<string, string> = { ready: '可准备消息', result_observed: '已观察到远程回复', ack_unknown: '命令回执未确认', pending: '等待回执', creating: '等待创建确认' };
+function isLeasePreAdmissionRejection(error: ApiError) {
+  return error.status === 409 && ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'].includes(error.code ?? '');
+}
 function CommandSummary({ plan }: { plan: Plan }) {
   const values = plan.inputValues ?? {};
   const text = (key: string) => typeof values[key] === 'string' && values[key] ? values[key] as string : '未提供';
@@ -66,6 +69,19 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     return true;
   }
   function remember(p: Pending | null) { if (p) localStorage.setItem(storage, JSON.stringify(p)); else localStorage.removeItem(storage); setPending(p); }
+  function handleSubmitRejection(error: unknown, epoch: number, creating = false) {
+    if (!current(epoch) || !(error instanceof ApiError)) return false;
+    const leaseRejected = researchJourney && isLeasePreAdmissionRejection(error);
+    if (!definitivelyRejected(error.status) && !leaseRejected) return false;
+    remember(null); followup.current = null;
+    if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return true; }
+    setNotice(error.code === 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'
+      ? '研究未提交：连接健康检查暂时失败，草稿和原回复保留。恢复后可明确重试；原请求不会重发。'
+      : creating ? '研究未启动：请检查连接或当前权限，草稿保留。'
+      : '研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。');
+    if (leaseRejected) setSetupOpen(true);
+    return true;
+  }
   function adoptSession(next: PersonalSession) {
     setSession(next);
     if (researchJourney && next.bindingStatus === 'active' && next.connectionPin?.ownerId === ownerId) {
@@ -156,15 +172,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       const intent: PersonalIntent = next === 'create' ? { requestId, action: next, connectionRef: selected, nativeProjectId: project!.nativeProjectId, title: title.trim() || 'Factory personal session' } : next === 'prompt' ? { requestId, action: next, sessionId: session!.id, text: researchJourney ? researchText : text } : { requestId, action: next, sessionId: session!.id };
       let result;
       try { result = await personalAgentApi.submit(intent, ...(researchJourney ? [ownerId] : [])); } catch (error) {
-        const leaseRejected = researchJourney && error instanceof ApiError && error.status === 409
-          && ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'].includes(error.code ?? '');
-        if (current(epoch) && error instanceof ApiError && (definitivelyRejected(error.status) || leaseRejected)) {
-          remember(null); if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; }
-          setNotice(error.code === 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'
-            ? '研究未提交：连接健康检查暂时失败，草稿和原回复保留。恢复后可明确重试；原请求不会重发。'
-            : '研究未提交：原请求不会重发，草稿保留。若连接授权或目标变化，请明确选择连接；原轮次仍未知时先核对它。');
-          if (leaseRejected) setSetupOpen(true); return;
-        }
+        if (handleSubmitRejection(error, epoch)) return;
         throw error;
       }
       if (!current(epoch)) return;
@@ -183,7 +191,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       // The goal stays in memory. Reload can recover creation, but cannot resend a goal.
       followup.current = { requestId: `${journey}:prompt`, text: researchJourney ? researchText : newGoal, epoch };
       let created;
-      try { created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: selected, nativeProjectId: project.nativeProjectId, title: researchJourney ? researchGoal.trim().slice(0, 120) : title.trim() || 'Research session' }, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (current(epoch) && error instanceof ApiError && definitivelyRejected(error.status)) { remember(null); followup.current = null; if (error.code === 'EXPECTED_OWNER_MISMATCH') { identityChanged(); return; } setNotice('研究未启动：请检查连接或当前权限，草稿保留。'); return; } throw error; }
+      try { created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: selected, nativeProjectId: project.nativeProjectId, title: researchJourney ? researchGoal.trim().slice(0, 120) : title.trim() || 'Research session' }, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (handleSubmitRejection(error, epoch, true)) return; throw error; }
       if (!current(epoch)) return;
       if (created.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: created.planId, startPlanId: created.planId, submitAttempt: true }); setJob(created);
@@ -236,7 +244,9 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
             if (result.receipt.action === 'create' && next && current(next.epoch) && createdSession.nativeSessionId && !createdSession.activeRequestId && createdSession.connectionPin?.ownerId === ownerId && createdSession.connectionPin.capabilities.includes('session:prompt')) {
               remember({ requestId: next.requestId, submitAttempt: true }); setNewGoal('');
               if (!await ownerIsCurrent(epoch)) return;
-              const prompted = await personalAgentApi.submit({ requestId: next.requestId, action: 'prompt', sessionId: createdSession.id, text: next.text }, ...(researchJourney ? [ownerId] : []));
+              let prompted;
+              try { prompted = await personalAgentApi.submit({ requestId: next.requestId, action: 'prompt', sessionId: createdSession.id, text: next.text }, ...(researchJourney ? [ownerId] : [])); }
+              catch (error) { if (handleSubmitRejection(error, epoch)) return; throw error; }
               if (!current(epoch)) return;
               if (prompted.ownerId !== ownerId) throw new Error('owner');
               remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');

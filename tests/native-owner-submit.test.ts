@@ -198,6 +198,62 @@ it('ordinary journey starts from one goal action, retains material provenance an
   expect(host.querySelector('dialog')).toBeNull(); expect(personalAgentApi.prepare).not.toHaveBeenCalled();
   expect(button('查看任务详情').closest('details')?.open).toBe(false);
 });
+const preAdmissionCodes = ['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE', 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED'];
+function acknowledgeCreate() {
+  const createPlan = { ...plan, inputValues: { ...plan.inputValues!, action: 'create' } };
+  vi.mocked(personalAgentApi.recover).mockImplementation(async id => ({ ...recovery(id), plan: createPlan, receipt: { requestId: id, action: 'create', state: 'acknowledged', session: { ...session, factoryIdentity: identity }, factoryIdentity: identity } }));
+}
+it.each(preAdmissionCodes)('new research create refusal %s clears the unadmitted journey and retains owner goal/materials', async code => {
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('safe create refusal', 409, code));
+  await journey(); await goal('Retain the new study goal'); await goal('Synthetic owner materials', '补充材料');
+  await act(async () => button('开始研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1); expect(personalAgentApi.recover).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).not.toContain('正在确认研究会话');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Retain the new study goal');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="补充材料"]')!.value).toBe('Synthetic owner materials');
+  expect(button('开始研究').disabled).toBe(false); expect(host.querySelector('.research-setup')).not.toBeNull();
+});
+it('an explicitly retried create after health refusal uses a fresh journey and only its acknowledged goal', async () => {
+  acknowledgeCreate();
+  vi.mocked(personalAgentApi.submit).mockRejectedValueOnce(new ApiError('health refusal', 409, preAdmissionCodes[2])).mockResolvedValue(job);
+  await journey(); await goal('Original retained create goal'); await act(async () => button('开始研究').click());
+  const failed = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
+  expect(localStorage.getItem(storage)).toBeNull(); expect(personalAgentApi.recover).not.toHaveBeenCalled();
+  await goal('Explicit revised goal after recovery'); await act(async () => button('开始研究').click());
+  const retried = vi.mocked(personalAgentApi.submit).mock.calls[1][0].requestId;
+  expect(retried).not.toBe(failed); expect(retried).toMatch(/:create$/);
+  await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(3);
+  expect(personalAgentApi.submit).toHaveBeenNthCalledWith(3, expect.objectContaining({ requestId: retried.replace(/:create$/, ':prompt'), action: 'prompt', text: 'Explicit revised goal after recovery' }), owner.id);
+  expect(vi.mocked(personalAgentApi.recover).mock.calls.some(call => call[0] === failed)).toBe(false);
+});
+it.each(['IDEMPOTENCY_CONFLICT', 'REMOTE_VERIFICATION_FAILED'])('ambiguous create409 %s retains the original create pointer', async code => {
+  vi.mocked(personalAgentApi.submit).mockRejectedValue(new ApiError('ambiguous create', 409, code));
+  await journey(); await goal('Retain the ambiguous create goal'); await act(async () => button('开始研究').click());
+  const original = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
+  expect(localStorage.getItem(storage)).toContain(original); expect(original).toMatch(/:create$/);
+  expect(button('开始研究').disabled).toBe(true); expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+});
+it.each(preAdmissionCodes)('first prompt after acknowledged creation handles exact refusal %s without recreating or replaying', async code => {
+  acknowledgeCreate(); vi.mocked(personalAgentApi.submit).mockResolvedValueOnce(job).mockRejectedValueOnce(new ApiError('safe first prompt refusal', 409, code));
+  await journey(); await goal('Retain goal after acknowledged creation'); await act(async () => button('开始研究').click());
+  await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(2); expect(localStorage.getItem(storage)).toBeNull();
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Retain goal after acknowledged creation');
+  expect(button('继续研究').disabled).toBe(false); expect(host.textContent).not.toContain('需要核对原请求');
+  vi.mocked(personalAgentApi.submit).mockResolvedValue(job); await act(async () => button('继续研究').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(3);
+  expect(personalAgentApi.submit).toHaveBeenNthCalledWith(3, expect.objectContaining({ action: 'prompt', sessionId: session.id, text: 'Retain goal after acknowledged creation' }), owner.id);
+  expect(vi.mocked(personalAgentApi.submit).mock.calls.filter(([input]) => input.action === 'create')).toHaveLength(1);
+});
+it.each(['IDEMPOTENCY_CONFLICT', 'REMOTE_VERIFICATION_FAILED'])('ambiguous first-prompt409 %s retains that original prompt pointer after acknowledged creation', async code => {
+  acknowledgeCreate(); vi.mocked(personalAgentApi.submit).mockResolvedValueOnce(job).mockRejectedValueOnce(new ApiError('ambiguous first prompt', 409, code));
+  await journey(); await goal('Retain unknown first prompt'); await act(async () => button('开始研究').click());
+  await act(async () => button('核对研究请求').click());
+  const prompted = vi.mocked(personalAgentApi.submit).mock.calls[1][0].requestId;
+  expect(localStorage.getItem(storage)).toContain(prompted); expect(prompted).toMatch(/:prompt$/);
+  expect(button('继续研究').disabled).toBe(true); expect(personalAgentApi.submit).toHaveBeenCalledTimes(2);
+});
 it('ordinary journey keeps owner draft on navigation/reload and unknown requests only permit original reads', async () => {
   vi.mocked(personalAgentApi.submit).mockRejectedValue(new Error('private upstream secret'));
   await journey(); await goal('Keep my unsent draft'); await act(async () => button('开始研究').click());

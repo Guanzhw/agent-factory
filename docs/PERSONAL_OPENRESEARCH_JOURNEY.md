@@ -53,6 +53,9 @@ responses retain the original request pointer and never imply nonexecution.
 only in the lease-check phase before plan admission; the raw code remains ambiguous.
 A temporary health failure preserves the goal and
 allows an explicit new retry after recovery; it never replays the failed request.
+The shared submit refusal handler covers new-session creation, the first goal after
+acknowledged creation, and later prompts. It clears only a known unadmitted request
+and its in-memory followup; ambiguous409 responses keep their original pointers.
 
 - `POST /api/factory/personal-agent/connections/{ref}/refresh`:
   `{expectedFingerprint}`; same-owner/same-scope local lease maintenance only.
