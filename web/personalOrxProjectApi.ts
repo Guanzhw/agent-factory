@@ -41,6 +41,7 @@ export function checkOrxProjectPrepared(value: OrxProjectPrepared, requestId: st
 export const personalOrxProjectApi = {
   prepare: async (input: { requestId: string; connectionRef: string; project: OrxProjectInput }) => checkOrxProjectPrepared(await factoryRequest<OrxProjectPrepared>(`${path}/project-commands/prepare`, 'POST', input), input.requestId),
   decide: async (requestId: string, previewHash: string, approved: boolean) => checkOrxProjectReceipt(await factoryRequest<OrxProjectReceipt>(`${path}/project-commands/${encodeURIComponent(requestId)}/decision`, 'POST', { previewHash, approved }), requestId),
+  submit: async (requestId: string, previewHash: string, planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/project-commands/${encodeURIComponent(requestId)}/submit`, 'POST', { previewHash, approved: true }); if (!job?.id || job.planId !== planId) invalid(); return job; },
   recover: async (requestId: string) => {
     const recovery = await factoryRequest<{ requestId: string; plan: Plan; authorization: PlanAuthorization; receipt: OrxProjectReceipt | null; job: FactoryJob | null; nativeRunId: string | null }>(`${path}/commands/requests/${encodeURIComponent(requestId)}`);
     if (!recovery.receipt || recovery.requestId !== requestId) invalid();

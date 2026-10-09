@@ -24,11 +24,11 @@ it('rejects contradictory path, clone scope and remote cost promises', () => {
     { ...summary, billing: { ...summary.billing, hardRemoteBudgetEnforced: true } },
   ]) expect(projectCreationSummary(review(changed as PersonalOrxProjectReviewSummary))).toBeUndefined();
 });
-it('shows exact escaped inputs and distinguishes local controller accounting from unknown remote costs', () => {
+it('shows exact escaped side effects and owner confirmation while financial details remain folded', () => {
   const html = renderToStaticMarkup(createElement(ProjectCreationReview, { value: summary }));
   expect(html).toContain('&lt;script&gt;Synthetic project&lt;/script&gt;'); expect(html).not.toContain('<script>');
   expect(html).toContain('/synthetic/immutable'); expect(html).toContain(summary.project.cloneUrl!);
   expect(html).toContain('新目录或已有空目录'); expect(html).toContain('符号链接');
-  expect(html).toContain('远端用量与费用未知'); expect(html).toContain('仅覆盖 Factory 本地控制器账本'); expect(html).toContain('不保证远端硬预算');
+  expect(html).toContain('拥有者确认后才会提交远端副作用'); expect(html).not.toContain('管理员同意后'); expect(html).not.toContain('<strong>远端用量与费用未知</strong>');
   expect(html).not.toContain('<details open');
 });

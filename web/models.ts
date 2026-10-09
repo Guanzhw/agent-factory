@@ -158,6 +158,8 @@ export function pendingApproval(detail: JobDetail): PendingApproval | undefined 
 
 export interface PlanAuthorization {
   executionAllowed: boolean; reviewRequired: boolean; code?: string; message?: string;
+  ownerSubmissionSupported?: boolean; reviewRequestSupported?: boolean;
+  ownerId?: string; planId?: string; planFingerprint?: string;
   policy: { name: string; revision: string; fingerprint: string; review_ttl_seconds: number; nativeToolConfirmationSeparate: boolean };
   nativeToolConfirmationRequired: boolean;
 }

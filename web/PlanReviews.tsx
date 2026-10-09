@@ -36,9 +36,10 @@ export function PlanReviewGate({ ownerId, plan, busy, act, onAllowed }: { ownerI
         const [session, raw, reviews] = await Promise.all([api.session(controller.signal), api.planAuthorization(plan.id, controller.signal), api.planReviews(false, controller.signal, plan.id)]);
         if (session.id !== ownerId) throw new Error('当前身份无法核对。');
         const state = checkedAuthorization(raw); const recovery = recoverPlanReviews(reviews, ownerId, plan, state);
+        if (state.ownerSubmissionSupported === true && (state.ownerId !== ownerId || state.planId !== plan.id || state.planFingerprint !== plan.fingerprint)) throw new Error('当前身份或方案范围无法核对。');
         if (controller.signal.aborted || (currentScope.current !== scope || identity.current.epoch !== epoch)) return;
         if (pendingRequest.current?.scope === scope && reviews.some(item => checkedReview(item).requestId === pendingRequest.current?.id)) pendingRequest.current = undefined;
-        setSnapshot({ scope, state, recovery }); setReadyScope(scope); setError(''); onAllowed(state.executionAllowed);
+        setSnapshot({ scope, state, recovery }); setReadyScope(scope); setError(''); onAllowed(state.executionAllowed || state.ownerSubmissionSupported === true);
       } catch (e) { if (!controller.signal.aborted && (currentScope.current === scope && identity.current.epoch === epoch)) { setError(message(e)); setReadyScope(''); onAllowed(false); } }
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2500);
     }
@@ -71,6 +72,7 @@ export function PlanReviewGate({ ownerId, plan, busy, act, onAllowed }: { ownerI
       } catch (e) { if ((currentScope.current === scope && identity.current.epoch === epoch)) { setError('请求尚未确认；请先刷新核对，显式重试沿用原请求标识。'); setRefresh(n => n + 1); } throw e; }
     });
   }
+  if (ready && state?.ownerSubmissionSupported === true && !state.reviewRequired) return <p className="quiet" role="status">提交即确认此次业务范围；服务端仍核对当前身份和资源权限。</p>;
   return <section className="plan-review-gate" aria-label="方案执行授权"><h3>方案执行授权</h3><p>{state ? policyNames[state.policy.name] ?? '策略待确认' : '正在核对授权与已有审查'} · {state?.executionAllowed ? '当前允许执行' : state?.reviewRequired ? '需要管理员审查' : '当前不允许执行'}</p>{error && <div role="alert" className="error-message">{error}</div>}
     {review && <p role="status">审查状态：{review.decision === 'pending' ? '等待决定' : review.decision === 'approved' ? '已同意' : '已拒绝'}{review.expired ? ' · 已过期' : ''}{!review.currentPolicy ? ' · 策略已变更' : ''}。有效期至 {new Date(review.expiresAt).toLocaleString('zh-CN')}。<small>审查 {review.id}</small></p>}
     {recovery?.pending && <p className="quiet">已有当前方案的待审查请求，正在等待管理员决定；不会重复申请。</p>}

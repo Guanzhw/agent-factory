@@ -66,7 +66,7 @@ export function checkPersonalRecovery(r: PersonalRecovery, requestId: string, pl
 }
 const path = '/personal-agent'; const ref = encodeURIComponent;
 export const personalAgentApi = {
-  capabilities: (signal?: AbortSignal) => factoryRequest<{ executionContract: string; nativeQueue: boolean }>(`${path}/capabilities`, 'GET', undefined, signal),
+  capabilities: (signal?: AbortSignal) => factoryRequest<{ executionContract: string; nativeQueue: boolean; ownerSubmit?: string; modelConfiguration?: string; factoryBYOKForwarded?: false }>(`${path}/capabilities`, 'GET', undefined, signal),
   project: async (connectionRef: string, signal?: AbortSignal) => {
     const p = await factoryRequest<PersonalProject>(`${path}/projects?connectionRef=${ref(connectionRef)}`, 'GET', undefined, signal);
     if (p.executionContract !== PERSONAL_CONTRACT || !['opencode', 'native-openresearch'].includes(p.namespace) || p.connectionPin?.ref !== connectionRef || !p.nativeProjectId || p.upstreamOrxProjectId !== (p.namespace === 'opencode' ? null : p.nativeProjectId) || p.budgetEnforcement !== 'advisory' || p.modelCredentialCustody !== 'remote') invalid();
@@ -84,6 +84,7 @@ export const personalAgentApi = {
   attach: (input: PersonalAttachment) => factoryRequest<AttachmentReceipt>(`${path}/sessions/attach`, 'POST', input),
   recoverAttachment: (requestId: string) => factoryRequest<AttachmentReceipt>(`${path}/requests/${ref(requestId)}`),
   prepare: async (intent: PersonalIntent) => checkPrepared(await factoryRequest<PersonalPrepared>(`${path}/commands/prepare`, 'POST', intent)),
+  submit: async (intent: PersonalIntent) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/submit`, 'POST', intent); if (!job?.id || !job.planId) invalid(); return job; },
   start: async (planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/start`, 'POST', { planId }); if (!job?.id || job.planId !== planId) invalid(); return job; },
   recover: async (requestId: string, signal?: AbortSignal) => {
     const r = await factoryRequest<PersonalRecovery>(`${path}/commands/requests/${ref(requestId)}`, 'GET', undefined, signal);

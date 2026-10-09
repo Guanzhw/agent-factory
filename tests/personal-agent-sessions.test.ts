@@ -33,14 +33,14 @@ function button(text: string) { const b = [...host.querySelectorAll('button')].f
 async function click(text: string) { await act(async () => button(text).click()); }
 async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!; const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); }); }
 async function prepareCreate() { await mount(); await fill('新会话标题', 'Private session name'); await click('准备创建会话'); }
-async function approveStart() { await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click()); await click('确认启动此命令任务'); }
+async function approveStart() { await click('确认提交此命令'); }
 const key = `factory-personal-command:${owner.id}`;
-it('uses separate binding, preparation, review and explicit billing consent; does not start on double prepare', async () => {
+it('preserves binding and exact preview, submits only on the owner business confirmation, and prevents double dispatch', async () => {
   await mount(); await act(async () => { button('准备创建会话').click(); button('准备创建会话').click(); });
   expect(personalAgentApi.prepare).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).not.toHaveBeenCalled();
-  expect(button('确认启动此命令任务').disabled).toBe(true); expect(host.textContent).toContain('模型费用由你与远程服务商结算');
-  await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click());
-  await act(async () => { button('确认启动此命令任务').click(); button('确认启动此命令任务').click(); });
+  expect(button('确认提交此命令').disabled).toBe(false); expect(host.textContent).toContain('会话使用远程服务的模型配置');
+  expect(host.querySelector('input[type=checkbox]')).toBeNull();
+  await act(async () => { button('确认提交此命令').click(); button('确认提交此命令').click(); });
   expect(personalAgentApi.start).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).toHaveBeenCalledWith(plan.id);
   expect(host.textContent).toContain('不证明远程已停止'); expect(localStorage.getItem(key)).not.toContain('private fixture prompt');
 });
@@ -49,12 +49,12 @@ it('closing review and refreshing never starts or replays a command', async () =
   await click('刷新个人资源'); expect(personalAgentApi.start).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).toHaveBeenCalledTimes(1);
   expect(localStorage.getItem(key)).not.toContain('Private session name'); expect(button('准备创建会话').disabled).toBe(true);
 });
-it('recovers a lost prepare response read-only with the original request, then requires fresh review', async () => {
+it('recovers a lost prepare response read-only with the original request, then requires a fresh business confirmation', async () => {
   vi.mocked(personalAgentApi.prepare).mockRejectedValue(new Error('private upstream secret'));
   const recover = vi.spyOn(personalAgentApi, 'recover').mockImplementation(async requestId => ({ requestId, plan, authorization: prepared.authorization, job: null, nativeRunId: null, receipt: null }));
   await mount(); await click('准备创建会话'); const original = vi.mocked(personalAgentApi.prepare).mock.calls[0][0].requestId;
   expect(host.textContent).not.toContain('private upstream secret'); await click('核对原会话命令');
-  expect(recover).toHaveBeenCalledWith(original); expect(personalAgentApi.prepare).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).not.toHaveBeenCalled(); expect(button('确认启动此命令任务').disabled).toBe(true);
+  expect(recover).toHaveBeenCalledWith(original); expect(personalAgentApi.prepare).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).not.toHaveBeenCalled(); expect(button('确认提交此命令').disabled).toBe(false);
 });
 it('lost start remains unknown after reload and a missing task never permits replay', async () => {
   localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: plan.id, startPlanId: plan.id }));
@@ -78,7 +78,7 @@ it('owner changes clear private text and ignore a prior owner’s in-flight prep
 it('renders multi-turn text/tool events escaped and advisory usage while blocking unresolved next turns', async () => {
   const observed: PersonalSession = { ...session, activeRequestId: 'original-prompt', observation: { observedAt: '2026-10-08T00:00:00Z', provenance: 'remote-reported', trustedMetering: false, sessionId: session.nativeSessionId!, projectId: session.nativeProjectId, messages: [{ id: 'message-fixture', role: 'assistant', completed: false, usageProvenance: 'remote-reported', usage: { tokens: { input: 12 }, cost: 0.03 }, events: [{ type: 'text', text: '<script>bad()</script>' }, { type: 'tool', tool: 'synthetic', status: 'running', output: '<img src=x onerror=bad()>' }] }] } };
   vi.mocked(personalAgentApi.session).mockResolvedValue(observed); await mount(); await click(`打开 OpenCode 会话 ${session.nativeSessionId}`);
-  expect(host.querySelector('script,img')).toBeNull(); expect(host.textContent).toContain('<script>bad()</script>'); expect(host.textContent).toContain('不是共享账本发票');
+  expect(host.querySelector('script,img')).toBeNull(); expect(host.textContent).toContain('<script>bad()</script>'); expect(host.textContent).not.toContain('共享账本发票'); expect(host.textContent).not.toContain('"cost"');
   expect(button('准备发送消息').disabled).toBe(true); expect(button('准备尽力中断').disabled).toBe(false);
   await click('准备尽力中断'); expect(personalAgentApi.prepare).toHaveBeenCalledWith(expect.objectContaining({ action: 'interrupt', sessionId: session.id })); expect(personalAgentApi.start).not.toHaveBeenCalled();
 });
@@ -155,6 +155,7 @@ it('shows only actual OpenResearch bindings and native IDs; no-template mode can
   const orxProject: PersonalProject = { ...project, namespace: 'native-openresearch', connectionPin: { ref: orxConnection.ref }, upstreamOrxProjectId: project.nativeProjectId, sessionCreationSupported: false };
   const orxSession: PersonalSession = { ...session, namespace: 'native-openresearch', connectionRef: orxConnection.ref, connectionPin: orxConnection, nativeSessionId: 'original-orx-session', upstreamOrxProjectId: project.nativeProjectId, factoryIdentity: null };
   vi.mocked(api.userConnections).mockResolvedValue([connection, orxConnection]); vi.mocked(personalRemoteApi.list).mockResolvedValue([remote, { ...remote, registrationRef: orxConnection.registrationRef, providerId: ORX_PERSONAL_PROVIDER }]);
+  vi.spyOn(personalAgentApi, 'nativeSessions').mockResolvedValue({ nativeProjectId: orxProject.nativeProjectId, namespace: 'native-openresearch', executionContract: PERSONAL_CONTRACT, connectionPin: { ref: orxConnection.ref }, sessions: [] });
   vi.mocked(personalAgentApi.project).mockResolvedValue(orxProject); vi.mocked(personalAgentApi.sessions).mockResolvedValue([orxSession]); vi.mocked(personalAgentApi.session).mockResolvedValue(orxSession);
   await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', connectionRef: orxConnection.ref })));
   expect(host.textContent).not.toContain('OpenCode'); expect(host.querySelector('[aria-label="新会话标题"]')).toBeNull();

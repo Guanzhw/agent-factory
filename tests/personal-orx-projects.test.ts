@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'userConnections').mockResolvedValue([connection]); vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([remote]);
   vi.spyOn(personalOrxProjectApi, 'prepare').mockImplementation(async input => prepared(input.requestId));
   vi.spyOn(personalOrxProjectApi, 'decide').mockImplementation(async (id, _hash, approved) => receipt(id, { consentState: approved ? 'approved' : 'cancelled', state: approved ? 'approved' : 'cancelled' }));
-  vi.spyOn(personalAgentApi, 'start').mockResolvedValue(job);
+  vi.spyOn(personalAgentApi, 'start').mockResolvedValue(job); vi.spyOn(personalOrxProjectApi, 'submit').mockResolvedValue(job);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId, onConnected: connected, onTask: navigateTask }))); }
@@ -46,7 +46,7 @@ it('requires disclosed per-request approval and one submission on double click',
   expect(host.textContent).toContain('README、部分代码、文件清单或论文摘要'); expect(host.textContent).toContain('GitHub 自动同步明确关闭'); expect(host.textContent).toContain('不自动开展实验');
   expect(button('批准并提交此次创建').disabled).toBe(true); await consent();
   await act(async () => { button('批准并提交此次创建').click(); button('批准并提交此次创建').click(); });
-  expect(personalOrxProjectApi.decide).toHaveBeenCalledTimes(1); expect(personalAgentApi.start).toHaveBeenCalledTimes(1);
+  expect(personalOrxProjectApi.submit).toHaveBeenCalledTimes(1); expect(personalOrxProjectApi.submit).toHaveBeenCalledWith(expect.any(String), preview.previewHash, job.planId); expect(personalOrxProjectApi.decide).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
   expect(navigateTask).not.toHaveBeenCalled(); await click('查看原创建任务进度与结果'); expect(navigateTask).toHaveBeenCalledWith(job.id);
   expect(localStorage.getItem(key)).not.toContain(request.path); expect(localStorage.getItem(key)).not.toContain(request.name);
 });

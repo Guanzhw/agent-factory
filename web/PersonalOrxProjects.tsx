@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
 import { PlanReviewGate } from './PlanReviews.js';
-import { personalAgentApi, ORX_PERSONAL_PROVIDER } from './personalAgentApi.js';
+import { ORX_PERSONAL_PROVIDER } from './personalAgentApi.js';
 import { personalRemoteApi, definitivelyRejected } from './personalRemoteApi.js';
 import { personalOrxProjectApi, checkOrxProjectPrepared, checkOrxProjectReceipt, type OrxProjectInput, type OrxProjectReceipt } from './personalOrxProjectApi.js';
 import type { Plan, UserConnection } from './models.js';
@@ -60,13 +60,11 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
   async function start() {
     if (!pending || pending.startAttempt || !plan || !receipt || !consent || !allowed || !['awaiting', 'approved'].includes(receipt.consentState)) return;
     await act('start', async () => {
-      const decided = checkOrxProjectReceipt(await personalOrxProjectApi.decide(pending.requestId, receipt.preview.previewHash, true), pending.requestId, ownerId, plan.id);
-      if (!live.current) return;
-      setReceipt(decided); remember({ ...pending, startAttempt: true }); setConsent(false); setAllowed(false);
-      const job = await personalAgentApi.start(plan.id);
+      remember({ ...pending, startAttempt: true }); setConsent(false); setAllowed(false);
+      const job = await personalOrxProjectApi.submit(pending.requestId, receipt.preview.previewHash, plan.id);
       if (!live.current) return;
       if (job.ownerId !== ownerId) throw new Error('owner');
-      setTaskId(job.id); setNotice('原生创建任务已受理，正在只读核对结果。确认项目后可在此继续关联会话，也可查看任务进度。可能的远程模型费用由你的账户承担。');
+      setTaskId(job.id); setNotice('原生创建任务已受理，正在只读核对结果。确认项目后可在此继续关联会话，也可查看任务进度。');
     });
   }
   async function cancel() {
@@ -86,7 +84,7 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
       if (pending.planId && value.plan.id !== pending.planId || value.job && value.job.ownerId !== ownerId) throw new Error('scope');
       setPlan(result.plan); setReceipt(result.receipt); if (value.job) setTaskId(value.job.id); setConsent(false); setAllowed(false);
       if (result.receipt.consentState === 'cancelled') { remember(null); setNotice('原取消已核实，未重放创建。'); }
-      else { remember({ ...pending, planId: result.plan.id, ...(value.job ? { startAttempt: true } : {}) }); setNotice(result.receipt.state === 'ack_unknown' ? '原创建确认 UNKNOWN；候选项目仅供远端人工核对，不能证明属于此请求。禁止重发。' : result.receipt.state === 'acknowledged' ? '已取得原项目 ID。下一步明确选择会话 harness 与模型，关联后单独准备会话及研究消息。' : pending.startAttempt ? '尚未找到原任务不代表未提交，继续核对，不重发。' : '原方案已找到，仍需逐次审阅与批准。'); }
+      else { remember({ ...pending, planId: result.plan.id, ...(value.job ? { startAttempt: true } : {}) }); setNotice(result.receipt.state === 'ack_unknown' ? '原创建确认 UNKNOWN；候选项目仅供远端人工核对，不能证明属于此请求。禁止重发。' : result.receipt.state === 'acknowledged' ? '已取得原项目 ID。下一步明确选择会话 harness 与模型，关联后即可选择会话并提交研究目标。' : pending.startAttempt ? '尚未找到原任务不代表未提交，继续核对，不重发。' : '原预览已找到，请核对创建副作用后确认提交。'); }
     });
   }
   // Observation only: refreshing a submitted request never calls decide/start.
@@ -105,13 +103,13 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
       const connection = await personalOrxProjectApi.connect(pending.requestId, harness, model.trim()); if (!live.current) return;
       if (connection.ownerId !== ownerId) throw new Error('owner');
       setConnectedProject(receipt.result); remember(null); setPlan(undefined); setReceipt(undefined); setConsent(false); setAllowed(false); onConnected(connection.ref);
-      setNotice('已绑定新项目。请在下方选择或创建原生会话，再逐次准备研究消息、审阅批准并查看结果。');
+      setNotice('已绑定新项目。请在下方选择或创建原生会话，然后提交研究目标并在原会话查看结果。');
     });
   }
   const disabled = !!busy || !!pending || !ready;
   return <section aria-label="新建原生 OpenResearch 项目"><h2>新建原生 OpenResearch 项目</h2>
-    <p>使用明确启用的项目创建连接。创建先预览，再逐次批准；现有项目连接不会自动扩权。</p>
-    {connectedProject && <div className="success-message" role="status"><strong>已关联项目：{connectedProject.name}</strong><p>{connectedProject.path} · 原生 ID {connectedProject.nativeProjectId}</p><p>继续在下方选择已有会话或准备新会话。每一轮研究消息仍需单独审阅批准。</p></div>}
+    <p>使用明确启用的项目创建连接。创建先预览，再确认一次固定副作用；现有项目连接不会自动扩权。</p>
+    {connectedProject && <div className="success-message" role="status"><strong>已关联项目：{connectedProject.name}</strong><p>{connectedProject.path} · 原生 ID {connectedProject.nativeProjectId}</p><p>继续在下方选择已有会话或创建新会话。研究目标直接提交到选定的原生会话。</p></div>}
     <details open={createOpen} onToggle={e => setCreateOpen(e.currentTarget.open)} className="project-create-form"><summary>填写新项目创建输入</summary>
     <label>项目创建资源<select aria-label="项目创建资源" disabled={disabled} value={selected} onChange={e => setSelected(e.target.value)}><option value="">选择已验证、绑定的创建资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? c.ref}</option>)}</select></label>
     {ready && !connections.length && <p>请在资源管理中选择 OpenResearch，启用“用于创建新项目”后验证、绑定。</p>}
@@ -130,9 +128,9 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
       <p>{receipt.preview.disclosure.clone ? '远端服务将 clone 此公开仓库到目标路径：新目录或已有空目录，并登记项目。' : receipt.preview.request.createFolder ? '将在远端新建目录并登记项目。' : '将登记已有远端目录。'}{receipt.preview.disclosure.paperDownload && '远端服务将下载论文 PDF。'}{receipt.preview.disclosure.gitInitialization && '将在该目录初始化 Git。'}GitHub 自动同步明确关闭，不自动开展实验。</p>
       {receipt.preview.disclosure.clone && <p>clone 可能修改已有空目录。目标路径及父目录中的符号链接会指向实际写入位置；上游 clone 分支不保证目标为全新目录，Factory 未检查或锁定远端路径。请确认你批准此路径及其实际目标的写入。</p>}
       {!receipt.preview.request.createFolder && <p>已有目录会按上游规则解析到所在 Git 仓库的根目录；符号链接也会解析到实际位置。请填写你允许远端模型读取的预期仓库根路径。</p>}
-      <p>上游可能为聊天页生成 4 条项目建议。它可能将 README、部分代码、文件清单或论文摘要发送给远端偏好或可用 harness 的模型，产生你远端账户的费用。空项目、缓存命中或无可用 harness 时可能不调用模型。Factory 不保证此步骤的硬预算。</p>
+      <p>上游可能为聊天页生成 4 条项目建议。它可能将 README、部分代码、文件清单或论文摘要发送给远端偏好或可用 harness 的模型。空项目、缓存命中或无可用 harness 时可能不调用模型。</p>
       </details>
-      {plan && !pending?.startAttempt && ['awaiting', 'approved'].includes(receipt.consentState) && <><PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} /><label><input type="checkbox" aria-label="批准此次项目创建副作用" disabled={!!busy} checked={consent} onChange={e => setConsent(e.target.checked)} />我批准此次明确输入、远端写入或 clone，以及可能的模型请求和远端账户费用。</label><button disabled={!!busy || !consent || !allowed} onClick={() => void start()}>批准并提交此次创建</button><button disabled={!!busy} onClick={() => void cancel()}>取消此次创建批准</button></>}
+      {plan && !pending?.startAttempt && ['awaiting', 'approved'].includes(receipt.consentState) && <><PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} /><label><input type="checkbox" aria-label="批准此次项目创建副作用" disabled={!!busy} checked={consent} onChange={e => setConsent(e.target.checked)} />我确认此次项目输入、远端写入或 clone，以及可能的远端模型请求。</label><button disabled={!!busy || !consent || !allowed} onClick={() => void start()}>批准并提交此次创建</button><button disabled={!!busy} onClick={() => void cancel()}>取消此次创建批准</button></>}
       {receipt.state === 'ack_unknown' && <><p role="alert">创建确认 UNKNOWN，不能重新提交。候选项目与原请求的关联未经证明。</p><p>请向远端管理员提供上方原请求、项目名称和目标路径，核对远端记录。不要重新创建同名项目或将候选项目当作成功回执。此处只读取候选；刷新与返回也不会重发。</p><button disabled={!!busy} onClick={() => void reconcile()}>只读核对远端候选项目</button>{receipt.candidates.map(p => <p key={p.nativeProjectId}>候选原生 ID {p.nativeProjectId} · {p.name} · {p.path}</p>)}</>}
       {receipt.result && <section className="project-created" aria-label="项目已确认，可继续关联会话"><h3>项目已确认，继续关联会话</h3><p><strong>{receipt.result.name}</strong> · {receipt.result.path}</p><p>已确认原生项目 ID：{receipt.result.nativeProjectId}</p><label>新会话 harness<select aria-label="新会话 harness" value={harness} disabled={!!busy} onChange={e => setHarness(e.target.value)}><option value="">明确选择</option><option value="opencode">OpenCode（可选）</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option></select></label><label>新会话模型 ID<input aria-label="新会话模型 ID" maxLength={200} disabled={!!busy} value={model} onChange={e => setModel(e.target.value)} /></label><p>沿用远端账户的模型与默认权限。关联只验证项目并绑定，不创建会话或发送研究消息。</p><button className="primary" disabled={!!busy || !harness || !model.trim()} onClick={() => void connect()}>关联新项目并进入原生会话</button></section>}
     </article>}

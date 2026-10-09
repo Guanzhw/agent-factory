@@ -24,7 +24,9 @@ export function checkedAuthorization(value: PlanAuthorization): PlanAuthorizatio
   if (!record(value) || typeof value.executionAllowed !== 'boolean' || typeof value.reviewRequired !== 'boolean'
       || !record(value.policy) || typeof value.policy.name !== 'string' || typeof value.policy.revision !== 'string'
       || !hash(value.policy.fingerprint) || value.policy.nativeToolConfirmationSeparate !== true
-      || typeof value.nativeToolConfirmationRequired !== 'boolean') throw new Error('当前方案授权无法核对。');
+      || typeof value.nativeToolConfirmationRequired !== 'boolean'
+      || value.ownerSubmissionSupported !== undefined && typeof value.ownerSubmissionSupported !== 'boolean'
+      || value.ownerSubmissionSupported === true && (value.reviewRequired || value.reviewRequestSupported !== false)) throw new Error('当前方案授权无法核对。');
   return value;
 }
 export function recoverPlanReviews(values: unknown, ownerId: string, plan: Pick<Plan, 'id' | 'fingerprint'>, authorization: PlanAuthorization) {
