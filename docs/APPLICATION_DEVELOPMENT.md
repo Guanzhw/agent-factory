@@ -8,6 +8,51 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 真实 ConvertD 的业务代码、后端和材料由用户在本地实现。本指南和仓库中的合成示例
 证明的是接线方式，不能替代真实业务、模型、GPU 或目标机器验收。
 
+## 公共契约与兼容边界
+
+应用依赖已版本化的声明、精确引用和受治理请求，不依赖内部存储布局。
+当前兼容证据覆盖下列边界；仓库没有独立稳定 Python SDK 的 SemVer 承诺。
+
+| 接入面 | 当前公共契约 |
+| --- | --- |
+| 应用声明 | 缺省版本的冻结 v1，以及显式整数 `contractVersion: 2` 的 v2；字段见 [`application_schema.py`](../platform/agent_factory/application_schema.py) |
+| 素材、应用和原生组件 | 发布的 `{id, version, sha256}`、精确 `nativeComponent` pin；新发布不重写原引用 |
+| 组合、计划与任务 | 本指南中的 proposals、plans、instances 请求；保留原 `requestId` 与 payload，同 ID 改意图会冲突 |
+| 可信能力注册 | 已审 `AdapterRegistration`、`NativeWorkflowRegistration` 和精确 revision/config pin；声明不能安装代码或扩大权限 |
+| 外部异步操作 | [`WorkflowAdapter`](../platform/agent_factory/workflow_contracts.py) 的 `start/lookup/inspect/cancel`、原 operation ID 和停止证据 |
+| 原生工作流投影 | `/api/factory/workflows/{task_id}` 的 schema 2；`decide/reconcile` 核对当前 snapshot `version` 摘要，不能将它当可排序版本号；`cancel` 仅提交 `commandId/action`，不携带 `version` |
+
+可信工厂使用的 `BindingContext` 是本进程的接线上下文，其 `store`、内部 service、
+数据库表、下划线方法和测试 helper 没有独立公开 SDK 的兼容保证。
+下文示例展示当前仓库版本的接线；升级时应重新验证这些内部依赖。
+
+| 应用声明 | v1 保留格式 | 新 v2 格式 |
+| --- | --- | --- |
+| 版本标记 | 不含 `contractVersion` | 显式整数 `2` |
+| mode 选择 | 原 v1 默认规则 | 必须显式 `defaultMode` |
+| 时间预算 | `budget.experimentSeconds` | `budget.operationSeconds` |
+| mode 配置 | 原 `LegacyTaskConfig` | 有界 `configSchema` 与经校验的 `config` |
+| plan 配置 | 原 `askScope/experimentDurationSeconds` | `sample/toolOrder/applicationConfig` |
+
+既有 v1 定义、保存的计划和摘要保持原值。不要给 v1 添加 `contractVersion: 1`，
+也不要原地改成 v2 或混合两套预算字段；字符串、布尔和未知版本被拒绝。
+v2 不回退到 v1 的时间上限。执行仍会重检权限、素材状态和连接；格式兼容不保留已撤销的授权。
+冻结 v1、严格版本和预算检查见
+[`test_application_contract_v2.py`](../platform/tests/test_application_contract_v2.py)。
+
+改变输入解释、预算、能力或 runtime 行为时，使用新的契约或实现 revision，发布新引用，
+重新组合计划并完成所需审批；不要重算旧计划摘要或用旧审批静默扩大权限。
+兼容的声明更新发布新应用/素材版本；破坏既有字段或请求语义的升级需先实现明确的新契约
+并保留旧解析路径，不能仅给请求添加未支持的版本号。当前仅支持缺省 v1 和显式整数 `2`。
+新增字段也需核对已有 strict schema，不能假设旧解析器会接受它。
+应用契约、发布版本、adapter/component revision 与 Agno 依赖版本是不同的版本维度。
+当前底座目标为 Agno 3.1.0；素材中的 compatibility 声明不代表已验证跨 Agno 版本、
+任意 provider 或目标机器兼容。
+
+v2 已有本机原生合成执行证据；当前通用 `remote_handoff` 对不支持的中立 v2 manifest
+返回 `REMOTE_CONTRACT_UNSUPPORTED`。ORX 原生会话需按其自身协议验收，不能推断所有
+远端 runtime 已支持 v2。真实研究、模型请求、外部后端及停止证据仍需分别验收。
+
 ## 选择最小路径
 
 | 需求 | 开发内容 | 部署管理员接线 |
@@ -177,12 +222,14 @@ model、environment。每项包含来源/许可证、兼容版本、依赖、权
 通过 `MaterialGovernance.create_draft → request_publication → decide_publication`，
 由不同的当前管理员审查。保留返回的 `{id, version, sha256}` 精确引用。
 
-应用 mode 最小结构如下；`approved_refs` 是完成审查后的实际六类引用，
+新应用使用以下 v2 最小结构；既有 v1 定义按上面的保留格式继续支持。
+`approved_refs` 是完成审查后的实际六类引用，
 `native_pin` 来自 `state['store'].native_workflows.pin('department-summary-v1')`：
 
 ```python
 def application_definition(approved_refs, native_pin, input_schema):
     return {
+        'contractVersion': 2,
         'id': 'department-summary', 'name': 'Department summary',
         'description': 'Reviewed bounded application', 'defaultMode': 'summary',
         'modes': {'summary': {
@@ -191,9 +238,10 @@ def application_definition(approved_refs, native_pin, input_schema):
             'inputSchema': input_schema,
             'toolOrder': ['summarize'],
             'capabilities': ['summary:execute'],
+            'configSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
             'config': {}, 'connectionRequirements': [],
             'budget': {'toolCalls': 4, 'maxDepth': 1, 'maxChildren': 1,
-                       'experimentSeconds': 8, 'outputBytes': 65536},
+                       'operationSeconds': 8, 'outputBytes': 65536},
         }},
     }
 ```
@@ -202,6 +250,11 @@ def application_definition(approved_refs, native_pin, input_schema):
 就获得授权。toolOrder 和素材需要包括该 mode 实际使用的工具；如果加入 wait Agent，也
 要加入 `factory_wait_operations` 的素材和 policy。普通注册执行器应用省略 nativeComponent；
 不是所有应用都需要 Workflow。
+
+v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues` 传入。
+`configSchema` 不能声明 permissions、credentials、budget、executionBindings 等授权字段。
+可用 `application_schema.definition_model(body).model_validate(body)` 校验声明格式；这不替代素材发布、
+组件身份、权限、连接和生产准入检查，也不会执行该应用。
 
 再通过 `ApplicationService.create_draft → request_publication → decide_publication` 发布应用。
 完整具体 payload 和不同审查者接线见上述 fixture 的 `publish`，不要把测试账户用于生产。
@@ -235,6 +288,7 @@ def application_definition(approved_refs, native_pin, input_schema):
 uv sync --frozen
 npm ci --ignore-scripts
 uv run python -m unittest discover -s platform/tests -p 'test_application_inputs.py' -v
+uv run python -m unittest discover -s platform/tests -p 'test_application_contract_v2.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_tool_policy_registry.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_native_workflows.py' -v
 uv run ruff check platform scripts
