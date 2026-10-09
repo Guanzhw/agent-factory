@@ -77,6 +77,12 @@ it('settles a disabled deployment or read error without secret input or false su
   vi.mocked(personalRemoteApi.credentialAvailability).mockResolvedValue({ enabled: false, providerIds: [] });
   await act(async () => button('重新读取凭据').click()); expect(host.textContent).toContain('不需要接收你的明文密钥'); expect(host.querySelector('input[type=password]')).toBeNull();
 });
+it('keeps a retired provider credential revocable while disabling its rotation', async () => {
+  vi.mocked(personalRemoteApi.credentialAvailability).mockResolvedValue({ enabled: true, providerIds: ['byok-chat-v1'] });
+  await mount(); expect(button('更换凭据').disabled).toBe(true); expect(button('撤销凭据').disabled).toBe(false);
+  await act(async () => button('撤销凭据').click()); await act(async () => button('确认撤销凭据').click());
+  expect(personalRemoteApi.revokeCredential).toHaveBeenCalledWith(row, expect.any(String), 'alice');
+});
 it('rejects secret-bearing, foreign pending, changed-scope and wrong-revision receipts', () => {
   const command = { owner: 'alice', action: 'rotate' as const, requestId: 'fixture-request', providerId: row.providerId, destination: row.destination, credentialRef: row.credentialRef, credentialRevision: row.credentialRevision };
   expect(readCredentialCommand(JSON.stringify(command), 'alice')).toEqual(command); expect(readCredentialCommand(JSON.stringify(command), 'bob')).toBeNull();
