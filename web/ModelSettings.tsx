@@ -1,3 +1,4 @@
+import { api } from './api.js';
 import { useEffect, useRef, useState } from 'react';
 import { ownerModelApi, ModelRequestError, type ModelCapabilities, type OwnerModel } from './ownerModelApi.js';
 import { personalRemoteApi, RemoteRequestError, definitivelyRejected } from './personalRemoteApi.js';
@@ -28,14 +29,25 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
     const safe = setupMetadata(value); localStorage.setItem(storage, JSON.stringify(safe)); setPending(safe); return safe;
   }
   function finished() { localStorage.removeItem(storage); setPending(null); setEditing(undefined); setKey(''); setRefresh(n => n + 1); }
+  function accountChanged() {
+    setKey(''); setModel(''); setEditing(undefined); setConfirmRevoke(''); setRecords([]); setPending(null); setReady(false);
+    setError('当前登录账户已改变。已清除输入，请刷新页面后重新进入自己的模型设置。');
+  }
+  async function verifyOwner() {
+    const current = await api.session();
+    if (!alive.current) throw new Error('Unmounted');
+    if (current.id !== ownerId) { accountChanged(); throw new ModelRequestError(403, 'EXPECTED_OWNER_MISMATCH'); }
+  }
   async function continueSetup(value: ModelSetup) {
     let s = value;
+    await verifyOwner();
     if (!s.credential) {
-      const receipt = await personalRemoteApi.recoverCredential(s.credentialRequest);
+      const receipt = await personalRemoteApi.recoverCredential(s.credentialRequest, ownerId);
       if (!alive.current) return;
       s = retain({ ...s, credential: setupCredential(receipt, s), stage: 'model' });
     }
     if (s.stage === 'model') {
+      await verifyOwner();
       const configured = await ownerModelApi.configure(ownerId, { provider: s.provider, baseURL: s.baseURL, model: s.model,
         credentialRef: s.credential!.credentialRef, credentialRevision: s.credential!.credentialRevision, requestId: s.modelRequest }, s.reference);
       if (!alive.current) return;
@@ -43,6 +55,7 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
       s = retain({ ...s, reference: configured.reference, stage: 'default' });
     }
     if (s.chooseDefault) {
+      await verifyOwner();
       const selected = await ownerModelApi.default(ownerId, s.reference!, s.defaultRequest);
       if (!alive.current) return;
       if (selected.reference !== s.reference || !selected.isDefault || !selected.available) throw new Error('默认模型尚未确认；请核对原设置。');
@@ -53,7 +66,7 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
   async function run(work: () => Promise<void>) {
     if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice('');
     try { await work(); }
-    catch (e) { if (alive.current) setError(e instanceof ModelRequestError || e instanceof RemoteRequestError ? e.message : '设置尚未确认，请核对原请求或重新读取设置。'); }
+    catch (e) { if (alive.current && (e instanceof ModelRequestError || e instanceof RemoteRequestError) && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else if (alive.current) setError(e instanceof ModelRequestError || e instanceof RemoteRequestError ? e.message : '设置尚未确认，请核对原请求或重新读取设置。'); }
     finally { lock.current = false; if (alive.current) setBusy(false); }
   }
   function save() {
@@ -64,6 +77,7 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
     const selectedModel = model.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(selectedModel) || selectedModel === key.trim()) { setError('请核对模型名称；密钥只能填入 API 密钥字段。'); return; }
     void run(async () => {
+      await verifyOwner();
       const s = retain({ owner: ownerId, provider, baseURL, model: selectedModel,
         credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
         stage: 'credential', chooseDefault: editing ? editing.isDefault : true,
@@ -72,8 +86,8 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
       let credential;
       try {
         credential = editing
-          ? await ownerModelApi.rotateCredential(editing.credentialRef, editing.credentialRevision, secret, s.credentialRequest)
-          : await personalRemoteApi.saveCredential({ providerId: 'byok-chat-v1', destination: new URL(baseURL).origin, username: 'api-key', password: secret, requestId: s.credentialRequest });
+          ? await ownerModelApi.rotateCredential(ownerId, editing.credentialRef, editing.credentialRevision, secret, s.credentialRequest)
+          : await personalRemoteApi.saveCredential({ providerId: 'byok-chat-v1', destination: new URL(baseURL).origin, username: 'api-key', password: secret, requestId: s.credentialRequest }, ownerId);
       } catch (failure) {
         if (failure instanceof RemoteRequestError && failure.rejected || failure instanceof ModelRequestError && definitivelyRejected(failure.status)) { localStorage.removeItem(storage); if (alive.current) setPending(null); }
         throw failure;
@@ -84,6 +98,7 @@ export function ModelSettings({ ownerId, onResearch }: { ownerId: string; onRese
   }
   function command(record: OwnerModel, action: 'default' | 'revoke') {
     void run(async () => {
+      await verifyOwner();
       const scope = `${action}:${record.reference}:${record.revision}`;
       const key = await commandKeys(scope, { reference: record.reference, revision: record.revision });
       if (!alive.current) return;

@@ -90,6 +90,11 @@ class AuthService:
         user_id = getattr(request.state, "user_id", None)
         if not isinstance(user_id, str):
             raise HTTPException(401, "A verified user identity is required")
+        # A stale tab may share a newly changed browser cookie. This hint only
+        # narrows the verified principal; it cannot select or authorize a user.
+        expected = request.headers.get("x-factory-expected-owner")
+        if expected is not None and expected != user_id:
+            raise HTTPException(403, {"code": "EXPECTED_OWNER_MISMATCH", "message": "Account changed"})
         return self.identity(user_id)
 
     def identity(self, user_id: str) -> dict[str, Any]:

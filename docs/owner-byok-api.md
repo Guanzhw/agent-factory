@@ -280,9 +280,37 @@ accounting are denied while disabled, including managed ORX and AutoResearch's
 platform-paid profile; disabling the ledger is not a claim of a preserved hard
 budget. Owner BYOK stays outside that ledger even on an enabled legacy host.
 
-Required acceptance: `scripts/check_owner_byok_postgres.py` (13 cases, zero skips)
+Required acceptance: `scripts/check_owner_byok_postgres.py` (14 cases, zero skips)
 and existing `scripts/check_boundaries_postgres.py`. Supply only an independent,
 disposable loopback PG server through `FACTORY_TEST_DATABASE_URL`; fixtures create
 and remove their own unique databases. Tests use static synthetic secret fixtures
 and `httpx.MockTransport` only. They prove native Agno execution and boundaries,
 not real credentials, provider costs, remote research, or deployment readiness.
+
+## Stale browser tabs and account changes
+
+Model settings check the live authenticated session before secret custody and
+before each metadata/default/revoke write. Account changes clear the entered
+key and model draft and stop the old account's screen. Each vault create,
+rotation, recovery and model request also sends `X-Factory-Expected-Owner`.
+The existing authenticated identity extractor compares this header with the
+verified principal in that same request, before the vault or model service can
+write. A mismatch returns 403 `EXPECTED_OWNER_MISMATCH`; the header cannot grant
+permissions or choose another account. Existing clients without this narrowing
+header keep their authenticated owner contract. The server check covers an
+account change between the browser's preflight and its mutation.
+
+The required isolated PostgreSQL regression submits only fake keys using Bob's
+verified authentication and Alice's expected owner. It verifies no credential
+is created in either account and that model/default/revoke/rotation writes are
+rejected. UI regressions cover account changes before saving, between custody
+and metadata, and a mismatch returned after preflight. These tests use no real
+keys or live provider requests.
+
+This PR completes the current foundation scope: disabled-by-default Factory
+billing, owner BYOK for native Agno tasks, owner-scoped resource submission, and
+existing native ORX project/session entrypoints. The next application phase can
+organize research goals, progress, readable results and user decisions around
+actual supplied research data. Structured scientific findings/stages, actual
+research tools and real remote/provider compatibility remain undelivered or
+unverified; synthetic replies are protocol evidence only.

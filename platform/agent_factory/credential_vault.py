@@ -321,7 +321,7 @@ def credential_vault_router(auth, vault: CredentialVault):
                 owner = auth.user(request)["id"]
                 auth.require(owner, "read" if operation == "revoke" else "run")
             except HTTPException as error:
-                return JSONResponse({"detail": "CREDENTIAL_REQUEST_REJECTED"}, status_code=
+                return JSONResponse({"detail": error.detail if isinstance(error.detail, dict) and error.detail.get("code") == "EXPECTED_OWNER_MISMATCH" else "CREDENTIAL_REQUEST_REJECTED"}, status_code=
                     error.status_code if error.status_code in {401, 403} else 503,
                     headers={"Cache-Control": "private, no-store"})
             fields = {"credentialRevision"} if operation == "revoke" else {"username", "password"}
@@ -351,7 +351,7 @@ def credential_vault_router(auth, vault: CredentialVault):
                 owner = auth.user(request)["id"]
                 auth.require(owner, "read")
             except HTTPException as error:
-                return JSONResponse({"detail": "CREDENTIAL_REQUEST_REJECTED"}, status_code=
+                return JSONResponse({"detail": error.detail if isinstance(error.detail, dict) and error.detail.get("code") == "EXPECTED_OWNER_MISMATCH" else "CREDENTIAL_REQUEST_REJECTED"}, status_code=
                     error.status_code if error.status_code in {401, 403} else 503,
                     headers={"Cache-Control": "private, no-store"})
             if operation == "capabilities":

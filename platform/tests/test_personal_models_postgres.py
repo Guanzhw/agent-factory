@@ -50,9 +50,10 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         publish_application(self.state, author='manager', reviewer='fixture-reviewer')
         self.client = TestClient(self.app); self.client.__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
 
-    def request(self, method, path, body=None, *, owner='alice', expected=200):
+    def request(self, method, path, body=None, *, owner='alice', expected=200, expected_owner=None):
         response = self.client.request(method, '/api/factory' + path, json=body,
-            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner)})
+            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner),
+                **({'X-Factory-Expected-Owner': expected_owner} if expected_owner is not None else {})})
         self.assertEqual(response.status_code, expected, response.text)
         self.assertNotIn('synthetic-test-password', response.text)
         self.assertNotIn('synthetic-rotated-password', response.text)
@@ -218,4 +219,29 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('POST', '/personal-models', body, expected=403)
         self.auth.authorization.unassign('alice', 'factory-user')
         self.request('POST', '/personal-research', {'topic': 'Permission revoked', 'requestId': 'revoked-grant'}, expected=403)
+        self.assertEqual(self.calls, [])
+
+    def test_stale_tab_expected_owner_rejects_secret_and_metadata_before_any_write(self):
+        before = self.request('GET', '/personal-credentials', owner='bob')
+        # Models may be empty, so response-owner validation alone cannot help.
+        self.request('POST', '/personal-credentials', {'requestId': 'stale-tab-fake-key',
+            'providerId': PROVIDER_ID, 'destination': 'https://models.example.com',
+            'username': 'api-key', 'password': 'synthetic-test-password'},
+            owner='bob', expected_owner='alice', expected=403)
+        self.assertEqual(self.request('GET', '/personal-credentials', owner='bob'), before)
+        self.assertEqual(self.request('GET', '/personal-credentials'), [])
+        credential, model = self.configured()
+        for path, body in [('/personal-models', {'provider': 'openai-compatible',
+                'baseURL': model['baseURL'], 'model': model['model'],
+                'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision'], 'requestId': 'stale-model'}),
+                ('/personal-models/' + model['reference'] + '/default', {'requestId': 'stale-default'}),
+                ('/personal-models/' + model['reference'] + '/revoke', {'requestId': 'stale-revoke'}),
+                ('/personal-credentials/' + credential['credentialRef'] + '/rotate',
+                {'credentialRevision': credential['credentialRevision'], 'username': 'api-key',
+                 'password': 'synthetic-rotated-password', 'requestId': 'stale-rotate'})]:
+            self.request('POST', path, body, owner='bob', expected_owner='alice', expected=403)
+        self.request('GET', '/personal-models', owner='bob', expected_owner='alice', expected=403)
+        self.assertEqual(self.request('GET', '/personal-models', owner='bob'), [])
+        self.assertEqual(self.request('GET', '/personal-credentials', owner='bob'), before)
+        self.assertEqual(self.request('GET', '/personal-models')[0]['status'], 'configured')
         self.assertEqual(self.calls, [])

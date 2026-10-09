@@ -18,8 +18,8 @@ export class ModelRequestError extends Error {
   }
 }
 // Neither secret inputs nor raw server/provider error text reach the UI.
-async function safe<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
-  try { return await factoryRequest<T>(path, method, body, signal); }
+async function safe<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, expectedOwner?: string): Promise<T> {
+  try { return await factoryRequest<T>(path, method, body, signal, expectedOwner); }
   catch (error) { throw new ModelRequestError(error instanceof ApiError ? error.status : 0, error instanceof ApiError ? error.code : undefined); }
 }
 export function ownerModel(value: unknown, owner: string): OwnerModel {
@@ -47,12 +47,12 @@ export const ownerModelApi = {
     return value;
   },
   list: async (owner: string, signal?: AbortSignal) => {
-    const values = await safe<unknown>('/personal-models', 'GET', undefined, signal);
+    const values = await safe<unknown>('/personal-models', 'GET', undefined, signal, owner);
     if (!Array.isArray(values) || values.length > 100) throw new ModelRequestError(200, 'INVALID_RESPONSE');
     return values.map(value => ownerModel(value, owner));
   },
-  configure: async (owner: string, body: ModelConfiguration, reference?: string) => ownerModel(await safe(`/personal-models${reference ? `/${ref(reference)}/configure` : ''}`, 'POST', body), owner),
-  default: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/default`, 'POST', { requestId }), owner),
-  revoke: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/revoke`, 'POST', { requestId }), owner),
-  rotateCredential: (reference: string, credentialRevision: string, password: string, requestId: string) => safe<{ credentialRef: string; credentialRevision: string; status: string; providerId: string; destination: string }>(`/personal-credentials/${ref(reference)}/rotate`, 'POST', { credentialRevision, username: 'api-key', password, requestId }),
+  configure: async (owner: string, body: ModelConfiguration, reference?: string) => ownerModel(await safe(`/personal-models${reference ? `/${ref(reference)}/configure` : ''}`, 'POST', body, undefined, owner), owner),
+  default: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/default`, 'POST', { requestId }, undefined, owner), owner),
+  revoke: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/revoke`, 'POST', { requestId }, undefined, owner), owner),
+  rotateCredential: (owner: string, reference: string, credentialRevision: string, password: string, requestId: string) => safe<{ credentialRef: string; credentialRevision: string; status: string; providerId: string; destination: string }>(`/personal-credentials/${ref(reference)}/rotate`, 'POST', { credentialRevision, username: 'api-key', password, requestId }, undefined, owner),
 };

@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { api } from '../web/api.js';
 import { ModelSettings } from '../web/ModelSettings.js';
 import { ownerModel, ownerModelApi, ModelRequestError, type OwnerModel } from '../web/ownerModelApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
@@ -15,6 +16,7 @@ let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+  vi.spyOn(api, 'session').mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
   vi.spyOn(ownerModelApi, 'capabilities').mockResolvedValue({ enabled: true, providers: ['openai', 'openai-compatible'], liveCompatibilityVerified: false });
   vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
   vi.spyOn(ownerModelApi, 'configure').mockResolvedValue(row);
@@ -37,7 +39,7 @@ it('uses one Save to custody a secret, configure metadata and confirm the owner 
   await mount(); expect(host.querySelector('[aria-label="API 密钥"]')?.getAttribute('type')).toBe('password');
   await save();
   expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
-  expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ password: secret, providerId: 'byok-chat-v1', username: 'api-key', destination: 'https://api.openai.com' }));
+  expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ password: secret, providerId: 'byok-chat-v1', username: 'api-key', destination: 'https://api.openai.com' }), 'alice');
   expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ model: row.model, credentialRef: credential.credentialRef }), undefined);
   expect(JSON.stringify(vi.mocked(ownerModelApi.configure).mock.calls)).not.toContain(secret);
   expect(JSON.stringify(localStorage)).not.toContain(secret); expect(localStorage.getItem(storage)).toBeNull();
@@ -50,7 +52,7 @@ it('recovers an uncertain vault save after remount without replaying the key or 
   expect(localStorage.getItem(storage)).not.toContain(secret); expect(host.textContent).not.toContain(secret);
   await act(async () => root.unmount()); root = createRoot(host); await mount();
   await act(async () => button('核对并继续原保存').click());
-  expect(personalRemoteApi.recoverCredential).toHaveBeenCalledWith(request); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
+  expect(personalRemoteApi.recoverCredential).toHaveBeenCalledWith(request, 'alice'); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('模型已保存并设为默认');
 });
 it('replays only the original non-secret metadata request when configuration acknowledgement is lost', async () => {
@@ -82,4 +84,22 @@ it('persists only owner-scoped safe setup metadata and rejects unsupported desti
   const metadata = setupMetadata({ ...setup, password: secret } as ModelSetup); expect(JSON.stringify(metadata)).not.toContain(secret);
   expect(readModelSetup(JSON.stringify(metadata), 'bob')).toBeNull(); expect(readModelSetup(JSON.stringify(metadata), 'alice')).toEqual(setup);
   for (const value of ['http://models.example/v1', 'https://user:pass@models.example/v1', 'https://models.example/v1?api_key=secret', 'https://127.0.0.1/v1', 'https://models.example/other']) expect(() => modelEndpoint(value)).toThrow();
+});
+
+it('clears stale drafts when another tab changes the cookie owner before Save, without submitting any secret', async () => {
+  await mount(); vi.mocked(api.session).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' }); await save();
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(ownerModelApi.configure).not.toHaveBeenCalled();
+  expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull(); expect(host.textContent).toContain('当前登录账户已改变');
+  expect(localStorage.getItem(storage)).toBeNull();
+});
+it('stops metadata writes when the account changes after secret custody', async () => {
+  vi.mocked(api.session).mockResolvedValueOnce({ id: 'alice', name: 'Alice', role: 'user' }).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' });
+  await mount(); await save(); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(ownerModelApi.default).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('当前登录账户已改变'); expect(JSON.stringify(localStorage)).not.toContain(secret);
+});
+it('clears drafts on a server-side owner mismatch in the race after live preflight', async () => {
+  vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new (await import('../web/personalRemoteApi.js')).RemoteRequestError(true, 'EXPECTED_OWNER_MISMATCH'));
+  await mount(); await save(); expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(host.textContent).toContain('当前登录账户已改变');
+  expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
 });
