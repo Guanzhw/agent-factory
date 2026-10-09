@@ -30,7 +30,7 @@ it('requires explicit custody consent, password field, one submission and clears
   const save = vi.spyOn(personalRemoteApi, 'saveCredential').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   await mountCredential(); expect(button('确认安全保存凭据').disabled).toBe(true); expect(host.querySelector('[aria-label="服务密码"]')?.getAttribute('type')).toBe('password');
   await fill(); await act(async () => { button('确认安全保存凭据').click(); button('确认安全保存凭据').click(); });
-  expect(save).toHaveBeenCalledTimes(1); expect(JSON.stringify(window.localStorage)).not.toContain('synthetic-secret-only');
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ password: 'synthetic-secret-only' }), owner.id); expect(save).toHaveBeenCalledTimes(1); expect(JSON.stringify(window.localStorage)).not.toContain('synthetic-secret-only');
   await act(async () => finish(credential)); expect(saved).toHaveBeenCalledWith(credential); expect(host.querySelector<HTMLInputElement>('[aria-label="服务密码"]')!.value).toBe('');
 });
 it('redacts failure bodies, freezes unknown saves, recovers by original request without secret replay', async () => {
@@ -40,7 +40,7 @@ it('redacts failure bodies, freezes unknown saves, recovers by original request 
   expect(host.textContent).not.toContain('synthetic-secret-only'); expect(button('确认安全保存凭据').disabled).toBe(true);
   expect(host.querySelector<HTMLInputElement>('[aria-label="服务密码"]')!.value).toBe('');
   const id = save.mock.calls[0][0].requestId;
-  await act(async () => button('核对原凭据请求').click()); expect(recover).toHaveBeenCalledWith(id); expect(save).toHaveBeenCalledTimes(1); expect(saved).toHaveBeenCalledWith(credential);
+  await act(async () => button('核对原凭据请求').click()); expect(recover).toHaveBeenCalledWith(id, owner.id); expect(save).toHaveBeenCalledTimes(1); expect(saved).toHaveBeenCalledWith(credential);
 });
 it('cancel clears input and never saves credentials', async () => { const save = vi.spyOn(personalRemoteApi, 'saveCredential'); await mountCredential(); await fill(); await act(async () => button('取消并清空').click()); expect(cancelled).toHaveBeenCalled(); expect(save).not.toHaveBeenCalled(); expect(host.querySelector<HTMLInputElement>('[aria-label="服务密码"]')!.value).toBe(''); });
 it('uses deployment availability and does not imply remote execution readiness', async () => {
@@ -81,7 +81,7 @@ it('recovers original receipt after form destination changes without resubmittin
   window.localStorage.setItem(`factory-credential-pending:${owner.id}`, 'original-request');
   const recover = vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue({ ...credential, destination: 'https://original.example.org' });
   const save = vi.spyOn(personalRemoteApi, 'saveCredential'); await mountCredential();
-  await act(async () => button('核对原凭据请求').click()); expect(recover).toHaveBeenCalledWith('original-request'); expect(saved).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://original.example.org' })); expect(save).not.toHaveBeenCalled();
+  await act(async () => button('核对原凭据请求').click()); expect(recover).toHaveBeenCalledWith('original-request', owner.id); expect(saved).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://original.example.org' })); expect(save).not.toHaveBeenCalled();
 });
 it('recovers unknown binding through original owner-scoped receipt without rebinding', async () => {
   window.localStorage.setItem(`factory-remote-pending:${owner.id}`, JSON.stringify({ requestId: 'original-bind', action: 'bind' }));
@@ -118,7 +118,7 @@ it('collects an existing ORX service token without asking for a model key or use
   expect(host.querySelector('[aria-label="服务用户名"]')).toBeNull(); expect(host.textContent).toContain('不要填写模型 API 密钥');
   const input = host.querySelector<HTMLInputElement>('[aria-label="OpenResearch 服务令牌"]')!; expect(input.type).toBe('password');
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'synthetic-service-token'); input.dispatchEvent(new Event('input', { bubbles: true })); host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click(); });
-  await act(async () => button('确认安全保存凭据').click()); expect(save).toHaveBeenCalledWith(expect.objectContaining({ username: 'bearer', password: 'synthetic-service-token' })); expect(JSON.stringify(localStorage)).not.toContain('synthetic-service-token'); expect(input.value).toBe('');
+  await act(async () => button('确认安全保存凭据').click()); expect(save).toHaveBeenCalledWith(expect.objectContaining({ username: 'bearer', password: 'synthetic-service-token' }), owner.id); expect(JSON.stringify(localStorage)).not.toContain('synthetic-service-token'); expect(input.value).toBe('');
 });
 it('requires explicit ORX auth mode and carries an optional existing session template only in the configuration request', async () => {
   const providerId = 'openresearch-personal-session-v1'; const stored = { ...credential, providerId };
@@ -130,4 +130,12 @@ it('requires explicit ORX auth mode and carries an optional existing session tem
   expect(button('输入并保存个人凭据').disabled).toBe(true); await field('OpenResearch 认证方式', 'bearer'); expect(button('输入并保存个人凭据').disabled).toBe(false);
   await field('新会话模板 ID（可选）', 'existing-session-template'); await field('已有此目标的凭据', stored.credentialRef); await act(async () => button('确认保存配置').click());
   await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1)); expect(configure).toHaveBeenCalledWith(expect.objectContaining({ authMode: 'bearer', sessionTemplateId: 'existing-session-template', projectId: 'native-project', credentialRef: stored.credentialRef }), undefined); expect(JSON.stringify(localStorage)).not.toContain('existing-session-template');
+});
+
+it('binds remote service secret custody to the form owner and clears a rejected stale-tab draft', async () => {
+  const save = vi.spyOn(personalRemoteApi, 'saveCredential').mockRejectedValue(new RemoteRequestError(true, 'EXPECTED_OWNER_MISMATCH'));
+  await mountCredential(); await fill(); await act(async () => button('确认安全保存凭据').click());
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ password: 'synthetic-secret-only' }), owner.id);
+  expect(saved).not.toHaveBeenCalled(); expect(host.querySelector<HTMLInputElement>('[aria-label="服务密码"]')!.value).toBe('');
+  expect(localStorage.getItem('factory-credential-pending:fixture-owner')).toBeNull();
 });

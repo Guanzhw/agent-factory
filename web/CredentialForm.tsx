@@ -17,7 +17,8 @@ export function CredentialForm({ owner, providerId, destination, onSaved, onCanc
     if (pending.current || unknown || !consent || !serviceToken && !username || !password) return;
     pending.current = true; setBusy(true); setRejected(false); const id = crypto.randomUUID(); setRequestId(id);
     try { window.localStorage.setItem(storageKey, id); } catch { setRequestId(''); setRejected(true); setUsername(''); setPassword(''); setConsent(false); setBusy(false); pending.current = false; return; }
-    try { accepted(await personalRemoteApi.saveCredential({ providerId, destination, username: serviceToken ? 'bearer' : username, password, requestId: id })); }
+    const secret = password; setPassword('');
+    try { accepted(await personalRemoteApi.saveCredential({ providerId, destination, username: serviceToken ? 'bearer' : username, password: secret, requestId: id }, owner)); }
     catch (error) {
       setUsername(''); setPassword('');
       if (error instanceof RemoteRequestError && error.rejected) {
@@ -30,7 +31,7 @@ export function CredentialForm({ owner, providerId, destination, onSaved, onCanc
   async function recover() {
     if (pending.current || !requestId) return;
     pending.current = true; setBusy(true);
-    try { accepted(await personalRemoteApi.recoverCredential(requestId), true); }
+    try { accepted(await personalRemoteApi.recoverCredential(requestId, owner), true); }
     catch { setUnknown(true); }
     finally { setBusy(false); pending.current = false; }
   }
