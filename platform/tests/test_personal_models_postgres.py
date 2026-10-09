@@ -172,6 +172,11 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             time.sleep(.05)
         self.assertEqual(native.get('status'), 'completed', native)
         self.assertEqual(len(self.calls), 2)
+        # Capture history after the public observer records native completion.
+        detail = self.request('GET', '/jobs/' + task['id'])
+        self.assertEqual(detail['job']['status'], 'completed')
+        task = self.store.task_for_request('credential-context-task', 'alice')
+        self.assertEqual(task['body']['lastStatus'], 'completed')
         self.assertIsNone(self.store.usage_ledger)
         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
         plan = self.store.plan(task['plan_id'], 'alice')
@@ -254,6 +259,33 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             connection_refs={'ownerModel': model['connectionRef']})
         self.assertEqual(plan['status'], 'ready', plan)
         self.assertNotIn('usageBudget', plan)
+        self.assertEqual(self.calls, [])
+
+    def test_new_models_reuse_saved_credential_and_server_rechecks_scope_and_revision(self):
+        credential = self.request('POST', '/personal-credentials', {'requestId': 'existing-key',
+            'providerId': PROVIDER_ID, 'destination': 'https://models.example.com',
+            'username': 'api-key', 'password': 'synthetic-test-password'}, expected=201, expected_owner='alice')
+        body = {'provider': 'openai-compatible', 'baseURL': 'https://models.example.com/v1', 'model': 'fixture-model',
+            'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision']}
+        self.request('POST', '/personal-models', body | {'requestId': 'foreign-existing'}, owner='bob', expected_owner='bob', expected=403)
+        for request_id, changed in [('wrong-origin', {'baseURL': 'https://other.example.com/v1'}),
+                ('wrong-revision', {'credentialRevision': 'forged-revision'})]:
+            self.request('POST', '/personal-models', body | changed | {'requestId': request_id}, expected_owner='alice', expected=403)
+        self.assertEqual(self.request('GET', '/personal-models'), [])
+        first = self.request('POST', '/personal-models', body | {'requestId': 'reuse-first'}, expected=201, expected_owner='alice')
+        second = self.request('POST', '/personal-models', body | {'model': 'another-fixture-model', 'requestId': 'reuse-second'}, expected=201, expected_owner='alice')
+        self.assertNotEqual(first['reference'], second['reference'])
+        self.assertEqual(len(self.request('GET', '/personal-credentials')), 1)
+        rotated = self.request('POST', '/personal-credentials/' + credential['credentialRef'] + '/rotate', {
+            'requestId': 'reuse-rotate', 'credentialRevision': credential['credentialRevision'],
+            'username': 'api-key', 'password': 'synthetic-rotated-password'})
+        self.request('POST', '/personal-models', body | {'requestId': 'stale-existing'}, expected_owner='alice', expected=403)
+        self.request('POST', '/personal-credentials/' + rotated['credentialRef'] + '/revoke', {
+            'requestId': 'reuse-revoke', 'credentialRevision': rotated['credentialRevision']})
+        self.request('POST', '/personal-models', body | {'credentialRevision': rotated['credentialRevision'],
+            'requestId': 'revoked-existing'}, expected_owner='alice', expected=403)
+        self.auth.authorization.unassign('alice', 'factory-user')
+        self.request('POST', '/personal-models', body | {'requestId': 'permission-ended'}, expected_owner='alice', expected=403)
         self.assertEqual(self.calls, [])
 
     def test_rejected_secret_input_destination_and_current_permission(self):

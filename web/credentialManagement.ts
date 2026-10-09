@@ -39,3 +39,10 @@ export function matchCredentialReceipt(value: unknown, command: CredentialComman
       command.action !== 'revoke' && row.status !== 'active') throw new Error('Mismatched receipt');
   return row;
 }
+export function readUnresolvedCommands(raw: string | null, owner: string): CredentialCommand[] {
+  try {
+    const values: unknown = JSON.parse(raw ?? '[]');
+    if (!Array.isArray(values) || values.length > 100) return [];
+    return values.map(value => readCredentialCommand(JSON.stringify(value), owner)).filter((value): value is CredentialCommand => value !== null);
+  } catch { return []; }
+}

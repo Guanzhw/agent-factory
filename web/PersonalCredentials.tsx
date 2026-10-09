@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
-import { credentialDestination, credentialReceipt, matchCredentialReceipt, readCredentialCommand, type CredentialCommand } from './credentialManagement.js';
+import { credentialDestination, credentialReceipt, matchCredentialReceipt, readCredentialCommand, readUnresolvedCommands, type CredentialCommand } from './credentialManagement.js';
 
 const providerName = (id: string) => ({ 'byok-chat-v1': 'Agno 模型 API', 'openresearch-personal-session-v1': 'OpenResearch 服务', 'opencode-serve-v1': 'OpenCode 服务（可选）' })[id] ?? id;
 export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId: string; onChanged: () => void; onModels?: () => void }) {
   const storage = `factory-credential-management:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState(() => { try { return readCredentialCommand(localStorage.getItem(storage), ownerId); } catch { return null; } });
+  const unresolvedStorage = `${storage}:unresolved`;
+  const [unresolved, setUnresolved] = useState(() => { try { return readUnresolvedCommands(localStorage.getItem(unresolvedStorage), ownerId); } catch { return []; } });
+  const [confirmAbandon, setConfirmAbandon] = useState(false);
   const [rows, setRows] = useState<PersonalCredential[]>([]); const [providers, setProviders] = useState<string[]>([]);
   const [ready, setReady] = useState(false); const [enabled, setEnabled] = useState(false); const [blocked, setBlocked] = useState(false);
   const [refresh, setRefresh] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
@@ -16,7 +19,7 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
   const lock = useRef(false); const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   function clearDraft() { setPassword(''); setUsername(''); setConsent(false); setEditing(undefined); setRevoking(undefined); setForm(false); }
-  function accountChanged() { clearDraft(); setRows([]); setPending(null); setReady(false); setBlocked(true); setError('当前登录账户已改变。已清空输入，请刷新后管理自己的凭据。'); }
+  function accountChanged() { clearDraft(); setRows([]); setPending(null); setUnresolved([]); setConfirmAbandon(false); setReady(false); setBlocked(true); setError('当前登录账户已改变。已清空输入，请刷新后管理自己的凭据。'); }
   async function verifyOwner() {
     const session = await api.session();
     if (!alive.current) throw new Error('Unmounted');
@@ -36,9 +39,28 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
     // The parent mounts this panel with an owner key; a changed account blocks it.
   }, [ownerId, refresh]);
   function retain(command: CredentialCommand) { localStorage.setItem(storage, JSON.stringify(command)); setPending(command); }
-  function accepted(value: unknown, command: CredentialCommand) {
-    matchCredentialReceipt(value, command); localStorage.removeItem(storage); setPending(null); clearDraft(); setRefresh(n => n + 1); onChanged();
+  function accepted(value: unknown, command: CredentialCommand, archived = false) {
+    matchCredentialReceipt(value, command);
+    if (archived) { const next = unresolved.filter(item => item.requestId !== command.requestId); localStorage.setItem(unresolvedStorage, JSON.stringify(next)); setUnresolved(next); }
+    else { localStorage.removeItem(storage); setPending(null); }
+    setConfirmAbandon(false); clearDraft(); setRefresh(n => n + 1); onChanged();
     setNotice(command.action === 'revoke' ? '凭据已撤销。关联连接的后续使用会被拒绝；原任务、上下文与结果保留。' : command.action === 'rotate' ? '凭据已更换。请在模型设置或远程连接中显式绑定新版本；原任务不会自动换用新凭据。' : '凭据已安全保存。可在模型设置或远程连接中绑定使用。');
+  }
+  function stopWaiting() {
+    if (!pending || busy || blocked || unresolved.length >= 100) return;
+    void run(async () => {
+      const next = [...unresolved.filter(item => item.requestId !== pending.requestId), pending];
+      // Preserve the original lookup before releasing the local editing lock.
+      localStorage.setItem(unresolvedStorage, JSON.stringify(next)); localStorage.removeItem(storage);
+      setUnresolved(next); setPending(null); setConfirmAbandon(false); clearDraft(); setReady(false); setRefresh(n => n + 1);
+      setNotice('已停止等待，原请求保留在未确认记录中。原操作仍可能已执行或随后完成；请核对最新列表，任何新操作都需要重新确认。');
+    });
+  }
+  function recover(command: CredentialCommand, archived = false) {
+    void run(async () => {
+      try { const receipt = await personalRemoteApi.recoverCredential(command.requestId, ownerId); if (alive.current) accepted(receipt, command, archived); }
+      catch (e) { if (e instanceof RemoteRequestError && e.code === 'EXPECTED_OWNER_MISMATCH') throw e; if (alive.current) setError('暂未取得可读回执。这不代表原操作从未执行；原请求仍保留，可稍后核对或明确停止等待。'); }
+    });
   }
   async function run(work: () => Promise<void>) {
     if (lock.current || blocked) return; lock.current = true; setBusy(true); setError(''); setNotice('');
@@ -80,7 +102,8 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
     <div className="button-row"><button disabled={busy || blocked} onClick={() => setRefresh(n => n + 1)}>重新读取凭据</button>{onModels && <button disabled={busy} onClick={onModels}>管理模型/API 设置</button>}</div>
     {!ready && !error && <p role="status">正在读取个人凭据…</p>}
     {ready && !enabled && <p className="state-note">此部署尚未启用安全凭据保险库。管理员仅需维护部署，不需要接收你的明文密钥。</p>}
-    {pending && <div className="state-note"><h3>上次凭据操作尚未确认</h3><p>输入已清空，仅保留原请求标识。核对不会重发秘密、轮换或撤销。</p><button disabled={busy || blocked} onClick={() => void run(async () => { const receipt = await personalRemoteApi.recoverCredential(pending.requestId, ownerId); if (alive.current) accepted(receipt, pending); })}>核对原凭据操作</button></div>}
+    {pending && <div className="state-note"><h3>上次凭据操作尚未确认</h3><p>输入已清空，仅保留原请求标识。核对不会重发秘密、轮换或撤销。没有回执不代表没有执行。</p><div className="button-row"><button disabled={busy || blocked} onClick={() => recover(pending)}>核对原凭据操作</button><button disabled={busy || blocked || unresolved.length >= 100} onClick={() => setConfirmAbandon(true)}>停止等待此操作</button></div>{confirmAbandon && <div><p>停止等待不会取消服务端操作。它可能已经保存或随后完成；再次添加可能得到另一条凭据。我们会保留原请求供后续核对，并先重新读取当前状态。不会自动重发秘密。</p><button disabled={busy || blocked} onClick={stopWaiting}>确认停止等待并保留原请求</button><button disabled={busy} onClick={() => setConfirmAbandon(false)}>继续等待</button></div>}</div>}
+    {unresolved.length > 0 && <details className="technical-detail"><summary>未确认的原请求（{unresolved.length}）</summary><p>这些操作仍可能已发生。停止等待只解除页面等待，不取消请求，也不证明它没有执行。</p>{unresolved.map(command => <div key={command.requestId}><p>{providerName(command.providerId)} · {command.destination} · 原请求 {command.requestId}</p><button disabled={busy || blocked || !!pending || form} onClick={() => recover(command, true)}>核对保留的原请求</button></div>)}</details>}
     {ready && !rows.length && <p className="list-empty">尚未保存个人凭据。可添加服务凭据，或在模型设置中一次保存模型与 API 密钥。</p>}
     {rows.map(row => <article className="model-record" key={row.credentialRef}><div><h3>{providerName(row.providerId)}</h3><p>{row.destination}</p><span className={`badge status-${row.status === 'active' ? 'completed' : 'failed'}`}>{row.status === 'active' ? '已保存' : '已撤销'}</span></div><details className="technical-detail"><summary>凭据引用与版本</summary><p>{row.credentialRef}</p><p>{row.credentialRevision}</p></details>{row.status === 'active' && <div className="button-row"><button disabled={disabled || !enabled || !providers.includes(row.providerId)} onClick={() => edit(row)}>更换凭据</button><button className="danger" disabled={disabled} onClick={() => { clearDraft(); setRevoking(row); }}>撤销凭据</button></div>}{revoking?.credentialRef === row.credentialRef && <div className="state-note"><p>确认撤销用于 {row.destination} 的凭据？所有关联连接的后续使用都将失效，历史记录保留。</p><button className="danger" disabled={disabled} onClick={() => revoke(row)}>确认撤销凭据</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留凭据</button></div>}</article>)}
     {ready && enabled && !pending && !form && <button disabled={disabled} onClick={() => edit()}>添加个人凭据</button>}

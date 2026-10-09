@@ -83,6 +83,24 @@ it('keeps a retired provider credential revocable while disabling its rotation',
   await act(async () => button('撤销凭据').click()); await act(async () => button('确认撤销凭据').click());
   expect(personalRemoteApi.revokeCredential).toHaveBeenCalledWith(row, expect.any(String), 'alice');
 });
+it('keeps a 404 ambiguous, permits explicit stop-waiting, and retains lookup across refresh without replay', async () => {
+  vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new Error('not delivered'));
+  const recovery = vi.spyOn(personalRemoteApi, 'recoverCredential').mockRejectedValue(new RemoteRequestError(true));
+  await mount(); await add(); await act(async () => button('安全保存个人凭据').click());
+  const command = JSON.parse(localStorage.getItem(storage)!);
+  await act(async () => button('核对原凭据操作').click());
+  expect(localStorage.getItem(storage)).not.toBeNull(); expect(host.textContent).toContain('不代表原操作从未执行');
+  await act(async () => button('停止等待此操作').click()); expect(localStorage.getItem(storage)).not.toBeNull();
+  await act(async () => button('确认停止等待并保留原请求').click());
+  expect(localStorage.getItem(storage)).toBeNull(); expect(JSON.parse(localStorage.getItem(storage + ':unresolved')!)).toEqual([command]);
+  expect(button('添加个人凭据').disabled).toBe(false); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1); expect(JSON.stringify(localStorage)).not.toContain(secret);
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  expect(button('添加个人凭据').disabled).toBe(false); expect(host.textContent).toContain('未确认的原请求（1）');
+  // A late commit can become visible even after 404 and explicit stop-waiting.
+  recovery.mockResolvedValue(row); await act(async () => button('核对保留的原请求').click());
+  expect(recovery).toHaveBeenLastCalledWith(command.requestId, 'alice'); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(localStorage.getItem(storage + ':unresolved')!)).toEqual([]);
+});
 it('rejects secret-bearing, foreign pending, changed-scope and wrong-revision receipts', () => {
   const command = { owner: 'alice', action: 'rotate' as const, requestId: 'fixture-request', providerId: row.providerId, destination: row.destination, credentialRef: row.credentialRef, credentialRevision: row.credentialRevision };
   expect(readCredentialCommand(JSON.stringify(command), 'alice')).toEqual(command); expect(readCredentialCommand(JSON.stringify(command), 'bob')).toBeNull();
