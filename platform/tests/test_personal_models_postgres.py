@@ -158,6 +158,52 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException): restarted.personal_models.default('alice')
         self.assertEqual(self.calls, [])
 
+    def test_vault_lifecycle_blocks_future_use_preserves_native_task_context(self):
+        credential, model = self.configured()
+        old_handle = self.store.connections.resolve('alice', model['connectionRef'], 'model')
+        self.request('POST', '/personal-research', {'topic': 'Synthetic retained context',
+            'requestId': 'credential-context-task'}, expected=202)
+        task = self.store.task_for_request('credential-context-task', 'alice')
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            native = self.store.native_db.get_job(task['run_id']) or {}
+            if native.get('status') in {'completed', 'failed'}:
+                break
+            time.sleep(.05)
+        self.assertEqual(native.get('status'), 'completed', native)
+        self.assertEqual(len(self.calls), 2)
+        self.assertIsNone(self.store.usage_ledger)
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
+        plan = self.store.plan(task['plan_id'], 'alice')
+        events = self.store.events(task['id'])
+        rotated = self.request('POST', '/personal-credentials/' + credential['credentialRef'] + '/rotate', {
+            'requestId': 'context-rotate', 'credentialRevision': credential['credentialRevision'],
+            'username': 'api-key', 'password': 'synthetic-rotated-password'}, expected_owner='alice')
+        with self.assertRaises(HTTPException):
+            old_handle.credential()
+        self.request('POST', '/personal-research', {'topic': 'No stale binding', 'requestId': 'context-stale'}, expected=409)
+        updated = self.request('POST', '/personal-models/' + model['reference'] + '/configure', {
+            'provider': model['provider'], 'baseURL': model['baseURL'], 'model': model['model'],
+            'credentialRef': rotated['credentialRef'], 'credentialRevision': rotated['credentialRevision'],
+            'requestId': 'context-rebind'}, expected_owner='alice')
+        current_handle = self.store.connections.resolve('alice', updated['connectionRef'], 'model')
+        self.request('POST', '/personal-credentials/' + rotated['credentialRef'] + '/revoke', {
+            'requestId': 'context-revoke', 'credentialRevision': rotated['credentialRevision']}, expected_owner='alice')
+        with self.assertRaises(HTTPException):
+            current_handle.credential()
+        self.request('POST', '/personal-research', {'topic': 'No revoked binding', 'requestId': 'context-revoked'}, expected=409)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.store.plan(task['plan_id'], 'alice'), plan)
+        retained = self.store.task_for_request('credential-context-task', 'alice')
+        for key in ('id', 'owner_id', 'plan_id', 'run_id', 'body'):
+            self.assertEqual(retained[key], task[key])
+        self.assertEqual(self.store.native_db.get_job(task['run_id'])['status'], 'completed')
+        self.assertTrue(all(event in self.store.events(task['id']) for event in events))
+        persisted = json.dumps({'plan': plan, 'task': retained, 'events': self.store.events(task['id'])}, default=str)
+        for secret in ('synthetic-test-password', 'synthetic-rotated-password'):
+            self.assertNotIn(secret, persisted)
+            self.assertTrue(all(secret not in request.content.decode() for request in self.calls))
+
     def test_legacy_enabled_host_byok_job_reads_without_commitment(self):
         # Exercise actual startup accounting configuration, native admission and
         # public reads; a composition-only check cannot catch detail's inspect.
@@ -238,9 +284,12 @@ class PersonalModelsPostgresTests(unittest.TestCase):
                 ('/personal-models/' + model['reference'] + '/revoke', {'requestId': 'stale-revoke'}),
                 ('/personal-credentials/' + credential['credentialRef'] + '/rotate',
                 {'credentialRevision': credential['credentialRevision'], 'username': 'api-key',
-                 'password': 'synthetic-rotated-password', 'requestId': 'stale-rotate'})]:
+                 'password': 'synthetic-rotated-password', 'requestId': 'stale-rotate'}),
+                ('/personal-credentials/' + credential['credentialRef'] + '/revoke',
+                 {'credentialRevision': credential['credentialRevision'], 'requestId': 'stale-vault-revoke'})]:
             self.request('POST', path, body, owner='bob', expected_owner='alice', expected=403)
         self.request('GET', '/personal-models', owner='bob', expected_owner='alice', expected=403)
+        self.request('GET', '/personal-credentials', owner='bob', expected_owner='alice', expected=403)
         self.assertEqual(self.request('GET', '/personal-models', owner='bob'), [])
         self.assertEqual(self.request('GET', '/personal-credentials', owner='bob'), before)
         self.assertEqual(self.request('GET', '/personal-models')[0]['status'], 'configured')

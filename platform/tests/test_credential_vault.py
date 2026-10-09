@@ -52,6 +52,26 @@ class CredentialVaultTests(unittest.TestCase):
         self.assertNotIn("s" * 32, repr(self.vault))
         self.assertIn("redacted", repr(self.vault))
 
+    def test_retired_provider_denies_use_and_rotation_but_owner_can_erase_credential(self):
+        created = self.create()
+        retired = EncryptedCredentialVault(self.engine, b"s" * 32, {"other-installed-provider": origin})
+        scope = self.scope(created)
+        self.assertFalse(retired.authorize(**scope))
+        with self.assertRaises(CredentialVaultError):
+            retired.resolve(**scope)
+        command = {key: scope[key] for key in ("owner", "reference", "revision")}
+        with self.assertRaises(CredentialVaultError):
+            retired.rotate(**command, username="synthetic-user", password=PASSWORD)
+        with self.assertRaises(CredentialVaultError):
+            retired.revoke(**(command | {"owner": "bob"}))
+        receipt = retired.revoke(**command, request_id="retired-provider-revoke")
+        self.assertEqual(receipt["status"], "revoked")
+        with self.engine.connect() as conn:
+            row = conn.execute(select(retired.credentials)).mappings().one()
+        self.assertEqual(row["ciphertext"], b"")
+        self.assertEqual(row["nonce"], b"")
+        self.assertFalse(self.vault.authorize(**scope))
+
     def test_ciphertext_only_sql_logs_distinct_nonce_and_restart(self):
         captured = io.StringIO()
         handler = logging.StreamHandler(captured)

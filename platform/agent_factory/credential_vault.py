@@ -146,7 +146,7 @@ class EncryptedCredentialVault:
         return {"credentialRef": row["reference"], "credentialRevision": row["revision"],
                 "providerId": row["provider_id"], "destination": row["destination"], "status": row["state"].lower()}
 
-    def _row(self, conn, owner, reference, revision):
+    def _row(self, conn, owner, reference, revision, *, current_policy=True):
         if not all(self._identifier(value) for value in (owner, reference, revision)):
             raise CredentialRequestRejected()
         row = conn.execute(select(self.credentials).where(self.credentials.c.owner_id == owner,
@@ -154,7 +154,8 @@ class EncryptedCredentialVault:
             self.credentials.c.state == "ACTIVE")).mappings().first()
         if row is None:
             raise CredentialRequestRejected()
-        self._destination(row["provider_id"], row["destination"])
+        if current_policy:
+            self._destination(row["provider_id"], row["destination"])
         return dict(row)
 
     def capabilities(self):
@@ -255,7 +256,9 @@ class EncryptedCredentialVault:
 
     def revoke(self, *, owner, reference, revision, request_id=None):
         def execute(conn):
-            row = self._row(conn, owner, reference, revision)
+            # Retiring a provider/target policy must not prevent an owner from
+            # erasing an exact owned credential. No decryption or use is allowed.
+            row = self._row(conn, owner, reference, revision, current_policy=False)
             result = conn.execute(self.credentials.update().where(self.credentials.c.owner_id == owner,
                 self.credentials.c.reference == reference, self.credentials.c.revision == revision,
                 self.credentials.c.state == "ACTIVE").values(state="REVOKED", ciphertext=b"", nonce=b""))

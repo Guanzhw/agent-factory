@@ -14,6 +14,32 @@ from pg_fixture import IsolatedPostgres
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
 class CredentialVaultPostgresTests(unittest.TestCase):
+    def test_retired_provider_owner_revoke_erases_ciphertext_without_new_authority(self):
+        with IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database:
+            engine = create_engine(database.url)
+            try:
+                vault = EncryptedCredentialVault(engine, b"s" * 32, {PROVIDER_ID: origin})
+                created = vault.create(owner="alice", provider_id=PROVIDER_ID, destination="https://runtime.example.com",
+                    username="synthetic-user", password="synthetic-password", request_id="retire-create")
+                retired = EncryptedCredentialVault(engine, b"s" * 32, {"other-installed-provider": origin})
+                scope = dict(owner="alice", reference=created["credentialRef"], revision=created["credentialRevision"],
+                    provider_id=PROVIDER_ID, destination=created["destination"])
+                self.assertFalse(retired.authorize(**scope))
+                with self.assertRaises(CredentialVaultError):
+                    retired.resolve(**scope)
+                command = {key: scope[key] for key in ("owner", "reference", "revision")}
+                with self.assertRaises(CredentialVaultError):
+                    retired.revoke(**(command | {"owner": "bob"}), request_id="retire-bob")
+                receipt = retired.revoke(**command, request_id="retire-alice")
+                self.assertEqual(receipt["status"], "revoked")
+                self.assertEqual(retired.recover(owner="alice", request_id="retire-alice"), receipt)
+                self.assertIsNone(retired.recover(owner="bob", request_id="retire-alice"))
+                with engine.connect() as conn:
+                    row = conn.execute(select(vault.credentials)).mappings().one()
+                self.assertEqual((row["ciphertext"], row["nonce"]), (b"", b""))
+            finally:
+                engine.dispose()
+
     def test_ciphertext_restart_rotation_revoke_and_cas(self):
         database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         self.addCleanup(database.__exit__, None, None, None)

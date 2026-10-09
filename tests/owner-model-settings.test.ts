@@ -103,3 +103,14 @@ it('clears drafts on a server-side owner mismatch in the race after live preflig
   await mount(); await save(); expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(host.textContent).toContain('当前登录账户已改变');
   expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
 });
+
+it('explicitly binds the latest saved credential revision without asking for or replaying a secret', async () => {
+  const stale = { ...row, status: 'credential_unavailable' as const, available: false, isDefault: true };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([stale]);
+  vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([{ ...credential, credentialRevision: 'rotated-r2' }]);
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, isDefault: true, credentialRevision: 'rotated-r2', connectionRef: 'updated-connection' });
+  await mount(); expect(button('绑定更新后的凭据')).toBeDefined(); await act(async () => button('绑定更新后的凭据').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ credentialRef: credential.credentialRef, credentialRevision: 'rotated-r2' }), row.reference);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('旧任务绑定会按服务端规则重新检查'); expect(JSON.stringify(localStorage)).not.toContain(secret);
+});
