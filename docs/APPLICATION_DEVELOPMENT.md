@@ -20,7 +20,7 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 | 组合、计划与任务 | 本指南中的 proposals、plans、instances 请求；保留原 `requestId` 与 payload，同 ID 改意图会冲突 |
 | 可信能力注册 | 已审 `AdapterRegistration`、`NativeWorkflowRegistration` 和精确 revision/config pin；声明不能安装代码或扩大权限 |
 | 外部异步操作 | [`WorkflowAdapter`](../platform/agent_factory/workflow_contracts.py) 的 `start/lookup/inspect/cancel`、原 operation ID 和停止证据 |
-| 原生工作流投影 | `/api/factory/workflows/{task_id}` 的 schema 2；`decide/reconcile/cancel` 核对当前 snapshot `version` 摘要，不能将它当可排序版本号 |
+| 原生工作流投影 | `/api/factory/workflows/{task_id}` 的 schema 2；`decide/reconcile` 核对当前 snapshot `version` 摘要，不能将它当可排序版本号；`cancel` 仅提交 `commandId/action`，不携带 `version` |
 
 可信工厂使用的 `BindingContext` 是本进程的接线上下文，其 `store`、内部 service、
 数据库表、下划线方法和测试 helper 没有独立公开 SDK 的兼容保证。
