@@ -231,7 +231,9 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         evaluator_target = replace(target, provider=self.evaluator)
         settings = research_settings(db_url=db.url, workspace=root, target_ref='local', remote_targets={'local': target, 'evaluator': evaluator_target}, comparison_manifest=self.manifest)
         evaluator_adapters = registrations(target_ref='evaluator', comparison_manifest=self.manifest, adapter_suffix='-evaluator')
-        settings = replace(settings, runtime_adapters=[*settings.runtime_adapters, *evaluator_adapters],
+        # Exercise the retained zero-priced ledger compatibility path explicitly;
+        # ordinary owner defaults remain disabled. No paid provider is called.
+        settings = replace(settings, fee_management_enabled=True, platform_paid_models_enabled=True, runtime_adapters=[*settings.runtime_adapters, *evaluator_adapters],
             usage_pricing=(*settings.usage_pricing, replace(settings.usage_pricing[0], adapter_id=settings.usage_pricing[0].adapter_id + '-evaluator')))
         self.app = create_app(settings); self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']; self.runtime = self.store.research_runtime
