@@ -184,6 +184,9 @@ class PersonalCommandAPI:
         @self.router.get('/project-selection/requests/{request_id}')
         def selected_project_request(request_id: str, request: Request):
             return self.projects.selected_request(owner(request), request_id)
+        @self.router.get('/project-selection/requests/{request_id}/status')
+        def selected_project_status(request_id: str, request: Request):
+            return self.projects.selection_status(owner(request), request_id)
         @self.router.get('/native-sessions')
         def native_sessions(request: Request, connectionRef: str):
             return self.sessions.native_sessions(owner(request), connectionRef)

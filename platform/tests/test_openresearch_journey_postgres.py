@@ -2,11 +2,49 @@
 import os
 import unittest
 from uuid import uuid4
+from unittest.mock import patch
+from fastapi import HTTPException
+from agent_factory.personal_orx_projects import PersonalOrxProjects
 import test_personal_orx_projects_postgres as native
 
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL')
 class ResearchJourneyPostgresTests(unittest.TestCase):
+    def test_configuration_failure_partial_unknown_and_explicit_reselection_recovery(self):
+        fixture = native.OrxProjectPostgresTests('test_personal_orx_registration_uses_shared_contract_without_remote_probe')
+        with fixture.fixture():
+            request = fixture.request; route = '/personal-agent/project-selection'
+            body = {'requestId': 'missing-selection', 'connectionRef': fixture.bound['ref'], 'nativeProjectId': 'missing-project'}
+            request('POST', route, body, expected=404)
+            status = request('GET', route + '/requests/missing-selection/status')
+            self.assertEqual((status['state'], status['localConfiguration']), ('failed', 'none'))
+            request('GET', route + '/requests/missing-selection/status', owner='bob', expected=404)
+            body = {**body, 'requestId': 'partial-selection', 'nativeProjectId': 'native-project'}
+            with patch.object(fixture.store.connections.personal, 'verify', side_effect=HTTPException(409, 'synthetic verify rejected')):
+                request('POST', route, body, expected=409)
+            status = request('GET', route + '/requests/partial-selection/status')
+            self.assertEqual((status['state'], status['localConfiguration']), ('failed', 'partial'))
+            service = PersonalOrxProjects(fixture.store.connections, admission=lambda *_: None)
+            configure = fixture.store.connections.personal.configure
+            def lost_configuration(*args, **kwargs):
+                configure(*args, **kwargs)
+                raise RuntimeError('Synthetic lost local reply after commit')
+            with patch.object(fixture.store.connections.personal, 'configure', side_effect=lost_configuration):
+                with self.assertRaises(RuntimeError):
+                    service.select_existing('alice', fixture.bound['ref'], 'native-project', 'unknown-selection')
+            calls = len(fixture.wire.calls)
+            status = request('GET', route + '/requests/unknown-selection/status')
+            self.assertEqual((status['state'], status['localConfiguration']), ('unknown', 'partial'))
+            request('POST', route, {**body, 'requestId': 'unknown-selection'}, expected=409)
+            self.assertEqual(len(fixture.wire.calls), calls)
+            selected = request('POST', route, {**body, 'requestId': 'explicit-new-selection'})
+            status = request('GET', route + '/requests/explicit-new-selection/status')
+            self.assertEqual(status['connection']['ref'], selected['ref'])
+            self.assertEqual(status['state'], 'complete')
+            self.assertFalse(any(call[0] != 'GET' for call in fixture.wire.calls))
+            self.assertEqual(fixture.wire.prompts, 0)
+            self.assertEqual(fixture.wire.creation_posts, 0)
+
     def test_select_native_project_create_goal_result_continue_and_owner_isolation(self):
         fixture = native.OrxProjectPostgresTests('test_personal_orx_registration_uses_shared_contract_without_remote_probe')
         with fixture.fixture():

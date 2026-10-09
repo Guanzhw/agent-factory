@@ -28,7 +28,7 @@ def main():
         'test_remote_authority.OriginAuthorityPostgresTests.test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider',
     ]
     suite = unittest.defaultTestLoader.loadTestsFromNames(names)
-    expected = 20
+    expected = 21
     if suite.countTestCases() != expected:
         print('BOUNDARIES_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

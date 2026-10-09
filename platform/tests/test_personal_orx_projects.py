@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit, parse_qs
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -112,6 +112,68 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(replay['ref'], selected['ref'])
         self.fx.connections.revoke('alice', self.bound['ref'], 'revoke-setup-source')
         with self.assertRaises(HTTPException): self.service.select_existing('alice', self.bound['ref'], 'native-project', 'revoked-selection')
+
+    def test_selection_rejected_before_setup_survives_refresh_and_never_replays(self):
+        key = 'missing-project-selection'
+        with self.assertRaises(HTTPException) as error:
+            self.service.select_existing('alice', self.bound['ref'], 'missing-project', key)
+        self.assertEqual(error.exception.status_code, 404)
+        restarted = PersonalOrxProjects(self.fx.connections, admission=self.fx.admission)
+        status = restarted.selection_status('alice', key)
+        self.assertEqual((status['state'], status['localConfiguration'], status['failureStatus']), ('failed', 'none', 404))
+        calls = len(self.wire.calls)
+        with self.assertRaises(HTTPException): restarted.select_existing('alice', self.bound['ref'], 'missing-project', key)
+        self.assertEqual(len(self.wire.calls), calls)
+        with self.assertRaises(HTTPException): restarted.select_existing('alice', self.bound['ref'], 'native-project', key)
+        with self.assertRaises(HTTPException) as foreign: restarted.selection_status('bob', key)
+        self.assertEqual(foreign.exception.status_code, 404)
+        selected = restarted.select_existing('alice', self.bound['ref'], 'native-project', 'explicit-new-selection')
+        self.assertEqual(selected['ownerId'], 'alice')
+
+    def test_selection_permission_rejection_has_terminal_read_only_receipt(self):
+        require = self.service.auth.require
+        def denied(owner, action):
+            if action == 'run': raise HTTPException(403, 'Synthetic permission rejected')
+            return require(owner, action)
+        with patch.object(self.service.auth, 'require', side_effect=denied):
+            with self.assertRaises(HTTPException) as error:
+                self.service.select_existing('alice', self.bound['ref'], 'native-project', 'denied-selection')
+            self.assertEqual(error.exception.status_code, 403)
+            status = self.service.selection_status('alice', 'denied-selection')
+        self.assertEqual((status['state'], status['localConfiguration'], status['failureStatus']), ('failed', 'none', 403))
+
+    def test_partial_validation_failure_is_terminal_but_retains_local_configuration(self):
+        with patch.object(self.fx.connections.personal, 'verify', side_effect=HTTPException(409, 'synthetic-private-secret')):
+            with self.assertRaises(HTTPException):
+                self.service.select_existing('alice', self.bound['ref'], 'native-project', 'partial-selection')
+        status = self.service.selection_status('alice', 'partial-selection')
+        self.assertEqual((status['state'], status['localConfiguration']), ('failed', 'partial'))
+        self.assertNotIn('synthetic-private-secret', json.dumps(status))
+        self.assertIsNone(status['connection'])
+        self.assertFalse(any(call[0] != 'GET' for call in self.wire.calls))
+
+    def test_lost_or_interrupted_configuration_is_unknown_not_nonexecution(self):
+        with patch.object(self.fx.connections.personal, 'verify', side_effect=RuntimeError('synthetic loss')):
+            with self.assertRaises(RuntimeError):
+                self.service.select_existing('alice', self.bound['ref'], 'native-project', 'unknown-selection')
+        status = self.service.selection_status('alice', 'unknown-selection')
+        self.assertEqual((status['state'], status['localConfiguration']), ('unknown', 'partial'))
+        calls = len(self.wire.calls)
+        with self.assertRaises(HTTPException):
+            self.service.select_existing('alice', self.bound['ref'], 'native-project', 'unknown-selection')
+        self.assertEqual(len(self.wire.calls), calls)
+        with self.assertRaises(HTTPException) as absent: self.service.selection_status('alice', 'absent-selection')
+        self.assertEqual(absent.exception.status_code, 404)
+
+    def test_final_binding_recovers_after_process_loss_before_selection_completion(self):
+        with patch.object(self.service, '_selection_state', side_effect=RuntimeError('synthetic lost completion')):
+            with self.assertRaises(RuntimeError):
+                self.service.select_existing('alice', self.bound['ref'], 'native-project', 'final-selection')
+        calls = len(self.wire.calls)
+        status = self.service.selection_status('alice', 'final-selection')
+        self.assertEqual(status['state'], 'complete')
+        self.assertEqual(status['connection']['ownerId'], 'alice')
+        self.assertEqual(len(self.wire.calls), calls)
 
     def test_preview_consent_sync_false_and_existing_session_research_chain(self):
         command = self.prepared()
