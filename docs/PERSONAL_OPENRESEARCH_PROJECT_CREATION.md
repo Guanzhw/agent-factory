@@ -95,6 +95,25 @@ they never submit automatically. The native tool rechecks current permission,
 exact plan/run identity, original credential/connection revision and consent
 after blocking address/credential IO, immediately before POST.
 
+The existing review request/list/inspect/decision APIs include
+`planSummary.projectCreation` (`schema: native-orx-project-review-v1`) for this
+application. This is a read-only projection of the original persisted plan,
+checked against its review digest and the versioned preview contract. It contains
+`requestId`, `previewHash`, exact `project` (`name`, `path`, source kind,
+`cloneUrl`, `paperId`), original `effects`, `billing`, and
+`ownerConsentSeparate: true`. It never projects raw `inputValues`, connection
+pins, credential references or resolved credentials, and requires no remote IO.
+The TypeScript contract is `PersonalOrxProjectReviewSummary` in `web/models.ts`.
+
+`billing.controllerLedgerScope` is `local-controller-only`;
+`remoteUsageStatus` and `remoteCostStatus` are `unknown`;
+`remoteCostIncludedInUsageBudget` and `hardRemoteBudgetEnforced` are false.
+The existing zero controller commitment remains unchanged and does **not** mean
+that native starter/model work is free. Managers must see the exact creation
+input, writes, possible model-context disclosure and owner-account charges.
+An unavailable or invalid review projection cannot be approved by the server;
+no HTTP input can substitute a summary or alter the immutable reviewed plan.
+
 Consent moves from `awaiting` to `approved` or `cancelled`. Cancelled consent is
 terminal. The last pre-send callback atomically claims `dispatch_started` only
 from `approved`. A cancellation winning that comparison prevents POST; a later
@@ -179,5 +198,6 @@ on that remote host, explicit consent to possible starter/model costs, harness
 and model selection, applicable plan reviews, and separately approved research
 messages. Collect actual native IDs/transcripts and recovery evidence. No real
 credential, model request, clone or research execution was used in this change.
-Frontend visual acceptance remains paused; mounted behavior is not browser/live
-acceptance. Managed multi-step execution and general installers are outside scope.
+Browser visual QA is tracked separately, including its outstanding fixes;
+mounted behavior is not browser/live acceptance. Managed multi-step execution
+and general installers are outside scope.

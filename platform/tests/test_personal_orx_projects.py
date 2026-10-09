@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from agent_factory.personal_command_api import PersonalCommandAPI
 from agent_factory.personal_command_profile import command_from_plan, validate_intent, PROJECT_APPLICATION_ID, TOOL_NAME
-from agent_factory.personal_orx_projects import PersonalOrxProjects, native_request, valid_native_request, ProjectInput
+from agent_factory.personal_orx_projects import PersonalOrxProjects, native_request, valid_native_request, ProjectInput, project_review_summary
 from agent_factory.personal_orx_transport import PERSONAL_ORX_PROVIDER_ID, PersonalOrxHTTPS
 from agent_factory.personal_remote_provider import RemoteConnectionError
 from agent_factory.store import canonical
@@ -267,6 +267,39 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(self.service.create('alice', command)['state'], 'acknowledged')
             self.assertTrue((target / 'synthetic-clone-marker').is_file())
             self.assertEqual(self.wire.creation_posts, 1)
+
+    def test_review_summary_uses_immutable_inputs_without_credential_projection_or_remote_io(self):
+        for source, extra in [('empty', {}), ('existing', {}), ('clone', {'cloneUrl': 'https://github.com/synthetic-fixture/example'}),
+                ('paper', {'paperId': '2601.12345'})]:
+            self.values = {'name': 'Synthetic ' + source, 'path': '/synthetic/' + source, 'source': source, **extra}
+            command = self.prepared('review-' + source)
+            values = {k: v for k, v in command.items() if k != 'projectBundle'}
+            values.update(connectionPin=canonical({**command['connectionPin'], 'credentialRef': 'synthetic-private-reference'}),
+                nativeSessionId='', agent='')
+            bundle = deepcopy(command['projectBundle'])
+            bundle['connectionPin']['credentialRef'] = 'synthetic-private-reference'
+            from agent_factory.store import digest
+            bundle['previewHash'] = digest({k: v for k, v in bundle.items() if k != 'previewHash'})
+            values['text'] = canonical(bundle)
+            plan = {'id': 'controlled-plan', 'application': PROJECT_APPLICATION_ID, 'mode': 'personal-command',
+                'tools': [TOOL_NAME], 'inputValues': values}
+            before = deepcopy(plan); calls = len(self.wire.calls)
+            summary = project_review_summary(plan)
+            self.assertEqual(summary['project'], {'name': self.values['name'], 'path': self.values['path'], 'source': source,
+                'cloneUrl': extra.get('cloneUrl'), 'paperId': extra.get('paperId')})
+            self.assertEqual(summary['effects'], bundle['disclosure'])
+            self.assertEqual(summary['previewHash'], bundle['previewHash'])
+            self.assertEqual(summary['billing']['controllerLedgerScope'], 'local-controller-only')
+            self.assertEqual(summary['billing']['remoteCostStatus'], 'unknown')
+            self.assertEqual(summary['billing']['remoteUsageStatus'], 'unknown')
+            self.assertFalse(summary['billing']['remoteCostIncludedInUsageBudget'])
+            self.assertTrue(summary['ownerConsentSeparate'])
+            self.assertNotIn('synthetic-private-reference', json.dumps(summary))
+            self.assertNotIn('connectionPin', summary)
+            self.assertEqual(plan, before); self.assertEqual(len(self.wire.calls), calls)
+            changed = deepcopy(plan)
+            changed['inputValues']['text'] = canonical({**bundle, 'disclosure': {**bundle['disclosure'], 'hardBudgetEnforced': True}})
+            with self.assertRaises(HTTPException): project_review_summary(changed)
 
 
 class ProjectAPITests(unittest.TestCase):

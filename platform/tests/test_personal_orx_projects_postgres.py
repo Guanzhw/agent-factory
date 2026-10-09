@@ -5,6 +5,7 @@ No real endpoint, clone or provider inference. CI rejects every skipped case.
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import timedelta
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 from agent_factory.config import Settings
 from agent_factory.main import create_app
-from agent_factory.personal_command_profile import publish_application
+from agent_factory.personal_command_profile import publish_application, PROJECT_APPLICATION_ID
 from agent_factory.personal_orx_projects import PersonalOrxProjects
 from agent_factory.personal_command_api import deny_direct_admission
 from agent_factory.personal_orx_transport import PERSONAL_ORX_PROVIDER_ID
@@ -71,8 +72,31 @@ class OrxProjectPostgresTests(unittest.TestCase):
 
     def review(self, plan):
         review = self.request('POST', '/plan-reviews', {'planId': plan['id'], 'requestId': uuid4().hex}, expected=201)
-        self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
+        original = self.store.plan(plan['id'], 'alice')
+        project = review['planSummary'].get('projectCreation')
+        if original.get('application') == PROJECT_APPLICATION_ID: self.assertIsNotNone(project)
+        if project is not None:
+            bundle = json.loads(original['inputValues']['text'])
+            self.assertEqual(project['project']['name'], bundle['request']['name'])
+            self.assertEqual(project['project']['path'], bundle['request']['path'])
+            self.assertEqual(project['project']['source'], 'clone')
+            self.assertEqual(project['project']['cloneUrl'], bundle['request']['cloneUrl'])
+            self.assertEqual(project['effects'], bundle['disclosure'])
+            self.assertEqual(project['previewHash'], bundle['previewHash'])
+            self.assertEqual(review['planSummary']['usageBudget'], original['usageBudget'])
+            self.assertEqual(project['billing']['remoteCostStatus'], 'unknown')
+            self.assertEqual(project['billing']['controllerLedgerScope'], 'local-controller-only')
+            self.assertFalse(project['billing']['remoteCostIncludedInUsageBudget'])
+            self.assertNotIn('synthetic-test-password', json.dumps(review))
+            self.assertNotIn('credentialRef', json.dumps(project))
+            inspected = self.request('GET', '/plan-reviews/' + review['id'], owner='manager')
+            listed = self.request('GET', '/plan-reviews?allOwners=true', owner='manager')
+            self.assertEqual(inspected['planSummary']['projectCreation'], project)
+            self.assertEqual(next(r for r in listed if r['id'] == review['id'])['planSummary']['projectCreation'], project)
+            self.request('GET', '/plan-reviews/' + review['id'], owner='bob', expected=404)
+        saved = self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
             {'approved': True, 'requestId': uuid4().hex}, owner='manager')
+        if project is not None: self.assertEqual(saved['planSummary']['projectCreation'], project)
 
     def approve(self, key, result):
         return self.request('POST', '/personal-agent/project-commands/' + key + '/decision',

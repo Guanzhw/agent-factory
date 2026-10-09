@@ -167,7 +167,15 @@ export interface PlanReview {
   planIntegrityMatches?: boolean;
   decision: 'pending' | 'approved' | 'denied'; approvalEffective: boolean; reviewerId: string | null;
   planSummary?: { normalizedGoal?: string; application?: string; mode?: string; tools?: string[];
-    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[]; usageBudget?: unknown; config?: Record<string, unknown> };
+    capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[]; usageBudget?: unknown; config?: Record<string, unknown>; projectCreation?: PersonalOrxProjectReviewSummary };
+}
+
+export interface PersonalOrxProjectReviewSummary {
+  schema: 'native-orx-project-review-v1'; requestId: string; previewHash: string;
+  project: { name: string; path: string; source: 'empty' | 'existing' | 'clone' | 'paper'; cloneUrl: string | null; paperId: string | null };
+  effects: { version: 'native-orx-create-consent-v2'; remotePath: string; repository: string | null; paperId: string | null; remoteWrites: string; clone: boolean; paperDownload: boolean; gitInitialization: boolean; githubSyncEnabled: false; pathResolution: string; starterSuggestions: string; modelInput: string[]; modelSelection: string; billing: 'owner-remote-account-possible-cost'; hardBudgetEnforced: false; automaticExperiment: false; emptyCacheHitOrNoHarness: string; unknownResponse: 'read-only-reconcile-never-resend' };
+  billing: { controllerLedgerScope: 'local-controller-only'; remoteUsageStatus: 'unknown'; remoteCostStatus: 'unknown'; remoteBilling: 'owner-remote-account-possible-cost'; remoteCostIncludedInUsageBudget: false; hardRemoteBudgetEnforced: false };
+  ownerConsentSeparate: true;
 }
 
 export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }

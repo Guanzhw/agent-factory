@@ -5,6 +5,7 @@ remains unknown; recovery reads the original reservation and lists candidates.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 
@@ -82,6 +83,25 @@ def disclosure(request):
         'modelSelection': 'remote-preferred-or-ready-harness', 'billing': 'owner-remote-account-possible-cost',
         'hardBudgetEnforced': False, 'automaticExperiment': False,
         'emptyCacheHitOrNoHarness': 'may-skip-model-request', 'unknownResponse': 'read-only-reconcile-never-resend'}
+
+
+def project_review_summary(plan):
+    """Read the exact admitted disclosure; never resolve or project credentials."""
+    if plan.get('application') != PROJECT_APPLICATION_ID: return None
+    from .personal_command_profile import command_from_plan
+    command = command_from_plan(plan)
+    bundle = command['projectBundle']; request = bundle['request']
+    source = 'clone' if request['cloneUrl'] else 'paper' if request['paperId'] else 'empty' if request['createFolder'] else 'existing'
+    return {'schema': 'native-orx-project-review-v1', 'requestId': command['requestId'],
+        'previewHash': bundle['previewHash'],
+        'project': {'name': request['name'], 'path': request['path'], 'source': source,
+            'cloneUrl': request['cloneUrl'], 'paperId': request['paperId']},
+        'effects': deepcopy(bundle['disclosure']),
+        'billing': {'controllerLedgerScope': 'local-controller-only',
+            'remoteUsageStatus': 'unknown', 'remoteCostStatus': 'unknown',
+            'remoteBilling': bundle['disclosure']['billing'],
+            'remoteCostIncludedInUsageBudget': False, 'hardRemoteBudgetEnforced': False},
+        'ownerConsentSeparate': True}
 
 
 class PersonalOrxProjects:
