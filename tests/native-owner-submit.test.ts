@@ -153,3 +153,11 @@ it('keeps the authorized goal while native creation is still running with a prov
   await act(async () => button('核对研究请求').click());
   expect(personalAgentApi.submit).toHaveBeenNthCalledWith(2, expect.objectContaining({ action: 'prompt', text: 'Authorized goal after creation' }), owner.id);
 });
+it('terminal native execution with an unresolved Factory effect stops follow-up and never invents an acknowledgement', async () => {
+  const createPlan = { ...plan, inputValues: { ...plan.inputValues!, action: 'create' } };
+  let acknowledged = false;
+  vi.mocked(personalAgentApi.recover).mockImplementation(async id => ({ ...recovery(id), plan: createPlan, nativeStatus: 'completed', job: { ...job, status: 'unknown' } as unknown as FactoryJob, receipt: { requestId: id, action: 'create', state: acknowledged ? 'acknowledged' : 'ack_unknown', session: { ...session, nativeSessionId: acknowledged ? session.nativeSessionId : null, factoryIdentity: identity }, factoryIdentity: identity } }));
+  await journey(); await goal('Original authorized goal'); await act(async () => button('开始研究').click()); await act(async () => button('核对研究请求').click());
+  expect(host.textContent).toContain('原远程命令确认未知'); acknowledged = true; await act(async () => button('核对研究请求').click());
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('研究目标尚未发送');
+});

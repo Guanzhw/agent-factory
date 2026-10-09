@@ -38,4 +38,6 @@ class ResearchJourneyPostgresTests(unittest.TestCase):
             self.assertEqual(len(fixture.wire.rows), 2)
             self.assertEqual(fixture.wire.creation_posts, 0)
             self.assertEqual(fixture.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
-            self.assertEqual(request('GET', '/personal-agent/commands/requests/' + created['requestId'])['job']['id'], task['id'])
+            recovered = request('GET', '/personal-agent/commands/requests/' + created['requestId'])
+            self.assertEqual(recovered['job']['id'], task['id'])
+            self.assertEqual(recovered['nativeStatus'], 'completed')

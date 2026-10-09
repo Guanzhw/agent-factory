@@ -113,7 +113,14 @@ class PersonalCommandAPI:
             if error.status_code != 404: raise
         else:
             result['nativeRunId'] = task['run_id']
-            result['job'] = (await self.factory.detail(task))['job']
+            detail = await self.factory.detail(task)
+            result['job'] = detail['job']
+            # Factory status remains unknown for an unresolved remote effect,
+            # even after native execution finishes. Project the native status
+            # separately so clients never confuse an in-flight reservation
+            # with a terminal lost acknowledgement. This is observation only.
+            snapshot = detail.get('snapshot') or {}
+            result['nativeStatus'] = (snapshot.get('queue') or snapshot.get('job') or {}).get('status') or (snapshot.get('run') or {}).get('status')
         return result
 
     async def start(self, owner, plan_id):
