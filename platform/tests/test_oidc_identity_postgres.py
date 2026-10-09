@@ -38,6 +38,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         self.addCleanup(workspace.cleanup)
         settings = Settings(
             db_url=database.url, workspace=Path(workspace.name), demo=False,
+            fee_management_enabled=True,
             jwt_key="synthetic-oidc-native-signing-key-at-least-32-bytes",
             oidc_identity=self.config(subject_owners={
                 (ISSUER, "subject-123"): "alice", (ISSUER, "subject-bob"): "bob",

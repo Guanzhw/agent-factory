@@ -339,6 +339,8 @@ def main():
         synthetic_fixture=True, max_cpu=1, max_memory_mb=128, max_disk_mb=1, max_seconds=5, capacity_pool=pool)
     settings = process_settings(db_url=configuration["dbUrl"], workspace=workspace, target_ref=target_ref,
         remote_targets={target_ref: target, "capacity-probe": probe_target}, owner=owner)
+    # This controlled worker exercises legacy zero-priced accounting only.
+    settings.fee_management_enabled = settings.platform_paid_models_enabled = True
     settings.jwt_key, settings.port = configuration["jwtKey"], configuration["port"]
     settings.max_user_tasks, settings.max_total_tasks = 12, 24
     created = []

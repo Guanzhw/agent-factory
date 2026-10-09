@@ -28,7 +28,8 @@ from test_managed_orx_attachment import ManagedFixture
 class ManagedORXPostgresTests(unittest.TestCase):
     def test_resource_lease_and_shared_ledger_preserve_original_session(self):
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
-            settings = Settings(db_url=database.url, workspace=Path(folder))
+            settings = Settings(db_url=database.url, workspace=Path(folder),
+                fee_management_enabled=True, platform_paid_models_enabled=True)
             store = Store(database.url, settings)
             self.addCleanup(store.engine.dispose)
             self.addCleanup(store.dispose_root_locks)
