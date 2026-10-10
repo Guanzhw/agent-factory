@@ -49,7 +49,22 @@ class SSHSupervisor(OpenResearchSupervisor):
                     try: yield
                     finally: self.capacity_depth = 0
     def stop(self, body):
-        with self.lock, self._capacity(): return super().stop(body)
+        with self.lock, self._capacity():
+            live = self.live.get(body['id'])
+            if live is None: return False
+            try:
+                receipt = self._receipt(self._root(body), body)
+                same_generation = receipt and receipt['name'] == live['generation'] and receipt.get('brokerSocket') == str(self.forwarded.path)
+            except Exception:
+                return False
+            if not same_generation:
+                # A replacement can win the flock before this disconnected
+                # process. Retire only our own capability/timer; the newer
+                # receipt and its container must remain untouched.
+                live['timer'].cancel(); live['broker'].close()
+                self.live.pop(body['id'], None)
+                return False
+            return super().stop(body)
     def _new_broker(self, path, handle, *, ttl): return self.forwarded
     def _command(self, config, name, capability):
         command = build_command(config, name, capability)

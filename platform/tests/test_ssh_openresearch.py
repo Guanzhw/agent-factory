@@ -8,7 +8,7 @@ import socket
 import sys
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agent_factory.ssh_openresearch import SSHServer, SSHAgentLease, SSHOpenResearchPackage, SSHOpenResearchConfig
 from agent_factory.platform_openresearch import PlatformOpenResearchConfig
@@ -96,6 +96,10 @@ class SSHOpenResearchTests(unittest.TestCase):
         for _ in range(2):
             supervisor = object.__new__(SSHSupervisor)
             supervisor.root, supervisor.lock, supervisor.capacity_depth = self.root, threading.RLock(), 0
+            supervisor.forwarded = SimpleNamespace(path=self.root / 'broker.sock')
+            supervisor.live = {'fixture': {'generation': 'owned'}}
+            supervisor._root = lambda body: self.root
+            supervisor._receipt = lambda root, body: {'name': 'owned', 'brokerSocket': str(self.root / 'broker.sock')}
             supervisors.append(supervisor)
         old, new = supervisors
         admitted, attempted, release, replacement = (threading.Event() for _ in range(4))
@@ -104,8 +108,8 @@ class SSHOpenResearchTests(unittest.TestCase):
             if body['nested']:
                 order.append('original-receipt-committed'); return True
             admitted.set(); self.assertTrue(release.wait(3))
-            return supervisor.stop({'nested': True})
-        def cleanup(): old.stop({'nested': False})
+            return supervisor.stop({'id': 'fixture', 'nested': True})
+        def cleanup(): old.stop({'id': 'fixture', 'nested': False})
         def prepare():
             self.assertTrue(admitted.wait(3)); attempted.set()
             with new._capacity(): order.append('replacement-receipt-read'); replacement.set()
@@ -120,6 +124,51 @@ class SSHOpenResearchTests(unittest.TestCase):
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(order, ['original-receipt-committed', 'replacement-receipt-read'])
         self.assertEqual((old.capacity_depth, new.capacity_depth), (0, 0))
+
+    def test_replacement_prepare_first_then_old_close_and_timer_preserve_new_generation(self):
+        from agent_factory.runtime_packages.openresearch_v1.supervisor import digest
+        root = self.root / 'runtime'; root.mkdir(mode=0o700)
+        brokers = []
+        for nonce in ('a' * 24, 'b' * 24):
+            parent = self.root / 'connections' / nonce; parent.mkdir(mode=0o700, parents=True)
+            channel = socket.socket(socket.AF_UNIX); channel.bind(str(parent / 'broker.sock'))
+            (parent / 'broker.sock').chmod(0o600); self.addCleanup(channel.close)
+            brokers.append(ForwardedBroker('c' * 32, parent / 'broker.sock', 120))
+        config = PlatformOpenResearchConfig('/synthetic/orx', '/synthetic/opencode', 'sha256:' + 'a' * 64)
+        with patch.object(PlatformOpenResearchConfig, 'validate'):
+            old, new = [SSHSupervisor(config, root, 'synthetic-version', broker) for broker in brokers]
+            body = {'id': 'env-' + 'd' * 32, 'packageVersion': new.version, 'projectId': 'synthetic-project'}
+            data = old._root(body); old_name = 'factory-orx-' + 'e' * 32
+            old._save(data, {'name': old_name, 'bodyHash': digest(body), 'removed': False})
+            old.live[body['id']] = {'generation': old_name, 'timer': Mock(), 'broker': brokers[0],
+                'body': body, 'root': data, 'hardDeadline': 0}
+            removed = []
+            new._remove_stopped = lambda receipt, path: removed.append(receipt['name']) or True
+            new._verify_idle = lambda path: None
+            new._command = lambda *args: ['docker', 'create', '--network', 'none', '--env', 'PATH']
+            new._docker = lambda *args, **kwargs: b''
+            new.check = lambda body: True
+            with patch('agent_factory.runtime_packages.openresearch_v1.supervisor.subprocess.run',
+                    return_value=SimpleNamespace(returncode=0, stdout=('f' * 64).encode())):
+                new.prepare(body, brokers[1])
+            self.addCleanup(new.live[body['id']]['timer'].cancel)
+            receipt_path = new._control(data) / 'runtime.json'; original = receipt_path.read_bytes()
+            replacement = json.loads(original)
+            self.assertNotEqual(replacement['name'], old_name)
+            self.assertEqual(replacement['brokerSocket'], str(brokers[1].path))
+            # The new prepare actually completed first. Both delayed cleanup
+            # paths still hold the old generation, even after taking the flock.
+            with patch.object(old, '_remove_stopped') as stale_remove:
+                old._lease_due(body, generation=old_name)
+                old.close(); stale_remove.assert_not_called()
+            self.assertEqual(receipt_path.read_bytes(), original)
+            self.assertIn(body['id'], new.live); self.assertNotIn(body['id'], old.live)
+            self.assertTrue(brokers[1].authorized(brokers[1].capability))
+            self.assertEqual(removed, [old_name])
+            # A canceled timer already waiting on this same process's lock
+            # cannot reclaim its later replacement either.
+            with patch.object(new, 'stop') as stop:
+                new._lease_due(body, generation=old_name); stop.assert_not_called()
 
     def test_runtime_limits_and_original_license_notices_are_frozen_into_package_identity(self):
         binary = self.root / 'synthetic-binary'; binary.write_bytes(b'SYNTHETIC-NOT-EXECUTED')

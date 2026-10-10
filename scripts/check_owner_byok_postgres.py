@@ -22,7 +22,7 @@ def main():
         'test_platform_openresearch_custody.PlatformOpenResearchCustodyTests',
         'test_ssh_openresearch.SSHOpenResearchTests',
         'test_remote_bindings_postgres.RemoteBindingPostgresTests.test_effective_nonlocal_receiver_mapping_obeys_default_off_before_factory'])
-    expected = 42
+    expected = 43
     if suite.countTestCases() != expected:
         print('OWNER_BYOK_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

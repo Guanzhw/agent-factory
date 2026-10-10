@@ -226,9 +226,9 @@ class OpenResearchSupervisor:
             private_env['PATH'] = '/usr/local/bin:/usr/bin:/bin'
             index = command.index('PATH', command.index('--env'))
             command[index] = 'PATH=' + environment(broker.capability)['PATH']
-            timer = threading.Timer(self.config.lease_seconds, lambda: self._lease_due(body)); timer.daemon = True
+            timer = threading.Timer(self.config.lease_seconds, lambda: self._lease_due(body, generation=name)); timer.daemon = True
             self.live[body['id']] = {'broker': broker, 'body': body, 'timer': timer, 'root': root,
-                'hardDeadline': time.monotonic() + self.config.max_active_seconds, 'inFlightMutations': 0}
+                'hardDeadline': time.monotonic() + self.config.max_active_seconds, 'inFlightMutations': 0, 'generation': name}
             try:
                 result = subprocess.run(command, env=private_env, capture_output=True, timeout=60, check=False)
                 require(result.returncode == 0)
@@ -252,10 +252,10 @@ class OpenResearchSupervisor:
             'workExtendsLease': True, 'automaticWorkReplay': False,
             'interruptedWorkRecovery': False, 'externalToolNetwork': False}
 
-    def _lease_due(self, body):
+    def _lease_due(self, body, *, generation=None):
         with self.lock:
             live = self.live.get(body['id'])
-            if live is None: return
+            if live is None or generation is not None and live.get('generation') != generation: return
             remaining = live['hardDeadline'] - time.monotonic()
             if remaining <= 0:
                 self.stop(body); return
@@ -272,7 +272,7 @@ class OpenResearchSupervisor:
                     pass
             if idle:
                 self.stop(body); return
-            timer = threading.Timer(min(self.config.lease_seconds, remaining), lambda: self._lease_due(body))
+            timer = threading.Timer(min(self.config.lease_seconds, remaining), lambda: self._lease_due(body, generation=live.get('generation')))
             timer.daemon = True; live['timer'] = timer; timer.start()
 
     def check(self, body):

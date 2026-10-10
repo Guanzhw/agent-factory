@@ -9,7 +9,7 @@ submit research; a goal is sent only through the owner's explicit start click.
 
 ## Explicit prerequisites and registration
 
-This adapter requires Linux x86-64, Python 3.12, existing non-root Docker access,
+This adapter requires Linux x86-64, Python 3.12 or newer, existing non-root Docker access,
 and an existing owner SSH-agent credential binding. It installs the application
 package and loads its pinned image when missing. It never runs apt, sudo, changes
 accounts or system services, grants Docker access, learns a host key, changes
@@ -46,6 +46,17 @@ an overlong directory is rejected before effects. Installation and recovery
 retain the same server, directory, model revision and native project. A changed
 server/agent/package/model identity requires explicit migration and is rejected.
 
+## What is automatic and what still needs preparation
+
+| Item | Current responsibility and evidence |
+| --- | --- |
+| Linux x86-64, Python 3.12+, Docker CLI/daemon, SSH account and non-root Docker access | Must already exist on the selected server. Factory does not install or grant these. |
+| Owner-private root directory (0700), fixed host public key, server/IP/account registration and existing SSH-agent binding | Trusted deployment operator must prepare/register these. There is no self-service registration UI. |
+| Fixed original ORX/OpenCode application binaries, bridge, supervisor and notices | Factory transfers, verifies and installs these into the selected private child directory. No existing ORX service/runtime package is required on the target. Actual localhost SSH acceptance used a fresh child directory. |
+| Immutable native image | Factory must already hold the reviewed image. The installer transfers it and loads it if absent. Transfer/verification passed on localhost; the truly image-absent cold-host branch remains unverified. |
+| Start, private connection, original project/session/files, explicit restoration | Factory performs these within the existing infrastructure; controlled actual SSH/native/browser acceptance passed with a synthetic model. |
+| External owner device and production credential enrollment | Unverified. This increment is application assembly on prepared infrastructure, not automated preparation of an arbitrary new server. |
+
 ## Installation, connection and custody
 
 The installer runs fixed Python code through authenticated OpenSSH and receives
@@ -79,7 +90,7 @@ capacity bound is per supervisor directory, not a whole-server or fleet schedule
 
 An SSH disconnect attempts to stop the owned runtime; no lost acknowledgement
 is called a confirmed stop. Cleanup and a replacement SSH process hold the same
-remote custody file lock before reading or writing the original receipt. Nested
+remote custody file lock before reading or writing the original receipt. Cleanup also matches the process's captured container generation and forwarding socket; a replacement that wins the lock cannot be stopped by delayed old cleanup. Lease timers capture their own generation, including within one process. Nested
 stop during preparation reuses the admitted lock; repeated disconnect signals
 cannot interrupt its bounded cleanup. A new explicit prepare reconciles the exact receipt
 and original project before creating a replacement. Neither read recovery nor

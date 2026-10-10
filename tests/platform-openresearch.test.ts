@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../web/PersonalAgentSessions.js';
 import { applicationEnvironmentApi, type EnvironmentRequest } from '../web/applicationEnvironmentApi.js';
 import { ownerModelApi, type OwnerModel } from '../web/ownerModelApi.js';
-import { personalAgentApi, PERSONAL_CONTRACT, type PersonalProject } from '../web/personalAgentApi.js';
+import { personalAgentApi, PERSONAL_CONTRACT, type PersonalProject, type PersonalSession } from '../web/personalAgentApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { api, ApiError } from '../web/api.js';
 import type { FactoryJob } from '../web/models.js';
@@ -139,8 +139,38 @@ it('an authoritative SSH directory rejection keeps the draft and lets the owner 
   vi.mocked(applicationEnvironmentApi.prepare).mockRejectedValue(new ApiError('ENVIRONMENT_SSH_SELECTION_UNAVAILABLE', 409));
   await mount(); await goal('Synthetic retained draft'); await act(async () => button('开始研究').click());
   expect(host.textContent).toContain('服务器或目录未通过检查');
+  expect(host.querySelector('.research-status')!.textContent).toContain('请修正服务器或目录');
+  expect(host.querySelector('.research-status')!.textContent).not.toContain('可以开始研究');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.getAttribute('aria-invalid')).toBe('true');
+  expect(host.querySelector('[role="alert"]')!.id).toBe('research-environment-error');
   expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.disabled).toBe(false);
   expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained draft');
   expect(localStorage.getItem(`factory-environment-prepare:${owner.id}`)).toBeNull();
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
+it('shows SSH infrastructure and manual registration prerequisites before the start button', async () => {
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([{ reference: 'owned-linux', name: 'My Linux', defaultDirectory: '/private/alice/research' }]);
+  await mount();
+  const requirements = host.querySelector('#research-ssh-prerequisites')!;
+  for (const text of ['Python 3.12+', 'Docker', '非 root', 'SSH 账户', '先注册服务器', '没有自助注册入口', '不安装系统依赖']) expect(requirements.textContent).toContain(text);
+  expect(requirements.compareDocumentPosition(button('开始研究')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
+});
+
+it('exposes existing research outside collapsed settings and opens it without creating or prompting', async () => {
+  const existing = { id: 'original-study', namespace: 'native-openresearch', connectionRef: 'original-binding',
+    nativeSessionId: 'original-session', nativeProjectId: 'original-project', state: 'result_observed',
+    observation: { messages: [{ id: 'goal', role: 'user', completed: false, events: [{ type: 'text', text: 'Synthetic original research' }] },
+      { id: 'reply', role: 'assistant', completed: true, events: [{ type: 'text', text: 'Synthetic retained result' }] }] } } as PersonalSession;
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([existing]);
+  await mount();
+  const entry = host.querySelector('section[aria-label="已有研究"]')!;
+  expect(entry.closest('details')).toBeNull();
+  expect(entry.textContent).toContain('Synthetic original research');
+  await act(async () => button('Synthetic original research').click());
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Synthetic retained result');
+  expect(localStorage.getItem(`factory-personal-session:${owner.id}:native-openresearch`)).toBe(existing.id);
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
