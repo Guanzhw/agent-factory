@@ -375,21 +375,39 @@ class ConnectionService:
             raise HTTPException(409, "IDEMPOTENCY_CONFLICT: connection request intent changed")
         return row
 
-    def bind(self, owner, registration_ref, request_id, *, capabilities=None, task_id=None):
+    def bind(self, owner, registration_ref, request_id, *, capabilities=None, task_id=None,
+             expected_trusted_revision=None, expected_trusted_fingerprint=None):
         self.auth.require(owner, "run")
         self._key(registration_ref)
         self._key(request_id)
         requested = self._caps(capabilities) if capabilities is not None else None
         # Request identity captures the caller's choice, not a later operator
         # configuration. A replay observes the existing reference's current state.
-        fingerprint = digest({"operation": "bind", "registrationRef": registration_ref,
-            "capabilities": sorted(requested) if requested is not None else None, "taskId": task_id})
+        intent = {"operation": "bind", "registrationRef": registration_ref,
+            "capabilities": sorted(requested) if requested is not None else None, "taskId": task_id}
+        checked_proof = expected_trusted_revision is not None or expected_trusted_fingerprint is not None
+        if checked_proof:
+            intent.update(expectedTrustedRevision=expected_trusted_revision,
+                expectedTrustedFingerprint=expected_trusted_fingerprint)
+        fingerprint = digest(intent)
         with self._write() as conn:
             self._lock(conn, owner)
             previous = self._command(conn, owner, request_id, fingerprint)
-            if previous:
+            if previous and not checked_proof:
                 return self._project(conn, owner, self._row(conn, owner, previous["result_ref"]))
             trusted = self._trusted(registration_ref, owner, conn)
+            # Internal callers can pin the exact health proof they validated.
+            # Verification writes use this same owner lock; never bind a later
+            # proof between the caller's identity check and this insertion.
+            if checked_proof and (trusted.revision != expected_trusted_revision
+                    or trusted.fingerprint != expected_trusted_fingerprint):
+                raise HTTPException(409, "CONNECTION_VERIFICATION_CHANGED")
+            if previous:
+                row = self._row(conn, owner, previous["result_ref"])
+                if (row["body"]["revision"] != expected_trusted_revision
+                        or row["body"]["trustedFingerprint"] != expected_trusted_fingerprint):
+                    raise HTTPException(409, "CONNECTION_VERIFICATION_CHANGED")
+                return self._project(conn, owner, row)
             requested = requested if requested is not None else trusted.capabilities
             if not requested <= trusted.capabilities:
                 raise HTTPException(409, "CONNECTION_SCOPE_INVALID: requested capability exceeds trusted binding")

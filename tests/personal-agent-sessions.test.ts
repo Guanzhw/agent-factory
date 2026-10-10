@@ -29,6 +29,16 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId, connectionRef: connection.ref }))); }
+it('lets OpenCode users with no history select an existing connection and prepare a session', async () => {
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([]);
+  await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id })));
+  const select = host.querySelector<HTMLSelectElement>('[aria-label="个人会话资源"]')!;
+  expect(select.disabled).toBe(false); expect(select.value).toBe('');
+  await act(async () => { select.value = connection.ref; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(personalAgentApi.project).toHaveBeenCalledWith(connection.ref, expect.any(AbortSignal));
+  await click('准备创建会话'); expect(personalAgentApi.prepare).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', connectionRef: connection.ref }));
+  expect(personalAgentApi.start).not.toHaveBeenCalled();
+});
 function button(text: string) { const b = [...host.querySelectorAll('button')].find(b => b.textContent === text); if (!b) throw new Error(`Missing button ${text}`); return b; }
 async function click(text: string) { await act(async () => button(text).click()); }
 async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!; const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); }); }

@@ -52,6 +52,11 @@ class StartCommand(BaseModel):
     planId: str = Field(min_length=1, max_length=100)
 
 
+class ContinueResearch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expectedFingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
 def deny_direct_admission(owner, intent):
     raise HTTPException(403, 'PERSONAL_NATIVE_COMMAND_REQUIRED')
 
@@ -64,13 +69,42 @@ class PersonalCommandAPI:
             observed=lambda owner, request_id: reconcile_command(store, self.sessions, owner, request_id))
         from .personal_orx_projects import PersonalOrxProjects
         self.projects = PersonalOrxProjects(store.connections, admission=deny_direct_admission)
+        from .personal_orx_lease import PersonalOrxLease
+        self.leases = PersonalOrxLease(self.sessions)
         self.router = APIRouter(prefix='/api/factory/personal-agent')
         self.routes()
 
-    def prepare(self, owner, body):
+    def prepare(self, owner, body, *, refresh_lease=False):
         self.auth.require(owner, 'run')
+        connection_ref = body.connectionRef
+        if refresh_lease:
+            # A replay must keep its original immutable plan, not refresh a pin.
+            previous = self.store.sql('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:request',
+                owner=owner, request=body.requestId)
+            if previous:
+                plan = self.store.admit_plan(owner, body.requestId, {'personalCommand': body.model_dump()},
+                    lambda: (_ for _ in ()).throw(HTTPException(409, 'PERSONAL_ORIGINAL_PLAN_MISSING')))
+                return self._prepared(owner, plan)
+            try:
+                if body.action == 'create':
+                    original = self.store.connections.inspect(owner, connection_ref)
+                    if original['kind'] == 'orx' and not original['available']:
+                        connection_ref = self.leases.refresh(owner, original['ref'], original['fingerprint'])['ref']
+                elif body.action == 'prompt':
+                    original = self.sessions.inspect(owner, body.sessionId)
+                    if original['namespace'] == 'native-openresearch' and original['bindingStatus'] != 'active':
+                        resumed = self.leases.continue_session(owner, original['id'], original['connectionPin']['fingerprint'])
+                        if resumed['state'] != 'ready':
+                            raise HTTPException(409, resumed.get('blocker', 'PERSONAL_PREVIOUS_TURN_UNRESOLVED'))
+            except HTTPException as error:
+                # Only this lease-check phase proves that no plan was admitted.
+                # The same code after admission must retain the original request.
+                if error.status_code == 409 and error.detail == 'REMOTE_VERIFICATION_FAILED':
+                    raise HTTPException(409, {'code': 'ORX_LEASE_PRE_ADMISSION_HEALTH_CHECK_FAILED',
+                        'message': '连接健康检查暂时失败。研究目标未提交，草稿和原结果保留。'}) from None
+                raise
         if body.action == 'create':
-            project = self.sessions.project(owner, body.connectionRef)
+            project = self.sessions.project(owner, connection_ref)
             if project['nativeProjectId'] != body.nativeProjectId:
                 raise HTTPException(409, 'PERSONAL_PROJECT_MISMATCH')
             pin, project_id, native_session = project['connectionPin'], body.nativeProjectId, ''
@@ -86,6 +120,9 @@ class PersonalCommandAPI:
         plan = self.store.admit_plan(owner, body.requestId, {'personalCommand': body.model_dump()},
             lambda: self.store.composition.create_plan(owner, 'Personal remote agent ' + body.action,
                 'personal-command', APPLICATION_ID, request_id=body.requestId, input_values=values))
+        return self._prepared(owner, plan)
+
+    def _prepared(self, owner, plan):
         return {'executionContract': CONTRACT, 'plan': plan,
             'authorization': self.store.plan_policy.status(owner, plan),
             'commandSuccessMeans': 'remote-command-acceptance-only', 'remoteStopVerified': False,
@@ -113,7 +150,14 @@ class PersonalCommandAPI:
             if error.status_code != 404: raise
         else:
             result['nativeRunId'] = task['run_id']
-            result['job'] = (await self.factory.detail(task))['job']
+            detail = await self.factory.detail(task)
+            result['job'] = detail['job']
+            # Factory status remains unknown for an unresolved remote effect,
+            # even after native execution finishes. Project the native status
+            # separately so clients never confuse an in-flight reservation
+            # with a terminal lost acknowledgement. This is observation only.
+            snapshot = detail.get('snapshot') or {}
+            result['nativeStatus'] = (snapshot.get('queue') or snapshot.get('job') or {}).get('status') or (snapshot.get('run') or {}).get('status')
         return result
 
     async def start(self, owner, plan_id):
@@ -130,7 +174,17 @@ class PersonalCommandAPI:
         # The normal explicit submit authorizes this exact business action.
         # Existing plan/task reservations and native effects own durability;
         # this facade adds neither a queue nor an external transaction/retry.
-        prepared = await asyncio.to_thread(self.prepare, owner, body)
+        try:
+            prepared = await asyncio.to_thread(self.prepare, owner, body, refresh_lease=True)
+        except HTTPException as error:
+            # These exact lease refusals occur before admitting a business plan.
+            # Emit their codes explicitly; do not classify errors from start()
+            # or an arbitrary conflict as proof that no command was admitted.
+            if error.status_code == 409 and isinstance(error.detail, str) and error.detail in {
+                    'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE'}:
+                raise HTTPException(409, {'code': error.detail,
+                    'message': '原研究连接需要明确选择。研究目标未提交，草稿和原结果保留。'}) from None
+            raise
         return await self.start(owner, prepared['plan']['id'])
 
     async def submit_project(self, owner, request_id, body):
@@ -154,7 +208,7 @@ class PersonalCommandAPI:
         return await self.start(owner, consent['plan_id'])
 
     def routes(self):
-        from .personal_orx_projects import PrepareProject, ProjectDecision, ConnectProject, prepare_project
+        from .personal_orx_projects import PrepareProject, ProjectDecision, ConnectProject, SelectExistingProject, prepare_project
         def owner(request): return self.auth.user(request)['id']
         @self.router.get('/capabilities')
         def capabilities(request: Request):
@@ -168,9 +222,27 @@ class PersonalCommandAPI:
         def projects(request: Request, connectionRef: str):
             self.auth.require(owner(request), 'read')
             return self.sessions.project(owner(request), connectionRef)
+        @self.router.get('/project-selection')
+        def existing_projects(request: Request, connectionRef: str):
+            return self.projects.existing_projects(owner(request), connectionRef)
+        @self.router.post('/project-selection')
+        def select_existing_project(body: SelectExistingProject, request: Request):
+            return self.projects.select_existing(owner(request), body.connectionRef, body.nativeProjectId, body.requestId)
+        @self.router.get('/project-selection/requests/{request_id}')
+        def selected_project_request(request_id: str, request: Request):
+            return self.projects.selected_request(owner(request), request_id)
+        @self.router.get('/project-selection/requests/{request_id}/status')
+        def selected_project_status(request_id: str, request: Request):
+            return self.projects.selection_status(owner(request), request_id)
         @self.router.get('/native-sessions')
         def native_sessions(request: Request, connectionRef: str):
             return self.sessions.native_sessions(owner(request), connectionRef)
+        @self.router.post('/connections/{connection_ref}/refresh')
+        def refresh_connection(connection_ref: str, body: ContinueResearch, request: Request):
+            return self.leases.refresh(owner(request), connection_ref, body.expectedFingerprint)
+        @self.router.post('/sessions/{session_id}/continue')
+        def continue_research(session_id: str, body: ContinueResearch, request: Request):
+            return self.leases.continue_session(owner(request), session_id, body.expectedFingerprint)
         @self.router.post('/sessions/attach')
         def attach(body: AttachSession, request: Request):
             return self.sessions.attach(owner(request), body.connectionRef, body.nativeProjectId,

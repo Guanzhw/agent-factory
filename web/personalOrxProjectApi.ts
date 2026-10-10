@@ -2,6 +2,16 @@ import { factoryRequest } from './api.js';
 import type { FactoryJob, Plan, PlanAuthorization, UserConnection } from './models.js';
 
 export interface OrxProjectInput { name: string; path: string; source: 'empty' | 'existing' | 'clone' | 'paper'; cloneUrl?: string; paperId?: string }
+export interface ProjectSelectionStatus {
+  requestId: string; ownerId: string; state: 'complete' | 'failed' | 'unknown';
+  localConfiguration: 'none' | 'partial'; failureStatus: number | null; connection: UserConnection | null;
+}
+function checkSelection(value: ProjectSelectionStatus, requestId: string, ownerId: string): ProjectSelectionStatus {
+  if (!value || value.requestId !== requestId || value.ownerId !== ownerId || !['complete', 'failed', 'unknown'].includes(value.state)
+    || !['none', 'partial'].includes(value.localConfiguration) || (value.state === 'failed' ? !Number.isInteger(value.failureStatus) || value.failureStatus! < 400 || value.failureStatus! > 599 : value.failureStatus !== null)
+    || (value.state === 'complete' ? !value.connection || value.connection.ownerId !== ownerId || value.connection.kind !== 'orx' || !value.connection.capabilities.includes('session:read') : value.connection !== null)) invalid();
+  return value;
+}
 export interface ProjectPreview {
   previewHash: string;
   connectionPin: UserConnection;
@@ -39,6 +49,9 @@ export function checkOrxProjectPrepared(value: OrxProjectPrepared, requestId: st
   return value;
 }
 export const personalOrxProjectApi = {
+  existing: (connectionRef: string, signal?: AbortSignal) => factoryRequest<{ nativeProjectId: string; name: string; path: string }[]>(`${path}/project-selection?connectionRef=${encodeURIComponent(connectionRef)}`, 'GET', undefined, signal),
+  selectExisting: (connectionRef: string, nativeProjectId: string, requestId: string, ownerId: string) => factoryRequest<UserConnection>(`${path}/project-selection`, 'POST', { connectionRef, nativeProjectId, requestId }, undefined, ownerId),
+  recoverSelected: async (requestId: string, ownerId: string) => checkSelection(await factoryRequest<ProjectSelectionStatus>(`${path}/project-selection/requests/${encodeURIComponent(requestId)}/status`, 'GET', undefined, undefined, ownerId), requestId, ownerId),
   prepare: async (input: { requestId: string; connectionRef: string; project: OrxProjectInput }) => checkOrxProjectPrepared(await factoryRequest<OrxProjectPrepared>(`${path}/project-commands/prepare`, 'POST', input), input.requestId),
   decide: async (requestId: string, previewHash: string, approved: boolean) => checkOrxProjectReceipt(await factoryRequest<OrxProjectReceipt>(`${path}/project-commands/${encodeURIComponent(requestId)}/decision`, 'POST', { previewHash, approved }), requestId),
   submit: async (requestId: string, previewHash: string, planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/project-commands/${encodeURIComponent(requestId)}/submit`, 'POST', { previewHash, approved: true }); if (!job?.id || job.planId !== planId) invalid(); return job; },

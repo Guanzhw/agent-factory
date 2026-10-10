@@ -169,7 +169,7 @@ it('does not admit a prepared probe whose owner binding or budget cannot be veri
 });
 it('defaults to ordinary actual OpenResearch sessions and keeps managed setup opt-in', async () => {
   await act(async () => root.render(createElement(OpenResearchWorkspace, { ownerId: owner.id, onTask, onResources: vi.fn(), onCatalog: vi.fn() })));
-  expect(host.textContent).toContain('OpenResearch 普通模式'); expect(host.textContent).not.toContain('OpenCode'); expect(openresearchApi.projects).not.toHaveBeenCalled(); expect(openresearchApi.managedProfiles).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('普通模式 · 使用你已有的 OpenResearch 服务'); expect(host.textContent).not.toContain('OpenCode'); expect(openresearchApi.projects).not.toHaveBeenCalled(); expect(openresearchApi.managedProfiles).not.toHaveBeenCalled();
   await click('切换受管模式（可选）'); expect(openresearchApi.projects).toHaveBeenCalledTimes(1);
-  await click('切换普通模式'); expect(host.textContent).toContain('OpenResearch 普通模式'); expect(openresearchApi.start).not.toHaveBeenCalled();
+  await click('切换普通模式'); expect(host.textContent).toContain('普通模式 · 使用你已有的 OpenResearch 服务'); expect(openresearchApi.start).not.toHaveBeenCalled();
 });

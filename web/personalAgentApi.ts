@@ -5,13 +5,13 @@ export const ORX_PERSONAL_PROVIDER = 'openresearch-personal-session-v1';
 export type PersonalNamespace = 'opencode' | 'native-openresearch';
 export const PERSONAL_CONTRACT = 'personal-external-v1';
 export type PersonalAction = 'create' | 'prompt' | 'interrupt';
-export interface PersonalProject { namespace: PersonalNamespace; executionContract: typeof PERSONAL_CONTRACT; nativeProjectId: string; connectionPin: { ref: string; [key: string]: unknown }; upstreamOrxProjectId: string | null; budgetEnforcement: 'advisory'; modelCredentialCustody: 'remote'; stopGuarantee: 'unverified'; sessionCreationSupported?: boolean }
+export interface PersonalProject { name?: string; namespace: PersonalNamespace; executionContract: typeof PERSONAL_CONTRACT; nativeProjectId: string; connectionPin: { ref: string; [key: string]: unknown }; upstreamOrxProjectId: string | null; budgetEnforcement: 'advisory'; modelCredentialCustody: 'remote'; stopGuarantee: 'unverified'; sessionCreationSupported?: boolean }
 export interface PersonalMessage { id: string; role: 'user' | 'assistant'; completed: boolean; events: ({ type: 'text'; text: string } | { type: 'tool'; tool: string; status: string; output: string })[]; usage?: { cost?: number; tokens?: Record<string, number> }; correlationSource?: string; usageProvenance: 'remote-reported' | 'unavailable' }
 export interface PersonalSession { connectionPin?: UserConnection; bindingStatus?: string; bindingHistory?: import('./personalRebindApi.js').BindingHistoryEntry[]; id: string; namespace: PersonalNamespace; executionContract: typeof PERSONAL_CONTRACT; connectionRef: string; nativeProjectId: string; nativeSessionId: string | null; activeRequestId?: string | null; state: string; upstreamOrxProjectId: string | null; factoryIdentity: { planId: string; taskId: string; nativeRunId: string; executionContract: typeof PERSONAL_CONTRACT } | null; observation: { correlationSource?: string; exactTurnVerified?: false; usageStatus?: string; messages: PersonalMessage[]; observedAt: string; provenance: 'remote-reported'; trustedMetering: false; sessionId: string; projectId: string } | null; modelCredentialCustody: 'remote'; budgetEnforcement: 'advisory'; stopVerified: false; liveEndToEndVerified: false }
 export type PersonalIntent = { requestId: string; action: 'create'; connectionRef: string; nativeProjectId: string; title: string } | { requestId: string; action: 'prompt'; sessionId: string; text: string } | { requestId: string; action: 'interrupt'; sessionId: string };
 export interface PersonalPrepared { executionContract: typeof PERSONAL_CONTRACT; plan: Plan; authorization: PlanAuthorization; commandSuccessMeans: 'remote-command-acceptance-only'; remoteStopVerified: false; remoteBudgetEnforcement: 'advisory' }
 export interface PersonalReceipt { requestId: string; action: PersonalAction; state: 'ack_unknown' | 'acknowledged' | 'result_observed'; session: PersonalSession; factoryIdentity: NonNullable<PersonalSession['factoryIdentity']> }
-export interface PersonalRecovery { requestId: string; plan: Plan; authorization: PlanAuthorization; job: FactoryJob | null; nativeRunId: string | null; receipt: PersonalReceipt | null }
+export interface PersonalRecovery { requestId: string; plan: Plan; authorization: PlanAuthorization; job: FactoryJob | null; nativeRunId: string | null; nativeStatus?: string | null; receipt: PersonalReceipt | null }
 export interface NativePersonalSession { nativeSessionId: string; nativeProjectId: string; namespace?: PersonalNamespace; title?: string }
 export interface NativePersonalSessions { nativeProjectId: string; namespace: PersonalNamespace; executionContract: typeof PERSONAL_CONTRACT; connectionPin: { ref: string }; sessions: NativePersonalSession[] }
 export interface PersonalAttachment { requestId: string; connectionRef: string; nativeProjectId: string; nativeSessionId: string }
@@ -45,6 +45,15 @@ export function checkSession(value: PersonalSession): PersonalSession {
   if (value.observation && (value.observation.trustedMetering !== false || value.observation.provenance !== 'remote-reported' || value.observation.sessionId !== value.nativeSessionId || value.observation.projectId !== value.nativeProjectId || !Array.isArray(value.observation.messages))) invalid();
   return value;
 }
+export function checkLeaseConnection(value: UserConnection, original: UserConnection): UserConnection {
+  if (!value || value.ownerId !== original.ownerId || value.kind !== 'orx' || original.kind !== 'orx' || value.registrationRef !== original.registrationRef || value.taskId !== null || value.status !== 'active' || value.available !== true || !/^[a-f0-9]{64}$/.test(value.fingerprint) || !Array.isArray(value.capabilities) || [...value.capabilities].sort().join('\u0000') !== [...original.capabilities].sort().join('\u0000')) invalid();
+  return value;
+}
+export function checkResearchContinuation(value: { state: 'ready' | 'waiting' | 'unavailable'; session: PersonalSession }, original: PersonalSession) {
+  const session = checkSession(value.session); const old = original.connectionPin; const next = session.connectionPin;
+  if (!['ready', 'waiting', 'unavailable'].includes(value.state) || !old || !next || session.id !== original.id || session.namespace !== 'native-openresearch' || session.nativeProjectId !== original.nativeProjectId || session.nativeSessionId !== original.nativeSessionId || JSON.stringify(session.factoryIdentity) !== JSON.stringify(original.factoryIdentity) || next.ownerId !== old.ownerId || next.kind !== old.kind || next.taskId !== old.taskId || !historicalConnectionMatches(session, old) || !Array.isArray(next.capabilities) || next.capabilities.some(cap => !old.capabilities.includes(cap)) || value.state === 'ready' && (session.bindingStatus !== 'active' || !!session.activeRequestId)) invalid();
+  return value;
+}
 export function checkPrepared(value: PersonalPrepared): PersonalPrepared {
   if (!value || value.executionContract !== PERSONAL_CONTRACT || value.commandSuccessMeans !== 'remote-command-acceptance-only' || value.remoteStopVerified !== false || value.remoteBudgetEnforcement !== 'advisory' || !value.plan?.id || !value.plan.fingerprint) invalid();
   return value;
@@ -76,6 +85,9 @@ export const personalAgentApi = {
   session: async (id: string, signal?: AbortSignal) => {
     const s = checkSession(await factoryRequest<PersonalSession>(`${path}/sessions/${ref(id)}?refresh=true`, 'GET', undefined, signal)); if (s.id !== id) invalid(); return s;
   },
+  snapshot: async (id: string, signal?: AbortSignal) => { const s = checkSession(await factoryRequest<PersonalSession>(`${path}/sessions/${ref(id)}`, 'GET', undefined, signal)); if (s.id !== id) invalid(); return s; },
+  refreshConnection: async (original: UserConnection) => checkLeaseConnection(await factoryRequest<UserConnection>(`${path}/connections/${ref(original.ref)}/refresh`, 'POST', { expectedFingerprint: original.fingerprint }, undefined, original.ownerId), original),
+  continueResearch: async (original: PersonalSession) => checkResearchContinuation(await factoryRequest<{ state: 'ready' | 'waiting' | 'unavailable'; session: PersonalSession }>(`${path}/sessions/${ref(original.id)}/continue`, 'POST', { expectedFingerprint: original.connectionPin?.fingerprint }, undefined, original.connectionPin?.ownerId), original),
   nativeSessions: async (connectionRef: string, signal?: AbortSignal) => {
     const value = await factoryRequest<NativePersonalSessions>(`${path}/native-sessions?connectionRef=${ref(connectionRef)}`, 'GET', undefined, signal);
     if (!value || !['opencode', 'native-openresearch'].includes(value.namespace) || value.executionContract !== PERSONAL_CONTRACT || value.connectionPin?.ref !== connectionRef || !value.nativeProjectId || !Array.isArray(value.sessions) || value.sessions.some(s => !s.nativeSessionId || s.nativeProjectId !== value.nativeProjectId || s.namespace && s.namespace !== value.namespace || s.title !== undefined && typeof s.title !== 'string')) invalid();
@@ -84,7 +96,7 @@ export const personalAgentApi = {
   attach: (input: PersonalAttachment) => factoryRequest<AttachmentReceipt>(`${path}/sessions/attach`, 'POST', input),
   recoverAttachment: (requestId: string) => factoryRequest<AttachmentReceipt>(`${path}/requests/${ref(requestId)}`),
   prepare: async (intent: PersonalIntent) => checkPrepared(await factoryRequest<PersonalPrepared>(`${path}/commands/prepare`, 'POST', intent)),
-  submit: async (intent: PersonalIntent) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/submit`, 'POST', intent); if (!job?.id || !job.planId) invalid(); return job; },
+  submit: async (intent: PersonalIntent, ownerId?: string) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/submit`, 'POST', intent, undefined, ownerId); if (!job?.id || !job.planId) invalid(); return job; },
   start: async (planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/commands/start`, 'POST', { planId }); if (!job?.id || job.planId !== planId) invalid(); return job; },
   recover: async (requestId: string, signal?: AbortSignal) => {
     const r = await factoryRequest<PersonalRecovery>(`${path}/commands/requests/${ref(requestId)}`, 'GET', undefined, signal);

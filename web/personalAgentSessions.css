@@ -19,3 +19,26 @@
 .personal-session-workspace > article { margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .personal-session-history { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
 @media (max-width: 600px) { .personal-session-dialog { padding: 18px; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); } .personal-session-workspace > article { padding: 16px; } }
+.research-journey { min-width: 0; max-width: 900px; overflow-wrap: anywhere; }
+.research-status { display: flex; align-items: center; gap: 10px; margin: 20px 0; color: var(--text); }
+.research-status .text-button { margin-left: auto; }
+.research-status-dot { width: 9px; height: 9px; background: #497459; border-radius: 50%; flex: none; }
+.research-composer, .research-results, .research-setup { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin: 20px 0; }
+.research-composer > label { font-size: 18px; font-weight: 600; display: block; margin-bottom: 12px; }
+.research-composer textarea { width: 100%; min-height: 130px; box-sizing: border-box; padding: 14px; font: inherit; resize: vertical; border: 1px solid var(--line); border-radius: 8px; }
+.research-materials { margin: 12px 0 20px; }
+.research-materials label, .research-setup label { display: block; margin: 12px 0; }
+.research-materials textarea { display: block; margin-top: 8px; min-height: 100px; }
+.research-start-row, .research-result-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.research-result-heading { justify-content: space-between; }
+.research-result-heading h2 { margin: 0; font-size: 20px; }
+.research-empty { padding: 30px 0 10px; color: var(--muted); }
+.research-answer { padding: 16px 0; border-top: 1px solid var(--line); margin-top: 18px; }
+.research-answer-text { white-space: pre-wrap; line-height: 1.8; }
+.research-decision { border-left: 3px solid #bb8530; padding: 12px 20px; background: #fff8ed; }
+.research-decision h3 { margin-top: 0; }
+.research-details { margin: 24px 0; }
+.research-details > :not(summary) { margin-top: 16px; }
+.research-details pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.research-setup select { width: 100%; max-width: 100%; box-sizing: border-box; }
+@media (max-width: 600px) { .research-composer, .research-results, .research-setup { padding: 16px; } .research-start-row .primary { width: 100%; } .research-start-row .quiet { font-size: 13px; } }

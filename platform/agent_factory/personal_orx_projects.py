@@ -115,6 +115,10 @@ class PersonalOrxProjects:
             Column('plan_id', String, nullable=False), Column('bundle', JSON, nullable=False),
             Column('fingerprint', String, nullable=False), Column('state', String, nullable=False),
             Column('updated_at', String, nullable=False))
+        self.selections = Table('af_personal_orx_project_selections', metadata,
+            Column('owner_id', String, primary_key=True), Column('request_id', String, primary_key=True),
+            Column('fingerprint', String, nullable=False), Column('state', String, nullable=False),
+            Column('failure_status', JSON), Column('created_at', String, nullable=False))
         metadata.create_all(self.store.engine)
 
     def _command(self, owner, request_id): return self.sessions._command(owner, request_id)
@@ -275,6 +279,109 @@ class PersonalOrxProjects:
         self.connections.personal.verify(owner, remote['registrationRef'], 'created-verify:' + suffix)
         return self.connections.bind(owner, remote['registrationRef'], 'created-bind:' + suffix)
 
+    def existing_projects(self, owner, reference):
+        self.auth.require(owner, 'read')
+        handle, _ = self.sessions._handle(owner, reference=reference, capability='project:read')
+        return handle.creation_projects()
+
+    def select_existing(self, owner, reference, project_id, request_id):
+        # A receipt before validation distinguishes terminal failures from a
+        # lost response. Reserving the key never admits research/model IO.
+        self.auth.require(owner, 'read')
+        self.connections._key(request_id)
+        fingerprint = digest({'connectionRef': reference, 'nativeProjectId': project_id})
+        with self.connections._write() as conn:
+            self.connections._lock(conn, owner)
+            row = conn.execute(select(self.selections).where(self.selections.c.owner_id == owner,
+                self.selections.c.request_id == request_id)).mappings().first()
+            if row:
+                if row['fingerprint'] != fingerprint: raise HTTPException(409, 'IDEMPOTENCY_CONFLICT')
+                if row['state'] == 'failed': raise HTTPException(row['failure_status'], 'PERSONAL_PROJECT_SELECTION_FAILED')
+                if row['state'] != 'complete': raise HTTPException(409, 'PERSONAL_PROJECT_SELECTION_PENDING')
+            else:
+                conn.execute(self.selections.insert().values(owner_id=owner, request_id=request_id,
+                    fingerprint=fingerprint, state='pending', created_at=now()))
+        if row: return self.selected_request(owner, request_id)
+        try:
+            result = self._select_existing(owner, reference, project_id, request_id)
+        except HTTPException as error:
+            self._selection_state(owner, request_id, 'failed', error.status_code)
+            # Upstream diagnostics or secrets are never stored/projected.
+            raise HTTPException(error.status_code, 'PERSONAL_PROJECT_SELECTION_FAILED') from None
+        # Unexpected exceptions or process loss leave pending, never an absence
+        # assertion. The original command receipts remain available read-only.
+        self._selection_state(owner, request_id, 'complete')
+        return result
+
+    def _selection_state(self, owner, request_id, state, failure_status=None):
+        with self.connections._write() as conn:
+            self.connections._lock(conn, owner)
+            conn.execute(self.selections.update().where(self.selections.c.owner_id == owner,
+                self.selections.c.request_id == request_id).values(state=state, failure_status=failure_status))
+
+    def selection_status(self, owner, request_id):
+        self.auth.require(owner, 'read')
+        self.connections._key(request_id)
+        suffix = digest({'request': request_id})[:40]
+        keys = ['research-' + stage + ':' + suffix for stage in
+            ('config', 'verify', 'read', 'template', 'template-verify', 'bind')]
+        with self.connections._read() as conn:
+            row = conn.execute(select(self.selections).where(self.selections.c.owner_id == owner,
+                self.selections.c.request_id == request_id)).mappings().first()
+            commands = list(conn.execute(select(self.connections.commands.c.request_id).where(
+                self.connections.commands.c.owner_id == owner,
+                self.connections.commands.c.request_id.in_(keys))).scalars())
+        # Legacy/final receipts can establish completion even after process loss
+        # before the selection row was updated. Missing receipts cannot prove
+        # nonexecution; this endpoint never retries any configuration command.
+        connection = self.selected_request(owner, request_id) if keys[-1] in commands else None
+        if row is None and not commands: raise HTTPException(404, 'PERSONAL_PROJECT_SELECTION_NOT_FOUND')
+        return {'requestId': request_id, 'ownerId': owner,
+            'state': 'complete' if connection else 'failed' if row and row['state'] == 'failed' else 'unknown',
+            'localConfiguration': 'partial' if commands else 'none',
+            'failureStatus': row['failure_status'] if row and row['state'] == 'failed' else None,
+            'connection': connection}
+
+    def _select_existing(self, owner, reference, project_id, request_id):
+        """Explicitly bind an existing project; only upstream GETs, no research IO.
+
+        Reuse a real, nonarchived native session's explicit remote model as the
+        new-session template. No invented harness/model or Factory BYOK forwarding.
+        All intermediate commands use the existing owner-scoped receipt stores.
+        """
+        self.auth.require(owner, 'run')
+        self.connections._key(request_id)
+        handle, source_pin = self.sessions._handle(owner, reference=reference, capability='project:read')
+        # Shared/task grants keep their existing admission policy; they cannot
+        # be converted into an owner-owned service with owner-submit approval.
+        self.connections.personal.inspect(owner, source_pin['registrationRef'])
+        if source_pin.get('taskId') is not None:
+            raise HTTPException(409, 'PERSONAL_USER_CONNECTION_REQUIRED')
+        if project_id not in {p['nativeProjectId'] for p in handle.creation_projects()}:
+            raise HTTPException(404, 'PERSONAL_NATIVE_PROJECT_NOT_FOUND')
+        suffix = digest({'request': request_id})[:40]
+        config = {k: v for k, v in handle.configuration.items() if k in {'origin', 'authMode', 'credentialRef', 'credentialRevision'}}
+        config['projectId'] = project_id
+        remote = self.connections.personal.configure(owner, handle.provider.provider_id, config, 'research-config:' + suffix)
+        self.sessions._handle(owner, source_pin, capability='project:read')
+        self.connections.personal.verify(owner, remote['registrationRef'], 'research-verify:' + suffix)
+        bound = self.connections.bind(owner, remote['registrationRef'], 'research-read:' + suffix)
+        # A second explicit selection POST never dispatches a remote mutation.
+        # The final bind receipt establishes setup completion after loss.
+        scoped, _ = self.sessions._handle(owner, reference=bound['ref'], capability='session:read')
+        templates = sorted((s for s in scoped.list_sessions() if s.get('model') and not s['archived']),
+            key=lambda s: (s['busy'], s['nativeSessionId']))
+        if templates:
+            config['sessionTemplateId'] = templates[0]['nativeSessionId']
+            remote = self.connections.personal.configure(owner, handle.provider.provider_id, config, 'research-template:' + suffix)
+            self.sessions._handle(owner, source_pin, capability='project:read')
+            self.connections.personal.verify(owner, remote['registrationRef'], 'research-template-verify:' + suffix)
+        self.sessions._handle(owner, source_pin, capability='project:read')
+        return self.connections.bind(owner, remote['registrationRef'], 'research-bind:' + suffix)
+
+    def selected_request(self, owner, request_id):
+        return self.connections.request_result(owner, 'research-bind:' + digest({'request': request_id})[:40])['connection']
+
 
 class PrepareProject(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -293,6 +400,13 @@ class ConnectProject(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     harness: str = Field(pattern=r'^(codex|opencode|claude-code)$')
     model: str = Field(min_length=1, max_length=200)
+
+
+class SelectExistingProject(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    requestId: str = Field(min_length=8, max_length=100, pattern=r'^[a-zA-Z0-9_.:-]+$')
+    connectionRef: str = Field(min_length=1, max_length=200)
+    nativeProjectId: str = Field(min_length=1, max_length=200)
 
 
 def prepare_project(api, owner, body):
