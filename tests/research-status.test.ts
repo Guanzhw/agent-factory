@@ -10,6 +10,11 @@ it('keeps an unknown request above its active pointer and an earlier completed r
   expect(result.title).toBe('研究请求待核对'); expect(result.tone).toBe('unknown');
   expect(researchStatus({ ...input, commandPending: true, session: session('result_observed') }).tone).toBe('unknown');
 });
+it('retains creation uncertainty above retained replies and connection recovery', () => {
+  const result = researchStatus({ ...input, session: session('create_ack_unknown'), connectionUnavailable: true });
+  expect(result.title).toBe('研究会话创建待核对'); expect(result.tone).toBe('unknown');
+  expect(result.explanation).toContain('不会重建会话或发送目标');
+});
 it('does not count a tool record or an unfinished message as a completed readable reply', () => {
   const tools: PersonalMessage = { ...reply, events: [{ type: 'tool', tool: 'python', status: 'completed', output: 'synthetic' }] };
   expect(researchStatus({ ...input, session: session('result_observed', [tools]) }).title).toBe('已观察到工具记录');

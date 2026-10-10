@@ -58,7 +58,10 @@ class CreationWire(native.NativeOrxWire):
                 project = parse_qs(urlsplit(path).query)['projectId'][0]
                 return 200, {'sessions': [deepcopy(r) for r in self.rows.values() if r['projectId'] == project]}
             sid = 'chat_created_' + str(len(self.rows))
-            self.rows[sid] = {'id': sid, **deepcopy(payload), 'busy': False, 'archived': False, 'title': None}
+            self.rows[sid] = {'id': sid, **deepcopy(payload),
+                'permissionMode': payload.get('permissionMode') or 'default',
+                'serviceTier': payload.get('serviceTier'), 'reasoningLevel': payload.get('reasoningLevel'),
+                'busy': False, 'archived': False, 'title': None, 'goal': None, 'activeLeafId': None}
             self.messages[sid] = []
             return 200, {'session': deepcopy(self.rows[sid])}
         return super().request(destination, address, method, path, lease, payload)

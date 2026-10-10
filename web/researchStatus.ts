@@ -13,6 +13,7 @@ export interface ResearchStatusInput {
 export function researchStatus(input: ResearchStatusInput) {
   const state = (tone: string, title: string, explanation: string) => ({ tone, title, explanation });
   if (!input.ready) return state('neutral', '正在读取研究连接', '正在核对你的项目与会话，尚未提交研究。');
+  if (input.session?.state === 'create_ack_unknown') return state('unknown', '研究会话创建待核对', '服务可能已创建会话，但创建回执尚未确认。保留原请求只读核对；刷新和返回不会重建会话或发送目标。');
   if (input.submitting) return state('waiting', '正在提交研究目标', '正在等待本次提交的回执，请勿重复提交。');
   if (input.commandPending || input.session?.state === 'ack_unknown') return state('unknown', '研究请求待核对', '本次提交结果尚未确认。保留原请求只读核对；页面同步成功或看到旧回复都不能证明本次已受理。');
   if (input.attachmentPending) return state('unknown', '会话关联待核对', '只读关联结果尚未确认，没有因此发送研究目标。');
