@@ -45,7 +45,7 @@ it('uses one Save to custody a secret, configure metadata and confirm the owner 
   expect(JSON.stringify(vi.mocked(ownerModelApi.configure).mock.calls)).not.toContain(secret);
   expect(JSON.stringify(localStorage)).not.toContain(secret); expect(localStorage.getItem(storage)).toBeNull();
   expect(host.textContent).toContain('模型已保存并设为默认'); expect(host.textContent).not.toContain(secret);
-  expect(host.textContent).toContain('OpenResearch 原生远程会话继续使用其服务自身的模型配置');
+  expect(host.textContent).toContain('已有远端 OpenResearch 服务继续使用其自身配置。');
 });
 it('recovers an uncertain vault save after remount without replaying the key or changing configuration', async () => {
   vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new Error(secret + ' unsafe transport echo'));

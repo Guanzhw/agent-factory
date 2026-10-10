@@ -1,4 +1,6 @@
 import './personalAgentSessions.css';
+import { applicationEnvironmentApi, PLATFORM_ORX_PROVIDER, type ApplicationEnvironment } from './applicationEnvironmentApi.js';
+import { ownerModelApi } from './ownerModelApi.js';
 import { researchStatus, researchReplyFailed } from './researchStatus.js';
 import { PersonalOrxProjects } from './PersonalOrxProjects.js';
 import { OpenResearchSetup } from './OpenResearchSetup.js';
@@ -11,7 +13,7 @@ import { personalRemoteApi, definitivelyRejected } from './personalRemoteApi.js'
 import { PERSONAL_CONTRACT, PERSONAL_PROVIDER, ORX_PERSONAL_PROVIDER, personalAgentApi, checkPersonalRecovery, checkAttachment, type PersonalAttachment, type NativePersonalSession, type PersonalNamespace, type PersonalAction, type PersonalIntent, type PersonalProject, type PersonalSession } from './personalAgentApi.js';
 import { statusNames, type FactoryJob, type Plan, type UserConnection } from './models.js';
 
-type Props = { onResources?: () => void; ownerId: string; onTask?: (id: string) => void; connectionRef?: string; namespace?: PersonalNamespace; researchJourney?: boolean };
+type Props = { onResources?: () => void; ownerId: string; onTask?: (id: string) => void; connectionRef?: string; namespace?: PersonalNamespace; researchJourney?: boolean; onModels?: () => void };
 type Pending = { requestId: string; planId?: string; startPlanId?: string; submitAttempt?: true };
 const labels = { create: '创建 OpenCode 会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' };
 const warning = '会话使用远程服务的模型配置。中断仅尽力而为，停止状态以服务端记录为准。';
@@ -26,7 +28,7 @@ function CommandSummary({ plan }: { plan: Plan }) {
   return <section className="personal-command-summary" aria-label="此次固定命令范围"><h4>此次固定命令范围</h4><dl className="plan-details"><dt>动作</dt><dd>{({ create: '创建原生会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' } as Record<string, string>)[action] ?? '动作未确认，请核对技术快照'}</dd><dt>原生项目 ID</dt><dd>{text('nativeProjectId')}</dd>{action === 'create' ? <><dt>新会话标题</dt><dd>{text('title')}</dd></> : <><dt>原生会话 ID</dt><dd>{text('nativeSessionId')}</dd></>}</dl>{action === 'prompt' && <><h4>将发送的消息</h4><p className="personal-command-text">{text('text')}</p></>}{action === 'interrupt' && <p>仅向原会话请求中断，不证明工具、模型或远端进程已停止。</p>}<details className="technical-detail"><summary>固定方案与连接技术快照</summary><span>方案 {plan.id}</span><pre>{JSON.stringify(values, null, 2)}</pre></details></section>;
 }
 export function PersonalAgentSessions(props: Props) { return <PersonalSessions key={`${props.ownerId}:${props.namespace ?? 'opencode'}`} {...props} />; }
-function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode', researchJourney = false }: Props) {
+function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode', researchJourney = false, onModels }: Props) {
   const feeManagementEnabled = useFeeManagement();
   const engine = namespace === 'opencode' ? 'OpenCode' : 'OpenResearch';
   const provider = namespace === 'opencode' ? PERSONAL_PROVIDER : ORX_PERSONAL_PROVIDER;
@@ -48,6 +50,29 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const readDraft = () => { try { const d = JSON.parse(sessionStorage.getItem(draftStorage) ?? '{}'); return { goal: typeof d.goal === 'string' ? d.goal.slice(0, 16000) : '', materials: typeof d.materials === 'string' ? d.materials.slice(0, 16000) : '' }; } catch { return { goal: '', materials: '' }; } };
   const [researchGoal, setResearchGoal] = useState(() => researchJourney ? readDraft().goal : '');
   const [materials, setMaterials] = useState(() => researchJourney ? readDraft().materials : '');
+  const [revision, refresh] = useState(0);
+  const locationChosen = useRef(false);
+  const environmentStorage = `factory-environment-prepare:${encodeURIComponent(ownerId)}`;
+  const [platformAvailable, setPlatformAvailable] = useState(false);
+  const [location, setLocation] = useState<'platform' | 'existing'>('existing');
+  const [modelConfigured, setModelConfigured] = useState(false);
+  const [environment, setEnvironment] = useState<ApplicationEnvironment>();
+  const [environmentRequest, setEnvironmentRequest] = useState(() => { try { const value = localStorage.getItem(environmentStorage); return value && /^[a-zA-Z0-9_.:-]{8,80}$/.test(value) ? value : ''; } catch { return ''; } });
+  useEffect(() => {
+    if (!researchJourney) return;
+    const ctrl = new AbortController();
+    void Promise.all([applicationEnvironmentApi.capabilities(ctrl.signal), ownerModelApi.list(ownerId, ctrl.signal)]).then(([cap, models]) => {
+      if (ctrl.signal.aborted) return;
+      const available = cap.locations.includes('platform') && cap.applications.includes('openresearch');
+      setPlatformAvailable(available); if (!locationChosen.current) setLocation(available ? 'platform' : 'existing');
+      setModelConfigured(models.some(model => model.isDefault && model.available));
+    }).catch(() => { if (!ctrl.signal.aborted) setPlatformAvailable(false); });
+    // Recovery reads custody only. It cannot resume this click's goal submission.
+    if (environmentRequest) void applicationEnvironmentApi.recover(environmentRequest, ctrl.signal).then(result => {
+      if (!ctrl.signal.aborted) { setEnvironment(result.environment); setNotice('已核对原环境准备请求；研究目标没有因此发送。准备确认后，请明确点击开始研究。'); }
+    }).catch(() => { if (!ctrl.signal.aborted) setNotice('环境准备尚未确认。目标草稿保留，请核对原准备请求。'); });
+    return () => ctrl.abort();
+  }, [ownerId, researchJourney, revision]);
   const [setupOpen, setSetupOpen] = useState(false);
   const [projectSetupOpen, setProjectSetupOpen] = useState(false);
   const [creationConnection, setCreationConnection] = useState('');
@@ -56,7 +81,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const researchText = materials.trim() ? `${researchGoal.trim()}\n\n补充材料（用户提供）：\n${materials.trim()}` : researchGoal.trim();
   useEffect(() => { if (researchJourney) { try { sessionStorage.setItem(draftStorage, JSON.stringify({ goal: researchGoal, materials })); } catch { /* In-memory draft remains; dispatch still requires durable request storage. */ } } }, [researchJourney, draftStorage, researchGoal, materials]);
   const [title, setTitle] = useState(''); const [newGoal, setNewGoal] = useState(''); const followup = useRef<{ requestId: string; text: string; epoch: number } | null>(null); const [text, setText] = useState(''); const [plan, setPlan] = useState<Plan>(); const [action, setAction] = useState<PersonalAction>();
-  const [allowed, setAllowed] = useState(false); const [showReview, setShowReview] = useState(false); const [job, setJob] = useState<FactoryJob>(); const [revision, refresh] = useState(0);
+  const [allowed, setAllowed] = useState(false); const [showReview, setShowReview] = useState(false); const [job, setJob] = useState<FactoryJob>();
   const dialog = useRef<HTMLDialogElement>(null);
   const live = useRef(true); const lock = useRef(false); const navigation = useRef(0);
   useEffect(() => { live.current = true; return () => { live.current = false; navigation.current++; }; }, []);
@@ -116,8 +141,8 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       if (ctrl.signal.aborted) return;
       if (who.id !== ownerId || cap.executionContract !== PERSONAL_CONTRACT || cap.nativeQueue !== true || refs.some(r => r.ownerId !== ownerId)) throw new Error('identity');
       setSessionCatalog(history.filter(item => item.namespace === namespace));
-      const personal = new Set(remotes.filter(r => r.providerId === provider).map(r => r.registrationRef));
-      setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && r.providerId === provider); return [ref.ref, remote ? `${remote.origin} · 项目 ${remote.projectId || '未指定'} · ${ref.ref.slice(0, 8)}` : `连接 ${ref.ref}`]; })));
+      const personal = new Set(remotes.filter(r => r.providerId === provider || namespace === 'native-openresearch' && r.providerId === PLATFORM_ORX_PROVIDER).map(r => r.registrationRef));
+      setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && (r.providerId === provider || namespace === 'native-openresearch' && r.providerId === PLATFORM_ORX_PROVIDER)); return [ref.ref, remote?.providerId === PLATFORM_ORX_PROVIDER ? '平台环境 · 原生 OpenResearch' : remote ? `${remote.origin} · 项目 ${remote.projectId || '未指定'} · ${ref.ref.slice(0, 8)}` : `连接 ${ref.ref}`]; })));
       const usable = refs.filter(r => personal.has(r.registrationRef) && r.kind === (namespace === 'opencode' ? 'environment' : 'orx') && (r.status === 'active' && r.available || researchJourney && r.status === 'expired') && r.taskId === null && r.capabilities.includes('session:read'));
       setConnections(usable); setOwnerSubmit(namespace === 'native-openresearch' && cap.ownerSubmit === '/api/factory/personal-agent/commands/submit' && cap.modelConfiguration === 'remote-configured-model' && cap.factoryBYOKForwarded === false);
       if (namespace === 'native-openresearch') {
@@ -192,16 +217,52 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     const epoch = navigation.current;
     await act('submit', async () => {
       if (!await ownerIsCurrent(epoch)) return;
+      await submitNewSession(selected, project.nativeProjectId, researchJourney ? researchText : newGoal, researchJourney ? researchGoal.trim().slice(0, 120) : title.trim() || 'Research session', epoch);
+    });
+  }
+  async function submitNewSession(targetConnection: string, targetProject: string, goal: string, sessionTitle: string, epoch: number) {
       const journey = crypto.randomUUID(); const requestId = `${journey}:create`;
       remember({ requestId, submitAttempt: true });
       // The goal stays in memory. Reload can recover creation, but cannot resend a goal.
-      followup.current = { requestId: `${journey}:prompt`, text: researchJourney ? researchText : newGoal, epoch };
+      followup.current = { requestId: `${journey}:prompt`, text: goal, epoch };
       let created;
-      try { created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: selected, nativeProjectId: project.nativeProjectId, title: researchJourney ? researchGoal.trim().slice(0, 120) : title.trim() || 'Research session' }, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (handleSubmitRejection(error, epoch, true)) return; throw error; }
+      try { created = await personalAgentApi.submit({ requestId, action: 'create', connectionRef: targetConnection, nativeProjectId: targetProject, title: sessionTitle }, ...(researchJourney ? [ownerId] : [])); } catch (error) { if (handleSubmitRejection(error, epoch, true)) return; throw error; }
       if (!current(epoch)) return;
       if (created.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: created.planId, startPlanId: created.planId, submitAttempt: true }); setJob(created);
       setNotice('正在确认新会话；取得原生会话回执后才提交你此次输入的研究目标。');
+  }
+  async function preparePlatform(submitGoal: boolean) {
+    if (!platformAvailable || !ready || !ownerSubmit || pending || attachment || rebindPending || rebindActive.current || lock.current || session?.activeRequestId || submitGoal && (!researchText.trim() || researchText.length > 16000)) return;
+    const epoch = navigation.current; const goal = researchText; const sessionTitle = researchGoal.trim().slice(0, 120);
+    await act('environment', async () => {
+      if (!await ownerIsCurrent(epoch)) return;
+      const requestId = crypto.randomUUID(); localStorage.setItem(environmentStorage, requestId); setEnvironmentRequest(requestId);
+      setNotice('正在准备你的平台环境；原生项目数据保留，准备请求不会发送研究目标。');
+      const result = await applicationEnvironmentApi.prepare(ownerId, requestId);
+      if (!current(epoch) || !await ownerIsCurrent(epoch)) return;
+      if (result.requestId !== requestId || result.environment.applicationId !== 'openresearch' || result.environment.researchSubmitted !== false) throw new Error('scope');
+      setEnvironment(result.environment);
+      if (result.state !== 'ready' || result.environment.state !== 'ready' || !result.environment.connectionRef) {
+        setNotice('环境准备尚未确认。目标草稿保留；不会自动重试研究。请核对原准备请求后明确恢复环境。'); return;
+      }
+      const ref = result.environment.connectionRef; const native = await personalAgentApi.project(ref);
+      if (!current(epoch) || !await ownerIsCurrent(epoch)) return;
+      if (native.namespace !== 'native-openresearch' || native.nativeProjectId !== result.environment.projectId || native.modelCredentialCustody !== 'owner-vault' || !native.sessionCreationSupported) throw new Error('scope');
+      localStorage.removeItem(environmentStorage); setEnvironmentRequest('');
+      setSelected(ref); setProject(native); setResourceReady(true);
+      if (submitGoal) await submitNewSession(ref, native.nativeProjectId, goal, sessionTitle, epoch);
+      else { refresh(n => n + 1); setNotice('平台环境已就绪。原研究记录保留，尚未发送目标；可以明确开始或继续研究。'); }
+    });
+  }
+  async function recoverEnvironment() {
+    if (!environmentRequest || lock.current) return;
+    const epoch = navigation.current;
+    await act('environment-recovery', async () => {
+      if (!await ownerIsCurrent(epoch)) return;
+      const result = await applicationEnvironmentApi.recover(environmentRequest);
+      if (!current(epoch)) return;
+      setEnvironment(result.environment); setNotice('已核对原环境准备状态；没有发送或重发研究目标。');
     });
   }
   async function prepare(next: PersonalAction) {
@@ -308,9 +369,10 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   if (researchJourney) {
     const answers = session?.observation?.messages.filter(m => m.role === 'assistant') ?? [];
     const latest = answers.at(-1);
-    const status = researchStatus({ ready, submitting: ['submit', 'start'].includes(busy), commandPending: !!pending, attachmentPending: !!attachment, session, connectionUnavailable: !!session && !sessionWritable, canRun: ownerSubmit && resourceReady && (session ? !!sessionWritable && !!session.connectionPin?.capabilities.includes('session:prompt') : canCreate) });
+    const ordinaryStatus = researchStatus({ ready, submitting: ['submit', 'start'].includes(busy), commandPending: !!pending, attachmentPending: !!attachment, session, connectionUnavailable: !!session && !sessionWritable, canRun: ownerSubmit && resourceReady && (session ? !!sessionWritable && !!session.connectionPin?.capabilities.includes('session:prompt') : canCreate) });
+    const status = !session && !pending && platformAvailable && location === 'platform' && ready ? { tone: 'neutral', title: busy === 'environment' ? '正在准备平台环境' : !modelConfigured ? '请配置自己的默认模型' : '可以开始研究', explanation: busy === 'environment' ? '正在检查原生运行包和项目；目标尚未提交。' : !modelConfigured ? '设置一次模型后，开始时会自动准备你的研究环境。' : '开始时自动准备或复用平台环境，再向原生会话发送此次目标。' } : ordinaryStatus;
     const needsSetup = ready && (!connections.length || !!project && !canCreate && !session);
-    function begin() { if (session && (!session.nativeSessionId || session.state === 'create_ack_unknown')) return; if (!resourceReady && !leaseContinuation || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
+    function begin() { if (!session && location === 'platform' && platformAvailable) { void preparePlatform(true); return; } if (session && (!session.nativeSessionId || session.state === 'create_ack_unknown')) return; if (!resourceReady && !leaseContinuation || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
     const resultPanel = <section className="research-results" aria-label="研究结果"><div className="research-result-heading"><h2>结果与重要发现</h2>{session && <button className="secondary" disabled={disabled || !!session.activeRequestId} onClick={() => { navigation.current++; setSession(undefined); localStorage.removeItem(selectionStorage); setResearchGoal(''); setMaterials(''); }}>开始新的研究</button>}</div>
         {answers.length ? answers.map(m => <article key={m.id} className="research-answer"><p className="quiet">{researchReplyFailed(m) ? '远端记录了错误' : m.completed ? '远端回复' : '远端回复尚未完成'}</p>{m.events.filter(e => e.type === 'text').map((e, i) => e.type === 'text' && <p key={i} className="research-answer-text">{e.text}</p>)}{!m.events.some(e => e.type === 'text' && e.text.trim()) && <p>{researchReplyFailed(m) ? '本条回复没有最终研究结果。请刷新核对原会话，并查看过程详情或原任务；不会自动重发目标。' : '已观察到工具活动，但还没有可阅读的研究回复。'}</p>}</article>) : <div className="research-empty"><strong>{session?.activeRequestId || pending ? '正在等待原研究的回复' : '研究回复会出现在这里'}</strong><p>{session ? '暂未取得可阅读的结果。可刷新核对原请求，或查看过程详情。' : '输入研究目标开始；收到回复后，可以继续追问。'}</p></div>}
         {latest && <details><summary>结果来源</summary><p>来自此 OpenResearch 原生会话的远端回复。{session?.observation?.exactTurnVerified === false && '按会话记录变化关联，精确轮次未验证。'}研究结论需结合原始材料核实。</p></details>}
@@ -324,18 +386,21 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       {(pending || session?.state === 'ack_unknown' || session?.state === 'create_ack_unknown') && <aside className="research-decision"><h3>需要核对原请求</h3><p>尚未取得明确回执。请核对原请求；刷新和返回不会重建会话或重新发送目标。</p>{pending && <button disabled={!!busy} onClick={() => void recover()}>核对研究请求</button>}</aside>}
       {session && !sessionWritable && <aside className="research-decision"><h3>继续原研究</h3><p>已有结果和原请求保留。继续时会检查同一连接；若账户授权或目标变化，会停止要求你明确选择。</p><button disabled={!!busy || !!attachment || rebindPending || !ready || !session.nativeSessionId} onClick={() => void continueViewing()}>继续查看研究</button></aside>}
       {!!answers.length && resultPanel}
+      {platformAvailable && !session && <section className="research-location" aria-label="研究运行位置"><label>运行位置<select aria-label="运行位置" value={location} disabled={!!busy || !!pending || !!attachment} onChange={e => { locationChosen.current = true; setLocation(e.target.value as 'platform' | 'existing'); }}><option value="platform">平台提供的环境（默认）</option><option value="existing">我的已有 OpenResearch 服务</option></select></label><p className="quiet">{location === 'platform' ? '首次使用自动准备原生 OpenResearch，之后复用同一项目。使用你自己的默认模型。' : '连接你已部署的服务，沿用其模型与原生项目。'}</p>{location === 'platform' && !modelConfigured && <div className="state-note"><strong>先配置自己的默认模型</strong><p>只需设置一次，平台环境按你的授权调用；模型密钥由平台加密保管。</p>{onModels && <button onClick={onModels}>设置我的模型</button>}</div>}</section>}
+      {environmentRequest && <aside className="research-decision"><h3>环境准备请求待核对</h3><p>刷新和返回只恢复环境状态，不会发送研究目标。</p><button disabled={!!busy} onClick={() => void recoverEnvironment()}>核对原环境准备</button><button disabled={!!busy || !!pending || !!session?.activeRequestId} onClick={() => void preparePlatform(false)}>明确恢复平台环境</button></aside>}
       <form className="research-composer" onSubmit={e => { e.preventDefault(); begin(); }}>
         <label htmlFor="research-goal">{session ? '继续研究' : '研究目标'}</label><textarea id="research-goal" aria-label="研究目标" placeholder={session ? '想进一步了解什么？' : '描述你想研究的问题，以及希望得到什么结果…'} maxLength={16000} value={researchGoal} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setResearchGoal(e.target.value)} />
         <details className="research-materials"><summary>补充材料（可选）</summary><label>材料文本或链接<textarea aria-label="补充材料" placeholder="粘贴相关文本或链接；会随目标发送到远端模型。链接不会由 Factory 自动下载。" maxLength={16000} value={materials} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setMaterials(e.target.value)} /></label></details>
-        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!session.nativeSessionId || session.state === 'create_ack_unknown' || !sessionWritable && !leaseContinuation || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{['submit', 'start'].includes(busy) ? '正在提交…' : busy ? '正在核对…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady || session ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
+        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !session && location === 'platform' && platformAvailable && !modelConfigured || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!resourceReady && !leaseContinuation || !session.nativeSessionId || session.state === 'create_ack_unknown' || !sessionWritable && !leaseContinuation || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{['submit', 'start'].includes(busy) ? '正在提交…' : busy ? '正在核对…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{!session && platformAvailable && location === 'platform' ? '平台环境 · 使用我的默认模型' : resourceReady || session ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
         {researchText.length > 16000 && <p role="alert">目标与材料合计超过 16000 字，请缩短后再开始。</p>}
       </form>
-      {(needsSetup || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onCreateProject={ref => { setCreationConnection(ref); refreshCreationConnections(n => n + 1); setProjectSetupOpen(true); requestAnimationFrame(() => { projectSetupElement.current?.scrollIntoView({ block: 'start' }); projectSetupElement.current?.querySelector('summary')?.focus(); }); }} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}
-      <details ref={projectSetupElement} className="research-project-setup" open={projectSetupOpen} onToggle={e => { setProjectSetupOpen(e.currentTarget.open); if (e.currentTarget.open) refreshCreationConnections(n => n + 1); }}><summary>设置新项目的位置与模型</summary><PersonalOrxProjects ownerId={ownerId} initialConnectionRef={creationConnection} refreshRevision={revision + creationRevision} researchSetup onTask={onTask} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setProjectSetupOpen(false); setSetupOpen(false); refresh(n => n + 1); }} /></details>
+      {((needsSetup && (!platformAvailable || location === 'existing')) || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onCreateProject={ref => { setCreationConnection(ref); refreshCreationConnections(n => n + 1); setProjectSetupOpen(true); requestAnimationFrame(() => { projectSetupElement.current?.scrollIntoView({ block: 'start' }); projectSetupElement.current?.querySelector('summary')?.focus(); }); }} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}
+      {(!platformAvailable || location === 'existing' || session) && <details ref={projectSetupElement} className="research-project-setup" open={projectSetupOpen} onToggle={e => { setProjectSetupOpen(e.currentTarget.open); if (e.currentTarget.open) refreshCreationConnections(n => n + 1); }}><summary>设置新项目的位置与模型</summary><PersonalOrxProjects ownerId={ownerId} initialConnectionRef={creationConnection} refreshRevision={revision + creationRevision} researchSetup onTask={onTask} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setProjectSetupOpen(false); setSetupOpen(false); refresh(n => n + 1); }} /></details>}
       {!answers.length && resultPanel}
       <details className="research-details"><summary>研究记录与连接设置</summary>
         <button className="secondary" disabled={disabled || !!session?.activeRequestId} onClick={() => setSetupOpen(v => !v)}>设置研究连接</button>
         <label>项目连接<select aria-label="个人会话资源" value={selected} disabled={disabled} onChange={e => { navigation.current++; setSelected(e.target.value); setSession(undefined); localStorage.removeItem(selectionStorage); }}><option value="">选择项目</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? c.ref}</option>)}</select></label>
+        {platformAvailable && <section aria-label="平台环境状态">{environment?.runtimeLimits && <p>研究可调用你的模型，本地研究工具暂不能联网。进行中工作会延长环境租约，单次运行最长 {Math.round(environment.runtimeLimits.maxActiveSeconds / 3600)} 小时。停止或到时若有未完成工作，记录会保留，但暂不能恢复执行；请先请求中断并等待结束。</p>}<p>平台环境：{environment?.state === 'ready' ? '已就绪' : environment?.state === 'stopped' ? '已停止，原数据保留' : '按开始操作准备或恢复'}</p><button disabled={!!busy || !!pending || !!attachment || !!session?.activeRequestId} onClick={() => void preparePlatform(false)}>准备或恢复平台环境</button>{environment?.state === 'ready' && <button disabled={!!busy || !!pending || !!session?.activeRequestId} onClick={() => void act('environment-stop', async () => { const epoch = navigation.current; if (!await ownerIsCurrent(epoch)) return; const result = await applicationEnvironmentApi.stop(ownerId, environment.id, crypto.randomUUID()); if (current(epoch)) { setEnvironment(result.environment); refresh(n => n + 1); setNotice(result.state === 'stopped' ? '平台环境已停止，项目和研究记录保留。恢复环境不会重发目标。' : '停止状态未确认，原数据保留。'); } })}>停止环境并保留数据</button>}</section>}
         <h3>已有研究</h3>{visibleSessions.map(s => <button key={s.id} disabled={disabled} onClick={() => { navigation.current++; localStorage.setItem(selectionStorage, s.id); setSession(s); setSelected(s.connectionRef); }}>{s.observation?.messages.find(m => m.role === 'user')?.events.find(e => e.type === 'text')?.text?.slice(0, 80) || '查看已有研究'}</button>)}
         {!!nativeSessions.length && <details><summary>已有远端会话</summary>{nativeSessions.map(s => <p key={s.nativeSessionId}>{s.title || '未命名研究'} <button disabled={disabled} onClick={() => void attachNative(s)}>继续此研究</button></p>)}</details>}
         {session && <><details><summary>过程详情与原始输出</summary><p>项目 {session.nativeProjectId} · 会话 {session.nativeSessionId} · 状态 {session.state}</p>{session.observation?.messages.map(m => <article key={m.id}><h4>{m.role === 'assistant' ? '远端代理' : '你的目标'}</h4>{m.events.map((e, i) => e.type === 'text' ? <p key={i} className="research-answer-text">{e.text}</p> : <details key={i}><summary>工具 {e.tool} · {e.status}</summary><pre>{e.output}</pre></details>)}</article>)}</details><PersonalSessionRebind ownerId={ownerId} namespace={namespace} session={session} candidates={connections} disabled={!!busy || !!attachment || !ready} commandPending={!!pending} onPending={rebindChanged} onRebound={next => { navigation.current++; observationGeneration.current++; setSession(next); setSelected(next.connectionRef); refresh(n => n + 1); }} /><button className="secondary" disabled={disabled || !sessionWritable || !session.connectionPin?.capabilities.includes('session:interrupt')} onClick={() => void submit('interrupt')}>请求中断研究</button></>}

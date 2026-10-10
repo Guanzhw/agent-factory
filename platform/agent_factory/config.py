@@ -81,6 +81,9 @@ class Settings:
     platform_paid_models_enabled: bool = False
     # Trusted test transport only; never accepted from HTTP or environment.
     owner_model_transport_factory: Callable | None = field(default=None, repr=False)
+    # Operator-installed immutable artifacts; no runtime paths/commands in HTTP.
+    # None leaves preparation unavailable. Owners only configure their own model.
+    platform_openresearch: object | None = field(default=None, repr=False)
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 

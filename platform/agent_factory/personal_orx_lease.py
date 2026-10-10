@@ -28,7 +28,7 @@ class PersonalOrxLease:
             raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
         resource, config = service.personal._row(conn, owner, old['registrationRef'])
         provider = service.personal._provider(config)
-        if config['providerId'] != PERSONAL_ORX_PROVIDER_ID or resource['state'] not in {'VERIFIED', 'FAILED'}:
+        if config['providerId'] not in {PERSONAL_ORX_PROVIDER_ID, 'platform-openresearch-session-v1'} or resource['state'] not in {'VERIFIED', 'FAILED'}:
             raise HTTPException(409, 'ORX_LEASE_EXPLICIT_SELECTION_REQUIRED')
         if not provider.authorized(owner, config['configuration']):
             raise HTTPException(409, 'REMOTE_CREDENTIAL_UNAVAILABLE')

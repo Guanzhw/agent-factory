@@ -56,6 +56,9 @@ class PersonalAgentSessions:
                 raise
             return engines
         engines[module.PERSONAL_ORX_PROVIDER_ID] = module.PersonalOrxHandle
+        # Installed platform package reuses original ORX's wire and the same
+        # persisted personal-command controller; no separate research queue.
+        engines['platform-openresearch-session-v1'] = module.PersonalOrxHandle
         return engines
 
     def _handle(self, owner, pin=None, reference=None, capability='session:read'):
@@ -79,7 +82,7 @@ class PersonalAgentSessions:
         project = handle.project()
         return {**project, 'connectionPin': pin,
             'upstreamOrxProjectId': project['nativeProjectId'] if handle.namespace == 'native-openresearch' else None,
-            'budgetEnforcement': 'advisory', 'modelCredentialCustody': 'remote',
+            'budgetEnforcement': 'advisory', 'modelCredentialCustody': getattr(handle.provider, 'model_credential_custody', 'remote'),
             'stopGuarantee': 'unverified'}
 
     @staticmethod
@@ -142,6 +145,7 @@ class PersonalAgentSessions:
                     body = {'id': identifier, 'ownerId': owner, 'connectionPin': pin,
                         'nativeProjectId': native_project_id, 'nativeSessionId': native_session_id,
                         'namespace': handle.namespace, 'executionContract': PERSONAL_CONTRACT,
+                        'modelCredentialCustody': getattr(handle.provider, 'model_credential_custody', 'remote'),
                         'attachRequestId': request_id, 'factoryIdentity': None}
                     conn.execute(self.sessions.insert().values(id=identifier, owner_id=owner, body=body,
                         body_hash=digest(body), state='ready', observation=None, active_request=None, created_at=now()))
@@ -407,6 +411,7 @@ class PersonalAgentSessions:
         identity = self._authorize(owner, intent)
         body = {'id': identifier, 'ownerId': owner, 'connectionPin': pin, 'nativeProjectId': native_project_id,
             'nativeSessionId': None, 'namespace': handle.namespace, 'executionContract': PERSONAL_CONTRACT,
+            'modelCredentialCustody': getattr(handle.provider, 'model_credential_custody', 'remote'),
             'createRequestId': request_id, 'factoryIdentity': identity}
         session = dict(id=identifier, owner_id=owner, body=body, body_hash=digest(body),
             state='create_ack_unknown', observation=None, active_request=None, created_at=now())
@@ -505,7 +510,7 @@ class PersonalAgentSessions:
             'upstreamOrxProjectId': body['nativeProjectId'] if body['namespace'] == 'native-openresearch' else None,
             'factoryIdentity': body['factoryIdentity'], 'state': row['state'], 'activeRequestId': row['active_request'],
             'bindingHistory': body.get('bindingHistory', []), 'bindingStatus': self._binding_status(owner, body['connectionPin']),
-            'observation': row['observation'], 'modelCredentialCustody': 'remote',
+            'observation': row['observation'], 'modelCredentialCustody': body.get('modelCredentialCustody', 'remote'),
             'budgetEnforcement': 'advisory', 'stopVerified': False, 'liveEndToEndVerified': False}
 
     def _binding_status(self, owner, pin):

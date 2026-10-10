@@ -137,7 +137,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
   });
   const selectedCredential = matchingCredentials.find(c => c.credentialRef === savedReference);
   return <section className="model-settings" aria-labelledby="model-settings-title">
-    <div className="page-heading"><div><p className="quiet">个人设置 · Agno 原生任务</p><h1 id="model-settings-title">我的模型/API</h1><p>保存一次自己的模型，后续原生任务使用默认设置。</p></div><button className="secondary" onClick={onResearch} disabled={busy}>返回工作区</button></div>
+    <div className="page-heading"><div><p className="quiet">个人设置 · 我的默认模型</p><h1 id="model-settings-title">我的模型/API</h1><p>保存一次自己的模型，平台准备的 OpenResearch 与原生任务使用默认设置。</p></div><button className="secondary" onClick={onResearch} disabled={busy}>返回工作区</button></div>
     <p className="model-purpose">研究内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
     {onCredentials && <button className="secondary" disabled={busy} onClick={onCredentials}>管理我的凭据与连接</button>}
     {error && <div className="error-message" role="alert">{error}</div>}{notice && <div className="success-message" role="status">{notice}</div>}
@@ -155,6 +155,6 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
       {!editing && credentialSource === 'saved' ? <><label>已保存的模型凭据<select aria-label="已保存的模型凭据" value={selectedCredential ? savedReference : ''} onChange={e => setSavedReference(e.target.value)}><option value="">选择匹配此模型端点的凭据</option>{matchingCredentials.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.destination} · {c.credentialRef}</option>)}</select></label><p className="quiet">只绑定当前用户的已保存凭据引用，不重新保存密钥。保存时仍由服务端核对归属、授权、目标和版本。{!matchingCredentials.length && '当前没有匹配的有效凭据；可更改端点、重新读取设置或直接输入新密钥。'}</p></> : <label>API 密钥<input aria-label="API 密钥" type="password" autoComplete="new-password" required maxLength={4096} value={key} onChange={e => setKey(e.target.value)} placeholder={editing ? '输入新的密钥' : '输入自己的 API 密钥'}/></label>}</fieldset>
       <div className="button-row"><button className="primary" disabled={busy || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : !selectedCredential)}>{busy ? '正在保存…' : editing ? '保存新密钥' : credentialSource === 'saved' ? '保存模型并设为默认' : '保存并设为默认'}</button>{editing && <button type="button" disabled={busy} onClick={() => { setEditing(undefined); setKey(''); setModel(''); }}>取消更新</button>}</div>
     </form>}
-    <details className="technical-detail"><summary>兼容性与设置说明</summary><p>支持 HTTPS /v1 的文本与工具调用 Chat Completions。保存配置不会发送模型请求，也不证明远端模型兼容。</p><p>这是 Agno 原生模型设置；OpenResearch 原生远程会话继续使用其服务自身的模型配置。</p><p>撤销模型不删除历史记录；密钥轮换后旧任务绑定需重新核对。</p></details>
+    <details className="technical-detail"><summary>兼容性与设置说明</summary><p>支持 HTTPS /v1 的文本与工具调用 Chat Completions。保存配置不会发送模型请求，也不证明远端模型兼容。</p><p>此默认模型用于平台 OpenResearch 环境及 Agno 原生任务。已有远端 OpenResearch 服务继续使用其自身配置。</p><p>撤销模型不删除历史记录；密钥轮换后旧任务绑定需重新核对。</p></details>
   </section>;
 }

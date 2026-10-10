@@ -124,6 +124,17 @@ def create_app(settings=None, *, diagnostics=None):
     store.personal_models = PersonalModels(store, auth, connections, credential_vault,
         transport_factory=settings.owner_model_transport_factory)
     connections.owner_models = store.personal_models
+    from .application_environments import ApplicationEnvironments, environment_router
+    environment_packages = {}
+    if settings.platform_openresearch is not None:
+        from .platform_openresearch import PlatformOpenResearchConfig, PlatformOpenResearchPackage
+        if not settings.personal_agent_commands_enabled or not isinstance(settings.platform_openresearch, PlatformOpenResearchConfig):
+            raise ValueError('Platform OpenResearch requires the native personal-command channel and trusted package config')
+        package = PlatformOpenResearchPackage(settings.platform_openresearch,
+            settings.workspace.resolve() / 'platform-openresearch')
+        environment_packages['openresearch'] = package
+        connections.personal.providers[package.provider_id] = package.provider
+    store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections, environment_packages)
     from .synthesis_sources import SynthesisSourceService
     at('PREPARATION_APP_SYNTHESIS_SOURCES')
     store.synthesis_sources = SynthesisSourceService(store, auth)
@@ -248,6 +259,7 @@ def create_app(settings=None, *, diagnostics=None):
     factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
     base.include_router(personal_model_router(auth, store.personal_models))
+    base.include_router(environment_router(auth, store.application_environments))
     from .personal_research import personal_research_router
     base.include_router(personal_research_router(auth, store, factory_api))
     if settings.personal_agent_commands_enabled:
@@ -392,6 +404,7 @@ def create_app(settings=None, *, diagnostics=None):
                         if store.remote_scientific_receiver is not None:
                             await store.remote_scientific_receiver.close()
                         await store.autoresearch_session_control.close()
+                        store.application_environments.close()
         finally:
             # Observer and native worker finish before their shared lock pool.
             store.dispose_root_locks()
