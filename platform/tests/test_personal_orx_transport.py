@@ -15,6 +15,7 @@ from agent_factory.personal_agent_sessions import PersonalAgentSessions
 from agent_factory.personal_agent_transport import PERSONAL_CONTRACT
 from agent_factory.personal_orx_transport import (
     PERSONAL_ORX_PROVIDER_ID, PersonalOrxProvider, PersonalOrxHTTPS, PersonalOrxHandle,
+    _NativeSessionClient,
 )
 from agent_factory.personal_remote_provider import SecretLease, RemoteConnectionError
 from test_personal_agent_sessions import Auth, Secrets
@@ -47,7 +48,10 @@ class NativeOrxWire:
         elif route == '/api/chat/sessions' and method == 'POST':
             assert payload['projectId'] == 'native-project'
             sid = 'chat_created_' + str(len(self.rows))
-            self.rows[sid] = {'id': sid, **deepcopy(payload), 'busy': False, 'archived': False, 'title': None}
+            self.rows[sid] = {'id': sid, **deepcopy(payload),
+                'permissionMode': payload.get('permissionMode') or 'default',
+                'serviceTier': payload.get('serviceTier'), 'reasoningLevel': payload.get('reasoningLevel'),
+                'busy': False, 'archived': False, 'title': None, 'goal': None, 'activeLeafId': None}
             self.messages[sid] = []
             value = {'session': self.rows[sid]}
         else:
@@ -221,6 +225,41 @@ class PersonalOrxTests(unittest.TestCase):
         self.assertEqual(create[2]['reasoningLevel'], 'medium')
         self.assertEqual(result['titleUpdate'], 'acknowledged')
         self.assertFalse(any(c[1] == '/api/projects' for c in self.posts()))
+
+    def test_fresh_explicit_model_accepts_pinned_effective_default_permission_response(self):
+        handle = PersonalOrxHandle(self.provider, 'alice', {**self.config,
+            'sessionDefaults': {'harness': 'opencode', 'model': 'owner/model'}}, lambda _: None)
+        result = handle.create_session('First native research', before_send=lambda: None)
+        create = next(c for c in self.posts() if c[1] == '/api/chat/sessions')
+        self.assertNotIn('permissionMode', create[2])
+        self.assertEqual(self.wire.rows[result['nativeSessionId']]['permissionMode'], 'default')
+        self.assertEqual(result['nativeProjectId'], 'native-project')
+        self.assertEqual(result['titleUpdate'], 'acknowledged')
+        self.assertEqual(len([c for c in self.posts() if c[1] == '/api/chat/sessions']), 1)
+
+    def test_default_equivalence_cannot_relax_permission_or_native_identity_pins(self):
+        row = deepcopy(self.wire.rows['chat_original'])
+        expected = {**row, 'permissionMode': None}
+        client = _NativeSessionClient(self.handle(), expected)
+        self.assertEqual(client._session(row, row['id'])['id'], row['id'])
+        for patch in ({'permissionMode': 'auto-approve'}, {'permissionMode': 'unknown'},
+                {'permissionMode': 'plan'}, {'permissionMode': 'yolo'},
+                {'projectId': 'another-project'}, {'id': 'chat_another'}, {'harness': 'codex'},
+                {'model': 'another/model'}, {'planMode': True}, {'planMode': 0},
+                {'reasoningLevel': 'high'}):
+            with self.subTest(patch=patch), self.assertRaises(RemoteConnectionError):
+                client._session({**row, **patch}, row['id'])
+        missing = deepcopy(row); del missing['permissionMode']
+        with self.assertRaises(RemoteConnectionError): client._session(missing, row['id'])
+        with self.assertRaises(RemoteConnectionError):
+            _NativeSessionClient(self.handle(), {**row, 'permissionMode': 'unknown'})._session(
+                {**row, 'permissionMode': 'unknown'}, row['id'])
+        explicit = _NativeSessionClient(self.handle(), {**row, 'permissionMode': 'auto-approve'})
+        with self.assertRaises(RemoteConnectionError): explicit._session(row, row['id'])
+        self.assertEqual(explicit._session({**row, 'permissionMode': 'auto-approve'}, row['id'])['id'], row['id'])
+        tier = _NativeSessionClient(self.handle(), {**row, 'serviceTier': 'priority'})
+        with self.assertRaises(RemoteConnectionError): tier._session(row, row['id'])
+        self.assertEqual(self.posts(), [])
 
     def test_bearer_basic_modes_and_narrow_route_contract(self):
         credential = SecretLease('owner', 'service-token')

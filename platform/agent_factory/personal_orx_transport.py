@@ -183,8 +183,17 @@ class _NativeSessionClient(OpenResearchSessionHTTP):
 
     def _session(self, row, session_id=None):
         self._handle.validate_session(row, session_id)
+        # Pinned ORX session_json exposes effective_permission_id: OpenCode's
+        # omitted stored permission is returned as "default". Compare only this
+        # proven equivalent pair; do not change the outgoing permission grant.
+        def permission(value):
+            if self.harness == 'opencode':
+                require(value is None or value in ('default', 'auto-approve'))
+                return 'default' if value is None else value
+            return value
         require(row.get('harness') == self.harness and row.get('model') == self.model
-                and row.get('permissionMode') == self.permission_mode)
+                and 'permissionMode' in row
+                and permission(row['permissionMode']) == permission(self.permission_mode))
         for key, value in self._optional_pins().items():
             require(row.get(key) == value and (key != 'planMode' or type(row.get(key)) is bool))
         return {'id': row['id'], 'projectId': self.project_id, 'harness': self.harness, 'model': self.model,

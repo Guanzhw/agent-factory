@@ -198,3 +198,24 @@ it('retains expired-session history and original results, then continues the sam
   expect(attach).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
   await fill('下一轮消息', 'Continue the original work'); await click('准备发送消息'); expect(personalAgentApi.prepare).toHaveBeenCalledWith(expect.objectContaining({ action: 'prompt', sessionId: session.id }));
 });
+it('reopens an unknown ORX creation prominently and keeps refresh and return read-only', async () => {
+  const orxConnection = { ...connection, kind: 'orx' as const };
+  const orxProject = { ...project, namespace: 'native-openresearch' as const, upstreamOrxProjectId: project.nativeProjectId };
+  const unknown: PersonalSession = { ...session, namespace: 'native-openresearch', nativeSessionId: null, state: 'create_ack_unknown', connectionPin: orxConnection, upstreamOrxProjectId: project.nativeProjectId };
+  vi.mocked(api.userConnections).mockResolvedValue([orxConnection]);
+  vi.mocked(personalRemoteApi.list).mockResolvedValue([{ ...remote, providerId: ORX_PERSONAL_PROVIDER }]);
+  vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: PERSONAL_CONTRACT, nativeQueue: true, ownerSubmit: '/api/factory/personal-agent/commands/submit', modelConfiguration: 'remote-configured-model', factoryBYOKForwarded: false });
+  vi.mocked(personalAgentApi.project).mockResolvedValue(orxProject);
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([unknown]); vi.mocked(personalAgentApi.session).mockResolvedValue(unknown);
+  const submit = vi.spyOn(personalAgentApi, 'submit');
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, unknown.id);
+  const render = () => act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true })));
+  await render(); await fill('研究目标', 'Retained draft must not send');
+  expect(host.querySelector('.research-status')?.textContent).toContain('研究会话创建待核对');
+  expect(host.querySelector('.research-status')?.getAttribute('data-tone')).toBe('unknown');
+  expect(button('继续研究').disabled).toBe(true); expect(host.textContent).toContain('不会重建会话或重新发送目标');
+  await click('刷新');
+  await act(async () => root.unmount()); root = createRoot(host); await render();
+  expect(host.querySelector('.research-status')?.textContent).toContain('研究会话创建待核对');
+  expect(submit).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
+});
