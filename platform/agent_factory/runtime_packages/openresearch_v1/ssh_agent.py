@@ -1,5 +1,6 @@
 """Stdlib supervisor RPC over an authenticated SSH channel, no model secrets."""
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
@@ -30,7 +31,25 @@ class ForwardedBroker:
 class SSHSupervisor(OpenResearchSupervisor):
     def __init__(self, config, root, version, broker):
         self.version, self.forwarded = version, broker
+        self.capacity_depth = 0
         super().__init__(config, root)
+    @contextmanager
+    def _capacity(self):
+        # Disconnect cleanup and a new SSH process must share custody before
+        # either reads/writes the original receipt. Nested stop during prepare
+        # reuses this process's existing flock instead of deadlocking itself.
+        with self.lock:
+            if self.capacity_depth:
+                self.capacity_depth += 1
+                try: yield
+                finally: self.capacity_depth -= 1
+            else:
+                with super()._capacity():
+                    self.capacity_depth = 1
+                    try: yield
+                    finally: self.capacity_depth = 0
+    def stop(self, body):
+        with self.lock, self._capacity(): return super().stop(body)
     def _new_broker(self, path, handle, *, ttl): return self.forwarded
     def _command(self, config, name, capability):
         command = build_command(config, name, capability)
@@ -57,7 +76,12 @@ def run():
     config = PlatformOpenResearchConfig(**value['config'])
     broker = ForwardedBroker(value['capability'], value['brokerSocket'], config.max_active_seconds)
     supervisor = SSHSupervisor(config, value['root'], value['version'], broker)
-    def disconnected(signum, frame): raise SystemExit(1)
+    def disconnected(signum, frame):
+        # Repeated channel-close signals cannot interrupt an already admitted
+        # bounded cleanup. SIGKILL/host failure still remain unknown custody.
+        signal.signal(getattr(signal, 'SIGHUP'), signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise SystemExit(1)
     signal.signal(getattr(signal, 'SIGHUP'), disconnected)
     signal.signal(signal.SIGTERM, disconnected)
     try:

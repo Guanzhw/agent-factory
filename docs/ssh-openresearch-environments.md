@@ -76,7 +76,10 @@ capabilities and has only its own writable persistent data mount. The configured
 capacity bound is per supervisor directory, not a whole-server or fleet scheduler.
 
 An SSH disconnect attempts to stop the owned runtime; no lost acknowledgement
-is called a confirmed stop. A new explicit prepare reconciles the exact receipt
+is called a confirmed stop. Cleanup and a replacement SSH process hold the same
+remote custody file lock before reading or writing the original receipt. Nested
+stop during preparation reuses the admitted lock; repeated disconnect signals
+cannot interrupt its bounded cleanup. A new explicit prepare reconciles the exact receipt
 and original project before creating a replacement. Neither read recovery nor
 reconnection retries a message. Stored unfinished native work prevents restart
 and remains preserved. In-flight host/server crashes and interrupted-work

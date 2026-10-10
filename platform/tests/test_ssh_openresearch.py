@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import sys
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -88,3 +89,33 @@ class SSHOpenResearchTests(unittest.TestCase):
         self.assertEqual(supervisor._inspect(receipt, root), value)
         value['Mounts'][1]['Source'] = '/foreign/broker.sock'
         with self.assertRaises(ValueError): supervisor._inspect(receipt, root)
+
+    def test_disconnect_cleanup_fences_a_new_process_and_nested_stop_does_not_deadlock(self):
+        supervisors = []
+        for _ in range(2):
+            supervisor = object.__new__(SSHSupervisor)
+            supervisor.root, supervisor.lock, supervisor.capacity_depth = self.root, threading.RLock(), 0
+            supervisors.append(supervisor)
+        old, new = supervisors
+        admitted, attempted, release, replacement = (threading.Event() for _ in range(4))
+        order = []
+        def original_stop(supervisor, body):
+            if body['nested']:
+                order.append('original-receipt-committed'); return True
+            admitted.set(); self.assertTrue(release.wait(3))
+            return supervisor.stop({'nested': True})
+        def cleanup(): old.stop({'nested': False})
+        def prepare():
+            self.assertTrue(admitted.wait(3)); attempted.set()
+            with new._capacity(): order.append('replacement-receipt-read'); replacement.set()
+        first, second = threading.Thread(target=cleanup), threading.Thread(target=prepare)
+        with patch('agent_factory.runtime_packages.openresearch_v1.ssh_agent.OpenResearchSupervisor.stop',
+                autospec=True, side_effect=original_stop):
+            first.start(); second.start()
+            try:
+                self.assertTrue(attempted.wait(3)); self.assertFalse(replacement.wait(0.05))
+            finally:
+                release.set(); first.join(3); second.join(3)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(order, ['original-receipt-committed', 'replacement-receipt-read'])
+        self.assertEqual((old.capacity_depth, new.capacity_depth), (0, 0))

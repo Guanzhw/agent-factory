@@ -137,7 +137,7 @@ browser/container reports are private task artifacts; public tests use synthetic
 owners, credentials, runtime peers and model responses. No real model or remote
 deployment is required by the automated suite.
 
-`check_owner_byok_postgres.py` requires all 40 owner-model, platform and SSH-boundary
+`check_owner_byok_postgres.py` requires all 41 owner-model, platform and SSH-boundary
 cases with no skips. The runtime startup gate checks both merged configuration
 and the final executable tools of the native factory/build/plan agents. Controlled
 original-binary testing has exercised one local bash tool, a persisted worktree
