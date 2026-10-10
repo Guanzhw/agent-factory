@@ -42,11 +42,13 @@ class PlatformOpenResearchConfig:
     image: str
     max_active: int = 2
     lease_seconds: int = 1800
+    max_active_seconds: int = 21600
 
     def validate(self):
         if sys.platform != 'linux' or fcntl is None: raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
         require(type(self.max_active) is int and 1 <= self.max_active <= 8)
         require(type(self.lease_seconds) is int and 60 <= self.lease_seconds <= 3600)
+        require(type(self.max_active_seconds) is int and self.lease_seconds <= self.max_active_seconds <= 86400)
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image))
         BinaryPin(self.orx_path, LINUX_SHA256).verify()
         BinaryPin(self.opencode_path, OPENCODE_SHA256).verify()
@@ -135,6 +137,15 @@ class PlatformOpenResearchPackage:
         return current
 
     def _remove_stopped(self, receipt, root):
+        # Without an acknowledged/persisted container ID, start was never
+        # issued. A successful exact-name inventory can prove create had no
+        # effect. A failed inventory or an existing object remains unresolved.
+        removal = receipt.get('removalIntent')
+        absence_safe = not receipt.get('containerId') or type(removal) is dict and (
+            removal.get('containerId') == receipt['containerId'] and removal.get('status') in {'created', 'exited'})
+        if absence_safe and not self._docker('container', 'ls', '--all',
+                '--filter', 'name=^/' + receipt['name'] + '$', '--format', '{{.ID}}').strip():
+            return True
         current = self._inspect(receipt, root)
         if current['State']['Running']:
             self._docker('stop', '--time', '5', current['Id'], timeout=15)
@@ -144,6 +155,12 @@ class PlatformOpenResearchPackage:
         if current['State']['Status'] == 'exited':
             require(type(current['State']['ExitCode']) is int
                 and current['State']['FinishedAt'] not in ('', '0001-01-01T00:00:00Z'))
+        # Record positive stopped custody before removal. If rm succeeds but
+        # its acknowledgement/final receipt write is lost, exact-name absence
+        # can reconcile this original container without requiring a new one.
+        receipt['removalIntent'] = {'containerId': current['Id'], 'status': current['State']['Status'],
+            'finishedAt': current['State']['FinishedAt'], 'exitCode': current['State']['ExitCode']}
+        self._save(root, receipt)
         self._docker('rm', current['Id'])
         return True
 
@@ -184,7 +201,7 @@ class PlatformOpenResearchPackage:
                 with marker.open('x') as handle_file: json.dump(body, handle_file)
                 marker.chmod(0o600)
             for name in ('broker.sock', 'orx.sock'): self._socket_cleanup(root / 'sockets' / name)
-            broker = OwnerRuntimeBroker(root / 'sockets/broker.sock', handle, ttl=self.config.lease_seconds)
+            broker = OwnerRuntimeBroker(root / 'sockets/broker.sock', handle, ttl=self.config.max_active_seconds)
             broker.start()
             name = 'factory-orx-' + os.urandom(16).hex()
             receipt = {'name': name, 'bodyHash': digest(body), 'removed': False}
@@ -201,8 +218,9 @@ class PlatformOpenResearchPackage:
             private_env['PATH'] = '/usr/local/bin:/usr/bin:/bin'
             index = command.index('PATH', command.index('--env'))
             command[index] = 'PATH=' + environment(broker.capability)['PATH']
-            timer = threading.Timer(self.config.lease_seconds, lambda: self.stop(body)); timer.daemon = True
-            self.live[body['id']] = {'broker': broker, 'body': body, 'timer': timer, 'root': root}
+            timer = threading.Timer(self.config.lease_seconds, lambda: self._lease_due(body)); timer.daemon = True
+            self.live[body['id']] = {'broker': broker, 'body': body, 'timer': timer, 'root': root,
+                'hardDeadline': time.monotonic() + self.config.max_active_seconds}
             try:
                 result = subprocess.run(command, env=private_env, capture_output=True, timeout=60, check=False)
                 require(result.returncode == 0)
@@ -220,6 +238,31 @@ class PlatformOpenResearchPackage:
                 # Runtime receipt stays for exact reconciliation, data stays.
                 self.stop(body)
                 raise ValueError('ENVIRONMENT_PREPARATION_UNCONFIRMED') from None
+
+    def lifecycle_policy(self):
+        return {'leaseSeconds': self.config.lease_seconds, 'maxActiveSeconds': self.config.max_active_seconds,
+            'workExtendsLease': True, 'automaticWorkReplay': False,
+            'interruptedWorkRecovery': False, 'externalToolNetwork': False}
+
+    def _lease_due(self, body):
+        with self.lock:
+            live = self.live.get(body['id'])
+            if live is None: return
+            remaining = live['hardDeadline'] - time.monotonic()
+            if remaining <= 0:
+                self.stop(body); return
+            try:
+                # Read original durable state only. A turn/run/queue in progress
+                # renews this same process; preparation/replay never occurs.
+                private_directory(live['root'] / 'orx')
+                verify_no_startup_dispatch(live['root'] / 'orx/orx.db')
+            except Exception:
+                # Unknown native state also cannot be called safely idle. Keep
+                # existing custody only within the fixed activation budget.
+                timer = threading.Timer(min(self.config.lease_seconds, remaining), lambda: self._lease_due(body))
+                timer.daemon = True; live['timer'] = timer; timer.start()
+                return
+            self.stop(body)
 
     def check(self, body):
         with self.lock:

@@ -74,11 +74,14 @@ class ApplicationEnvironments:
         return dict(row)
 
     def _public(self, row):
+        package = self.packages.get(row['application_id'])
+        policy = getattr(package, 'lifecycle_policy', None)
         return {'id': row['id'], 'applicationId': row['application_id'], 'location': 'platform',
             'state': row['state'].lower(), 'packageVersion': row['body']['packageVersion'],
             'projectId': row['body']['projectId'], 'connectionRef': row['connection_ref'],
             'modelReference': row['body']['modelReference'], 'modelRevision': row['body']['modelRevision'],
-            'dataRetained': True, 'researchSubmitted': False, 'updatedAt': row['updated_at']}
+            'dataRetained': True, 'researchSubmitted': False, 'updatedAt': row['updated_at'],
+            **({'runtimeLimits': policy()} if callable(policy) else {})}
 
     def inspect(self, owner, identifier):
         self.auth.require(owner, 'read')

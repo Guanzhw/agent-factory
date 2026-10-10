@@ -66,8 +66,13 @@ build pins; operator artifact delivery is separate from owner preparation.
 Each active environment has a separate non-root container, no network, no
 capabilities, no new privileges, a read-only root and only its own writable data
 mount. Defaults are one CPU, 1 GiB memory, 256 processes, two active environments
-per configured supervisor, and a 30-minute runtime lease. A lease expiry stops
-the container and preserves data. This is bounded local container isolation;
+per configured supervisor, and a 30-minute renewal interval. At renewal, native durable state is read without
+dispatching: idle environments stop; an active or unresolved turn/run/queue keeps
+the same container within a fixed six-hour activation budget (operator configurable
+up to 24 hours). The broker capability also expires at that absolute budget.
+No automatic restart or goal replay extends the budget. At the hard limit the
+container stops and data remains; interrupted work recovery is still unsupported.
+Owners see these limits and should interrupt/finish native work before an explicit stop. This is bounded local container isolation;
 capacity on the larger target servers has not been measured.
 
 Supervisor identity markers and container receipts stay outside the writable
@@ -138,3 +143,17 @@ and the final executable tools of the native factory/build/plan agents. Controll
 original-binary testing has exercised one local bash tool, a persisted worktree
 file, stop, and restoration by a new supervisor with identical original project,
 session and transcript, zero model calls during preparation, and no goal replay.
+
+## Deployment acknowledgement and socket custody
+
+A pre-create receipt with no container ID can be reconciled only after a successful
+exact-name Docker inventory proves absence. Inventory errors remain unknown.
+Positive stopped-container custody is persisted before removal; if rm succeeds
+but the final receipt write is lost, that saved stop intent plus authoritative
+absence can complete cleanup. An acknowledged container missing without saved
+stop evidence stays unresolved. None of these paths submits a research message.
+
+The broker retains its original socket directory descriptor and socket inode.
+Cleanup uses relative no-follow stat and unlink through that descriptor. Replacing
+the writable sockets directory with another owner’s path, or replacing the socket
+inode, cannot redirect host cleanup.

@@ -1,6 +1,8 @@
 """Synthetic model transport; no native research engine or network here."""
 import asyncio
 import json
+import os
+import socket
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -83,3 +85,35 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         self.revoked = True
         status, value = call(broker.capability)
         self.assertEqual(status, 502); self.assertNotIn('synthetic-private-key', value)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux directory-relative socket custody')
+    def test_close_parent_replacement_cannot_delete_another_owner_socket(self):
+        root = Path(self.folder.name)
+        for owner in ('alice', 'bob'): (root / owner / 'sockets').mkdir(parents=True, mode=0o700)
+        alice = OwnerRuntimeBroker(root / 'alice/sockets/broker.sock', self.handle)
+        bob = OwnerRuntimeBroker(root / 'bob/sockets/broker.sock', self.handle)
+        alice.start(); bob.start(); self.addCleanup(bob.close); self.addCleanup(alice.close)
+        identity = bob.path.stat().st_ino
+        original = root / 'alice/original-sockets'
+        alice.path.parent.rename(original)
+        alice.path.parent.symlink_to(bob.path.parent, target_is_directory=True)
+        alice.close(); alice.close()
+        self.assertEqual(bob.path.stat().st_ino, identity)
+        self.assertFalse((original / 'broker.sock').exists())
+        client = _UnixHTTP(bob.path)
+        try:
+            client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
+                'messages': [{'role': 'user', 'content': 'Synthetic surviving owner'}]}),
+                headers={'Authorization': 'Bearer ' + bob.capability})
+            self.assertEqual(client.getresponse().status, 200)
+        finally: client.close()
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux directory-relative socket custody')
+    def test_close_does_not_unlink_replaced_socket_inode(self):
+        broker = self.broker; broker.start(); self.addCleanup(broker.close)
+        original = broker.path.with_name('original.sock'); broker.path.rename(original)
+        replacement = socket.socket(getattr(socket, 'AF_UNIX'), socket.SOCK_STREAM)
+        self.addCleanup(replacement.close); replacement.bind(str(broker.path))
+        identity = os.lstat(broker.path).st_ino
+        broker.close()
+        self.assertEqual(os.lstat(broker.path).st_ino, identity)

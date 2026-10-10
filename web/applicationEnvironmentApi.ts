@@ -5,6 +5,8 @@ export interface ApplicationEnvironment {
   id: string; applicationId: string; location: 'platform'; state: string;
   packageVersion: string; projectId: string; connectionRef: string | null;
   modelReference: string; modelRevision: string; dataRetained: true; researchSubmitted: false;
+  runtimeLimits?: { leaseSeconds: number; maxActiveSeconds: number; workExtendsLease: true;
+    automaticWorkReplay: false; interruptedWorkRecovery: false; externalToolNetwork: false };
 }
 export interface EnvironmentRequest {
   requestId: string; action: 'prepare' | 'stop'; state: string;

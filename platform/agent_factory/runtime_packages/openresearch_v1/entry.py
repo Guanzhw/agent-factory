@@ -291,10 +291,10 @@ def verify_no_startup_dispatch(database):
         for table, columns in required.items():
             require(columns <= {row[1] for row in connection.execute('PRAGMA table_info(' + table + ')')})
         require(connection.execute('SELECT COUNT(*) FROM chat_queued_messages').fetchone()[0] == 0)
-        require(connection.execute("SELECT COUNT(*) FROM chat_turns WHERE state NOT IN ('completed','failed','cancelled')").fetchone()[0] == 0)
-        require(connection.execute("SELECT COUNT(*) FROM runs WHERE status NOT IN ('done','failed','cancelled')").fetchone()[0] == 0)
-        require(connection.execute("SELECT COUNT(*) FROM chat_run_wakeups WHERE state != 'delivered'").fetchone()[0] == 0)
-        require(connection.execute("SELECT COUNT(*) FROM chat_spawns WHERE state != 'done'").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_turns WHERE state IS NULL OR state NOT IN ('completed','failed','cancelled')").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM runs WHERE status IS NULL OR status NOT IN ('done','failed','cancelled')").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_run_wakeups WHERE state IS NULL OR state != 'delivered'").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_spawns WHERE state IS NULL OR state != 'done'").fetchone()[0] == 0)
 
 
 def container_main():

@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import secrets
 import socketserver
+import stat
 from socketserver import ThreadingMixIn
 import sys
 import threading
@@ -53,6 +54,8 @@ class _Server(ThreadingMixIn, UnixServerBase):
 class OwnerRuntimeBroker:
     def __init__(self, path, model_handle, *, ttl=1800, max_calls=64):
         self.path, self.handle = Path(path), model_handle
+        self.directory_fd: int | None = None
+        self.socket_identity: tuple[int, int] | None = None
         self.capability = secrets.token_urlsafe(32)
         self.deadline, self.remaining = time.monotonic() + ttl, max_calls
         self.lock = threading.Lock(); self.gate = threading.BoundedSemaphore(4)
@@ -168,14 +171,31 @@ class OwnerRuntimeBroker:
         # the same private inode custody even when the persistent workspace path
         # is long; no symlink, alternate listener or broader mount is introduced.
         descriptor = os.open(self.path.parent, getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'))
-        try: self.server = _Server(f'/proc/self/fd/{descriptor}/{self.path.name}', Handler)
-        finally: os.close(descriptor)
-        self.path.chmod(0o600)
+        try:
+            self.server = _Server(f'/proc/self/fd/{descriptor}/{self.path.name}', Handler)
+            os.chmod(self.path.name, 0o600, dir_fd=descriptor, follow_symlinks=False)
+            info = os.stat(self.path.name, dir_fd=descriptor, follow_symlinks=False)
+            if not stat.S_ISSOCK(info.st_mode): raise ValueError('MODEL_SOCKET_INVALID')
+            self.socket_identity = (info.st_dev, info.st_ino)
+            self.directory_fd = descriptor
+        except BaseException:
+            if self.server is not None: self.server.server_close()
+            os.close(descriptor)
+            raise
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
 
     def close(self):
         self.deadline = 0
         if self.server is not None:
             self.server.shutdown(); self.server.server_close()
-        if self.thread is not None: self.thread.join(timeout=2)
-        if self.path.exists(): self.path.unlink()
+            self.server = None
+        if self.thread is not None:
+            self.thread.join(timeout=2); self.thread = None
+        descriptor, self.directory_fd = self.directory_fd, None
+        if descriptor is not None:
+            try:
+                try: info = os.stat(self.path.name, dir_fd=descriptor, follow_symlinks=False)
+                except FileNotFoundError: return
+                if stat.S_ISSOCK(info.st_mode) and (info.st_dev, info.st_ino) == self.socket_identity:
+                    os.unlink(self.path.name, dir_fd=descriptor)
+            finally: os.close(descriptor)

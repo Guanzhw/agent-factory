@@ -55,7 +55,11 @@ class PlatformOpenResearchRuntimeTests(unittest.TestCase):
                 ("UPDATE chat_turns SET state='running'", "UPDATE chat_turns SET state='completed'"),
                 ("UPDATE runs SET status='running'", "UPDATE runs SET status='done'"),
                 ("UPDATE chat_run_wakeups SET state='pending'", "UPDATE chat_run_wakeups SET state='delivered'"),
-                ("UPDATE chat_spawns SET state='waking'", "UPDATE chat_spawns SET state='done'")):
+                ("UPDATE chat_spawns SET state='waking'", "UPDATE chat_spawns SET state='done'"),
+                ("UPDATE chat_turns SET state=NULL", "UPDATE chat_turns SET state='completed'"),
+                ("UPDATE runs SET status=NULL", "UPDATE runs SET status='done'"),
+                ("UPDATE chat_run_wakeups SET state=NULL", "UPDATE chat_run_wakeups SET state='delivered'"),
+                ("UPDATE chat_spawns SET state=NULL", "UPDATE chat_spawns SET state='done'")):
                 with closing(sqlite3.connect(path)) as conn, conn: conn.execute(statement)
                 original = hashlib.sha256(path.read_bytes()).hexdigest()
                 with self.assertRaises(ValueError): verify_no_startup_dispatch(path)
