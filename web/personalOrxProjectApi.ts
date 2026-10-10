@@ -25,6 +25,7 @@ export interface OrxProjectReceipt {
   candidates: { nativeProjectId: string; name: string; path: string }[]; candidateCorrelation: 'unproven-does-not-settle-original-request'; liveEndToEndVerified: false;
 }
 export interface OrxProjectPrepared { plan: Plan; authorization: PlanAuthorization; receipt: OrxProjectReceipt }
+type ProjectRecoveryJob = Omit<FactoryJob, 'status'> & { status: FactoryJob['status'] | 'unknown' | 'waiting_children' };
 const path = '/personal-agent';
 function invalid(): never { throw new Error('项目创建回执无法核对。'); }
 function canonical(value: unknown): string {
@@ -56,7 +57,7 @@ export const personalOrxProjectApi = {
   decide: async (requestId: string, previewHash: string, approved: boolean) => checkOrxProjectReceipt(await factoryRequest<OrxProjectReceipt>(`${path}/project-commands/${encodeURIComponent(requestId)}/decision`, 'POST', { previewHash, approved }), requestId),
   submit: async (requestId: string, previewHash: string, planId: string) => { const job = await factoryRequest<FactoryJob>(`${path}/project-commands/${encodeURIComponent(requestId)}/submit`, 'POST', { previewHash, approved: true }); if (!job?.id || job.planId !== planId) invalid(); return job; },
   recover: async (requestId: string) => {
-    const recovery = await factoryRequest<{ requestId: string; plan: Plan; authorization: PlanAuthorization; receipt: OrxProjectReceipt | null; job: FactoryJob | null; nativeRunId: string | null }>(`${path}/commands/requests/${encodeURIComponent(requestId)}`);
+    const recovery = await factoryRequest<{ requestId: string; plan: Plan; authorization: PlanAuthorization; receipt: OrxProjectReceipt | null; job: ProjectRecoveryJob | null; nativeRunId: string | null; nativeStatus?: string | null }>(`${path}/commands/requests/${encodeURIComponent(requestId)}`);
     if (!recovery.receipt || recovery.requestId !== requestId) invalid();
     checkOrxProjectPrepared({ plan: recovery.plan, authorization: recovery.authorization, receipt: recovery.receipt }, requestId);
     if (recovery.job && (recovery.job.planId !== recovery.plan.id || recovery.receipt.factoryIdentity && (recovery.receipt.factoryIdentity.taskId !== recovery.job.id || recovery.receipt.factoryIdentity.nativeRunId !== recovery.nativeRunId))) invalid();

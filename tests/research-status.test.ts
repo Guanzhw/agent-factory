@@ -31,3 +31,12 @@ it('distinguishes attachment recovery and first setup from research submission',
   expect(researchStatus({ ...input, canRun: false }).title).toBe('首次设置待完成');
   expect(researchStatus({ ...input, submitting: true, commandPending: true }).title).toBe('正在提交研究目标');
 });
+it('surfaces a completed native tool error without exposing its output or claiming process stop', () => {
+  const failed: PersonalMessage = { ...reply, events: [{ type: 'tool', tool: 'error', status: 'completed', output: 'private-provider-token STOPPED' }] };
+  const result = researchStatus({ ...input, session: session('ready', [failed], 'current-request') });
+  expect(result.title).toBe('原生研究回复出现错误'); expect(result.tone).toBe('failed');
+  expect(result.explanation).toContain('请刷新核对原会话'); expect(result.explanation).toContain('不能据此认定远端进程已停止'); expect(result.explanation).not.toContain('private-provider-token');
+  expect(researchStatus({ ...input, session: session('ready', [{ ...failed, completed: false }], 'current-request') }).tone).toBe('waiting');
+  expect(researchStatus({ ...input, session: session('ready', [failed, { ...reply, role: 'user' }], 'new-request') }).tone).toBe('waiting');
+  expect(researchStatus({ ...input, commandPending: true, session: session('ready', [failed], 'current-request') }).tone).toBe('unknown');
+});

@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.spyOn(personalOrxProjectApi, 'decide').mockImplementation(async (id, _hash, approved) => receipt(id, { consentState: approved ? 'approved' : 'cancelled', state: approved ? 'approved' : 'cancelled' }));
   vi.spyOn(personalAgentApi, 'start').mockResolvedValue(job); vi.spyOn(personalOrxProjectApi, 'submit').mockResolvedValue(job);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId, onConnected: connected, onTask: navigateTask }))); }
 function button(text: string) { const value = [...host.querySelectorAll('button')].find(b => b.textContent === text); if (!value) throw new Error('Missing ' + text); return value; }
 async function click(text: string) { await act(async () => button(text).click()); }
@@ -117,11 +117,47 @@ it('lost start and missing job never permit replay after reload', async () => {
 it('UNKNOWN candidates remain unproven and cannot trigger connect, approval or create', async () => {
   localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: 'plan-project', startAttempt: true }));
   const unknown = receipt('original-request', { state: 'ack_unknown', consentState: 'dispatch_started', factoryIdentity: identity });
-  vi.spyOn(personalOrxProjectApi, 'recover').mockResolvedValue({ ...prepared('original-request', unknown), requestId: 'original-request', job, nativeRunId: identity.nativeRunId });
+  vi.spyOn(personalOrxProjectApi, 'recover').mockResolvedValue({ ...prepared('original-request', unknown), requestId: 'original-request', job: { ...job, status: 'unknown' }, nativeRunId: identity.nativeRunId, nativeStatus: 'completed' });
   const reconcile = vi.spyOn(personalOrxProjectApi, 'reconcile').mockResolvedValue({ ...unknown, candidates: [{ nativeProjectId: 'possible-project', name: '<script>candidate</script>', path: request.path }] });
   await mount(); await click('核对原项目创建请求'); await click('只读核对远端候选项目');
   expect(reconcile).toHaveBeenCalledWith('original-request'); expect(host.textContent).toContain('关联未经证明'); expect(host.querySelector('script')).toBeNull();
   expect(host.textContent).not.toContain('关联新项目并进入原生会话'); expect(personalAgentApi.start).not.toHaveBeenCalled(); expect(personalOrxProjectApi.decide).not.toHaveBeenCalled();
+});
+it('continues observing a running native creation through a conservative UNKNOWN until its original acknowledgement', async () => {
+  vi.useFakeTimers(); localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: 'plan-project', startAttempt: true }));
+  const unknown = receipt('original-request', { state: 'ack_unknown', consentState: 'dispatch_started', factoryIdentity: identity });
+  const ack = { ...unknown, state: 'acknowledged', result: { nativeProjectId: 'native-created', name: request.name, path: request.path, namespace: 'native-openresearch' as const, githubSyncRequested: false as const, correlationSource: 'native-create-response' as const, liveEndToEndVerified: false as const } };
+  const recovery = { ...prepared('original-request', unknown), requestId: 'original-request', job: { ...job, status: 'unknown' as const }, nativeRunId: identity.nativeRunId, nativeStatus: 'runstatus.running' };
+  const recover = vi.spyOn(personalOrxProjectApi, 'recover').mockResolvedValueOnce(recovery).mockResolvedValue({ ...recovery, receipt: ack, nativeStatus: 'completed' });
+  await mount(); await act(async () => vi.advanceTimersByTimeAsync(2500));
+  expect(host.textContent).toContain('原生创建任务仍在执行'); expect(host.textContent).not.toContain('创建确认 UNKNOWN');
+  await act(async () => vi.advanceTimersByTimeAsync(2500));
+  expect(host.textContent).toContain('已确认原生项目 ID：native-created');
+  await act(async () => vi.advanceTimersByTimeAsync(10000)); expect(recover).toHaveBeenCalledTimes(2);
+  expect(recover.mock.calls.every(([id]) => id === 'original-request')).toBe(true);
+  expect(personalOrxProjectApi.submit).not.toHaveBeenCalled(); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled(); expect(personalOrxProjectApi.decide).not.toHaveBeenCalled();
+});
+it('stops automatic observation at a terminal native UNKNOWN and preserves the request after reopening', async () => {
+  vi.useFakeTimers(); localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: 'plan-project', startAttempt: true }));
+  const unknown = receipt('original-request', { state: 'ack_unknown', consentState: 'dispatch_started', factoryIdentity: identity });
+  const recover = vi.spyOn(personalOrxProjectApi, 'recover').mockResolvedValue({ ...prepared('original-request', unknown), requestId: 'original-request', job: { ...job, status: 'unknown' }, nativeRunId: identity.nativeRunId, nativeStatus: 'runstatus.error' });
+  await mount(); await act(async () => vi.advanceTimersByTimeAsync(2500));
+  expect(host.textContent).toContain('创建确认 UNKNOWN'); await act(async () => vi.advanceTimersByTimeAsync(10000)); expect(recover).toHaveBeenCalledTimes(1);
+  await act(async () => root.unmount()); root = createRoot(host); await mount(); await act(async () => vi.advanceTimersByTimeAsync(2500)); await act(async () => vi.advanceTimersByTimeAsync(10000));
+  expect(recover).toHaveBeenCalledTimes(2); expect(localStorage.getItem(key)).toContain('original-request');
+  expect(personalOrxProjectApi.submit).not.toHaveBeenCalled(); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
+});
+it('bounds running-request observation without declaring a terminal UNKNOWN and permits another read-only check', async () => {
+  vi.useFakeTimers(); localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: 'plan-project', startAttempt: true }));
+  const unknown = receipt('original-request', { state: 'ack_unknown', consentState: 'dispatch_started', factoryIdentity: identity });
+  const recovery = { ...prepared('original-request', unknown), requestId: 'original-request', job, nativeRunId: identity.nativeRunId, nativeStatus: 'running' };
+  const recover = vi.spyOn(personalOrxProjectApi, 'recover').mockResolvedValue(recovery);
+  await mount(); await click('核对原项目创建请求');
+  for (let i = 0; i < 61; i++) await act(async () => vi.advanceTimersByTimeAsync(2500));
+  expect(recover).toHaveBeenCalledTimes(61); expect(host.textContent).toContain('自动只读核对暂告一段落'); expect(host.textContent).not.toContain('创建确认 UNKNOWN');
+  await act(async () => vi.advanceTimersByTimeAsync(10000)); expect(recover).toHaveBeenCalledTimes(61);
+  await click('核对原项目创建请求'); await act(async () => vi.advanceTimersByTimeAsync(2500)); expect(recover).toHaveBeenCalledTimes(63);
+  expect(personalOrxProjectApi.submit).not.toHaveBeenCalled(); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled(); expect(personalOrxProjectApi.decide).not.toHaveBeenCalled();
 });
 it('connects an acknowledged original project only after explicit harness/model selection', async () => {
   localStorage.setItem(key, JSON.stringify({ requestId: 'original-request', planId: 'plan-project', startAttempt: true }));

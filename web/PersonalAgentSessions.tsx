@@ -1,5 +1,5 @@
 import './personalAgentSessions.css';
-import { researchStatus } from './researchStatus.js';
+import { researchStatus, researchReplyFailed } from './researchStatus.js';
 import { PersonalOrxProjects } from './PersonalOrxProjects.js';
 import { OpenResearchSetup } from './OpenResearchSetup.js';
 import { PersonalSessionRebind } from './PersonalSessionRebind.js';
@@ -152,7 +152,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     if (!sessionId) return;
     const generation = observationGeneration.current; const ctrl = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') || value.startsWith('Factory 已受理原命令') || value.startsWith('原生会话已确认；Factory') ? '' : value); } }
+      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && (result.state === 'result_observed' && !result.activeRequestId || researchReplyFailed(result.observation?.messages.at(-1)))) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') || value.startsWith('Factory 已受理原命令') || value.startsWith('原生会话已确认；Factory') ? '' : value); } }
       catch {
         if (!ctrl.signal.aborted && generation === observationGeneration.current) {
           try { const snapshot = await personalAgentApi.snapshot(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current && snapshot.connectionPin?.ownerId === ownerId && snapshot.namespace === namespace) setSession(snapshot); }
@@ -312,7 +312,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     const needsSetup = ready && (!connections.length || !!project && !canCreate && !session);
     function begin() { if (session && (!session.nativeSessionId || session.state === 'create_ack_unknown')) return; if (!resourceReady && !leaseContinuation || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
     const resultPanel = <section className="research-results" aria-label="研究结果"><div className="research-result-heading"><h2>结果与重要发现</h2>{session && <button className="secondary" disabled={disabled || !!session.activeRequestId} onClick={() => { navigation.current++; setSession(undefined); localStorage.removeItem(selectionStorage); setResearchGoal(''); setMaterials(''); }}>开始新的研究</button>}</div>
-        {answers.length ? answers.map(m => <article key={m.id} className="research-answer"><p className="quiet">{m.completed ? '远端回复' : '远端回复尚未完成'}</p>{m.events.filter(e => e.type === 'text').map((e, i) => e.type === 'text' && <p key={i} className="research-answer-text">{e.text}</p>)}{!m.events.some(e => e.type === 'text' && e.text.trim()) && <p>已观察到工具活动，但还没有可阅读的研究回复。</p>}</article>) : <div className="research-empty"><strong>{session?.activeRequestId || pending ? '正在等待原研究的回复' : '研究回复会出现在这里'}</strong><p>{session ? '暂未取得可阅读的结果。可刷新核对原请求，或查看过程详情。' : '输入研究目标开始；收到回复后，可以继续追问。'}</p></div>}
+        {answers.length ? answers.map(m => <article key={m.id} className="research-answer"><p className="quiet">{researchReplyFailed(m) ? '远端记录了错误' : m.completed ? '远端回复' : '远端回复尚未完成'}</p>{m.events.filter(e => e.type === 'text').map((e, i) => e.type === 'text' && <p key={i} className="research-answer-text">{e.text}</p>)}{!m.events.some(e => e.type === 'text' && e.text.trim()) && <p>{researchReplyFailed(m) ? '本条回复没有最终研究结果。请刷新核对原会话，并查看过程详情或原任务；不会自动重发目标。' : '已观察到工具活动，但还没有可阅读的研究回复。'}</p>}</article>) : <div className="research-empty"><strong>{session?.activeRequestId || pending ? '正在等待原研究的回复' : '研究回复会出现在这里'}</strong><p>{session ? '暂未取得可阅读的结果。可刷新核对原请求，或查看过程详情。' : '输入研究目标开始；收到回复后，可以继续追问。'}</p></div>}
         {latest && <details><summary>结果来源</summary><p>来自此 OpenResearch 原生会话的远端回复。{session?.observation?.exactTurnVerified === false && '按会话记录变化关联，精确轮次未验证。'}研究结论需结合原始材料核实。</p></details>}
       </section>;
     return <section className="research-journey" aria-label="OpenResearch 研究">
