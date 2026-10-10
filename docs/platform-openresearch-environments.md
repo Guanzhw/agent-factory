@@ -121,8 +121,8 @@ needed for broader online research. Container execution and controlled model
 fixtures prove the native wire and local tool mechanisms, not scientific results,
 real-provider compatibility or complete online research acceptance.
 
-Linux+SSH deployment to an owner's server is a separate subsequent increment.
-There is no SSH installation or external deployment in this change. In-place
+Owned Linux servers now have an opt-in [SSH package assembly path](ssh-openresearch-environments.md).
+External equipment acceptance remains separate from controlled local SSH testing. In-place
 runtime/model migration, a scheduler with durable capacity reservations across
 multiple supervisors and production artifact delivery
 also remain separate work. The current Docker scope bounds one configured
@@ -137,7 +137,7 @@ browser/container reports are private task artifacts; public tests use synthetic
 owners, credentials, runtime peers and model responses. No real model or remote
 deployment is required by the automated suite.
 
-`check_owner_byok_postgres.py` requires all 35 owner-model and platform-custody
+`check_owner_byok_postgres.py` requires all 43 owner-model, platform and SSH-boundary
 cases with no skips. The runtime startup gate checks both merged configuration
 and the final executable tools of the native factory/build/plan agents. Controlled
 original-binary testing has exercised one local bash tool, a persisted worktree

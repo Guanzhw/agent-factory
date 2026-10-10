@@ -59,6 +59,7 @@ class PersonalAgentSessions:
         # Installed platform package reuses original ORX's wire and the same
         # persisted personal-command controller; no separate research queue.
         engines['platform-openresearch-session-v1'] = module.PersonalOrxHandle
+        engines['ssh-openresearch-session-v1'] = module.PersonalOrxHandle
         return engines
 
     def _handle(self, owner, pin=None, reference=None, capability='session:read'):

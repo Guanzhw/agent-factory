@@ -134,6 +134,13 @@ def create_app(settings=None, *, diagnostics=None):
             settings.workspace.resolve() / 'platform-openresearch')
         environment_packages['openresearch'] = package
         connections.personal.providers[package.provider_id] = package.provider
+    if settings.ssh_openresearch is not None:
+        from .ssh_openresearch import SSHOpenResearchConfig, SSHOpenResearchPackage
+        if not settings.personal_agent_commands_enabled or not isinstance(settings.ssh_openresearch, SSHOpenResearchConfig):
+            raise ValueError('SSH OpenResearch requires trusted server bindings and the native personal-command channel')
+        ssh_package = SSHOpenResearchPackage(settings.ssh_openresearch, settings.workspace.resolve() / 'ssh-openresearch')
+        environment_packages['openresearch:ssh'] = ssh_package
+        connections.personal.providers[ssh_package.provider_id] = ssh_package.provider
     store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections, environment_packages)
     from .synthesis_sources import SynthesisSourceService
     at('PREPARATION_APP_SYNTHESIS_SOURCES')
