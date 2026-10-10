@@ -28,6 +28,19 @@ beforeEach(() => {
   vi.spyOn(personalOrxProjectApi, 'recoverSelected').mockImplementation(async id => receipt(id));
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it('offers first-project setup only after a successful empty read, preserving unknown loading state', async () => {
+  const create = vi.fn(); let resolve!: (rows: []) => void;
+  vi.mocked(personalOrxProjectApi.existing).mockReturnValue(new Promise(done => { resolve = done; }));
+  await act(async () => root.render(createElement(OpenResearchSetup, { ownerId: owner.id, onConnected: connected, onCreateProject: create })));
+  expect(host.textContent).toContain('正在读取此服务的项目'); expect(host.textContent).not.toContain('此服务还没有');
+  await act(async () => resolve([])); await click('设置我的第一个研究项目');
+  expect(create).toHaveBeenCalledWith(pin.ref); expect(personalOrxProjectApi.selectExisting).not.toHaveBeenCalled();
+});
+it('does not turn a failed project read into an empty service or creation suggestion', async () => {
+  vi.mocked(personalOrxProjectApi.existing).mockRejectedValue(new ApiError('offline', 0));
+  await mount(); expect(host.textContent).toContain('不能确认服务为空'); expect(host.textContent).not.toContain('此服务还没有');
+  expect(personalOrxProjectApi.selectExisting).not.toHaveBeenCalled();
+});
 it.each([403, 404, 409])('unlocks a known %s rejection while preserving its receipt and requiring a new explicit selection', async status => {
   vi.mocked(personalOrxProjectApi.recoverSelected).mockImplementation(async id => receipt(id, { failureStatus: status }));
   await mount(); await click('使用此项目'); const id = vi.mocked(personalOrxProjectApi.selectExisting).mock.calls[0][2];

@@ -37,6 +37,19 @@ function button(text: string) { const value = [...host.querySelectorAll('button'
 async function click(text: string) { await act(async () => button(text).click()); }
 async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`)!; const select = el.tagName === 'SELECT'; Object.getOwnPropertyDescriptor(select ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event(select ? 'change' : 'input', { bubbles: true })); }); }
 async function enter() { await mount(); await fill('项目创建资源', connection.ref); await fill('项目名称', request.name); await fill('远端项目绝对路径', request.path); }
+it('uses only a verified requested service for first setup, leaving path and model for the owner', async () => {
+  await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId: owner.id, onConnected: connected, initialConnectionRef: connection.ref, researchSetup: true })));
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe(connection.ref);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="远端项目绝对路径"]')!.value).toBe('');
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="项目来源"]')!.value).toBe('empty');
+  expect(button('预览项目创建').disabled).toBe(true); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
+  expect(personalOrxProjectApi.submit).not.toHaveBeenCalled();
+});
+it('does not select an unverified supplied service during first setup', async () => {
+  await act(async () => root.render(createElement(PersonalOrxProjects, { ownerId: owner.id, onConnected: connected, initialConnectionRef: 'unknown-service', researchSetup: true })));
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe('');
+  expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
+});
 async function previewCreation() { await enter(); await click('预览项目创建'); }
 async function consent() { await act(async () => host.querySelector<HTMLInputElement>('[aria-label="批准此次项目创建副作用"]')!.click()); }
 

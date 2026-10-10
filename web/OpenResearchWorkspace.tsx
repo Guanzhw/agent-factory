@@ -1,5 +1,4 @@
 import { PersonalAgentSessions } from './PersonalAgentSessions.js';
-import { PersonalOrxProjects } from './PersonalOrxProjects.js';
 import { ManagedNativeProbe, ManagedProbeAdmission } from './ManagedNativeProbe.js';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
@@ -15,7 +14,6 @@ export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog,
   const [localMode, setLocalMode] = useState<'personal' | 'managed'>(selectedProject ? 'managed' : 'personal');
   const mode = selectedMode ?? localMode;
   const setMode = (value: 'personal' | 'managed') => { setLocalMode(value); onMode?.(value); };
-  const [createdConnection, setCreatedConnection] = useState('');
   const [cap, setCap] = useState<ResearchCapabilities>();
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [project, setProject] = useState<ResearchProject>();
@@ -83,7 +81,7 @@ export function OpenResearchWorkspace({ ownerId, onTask, onResources, onCatalog,
   const disabled = busy || !ready || !!pending;
   const unresolvedSession = sessions.some(s => s.taskId === null && s.state !== 'prepared');
   const updateSession = (value: ResearchSession) => setSessions(all => [...all.filter(s => s.id !== value.id), value]);
-  if (mode === 'personal') return <section className="openresearch-workspace"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><div className="page-heading"><div><h1>OpenResearch</h1><p>提出研究目标，查看发现，并沿着结果继续研究。</p><span className="quiet">普通模式 · 使用你已有的 OpenResearch 服务</span></div></div><PersonalAgentSessions key={`${ownerId}:${createdConnection}`} ownerId={ownerId} connectionRef={createdConnection} namespace="native-openresearch" researchJourney onTask={onTask} onResources={onResources} /><details className="or-setup-details"><summary>新建远端项目</summary><p>空服务需要先明确远端路径与远端模型配置。创建或克隆有外部副作用，仍使用原创建预览及一次明确确认。</p><PersonalOrxProjects ownerId={ownerId} onTask={onTask} onConnected={setCreatedConnection} /></details><details className="technical-detail"><summary>其他模式与资源</summary><button onClick={onResources}>管理我的资源</button><button onClick={() => setMode('managed')}>切换受管模式（可选）</button><p>受管连接探测和受控训练实验是独立用途，不代替普通原生研究。</p></details></section>;
+  if (mode === 'personal') return <section className="openresearch-workspace"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><div className="page-heading"><div><h1>OpenResearch</h1><p>提出研究目标，查看发现，并沿着结果继续研究。</p><span className="quiet">普通模式 · 使用你已有的 OpenResearch 服务</span></div></div><PersonalAgentSessions ownerId={ownerId} namespace="native-openresearch" researchJourney onTask={onTask} onResources={onResources} /><details className="technical-detail"><summary>其他模式与资源</summary><button onClick={onResources}>管理我的资源</button><button onClick={() => setMode('managed')}>切换受管模式（可选）</button><p>受管连接探测和受控训练实验是独立用途，不代替普通原生研究。</p></details></section>;
   return <section className="openresearch-workspace">
     <button onClick={() => { selectProject(undefined); setMode('personal'); }}>切换普通模式</button><p className="policy-note">受管模式是独立可选路径。连接探测、受控工作负载与完整原生研究分别标记，不升级普通会话保证。</p>
     <div className="workspace-crumbs"><button className="text-button" onClick={onCatalog}>Factory 应用目录</button><span>/ OpenResearch</span>{project && <><span>/</span><button className="text-button" onClick={() => selectProject(undefined)}>项目</button><span>/ {project.name}</span></>}</div>
