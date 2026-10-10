@@ -99,6 +99,14 @@ silently substitute another model, project or runtime version. Existing unresolv
 research remains unresolved after stop/restart; it must be read or explicitly
 continued through the existing native session custody rules.
 
+This pinned ORX revision automatically drains persisted queues and resumes active
+experiments on startup. Before restarting it, both the host package and container
+entry read its native database and refuse launch when queued chat messages,
+unfinished turns, nonterminal runs, undelivered wakeups or unfinished child spawns exist. They
+preserve those records and never clear them or start a broker/container to recover
+the goal. Explicit native queue/experiment recovery is not implemented in this
+increment; those environments remain unresolved with their stored evidence.
+
 ## Current limits and verification
 
 This first package allows local file/bash tools inside the constrained container
@@ -124,7 +132,7 @@ browser/container reports are private task artifacts; public tests use synthetic
 owners, credentials, runtime peers and model responses. No real model or remote
 deployment is required by the automated suite.
 
-`check_owner_byok_postgres.py` requires all 26 owner-model and platform-custody
+`check_owner_byok_postgres.py` requires all 27 owner-model and platform-custody
 cases with no skips. The runtime startup gate checks both merged configuration
 and the final executable tools of the native factory/build/plan agents. Controlled
 original-binary testing has exercised one local bash tool, a persisted worktree

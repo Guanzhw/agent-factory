@@ -27,7 +27,7 @@ from .orx_pins import LINUX_SHA256
 from .owner_runtime_broker import OwnerRuntimeBroker
 from .personal_orx_transport import PersonalOrxHTTPS, PersonalOrxProvider
 from .personal_remote_provider import RemoteConnectionError, SecretLease
-from .runtime_packages.openresearch_v1.entry import BinaryPin, RuntimeConfig, build_command, environment, private_directory, require
+from .runtime_packages.openresearch_v1.entry import BinaryPin, RuntimeConfig, build_command, environment, private_directory, require, verify_no_startup_dispatch
 from .store import digest
 
 PROVIDER_ID = 'platform-openresearch-session-v1'
@@ -167,6 +167,9 @@ class PlatformOpenResearchPackage:
                 receipt['removed'] = True; self._save(root, receipt)
             if live:
                 live['timer'].cancel(); live['broker'].close(); self.live.pop(body['id'], None)
+            # Original up can dispatch persisted queues, experiments and child
+            # wakeups. Restart must not cross that work boundary implicitly.
+            verify_no_startup_dispatch(root / 'orx/orx.db')
             active = self._docker('ps', '--filter', 'label=factory.environment.scope=' + self.scope, '--format', '{{.ID}}').splitlines()
             require(len(active) < self.config.max_active)
             for name in ('sockets', 'home', 'work', 'orx', 'cache', 'proofs', 'xdg'):

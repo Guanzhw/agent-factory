@@ -277,10 +277,30 @@ def bootstrap_project(root, project_id):
     return project_id
 
 
+def verify_no_startup_dispatch(database):
+    """Pinned ORX up resumes queues/runs. Inspect only; never clear their custody."""
+    database = Path(database)
+    if not database.exists(): return
+    require(database.is_file() and not database.is_symlink())
+    with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
+        required = {'chat_queued_messages': {'id', 'session_id', 'payload_json'},
+            'chat_turns': {'id', 'state'},
+            'runs': {'id', 'status'}, 'chat_run_wakeups': {'run_id', 'state'},
+            'chat_spawns': {'session_id', 'state'}}
+        for table, columns in required.items():
+            require(columns <= {row[1] for row in connection.execute('PRAGMA table_info(' + table + ')')})
+        require(connection.execute('SELECT COUNT(*) FROM chat_queued_messages').fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_turns WHERE state NOT IN ('completed','failed','cancelled')").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM runs WHERE status NOT IN ('done','failed','cancelled')").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_run_wakeups WHERE state != 'delivered'").fetchone()[0] == 0)
+        require(connection.execute("SELECT COUNT(*) FROM chat_spawns WHERE state != 'done'").fetchone()[0] == 0)
+
+
 def container_main():
     os.umask(0o077)
     root = Path('/session')
     bootstrap_project(root, os.environ['ORX_FACTORY_PROJECT_ID'])
+    verify_no_startup_dispatch(root / 'orx/orx.db')
     bridge = subprocess.Popen(['/usr/local/bin/python3', '-I', '-B', '/trusted/bridge.py', '--bridge'])
     try:
         result = subprocess.run(['/trusted/orx', 'up', '--no-browser', '--port', '4791', '--model', 'factory/owner-model'], check=False)
