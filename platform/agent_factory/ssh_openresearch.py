@@ -48,7 +48,7 @@ class SSHAgentLease:
         path = Path(self.socket)
         private_directory(path.parent)
         info = path.lstat()
-        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600)
+        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == getattr(os, 'getuid')() and stat.S_IMODE(info.st_mode) == 0o600)
         require(re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{40,120}', self.public_key))
     def __repr__(self): return 'SSHAgentLease(credentials=<redacted>)'
 
@@ -202,7 +202,7 @@ class SSHOpenResearchPackage:
                     temporary = self.root / 'image.pending'
                     if temporary.exists():
                         info = temporary.lstat()
-                        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1)
+                        require(stat.S_ISREG(info.st_mode) and info.st_uid == getattr(os, 'getuid')() and info.st_nlink == 1)
                         temporary.unlink()
                     process = subprocess.Popen(['docker', 'save', self.config.runtime.image], stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL, bufsize=0)

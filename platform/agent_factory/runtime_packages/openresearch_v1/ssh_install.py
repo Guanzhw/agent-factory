@@ -25,7 +25,7 @@ def directory(root, path):
             if not current.exists(): current.mkdir(mode=0o700)
         info = current.lstat()
         require(stat.S_ISDIR(info.st_mode) and not current.is_symlink()
-            and info.st_uid == os.getuid() and not info.st_mode & 0o077)
+            and info.st_uid == getattr(os, 'getuid')() and not info.st_mode & 0o077)
     return current
 
 
@@ -33,7 +33,7 @@ def install():
     os.umask(0o077)
     manifest = json.loads(sys.stdin.buffer.readline(65537))
     require(sys.platform == 'linux' and os.uname().machine == 'x86_64'
-        and sys.version_info >= (3, 12) and os.getuid() > 0)
+        and sys.version_info >= (3, 12) and getattr(os, 'getuid')() > 0)
     require(set(manifest['files']) == FILES)
     root = directory(manifest['allowedRoot'], manifest['directory'])
     package = directory(str(root), str(root / 'factory_package'))
@@ -46,9 +46,9 @@ def install():
         temporary = package / (name + '.pending')
         if temporary.exists():
             info = temporary.lstat()
-            require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1)
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == getattr(os, 'getuid')() and info.st_nlink == 1)
             temporary.unlink()
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW'), 0o600)
         digest = hashlib.sha256(); remaining = pin['size']
         with os.fdopen(descriptor, 'wb') as output:
             while remaining:
@@ -58,7 +58,7 @@ def install():
         require(digest.hexdigest() == pin['sha256'])
         if path.exists() or path.is_symlink():
             info = path.lstat()
-            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid()
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == getattr(os, 'getuid')()
                 and not info.st_mode & 0o022)
             with path.open('rb') as existing: require(hashlib.file_digest(existing, 'sha256').hexdigest() == pin['sha256'])
             path.chmod(mode)

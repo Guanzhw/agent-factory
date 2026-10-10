@@ -23,7 +23,7 @@ class ForwardedBroker:
     def start(self):
         private_directory(self.path.parent)
         info = self.path.lstat()
-        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600)
+        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == getattr(os, 'getuid')() and stat.S_IMODE(info.st_mode) == 0o600)
     def close(self): self.deadline = 0
 
 
@@ -58,7 +58,7 @@ def run():
     broker = ForwardedBroker(value['capability'], value['brokerSocket'], config.max_active_seconds)
     supervisor = SSHSupervisor(config, value['root'], value['version'], broker)
     def disconnected(signum, frame): raise SystemExit(1)
-    signal.signal(signal.SIGHUP, disconnected)
+    signal.signal(getattr(signal, 'SIGHUP'), disconnected)
     signal.signal(signal.SIGTERM, disconnected)
     try:
         while line := sys.stdin.buffer.readline(1048577):
