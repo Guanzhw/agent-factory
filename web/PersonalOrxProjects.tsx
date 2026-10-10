@@ -21,6 +21,9 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
   const [repo, setRepo] = useState(''); const [paper, setPaper] = useState('');
   const [plan, setPlan] = useState<Plan>(); const [receipt, setReceipt] = useState<OrxProjectReceipt>();
   const [consent, setConsent] = useState(false); const [allowed, setAllowed] = useState(false);
+  const [creationRunning, setCreationRunning] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
+  const observation = useRef({ requestId: '', polls: 0 });
   const [harness, setHarness] = useState(''); const [model, setModel] = useState('');
   const lock = useRef(false); const live = useRef(true);
   const appliedInitialConnection = useRef('');
@@ -69,7 +72,7 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
       const job = await personalOrxProjectApi.submit(pending.requestId, receipt.preview.previewHash, plan.id);
       if (!live.current) return;
       if (job.ownerId !== ownerId) throw new Error('owner');
-      setTaskId(job.id); setNotice('原生创建任务已受理，正在只读核对结果。确认项目后可在此继续关联会话，也可查看任务进度。');
+      setTaskId(job.id); setCreationRunning(true); setPollingPaused(false); setNotice('原生创建任务已受理，正在只读核对结果。确认项目后可在此继续关联会话，也可查看任务进度。');
     });
   }
   async function cancel() {
@@ -81,23 +84,35 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
       remember(null); setPlan(undefined); setReceipt(undefined); setConsent(false); setAllowed(false); setNotice('已取消此创建批准，未提交项目创建。');
     });
   }
-  async function recover() {
+  async function recover(automatic = false) {
     if (!pending) return;
     await act('recover', async () => {
       const value = await personalOrxProjectApi.recover(pending.requestId); if (!live.current) return;
       const result = checkOrxProjectPrepared({ plan: value.plan, authorization: value.authorization, receipt: value.receipt! }, pending.requestId, ownerId);
       if (pending.planId && value.plan.id !== pending.planId || value.job && value.job.ownerId !== ownerId) throw new Error('scope');
+      if (!automatic) { observation.current = { requestId: pending.requestId, polls: 0 }; setPollingPaused(false); }
+      const terminal = ['completed', 'failed', 'canceled', 'cancelled', 'error', 'runstatus.completed', 'runstatus.cancelled', 'runstatus.error'];
+      const running = ['pending', 'queued', 'running', 'runstatus.pending', 'runstatus.running'];
+      const nativeStatus = String(value.nativeStatus ?? '').toLowerCase();
+      const inFlight = !!value.job && !terminal.includes(value.job.status) && running.includes(nativeStatus || value.job.status);
+      setCreationRunning(inFlight);
       setPlan(result.plan); setReceipt(result.receipt); if (value.job) setTaskId(value.job.id); setConsent(false); setAllowed(false);
       if (result.receipt.consentState === 'cancelled') { remember(null); setNotice('原取消已核实，未重放创建。'); }
-      else { remember({ ...pending, planId: result.plan.id, ...(value.job ? { startAttempt: true } : {}) }); setNotice(result.receipt.state === 'ack_unknown' ? '原创建确认 UNKNOWN；候选项目仅供远端人工核对，不能证明属于此请求。禁止重发。' : result.receipt.state === 'acknowledged' ? '已取得原项目 ID。下一步明确选择会话 harness 与模型，关联后即可选择会话并提交研究目标。' : pending.startAttempt ? '尚未找到原任务不代表未提交，继续核对，不重发。' : '原预览已找到，请核对创建副作用后确认提交。'); }
+      else { remember({ ...pending, planId: result.plan.id, ...(value.job ? { startAttempt: true } : {}) }); setNotice(result.receipt.state === 'acknowledged' ? '已取得原项目 ID。下一步明确选择会话 harness 与模型，关联后即可选择会话并提交研究目标。' : inFlight ? '原生创建任务仍在执行，正在只读核对原请求。尚未取得项目回执，不会重新提交创建。' : result.receipt.state === 'ack_unknown' ? '原创建确认 UNKNOWN；候选项目仅供远端人工核对，不能证明属于此请求。禁止重发。' : pending.startAttempt ? '尚未找到原任务不代表未提交，继续核对，不重发。' : '原预览已找到，请核对创建副作用后确认提交。'); }
     });
   }
   // Observation only: refreshing a submitted request never calls decide/start.
   useEffect(() => {
-    if (!ready || !pending?.startAttempt || receipt?.state === 'acknowledged' || receipt?.state === 'ack_unknown' || receipt?.consentState === 'cancelled') return;
-    const timer = setInterval(() => { if (!lock.current) void recover(); }, 2500);
+    if (!ready || !pending?.startAttempt || pollingPaused || receipt?.state === 'acknowledged' || receipt?.state === 'ack_unknown' && !creationRunning || receipt?.consentState === 'cancelled') return;
+    if (observation.current.requestId !== pending.requestId) observation.current = { requestId: pending.requestId, polls: 0 };
+    if (observation.current.polls >= 60) return;
+    const timer = setInterval(() => {
+      if (lock.current) return;
+      if (observation.current.polls >= 60) { clearInterval(timer); setPollingPaused(true); setNotice('自动只读核对暂告一段落。请核对原项目创建请求或查看任务进度；不会重新提交创建。'); return; }
+      observation.current.polls++; void recover(true);
+    }, 2500);
     return () => clearInterval(timer);
-  }, [ready, pending?.requestId, pending?.startAttempt, receipt?.state, receipt?.consentState]);
+  }, [ready, pending?.requestId, pending?.startAttempt, receipt?.state, receipt?.consentState, creationRunning, pollingPaused]);
   async function reconcile() {
     if (!pending || receipt?.state !== 'ack_unknown') return;
     await act('reconcile', async () => { const value = checkOrxProjectReceipt(await personalOrxProjectApi.reconcile(pending.requestId), pending.requestId, ownerId, pending.planId); if (live.current) setReceipt(value); });
@@ -136,7 +151,7 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
       <p>上游可能为聊天页生成 4 条项目建议。它可能将 README、部分代码、文件清单或论文摘要发送给远端偏好或可用 harness 的模型。空项目、缓存命中或无可用 harness 时可能不调用模型。</p>
       </details>
       {plan && !pending?.startAttempt && ['awaiting', 'approved'].includes(receipt.consentState) && <><PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} /><label><input type="checkbox" aria-label="批准此次项目创建副作用" disabled={!!busy} checked={consent} onChange={e => setConsent(e.target.checked)} />我确认此次项目输入、远端写入或 clone，以及可能的远端模型请求。</label><button disabled={!!busy || !consent || !allowed} onClick={() => void start()}>批准并提交此次创建</button><button disabled={!!busy} onClick={() => void cancel()}>取消此次创建批准</button></>}
-      {receipt.state === 'ack_unknown' && <><p role="alert">创建确认 UNKNOWN，不能重新提交。候选项目与原请求的关联未经证明。</p><p>请在你的 OpenResearch 服务用上方原请求、项目名称和目标路径核对记录。不要重新创建同名项目或将候选项目当作成功回执。此处只读取候选；刷新与返回也不会重发。</p><button disabled={!!busy} onClick={() => void reconcile()}>只读核对远端候选项目</button>{receipt.candidates.map(p => <p key={p.nativeProjectId}>候选原生 ID {p.nativeProjectId} · {p.name} · {p.path}</p>)}</>}
+      {receipt.state === 'ack_unknown' && (creationRunning ? <p role="status">原生创建任务仍在执行，尚未取得项目回执。{pollingPaused ? '请核对原项目创建请求或查看任务进度。' : '正在只读核对原请求。'}不会重新提交创建。</p> : <><p role="alert">创建确认 UNKNOWN，不能重新提交。候选项目与原请求的关联未经证明。</p><p>请在你的 OpenResearch 服务用上方原请求、项目名称和目标路径核对记录。不要重新创建同名项目或将候选项目当作成功回执。此处只读取候选；刷新与返回也不会重发。</p><button disabled={!!busy} onClick={() => void reconcile()}>只读核对远端候选项目</button>{receipt.candidates.map(p => <p key={p.nativeProjectId}>候选原生 ID {p.nativeProjectId} · {p.name} · {p.path}</p>)}</>)}
       {receipt.result && <section className="project-created" aria-label="项目已确认，可继续关联会话"><h3>项目已确认，继续关联会话</h3><p><strong>{receipt.result.name}</strong> · {receipt.result.path}</p><p>已确认原生项目 ID：{receipt.result.nativeProjectId}</p><label>{researchSetup ? '研究工具（与服务设置一致）' : '新会话 harness'}<select aria-label="新会话 harness" value={harness} disabled={!!busy} onChange={e => setHarness(e.target.value)}><option value="">明确选择</option><option value="opencode">OpenCode（可选）</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option></select></label><label>{researchSetup ? '模型名称（与服务设置一致）' : '新会话模型 ID'}<input aria-label="新会话模型 ID" maxLength={200} disabled={!!busy} value={model} onChange={e => setModel(e.target.value)} /></label><p>请填写此服务实际配置的完整模型名称。当前连接不提供可用模型列表，工具选项不代表已安装。Factory 的模型/API 设置不会传到这里；关联只验证项目并保存选择，不验证模型可用性、不创建会话或发送目标。</p><button className="primary" disabled={!!busy || !harness || !model.trim()} onClick={() => void connect()}>关联新项目并进入原生会话</button></section>}
     </article>}
   </section>;

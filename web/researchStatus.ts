@@ -1,4 +1,10 @@
-import type { PersonalSession } from './personalAgentApi.js';
+import type { PersonalSession, PersonalMessage } from './personalAgentApi.js';
+
+export function researchReplyFailed(message?: PersonalMessage) {
+  return !!message && message.role === 'assistant' && message.completed
+    && !message.events.some(event => event.type === 'text' && event.text.trim())
+    && message.events.some(event => event.type === 'tool' && (event.tool === 'error' || ['error', 'failed', 'canceled', 'cancelled'].includes(event.status)));
+}
 
 export interface ResearchStatusInput {
   ready: boolean;
@@ -18,6 +24,7 @@ export function researchStatus(input: ResearchStatusInput) {
   if (input.commandPending || input.session?.state === 'ack_unknown') return state('unknown', '研究请求待核对', '本次提交结果尚未确认。保留原请求只读核对；页面同步成功或看到旧回复都不能证明本次已受理。');
   if (input.attachmentPending) return state('unknown', '会话关联待核对', '只读关联结果尚未确认，没有因此发送研究目标。');
   if (input.connectionUnavailable) return state('unavailable', '研究连接待恢复', '已有回复和草稿保留；恢复连接前不能发送新的研究目标。');
+  if (researchReplyFailed(input.session?.observation?.messages.at(-1))) return state('failed', '原生研究回复出现错误', '原生会话记录了错误，但没有最终研究结果。请刷新核对原会话，并查看过程详情或原任务。保留原请求，不重复发送目标；不能据此认定远端进程已停止。');
   if (input.session?.activeRequestId) return state('waiting', '等待远端回复', '沿原会话只读查看回复。本轮结果尚未确认，不重复发送目标。');
   const latest = input.session?.observation?.messages.filter(message => message.role === 'assistant').at(-1);
   if (latest) {

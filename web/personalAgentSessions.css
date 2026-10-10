@@ -30,6 +30,7 @@
 .research-status[data-tone="observed"] .research-status-dot { background: #497459; }
 .research-status[data-tone="waiting"] .research-status-dot { background: #7c6635; }
 .research-status[data-tone="unknown"] .research-status-dot,
+.research-status[data-tone="failed"] .research-status-dot,
 .research-status[data-tone="unavailable"] .research-status-dot { background: #a36e27; }
 .research-project-setup { margin: 18px 0; padding: 18px 24px; border: 1px solid var(--line); border-radius: 12px; }
 .research-composer, .research-results, .research-setup { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin: 20px 0; }

@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.spyOn(personalAgentApi, 'project').mockResolvedValue(project); vi.spyOn(personalAgentApi, 'sessions').mockResolvedValue([session]); vi.spyOn(personalAgentApi, 'session').mockResolvedValue(session);
   vi.spyOn(personalAgentApi, 'prepare').mockResolvedValue(prepared); vi.spyOn(personalAgentApi, 'start').mockResolvedValue(job);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount(ownerId = owner.id) { await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId, connectionRef: connection.ref }))); }
 it('lets OpenCode users with no history select an existing connection and prepare a session', async () => {
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([]);
@@ -217,5 +217,32 @@ it('reopens an unknown ORX creation prominently and keeps refresh and return rea
   await click('刷新');
   await act(async () => root.unmount()); root = createRoot(host); await render();
   expect(host.querySelector('.research-status')?.textContent).toContain('研究会话创建待核对');
+  expect(submit).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
+});
+it('shows native terminal tool failure in the research main view without replaying or unlocking the original prompt', async () => {
+  vi.useFakeTimers();
+  const orxConnection = { ...connection, kind: 'orx' as const };
+  const failed: PersonalSession = { ...session, namespace: 'native-openresearch', connectionPin: orxConnection, upstreamOrxProjectId: project.nativeProjectId, activeRequestId: 'original-prompt', observation: { observedAt: '2026-10-10T00:00:00Z', provenance: 'remote-reported', trustedMetering: false, sessionId: session.nativeSessionId!, projectId: project.nativeProjectId, messages: [{ id: 'native-error', role: 'assistant', completed: true, usageProvenance: 'unavailable', events: [{ type: 'tool', tool: 'error', status: 'completed', output: 'private-provider-token STOPPED' }] }] } };
+  vi.mocked(api.userConnections).mockResolvedValue([orxConnection]); vi.mocked(personalRemoteApi.list).mockResolvedValue([{ ...remote, providerId: ORX_PERSONAL_PROVIDER }]);
+  vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: PERSONAL_CONTRACT, nativeQueue: true, ownerSubmit: '/api/factory/personal-agent/commands/submit', modelConfiguration: 'remote-configured-model', factoryBYOKForwarded: false });
+  vi.mocked(personalAgentApi.project).mockResolvedValue({ ...project, namespace: 'native-openresearch', upstreamOrxProjectId: project.nativeProjectId });
+  vi.spyOn(personalAgentApi, 'nativeSessions').mockResolvedValue({ namespace: 'native-openresearch', executionContract: PERSONAL_CONTRACT, nativeProjectId: project.nativeProjectId, connectionPin: { ref: orxConnection.ref }, sessions: [] });
+  let observed: PersonalSession = { ...failed, observation: null };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([failed]); vi.mocked(personalAgentApi.session).mockImplementation(async () => observed);
+  const submit = vi.spyOn(personalAgentApi, 'submit'); localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, failed.id);
+  const promptPlan = { ...plan, inputValues: { ...plan.inputValues, action: 'prompt', factorySessionId: failed.id, nativeSessionId: failed.nativeSessionId, connectionPin: JSON.stringify(orxConnection) } } as Plan;
+  vi.spyOn(personalAgentApi, 'recover').mockResolvedValue({ requestId: 'original-prompt', plan: promptPlan, authorization: prepared.authorization, job, nativeRunId: failed.factoryIdentity!.nativeRunId, receipt: { requestId: 'original-prompt', action: 'prompt', state: 'acknowledged', factoryIdentity: failed.factoryIdentity!, session: failed } });
+  localStorage.setItem(`factory-personal-command:${owner.id}:native-openresearch`, JSON.stringify({ requestId: 'original-prompt', planId: plan.id, startPlanId: plan.id, submitAttempt: true }));
+  const render = () => act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true })));
+  await render(); await click('核对研究请求'); await fill('研究目标', 'Retained draft');
+  expect(host.textContent).toContain('下一轮须等待原回复完成');
+  observed = failed;
+  await act(async () => vi.advanceTimersByTimeAsync(4000)); expect(host.textContent).not.toContain('下一轮须等待原回复完成');
+  const mainStatus = host.querySelector('.research-status')!;
+  expect(mainStatus.textContent).toContain('原生研究回复出现错误'); expect(mainStatus.textContent).not.toContain('private-provider-token');
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('本条回复没有最终研究结果');
+  expect(button('继续研究').disabled).toBe(true); expect(button('开始新的研究').disabled).toBe(true);
+  await click('刷新'); await act(async () => root.unmount()); root = createRoot(host); await render();
+  expect(host.querySelector('.research-status')!.getAttribute('data-tone')).toBe('failed'); expect(button('继续研究').disabled).toBe(true);
   expect(submit).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
 });
