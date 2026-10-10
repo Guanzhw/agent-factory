@@ -151,7 +151,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     if (!sessionId) return;
     const generation = observationGeneration.current; const ctrl = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') ? '' : value); } }
+      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') || value.startsWith('Factory 已受理原命令') || value.startsWith('原生会话已确认；Factory') ? '' : value); } }
       catch {
         if (!ctrl.signal.aborted && generation === observationGeneration.current) {
           try { const snapshot = await personalAgentApi.snapshot(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current && snapshot.connectionPin?.ownerId === ownerId && snapshot.namespace === namespace) setSession(snapshot); }
@@ -183,7 +183,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') { setText(''); if (researchJourney) { setResearchGoal(''); setMaterials(''); } }
-      setNotice('已提交到原生 OpenResearch。正在读取原请求进度与回复；不会自动重发。');
+      setNotice('Factory 已受理原命令，远端回执与回复仍待核对；不会自动重发。');
     });
   }
   async function createAndSubmit() {
@@ -254,7 +254,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
               catch (error) { if (handleSubmitRejection(error, epoch)) return; throw error; }
               if (!current(epoch)) return;
               if (prompted.ownerId !== ownerId) throw new Error('owner');
-              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');
+              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('原生会话已确认；Factory 已受理目标命令，远端回执与回复仍待核对。');
             } else { remember(null); setPlan(undefined); setNotice(result.receipt.action === 'create' ? '原生会话已确认。若页面曾刷新或离开，研究目标尚未发送；请在此会话输入并提交。' : result.receipt.action === 'interrupt' ? '原中断请求已核对；远端进程是否停止仍需核对。' : '原消息已受理，正在读取此会话的进度与回复。下一轮须等待原回复完成。'); }
           }
           else if (['completed', 'failed', 'canceled'].includes(result.job.status) || ['completed', 'failed', 'canceled', 'cancelled', 'error', 'runstatus.completed', 'runstatus.cancelled', 'runstatus.error'].includes(String(result.nativeStatus ?? '').toLowerCase())) { followup.current = null; setNotice('原远程命令确认未知。保留原请求，不自动重放；请在远程服务核对。'); }
