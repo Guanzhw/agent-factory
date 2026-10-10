@@ -1,5 +1,6 @@
 """Final native-harness permission checks; no processes or model requests."""
 from copy import deepcopy
+from contextlib import closing
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -38,7 +39,7 @@ class PlatformOpenResearchRuntimeTests(unittest.TestCase):
             path = Path(folder) / 'native.db'
             verify_no_startup_dispatch(path)
             self.assertFalse(path.exists())
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn, conn:
                 conn.executescript('''CREATE TABLE chat_queued_messages(id TEXT,session_id TEXT,payload_json TEXT);
                     CREATE TABLE chat_turns(id TEXT,state TEXT);
                     CREATE TABLE runs(id TEXT,status TEXT);
@@ -55,12 +56,12 @@ class PlatformOpenResearchRuntimeTests(unittest.TestCase):
                 ("UPDATE runs SET status='running'", "UPDATE runs SET status='done'"),
                 ("UPDATE chat_run_wakeups SET state='pending'", "UPDATE chat_run_wakeups SET state='delivered'"),
                 ("UPDATE chat_spawns SET state='waking'", "UPDATE chat_spawns SET state='done'")):
-                with sqlite3.connect(path) as conn: conn.execute(statement)
+                with closing(sqlite3.connect(path)) as conn, conn: conn.execute(statement)
                 original = hashlib.sha256(path.read_bytes()).hexdigest()
                 with self.assertRaises(ValueError): verify_no_startup_dispatch(path)
                 self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), original)
-                with sqlite3.connect(path) as conn: conn.execute(undo)
-            with sqlite3.connect(path) as conn: conn.execute('DROP TABLE chat_spawns')
+                with closing(sqlite3.connect(path)) as conn, conn: conn.execute(undo)
+            with closing(sqlite3.connect(path)) as conn, conn: conn.execute('DROP TABLE chat_spawns')
             with self.assertRaises(ValueError): verify_no_startup_dispatch(path)
 
     def test_reject_undeclared_external_tool_and_provider_fallback(self):

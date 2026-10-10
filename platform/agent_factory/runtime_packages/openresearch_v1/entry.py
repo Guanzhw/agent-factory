@@ -4,6 +4,7 @@ Only an ephemeral local broker capability enters the container. Real provider
 credentials remain in the host Factory broker. No Docker socket is mounted.
 """
 from dataclasses import dataclass, field
+from contextlib import closing
 from copy import deepcopy
 from fnmatch import fnmatchcase
 import hashlib
@@ -243,7 +244,7 @@ def bootstrap_project(root, project_id):
     expected = ['id', 'name', 'slug', 'github_owner', 'github_repo', 'github_sync_enabled',
                 'baseline_branch', 'repo_path', 'run_command', 'paper_id', 'created_at',
                 'updated_at', 'workspace_state_json']
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         require([row[1] for row in connection.execute('PRAGMA table_info(local_projects)')] == expected)
         projects = connection.execute('SELECT id, repo_path FROM local_projects').fetchall()
         if projects:
@@ -282,7 +283,7 @@ def verify_no_startup_dispatch(database):
     database = Path(database)
     if not database.exists(): return
     require(database.is_file() and not database.is_symlink())
-    with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as connection:
         required = {'chat_queued_messages': {'id', 'session_id', 'payload_json'},
             'chat_turns': {'id', 'state'},
             'runs': {'id', 'status'}, 'chat_run_wakeups': {'run_id', 'state'},
