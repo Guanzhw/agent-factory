@@ -158,9 +158,15 @@ class SSHOpenResearchTests(unittest.TestCase):
             self.assertEqual(replacement['brokerSocket'], str(brokers[1].path))
             # The new prepare actually completed first. Both delayed cleanup
             # paths still hold the old generation, even after taking the flock.
+            old_generation = old.live[body['id']]
             with patch.object(old, '_remove_stopped') as stale_remove:
-                old._lease_due(body, generation=old_name)
                 old.close(); stale_remove.assert_not_called()
+                self.assertEqual(receipt_path.read_bytes(), original)
+                # Exercise a distinct delayed timer with old custody still
+                # present, rather than a callback after close retired it.
+                old.live[body['id']] = old_generation
+                old._lease_due(body, generation=old_name)
+                stale_remove.assert_not_called()
             self.assertEqual(receipt_path.read_bytes(), original)
             self.assertIn(body['id'], new.live); self.assertNotIn(body['id'], old.live)
             self.assertTrue(brokers[1].authorized(brokers[1].capability))
