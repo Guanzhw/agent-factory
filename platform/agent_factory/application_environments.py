@@ -47,9 +47,19 @@ class ApplicationEnvironments:
 
     def capabilities(self, owner):
         self.auth.require(owner, 'read')
-        return {'locations': ['platform'] if self.packages else [], 'applications': sorted(self.packages),
+        return {'locations': sorted({key.split(':', 1)[1] if ':' in key else 'platform' for key in self.packages}),
+            'applications': sorted({key.split(':', 1)[0] for key in self.packages}),
             'modelSetup': '/api/factory/personal-models', 'preparationSubmitsResearch': False,
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False}
+
+    def servers(self, owner):
+        self.auth.require(owner, 'read')
+        package = self.packages.get('openresearch:ssh')
+        return package.servers(owner) if package is not None else []
+
+    def _package(self, application, body):
+        location = body.get('location', 'platform')
+        return self.packages.get(application if location == 'platform' else application + ':' + location)
 
     @contextmanager
     def _fence(self, identifier):
@@ -74,9 +84,10 @@ class ApplicationEnvironments:
         return dict(row)
 
     def _public(self, row):
-        package = self.packages.get(row['application_id'])
+        package = self._package(row['application_id'], row['body'])
         policy = getattr(package, 'lifecycle_policy', None)
-        return {'id': row['id'], 'applicationId': row['application_id'], 'location': 'platform',
+        return {'id': row['id'], 'applicationId': row['application_id'], 'location': row['body'].get('location', 'platform'),
+            **({key: row['body'][key] for key in ('serverRef', 'remoteDirectory')} if row['body'].get('location') == 'ssh' else {}),
             'state': row['state'].lower(), 'packageVersion': row['body']['packageVersion'],
             'projectId': row['body']['projectId'], 'connectionRef': row['connection_ref'],
             'modelReference': row['body']['modelReference'], 'modelRevision': row['body']['modelRevision'],
@@ -87,7 +98,7 @@ class ApplicationEnvironments:
         self.auth.require(owner, 'read')
         with self.db.read() as conn: row = self._row(conn, owner, identifier)
         result = self._public(row)
-        package = self.packages.get(row['application_id'])
+        package = self._package(row['application_id'], row['body'])
         if row['state'] == 'READY':
             # Metadata may outlive the process. Never present stale READY as a
             # live environment after host/runtime stop or credential rotation.
@@ -113,13 +124,23 @@ class ApplicationEnvironments:
             if binding.revision != body['modelRevision']: raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED')
             return binding.opaque_handle
 
-    def prepare(self, owner, application, request_id):
+    def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None):
         self.auth.require(owner, 'run')
         self.connections._key(request_id)
-        package = self.packages.get(application)
+        package = self._package(application, {'location': location})
         if package is None: raise HTTPException(409, 'ENVIRONMENT_PACKAGE_UNAVAILABLE')
-        identifier = 'env-' + digest({'owner': owner, 'application': application})[:32]
-        fingerprint = digest({'action': 'prepare', 'application': application, 'location': 'platform'})
+        selection = {}
+        identity = {'owner': owner, 'application': application}
+        intent = {'action': 'prepare', 'application': application, 'location': location}
+        if location == 'ssh':
+            try: selection = package.selection(owner, server_ref, directory)
+            except Exception: raise HTTPException(409, 'ENVIRONMENT_SSH_SELECTION_UNAVAILABLE') from None
+            identity.update(location=location, serverRef=server_ref, directory=selection['remoteDirectory'])
+            intent.update(serverRef=server_ref, directory=selection['remoteDirectory'])
+        elif location != 'platform' or server_ref is not None or directory is not None:
+            raise HTTPException(422, 'ENVIRONMENT_LOCATION_INVALID')
+        identifier = 'env-' + digest(identity)[:32]
+        fingerprint = digest(intent)
         with self._fence(identifier):
             with self.db.write() as conn:
                 previous = conn.execute(select(self.requests).where(self.requests.c.owner_id == owner,
@@ -137,12 +158,14 @@ class ApplicationEnvironments:
                     body = row['body']
                     if body['modelReference'] != model['reference'] or body['modelRevision'] != model['revision']:
                         raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED: keep original work; explicit migration required')
+                    if any(body.get(key) != value for key, value in selection.items()):
+                        raise HTTPException(409, 'ENVIRONMENT_SERVER_CHANGED: explicit migration required')
                     if body['packageVersion'] != package.version:
                         raise HTTPException(409, 'ENVIRONMENT_UPDATE_REQUIRES_MIGRATION')
                 else:
                     body = {'id': identifier, 'ownerId': owner, 'applicationId': application,
                         'packageVersion': package.version, 'projectId': str(uuid4()),
-                        'modelReference': model['reference'], 'modelRevision': model['revision']}
+                        'modelReference': model['reference'], 'modelRevision': model['revision'], **selection}
                     conn.execute(self.environments.insert().values(id=identifier, owner_id=owner,
                         application_id=application, body=body, body_hash=digest(body), state='PREPARING',
                         updated_at=now()))
@@ -204,7 +227,7 @@ class ApplicationEnvironments:
                     return self.request(owner, request_id)
                 conn.execute(self.requests.insert().values(owner_id=owner, request_id=request_id,
                     fingerprint=fingerprint, environment_id=identifier, action='stop', state='STOPPING', created_at=now()))
-            package = self.packages.get(row['application_id'])
+            package = self._package(row['application_id'], row['body'])
             stopped = package is not None and package.stop(row['body'])
             state = 'STOPPED' if stopped else 'UNKNOWN'
             with self.db.write() as conn:
@@ -223,6 +246,8 @@ class PrepareEnvironment(BaseModel):
     requestId: str = Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_.:-]+$')
     applicationId: str = 'openresearch'
     location: str = 'platform'
+    serverRef: str | None = Field(default=None, max_length=80)
+    directory: str | None = Field(default=None, max_length=4096)
 
 
 class StopEnvironment(BaseModel):
@@ -235,13 +260,15 @@ def environment_router(auth, service):
     def owner(request): return auth.user(request)['id']
     @router.get('/capabilities')
     def capabilities(request: Request): return service.capabilities(owner(request))
+    @router.get('/servers')
+    def servers(request: Request): return service.servers(owner(request))
     @router.post('/prepare', status_code=202)
     def prepare(body: PrepareEnvironment, request: Request):
         current = owner(request)
         if request.headers.get('X-Factory-Expected-Owner') != current:
             raise HTTPException(409, 'EXPECTED_OWNER_MISMATCH')
-        if body.location != 'platform': raise HTTPException(422, 'ENVIRONMENT_LOCATION_UNAVAILABLE')
-        return service.prepare(current, body.applicationId, body.requestId)
+        return service.prepare(current, body.applicationId, body.requestId, location=body.location,
+            server_ref=body.serverRef, directory=body.directory)
     @router.get('/requests/{request_id}')
     def recovery(request_id: str, request: Request): return service.request(owner(request), request_id)
     @router.get('/{identifier}')

@@ -41,8 +41,11 @@ async def bridges():
     path = Path('/session/sockets/orx.sock')
     if path.exists() or path.is_symlink():
         raise ValueError('ORX_SOCKET_ALREADY_EXISTS')
+    broker = os.environ.get('ORX_FACTORY_BROKER_SOCKET', '/session/sockets/broker.sock')
+    if broker not in {'/session/sockets/broker.sock', '/trusted/model-broker.sock'}:
+        raise ValueError('MODEL_SOCKET_DENIED')
     local = await asyncio.start_server(lambda r, w: relay(r, w,
-        lambda: getattr(asyncio, 'open_unix_connection')('/session/sockets/broker.sock'), gate), '127.0.0.1', 4801)
+        lambda: getattr(asyncio, 'open_unix_connection')(broker), gate), '127.0.0.1', 4801)
     reverse = await getattr(asyncio, 'start_unix_server')(lambda r, w: relay(r, w,
         lambda: asyncio.open_connection('127.0.0.1', 4791), gate), str(path))
     path.chmod(0o600)

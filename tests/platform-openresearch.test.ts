@@ -85,3 +85,50 @@ it('an owner change during prepare prevents the queued native session submission
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
   expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('');
 });
+
+it('selects an owned Linux server and directory, then uses the existing ordinary native command path', async () => {
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([{ reference: 'owned-linux', name: 'My Linux', defaultDirectory: '/private/alice/research' }]);
+  vi.mocked(applicationEnvironmentApi.prepare).mockImplementation(async (_, id) => ({ ...request(id), environment: {
+    ...env, location: 'ssh', serverRef: 'owned-linux', remoteDirectory: '/private/alice/research',
+  } }));
+  await mount();
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="运行位置"]')!.value).toBe('ssh');
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="我的服务器"]')!.value).toBe('owned-linux');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.value).toBe('/private/alice/research');
+  await goal('Synthetic SSH goal'); await act(async () => button('开始研究').click());
+  expect(applicationEnvironmentApi.prepare).toHaveBeenCalledWith(owner.id, expect.any(String), {
+    location: 'ssh', serverRef: 'owned-linux', directory: '/private/alice/research',
+  });
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', nativeProjectId: env.projectId }), owner.id);
+});
+
+it('recovers the original SSH selection after reload without installing or submitting a goal', async () => {
+  localStorage.setItem(`factory-environment-prepare:${owner.id}`, 'ssh-unknown-request');
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['platform', 'ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([{ reference: 'other-linux', name: 'Other Linux', defaultDirectory: '/private/other' }]);
+  vi.mocked(applicationEnvironmentApi.recover).mockImplementation(async id => ({ ...request(id), state: 'unknown', environment: {
+    ...env, location: 'ssh', state: 'unknown', serverRef: 'original-linux', remoteDirectory: '/private/original',
+  } }));
+  await mount();
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="运行位置"]')!.value).toBe('ssh');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.value).toBe('/private/original');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.disabled).toBe(true);
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
+  expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
+it('does not start an SSH installation when no owned server is available', async () => {
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([]);
+  await mount();
+  await act(async () => {
+    const selector = host.querySelector<HTMLSelectElement>('[aria-label="运行位置"]')!;
+    selector.value = 'ssh'; selector.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await goal('Synthetic retained draft');
+  expect(button('开始研究').disabled).toBe(true);
+  expect(host.textContent).toContain('暂无已授权的本人服务器');
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
+});

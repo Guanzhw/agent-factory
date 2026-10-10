@@ -106,3 +106,46 @@ class ApplicationEnvironmentTests(unittest.TestCase):
         self.assertEqual(update.exception.detail, 'ENVIRONMENT_UPDATE_REQUIRES_MIGRATION')
         self.revoked = True
         with self.assertRaises(HTTPException): self.service.prepare('alice', 'openresearch', 'request-revoked')
+
+    def test_ssh_selection_is_owner_scoped_frozen_and_separate_from_platform(self):
+        revision = ['server-1']
+        def selection(owner, reference, directory):
+            if owner != 'alice' or reference != 'owned-server' or not directory.startswith('/private/alice/'):
+                raise ValueError('private credential details')
+            return {'location': 'ssh', 'serverRef': reference, 'serverRevision': revision[0],
+                'serverPin': revision[0], 'remoteDirectory': directory}
+        ssh = SimpleNamespace(**self.package.__dict__)
+        ssh.version = 'ssh-package-1'; ssh.selection = selection
+        ssh.servers = lambda owner: [{'reference': 'owned-server'}] if owner == 'alice' else []
+        self.service.packages['openresearch:ssh'] = ssh
+        self.assertEqual(self.service.capabilities('alice')['locations'], ['platform', 'ssh'])
+        self.assertEqual(self.service.capabilities('alice')['applications'], ['openresearch'])
+        self.assertEqual(self.service.servers('bob'), [])
+        platform = self.service.prepare('alice', 'openresearch', 'platform-original')
+        first = self.service.prepare('alice', 'openresearch', 'ssh-first', location='ssh',
+            server_ref='owned-server', directory='/private/alice/research')
+        self.assertEqual(first['state'], 'ready')
+        self.assertEqual(first['environment']['location'], 'ssh')
+        self.assertEqual(first['environment']['remoteDirectory'], '/private/alice/research')
+        self.assertNotEqual(first['environment']['id'], platform['environment']['id'])
+        original_project = first['environment']['projectId']
+        before = len(self.prepares)
+        self.assertEqual(self.service.prepare('alice', 'openresearch', 'ssh-first', location='ssh',
+            server_ref='owned-server', directory='/private/alice/research'), first)
+        self.assertEqual(len(self.prepares), before)
+        with self.assertRaises(HTTPException) as conflict:
+            self.service.prepare('alice', 'openresearch', 'ssh-first', location='ssh',
+                server_ref='owned-server', directory='/private/alice/other')
+        self.assertEqual(conflict.exception.detail, 'IDEMPOTENCY_CONFLICT')
+        with self.assertRaises(HTTPException) as foreign:
+            self.service.prepare('bob', 'openresearch', 'ssh-foreign', location='ssh',
+                server_ref='owned-server', directory='/private/alice/research')
+        self.assertEqual(foreign.exception.detail, 'ENVIRONMENT_SSH_SELECTION_UNAVAILABLE')
+        revision[0] = 'server-2'
+        with self.assertRaises(HTTPException) as rotated:
+            self.service.prepare('alice', 'openresearch', 'ssh-rotated', location='ssh',
+                server_ref='owned-server', directory='/private/alice/research')
+        self.assertTrue(rotated.exception.detail.startswith('ENVIRONMENT_SERVER_CHANGED'))
+        self.assertEqual(len(self.prepares), before)
+        self.assertEqual(self.service.inspect('alice', first['environment']['id'])['projectId'], original_project)
+        self.assertEqual(self.research, [])

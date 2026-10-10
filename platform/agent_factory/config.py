@@ -84,6 +84,8 @@ class Settings:
     # Operator-installed immutable artifacts; no runtime paths/commands in HTTP.
     # None leaves preparation unavailable. Owners only configure their own model.
     platform_openresearch: object | None = field(default=None, repr=False)
+    # Trusted owned-server registrations + existing agent bindings; never HTTP keys.
+    ssh_openresearch: object | None = field(default=None, repr=False)
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 
