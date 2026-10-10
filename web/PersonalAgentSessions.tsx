@@ -1,4 +1,6 @@
 import './personalAgentSessions.css';
+import { researchStatus } from './researchStatus.js';
+import { PersonalOrxProjects } from './PersonalOrxProjects.js';
 import { OpenResearchSetup } from './OpenResearchSetup.js';
 import { PersonalSessionRebind } from './PersonalSessionRebind.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,6 +49,10 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const [researchGoal, setResearchGoal] = useState(() => researchJourney ? readDraft().goal : '');
   const [materials, setMaterials] = useState(() => researchJourney ? readDraft().materials : '');
   const [setupOpen, setSetupOpen] = useState(false);
+  const [projectSetupOpen, setProjectSetupOpen] = useState(false);
+  const [creationConnection, setCreationConnection] = useState('');
+  const [creationRevision, refreshCreationConnections] = useState(0);
+  const projectSetupElement = useRef<HTMLDetailsElement>(null);
   const researchText = materials.trim() ? `${researchGoal.trim()}\n\n补充材料（用户提供）：\n${materials.trim()}` : researchGoal.trim();
   useEffect(() => { if (researchJourney) { try { sessionStorage.setItem(draftStorage, JSON.stringify({ goal: researchGoal, materials })); } catch { /* In-memory draft remains; dispatch still requires durable request storage. */ } } }, [researchJourney, draftStorage, researchGoal, materials]);
   const [title, setTitle] = useState(''); const [newGoal, setNewGoal] = useState(''); const followup = useRef<{ requestId: string; text: string; epoch: number } | null>(null); const [text, setText] = useState(''); const [plan, setPlan] = useState<Plan>(); const [action, setAction] = useState<PersonalAction>();
@@ -146,7 +152,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     if (!sessionId) return;
     const generation = observationGeneration.current; const ctrl = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') ? '' : value); } }
+      try { const result = await personalAgentApi.session(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current) { if (result.namespace !== namespace || result.connectionPin?.ownerId !== ownerId) throw new Error('namespace'); setSession(result); if (researchJourney && result.state === 'result_observed' && !result.activeRequestId) setNotice(value => value.startsWith('原消息已受理') || value.startsWith('已确认原生会话，并提交') || value.startsWith('已提交到原生 OpenResearch') || value.startsWith('Factory 已受理原命令') || value.startsWith('原生会话已确认；Factory') ? '' : value); } }
       catch {
         if (!ctrl.signal.aborted && generation === observationGeneration.current) {
           try { const snapshot = await personalAgentApi.snapshot(sessionId!, ctrl.signal); if (!ctrl.signal.aborted && generation === observationGeneration.current && snapshot.connectionPin?.ownerId === ownerId && snapshot.namespace === namespace) setSession(snapshot); }
@@ -178,7 +184,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       if (!current(epoch)) return;
       if (result.ownerId !== ownerId) throw new Error('owner');
       remember({ requestId, planId: result.planId, startPlanId: result.planId, submitAttempt: true }); setJob(result); if (next === 'prompt') { setText(''); if (researchJourney) { setResearchGoal(''); setMaterials(''); } }
-      setNotice('已提交到原生 OpenResearch。正在读取原请求进度与回复；不会自动重发。');
+      setNotice('Factory 已受理原命令，远端回执与回复仍待核对；不会自动重发。');
     });
   }
   async function createAndSubmit() {
@@ -249,7 +255,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
               catch (error) { if (handleSubmitRejection(error, epoch)) return; throw error; }
               if (!current(epoch)) return;
               if (prompted.ownerId !== ownerId) throw new Error('owner');
-              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('已确认原生会话，并提交此次研究目标。正在读取原请求进度与回复。');
+              remember({ requestId: next.requestId, planId: prompted.planId, startPlanId: prompted.planId, submitAttempt: true }); setJob(prompted); if (researchJourney) { setResearchGoal(''); setMaterials(''); } setNotice('原生会话已确认；Factory 已受理目标命令，远端回执与回复仍待核对。');
             } else { remember(null); setPlan(undefined); setNotice(result.receipt.action === 'create' ? '原生会话已确认。若页面曾刷新或离开，研究目标尚未发送；请在此会话输入并提交。' : result.receipt.action === 'interrupt' ? '原中断请求已核对；远端进程是否停止仍需核对。' : '原消息已受理，正在读取此会话的进度与回复。下一轮须等待原回复完成。'); }
           }
           else if (['completed', 'failed', 'canceled'].includes(result.job.status) || ['completed', 'failed', 'canceled', 'cancelled', 'error', 'runstatus.completed', 'runstatus.cancelled', 'runstatus.error'].includes(String(result.nativeStatus ?? '').toLowerCase())) { followup.current = null; setNotice('原远程命令确认未知。保留原请求，不自动重放；请在远程服务核对。'); }
@@ -302,7 +308,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   if (researchJourney) {
     const answers = session?.observation?.messages.filter(m => m.role === 'assistant') ?? [];
     const latest = answers.at(-1);
-    const status = !ready ? '正在读取连接' : pending ? (pending.requestId.endsWith(':create') || followup.current ? '正在确认研究会话' : '研究请求待核对') : session?.activeRequestId ? '等待远端回复' : session?.state === 'ack_unknown' ? '研究请求待核对' : latest ? '已观察到回复' : session ? '尚未取得研究回复' : resourceReady && canCreate ? '可以开始研究' : '需要补齐连接';
+    const status = researchStatus({ ready, submitting: ['submit', 'start'].includes(busy), commandPending: !!pending, attachmentPending: !!attachment, session, connectionUnavailable: !!session && !sessionWritable, canRun: ownerSubmit && resourceReady && (session ? !!sessionWritable && !!session.connectionPin?.capabilities.includes('session:prompt') : canCreate) });
     const needsSetup = ready && (!connections.length || !!project && !canCreate && !session);
     function begin() { if (!resourceReady && !leaseContinuation || !session && !canCreate) { setSetupOpen(true); return; } void (session ? submit('prompt') : createAndSubmit()); }
     const resultPanel = <section className="research-results" aria-label="研究结果"><div className="research-result-heading"><h2>结果与重要发现</h2>{session && <button className="secondary" disabled={disabled || !!session.activeRequestId} onClick={() => { navigation.current++; setSession(undefined); localStorage.removeItem(selectionStorage); setResearchGoal(''); setMaterials(''); }}>开始新的研究</button>}</div>
@@ -310,7 +316,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
         {latest && <details><summary>结果来源</summary><p>来自此 OpenResearch 原生会话的远端回复。{session?.observation?.exactTurnVerified === false && '按会话记录变化关联，精确轮次未验证。'}研究结论需结合原始材料核实。</p></details>}
       </section>;
     return <section className="research-journey" aria-label="OpenResearch 研究">
-      <div className="research-status" role="status"><span className="research-status-dot" /><strong>{status}</strong><button className="text-button" disabled={!!busy} onClick={() => { setShowReview(false); refresh(n => n + 1); }}>刷新</button></div>
+      <div className="research-status" data-tone={status.tone} role="status"><span className="research-status-dot" aria-hidden="true" /><div><strong>{status.title}</strong><p className="quiet">{status.explanation}</p></div><button className="text-button" disabled={!!busy} onClick={() => { setShowReview(false); refresh(n => n + 1); }}>刷新</button></div>
       {ready && !ownerSubmit && <p role="alert">此部署暂不能直接开始普通研究。已有记录与草稿保留，请联系部署维护者启用个人命令能力。</p>}
       {session && !session.connectionPin?.capabilities.includes('session:prompt') && <p role="alert">此连接尚未授权发送研究目标，请在连接设置中选择可执行的本人绑定。</p>}
       {notice && <p className="research-notice" role={job?.status === 'failed' ? 'alert' : 'status'}>{notice}</p>}
@@ -321,10 +327,11 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       <form className="research-composer" onSubmit={e => { e.preventDefault(); begin(); }}>
         <label htmlFor="research-goal">{session ? '继续研究' : '研究目标'}</label><textarea id="research-goal" aria-label="研究目标" placeholder={session ? '想进一步了解什么？' : '描述你想研究的问题，以及希望得到什么结果…'} maxLength={16000} value={researchGoal} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setResearchGoal(e.target.value)} />
         <details className="research-materials"><summary>补充材料（可选）</summary><label>材料文本或链接<textarea aria-label="补充材料" placeholder="粘贴相关文本或链接；会随目标发送到远端模型。链接不会由 Factory 自动下载。" maxLength={16000} value={materials} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setMaterials(e.target.value)} /></label></details>
-        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!sessionWritable && !leaseContinuation || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{busy ? '正在提交…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady || session ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
+        <div className="research-start-row"><button className="primary" disabled={!ready || !ownerSubmit || !!busy || !!pending || !!attachment || rebindPending || !!session?.activeRequestId || !!session && (!sessionWritable && !leaseContinuation || !session.connectionPin?.capabilities.includes('session:prompt')) || !researchGoal.trim() || researchText.length > 16000}>{['submit', 'start'].includes(busy) ? '正在提交…' : busy ? '正在核对…' : session ? '继续研究' : '开始研究'}</button><span className="quiet">{resourceReady || session ? `使用${project?.name || '已有 OpenResearch 项目'}${session ? ' · 继续原会话' : ' · 自动新建会话'}` : '首次连接配置可在此补齐，目标草稿保留'}</span></div>
         {researchText.length > 16000 && <p role="alert">目标与材料合计超过 16000 字，请缩短后再开始。</p>}
       </form>
-      {(needsSetup || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}
+      {(needsSetup || setupOpen) && <OpenResearchSetup key={ownerId} ownerId={ownerId} onCreateProject={ref => { setCreationConnection(ref); refreshCreationConnections(n => n + 1); setProjectSetupOpen(true); requestAnimationFrame(() => { projectSetupElement.current?.scrollIntoView({ block: 'start' }); projectSetupElement.current?.querySelector('summary')?.focus(); }); }} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setSetupOpen(false); refresh(n => n + 1); }} />}
+      <details ref={projectSetupElement} className="research-project-setup" open={projectSetupOpen} onToggle={e => { setProjectSetupOpen(e.currentTarget.open); if (e.currentTarget.open) refreshCreationConnections(n => n + 1); }}><summary>设置新项目的位置与模型</summary><PersonalOrxProjects ownerId={ownerId} initialConnectionRef={creationConnection} refreshRevision={revision + creationRevision} researchSetup onTask={onTask} onConnected={ref => { navigation.current++; setSelected(ref); setSession(undefined); localStorage.removeItem(selectionStorage); setProjectSetupOpen(false); setSetupOpen(false); refresh(n => n + 1); }} /></details>
       {!answers.length && resultPanel}
       <details className="research-details"><summary>研究记录与连接设置</summary>
         <button className="secondary" disabled={disabled || !!session?.activeRequestId} onClick={() => setSetupOpen(v => !v)}>设置研究连接</button>

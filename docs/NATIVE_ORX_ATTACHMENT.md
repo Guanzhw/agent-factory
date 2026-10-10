@@ -11,6 +11,31 @@ Implemented: bounded native project list/read, owner-scoped attach, exact projec
 identity refresh, and validated inert session-profile options. Controlled wire tests
 cover these contracts. They do not prove a live provider or end-to-end model run.
 
+The ordinary research screen offers first-project setup beside the goal, retains
+the draft, and distinguishes loading, failed project reads, and a verified empty
+list. Setup selects only a current owner-verified creation connection. The
+connection list is re-read when setup opens, a newly bound service is selected,
+or the research page is refreshed, retaining the goal and checking owner identity.
+The owner must supply the remote folder, tool and complete model name; no local path, model,
+clone source or extra permission is inferred. Factory BYOK remains separate from
+the upstream service's model settings. Binding verifies the project, not model
+availability. These desktop changes preserve the existing creation preview,
+approval and durable unknown-request recovery.
+
+Empty-service setup remains incomplete: the pinned upstream `CreateProjectReq`
+has no per-request model selection or option to disable starter warmup. Project
+creation can use the service's preferred or first ready harness for suggestions.
+The adapter does not expose an available-model catalog on creation bindings.
+Therefore setup must retain explicit creation approval and service-confirmed
+model input; it cannot promise automatic two-action initialization or live model
+compatibility. See the pinned [creation implementation](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/commands/up.rs#L1411-L1522)
+and [starter model selection](https://github.com/alphaXiv/OpenResearch/blob/f336b121525d99364e2dee4fe90b2784894a54e6/src/local/starter.rs#L226-L262).
+
+Page synchronization is labeled separately from research state. Unknown requests
+take priority over earlier replies and active pointers. A tool-only record or
+unfinished message is not presented as a completed readable reply; an observed
+reply still does not certify scientific validity.
+
 ## Execution mode determines the admission requirements
 
 The original `openresearch-workspace-v1` read/attach connection alone does not

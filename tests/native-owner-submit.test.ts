@@ -270,6 +270,9 @@ it('ordinary journey continues the restored original session and only displays a
   localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
   await journey(); expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result'); expect(host.querySelector('script')).toBeNull();
   await goal('Continue with limitations'); await act(async () => button('继续研究').click());
+  expect(host.querySelector('.research-status')!.getAttribute('data-tone')).toBe('unknown');
+  expect(host.textContent).toContain('Factory 已受理原命令，远端回执与回复仍待核对');
+  expect(host.textContent).not.toContain('已提交到原生 OpenResearch');
   expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({ action: 'prompt', sessionId: session.id, text: 'Continue with limitations' }), owner.id);
   expect(vi.mocked(personalAgentApi.submit).mock.calls.some(([input]) => input.action === 'create')).toBe(false);
 });

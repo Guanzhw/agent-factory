@@ -7,9 +7,9 @@ import { personalOrxProjectApi, checkOrxProjectPrepared, checkOrxProjectReceipt,
 import type { Plan, UserConnection } from './models.js';
 
 type Pending = { requestId: string; planId?: string; startAttempt?: boolean };
-type Props = { ownerId: string; onTask?: (id: string) => void; onConnected: (ref: string) => void };
+type Props = { ownerId: string; onTask?: (id: string) => void; onConnected: (ref: string) => void; initialConnectionRef?: string; researchSetup?: boolean; refreshRevision?: number };
 export function PersonalOrxProjects(props: Props) { return <Projects key={props.ownerId} {...props} />; }
-function Projects({ ownerId, onTask, onConnected }: Props) {
+function Projects({ ownerId, onTask, onConnected, initialConnectionRef, researchSetup = false, refreshRevision = 0 }: Props) {
   const storage = `factory-orx-project-create:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<Pending | null>(() => { try { const value = JSON.parse(localStorage.getItem(storage) ?? 'null'); return value && /^[a-zA-Z0-9_.:-]{8,100}$/.test(value.requestId) ? { requestId: value.requestId, ...(value.planId ? { planId: value.planId } : {}), ...(value.startAttempt === true ? { startAttempt: true } : {}) } : null; } catch { return null; } });
   const [connections, setConnections] = useState<UserConnection[]>([]); const [selected, setSelected] = useState('');
@@ -17,24 +17,29 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
   const [createOpen, setCreateOpen] = useState(false); const [taskId, setTaskId] = useState('');
   const [connectedProject, setConnectedProject] = useState<OrxProjectReceipt['result']>(null);
   const [ready, setReady] = useState(false); const [busy, setBusy] = useState(''); const [notice, setNotice] = useState('');
-  const [name, setName] = useState(''); const [remotePath, setPath] = useState(''); const [source, setSource] = useState<OrxProjectInput['source']>('empty');
+  const [name, setName] = useState(researchSetup ? '我的研究' : ''); const [remotePath, setPath] = useState(''); const [source, setSource] = useState<OrxProjectInput['source']>('empty');
   const [repo, setRepo] = useState(''); const [paper, setPaper] = useState('');
   const [plan, setPlan] = useState<Plan>(); const [receipt, setReceipt] = useState<OrxProjectReceipt>();
   const [consent, setConsent] = useState(false); const [allowed, setAllowed] = useState(false);
   const [harness, setHarness] = useState(''); const [model, setModel] = useState('');
   const lock = useRef(false); const live = useRef(true);
+  const appliedInitialConnection = useRef('');
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => {
-    const ctrl = new AbortController();
+    const ctrl = new AbortController(); setReady(false);
     void Promise.all([api.session(ctrl.signal), api.userConnections(ctrl.signal), personalRemoteApi.list(ctrl.signal)]).then(([who, refs, remotes]) => {
       if (ctrl.signal.aborted) return;
       if (who.id !== ownerId || refs.some(r => r.ownerId !== ownerId)) throw new Error('owner');
       const personal = new Set(remotes.filter(r => r.providerId === ORX_PERSONAL_PROVIDER).map(r => r.registrationRef));
       setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && r.providerId === ORX_PERSONAL_PROVIDER); return [ref.ref, remote ? `${remote.origin} · 创建新项目 · ${ref.ref.slice(0, 8)}` : `创建连接 ${ref.ref}`]; })));
-      setConnections(refs.filter(r => personal.has(r.registrationRef) && r.available && r.status === 'active' && r.taskId === null && r.kind === 'orx' && r.capabilities.includes('project:create'))); setReady(true);
-    }).catch(() => { if (!ctrl.signal.aborted) setNotice('项目创建连接暂不可用。请先在资源中明确启用创建、验证并绑定。'); });
+      const eligible = refs.filter(r => personal.has(r.registrationRef) && r.available && r.status === 'active' && r.taskId === null && r.kind === 'orx' && r.capabilities.includes('project:create'));
+      setConnections(eligible); setSelected(old => eligible.some(c => c.ref === old) ? old : ''); setReady(true);
+    }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setSelected(''); setNotice('项目创建连接暂不可用。请先在资源中明确启用创建、验证并绑定。'); } });
     return () => ctrl.abort();
-  }, [ownerId]);
+  }, [ownerId, initialConnectionRef, refreshRevision]);
+  useEffect(() => {
+    if (initialConnectionRef && initialConnectionRef !== appliedInitialConnection.current && connections.some(c => c.ref === initialConnectionRef)) { appliedInitialConnection.current = initialConnectionRef; setSelected(initialConnectionRef); setCreateOpen(true); }
+  }, [initialConnectionRef, connections]);
   function remember(next: Pending | null) { if (next) localStorage.setItem(storage, JSON.stringify(next)); else localStorage.removeItem(storage); setPending(next); }
   async function act(label: string, work: () => Promise<void>) {
     if (lock.current) return; lock.current = true; setBusy(label);
@@ -107,14 +112,14 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
     });
   }
   const disabled = !!busy || !!pending || !ready;
-  return <section aria-label="新建原生 OpenResearch 项目"><h2>新建原生 OpenResearch 项目</h2>
+  return <section aria-label="新建原生 OpenResearch 项目"><h2>{researchSetup ? '设置我的研究项目' : '新建原生 OpenResearch 项目'}</h2>
     <p>使用明确启用的项目创建连接。创建先预览，再确认一次固定副作用；现有项目连接不会自动扩权。</p>
-    {connectedProject && <div className="success-message" role="status"><strong>已关联项目：{connectedProject.name}</strong><p>{connectedProject.path} · 原生 ID {connectedProject.nativeProjectId}</p><p>继续在下方选择已有会话或创建新会话。研究目标直接提交到选定的原生会话。</p></div>}
+    {connectedProject && <div className="success-message" role="status"><strong>已关联项目：{connectedProject.name}</strong><p>{connectedProject.path} · 原生 ID {connectedProject.nativeProjectId}</p><p>项目与模型选择已保存。回到研究目标，点击开始才会创建会话并发送目标；模型可用性由服务执行确认。</p></div>}
     <details open={createOpen} onToggle={e => setCreateOpen(e.currentTarget.open)} className="project-create-form"><summary>填写新项目创建输入</summary>
     <label>项目创建资源<select aria-label="项目创建资源" disabled={disabled} value={selected} onChange={e => setSelected(e.target.value)}><option value="">选择已验证、绑定的创建资源</option>{connections.map(c => <option key={c.ref} value={c.ref}>{connectionNames[c.ref] ?? c.ref}</option>)}</select></label>
     {ready && !connections.length && <p>请在资源管理中选择 OpenResearch，启用“用于创建新项目”后验证、绑定。</p>}
     <label>项目名称<input aria-label="项目名称" maxLength={120} disabled={disabled} value={name} onChange={e => setName(e.target.value)} /></label>
-    <label>远端项目绝对路径<input aria-label="远端项目绝对路径" maxLength={512} disabled={disabled} value={remotePath} onChange={e => setPath(e.target.value)} /></label>
+    <label>{researchSetup ? '项目保存位置（服务上的文件夹）' : '远端项目绝对路径'}<input aria-label="远端项目绝对路径" maxLength={512} disabled={disabled} value={remotePath} onChange={e => setPath(e.target.value)} /></label>
     <p className="quiet">填写你授权远端服务操作的绝对路径，例如 /workspace/my-project；这不是当前浏览器或 Factory 主机上的路径。</p>
     <label>项目来源<select aria-label="项目来源" disabled={disabled} value={source} onChange={e => setSource(e.target.value as OrxProjectInput['source'])}><option value="empty">新建空目录</option><option value="existing">已有远端目录</option><option value="clone">公开 GitHub 仓库</option><option value="paper">arXiv 论文</option></select></label>
     {source === 'clone' && <label>公开仓库 HTTPS URL<input aria-label="公开仓库 HTTPS URL" disabled={disabled} value={repo} onChange={e => setRepo(e.target.value)} /></label>}
@@ -131,8 +136,8 @@ function Projects({ ownerId, onTask, onConnected }: Props) {
       <p>上游可能为聊天页生成 4 条项目建议。它可能将 README、部分代码、文件清单或论文摘要发送给远端偏好或可用 harness 的模型。空项目、缓存命中或无可用 harness 时可能不调用模型。</p>
       </details>
       {plan && !pending?.startAttempt && ['awaiting', 'approved'].includes(receipt.consentState) && <><PlanReviewGate ownerId={ownerId} plan={plan} busy={busy} act={act} onAllowed={setAllowed} /><label><input type="checkbox" aria-label="批准此次项目创建副作用" disabled={!!busy} checked={consent} onChange={e => setConsent(e.target.checked)} />我确认此次项目输入、远端写入或 clone，以及可能的远端模型请求。</label><button disabled={!!busy || !consent || !allowed} onClick={() => void start()}>批准并提交此次创建</button><button disabled={!!busy} onClick={() => void cancel()}>取消此次创建批准</button></>}
-      {receipt.state === 'ack_unknown' && <><p role="alert">创建确认 UNKNOWN，不能重新提交。候选项目与原请求的关联未经证明。</p><p>请向远端管理员提供上方原请求、项目名称和目标路径，核对远端记录。不要重新创建同名项目或将候选项目当作成功回执。此处只读取候选；刷新与返回也不会重发。</p><button disabled={!!busy} onClick={() => void reconcile()}>只读核对远端候选项目</button>{receipt.candidates.map(p => <p key={p.nativeProjectId}>候选原生 ID {p.nativeProjectId} · {p.name} · {p.path}</p>)}</>}
-      {receipt.result && <section className="project-created" aria-label="项目已确认，可继续关联会话"><h3>项目已确认，继续关联会话</h3><p><strong>{receipt.result.name}</strong> · {receipt.result.path}</p><p>已确认原生项目 ID：{receipt.result.nativeProjectId}</p><label>新会话 harness<select aria-label="新会话 harness" value={harness} disabled={!!busy} onChange={e => setHarness(e.target.value)}><option value="">明确选择</option><option value="opencode">OpenCode（可选）</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option></select></label><label>新会话模型 ID<input aria-label="新会话模型 ID" maxLength={200} disabled={!!busy} value={model} onChange={e => setModel(e.target.value)} /></label><p>沿用远端账户的模型与默认权限。关联只验证项目并绑定，不创建会话或发送研究消息。</p><button className="primary" disabled={!!busy || !harness || !model.trim()} onClick={() => void connect()}>关联新项目并进入原生会话</button></section>}
+      {receipt.state === 'ack_unknown' && <><p role="alert">创建确认 UNKNOWN，不能重新提交。候选项目与原请求的关联未经证明。</p><p>请在你的 OpenResearch 服务用上方原请求、项目名称和目标路径核对记录。不要重新创建同名项目或将候选项目当作成功回执。此处只读取候选；刷新与返回也不会重发。</p><button disabled={!!busy} onClick={() => void reconcile()}>只读核对远端候选项目</button>{receipt.candidates.map(p => <p key={p.nativeProjectId}>候选原生 ID {p.nativeProjectId} · {p.name} · {p.path}</p>)}</>}
+      {receipt.result && <section className="project-created" aria-label="项目已确认，可继续关联会话"><h3>项目已确认，继续关联会话</h3><p><strong>{receipt.result.name}</strong> · {receipt.result.path}</p><p>已确认原生项目 ID：{receipt.result.nativeProjectId}</p><label>{researchSetup ? '研究工具（与服务设置一致）' : '新会话 harness'}<select aria-label="新会话 harness" value={harness} disabled={!!busy} onChange={e => setHarness(e.target.value)}><option value="">明确选择</option><option value="opencode">OpenCode（可选）</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option></select></label><label>{researchSetup ? '模型名称（与服务设置一致）' : '新会话模型 ID'}<input aria-label="新会话模型 ID" maxLength={200} disabled={!!busy} value={model} onChange={e => setModel(e.target.value)} /></label><p>请填写此服务实际配置的完整模型名称。当前连接不提供可用模型列表，工具选项不代表已安装。Factory 的模型/API 设置不会传到这里；关联只验证项目并保存选择，不验证模型可用性、不创建会话或发送目标。</p><button className="primary" disabled={!!busy || !harness || !model.trim()} onClick={() => void connect()}>关联新项目并进入原生会话</button></section>}
     </article>}
   </section>;
 }
