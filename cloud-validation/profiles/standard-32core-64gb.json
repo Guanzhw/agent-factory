@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "name": "standard-32core-64gb",
+  "purpose": "synthetic-planning-example",
+  "runtime": {
+    "engine": "agno-agentos",
+    "version": "3.1.0",
+    "persistence": "postgresql",
+    "remote_compute_separate": true
+  },
+  "host": {
+    "cpu_cores": 32,
+    "memory_gb": 64
+  },
+  "reserved": {
+    "os": {
+      "cpu_cores": 2,
+      "memory_mib": 4096
+    },
+    "postgres": {
+      "cpu_cores": 2,
+      "memory_mib": 8192
+    },
+    "control": {
+      "cpu_cores": 2,
+      "memory_mib": 4096
+    }
+  },
+  "workers": [
+    {
+      "name": "synthetic-worker-group",
+      "replicas": 4,
+      "tree_budget": {
+        "cpu_cores": 4,
+        "memory_mib": 8192
+      },
+      "process_tree": {
+        "name": "agent-runtime",
+        "kind": "runtime",
+        "state": "waiting",
+        "reservation": {
+          "cpu_cores": 1,
+          "memory_mib": 1024
+        },
+        "children": [
+          {
+            "name": "tool-supervisor",
+            "kind": "tool",
+            "state": "waiting",
+            "reservation": {
+              "cpu_cores": 0.5,
+              "memory_mib": 512
+            },
+            "children": [
+              {
+                "name": "browser-main",
+                "kind": "browser",
+                "state": "running",
+                "reservation": {
+                  "cpu_cores": 1,
+                  "memory_mib": 2048
+                },
+                "children": [
+                  {
+                    "name": "browser-child",
+                    "kind": "browser",
+                    "state": "running",
+                    "reservation": {
+                      "cpu_cores": 0.5,
+                      "memory_mib": 512
+                    },
+                    "children": []
+                  }
+                ]
+              }
+            ],
+            "subtree_budget": {
+              "cpu_cores": 2,
+              "memory_mib": 4096
+            }
+          },
+          {
+            "name": "mcp-server",
+            "kind": "mcp",
+            "state": "running",
+            "reservation": {
+              "cpu_cores": 0.25,
+              "memory_mib": 256
+            },
+            "children": []
+          },
+          {
+            "name": "experiment-process",
+            "kind": "experiment",
+            "state": "waiting",
+            "reservation": {
+              "cpu_cores": 0.25,
+              "memory_mib": 1024
+            },
+            "children": []
+          }
+        ]
+      }
+    }
+  ]
+}
