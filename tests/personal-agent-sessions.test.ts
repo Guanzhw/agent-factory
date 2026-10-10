@@ -226,7 +226,9 @@ it('shows native terminal tool failure in the research main view without replayi
   vi.mocked(api.userConnections).mockResolvedValue([orxConnection]); vi.mocked(personalRemoteApi.list).mockResolvedValue([{ ...remote, providerId: ORX_PERSONAL_PROVIDER }]);
   vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: PERSONAL_CONTRACT, nativeQueue: true, ownerSubmit: '/api/factory/personal-agent/commands/submit', modelConfiguration: 'remote-configured-model', factoryBYOKForwarded: false });
   vi.mocked(personalAgentApi.project).mockResolvedValue({ ...project, namespace: 'native-openresearch', upstreamOrxProjectId: project.nativeProjectId });
-  vi.mocked(personalAgentApi.sessions).mockResolvedValue([failed]); vi.mocked(personalAgentApi.session).mockResolvedValue(failed);
+  vi.spyOn(personalAgentApi, 'nativeSessions').mockResolvedValue({ namespace: 'native-openresearch', executionContract: PERSONAL_CONTRACT, nativeProjectId: project.nativeProjectId, connectionPin: { ref: orxConnection.ref }, sessions: [] });
+  let observed: PersonalSession = { ...failed, observation: null };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([failed]); vi.mocked(personalAgentApi.session).mockImplementation(async () => observed);
   const submit = vi.spyOn(personalAgentApi, 'submit'); localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, failed.id);
   const promptPlan = { ...plan, inputValues: { ...plan.inputValues, action: 'prompt', factorySessionId: failed.id, nativeSessionId: failed.nativeSessionId, connectionPin: JSON.stringify(orxConnection) } } as Plan;
   vi.spyOn(personalAgentApi, 'recover').mockResolvedValue({ requestId: 'original-prompt', plan: promptPlan, authorization: prepared.authorization, job, nativeRunId: failed.factoryIdentity!.nativeRunId, receipt: { requestId: 'original-prompt', action: 'prompt', state: 'acknowledged', factoryIdentity: failed.factoryIdentity!, session: failed } });
@@ -234,6 +236,7 @@ it('shows native terminal tool failure in the research main view without replayi
   const render = () => act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true })));
   await render(); await click('核对研究请求'); await fill('研究目标', 'Retained draft');
   expect(host.textContent).toContain('下一轮须等待原回复完成');
+  observed = failed;
   await act(async () => vi.advanceTimersByTimeAsync(4000)); expect(host.textContent).not.toContain('下一轮须等待原回复完成');
   const mainStatus = host.querySelector('.research-status')!;
   expect(mainStatus.textContent).toContain('原生研究回复出现错误'); expect(mainStatus.textContent).not.toContain('private-provider-token');
