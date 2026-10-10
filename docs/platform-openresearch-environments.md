@@ -124,7 +124,7 @@ real-provider compatibility or complete online research acceptance.
 Linux+SSH deployment to an owner's server is a separate subsequent increment.
 There is no SSH installation or external deployment in this change. In-place
 runtime/model migration, a scheduler with durable capacity reservations across
-multiple supervisors, automatic idle suspension and production artifact delivery
+multiple supervisors and production artifact delivery
 also remain separate work. The current Docker scope bounds one configured
 supervisor; it is not a cluster capacity claim.
 
