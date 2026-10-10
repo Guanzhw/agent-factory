@@ -7,7 +7,8 @@ import stat
 import subprocess
 import sys
 
-FILES = {'__init__.py', 'entry.py', 'bridge.py', 'supervisor.py', 'ssh_agent.py', 'orx', 'opencode', 'image.tar'}
+FILES = {'__init__.py', 'entry.py', 'bridge.py', 'supervisor.py', 'ssh_agent.py', 'orx', 'opencode', 'image.tar',
+    'ORX-LICENSE.txt', 'OPENCODE-LICENSE.txt', 'FACTORY-LICENSE.txt', 'THIRD_PARTY_NOTICES.md'}
 
 
 def require(value):

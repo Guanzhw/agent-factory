@@ -10,7 +10,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from agent_factory.ssh_openresearch import SSHServer, SSHAgentLease, SSHOpenResearchPackage
+from agent_factory.ssh_openresearch import SSHServer, SSHAgentLease, SSHOpenResearchPackage, SSHOpenResearchConfig
+from agent_factory.platform_openresearch import PlatformOpenResearchConfig
 from agent_factory.runtime_packages.openresearch_v1.ssh_install import directory
 from agent_factory.runtime_packages.openresearch_v1.ssh_agent import SSHSupervisor, ForwardedBroker
 
@@ -119,3 +120,18 @@ class SSHOpenResearchTests(unittest.TestCase):
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(order, ['original-receipt-committed', 'replacement-receipt-read'])
         self.assertEqual((old.capacity_depth, new.capacity_depth), (0, 0))
+
+    def test_runtime_limits_and_original_license_notices_are_frozen_into_package_identity(self):
+        binary = self.root / 'synthetic-binary'; binary.write_bytes(b'SYNTHETIC-NOT-EXECUTED')
+        runtime = PlatformOpenResearchConfig(str(binary), str(binary), 'sha256:' + 'a' * 64)
+        with patch.object(PlatformOpenResearchConfig, 'validate'):
+            config = SSHOpenResearchConfig(runtime, (self.server,), lambda **_: self.lease)
+            original = SSHOpenResearchPackage(config, self.root / 'package')
+            changed = SSHOpenResearchPackage(SSHOpenResearchConfig(
+                PlatformOpenResearchConfig(str(binary), str(binary), runtime.image, max_active_seconds=43200),
+                (self.server,), config.credentials), self.root / 'other-package')
+        self.assertNotEqual(original.version, changed.version)
+        for name in ('ORX-LICENSE.txt', 'OPENCODE-LICENSE.txt', 'FACTORY-LICENSE.txt'):
+            self.assertIn(name, original.code_pins)
+            self.assertIn('Permission is hereby granted', original.files[name].read_text())
+        self.assertIn('THIRD_PARTY_NOTICES.md', original.code_pins)

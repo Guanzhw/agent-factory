@@ -52,7 +52,9 @@ The installer runs fixed Python code through authenticated OpenSSH and receives
 a bounded manifest plus exact file bytes over stdin. It allows only the reviewed
 package filenames, verifies hashes, fsyncs pending files and atomically publishes
 them inside the owned private directory. Existing files must match; unrelated or
-changed package files are never overwritten. It streams a compressed export of
+changed package files are never overwritten. Original ORX/OpenCode MIT notices,
+Factory's license and the notice inventory travel with the package. Their hashes
+and the declared activation limits also form its frozen version. It streams a compressed export of
 the already cached immutable image; successful Docker inventory proves whether
 loading is needed, then exact image inspection verifies the selected ID. It
 does not pull from a registry or upgrade dependencies.
