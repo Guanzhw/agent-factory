@@ -8,7 +8,7 @@ import { applicationEnvironmentApi, type EnvironmentRequest } from '../web/appli
 import { ownerModelApi, type OwnerModel } from '../web/ownerModelApi.js';
 import { personalAgentApi, PERSONAL_CONTRACT, type PersonalProject } from '../web/personalAgentApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
-import { api } from '../web/api.js';
+import { api, ApiError } from '../web/api.js';
 import type { FactoryJob } from '../web/models.js';
 
 const owner = { id: 'synthetic-owner', name: 'Fixture owner', role: 'user' as const };
@@ -131,4 +131,16 @@ it('does not start an SSH installation when no owned server is available', async
   expect(button('开始研究').disabled).toBe(true);
   expect(host.textContent).toContain('暂无已授权的本人服务器');
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
+});
+
+it('an authoritative SSH directory rejection keeps the draft and lets the owner correct the selection', async () => {
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([{ reference: 'owned-linux', name: 'My Linux', defaultDirectory: '/private/alice/research' }]);
+  vi.mocked(applicationEnvironmentApi.prepare).mockRejectedValue(new ApiError('ENVIRONMENT_SSH_SELECTION_UNAVAILABLE', 409));
+  await mount(); await goal('Synthetic retained draft'); await act(async () => button('开始研究').click());
+  expect(host.textContent).toContain('服务器或目录未通过检查');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.disabled).toBe(false);
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained draft');
+  expect(localStorage.getItem(`factory-environment-prepare:${owner.id}`)).toBeNull();
+  expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });

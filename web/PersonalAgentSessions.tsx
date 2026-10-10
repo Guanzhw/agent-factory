@@ -254,7 +254,20 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       if (!await ownerIsCurrent(epoch)) return;
       const requestId = crypto.randomUUID(); localStorage.setItem(environmentStorage, requestId); setEnvironmentRequest(requestId);
       setNotice(`正在准备你的${environmentLabel}；原生项目数据保留，准备请求不会发送研究目标。`);
-      const result = await (location === 'ssh' ? applicationEnvironmentApi.prepare(ownerId, requestId, { location: 'ssh', serverRef, directory: serverDirectory.trim() }) : applicationEnvironmentApi.prepare(ownerId, requestId));
+      let result;
+      try {
+        result = await (location === 'ssh' ? applicationEnvironmentApi.prepare(ownerId, requestId, { location: 'ssh', serverRef, directory: serverDirectory.trim() }) : applicationEnvironmentApi.prepare(ownerId, requestId));
+      } catch (error) {
+        // These server responses precede persisted intent and installation. A
+        // transport/acknowledgement failure retains the original recovery ID.
+        if (current(epoch) && error instanceof ApiError && (error.status === 422 ||
+            error.status === 409 && error.message === 'ENVIRONMENT_SSH_SELECTION_UNAVAILABLE')) {
+          localStorage.removeItem(environmentStorage); setEnvironmentRequest('');
+          setNotice('服务器或目录未通过检查。请修改已授权服务器或私有目录后再开始；尚未安装环境或发送研究目标。');
+          return;
+        }
+        throw error;
+      }
       if (!current(epoch) || !await ownerIsCurrent(epoch)) return;
       if (result.requestId !== requestId || result.environment.applicationId !== 'openresearch' || result.environment.researchSubmitted !== false) throw new Error('scope');
       setEnvironment(result.environment);
