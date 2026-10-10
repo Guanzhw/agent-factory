@@ -64,16 +64,17 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         broker = OwnerRuntimeBroker(directory / 'broker.sock', self.handle)
         broker.start(); self.addCleanup(broker.close)
         self.assertGreater(len(str(broker.path)), 108)
-        def call(token):
+        def call(token, text='Synthetic local wire'):
             client = _UnixHTTP(broker.path)
             try:
                 client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model', 'stream': True,
-                    'messages': [{'role': 'user', 'content': 'Synthetic local wire'}]}),
+                    'messages': [{'role': 'user', 'content': text}]}),
                     headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
                 response = client.getresponse()
                 return response.status, response.read().decode()
             finally: client.close()
         self.assertEqual(call('foreign-capability')[0], 401)
+        self.assertEqual(call('foreign-capability', 'Synthetic unauthorized body ' * 4096)[0], 401)
         self.assertEqual(self.calls, [])
         status, value = call(broker.capability)
         self.assertEqual(status, 200)

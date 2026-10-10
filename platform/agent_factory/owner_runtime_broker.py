@@ -123,6 +123,17 @@ class OwnerRuntimeBroker:
             def log_message(self, *_): pass
             def do_POST(self):
                 if self.path != '/v1/chat/completions': return self.reply(404, {'error': 'MODEL_ROUTE_UNAVAILABLE'})
+                # Consume a bounded request before an authentication rejection.
+                # Closing while http.client sends its body races the 401 and
+                # turns a clear rejection into BrokenPipeError. Outer handler
+                # slots and the socket deadline also bound unauthenticated IO.
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if not 1 <= length <= MAX_BYTES or self.headers.get('Transfer-Encoding'): raise ValueError()
+                    raw = self.rfile.read(length)
+                    if len(raw) != length: raise ValueError()
+                except (ValueError, OSError):
+                    return self.reply(400, {'error': 'MODEL_REQUEST_REJECTED'})
                 token = self.headers.get('Authorization', '').removeprefix('Bearer ')
                 if not broker.authorized(token): return self.reply(401, {'error': 'MODEL_CAPABILITY_EXPIRED'})
                 if not broker.gate.acquire(blocking=False): return self.reply(429, {'error': 'MODEL_BUSY'})
@@ -130,10 +141,7 @@ class OwnerRuntimeBroker:
                     with broker.lock:
                         if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
                         broker.remaining -= 1
-                    self.connection.settimeout(10)
-                    length = int(self.headers.get('Content-Length', '0'))
-                    if not 1 <= length <= MAX_BYTES or self.headers.get('Transfer-Encoding'): raise ValueError()
-                    body = json.loads(self.rfile.read(length))
+                    body = json.loads(raw)
                     value = asyncio.run(broker.completion(body))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
