@@ -7,9 +7,9 @@ import { personalOrxProjectApi, checkOrxProjectPrepared, checkOrxProjectReceipt,
 import type { Plan, UserConnection } from './models.js';
 
 type Pending = { requestId: string; planId?: string; startAttempt?: boolean };
-type Props = { ownerId: string; onTask?: (id: string) => void; onConnected: (ref: string) => void; initialConnectionRef?: string; researchSetup?: boolean };
+type Props = { ownerId: string; onTask?: (id: string) => void; onConnected: (ref: string) => void; initialConnectionRef?: string; researchSetup?: boolean; refreshRevision?: number };
 export function PersonalOrxProjects(props: Props) { return <Projects key={props.ownerId} {...props} />; }
-function Projects({ ownerId, onTask, onConnected, initialConnectionRef, researchSetup = false }: Props) {
+function Projects({ ownerId, onTask, onConnected, initialConnectionRef, researchSetup = false, refreshRevision = 0 }: Props) {
   const storage = `factory-orx-project-create:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<Pending | null>(() => { try { const value = JSON.parse(localStorage.getItem(storage) ?? 'null'); return value && /^[a-zA-Z0-9_.:-]{8,100}$/.test(value.requestId) ? { requestId: value.requestId, ...(value.planId ? { planId: value.planId } : {}), ...(value.startAttempt === true ? { startAttempt: true } : {}) } : null; } catch { return null; } });
   const [connections, setConnections] = useState<UserConnection[]>([]); const [selected, setSelected] = useState('');
@@ -25,16 +25,17 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
   const lock = useRef(false); const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => {
-    const ctrl = new AbortController();
+    const ctrl = new AbortController(); setReady(false);
     void Promise.all([api.session(ctrl.signal), api.userConnections(ctrl.signal), personalRemoteApi.list(ctrl.signal)]).then(([who, refs, remotes]) => {
       if (ctrl.signal.aborted) return;
       if (who.id !== ownerId || refs.some(r => r.ownerId !== ownerId)) throw new Error('owner');
       const personal = new Set(remotes.filter(r => r.providerId === ORX_PERSONAL_PROVIDER).map(r => r.registrationRef));
       setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && r.providerId === ORX_PERSONAL_PROVIDER); return [ref.ref, remote ? `${remote.origin} · 创建新项目 · ${ref.ref.slice(0, 8)}` : `创建连接 ${ref.ref}`]; })));
-      setConnections(refs.filter(r => personal.has(r.registrationRef) && r.available && r.status === 'active' && r.taskId === null && r.kind === 'orx' && r.capabilities.includes('project:create'))); setReady(true);
-    }).catch(() => { if (!ctrl.signal.aborted) setNotice('项目创建连接暂不可用。请先在资源中明确启用创建、验证并绑定。'); });
+      const eligible = refs.filter(r => personal.has(r.registrationRef) && r.available && r.status === 'active' && r.taskId === null && r.kind === 'orx' && r.capabilities.includes('project:create'));
+      setConnections(eligible); setSelected(old => eligible.some(c => c.ref === old) ? old : ''); setReady(true);
+    }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setSelected(''); setNotice('项目创建连接暂不可用。请先在资源中明确启用创建、验证并绑定。'); } });
     return () => ctrl.abort();
-  }, [ownerId]);
+  }, [ownerId, initialConnectionRef, refreshRevision]);
   useEffect(() => {
     if (initialConnectionRef && connections.some(c => c.ref === initialConnectionRef)) { setSelected(initialConnectionRef); setCreateOpen(true); }
   }, [initialConnectionRef, connections]);

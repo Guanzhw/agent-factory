@@ -50,6 +50,15 @@ it('does not select an unverified supplied service during first setup', async ()
   expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe('');
   expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
 });
+it('rechecks owner identity on connection refresh and disables a stale selected creation resource', async () => {
+  const render = (refreshRevision: number) => createElement(PersonalOrxProjects, { ownerId: owner.id, onConnected: connected, initialConnectionRef: connection.ref, researchSetup: true, refreshRevision });
+  await act(async () => root.render(render(0))); await fill('远端项目绝对路径', request.path);
+  expect(button('预览项目创建').disabled).toBe(false);
+  vi.mocked(api.session).mockResolvedValue({ ...owner, id: 'another-owner' });
+  await act(async () => root.render(render(1)));
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe('');
+  expect(button('预览项目创建').disabled).toBe(true); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
+});
 async function previewCreation() { await enter(); await click('预览项目创建'); }
 async function consent() { await act(async () => host.querySelector<HTMLInputElement>('[aria-label="批准此次项目创建副作用"]')!.click()); }
 

@@ -13,8 +13,10 @@ cover these contracts. They do not prove a live provider or end-to-end model run
 
 The ordinary research screen offers first-project setup beside the goal, retains
 the draft, and distinguishes loading, failed project reads, and a verified empty
-list. Setup selects only a current owner-verified creation connection. The owner
-must supply the remote folder, tool and complete model name; no local path, model,
+list. Setup selects only a current owner-verified creation connection. The
+connection list is re-read when setup opens, a newly bound service is selected,
+or the research page is refreshed, retaining the goal and checking owner identity.
+The owner must supply the remote folder, tool and complete model name; no local path, model,
 clone source or extra permission is inferred. Factory BYOK remains separate from
 the upstream service's model settings. Binding verifies the project, not model
 availability. These desktop changes preserve the existing creation preview,
