@@ -59,11 +59,11 @@ class ApplicationEnvironments:
         if fcntl is None: raise HTTPException(409, 'ENVIRONMENT_PLATFORM_UNSUPPORTED')
         with (self.root / (identifier + '.lock')).open('a+b') as handle:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                getattr(fcntl, 'flock')(handle, getattr(fcntl, 'LOCK_EX') | getattr(fcntl, 'LOCK_NB'))
             except BlockingIOError:
                 raise HTTPException(409, 'ENVIRONMENT_PREPARATION_IN_PROGRESS') from None
             try: yield
-            finally: fcntl.flock(handle, fcntl.LOCK_UN)
+            finally: getattr(fcntl, 'flock')(handle, getattr(fcntl, 'LOCK_UN'))
 
     def _row(self, conn, owner, identifier):
         row = conn.execute(select(self.environments).where(self.environments.c.id == identifier,

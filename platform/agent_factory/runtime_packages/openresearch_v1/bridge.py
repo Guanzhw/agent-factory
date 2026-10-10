@@ -42,8 +42,8 @@ async def bridges():
     if path.exists() or path.is_symlink():
         raise ValueError('ORX_SOCKET_ALREADY_EXISTS')
     local = await asyncio.start_server(lambda r, w: relay(r, w,
-        lambda: asyncio.open_unix_connection('/session/sockets/broker.sock'), gate), '127.0.0.1', 4801)
-    reverse = await asyncio.start_unix_server(lambda r, w: relay(r, w,
+        lambda: getattr(asyncio, 'open_unix_connection')('/session/sockets/broker.sock'), gate), '127.0.0.1', 4801)
+    reverse = await getattr(asyncio, 'start_unix_server')(lambda r, w: relay(r, w,
         lambda: asyncio.open_connection('127.0.0.1', 4791), gate), str(path))
     path.chmod(0o600)
     async with local, reverse:

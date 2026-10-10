@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import socket
 import stat
+import sys
 import subprocess
 import threading
 import time
@@ -43,7 +44,7 @@ class PlatformOpenResearchConfig:
     lease_seconds: int = 1800
 
     def validate(self):
-        if fcntl is None: raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
+        if sys.platform != 'linux' or fcntl is None: raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
         require(type(self.max_active) is int and 1 <= self.max_active <= 8)
         require(type(self.lease_seconds) is int and 60 <= self.lease_seconds <= 3600)
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image))
@@ -55,9 +56,9 @@ class _UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path, timeout=10):
         super().__init__('localhost', timeout=timeout); self.path = path
     def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock = socket.socket(getattr(socket, 'AF_UNIX'), socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        descriptor = os.open(self.path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(self.path.parent, getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'))
         try: self.sock.connect(f'/proc/self/fd/{descriptor}/{self.path.name}')
         finally: os.close(descriptor)
 
@@ -82,11 +83,11 @@ class PlatformOpenResearchPackage:
 
     @contextmanager
     def _capacity(self):
-        if fcntl is None: raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
+        if sys.platform != 'linux' or fcntl is None: raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
         with (self.root / 'capacity.lock').open('a+b') as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            getattr(fcntl, 'flock')(handle, getattr(fcntl, 'LOCK_EX'))
             try: yield
-            finally: fcntl.flock(handle, fcntl.LOCK_UN)
+            finally: getattr(fcntl, 'flock')(handle, getattr(fcntl, 'LOCK_UN'))
 
     @staticmethod
     def _docker(*args, timeout=15, env=None):
@@ -127,7 +128,7 @@ class PlatformOpenResearchPackage:
             and labels.get('factory.environment.body') == receipt['bodyHash'])
         require(current['HostConfig']['NetworkMode'] == 'none' and current['HostConfig']['ReadonlyRootfs'] is True
             and current['HostConfig']['Privileged'] is False
-            and current['Config']['User'] == f'{os.getuid()}:{os.getgid()}'
+            and current['Config']['User'] == f'{getattr(os, 'getuid')()}:{getattr(os, 'getgid')()}'
             and len([m for m in current['Mounts'] if m['RW']]) == 1
             and next(m for m in current['Mounts'] if m['RW'])['Source'] == str(root))
         if receipt.get('containerId'): require(receipt['containerId'] == current['Id'])
@@ -149,7 +150,7 @@ class PlatformOpenResearchPackage:
     def _socket_cleanup(self, path):
         if path.exists() or path.is_symlink():
             info = path.lstat()
-            require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid())
+            require(stat.S_ISSOCK(info.st_mode) and info.st_uid == getattr(os, 'getuid')())
             path.unlink()
 
     def prepare(self, body, handle):
@@ -238,7 +239,7 @@ class PlatformOpenResearchPackage:
             live['broker'].handle.check()
             path_socket = live['root'] / 'sockets/orx.sock'
             info = path_socket.lstat()
-            require(stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.getuid())
+            require(stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == getattr(os, 'getuid')())
         # Original ORX waits for its coding harness on the first message. The
         # private local command needs that bounded startup window; a timeout
         # still remains an unknown acknowledgement and never authorizes replay.

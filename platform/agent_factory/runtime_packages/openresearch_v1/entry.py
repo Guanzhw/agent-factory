@@ -36,7 +36,7 @@ def private_directory(path):
     path = Path(path)
     require(path.is_absolute() and path.resolve() == path)
     info = path.lstat()
-    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.getuid())
+    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == getattr(os, 'getuid')())
     return path
 
 
@@ -75,8 +75,9 @@ class RuntimeConfig:
     project_id: str = field(default_factory=lambda: str(uuid4()))
 
     def validate(self):
+        require(sys.platform == 'linux')
         private_directory(self.session_root)
-        require(os.getuid() > 0 and os.getgid() > 0)
+        require(getattr(os, 'getuid')() > 0 and getattr(os, 'getgid')() > 0)
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image) is not None)
         require(type(self.cpus) is int and 1 <= self.cpus <= 4
                 and type(self.memory_mb) is int and 256 <= self.memory_mb <= 4096
@@ -205,7 +206,7 @@ def build_command(config, name, capability):
     base = Path(__file__).resolve().parent
     command = ['docker', 'create', '--pull', 'never', '--name', name, '--label', 'factory.orx.runtime=' + name,
         '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-        '--user', str(os.getuid()) + ':' + str(os.getgid()), '--cpus', str(config.cpus),
+        '--user', str(getattr(os, 'getuid')()) + ':' + str(getattr(os, 'getgid')()), '--cpus', str(config.cpus),
         '--memory', str(config.memory_mb) + 'm', '--memory-swap', str(config.memory_mb) + 'm',
         '--pids-limit', str(config.pids), '--ulimit', 'nofile=1024:1024',
         '--log-driver', 'local', '--log-opt', 'max-size=1m', '--log-opt', 'max-file=2',

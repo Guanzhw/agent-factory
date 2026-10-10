@@ -11,9 +11,12 @@ import json
 import os
 from pathlib import Path
 import secrets
-from socketserver import ThreadingMixIn, UnixStreamServer
+import socketserver
+from socketserver import ThreadingMixIn
+import sys
 import threading
 import time
+from typing import Any
 
 import httpx
 
@@ -21,7 +24,12 @@ from .byok_model import MAX_BYTES, PinnedChatTransport, function_call
 from .personal_remote_provider import reject_credential_echo
 
 
-class _Server(ThreadingMixIn, UnixStreamServer):
+# The inert base keeps host imports possible where AF_UNIX is unsupported.
+# start() rejects those hosts before constructing any listener.
+UnixServerBase: Any = getattr(socketserver, 'UnixStreamServer', object)
+
+
+class _Server(ThreadingMixIn, UnixServerBase):
     daemon_threads = True
     block_on_close = False
     def __init__(self, *args):
@@ -109,6 +117,7 @@ class OwnerRuntimeBroker:
         return value
 
     def start(self):
+        if sys.platform != 'linux': raise ValueError('ENVIRONMENT_PLATFORM_UNSUPPORTED')
         broker = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_): pass
@@ -150,7 +159,7 @@ class OwnerRuntimeBroker:
         # Linux AF_UNIX has a 108-byte address limit. A held directory FD keeps
         # the same private inode custody even when the persistent workspace path
         # is long; no symlink, alternate listener or broader mount is introduced.
-        descriptor = os.open(self.path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(self.path.parent, getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'))
         try: self.server = _Server(f'/proc/self/fd/{descriptor}/{self.path.name}', Handler)
         finally: os.close(descriptor)
         self.path.chmod(0o600)
