@@ -220,7 +220,7 @@ class PlatformOpenResearchPackage:
             command[index] = 'PATH=' + environment(broker.capability)['PATH']
             timer = threading.Timer(self.config.lease_seconds, lambda: self._lease_due(body)); timer.daemon = True
             self.live[body['id']] = {'broker': broker, 'body': body, 'timer': timer, 'root': root,
-                'hardDeadline': time.monotonic() + self.config.max_active_seconds}
+                'hardDeadline': time.monotonic() + self.config.max_active_seconds, 'inFlightMutations': 0}
             try:
                 result = subprocess.run(command, env=private_env, capture_output=True, timeout=60, check=False)
                 require(result.returncode == 0)
@@ -251,18 +251,21 @@ class PlatformOpenResearchPackage:
             remaining = live['hardDeadline'] - time.monotonic()
             if remaining <= 0:
                 self.stop(body); return
-            try:
-                # Read original durable state only. A turn/run/queue in progress
-                # renews this same process; preparation/replay never occurs.
-                private_directory(live['root'] / 'orx')
-                verify_no_startup_dispatch(live['root'] / 'orx/orx.db')
-            except Exception:
-                # Unknown native state also cannot be called safely idle. Keep
-                # existing custody only within the fixed activation budget.
-                timer = threading.Timer(min(self.config.lease_seconds, remaining), lambda: self._lease_due(body))
-                timer.daemon = True; live['timer'] = timer; timer.start()
-                return
-            self.stop(body)
+            idle = False
+            if not live.get('inFlightMutations', 0):
+                try:
+                    # Native durable work and a local mutation not yet committed
+                    # both retain this same process; no preparation/replay occurs.
+                    private_directory(live['root'] / 'orx')
+                    verify_no_startup_dispatch(live['root'] / 'orx/orx.db')
+                    idle = True
+                except Exception:
+                    # Unknown native state cannot be called safely idle either.
+                    pass
+            if idle:
+                self.stop(body); return
+            timer = threading.Timer(min(self.config.lease_seconds, remaining), lambda: self._lease_due(body))
+            timer.daemon = True; live['timer'] = timer; timer.start()
 
     def check(self, body):
         with self.lock:
@@ -278,6 +281,7 @@ class PlatformOpenResearchPackage:
             except Exception: return False
 
     def request(self, body, method, path, payload=None):
+        mutation = method not in ('GET', 'HEAD', 'OPTIONS')
         with self.lock:
             live = self.live.get(body['id'])
             if live is None or not live['broker'].authorized(live['broker'].capability):
@@ -286,17 +290,25 @@ class PlatformOpenResearchPackage:
             path_socket = live['root'] / 'sockets/orx.sock'
             info = path_socket.lstat()
             require(stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == getattr(os, 'getuid')())
+            if mutation:
+                live['inFlightMutations'] = live.get('inFlightMutations', 0) + 1
         # Original ORX waits for its coding harness on the first message. The
         # private local command needs that bounded startup window; a timeout
         # still remains an unknown acknowledgement and never authorizes replay.
         startup = method == 'POST' and re.fullmatch(r'/api/chat/sessions/[A-Za-z0-9_-]+/message', path)
-        client = _UnixHTTP(path_socket, timeout=120 if startup else 10)
+        client = None
         try:
+            client = _UnixHTTP(path_socket, timeout=120 if startup else 10)
             client.request(method, path, body=None if payload is None else json.dumps(payload), headers={'Content-Type': 'application/json', 'Connection': 'close'})
             response = client.getresponse(); raw = response.read(1048577)
             require(len(raw) <= 1048576)
             return response.status, json.loads(raw)
-        finally: client.close()
+        finally:
+            try:
+                if client is not None: client.close()
+            finally:
+                if mutation:
+                    with self.lock: live['inFlightMutations'] -= 1
 
     def stop(self, body):
         with self.lock:

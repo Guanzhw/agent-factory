@@ -137,7 +137,7 @@ browser/container reports are private task artifacts; public tests use synthetic
 owners, credentials, runtime peers and model responses. No real model or remote
 deployment is required by the automated suite.
 
-`check_owner_byok_postgres.py` requires all 27 owner-model and platform-custody
+`check_owner_byok_postgres.py` requires all 35 owner-model and platform-custody
 cases with no skips. The runtime startup gate checks both merged configuration
 and the final executable tools of the native factory/build/plan agents. Controlled
 original-binary testing has exercised one local bash tool, a persisted worktree
@@ -157,3 +157,10 @@ The broker retains its original socket directory descriptor and socket inode.
 Cleanup uses relative no-follow stat and unlink through that descriptor. Replacing
 the writable sockets directory with another owner’s path, or replacing the socket
 inode, cannot redirect host cleanup.
+
+Local mutating requests register under the same environment lock used by lease
+expiry, before releasing it for private HTTP IO. Until all such requests finish,
+idle reclamation retains the same container without relying on a native database
+that may not yet contain the command. The marker is released on response or error;
+durable native work or unknown native state then governs renewal. The absolute
+activation budget and explicit owner stop still apply; no request is replayed.

@@ -1,5 +1,6 @@
 """Controlled deployment receipts: no Docker daemon, native goal or model IO."""
 from pathlib import Path
+import socket
 import sys
 from tempfile import TemporaryDirectory
 import threading
@@ -87,6 +88,80 @@ class PlatformOpenResearchCustodyTests(unittest.TestCase):
                 patch('agent_factory.platform_openresearch.verify_no_startup_dispatch') as inspect, \
                 patch.object(package, 'stop') as stop:
             package._lease_due(self.body); stop.assert_called_once_with(self.body); inspect.assert_not_called()
+
+    def test_idle_lease_cannot_stop_posts_between_local_admission_and_native_commit(self):
+        package = self.package
+        (self.root / 'orx').mkdir(mode=0o700)
+        (self.root / 'sockets').mkdir(mode=0o700)
+        listener = socket.socket(socket.AF_UNIX)
+        self.addCleanup(listener.close)
+        path_socket = self.root / 'sockets/orx.sock'
+        listener.bind(str(path_socket)); path_socket.chmod(0o600)
+        live = {'root': self.root, 'body': self.body, 'hardDeadline': 200, 'timer': Mock(),
+            'broker': Mock(), 'inFlightMutations': 0}
+        package.live[self.body['id']] = live
+        entered = [threading.Event(), threading.Event()]
+        release = [threading.Event(), threading.Event()]
+        clients = [Mock(), Mock()]; outcomes = []
+        for i, client in enumerate(clients):
+            def before_native_commit(*args, index=i, **kwargs):
+                entered[index].set()
+                if not release[index].wait(5): raise TimeoutError('Synthetic POST barrier')
+            client.request.side_effect = before_native_commit
+            client.getresponse.return_value.status = 200
+            client.getresponse.return_value.read.return_value = b'{"ok":true}'
+        def post():
+            try: outcomes.append(package.request(self.body, 'POST', '/api/chat/sessions/synthetic/message', {'text': 'Synthetic goal'}))
+            except Exception as error: outcomes.append(error)
+        with patch('agent_factory.platform_openresearch._UnixHTTP', side_effect=clients), \
+                patch('agent_factory.platform_openresearch.time.monotonic', return_value=100), \
+                patch('agent_factory.platform_openresearch.verify_no_startup_dispatch') as inspect, \
+                patch('agent_factory.platform_openresearch.threading.Timer'), \
+                patch.object(package, 'stop') as stop:
+            threads = [threading.Thread(target=post) for _ in clients]
+            try:
+                for thread, event in zip(threads, entered):
+                    thread.start(); self.assertTrue(event.wait(5))
+                self.assertEqual(live['inFlightMutations'], 2)
+                package._lease_due(self.body)
+                stop.assert_not_called(); inspect.assert_not_called()
+                release[0].set(); threads[0].join(5)
+                self.assertFalse(threads[0].is_alive())
+                self.assertEqual(live['inFlightMutations'], 1)
+                package._lease_due(self.body)
+                stop.assert_not_called(); inspect.assert_not_called()
+                release[1].set(); threads[1].join(5)
+                self.assertFalse(threads[1].is_alive())
+                self.assertEqual(live['inFlightMutations'], 0)
+                self.assertEqual(outcomes, [(200, {'ok': True}), (200, {'ok': True})])
+                inspect.side_effect = ValueError('Synthetic now-durable native turn')
+                package._lease_due(self.body); stop.assert_not_called()
+                inspect.side_effect = None
+                package._lease_due(self.body); stop.assert_called_once_with(self.body)
+            finally:
+                for event in release: event.set()
+                for thread in threads:
+                    if thread.ident is not None: thread.join(5)
+        for client in clients: client.close.assert_called_once()
+
+    def test_failed_post_releases_inflight_marker_even_if_client_cleanup_fails(self):
+        package = self.package
+        (self.root / 'sockets').mkdir(mode=0o700)
+        listener = socket.socket(socket.AF_UNIX); self.addCleanup(listener.close)
+        path_socket = self.root / 'sockets/orx.sock'
+        listener.bind(str(path_socket)); path_socket.chmod(0o600)
+        live = {'root': self.root, 'broker': Mock(), 'inFlightMutations': 0}
+        package.live[self.body['id']] = live
+        client = Mock()
+        client.getresponse.side_effect = TimeoutError('Synthetic unknown acknowledgement')
+        client.close.side_effect = OSError('Synthetic cleanup failure')
+        with patch('agent_factory.platform_openresearch._UnixHTTP', return_value=client):
+            with self.assertRaises(OSError): package.request(self.body, 'POST', '/api/chat/sessions/synthetic/message', {})
+        self.assertEqual(live['inFlightMutations'], 0)
+        client.close.assert_called_once()
+        with patch('agent_factory.platform_openresearch._UnixHTTP', side_effect=OSError('Synthetic constructor failure')):
+            with self.assertRaises(OSError): package.request(self.body, 'POST', '/api/chat/sessions', {})
+        self.assertEqual(live['inFlightMutations'], 0)
 
     def test_removed_container_lost_final_receipt_reconciles_only_saved_stop_proof(self):
         package = self.package
