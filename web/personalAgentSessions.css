@@ -53,5 +53,5 @@
 .research-setup select { width: 100%; max-width: 100%; box-sizing: border-box; }
 @media (max-width: 600px) { .research-composer, .research-results, .research-setup { padding: 16px; } .research-start-row .primary { width: 100%; } .research-start-row .quiet { font-size: 13px; } }
 
-.research-session-entry { margin: 20px 0; padding: 18px; border: 1px solid var(--border); border-radius: 10px; }
+.research-session-entry { margin: 20px 0; padding: 18px; border: 1px solid var(--line); border-radius: 10px; }
 .research-session-entry h3 { margin-top: 0; }
