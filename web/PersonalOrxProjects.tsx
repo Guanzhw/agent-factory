@@ -23,6 +23,7 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
   const [consent, setConsent] = useState(false); const [allowed, setAllowed] = useState(false);
   const [harness, setHarness] = useState(''); const [model, setModel] = useState('');
   const lock = useRef(false); const live = useRef(true);
+  const appliedInitialConnection = useRef('');
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => {
     const ctrl = new AbortController(); setReady(false);
@@ -37,7 +38,7 @@ function Projects({ ownerId, onTask, onConnected, initialConnectionRef, research
     return () => ctrl.abort();
   }, [ownerId, initialConnectionRef, refreshRevision]);
   useEffect(() => {
-    if (initialConnectionRef && connections.some(c => c.ref === initialConnectionRef)) { setSelected(initialConnectionRef); setCreateOpen(true); }
+    if (initialConnectionRef && initialConnectionRef !== appliedInitialConnection.current && connections.some(c => c.ref === initialConnectionRef)) { appliedInitialConnection.current = initialConnectionRef; setSelected(initialConnectionRef); setCreateOpen(true); }
   }, [initialConnectionRef, connections]);
   function remember(next: Pending | null) { if (next) localStorage.setItem(storage, JSON.stringify(next)); else localStorage.removeItem(storage); setPending(next); }
   async function act(label: string, work: () => Promise<void>) {

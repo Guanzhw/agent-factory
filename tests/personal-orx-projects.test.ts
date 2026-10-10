@@ -59,6 +59,16 @@ it('rechecks owner identity on connection refresh and disables a stale selected 
   expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe('');
   expect(button('预览项目创建').disabled).toBe(true); expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
 });
+it('preserves a valid explicitly changed service when the connection inventory refreshes', async () => {
+  const other = { ...connection, ref: 'other-creation', registrationRef: 'other-service' };
+  vi.mocked(api.userConnections).mockResolvedValue([connection, other]);
+  vi.mocked(personalRemoteApi.list).mockResolvedValue([remote, { ...remote, registrationRef: other.registrationRef }]);
+  const render = (refreshRevision: number) => createElement(PersonalOrxProjects, { ownerId: owner.id, onConnected: connected, initialConnectionRef: connection.ref, researchSetup: true, refreshRevision });
+  await act(async () => root.render(render(0))); await fill('项目创建资源', other.ref);
+  await act(async () => root.render(render(1)));
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.value).toBe(other.ref);
+  expect(personalOrxProjectApi.prepare).not.toHaveBeenCalled();
+});
 async function previewCreation() { await enter(); await click('预览项目创建'); }
 async function consent() { await act(async () => host.querySelector<HTMLInputElement>('[aria-label="批准此次项目创建副作用"]')!.click()); }
 
