@@ -32,7 +32,6 @@ from .runtime_packages.openresearch_v1.supervisor import digest
 
 PROVIDER_ID = 'ssh-openresearch-session-v1'
 BASE = Path(__file__).resolve().parent / 'runtime_packages/openresearch_v1'
-REPOSITORY = Path(__file__).resolve().parents[2]
 
 
 def file_hash(path):
@@ -136,9 +135,8 @@ class SSHOpenResearchPackage:
         self.root.mkdir(mode=0o700, exist_ok=True); private_directory(self.root)
         self.files = {name: BASE / name for name in ('__init__.py', 'entry.py', 'bridge.py', 'supervisor.py', 'ssh_agent.py')}
         self.files.update(orx=Path(config.runtime.orx_path), opencode=Path(config.runtime.opencode_path))
-        self.files.update({'ORX-LICENSE.txt': REPOSITORY / 'licenses/openresearch-MIT.txt',
-            'OPENCODE-LICENSE.txt': REPOSITORY / 'licenses/opencode-MIT.txt',
-            'FACTORY-LICENSE.txt': REPOSITORY / 'LICENSE', 'THIRD_PARTY_NOTICES.md': REPOSITORY / 'THIRD_PARTY_NOTICES.md'})
+        self.files.update({name: BASE / 'notices' / name for name in
+            ('ORX-LICENSE.txt', 'OPENCODE-LICENSE.txt', 'FACTORY-LICENSE.txt', 'THIRD_PARTY_NOTICES.md')})
         self.code_pins = {name: file_hash(path) for name, path in self.files.items()}
         self.installer_pin = file_hash(BASE / 'ssh_install.py')
         self.version = 'ssh-openresearch-v1-' + digest({'files': self.code_pins, 'image': config.runtime.image,
