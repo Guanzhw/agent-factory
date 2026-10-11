@@ -304,6 +304,8 @@ class FactoryAPI:
 
     def routes(self):
         router = self.router
+        from .application_runs import application_runs_router
+        router.include_router(application_runs_router(self))
 
         @router.get("/status")
         def status():
