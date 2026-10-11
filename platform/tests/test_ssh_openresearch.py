@@ -62,6 +62,33 @@ class SSHOpenResearchTests(unittest.TestCase):
         self.assertNotIn('SSH_AUTH_SOCK', kwargs['env'])
         self.assertEqual((self.root / 'known_hosts').read_text(), 'factory-pinned ' + self.server.host_key + '\n')
 
+    def test_owned_rpc_requires_exact_body_and_fresh_scope_and_revocation_before_send(self):
+        self.package.version = 'fixture-version'
+        body = {'id': 'fixture', 'ownerId': 'alice', 'packageVersion': self.package.version,
+            **self.package.selection('alice', 'mine', str(self.root / 'work'))}
+        scope_calls = []
+        revoke_after_model_check = [False]
+        def owned_check():
+            self.package._scope(body); scope_calls.append('scope')
+            if revoke_after_model_check[0]: self.revoked = True
+        broker = SimpleNamespace(capability='synthetic', authorized=lambda token: token == 'synthetic',
+            handle=SimpleNamespace(check=owned_check))
+        channel = Mock(); channel.call.return_value = True
+        self.package.live = {'fixture': {'body': body, 'broker': broker, 'lease': self.lease, 'channel': channel}}
+        self.assertTrue(self.package.check(dict(body)))
+        self.assertEqual(scope_calls, ['scope'])
+        channel.reset_mock(); scope_calls.clear()
+        for key, changed in [('ownerId', 'bob'), ('serverPin', 'changed'), ('packageVersion', 'stale')]:
+            tampered = {**body, key: changed}
+            self.assertFalse(self.package.check(tampered))
+            with self.assertRaises(ValueError): self.package.request(tampered, 'GET', '/api/health')
+        channel.call.assert_not_called(); self.assertEqual(scope_calls, [])
+        revoke_after_model_check[0] = True
+        self.assertFalse(self.package.check(body))
+        channel.call.assert_not_called()
+        with self.assertRaises(ValueError): self.package.request(body, 'POST', '/api/chat/sessions', {})
+        channel.call.assert_not_called()
+
     def test_private_installer_refuses_symlink_foreign_directory_and_preserves_external_bytes(self):
         outside = self.root / 'outside'; outside.mkdir(mode=0o700)
         proof = outside / 'proof'; proof.write_text('UNCHANGED')

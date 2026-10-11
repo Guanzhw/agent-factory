@@ -321,16 +321,19 @@ class SSHOpenResearchPackage:
 
     def check(self, body):
         try:
-            self._scope(body)
             live = self.live.get(body['id'])
-            if not live or not live['broker'].authorized(live['broker'].capability): return False
+            if not live or live['body'] != body or not live['broker'].authorized(live['broker'].capability): return False
+            # The owned broker handle already rechecks this exact body's scope
+            # and current model. The lease then rechecks the current server/key
+            # immediately before RPC; no authority survives this boundary.
             live['broker'].handle.check(); live['lease'].validate()
             return live['channel'].call('check', body) is True
         except Exception: return False
 
     def request(self, body, method, path, payload=None):
-        self._scope(body)
-        live = self.live[body['id']]; live['broker'].handle.check(); live['lease'].validate()
+        live = self.live[body['id']]
+        require(live['body'] == body)
+        live['broker'].handle.check(); live['lease'].validate()
         return live['channel'].call('request', body, method=method, path=path, payload=payload)
 
     def stop(self, body):

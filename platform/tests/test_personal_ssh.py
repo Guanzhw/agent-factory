@@ -312,6 +312,7 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertEqual(first.socket, second.socket); self.assertEqual(first.public_key, second.public_key)
         allowed[0] = False
         with self.assertRaises(RemoteConnectionError): second.validate()
+        with self.assertRaises(RemoteConnectionError): agents.acquire(server, self.identity['origin'], guard)
         self.assertFalse(any(p.is_file() for p in agents.root.rglob('*')))
 
     def test_legacy_https_domain_is_unchanged_and_ssh_destination_is_canonical(self):

@@ -74,7 +74,6 @@ class SSHAgents:
         # SQL callbacks must never run while holding the agent mutex. Other
         # callers can already own bounded metadata-pool connections while
         # waiting for this mutex; the mutex owner cannot borrow another slot.
-        guard()
         with self.lock: snapshot = list(self.live.items())
         for old, item in snapshot:
             if (item['deadline'] <= time.monotonic() or item['process'].poll() is not None
@@ -82,6 +81,9 @@ class SSHAgents:
         with self.lock: item = self.live.get(key)
         if item is not None:
             lease = self._lease(item, guard); lease.validate(); return lease
+        # Cached leases already run this fresh guard immediately before return.
+        # A new agent must also be authorized before resolving private bytes.
+        guard()
         secret = self.vault.resolve(**scope)
         raw = base64.b64decode(secret.password, validate=True)
         private = serialization.load_ssh_private_key(raw, password=None)
