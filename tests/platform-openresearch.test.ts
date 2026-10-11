@@ -273,6 +273,20 @@ it('ignores late original environment inspect after switching research identity'
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
 
+it('retains original A recovery custody without restoring default or A after selecting research B',async()=>{
+  localStorage.setItem(`factory-environment-prepare:${owner.id}`,'original-A-prepare');
+  const unknown={...env,state:'unknown'};
+  vi.mocked(applicationEnvironmentApi.recover).mockImplementation(async id=>({...request(id),state:'unknown',environment:unknown}));
+  const b={id:'session-B',nativeProjectId:'project-B',nativeSessionId:'native-B',namespace:'native-openresearch',connectionRef:'binding-B',state:'result_observed',activeRequestId:null,bindingStatus:'unavailable',connectionPin:{ownerId:owner.id,capabilities:['session:read','session:prompt']},observation:null} as unknown as PersonalSession;
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([b]);vi.spyOn(personalAgentApi,'session').mockResolvedValue(b);
+  await mount();await act(async()=>host.querySelector<HTMLButtonElement>('.research-session-entry button')!.click());
+  expect(button('明确恢复平台环境').disabled).toBe(true);
+  await act(async()=>button('明确恢复平台环境').click());
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  expect(localStorage.getItem(`factory-environment-prepare:${owner.id}`)).toBe('original-A-prepare');
+  expect(button('停止环境并保留数据')).toBeUndefined();expect(button('核对恢复条件')).toBeUndefined();
+});
+
 it('lost stop acknowledgement survives reload and only reads the original stop request', async () => {
   vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env]);
   vi.spyOn(applicationEnvironmentApi, 'stop').mockRejectedValue(new Error('lost stop acknowledgement'));
