@@ -26,6 +26,13 @@ function readEnvironmentSelection(owner: string): EnvironmentSelection | undefin
       && pointer(value.projectId) && pointer(value.connectionRef) ? {id:value.id,projectId:value.projectId,connectionRef:value.connectionRef} : undefined;
   } catch { return undefined; }
 }
+function readServerSelection(owner: string): string | undefined {
+  try {
+    const hint = JSON.parse(sessionStorage.getItem(`factory-research-server:${encodeURIComponent(owner)}`) ?? 'null');
+    return hint?.owner === owner && typeof hint.reference === 'string'
+      && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(hint.reference) && !hint.reference.includes('..') ? hint.reference : undefined;
+  } catch { return undefined; }
+}
 const labels = { create: '创建 OpenCode 会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' };
 const warning = '会话使用远程服务的模型配置。中断仅尽力而为，停止状态以服务端记录为准。';
 const sessionStates: Record<string, string> = { ready: '可准备消息', result_observed: '已观察到远程回复', ack_unknown: '命令回执未确认', create_ack_unknown: '会话创建回执未确认', pending: '等待回执', creating: '等待创建确认' };
@@ -38,14 +45,20 @@ function CommandSummary({ plan }: { plan: Plan }) {
   const action = text('action');
   return <section className="personal-command-summary" aria-label="此次固定命令范围"><h4>此次固定命令范围</h4><dl className="plan-details"><dt>动作</dt><dd>{({ create: '创建原生会话', prompt: '发送下一轮消息', interrupt: '请求尽力中断' } as Record<string, string>)[action] ?? '动作未确认，请核对技术快照'}</dd><dt>原生项目 ID</dt><dd>{text('nativeProjectId')}</dd>{action === 'create' ? <><dt>新会话标题</dt><dd>{text('title')}</dd></> : <><dt>原生会话 ID</dt><dd>{text('nativeSessionId')}</dd></>}</dl>{action === 'prompt' && <><h4>将发送的消息</h4><p className="personal-command-text">{text('text')}</p></>}{action === 'interrupt' && <p>仅向原会话请求中断，不证明工具、模型或远端进程已停止。</p>}<details className="technical-detail"><summary>固定方案与连接技术快照</summary><span>方案 {plan.id}</span><pre>{JSON.stringify(values, null, 2)}</pre></details></section>;
 }
-export function PersonalAgentSessions(props: Props) { return <PersonalSessions key={`${props.ownerId}:${props.namespace ?? 'opencode'}`} {...props} />; }
-function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode', researchJourney = false, onModels }: Props) {
+export function PersonalAgentSessions(props: Props) {
+  const [recoveryRevision, reloadRecovery] = useState(0);
+  return <PersonalSessions key={`${props.ownerId}:${props.namespace ?? 'opencode'}:${recoveryRevision}`} {...props} onRecoveryChanged={() => reloadRecovery(value => value + 1)} />;
+}
+function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespace = 'opencode', researchJourney = false, onModels, onRecoveryChanged }: Props & { onRecoveryChanged: () => void }) {
   const feeManagementEnabled = useFeeManagement();
   const engine = namespace === 'opencode' ? 'OpenCode' : 'OpenResearch';
   const provider = namespace === 'opencode' ? PERSONAL_PROVIDER : ORX_PERSONAL_PROVIDER;
   const storage = `factory-personal-command:${encodeURIComponent(ownerId)}${namespace === 'opencode' ? '' : ':native-openresearch'}`;
   const selectionStorage = `factory-personal-session:${encodeURIComponent(ownerId)}:${namespace}`;
   const attachStorage = `factory-personal-attach:${encodeURIComponent(ownerId)}:${namespace}`;
+  const serverHint = useRef(researchJourney ? readServerSelection(ownerId) : undefined);
+  const serverChoice = useRef<'pending' | 'applied' | 'retained' | undefined>(serverHint.current ? 'pending' : undefined);
+  const [serverChoiceSettled, setServerChoiceSettled] = useState(!serverHint.current);
   const [attachment, setAttachment] = useState<PersonalAttachment | null>(() => { try { const value = JSON.parse(localStorage.getItem(attachStorage) ?? 'null'); return value && ['requestId', 'connectionRef', 'nativeProjectId', 'nativeSessionId'].every(key => typeof value[key] === 'string' && /^[a-zA-Z0-9_.:-]{1,200}$/.test(value[key])) ? { requestId: value.requestId, connectionRef: value.connectionRef, nativeProjectId: value.nativeProjectId, nativeSessionId: value.nativeSessionId } : null; } catch { return null; } });
   const [nativeSessions, setNativeSessions] = useState<NativePersonalSession[]>([]);
   const [pending, setPending] = useState<Pending | null>(() => { try { const p = JSON.parse(localStorage.getItem(storage) ?? 'null'); return p && /^[a-zA-Z0-9_.:-]{8,100}$/.test(p.requestId) && (!p.planId || /^[a-zA-Z0-9_.:-]{1,100}$/.test(p.planId)) ? { requestId: p.requestId, ...(p.planId ? { planId: p.planId } : {}), ...(p.startPlanId && p.startPlanId === p.planId ? { startPlanId: p.startPlanId } : {}), ...(p.submitAttempt === true ? { submitAttempt: true as const } : {}) } : null; } catch { return null; } });
@@ -98,12 +111,13 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const activeEnvironment = environment && (selected ? !!selectedNativeProject && environment.projectId === selectedNativeProject : !session)
     && environment.location === location && (location !== 'ssh' || environment.serverRef === serverRef && environment.remoteDirectory === serverDirectory.trim()) ? environment : undefined;
   const [environmentRequest, setEnvironmentRequest] = useState(() => { try { const value = localStorage.getItem(environmentStorage); return value && /^[a-zA-Z0-9_.:-]{8,80}$/.test(value) ? value : ''; } catch { return ''; } });
+  const [environmentRequestUnresolved, setEnvironmentRequestUnresolved] = useState(!!environmentRequest);
   const [environmentAction, setEnvironmentAction] = useState<'prepare' | 'stop'>(() => { try { return localStorage.getItem(environmentStorage + ':action') === 'stop' ? 'stop' : 'prepare'; } catch { return 'prepare'; } });
   function rememberEnvironment(requestId: string, action: 'prepare' | 'stop') {
     localStorage.setItem(environmentStorage + ':action', action);
-    localStorage.setItem(environmentStorage, requestId); setEnvironmentAction(action); setEnvironmentRequest(requestId);
+    localStorage.setItem(environmentStorage, requestId); setEnvironmentRequestUnresolved(true); setEnvironmentAction(action); setEnvironmentRequest(requestId);
   }
-  function clearEnvironmentRequest() { localStorage.removeItem(environmentStorage); localStorage.removeItem(environmentStorage + ':action'); setEnvironmentRequest(''); }
+  function clearEnvironmentRequest() { localStorage.removeItem(environmentStorage); localStorage.removeItem(environmentStorage + ':action'); setEnvironmentRequest(''); setEnvironmentRequestUnresolved(false); }
   useEffect(() => {
     if (!researchJourney) return;
     const ctrl = new AbortController();
@@ -114,23 +128,69 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       setModelConfigured(models.some(model => model.isDefault && model.available));
       setSshAvailable(cap.locations.includes('ssh') && cap.applications.includes('openresearch'));
       setSshSelfServiceEnabled(cap.selfServiceSSH === true);
-      if (cap.locations.includes('ssh')) void applicationEnvironmentApi.servers(ctrl.signal).then(servers => {
+      if (cap.locations.includes('ssh')) void applicationEnvironmentApi.servers(ctrl.signal).then(async servers => {
         if (ctrl.signal.aborted) return; setOwnedServers(servers);
         setServerRef(previous => previous || servers[0]?.reference || '');
         setServerDirectory(previous => previous || servers[0]?.defaultDirectory || '');
         if (!available && !locationChosen.current && servers.length) setLocation('ssh');
-        if (!environmentRequest && !locationChosen.current) {
+        if (serverChoice.current === 'pending') {
+          const chosen = servers.find(server => server.reference === serverHint.current);
+          let recoveryChanged = false;
+          const recoveryKeys = [environmentStorage, storage, attachStorage,
+            `factory-personal-rebind:${encodeURIComponent(ownerId)}:${namespace}`];
+          const bindingPrefix = `factory-environment-binding:${encodeURIComponent(ownerId)}:`;
+          const hasRecovery = () => recoveryKeys.some(key => localStorage.getItem(key) !== null)
+            || Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).some(key => key?.startsWith(bindingPrefix));
+          const recoveryBeforeInspection = hasRecovery();
           try {
-            const hint = JSON.parse(sessionStorage.getItem(`factory-research-server:${encodeURIComponent(ownerId)}`) ?? 'null');
-            const chosen = hint?.owner === ownerId && servers.find(server => server.reference === hint.reference);
-            if (chosen) { locationChosen.current = true; setLocation('ssh'); setServerRef(chosen.reference); setServerDirectory(chosen.defaultDirectory); }
-          } catch { /* Selection hints are never authority or a start request. */ }
+            const viewing = readEnvironmentSelection(ownerId);
+            const savedSession = localStorage.getItem(selectionStorage);
+            if (!chosen || recoveryBeforeInspection) throw new Error('selection needs original recovery');
+            const epoch = navigation.current;
+            // Inspect original custody before replacing a viewing pointer. A
+            // server hint cannot hide an UNKNOWN operation or grant authority.
+            const [records, history] = await Promise.all([
+              viewing ? applicationEnvironmentApi.inspect(ownerId, viewing.id, ctrl.signal).then(item => [item])
+                : savedSession ? applicationEnvironmentApi.list(ownerId, ctrl.signal) : Promise.resolve([]),
+              personalAgentApi.sessions(undefined, ctrl.signal),
+            ]);
+            if (ctrl.signal.aborted) return;
+            if (hasRecovery()) {
+              // Reload every recovery panel from durable storage before any
+              // write can reopen; a newly added request is not a viewing hint.
+              recoveryChanged = true; onRecoveryChanged(); return;
+            }
+            if (navigation.current !== epoch) throw new Error('selection changed during inspection');
+            const originals = viewing ? records : records.filter(item => history.some(s => s.id === savedSession && s.namespace === namespace && s.nativeProjectId === item.projectId));
+            if (viewing && (originals.length !== 1 || originals[0].id !== viewing.id || originals[0].projectId !== viewing.projectId)) throw new Error('original environment mismatched');
+            if (originals.some(item => !['ready', 'stopped', 'unavailable', 'failed'].includes(item.state)
+                || item.lastOperation && !['ready', 'stopped', 'failed', 'rejected'].includes(item.lastOperation.state))) throw new Error('original environment unresolved');
+            if (history.some(item => item.namespace === namespace
+                && (item.id === savedSession || viewing && item.nativeProjectId === viewing.projectId)
+                && (item.activeRequestId || !['ready', 'result_observed'].includes(item.state)))) throw new Error('original research unresolved');
+            // Only viewing selections are removed; history and every recovery
+            // key remain intact. This navigation never prepares or submits.
+            navigation.current++; serverChoice.current = 'applied'; locationChosen.current = true;
+            localStorage.removeItem(environmentSelectionKey(ownerId)); localStorage.removeItem(selectionStorage);
+            sessionStorage.removeItem(`factory-research-server:${encodeURIComponent(ownerId)}`);
+            setEnvironmentSelection(undefined); setEnvironment(undefined); setSelected(''); setProject(undefined); setSession(undefined);
+            setLocation('ssh'); setServerRef(chosen.reference); setServerDirectory(chosen.defaultDirectory);
+          } catch {
+            if (!ctrl.signal.aborted) {
+              if (!recoveryBeforeInspection && hasRecovery()) { recoveryChanged = true; onRecoveryChanged(); }
+              else { serverChoice.current = 'retained'; setNotice('服务器选择尚未应用。原研究与待核对操作保留，请先核对原记录或重新选择可用服务器。'); }
+            }
+          } finally { if (!ctrl.signal.aborted && !recoveryChanged) setServerChoiceSettled(true); }
         }
-      }).catch(() => { if (!ctrl.signal.aborted) { setSshAvailable(false); setOwnedServers([]); } });
-    }).catch(() => { if (!ctrl.signal.aborted) { setPlatformAvailable(false); setSshAvailable(false); } });
+      }).catch(() => { if (!ctrl.signal.aborted) { setSshAvailable(false); setOwnedServers([]); if (serverChoice.current === 'pending') { serverChoice.current = 'retained'; setServerChoiceSettled(true); } } });
+      else if (serverChoice.current === 'pending') { serverChoice.current = 'retained'; setServerChoiceSettled(true); }
+    }).catch(() => { if (!ctrl.signal.aborted) { setPlatformAvailable(false); setSshAvailable(false); if (serverChoice.current === 'pending') { serverChoice.current = 'retained'; setServerChoiceSettled(true); } } });
     // Recovery reads custody only. It cannot resume this click's goal submission.
     if (environmentRequest) void applicationEnvironmentApi.recover(environmentRequest, ctrl.signal).then(result => {
-      if (!ctrl.signal.aborted) { setEnvironment(result.environment); setEnvironmentAction(result.action);
+      if (!ctrl.signal.aborted) {
+        if (result.requestId !== environmentRequest || result.environment.applicationId !== 'openresearch' || result.environment.researchSubmitted !== false) throw new Error('scope');
+        setEnvironmentRequestUnresolved(!['ready', 'stopped', 'failed', 'rejected'].includes(result.state));
+        setEnvironment(result.environment); setEnvironmentAction(result.action);
         if (result.environment.location === 'ssh') { locationChosen.current = true; setLocation('ssh'); setServerRef(result.environment.serverRef || ''); setServerDirectory(result.environment.remoteDirectory || ''); }
         setNotice(result.action === 'stop' ? '已读取原停止请求；停止以明确回执为准，没有重发停止或研究目标。' : '已核对原环境准备请求；研究目标没有因此发送。准备确认后，请明确点击开始研究。'); }
     }).catch(() => { if (!ctrl.signal.aborted) setNotice('环境准备尚未确认。目标草稿保留，请核对原准备请求。'); });
@@ -138,7 +198,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   }, [ownerId, researchJourney, revision]);
   useEffect(() => {
     const originalProject = selectedNativeProject;
-    if (!researchJourney || environmentRequest) return;
+    if (!researchJourney || environmentRequest || !serverChoiceSettled) return;
     // Changing research/selection revokes the previous environment immediately.
     // Until an exact project match has been inspected, no old write target is
     // available. Empty, ambiguous and failed discovery all remain unselected.
@@ -174,7 +234,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       } catch { /* Keep original results and explicit request recovery available. */ }
     })();
     return () => ctrl.abort();
-  }, [ownerId, researchJourney, location, serverRef, serverDirectory, selected, selectedNativeProject, revision, environmentRequest]);
+  }, [ownerId, researchJourney, location, serverRef, serverDirectory, selected, selectedNativeProject, revision, environmentRequest, serverChoiceSettled]);
   const [setupOpen, setSetupOpen] = useState(false);
   const [projectSetupOpen, setProjectSetupOpen] = useState(false);
   const [creationConnection, setCreationConnection] = useState('');
@@ -247,7 +307,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       setConnectionNames(Object.fromEntries(refs.map(ref => { const remote = remotes.find(r => r.registrationRef === ref.registrationRef && (r.providerId === provider || namespace === 'native-openresearch' && [PLATFORM_ORX_PROVIDER, SSH_ORX_PROVIDER].includes(r.providerId))); return [ref.ref, remote?.providerId === SSH_ORX_PROVIDER ? '我的服务器 · 原生 OpenResearch' : remote?.providerId === PLATFORM_ORX_PROVIDER ? '平台环境 · 原生 OpenResearch' : remote ? `${remote.origin} · 项目 ${remote.projectId || '未指定'} · ${ref.ref.slice(0, 8)}` : `连接 ${ref.ref}`]; })));
       const usable = refs.filter(r => personal.has(r.registrationRef) && r.kind === (namespace === 'opencode' ? 'environment' : 'orx') && (r.status === 'active' && r.available || researchJourney && r.status === 'expired') && r.taskId === null && r.capabilities.includes('session:read'));
       setConnections(usable); setOwnerSubmit(namespace === 'native-openresearch' && cap.ownerSubmit === '/api/factory/personal-agent/commands/submit' && cap.modelConfiguration === 'remote-configured-model' && cap.factoryBYOKForwarded === false);
-      if (namespace === 'native-openresearch') {
+      if (namespace === 'native-openresearch' && !['pending', 'applied'].includes(serverChoice.current ?? '')) {
         const saved = localStorage.getItem(selectionStorage); const previous = history.find(item => item.id === saved && item.namespace === namespace && (researchJourney || usable.some(c => c.ref === item.connectionRef)));
         if (previous && !connectionRef) { setSelected(previous.connectionRef); setSession(previous); }
         else if (usable.length === 1 || researchJourney) {
@@ -264,7 +324,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       setReady(true);
     }).catch(() => { if (!ctrl.signal.aborted) { setConnections([]); setConnectionReadFailed(true); setNotice('个人会话功能尚未启用或身份无法核对。旧只读连接不会自动升级。'); } });
     return () => ctrl.abort();
-  }, [ownerId, namespace, provider, revision, researchJourney, connectionRef]);
+  }, [ownerId, namespace, provider, revision, researchJourney, connectionRef, serverChoiceSettled]);
   useEffect(() => {
     const ctrl = new AbortController(); setResourceReady(false); setProject(undefined); setSessions([]); setSession(current => current?.connectionRef === selected ? current : undefined); setNativeSessions([]);
     if (ready && connections.some(c => c.ref === selected && c.available)) {
@@ -335,8 +395,9 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       setNotice('正在确认新会话；取得原生会话回执后才提交你此次输入的研究目标。');
   }
   async function preparePlatform(submitGoal: boolean, newEnvironment = false) {
+    if (!serverChoiceSettled) return;
     if (!newEnvironment && selected && !activeEnvironment) return;
-    if (environmentRequest && (submitGoal || ['preparing', 'stopping'].includes(environment?.state ?? ''))) return;
+    if (environmentRequest && (environmentRequestUnresolved || submitGoal || ['preparing', 'stopping'].includes(environment?.state ?? ''))) return;
     if (environmentRequest && environmentAction === 'stop') return;
     if (!managedAvailable || !managedLocation || location === 'ssh' && (!serverRef || !serverDirectory.trim()) || !ready || !ownerSubmit || pending || attachment || rebindPending || rebindActive.current || environmentBindingActive.current || lock.current || session?.activeRequestId || submitGoal && (!researchText.trim() || researchText.length > 16000)) return;
     const epoch = navigation.current; const goal = researchText; const sessionTitle = researchGoal.trim().slice(0, 120);
@@ -370,6 +431,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       if (result.state !== 'ready' || result.environment.state !== 'ready' || !result.environment.connectionRef) {
         setNotice('环境准备尚未确认。目标草稿保留；不会自动重试研究。请核对原准备请求后明确恢复环境。'); return;
       }
+      setEnvironmentRequestUnresolved(false);
       const ref = result.environment.connectionRef; const native = await personalAgentApi.project(ref);
       if (!current(epoch) || !await ownerIsCurrent(epoch)) return;
       if (native.namespace !== 'native-openresearch' || native.nativeProjectId !== result.environment.projectId || native.modelCredentialCustody !== 'owner-vault' || !native.sessionCreationSupported) throw new Error('scope');
@@ -393,6 +455,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       const result = await applicationEnvironmentApi.recover(environmentRequest);
       if (!current(epoch)) return;
       if (result.requestId !== environmentRequest || result.environment.applicationId !== 'openresearch' || result.environment.researchSubmitted !== false) throw new Error('scope');
+      setEnvironmentRequestUnresolved(!['ready', 'stopped', 'failed', 'rejected'].includes(result.state));
       setEnvironment(result.environment); setEnvironmentAction(result.action);
       if (result.environment.location === 'ssh') { locationChosen.current = true; setLocation('ssh'); setServerRef(result.environment.serverRef || ''); setServerDirectory(result.environment.remoteDirectory || ''); }
       if (result.action === 'stop' && result.state === 'stopped' && result.environment.state === 'stopped') clearEnvironmentRequest();
@@ -512,7 +575,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   }
   function closeReview() { navigation.current++; setShowReview(false); setAllowed(false); setBusy(''); setNotice('已关闭审阅，未因此启动命令。原请求保留，可继续核对。'); }
   const leaseContinuation = researchJourney && !!session?.nativeSessionId && !!session.connectionPin?.capabilities.includes('session:prompt') && ['expired', 'changed', 'unavailable'].includes(session.bindingStatus ?? '');
-  const disabled = !!busy || !!pending || !!attachment || rebindPending || environmentBindingPending || !!environmentRequest && environmentAction === 'stop' || !resourceReady && !leaseContinuation;
+  const disabled = !serverChoiceSettled || !!busy || !!pending || !!attachment || rebindPending || environmentBindingPending || !!environmentRequest && environmentAction === 'stop' || !resourceReady && !leaseContinuation;
   const sessionWritable = session && connections.some(item => item.ref === session.connectionRef && !!session.connectionPin && item.fingerprint === session.connectionPin.fingerprint) && (!session.bindingStatus || session.bindingStatus === 'active');
   const visibleSessions = [...new Map([...sessionCatalog, ...sessions].map(item => [item.id, item])).values()];
   const canCreate = connections.find(c => c.ref === selected)?.capabilities.includes('session:create') === true && (namespace === 'opencode' || project?.sessionCreationSupported === true);
@@ -540,8 +603,8 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
         <section className="research-goal-panel" aria-label="目标与下一步">
           <div className="research-panel-heading"><span className="quiet">01 · 目标</span><h2>{session ? '继续原研究' : '开始你的研究'}</h2></div>
           {session?.observation?.messages.some(m => m.role === 'user') && <details className="research-original-goals"><summary>查看已发送的目标</summary>{session.observation.messages.filter(m => m.role === 'user').map(m => <article key={m.id}>{m.events.map((e, i) => e.type === 'text' && <p className="research-answer-text" key={i}>{e.text}</p>)}</article>)}</details>}
-      {managedAvailable && !session && <section className="research-location" aria-label="研究运行位置"><label>运行位置<select aria-label="运行位置" value={location} disabled={!!busy || !!pending || !!attachment || !!environmentRequest} onChange={e => { editEnvironmentSelection(); locationChosen.current = true; setLocation(e.target.value as 'platform' | 'ssh' | 'existing'); }}>{platformAvailable && <option value="platform">平台提供的环境（默认）</option>}{sshAvailable && <option value="ssh">{sshSelfServiceEnabled ? '我的 Linux 服务器（安装研究应用）' : '已注册 Linux 服务器（安装研究应用）'}</option>}<option value="existing">我的已有 OpenResearch 服务</option></select></label><p className="quiet">{location === 'ssh' ? '在已注册服务器上安装研究应用并保留项目数据，无需预装 OpenResearch 服务。使用你自己的默认模型。' : location === 'platform' ? '首次使用自动准备原生 OpenResearch，之后复用同一项目。使用你自己的默认模型。' : '连接你已部署的服务，沿用其模型与原生项目。'}</p>{location === 'ssh' && <><p className="quiet" id="research-ssh-prerequisites">服务器须预装 Linux x86-64、Python 3.12+ 和 Docker，并已有非 root Docker 权限及 SSH 账户。{sshSelfServiceEnabled ? '在“我的 Linux 服务器”中自行登记、确认主机公钥并检查依赖后即可选择，无需逐台管理员登记。' : '部署维护者须先注册服务器、核对主机公钥并绑定 SSH 授权；此部署尚未启用自助注册。'}这里只安装研究应用包，不安装系统依赖。</p><label>我的服务器<select aria-label="我的服务器" value={serverRef} disabled={!!busy || !!environmentRequest} onChange={e => { editEnvironmentSelection(); setServerRef(e.target.value); setServerDirectory(ownedServers.find(server => server.reference === e.target.value)?.defaultDirectory || ''); }}>{ownedServers.map(server => <option key={server.reference} value={server.reference}>{server.name}</option>)}</select></label><label>研究数据目录<input aria-label="研究数据目录" aria-invalid={environmentSelectionRejected} aria-describedby={environmentSelectionRejected ? "research-environment-error research-ssh-prerequisites" : "research-ssh-prerequisites"} value={serverDirectory} disabled={!!busy || !!environmentRequest} onChange={e => { editEnvironmentSelection(); setServerDirectory(e.target.value); }} /></label>{onResources && <button type="button" disabled={!!busy || !!environmentRequest} onClick={onResources}>添加或管理我的服务器</button>}{!ownedServers.length && <p role="alert">暂无已启用的本人服务器，请先添加自己的服务器、检查依赖并启用。</p>}</>}{managedLocation && !modelConfigured && <div className="state-note"><strong>先配置自己的默认模型</strong><p>只需设置一次，平台环境按你的授权调用；模型密钥由平台加密保管。</p>{onModels && <button onClick={onModels}>设置我的模型</button>}</div>}</section>}
-      {environmentRequest && <aside className="research-decision"><h3>{environmentAction === 'stop' ? '环境停止请求待核对' : '环境准备请求待核对'}</h3><p>刷新和返回只读取原操作，不会重发停止或研究目标。</p><button disabled={!!busy} onClick={() => void recoverEnvironment()}>{environmentAction === 'stop' ? '核对原环境停止' : '核对原环境准备'}</button>{environmentAction === 'prepare' && <button disabled={!!busy || !!pending || !!session?.activeRequestId || environmentBindingPending || ['preparing', 'stopping'].includes(environment?.state ?? '') || !!selected && !activeEnvironment} onClick={() => void preparePlatform(false)}>{`明确恢复${environmentLabel}`}</button>}</aside>}
+      {managedAvailable && !session && <section className="research-location" aria-label="研究运行位置"><label>运行位置<select aria-label="运行位置" value={location} disabled={!serverChoiceSettled || !!busy || !!pending || !!attachment || !!environmentRequest} onChange={e => { editEnvironmentSelection(); locationChosen.current = true; setLocation(e.target.value as 'platform' | 'ssh' | 'existing'); }}>{platformAvailable && <option value="platform">平台提供的环境（默认）</option>}{sshAvailable && <option value="ssh">{sshSelfServiceEnabled ? '我的 Linux 服务器（安装研究应用）' : '已注册 Linux 服务器（安装研究应用）'}</option>}<option value="existing">我的已有 OpenResearch 服务</option></select></label><p className="quiet">{location === 'ssh' ? '在已注册服务器上安装研究应用并保留项目数据，无需预装 OpenResearch 服务。使用你自己的默认模型。' : location === 'platform' ? '首次使用自动准备原生 OpenResearch，之后复用同一项目。使用你自己的默认模型。' : '连接你已部署的服务，沿用其模型与原生项目。'}</p>{location === 'ssh' && <><p className="quiet" id="research-ssh-prerequisites">服务器须预装 Linux x86-64、Python 3.12+ 和 Docker，并已有非 root Docker 权限及 SSH 账户。{sshSelfServiceEnabled ? '在“我的 Linux 服务器”中自行登记、确认主机公钥并检查依赖后即可选择，无需逐台管理员登记。' : '部署维护者须先注册服务器、核对主机公钥并绑定 SSH 授权；此部署尚未启用自助注册。'}这里只安装研究应用包，不安装系统依赖。</p><label>我的服务器<select aria-label="我的服务器" value={serverRef} disabled={!serverChoiceSettled || !!busy || !!environmentRequest} onChange={e => { editEnvironmentSelection(); setServerRef(e.target.value); setServerDirectory(ownedServers.find(server => server.reference === e.target.value)?.defaultDirectory || ''); }}>{ownedServers.map(server => <option key={server.reference} value={server.reference}>{server.name}</option>)}</select></label><label>研究数据目录<input aria-label="研究数据目录" aria-invalid={environmentSelectionRejected} aria-describedby={environmentSelectionRejected ? "research-environment-error research-ssh-prerequisites" : "research-ssh-prerequisites"} value={serverDirectory} disabled={!serverChoiceSettled || !!busy || !!environmentRequest} onChange={e => { editEnvironmentSelection(); setServerDirectory(e.target.value); }} /></label>{onResources && <button type="button" disabled={!!busy || !!environmentRequest} onClick={onResources}>添加或管理我的服务器</button>}{!ownedServers.length && <p role="alert">暂无已启用的本人服务器，请先添加自己的服务器、检查依赖并启用。</p>}</>}{managedLocation && !modelConfigured && <div className="state-note"><strong>先配置自己的默认模型</strong><p>只需设置一次，平台环境按你的授权调用；模型密钥由平台加密保管。</p>{onModels && <button onClick={onModels}>设置我的模型</button>}</div>}</section>}
+      {environmentRequest && <aside className="research-decision"><h3>{environmentAction === 'stop' ? '环境停止请求待核对' : '环境准备请求待核对'}</h3><p>刷新和返回只读取原操作，不会重发停止或研究目标。</p><button disabled={!!busy} onClick={() => void recoverEnvironment()}>{environmentAction === 'stop' ? '核对原环境停止' : '核对原环境准备'}</button>{environmentAction === 'prepare' && <button disabled={environmentRequestUnresolved || !!busy || !!pending || !!session?.activeRequestId || environmentBindingPending || ['preparing', 'stopping'].includes(environment?.state ?? '') || !!selected && !activeEnvironment} onClick={() => void preparePlatform(false)}>{`明确恢复${environmentLabel}`}</button>}</aside>}
       <form className="research-composer" onSubmit={e => { e.preventDefault(); begin(); }}>
         <label htmlFor="research-goal">{session ? '继续研究' : '研究目标'}</label><textarea id="research-goal" aria-label="研究目标" placeholder={session ? '想进一步了解什么？' : '描述你想研究的问题，以及希望得到什么结果…'} maxLength={16000} value={researchGoal} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setResearchGoal(e.target.value)} />
         <details className="research-materials"><summary>补充材料（可选）</summary><label>材料文本或链接<textarea aria-label="补充材料" placeholder="粘贴相关文本或链接；会随目标发送到远端模型。链接不会由 Factory 自动下载。" maxLength={16000} value={materials} disabled={!!busy || !!pending || !!session?.activeRequestId} onChange={e => setMaterials(e.target.value)} /></label></details>

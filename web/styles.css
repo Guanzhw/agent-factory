@@ -125,6 +125,7 @@
 /* Shared controls retain the existing palette while making touch and consent usable. */
 .secondary-navigation { display: none; gap: 7px; }
 .secondary-navigation.expanded { display: grid; }
+.resource-guidance { color: var(--muted); font-size: 13px; margin: 24px 0; }
 .sidebar nav .mobile-nav-toggle { display: flex; }
 .openresearch-workspace, .personal-session-workspace, .connections-page { min-width: 0; }
 .openresearch-workspace button:not([class]), .personal-session-workspace button:not([class]), .personal-session-dialog button:not([class]), .connections-page button:not([class]) {

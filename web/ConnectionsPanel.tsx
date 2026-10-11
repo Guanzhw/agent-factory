@@ -37,7 +37,7 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
   })}</div>;
 }
 
-export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onTask, onModels, onResearch }: { user: User; jobs: FactoryJob[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onResearch?: () => void }) {
+export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onTask, onModels, onResearch, onPrepareResearch }: { user: User; jobs: FactoryJob[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onResearch?: () => void; onPrepareResearch?: () => void }) {
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [registrations, setRegistrations] = useState<ConnectionRegistration[]>([]);
   const [registrationRef, setRegistrationRef] = useState('');
@@ -103,8 +103,8 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onTask, onMo
       key.acknowledged(); setRefresh(n => n + 1); onNotice('连接已撤销。后续执行会重新检查绑定；已有证据保留。');
     });
   }
-  return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div>
-    <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onResearch={onResearch}/>
+  return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onResearch && <button className="secondary" disabled={!!busy} onClick={onResearch}>返回 OpenResearch</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
+    <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onResearch={onPrepareResearch}/>
     <PersonalCredentials key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
     <PersonalRemotes key={`${user.id}:${refresh}`} user={user} jobs={jobs} onTask={onTask} onChanged={() => setRefresh(n => n + 1)} />
     {error && <div role="alert" className="error-message">资源列表暂不可用。请刷新资源；原绑定保留，未自动重试绑定。<span>{error}</span></div>}
