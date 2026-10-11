@@ -14,9 +14,15 @@ existing explicit actions and server authorization.
 
 Existing `tab=models`, `tab=connections`, project, mode and task deep links stay
 valid. The new `tab=resources` pointer survives refresh and Back/Forward. URL
-pointers carry no permission or execution authority.
+pointers carry no permission or execution authority. Models preserve their
+allowlisted `modelReturn` view in the URL through refresh and Back/Forward;
+returning from resources preserves the chosen research mode and project.
 
 This change only reorganizes frontend entry points. Its desktop browser
 acceptance uses a loopback synthetic demo and an isolated disposable PostgreSQL
 database, with no actual model calls. Research result and follow-up acceptance
 belongs to the original native OpenResearch continuation validation.
+
+This is the public navigation sub-batch of desktop simplification. The research
+body's goal, process, evidence and result layout remains separate unfinished
+work; this navigation change does not close that broader item.
