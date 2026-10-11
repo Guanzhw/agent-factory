@@ -48,7 +48,7 @@ it('reads first, commits once after fresh consent, and does not restore or submi
   expect(applicationEnvironmentApi.rebind).toHaveBeenCalledWith(owner.id, environment.id, expect.any(String), preview.previewHash);
   expect(changed).toHaveBeenCalledWith(expect.objectContaining({ id: environment.id, projectId: environment.projectId }));
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(applicationEnvironmentApi.stop).not.toHaveBeenCalled();
-  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('尚未恢复环境或发送目标');
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('此请求未恢复环境或发送目标');
 });
 it('requires new consent when the reviewed credential selection changes before the write', async () => {
   await inspect(); vi.mocked(applicationEnvironmentApi.continuation).mockResolvedValue({ ...preview, previewHash: 'b'.repeat(64) });

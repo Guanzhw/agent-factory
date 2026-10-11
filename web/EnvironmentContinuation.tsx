@@ -46,7 +46,7 @@ function ContinuationPanel({ ownerId, environment, disabled, onPending, onChange
         || value.environment.id !== original.environmentId || value.environment.projectId !== original.projectId
         || value.runtimePrepared !== false || value.researchSubmitted !== false) throw new Error('scope');
     localStorage.removeItem(storage); setPending(null); setPreview(undefined); onChanged(value.environment);
-    setNotice('新凭据绑定已保存，尚未恢复环境或发送目标。明确恢复环境后，再核对并续接原会话。');
+    setNotice('新凭据绑定已保存。此请求未恢复环境或发送目标；请核对当前环境状态，再明确恢复并续接原会话。');
   }
   async function confirm() {
     if (disabled || pending || !preview?.canRebind || !preview.previewHash) return;
