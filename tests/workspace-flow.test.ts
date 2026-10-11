@@ -4,10 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Workspace } from '../web/App.js';
 import { api } from '../web/api.js';
-import { personalAgentApi } from '../web/personalAgentApi.js';
+import { personalAgentApi, type PersonalSession } from '../web/personalAgentApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { openresearchApi } from '../web/openresearchApi.js';
-import { applicationEnvironmentApi } from '../web/applicationEnvironmentApi.js';
+import { applicationEnvironmentApi, type ApplicationEnvironment } from '../web/applicationEnvironmentApi.js';
 import { personalSSHApi, type PersonalSSHServer } from '../web/personalSSHApi.js';
 import { ownerModelApi } from '../web/ownerModelApi.js';
 import type { User } from '../web/models.js';
@@ -49,8 +49,66 @@ beforeEach(() => {
   vi.mocked(personalSSHApi.capabilities).mockResolvedValue({enabled:false});vi.mocked(personalSSHApi.list).mockResolvedValue([]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([]);vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({locations:[],applications:[]});vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([]);vi.mocked(ownerModelApi.list).mockResolvedValue([]);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); });
+async function chooseServerB(options: { environmentUnknown?: boolean; savedRequest?: boolean; researchUnknown?: boolean; bindingUnknown?: boolean; requestDuringRead?: boolean; historyOnly?: boolean } = {}) {
+    const server = (digit: string, name: string): PersonalSSHServer => ({ reference: 'remote-' + digit.repeat(32), name, address: '127.0.0.1', port: 2222, username: 'fixture', hostKey: 'ssh-ed25519 ' + 'A'.repeat(68), hostFingerprint: 'SHA256:synthetic-host-fingerprint', allowedRoot: '/tmp/af-owned-fixture', defaultDirectory: '/tmp/af-owned-fixture/' + name, status: 'verified', enabled: true, diagnostic: null, lastCheckRequestId: null, credentialRef: 'fixture-key', credentialRevision: 'one' });
+    const a = server('a', 'server-A'); const b = server('b', 'server-B');
+    const original: ApplicationEnvironment = { id: 'env-' + 'a'.repeat(32), applicationId: 'openresearch', location: 'ssh', serverRef: a.reference, remoteDirectory: a.defaultDirectory, state: 'ready', packageVersion: 'fixture-package', projectId: 'project-A', connectionRef: 'binding-A', modelReference: 'fixture-model', modelRevision: 'one', dataRetained: true, researchSubmitted: false };
+    if (options.environmentUnknown || options.savedRequest) { original.state = 'unknown'; original.lastOperation = { requestId: 'original-A-unknown', action: 'prepare', state: 'unknown' }; }
+    const history = { id: 'study-A', nativeProjectId: original.projectId, nativeSessionId: 'native-A', namespace: 'native-openresearch', connectionRef: original.connectionRef, state: 'result_observed', activeRequestId: null, bindingStatus: 'unavailable', connectionPin: { ownerId: alice.id, capabilities: ['session:read', 'session:prompt'] }, observation: null } as unknown as PersonalSession;
+    if (options.researchUnknown) { history.state = 'ack_unknown'; history.activeRequestId = 'original-A-command'; }
+    const selection = { id: original.id, projectId: original.projectId, connectionRef: original.connectionRef };
+    localStorage.setItem('factory-environment-selection:alice', JSON.stringify(selection));
+    if (options.historyOnly) localStorage.removeItem('factory-environment-selection:alice');
+    localStorage.setItem('factory-personal-session:alice:native-openresearch', history.id);
+    if (options.savedRequest) localStorage.setItem('factory-environment-prepare:alice', 'original-A-unknown');
+    const bindingKey = 'factory-environment-binding:alice:' + original.id;
+    const binding = JSON.stringify({ requestId: 'binding-A-unknown', previewHash: 'b'.repeat(64), projectId: original.projectId, environmentId: original.id });
+    if (options.bindingUnknown) localStorage.setItem(bindingKey, binding);
+    vi.mocked(personalSSHApi.capabilities).mockResolvedValue({ enabled: true }); vi.mocked(personalSSHApi.list).mockResolvedValue([a, b]);
+    vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+    vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([a, b]);
+    vi.spyOn(applicationEnvironmentApi, 'list').mockResolvedValue([original]);
+    vi.spyOn(applicationEnvironmentApi, 'inspect').mockImplementation(async () => {
+      if (options.requestDuringRead) localStorage.setItem('factory-environment-prepare:alice', 'original-A-unknown');
+      return original;
+    });
+    vi.spyOn(applicationEnvironmentApi, 'recover').mockResolvedValue({ requestId: 'original-A-unknown', action: 'prepare', state: 'unknown', diagnostic: null, environment: original });
+    vi.mocked(personalAgentApi.sessions).mockResolvedValue([history]);
+    vi.spyOn(personalAgentApi, 'session').mockResolvedValue(history);
+    window.history.replaceState(null, '', '/?tab=connections'); await render();
+    const card = [...host.querySelectorAll('article')].find(item => item.querySelector('h3')?.textContent === b.name)!;
+    await act(async () => [...card.querySelectorAll('button')].find(item => item.textContent === '去 OpenResearch 准备')!.click());
+    return { b, original, history, selection, bindingKey, binding };
+}
 describe('workspace mounted application boundaries', () => {
+  it('explicit SSH server B replaces only saved A viewing selections without preparing or submitting', async () => {
+    const { b } = await chooseServerB();
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="我的服务器"]')?.value).toBe(b.reference);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')?.value).toBe(b.defaultDirectory);
+    expect(localStorage.getItem('factory-environment-selection:alice')).toBeNull();
+    expect(localStorage.getItem('factory-personal-session:alice:native-openresearch')).toBeNull();
+    expect(host.querySelector('.research-session-entry')?.textContent).toContain('查看已有研究');
+    expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['saved environment UNKNOWN', { savedRequest: true }],
+    ['discovered environment UNKNOWN', { environmentUnknown: true }],
+    ['research UNKNOWN without a local command key', { researchUnknown: true }],
+    ['unconfirmed credential binding', { bindingUnknown: true }],
+    ['request persisted during the original inspection', { requestDuringRead: true }],
+    ['environment UNKNOWN with only a saved study pointer', { environmentUnknown: true, historyOnly: true }],
+  ] as const)('explicit server navigation retains A custody for %s', async (_, options) => {
+    const { selection, history, bindingKey, binding, b } = await chooseServerB(options);
+    if ('historyOnly' in options) expect(localStorage.getItem('factory-environment-selection:alice')).toBeNull();
+    else expect(JSON.parse(localStorage.getItem('factory-environment-selection:alice')!)).toEqual(selection);
+    expect(localStorage.getItem('factory-personal-session:alice:native-openresearch')).toBe(history.id);
+    expect(JSON.parse(sessionStorage.getItem('factory-research-server:alice')!).reference).toBe(b.reference);
+    if ('savedRequest' in options || 'environmentUnknown' in options || 'requestDuringRead' in options) expect(localStorage.getItem('factory-environment-prepare:alice')).toBe('original-A-unknown');
+    if ('bindingUnknown' in options) expect(localStorage.getItem(bindingKey)).toBe(binding);
+    if ('researchUnknown' in options) expect(host.textContent).toContain('需要核对原请求');
+    expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  });
   it('groups application, resource and task entry points while leaving advanced tools collapsed', async () => {
     await render();
     const primary = [...host.querySelectorAll('nav > button')].map(button => button.textContent);
