@@ -36,11 +36,11 @@ UnixServerBase: Any = getattr(socketserver, 'UnixStreamServer', object)
 
 class OwnerModelCallError(ValueError):
     """Sanitized, non-retryable native outcome; never carries provider text."""
-    def __init__(self, dispatched):
+    def __init__(self, dispatched, *, diagnostic_id=None):
         self.code = 'OWNER_MODEL_CALL_UNCONFIRMED' if dispatched else 'OWNER_MODEL_REQUEST_REJECTED'
         # OpenCode also scans response text for 5xx numerals. An alphabetic ID
         # cannot accidentally turn a terminal rejection into a retryable error.
-        self.diagnostic_id = 'diag_' + ''.join(chr(97 + int(c, 16)) for c in secrets.token_hex(16))
+        self.diagnostic_id = diagnostic_id or 'diag_' + ''.join(chr(97 + int(c, 16)) for c in secrets.token_hex(16))
         super().__init__(self.code)
 
     def response(self):
@@ -65,7 +65,8 @@ class _NativeCall:
     def __init__(self):
         self.done = threading.Event()
         self.value: Any = None
-        self.error: OwnerModelCallError | None = None
+        # Do not retain exception tracebacks/contexts, which can hold a lease.
+        self.error: tuple[str, str] | None = None
 
 
 class _Server(ThreadingMixIn, UnixServerBase):
@@ -129,16 +130,19 @@ class OwnerRuntimeBroker:
             try:
                 record.value = asyncio.run(self.completion(body, session_id))
             except OwnerModelCallError as error:
-                record.error = error
+                record.error = (error.code, error.diagnostic_id)
             except (Exception, asyncio.CancelledError):
-                record.error = OwnerModelCallError(True)
+                error = OwnerModelCallError(True)
+                record.error = (error.code, error.diagnostic_id)
             finally:
                 # Record before writing any local response. A lost downstream
                 # reply may be read again, but can never dispatch again.
                 record.done.set()
         elif not record.done.wait(timeout=120):
             raise OwnerModelCallError(True)
-        if record.error is not None: raise record.error
+        if record.error is not None:
+            code, diagnostic_id = record.error
+            raise OwnerModelCallError(code == 'OWNER_MODEL_CALL_UNCONFIRMED', diagnostic_id=diagnostic_id)
         if record.value is None: raise OwnerModelCallError(True)
         try:
             self.handle.check()

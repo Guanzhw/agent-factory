@@ -48,6 +48,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
                 self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
             diagnostics.append(caught.exception.diagnostic_id)
         self.assertEqual(diagnostics[0], diagnostics[1]); self.assertEqual(len(self.calls), 1)
+        self.assertTrue(all(type(record.error) is tuple for record in self.broker.native_calls.values()))
         with self.assertRaises(ValueError): self.broker.native_completion(body, 'ses_syntheticnative123', None)
         self.assertEqual(len(self.calls), 1); self.assertEqual(self.broker.remaining, 63)
 
