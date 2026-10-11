@@ -1,10 +1,14 @@
 import { expect, it } from 'vitest';
-import { researchStatus, type ResearchStatusInput } from '../web/researchStatus.js';
+import { researchStatus, researchReplyFailed, type ResearchStatusInput } from '../web/researchStatus.js';
 import type { PersonalSession, PersonalMessage } from '../web/personalAgentApi.js';
 
 const reply: PersonalMessage = { id: 'old-reply', role: 'assistant', completed: true, events: [{ type: 'text', text: 'Earlier reply' }], usageProvenance: 'unavailable' };
 const session = (state: string, messages = [reply], activeRequestId?: string) => ({ state, activeRequestId, observation: { messages } } as PersonalSession);
 const input: ResearchStatusInput = { ready: true, submitting: false, commandPending: false, attachmentPending: false, connectionUnavailable: false, canRun: true };
+it('distinguishes a terminal native error after partial text from a recovered tool failure', () => {
+  expect(researchReplyFailed({ ...reply, events: [...reply.events, { type: 'tool', tool: 'error', status: 'error', output: '' }] })).toBe(true);
+  expect(researchReplyFailed({ ...reply, events: [{ type: 'tool', tool: 'read', status: 'error', output: '' }, ...reply.events] })).toBe(false);
+});
 it('keeps an unknown request above its active pointer and an earlier completed reply', () => {
   const result = researchStatus({ ...input, session: session('ack_unknown', [reply], 'current-request') });
   expect(result.title).toBe('研究请求待核对'); expect(result.tone).toBe('unknown');

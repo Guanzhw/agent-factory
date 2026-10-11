@@ -505,11 +505,19 @@ class PersonalAgentSessions:
             self._refresh(owner, row)
             row = self._session(owner, session_id)
         body = row['body']
+        with self.store.engine.connect() as conn:
+            latest_request = conn.execute(select(self.commands.c.request_id).where(
+                self.commands.c.owner_id == owner,
+                self.commands.c.intent['factorySessionId'].as_string() == session_id,
+                self.commands.c.intent['action'].as_string().in_(['create', 'prompt', 'interrupt'])).order_by(
+                    self.commands.c.created_at.desc(), self.commands.c.request_id.desc()).limit(1)).scalar()
+        latest = self._command(owner, latest_request) if latest_request else None
         return {'id': session_id, 'namespace': body['namespace'], 'executionContract': PERSONAL_CONTRACT,
             'connectionRef': body['connectionPin']['ref'], 'connectionPin': body['connectionPin'], 'nativeProjectId': body['nativeProjectId'],
             'nativeSessionId': body['nativeSessionId'],
             'upstreamOrxProjectId': body['nativeProjectId'] if body['namespace'] == 'native-openresearch' else None,
             'factoryIdentity': body['factoryIdentity'], 'state': row['state'], 'activeRequestId': row['active_request'],
+            'latestFactoryIdentity': latest['identity'] if latest else body['factoryIdentity'],
             'bindingHistory': body.get('bindingHistory', []), 'bindingStatus': self._binding_status(owner, body['connectionPin']),
             'observation': row['observation'], 'modelCredentialCustody': body.get('modelCredentialCustody', 'remote'),
             'budgetEnforcement': 'advisory', 'stopVerified': False, 'liveEndToEndVerified': False}
