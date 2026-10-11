@@ -39,6 +39,7 @@ class Store:
         self.engine = create_engine(url, pool_pre_ping=True)
         self._root_lock_engine: Any = None
         self.application_environments: Any = None
+        self.personal_ssh: Any = None
         self._retention_lock_engine: Any = None
         self._root_lock_engine_mutex = Lock()
         event.listen(self.engine, "engine_disposed", self.dispose_root_locks)

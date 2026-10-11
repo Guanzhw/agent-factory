@@ -126,6 +126,18 @@ def create_app(settings=None, *, diagnostics=None):
     connections.owner_models = store.personal_models
     from .application_environments import ApplicationEnvironments, environment_router
     environment_packages = {}
+    personal_ssh = None
+    ssh_config = settings.ssh_openresearch
+    if settings.ssh_self_service is not None:
+        from .personal_ssh import PersonalSSHServers, SSHEnrollmentConfig
+        from .ssh_openresearch import SSHOpenResearchConfig
+        if credential_vault is None or not isinstance(settings.ssh_self_service, SSHEnrollmentConfig):
+            raise ValueError('Self-service SSH requires explicit global policy and encrypted vault')
+        personal_ssh = PersonalSSHServers(auth, connections, credential_vault, settings.ssh_self_service)
+        if ssh_config is None:
+            ssh_config = SSHOpenResearchConfig(settings.ssh_self_service.runtime, (), personal_ssh.static_unavailable)
+        elif not isinstance(ssh_config, SSHOpenResearchConfig) or ssh_config.runtime != settings.ssh_self_service.runtime:
+            raise ValueError('Self-service and registered SSH packages must have identical runtime pins')
     if settings.platform_openresearch is not None:
         from .platform_openresearch import PlatformOpenResearchConfig, PlatformOpenResearchPackage
         if not settings.personal_agent_commands_enabled or not isinstance(settings.platform_openresearch, PlatformOpenResearchConfig):
@@ -134,14 +146,17 @@ def create_app(settings=None, *, diagnostics=None):
             settings.workspace.resolve() / 'platform-openresearch')
         environment_packages['openresearch'] = package
         connections.personal.providers[package.provider_id] = package.provider
-    if settings.ssh_openresearch is not None:
+    if ssh_config is not None:
         from .ssh_openresearch import SSHOpenResearchConfig, SSHOpenResearchPackage
-        if not settings.personal_agent_commands_enabled or not isinstance(settings.ssh_openresearch, SSHOpenResearchConfig):
+        if not settings.personal_agent_commands_enabled or not isinstance(ssh_config, SSHOpenResearchConfig):
             raise ValueError('SSH OpenResearch requires trusted server bindings and the native personal-command channel')
-        ssh_package = SSHOpenResearchPackage(settings.ssh_openresearch, settings.workspace.resolve() / 'ssh-openresearch')
+        ssh_package = SSHOpenResearchPackage(ssh_config, settings.workspace.resolve() / 'ssh-openresearch')
+        ssh_package.personal_servers = personal_ssh
+        if personal_ssh is not None: personal_ssh.package = ssh_package
         environment_packages['openresearch:ssh'] = ssh_package
         connections.personal.providers[ssh_package.provider_id] = ssh_package.provider
     store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections, environment_packages)
+    store.personal_ssh = personal_ssh
     from .synthesis_sources import SynthesisSourceService
     at('PREPARATION_APP_SYNTHESIS_SOURCES')
     store.synthesis_sources = SynthesisSourceService(store, auth)
@@ -247,6 +262,8 @@ def create_app(settings=None, *, diagnostics=None):
     base.include_router(connection_router(auth, connections))
     from .personal_connections import personal_connection_router
     base.include_router(personal_connection_router(auth, connections.personal))
+    from .personal_ssh import personal_ssh_router
+    base.include_router(personal_ssh_router(auth, personal_ssh))
     if credential_vault is not None:
         from .credential_vault import credential_vault_router
         base.include_router(credential_vault_router(auth, credential_vault))
@@ -412,6 +429,7 @@ def create_app(settings=None, *, diagnostics=None):
                             await store.remote_scientific_receiver.close()
                         await store.autoresearch_session_control.close()
                         store.application_environments.close()
+                        if personal_ssh is not None: personal_ssh.close()
         finally:
             # Observer and native worker finish before their shared lock pool.
             store.dispose_root_locks()

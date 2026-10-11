@@ -175,18 +175,21 @@ class PersonalRemoteConnections:
             provider = self._provider(body)
         try:
             evidence = provider.verify(owner, body["configuration"])
-        except Exception:
+        except Exception as error:
             # A failed fresh probe invalidates the old lease. Do not clobber a
             # concurrent reconfiguration or revocation while IO was in flight.
+            code = str(error) if str(error) in getattr(provider, 'verification_error_codes', ()) else 'REMOTE_VERIFICATION_FAILED'
+            failure = ({'revision': body['revision'], 'expiresAt': None, 'capabilities': [],
+                'errorCode': code, 'requestId': request_id} if code != 'REMOTE_VERIFICATION_FAILED' else None)
             with service._write() as conn:
                 service._lock(conn, owner)
                 current, current_body = self._row(conn, owner, reference)
                 if current_body == body and current["state"] != "REVOKED":
                     conn.execute(self.resources.update().where(self.resources.c.registration_ref == reference,
-                        self.resources.c.owner_id == owner).values(state="FAILED", verification=None,
+                        self.resources.c.owner_id == owner).values(state="FAILED", verification=failure,
                         verification_hash=None, updated_at=now()))
             # Never expose transport exceptions, URL, server bodies or credentials.
-            raise HTTPException(409, "REMOTE_VERIFICATION_FAILED") from None
+            raise HTTPException(409, {'code': code} if failure else code) from None
         with service._write() as conn:
             service._lock(conn, owner)
             current, current_body = self._row(conn, owner, reference)
@@ -201,6 +204,8 @@ class PersonalRemoteConnections:
             verification = {**evidence, "revision": uuid4().hex, "configRevision": body["revision"],
                 "verifiedAt": at.isoformat(), "expiresAt": (at + timedelta(minutes=15)).isoformat(),
                 "policyRevision": provider.policy_revision}
+            if getattr(provider, 'record_verification_request_id', False) is True:
+                verification['requestId'] = request_id
             conn.execute(self.resources.update().where(self.resources.c.registration_ref == reference,
                 self.resources.c.owner_id == owner).values(state="VERIFIED", verification=verification,
                 verification_hash=digest(verification), updated_at=now()))

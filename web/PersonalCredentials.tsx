@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
-import { credentialDestination, credentialReceipt, matchCredentialReceipt, readCredentialCommand, readUnresolvedCommands, type CredentialCommand } from './credentialManagement.js';
+import { credentialDestination, credentialReceipt, matchCredentialReceipt, readCredentialCommand, readUnresolvedCommands, SSH_CREDENTIAL_PROVIDER, type CredentialCommand } from './credentialManagement.js';
 
-const providerName = (id: string) => ({ 'byok-chat-v1': 'Agno 模型 API', 'openresearch-personal-session-v1': 'OpenResearch 服务', 'opencode-serve-v1': 'OpenCode 服务（可选）' })[id] ?? id;
-export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId: string; onChanged: () => void; onModels?: () => void }) {
+const providerName = (id: string) => ({ 'byok-chat-v1': 'Agno 模型 API', 'openresearch-personal-session-v1': 'OpenResearch 服务', 'opencode-serve-v1': 'OpenCode 服务（可选）', 'owner-ssh-server-v1': '个人服务器 SSH 身份' })[id] ?? id;
+export function PersonalCredentials({ ownerId, onChanged, onModels, revision = 0 }: { ownerId: string; onChanged: () => void; onModels?: () => void; revision?: number }) {
   const storage = `factory-credential-management:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState(() => { try { return readCredentialCommand(localStorage.getItem(storage), ownerId); } catch { return null; } });
   const unresolvedStorage = `${storage}:unresolved`;
@@ -37,7 +37,7 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
     })().catch(e => { if (!controller.signal.aborted && alive.current) { if (e instanceof RemoteRequestError && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else setError('暂时无法读取凭据。请重新读取；原凭据和任务记录保留。'); } });
     return () => controller.abort();
     // The parent mounts this panel with an owner key; a changed account blocks it.
-  }, [ownerId, refresh]);
+  }, [ownerId, refresh, revision]);
   function retain(command: CredentialCommand) { localStorage.setItem(storage, JSON.stringify(command)); setPending(command); }
   function accepted(value: unknown, command: CredentialCommand, archived = false) {
     matchCredentialReceipt(value, command);
@@ -70,12 +70,12 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
   }
   function save() {
     if (!ready || !enabled || pending || !consent || !password || providerId !== 'byok-chat-v1' && kind === 'basic' && !username) return;
-    let origin: string; try { origin = credentialDestination(destination.trim()); } catch { setError('请输入不含路径、登录信息或查询参数的 HTTPS 服务源。'); return; }
+    let origin: string; try { origin = credentialDestination(destination.trim(), providerId); } catch { setError('请核对此凭据固定的服务目标。SSH 身份请从“我的 Linux 服务器”添加。'); return; }
     if (!providers.includes(providerId)) return;
     void run(async () => {
       const command: CredentialCommand = { owner: ownerId, action: editing ? 'rotate' : 'create', requestId: crypto.randomUUID(), providerId, destination: origin,
         ...(editing ? { credentialRef: editing.credentialRef, credentialRevision: editing.credentialRevision } : {}) };
-      const secret = password; const login = providerId === 'byok-chat-v1' ? 'api-key' : kind === 'bearer' ? 'bearer' : username;
+      const secret = password; const login = providerId === SSH_CREDENTIAL_PROVIDER ? new URL(origin).username : providerId === 'byok-chat-v1' ? 'api-key' : kind === 'bearer' ? 'bearer' : username;
       retain(command); setPassword(''); setUsername('');
       try {
         const receipt = editing ? await personalRemoteApi.rotateCredential(editing, login, secret, command.requestId, ownerId)
@@ -105,14 +105,15 @@ export function PersonalCredentials({ ownerId, onChanged, onModels }: { ownerId:
     {pending && <div className="state-note"><h3>上次凭据操作尚未确认</h3><p>输入已清空，仅保留原请求标识。核对不会重发秘密、轮换或撤销。没有回执不代表没有执行。</p><div className="button-row"><button disabled={busy || blocked} onClick={() => recover(pending)}>核对原凭据操作</button><button disabled={busy || blocked || unresolved.length >= 100} onClick={() => setConfirmAbandon(true)}>停止等待此操作</button></div>{confirmAbandon && <div><p>停止等待不会取消服务端操作。它可能已经保存或随后完成；再次添加可能得到另一条凭据。我们会保留原请求供后续核对，并先重新读取当前状态。不会自动重发秘密。</p><button disabled={busy || blocked} onClick={stopWaiting}>确认停止等待并保留原请求</button><button disabled={busy} onClick={() => setConfirmAbandon(false)}>继续等待</button></div>}</div>}
     {unresolved.length > 0 && <details className="technical-detail"><summary>未确认的原请求（{unresolved.length}）</summary><p>这些操作仍可能已发生。停止等待只解除页面等待，不取消请求，也不证明它没有执行。</p>{unresolved.map(command => <div key={command.requestId}><p>{providerName(command.providerId)} · {command.destination} · 原请求 {command.requestId}</p><button disabled={busy || blocked || !!pending || form} onClick={() => recover(command, true)}>核对保留的原请求</button></div>)}</details>}
     {ready && !rows.length && <p className="list-empty">尚未保存个人凭据。可添加服务凭据，或在模型设置中一次保存模型与 API 密钥。</p>}
-    {rows.map(row => <article className="model-record" key={row.credentialRef}><div><h3>{providerName(row.providerId)}</h3><p>{row.destination}</p><span className={`badge status-${row.status === 'active' ? 'completed' : 'failed'}`}>{row.status === 'active' ? '已保存' : '已撤销'}</span></div><details className="technical-detail"><summary>凭据引用与版本</summary><p>{row.credentialRef}</p><p>{row.credentialRevision}</p></details>{row.status === 'active' && <div className="button-row"><button disabled={disabled || !enabled || !providers.includes(row.providerId)} onClick={() => edit(row)}>更换凭据</button><button className="danger" disabled={disabled} onClick={() => { clearDraft(); setRevoking(row); }}>撤销凭据</button></div>}{revoking?.credentialRef === row.credentialRef && <div className="state-note"><p>确认撤销用于 {row.destination} 的凭据？所有关联连接的后续使用都将失效，历史记录保留。</p><button className="danger" disabled={disabled} onClick={() => revoke(row)}>确认撤销凭据</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留凭据</button></div>}</article>)}
+    {rows.map(row => <article className="model-record" key={row.credentialRef}><div><h3>{providerName(row.providerId)}</h3><p>{row.providerId === SSH_CREDENTIAL_PROVIDER ? new URL(row.destination).username + '@' + new URL(row.destination).host : row.destination}</p><span className={`badge status-${row.status === 'active' ? 'completed' : 'failed'}`}>{row.status === 'active' ? '已保存' : '已撤销'}</span></div><details className="technical-detail"><summary>凭据引用与版本</summary>{row.providerId === SSH_CREDENTIAL_PROVIDER && <p>{row.destination}</p>}<p>{row.credentialRef}</p><p>{row.credentialRevision}</p></details>{row.status === 'active' && <div className="button-row"><button disabled={disabled || !enabled || !providers.includes(row.providerId)} onClick={() => edit(row)}>更换凭据</button><button className="danger" disabled={disabled} onClick={() => { clearDraft(); setRevoking(row); }}>撤销凭据</button></div>}{revoking?.credentialRef === row.credentialRef && <div className="state-note"><p>确认撤销用于 {row.providerId === SSH_CREDENTIAL_PROVIDER ? '此 SSH 服务器' : row.destination} 的凭据？所有关联连接的后续使用都将失效，历史记录保留。</p><button className="danger" disabled={disabled} onClick={() => revoke(row)}>确认撤销凭据</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留凭据</button></div>}</article>)}
     {ready && enabled && !pending && !form && <button disabled={disabled} onClick={() => edit()}>添加个人凭据</button>}
     {form && !pending && !blocked && <form className="model-form" aria-label="管理个人凭据" onSubmit={e => { e.preventDefault(); save(); }}><h3>{editing ? '更换已保存凭据' : '添加个人凭据'}</h3><fieldset disabled={disabled}>
-      <label>用途<select aria-label="凭据用途" value={providerId} disabled={!!editing} onChange={e => setProviderId(e.target.value)}><option value="">选择已部署的用途</option>{providers.map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select></label>
-      <label>HTTPS 服务源<input aria-label="凭据服务源" value={destination} disabled={!!editing} autoComplete="off" maxLength={512} placeholder="https://你的服务" onChange={e => setDestination(e.target.value)}/></label>
-      {providerId !== 'byok-chat-v1' && <label>认证方式<select aria-label="凭据认证方式" value={kind} onChange={e => { setKind(e.target.value); setUsername(''); setPassword(''); }}><option value="bearer">服务令牌</option><option value="basic">用户名与密码</option></select></label>}
+      <label>用途<select aria-label="凭据用途" value={providerId} disabled={!!editing} onChange={e => setProviderId(e.target.value)}><option value="">选择已部署的用途</option>{providers.filter(id => id !== SSH_CREDENTIAL_PROVIDER || editing?.providerId === id).map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select></label>
+      <label>{providerId === SSH_CREDENTIAL_PROVIDER ? '已固定的 SSH 服务器' : 'HTTPS 服务源'}<input aria-label="凭据服务源" value={destination} disabled={!!editing} autoComplete="off" maxLength={512} placeholder="https://你的服务" onChange={e => setDestination(e.target.value)}/></label>
+      {providerId !== 'byok-chat-v1' && providerId !== SSH_CREDENTIAL_PROVIDER && <label>认证方式<select aria-label="凭据认证方式" value={kind} onChange={e => { setKind(e.target.value); setUsername(''); setPassword(''); }}><option value="bearer">服务令牌</option><option value="basic">用户名与密码</option></select></label>}
       {providerId !== 'byok-chat-v1' && kind === 'basic' && <label>服务用户名<input aria-label="凭据用户名" autoComplete="off" value={username} onChange={e => setUsername(e.target.value)}/></label>}
-      <label>{providerId === 'byok-chat-v1' ? 'API 密钥' : kind === 'bearer' ? '服务令牌' : '服务密码'}<input aria-label="新的凭据秘密" type="password" autoComplete="new-password" maxLength={4096} value={password} onChange={e => setPassword(e.target.value)}/></label>
+      {providerId === SSH_CREDENTIAL_PROVIDER ? <label>新的专用 Ed25519 SSH 私钥<textarea aria-label="新的凭据秘密" autoComplete="off" maxLength={4096} value={password} onChange={e => setPassword(e.target.value)}/></label> : <label>{providerId === 'byok-chat-v1' ? 'API 密钥' : kind === 'bearer' ? '服务令牌' : '服务密码'}<input aria-label="新的凭据秘密" type="password" autoComplete="new-password" maxLength={4096} value={password} onChange={e => setPassword(e.target.value)}/></label>}
+      {providerId === SSH_CREDENTIAL_PROVIDER && <p>保存后回到本人服务器的“更换连接设置”，显式绑定新身份版本并重新检查。旧研究数据保留，不自动更换已有运行的身份。</p>}
       <label><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/>允许安全保存，并仅用于我绑定到此目标的已授权执行。</label></fieldset>
       <div className="button-row"><button className="primary" disabled={disabled || !providerId || !destination || !password || !consent || providerId !== 'byok-chat-v1' && kind === 'basic' && !username}>{busy ? '正在保存…' : editing ? '保存更换后的凭据' : '安全保存个人凭据'}</button><button type="button" disabled={busy} onClick={clearDraft}>取消并清空凭据输入</button></div>
     </form>}

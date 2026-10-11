@@ -129,7 +129,7 @@ it('does not start an SSH installation when no owned server is available', async
   });
   await goal('Synthetic retained draft');
   expect(button('开始研究').disabled).toBe(true);
-  expect(host.textContent).toContain('暂无已授权的本人服务器');
+  expect(host.textContent).toContain('暂无已启用的本人服务器');
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
 });
 
@@ -154,7 +154,7 @@ it('shows SSH infrastructure and manual registration prerequisites before the st
   vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([{ reference: 'owned-linux', name: 'My Linux', defaultDirectory: '/private/alice/research' }]);
   await mount();
   const requirements = host.querySelector('#research-ssh-prerequisites')!;
-  for (const text of ['Python 3.12+', 'Docker', '非 root', 'SSH 账户', '先注册服务器', '没有自助注册入口', '不安装系统依赖']) expect(requirements.textContent).toContain(text);
+  for (const text of ['Python 3.12+', 'Docker', '非 root', 'SSH 账户', '先注册服务器', '此部署尚未启用自助注册', '不安装系统依赖']) expect(requirements.textContent).toContain(text);
   expect(requirements.compareDocumentPosition(button('开始研究')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
 });

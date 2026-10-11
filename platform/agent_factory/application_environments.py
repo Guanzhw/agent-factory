@@ -50,6 +50,7 @@ class ApplicationEnvironments:
         return {'locations': sorted({key.split(':', 1)[1] if ':' in key else 'platform' for key in self.packages}),
             'applications': sorted({key.split(':', 1)[0] for key in self.packages}),
             'modelSetup': '/api/factory/personal-models', 'preparationSubmitsResearch': False,
+            'selfServiceSSH': getattr(self.packages.get('openresearch:ssh'), 'personal_servers', None) is not None,
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False}
 
     def servers(self, owner):

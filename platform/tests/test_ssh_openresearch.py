@@ -32,6 +32,7 @@ class SSHOpenResearchTests(unittest.TestCase):
             'ssh-ed25519 ' + 'B' * 68, str(self.root), 'agent-binding', '1')
         self.package = object.__new__(SSHOpenResearchPackage)
         self.package.config = SimpleNamespace(servers=(self.server,), credentials=lambda **_: self.lease)
+        self.package.personal_servers = None
 
     def test_foreign_server_path_traversal_long_socket_and_revoked_agent_fail_closed(self):
         self.server.validate(); self.lease.validate()

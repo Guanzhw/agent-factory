@@ -47,7 +47,7 @@ export function PersonalRemotes({ user, jobs, onChanged, onTask, researchSetup =
         const [session, installed, records, custody] = await Promise.all([api.session(controller.signal), personalRemoteApi.providers(controller.signal), personalRemoteApi.list(controller.signal), personalRemoteApi.credentialAvailability(controller.signal).catch(() => ({ enabled: false, providerIds: [] as string[] }))]);
         if (controller.signal.aborted) return;
         if (session.id !== user.id) throw new Error('Identity changed');
-        setProviders(installed.filter(p => custody.providerIds.includes(p.providerId) && (!researchSetup || p.providerId === ORX_PERSONAL_PROVIDER))); setRemotes(records.filter(r => !researchSetup || r.providerId === ORX_PERSONAL_PROVIDER)); setVault(custody.enabled === true);
+        setProviders(installed.filter(p => p.namespace !== 'owner-ssh' && custody.providerIds.includes(p.providerId) && (!researchSetup || p.providerId === ORX_PERSONAL_PROVIDER))); setRemotes(records.filter(r => r.providerId !== 'owner-ssh-server-v1' && (!researchSetup || r.providerId === ORX_PERSONAL_PROVIDER))); setVault(custody.enabled === true);
         if (custody.enabled) { const saved = await personalRemoteApi.credentials(controller.signal); if (controller.signal.aborted) return; setCredentials(saved); } else setCredentials([]);
         setReady(true); setError('');
       } catch { if (!controller.signal.aborted) { setReady(false); setError('无法核对个人远程服务配置；操作已禁用。'); } }

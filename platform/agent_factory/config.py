@@ -86,6 +86,7 @@ class Settings:
     platform_openresearch: object | None = field(default=None, repr=False)
     # Trusted owned-server registrations + existing agent bindings; never HTTP keys.
     ssh_openresearch: object | None = field(default=None, repr=False)
+    ssh_self_service: object | None = field(default=None, repr=False)
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 

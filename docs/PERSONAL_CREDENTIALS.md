@@ -2,6 +2,8 @@
 
 Factory 的「我的凭据与连接」（`?tab=connections`）统一显示当前用户的模型 API 密钥、服务令牌和登录凭据的用途、HTTPS 目标、状态与不透明引用。用户自行添加、更换和撤销；不提供明文密钥查看。模型配置仍可在「我的模型/API」一次保存密钥、模型与默认选择。OpenResearch 服务令牌与模型 API 密钥是不同用途，Factory 不把 BYOK 密钥转交给远程 OpenResearch harness。
 
+启用通用 SSH 策略的部署也提供「我的 Linux 服务器」自助入口：确认主机公钥，保存或复用专用 Ed25519 身份，检查依赖并启用，再返回 OpenResearch。该类型的固定目标为含主机公钥哈希的 `ssh://账户@IP:端口?hostkey=…`，仅该可信用途接受 SSH；其他用途仍仅接受原 HTTPS 源。私钥复用同一保险库的加密、版本与撤销，不作为材料。首次接入、依赖及迁移限制见 [服务器环境](ssh-openresearch-environments.md)。
+
 本入口复用现有 `EncryptedCredentialVault`、个人模型和资源连接服务。没有另建 secrets 平台、通用秘密插件或应用内部凭据存储。尚未安装可信 vault 时，入口显示未启用，不创建默认加密密钥，也不从环境、个人文件或已有数据库寻找秘密。列表沿用现有接口的最多 100 条限制。
 
 ## 用户操作与失效语义

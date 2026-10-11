@@ -1,6 +1,6 @@
 import type { UserConnection } from './models.js';
 import { ApiError, factoryRequest } from './api.js';
-export interface RemoteProvider { providerId: string; kind: string; capabilities: string[]; namespace?: 'opencode' | 'native-openresearch'; authModes?: ('bearer' | 'basic-proxy')[]; sessionTemplateSupported?: boolean; projectCreationSupported?: boolean; }
+export interface RemoteProvider { providerId: string; kind: string; capabilities: string[]; namespace?: 'opencode' | 'native-openresearch' | 'owner-ssh'; authModes?: ('bearer' | 'basic-proxy')[]; sessionTemplateSupported?: boolean; projectCreationSupported?: boolean; }
 export interface PersonalRemote { registrationRef: string; providerId: string; configRevision: string; revision: string; status: string; available: boolean; origin: string; projectId: string; capabilities: string[]; expiresAt: string | null; allowedActions: string[]; }
 export interface PersonalCredential { credentialRef: string; credentialRevision: string; providerId: string; destination: string; status: string; }
 export interface CredentialInput { providerId: string; destination: string; username: string; password: string; requestId: string; }

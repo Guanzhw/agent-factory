@@ -22,7 +22,7 @@ import stat
 import subprocess
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 from tempfile import TemporaryDirectory
 
 from .owner_runtime_broker import OwnerRuntimeBroker
@@ -143,13 +143,15 @@ class SSHOpenResearchPackage:
             'installer': self.installer_pin, 'limits': {'maxActive': config.runtime.max_active,
                 'leaseSeconds': config.runtime.lease_seconds, 'maxActiveSeconds': config.runtime.max_active_seconds}})[:24]
         self.live = {}; self.lock = threading.RLock(); self.provider = SSHOrxProvider(self)
+        self.personal_servers: Any = None
 
     def servers(self, owner):
         return [{'reference': s.reference, 'name': s.name, 'defaultDirectory': str(Path(s.allowed_root) / 'research')}
-            for s in self.config.servers if s.owner == owner]
+            for s in self.config.servers if s.owner == owner] + (self.personal_servers.available(owner) if self.personal_servers else [])
 
     def _server(self, owner, reference):
         server = next((s for s in self.config.servers if s.reference == reference and s.owner == owner), None)
+        if server is None and self.personal_servers is not None: return self.personal_servers.server(owner, reference)
         if server is None: raise ValueError('SSH_OWNER_SERVER_UNAVAILABLE')
         return server
 
@@ -164,6 +166,8 @@ class SSHOpenResearchPackage:
             'remoteDirectory': str(path)}
 
     def _credential(self, server):
+        if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
+            return self.personal_servers.lease(server)
         lease = self.config.credentials(owner=server.owner, reference=server.credential_ref,
             revision=server.credential_revision, destination=server.pin())
         require(isinstance(lease, SSHAgentLease)); lease.validate()
@@ -233,6 +237,9 @@ class SSHOpenResearchPackage:
             finally: getattr(fcntl, 'flock')(fence, getattr(fcntl, 'LOCK_UN'))
 
     def _install(self, server, lease, body, local, nonce):
+        if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
+            # The environment intent was committed before this explicit effect.
+            self.personal_servers.probe(server, lease, 'prepare')
         self.config.runtime.validate()
         require(file_hash(BASE / 'ssh_install.py') == self.installer_pin)
         require(all(file_hash(path) == self.code_pins[name] for name, path in self.files.items()))
