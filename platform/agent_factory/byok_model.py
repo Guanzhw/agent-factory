@@ -108,14 +108,14 @@ def function_call(call):
 
 
 class OwnerChatModel(Model):
-    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None):
+    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Chat Completions', retries=0)
         self._base = base_url(configuration['baseURL'])
         self._credential = credential
         self._transport_factory = transport_factory
         self._recheck = recheck
-        self._session_id = 'af-agent-' + uuid4().hex
+        self._session_id = session_id or 'af-agent-' + uuid4().hex
 
     def __repr__(self):
         return 'OwnerChatModel(credentials=<redacted>)'

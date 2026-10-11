@@ -38,6 +38,19 @@ class ByokModelTests(unittest.TestCase):
         self.assertNotIn('synthetic-key', requests[0].headers['x-opencode-session'])
         self.assertEqual(json.loads(requests[0].content)['model'], 'longcat-2.5-preview-free')
 
+    def test_go_conversation_id_can_survive_model_reconstruction_for_an_immutable_plan(self):
+        requests = []
+        def wire(request):
+            requests.append(request)
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop',
+                'message': {'role': 'assistant', 'content': 'synthetic completion'}}]})
+        for _ in range(2):
+            model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'fixture-model',
+                'baseURL': 'https://opencode.ai/zen/go/v1'}, lambda: SecretLease('api-key', 'synthetic-key'),
+                transport_factory=lambda: httpx.MockTransport(wire), session_id='af-plan-syntheticfixture')
+            asyncio.run(model.ainvoke([Message(role='user', content='synthetic')]))
+        self.assertEqual([r.headers['x-opencode-session'] for r in requests], ['af-plan-syntheticfixture'] * 2)
+
     def test_go_pinned_transport_approves_only_its_exact_chat_route(self):
         async def run():
             transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1')
