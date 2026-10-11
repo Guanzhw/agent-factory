@@ -72,6 +72,28 @@ class PersonalCommandPostgresTests(unittest.TestCase):
                 observed = request('GET', '/personal-agent/sessions/' + sid + '?refresh=true')
                 self.assertEqual(observed['observation']['messages'][1]['usage']['cost'], .007)
                 self.assertFalse(observed['observation']['trustedMetering'])
+                # Factory admission precedes command reservation. Queued and
+                # pre-dispatch failures must remain the latest durable task.
+                for phase in ('queued', 'failed'):
+                    pending_key = 'before-dispatch-' + uuid4().hex
+                    prepared = request('POST', '/personal-agent/commands/prepare',
+                        {'requestId': pending_key, 'action': 'prompt', 'sessionId': sid, 'text': 'Synthetic pre-dispatch goal'})
+                    queued, fresh = store.reserve_task(prepared['plan'], 'personal:' + prepared['plan']['id'])
+                    self.assertTrue(fresh)
+                    if phase == 'failed': store.admission_failed(queued['id'], 'Synthetic pre-dispatch rejection')
+                    else:
+                        self.assertEqual(queued['admission'], 'reserved')
+                    count = len(wire.wire)
+                    latest = request('GET', '/personal-agent/sessions/' + sid)
+                    self.assertEqual(latest['latestFactoryIdentity']['taskId'], queued['id'])
+                    self.assertEqual(latest['latestFactoryIdentity']['planId'], prepared['plan']['id'])
+                    self.assertIsNone(latest['latestFactoryIdentity']['nativeRunId'])
+                    recovered_pending = request('GET', '/personal-agent/commands/requests/' + pending_key)
+                    self.assertEqual(recovered_pending['job']['id'], queued['id'])
+                    self.assertIsNone(recovered_pending['receipt'])
+                    self.assertEqual(len(wire.wire), count)
+                    self.assertIsNone(store.latest_personal_task('bob', sid, 'native-project', native))
+                    store.admission_failed(queued['id'], 'Synthetic fixture release after assertion')
                 wire.drop = '/session/' + native + '/prompt_async'
                 lost_key, lost_task = prepare('prompt', sessionId=sid, text='Native second turn lost acknowledgement')
                 terminal(lost_task, 'unknown')

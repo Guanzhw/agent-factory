@@ -132,6 +132,17 @@ class Sessions(unittest.TestCase):
     def create(self, request='create'):
         return self.service.create('alice', self.bound['ref'], 'native-project', request)
 
+    def test_latest_command_identity_survives_refresh_without_changing_creation_identity(self):
+        created = self.create(); sid = created['session']['id']
+        self.service.admission = lambda owner, intent: {**created['factoryIdentity'], 'taskId': 'followup-task'}
+        self.service.prompt('alice', sid, 'synthetic followup', 'followup-request')
+        seen = self.service.inspect('alice', sid, refresh=True)
+        self.assertEqual(seen['latestFactoryIdentity']['taskId'], 'followup-task')
+        self.assertEqual(seen['factoryIdentity'], created['factoryIdentity'])
+        restored = PersonalAgentSessions(self.connections, admission=self.admission)
+        self.assertEqual(restored.inspect('alice', sid)['latestFactoryIdentity']['taskId'], 'followup-task')
+        with self.assertRaises(HTTPException): restored.inspect('bob', sid)
+
     def test_real_wire_multiturn_tool_result_unknown_restart_and_interrupt(self):
         created = self.create(); sid = created['session']['id']; remote = created['session']['nativeSessionId']
         self.assertEqual(created['state'], 'acknowledged')

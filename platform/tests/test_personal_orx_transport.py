@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from urllib.parse import parse_qs, urlsplit
@@ -15,7 +16,7 @@ from agent_factory.personal_agent_sessions import PersonalAgentSessions
 from agent_factory.personal_agent_transport import PERSONAL_CONTRACT
 from agent_factory.personal_orx_transport import (
     PERSONAL_ORX_PROVIDER_ID, PersonalOrxProvider, PersonalOrxHTTPS, PersonalOrxHandle,
-    _NativeSessionClient,
+    _NativeSessionClient, project_transcript,
 )
 from agent_factory.personal_remote_provider import SecretLease, RemoteConnectionError
 from test_personal_agent_sessions import Auth, Secrets
@@ -87,6 +88,15 @@ class NativeOrxWire:
 
 
 class PersonalOrxTests(unittest.TestCase):
+    def test_native_error_parts_project_to_the_shared_ui_fixture_without_raw_error(self):
+        fixture = Path(__file__).resolve().parents[2] / 'tests/fixtures/native-orx-terminal-error.json'
+        for case in json.loads(fixture.read_text()):
+            messages = project_transcript(case['wire'], 'original-session')['messages']
+            self.assertEqual(messages, case['projected'])
+            self.assertTrue(messages[0]['terminalError'])
+            self.assertFalse(messages[0]['terminalResult'])
+            self.assertNotIn('synthetic-private-provider-token', json.dumps(messages))
+
     def setUp(self):
         self.wire, self.secrets, self.auth = NativeOrxWire(), Secrets(), Auth()
         self.provider = PersonalOrxProvider(self.secrets, transport=self.wire)

@@ -42,7 +42,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true, onModels }))); }
 const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
-async function goal(text: string) { await act(async () => { const input = host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); }); }
+async function goal(text: string) { await act(async () => { const input = host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); }); }
 
 it('prepares on the owner click then submits one existing native create command, with no goal in preparation', async () => {
   await mount(); expect(host.querySelector<HTMLSelectElement>('[aria-label="运行位置"]')!.value).toBe('platform');
@@ -61,7 +61,7 @@ it('reload only reads the original preparation and keeps goal dispatch behind a 
   sessionStorage.setItem(`factory-research-draft:${owner.id}`, JSON.stringify({ goal: 'Synthetic retained goal', materials: '' }));
   await mount(); expect(applicationEnvironmentApi.recover).toHaveBeenCalledWith('original-prepare', expect.any(AbortSignal));
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained goal');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Synthetic retained goal');
   await act(async () => button('核对原环境准备').click());
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
@@ -85,7 +85,7 @@ it('an owner change during prepare prevents the queued native session submission
   vi.mocked(api.session).mockResolvedValue({ ...owner, id: 'foreign-owner' });
   await act(async () => finish(request(id)));
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('');
 });
 
 it('selects an owned Linux server and directory, then uses the existing ordinary native command path', async () => {
@@ -146,7 +146,7 @@ it('an authoritative SSH directory rejection keeps the draft and lets the owner 
   expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.getAttribute('aria-invalid')).toBe('true');
   expect(host.querySelector('[role="alert"]')!.id).toBe('research-environment-error');
   expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')!.disabled).toBe(false);
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained draft');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Synthetic retained draft');
   expect(localStorage.getItem(`factory-environment-prepare:${owner.id}`)).toBeNull();
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
@@ -210,7 +210,7 @@ it('explicit incompatible-package choice creates another environment without sen
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
   await act(async () => button('创建新环境，保留旧结果').click());
   expect(applicationEnvironmentApi.prepare).toHaveBeenCalledWith(owner.id, expect.any(String), { location: 'platform', newEnvironment: true });
-  expect(personalAgentApi.submit).not.toHaveBeenCalled(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained goal');
+  expect(personalAgentApi.submit).not.toHaveBeenCalled(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Synthetic retained goal');
   await act(async () => root.unmount()); root=createRoot(host); await mount();
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
   await act(async () => button('开始研究').click());
@@ -250,7 +250,7 @@ it('selects a new generation with a distinct connection after opening A, retaini
   expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('false');
   expect(applicationEnvironmentApi.inspect).toHaveBeenLastCalledWith(owner.id,next.id,expect.any(AbortSignal));
   expect(applicationEnvironmentApi.prepare).toHaveBeenCalledTimes(1);expect(personalAgentApi.submit).not.toHaveBeenCalled();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('SYNTHETIC retained new research draft');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('SYNTHETIC retained new research draft');
   // The original research remains readable and requires an explicit selection.
   await act(async()=>host.querySelector<HTMLButtonElement>('.research-session-entry button')!.click());
   expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('true');
@@ -335,7 +335,7 @@ it('positive pre-install credential rejection preserves the goal and points to r
   await mount(); await goal('Synthetic retained credential-change goal'); await act(async () => button('开始研究').click());
   expect(host.querySelector('.research-status')!.textContent).toContain('请核对原环境恢复条件');
   expect(localStorage.getItem(`factory-environment-prepare:${owner.id}`)).toBeNull();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained credential-change goal');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Synthetic retained credential-change goal');
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
 
@@ -372,7 +372,7 @@ it('distinguishes a failed identity/capability read from loading and retries wit
   await mount();
   expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('暂时无法读取研究连接');
   expect(button('开始研究').disabled).toBe(true);
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic preserved draft');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Synthetic preserved draft');
   vi.mocked(personalAgentApi.capabilities).mockResolvedValue({executionContract:PERSONAL_CONTRACT,nativeQueue:true,ownerSubmit:'/api/factory/personal-agent/commands/submit',modelConfiguration:'remote-configured-model',factoryBYOKForwarded:false});
   await act(async () => button('刷新').click());
   expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('可以开始研究');

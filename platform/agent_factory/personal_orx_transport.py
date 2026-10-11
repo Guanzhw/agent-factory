@@ -428,7 +428,7 @@ def project_transcript(transcript, session_id):
     """Native ORX WireMessage/WirePart projection; no OpenCode ID relabelling."""
     messages = []
     for row in transcript['messages']:
-        events, failed = [], False
+        events, failed, terminal_error = [], False, False
         require(len(row['parts']) <= 1024)
         for part in row['parts']:
             require(type(part) is dict)
@@ -443,6 +443,7 @@ def project_transcript(transcript, session_id):
                     'output': state.get('output', '')[:32768] if type(state.get('output', '')) is str else ''})
             elif part.get('type') == 'error':
                 failed = True
+                terminal_error = True
             elif part.get('type') == 'prompt':
                 prompt = part.get('prompt') or {}
                 require(type(prompt) is dict)
@@ -453,6 +454,6 @@ def project_transcript(transcript, session_id):
                     'output': str(prompt.get('question') or prompt.get('header') or 'Respond in the original OpenResearch session.')[:4000]})
         complete = type(row.get('completedAt')) is int
         messages.append({'id': row['id'], 'wireSha256': digest(row), 'role': row['role'], 'parentId': row.get('parentId'),
-            'completed': complete, 'terminalResult': complete and not failed,
+            'completed': complete, 'terminalResult': complete and not failed, 'terminalError': terminal_error,
             'events': events, 'usage': {}, 'usageProvenance': 'unavailable'})
     return {'messages': messages, 'nativeSessionId': session_id}
