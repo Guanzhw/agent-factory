@@ -65,10 +65,11 @@ class ProcessRuntimeServer(OwnedServer):
 
 
 class RemoteProcessRuntimePair:
-    def __init__(self, database_url, *, workload="normal"):
+    def __init__(self, database_url, *, workload="normal", model_start_delay_seconds=0):
         self.directory = tempfile.TemporaryDirectory(prefix="remote-process-runtime-")
         self.path = Path(self.directory.name)
         self.database_url, self.workload = database_url, workload
+        self.model_start_delay_seconds = model_start_delay_seconds
         self.origin_db = self.receiver_db = self.origin = self.receiver = None
 
     def start(self):
@@ -81,7 +82,7 @@ class RemoteProcessRuntimePair:
             origin_key, receiver_key = secrets.token_urlsafe(48), secrets.token_urlsafe(48)
             common = {"originUrl": f"http://127.0.0.1:{first}", "receiverUrl": f"http://127.0.0.1:{second}",
                 "originJwtKey": origin_key, "receiverJwtKey": receiver_key, "controlKey": secrets.token_urlsafe(32),
-                "workload": self.workload}
+                "workload": self.workload, "modelStartDelaySeconds": self.model_start_delay_seconds}
             self.origin = ProcessRuntimeServer({**common, "role": "origin", "dbUrl": self.origin_db.url,
                 "jwtKey": origin_key, "port": first, "workspace": str(self.path / "origin-workspace")}, self.path).start()
             source = self.origin.facts()
@@ -118,7 +119,9 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
     def setUp(self):
         number = self._testMethodName.split("_")[1]
         workload = "normal" if number in {"01", "02"} else "unknown" if number == "09" else "deadline" if number == "08" else "sleep"
-        self.pair = RemoteProcessRuntimePair(os.environ["FACTORY_TEST_DATABASE_URL"], workload=workload).start()
+        delayed = self._testMethodName == "test_03_receiver_exit_after_delayed_actual_dispatch_recovers_original_custody"
+        self.pair = RemoteProcessRuntimePair(os.environ["FACTORY_TEST_DATABASE_URL"], workload=workload,
+            model_start_delay_seconds=9 if delayed else 0).start()
         self.addCleanup(self.pair.close)
         self.origin, self.receiver = self.pair.origin, self.pair.receiver
 
@@ -252,16 +255,33 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
             self.assertEqual(current[key], first[key])
 
     def test_03_receiver_exit_after_actual_dispatch_recovers_original_custody(self):
+        self.receiver_exit_after_actual_dispatch()
+
+    def test_03_receiver_exit_after_delayed_actual_dispatch_recovers_original_custody(self):
+        self.receiver_exit_after_actual_dispatch()
+
+    def receiver_exit_after_actual_dispatch(self):
         _, task, request = self.prepare()
         self.receiver.control("fault", fault="exit_after_dispatch")
+        started = time.monotonic()
         self.call(self.origin, "POST", "/instances", expected=202, json=request)
         self.until(lambda: self.receiver.process.poll() is not None)
+        if self.pair.model_start_delay_seconds:
+            self.assertGreaterEqual(time.monotonic() - started, self.pair.model_start_delay_seconds)
+        self.assertEqual(self.receiver.process.returncode, 41)
+        marker = json.loads((self.pair.path / "receiver-fault.json").read_text())
+        self.assertEqual(marker["phase"], "after-process-launch-before-http-ack")
+        self.assertEqual(marker["pid"], self.receiver.process.pid)
+        self.assertGreater(marker["guardian"]["pid"], 0)
+        self.assertTrue(marker["guardian"]["start"].isdigit())
         self.receiver.start()
         self.call(self.origin, "POST", "/jobs/" + task + "/reconcile")
         receipt = self.until(lambda: (r if r.get("remoteTaskId") else None)
             if (r := self.detail(task)["snapshot"]["remoteHandoff"]) else None)
         self.wait_lease(receipt["remoteTaskId"], {"RECLAIMED", "UNKNOWN"})
-        self.assert_single(task, receipt)
+        lease = self.assert_single(task, receipt)
+        self.assertEqual(marker["taskId"], receipt["remoteTaskId"])
+        self.assertEqual(marker["processId"], lease["providerJobId"])
 
     def test_04_origin_cancel_stops_only_original_receiver_process(self):
         _, task, _, receipt = self.execute()
