@@ -2,7 +2,7 @@ import type { PersonalSession, PersonalMessage } from './personalAgentApi.js';
 
 export function researchReplyFailed(message?: PersonalMessage) {
   return !!message && message.role === 'assistant' && message.completed
-    && (message.events.some(event => event.type === 'tool' && event.tool === 'error')
+    && (message.terminalError === true || message.events.some(event => event.type === 'tool' && event.tool === 'error')
       || !message.events.some(event => event.type === 'text' && event.text.trim())
         && message.events.some(event => event.type === 'tool' && ['error', 'failed', 'canceled', 'cancelled'].includes(event.status)));
 }

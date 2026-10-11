@@ -13,15 +13,23 @@ Reproduced on main `a3fe4a3a2b113d73979226399b96fe9f321dc77b`,
   headline to label every displayed result synthetic, including separately
   projected remote-reported session records.
 
-The session read response now includes the latest owner-scoped admitted command
-identity. It is read from durable command rows with existing integrity checks;
-the original creation identity is preserved for recovery and rebind. The task
-button uses the latest identity, including after refresh or service reconstruction.
+The session read response now includes the latest owner-scoped Factory task
+identity from its immutable plan and durable admission. Queued tasks and tasks
+that failed before native dispatch are included, even when no command row exists
+yet. Existing command identities are a fallback; the original creation identity
+is preserved for recovery and rebind. The task button first uses the current
+admitted job, then the latest durable identity. Recovery reads the original
+persisted request after refresh and never resubmits it.
 
 Native terminal error records show failure and no final reply. A recoverable tool
 failure followed by readable final text remains a completed reply. Unknown
 acknowledgements retain their existing higher-priority warning and prohibit
 automatic replay. Follow-up accessible and visible labels agree.
+
+Original ORX `WirePart.type:error` projects a boolean `terminalError`, without
+the raw error body. The shared synthetic wire/projection fixture is checked by
+the Python projector test and rendered by the UI tests. Both error-only and
+partial-text-plus-error replies show failure on the research and task pages.
 
 Only receipts matching the task, plan and native-command contract receive the
 more precise command source label. Demo command execution remains explicitly

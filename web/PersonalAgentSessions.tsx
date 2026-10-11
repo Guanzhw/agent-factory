@@ -580,6 +580,8 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
   const visibleSessions = [...new Map([...sessionCatalog, ...sessions].map(item => [item.id, item])).values()];
   const canCreate = connections.find(c => c.ref === selected)?.capabilities.includes('session:create') === true && (namespace === 'opencode' || project?.sessionCreationSupported === true);
   if (researchJourney) {
+    const latestTaskId = job?.ownerId === ownerId && pending?.planId === job.planId
+      ? job.id : (session?.latestFactoryIdentity ?? session?.factoryIdentity)?.taskId;
     const answers = session?.observation?.messages.filter(m => m.role === 'assistant') ?? [];
     const latest = answers.at(-1);
     const ordinaryStatus = researchStatus({ ready, submitting: ['submit', 'start'].includes(busy), commandPending: !!pending, attachmentPending: !!attachment, session, connectionUnavailable: !!session && !sessionWritable, canRun: ownerSubmit && resourceReady && (session ? !!sessionWritable && !!session.connectionPin?.capabilities.includes('session:prompt') : canCreate) });
@@ -617,7 +619,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       <div className="research-status" data-tone={status.tone} role="status"><span className="research-status-dot" aria-hidden="true" /><div><strong>{status.title}</strong><p className="quiet">{status.explanation}</p></div><button className="text-button" disabled={!!busy} onClick={() => { setShowReview(false); refresh(n => n + 1); }}>刷新</button></div>
           <p className="quiet">{session?.observation ? `已读取 ${session.observation.messages.filter(m => m.role === 'user').length} 条目标、${answers.length} 条远端回复。` : '开始后，沿原会话查看工具活动和回复。'}</p>
           {session?.activeRequestId && <p className="quiet">本轮尚待核对，已有回复可能来自上一轮。</p>}
-          {(session?.latestFactoryIdentity ?? session?.factoryIdentity)?.taskId && onTask && <button className="secondary" onClick={() => onTask((session!.latestFactoryIdentity ?? session!.factoryIdentity)!.taskId)}>查看最近任务与事件</button>}
+          {latestTaskId && onTask && <button className="secondary" onClick={() => onTask(latestTaskId)}>查看最近任务与事件</button>}
         </section>
         {resultPanel}
         <section className="research-evidence" aria-label="证据与来源">

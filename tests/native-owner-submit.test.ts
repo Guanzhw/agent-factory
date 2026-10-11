@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { webcrypto } from 'node:crypto';
+import projectedErrors from './fixtures/native-orx-terminal-error.json' with { type: 'json' };
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
@@ -118,6 +119,35 @@ it('shows a native error reply as failure even when the remote message has compl
   const detail = { job, snapshot: { content: JSON.stringify({ executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity }) } } as unknown as JobDetail;
   await act(async () => root.render(createElement(NativeCommandResult, { detail })));
   expect(host.textContent).toContain('远端执行失败'); expect(host.textContent).not.toContain('远端报告完成');
+});
+it.each(projectedErrors)('renders the checked native WirePart error projection as failure', async ({ projected }) => {
+  vi.mocked(personalAgentApi.session).mockResolvedValue({ ...observed, observation: { ...observed.observation!, messages: projected as import('../web/personalAgentApi.js').PersonalMessage[] } });
+  const detail = { job, snapshot: { content: JSON.stringify({ executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity }) } } as unknown as JobDetail;
+  await act(async () => root.render(createElement(NativeCommandResult, { detail })));
+  expect(host.textContent).toContain('远端执行失败'); expect(host.textContent).not.toContain('远端报告完成');
+  expect(host.textContent).not.toContain('synthetic-private-provider-token');
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([{ ...observed, observation: { ...observed.observation!, messages: projected as import('../web/personalAgentApi.js').PersonalMessage[] } }]);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  await journey();
+  expect(host.textContent).toContain('原生研究回复出现错误');
+});
+it.each(['queued', 'failed'] as const)('opens the admitted %s task before native dispatch, including after refresh', async status => {
+  const old = { ...observed, factoryIdentity: { ...identity, taskId: 'creation-task' }, latestFactoryIdentity: { ...identity, taskId: 'old-task' } };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([old]); vi.mocked(personalAgentApi.session).mockResolvedValue(old);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  const onTask = vi.fn();
+  const mountJourney = () => act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask })));
+  await mountJourney(); await goal('Synthetic followup');
+  vi.mocked(personalAgentApi.submit).mockResolvedValue({ ...job, status });
+  await act(async () => button('继续研究').click());
+  await act(async () => button('查看最近任务与事件').click());
+  expect(onTask).toHaveBeenLastCalledWith(job.id);
+  const saved = JSON.parse(localStorage.getItem(storage)!);
+  vi.mocked(personalAgentApi.recover).mockResolvedValue(recovery(saved.requestId, { job: { ...job, status }, receipt: null, nativeRunId: null }));
+  await act(async () => root.render(createElement('p'))); await mountJourney();
+  await act(async () => button('核对研究请求').click());
+  await act(async () => button('查看最近任务与事件').click());
+  expect(onTask).toHaveBeenLastCalledWith(job.id); expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
 });
 it('classifies only an exact native command receipt separately and retains synthetic demo warnings', () => {
   const detail = { job: { ...job, runtime: 'demo' }, snapshot: { content: { executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity } } } as unknown as JobDetail;

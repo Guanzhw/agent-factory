@@ -512,12 +512,14 @@ class PersonalAgentSessions:
                 self.commands.c.intent['action'].as_string().in_(['create', 'prompt', 'interrupt'])).order_by(
                     self.commands.c.created_at.desc(), self.commands.c.request_id.desc()).limit(1)).scalar()
         latest = self._command(owner, latest_request) if latest_request else None
+        task_reader = getattr(self.store, 'latest_personal_task', None)
+        admitted = task_reader(owner, session_id, body['nativeProjectId'], body['nativeSessionId']) if callable(task_reader) else None
         return {'id': session_id, 'namespace': body['namespace'], 'executionContract': PERSONAL_CONTRACT,
             'connectionRef': body['connectionPin']['ref'], 'connectionPin': body['connectionPin'], 'nativeProjectId': body['nativeProjectId'],
             'nativeSessionId': body['nativeSessionId'],
             'upstreamOrxProjectId': body['nativeProjectId'] if body['namespace'] == 'native-openresearch' else None,
             'factoryIdentity': body['factoryIdentity'], 'state': row['state'], 'activeRequestId': row['active_request'],
-            'latestFactoryIdentity': latest['identity'] if latest else body['factoryIdentity'],
+            'latestFactoryIdentity': admitted or (latest['identity'] if latest else body['factoryIdentity']),
             'bindingHistory': body.get('bindingHistory', []), 'bindingStatus': self._binding_status(owner, body['connectionPin']),
             'observation': row['observation'], 'modelCredentialCustody': body.get('modelCredentialCustody', 'remote'),
             'budgetEnforcement': 'advisory', 'stopVerified': False, 'liveEndToEndVerified': False}
