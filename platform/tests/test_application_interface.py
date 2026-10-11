@@ -1,6 +1,7 @@
 """Public ports: current authority, original identity, and no write retries."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -67,21 +68,34 @@ class ApplicationContextTests(unittest.TestCase):
 
 class ApplicationClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_lost_start_response_reads_original_request_without_retry(self):
-        calls = []
-        def receive(request):
-            calls.append((request.method, request.url.path, request.headers.get('X-Factory-Expected-Owner')))
-            if request.method == 'POST': raise httpx.ReadTimeout('synthetic lost acknowledgement', request=request)
-            return httpx.Response(200, json={'interfaceVersion': 1, 'requestId': 'original-001',
-                'state': 'unknown', 'taskId': 'task', 'automaticReplay': False})
-        async with httpx.AsyncClient(base_url='http://local-fixture.invalid', transport=httpx.MockTransport(receive)) as http:
+        for identifier in ('original-001', '.request-001', '_request-001', 'request..001'):
+            with self.subTest(identifier=identifier):
+                calls = []; accepted = []
+                def receive(request):
+                    calls.append((request.method, request.url.path, request.headers.get('X-Factory-Expected-Owner')))
+                    if request.method == 'POST':
+                        accepted.append(ApplicationStart.model_validate(json.loads(request.content)).requestId)
+                        raise httpx.ReadTimeout('synthetic lost acknowledgement', request=request)
+                    self.assertEqual(request.url.path, '/api/factory/application-interface/v1/starts/' + accepted[0])
+                    return httpx.Response(200, json={'interfaceVersion': 1, 'requestId': accepted[0],
+                        'state': 'unknown', 'taskId': 'task', 'automaticReplay': False})
+                async with httpx.AsyncClient(base_url='http://local-fixture.invalid', transport=httpx.MockTransport(receive)) as http:
+                    client = ApplicationClient(http, owner_id='alice')
+                    with self.assertRaises(httpx.ReadTimeout):
+                        await client.start({'requestId': identifier, 'application': 'synthetic-summary', 'mode': 'summary', 'goal': 'Controlled example'})
+                    result = await client.request(identifier)
+                self.assertEqual([item[0] for item in calls], ['POST', 'GET'])
+                self.assertEqual([item[2] for item in calls], ['alice', 'alice'])
+                self.assertEqual(accepted, [identifier]); self.assertEqual(result['requestId'], identifier)
+                self.assertEqual(result['state'], 'unknown'); self.assertFalse(result['automaticReplay'])
+
+    async def test_request_recovery_rejects_path_segments_and_escaped_separators_without_sending(self):
+        transport = Mock()
+        async with httpx.AsyncClient(base_url='http://local-fixture.invalid', transport=httpx.MockTransport(transport)) as http:
             client = ApplicationClient(http, owner_id='alice')
-            with self.assertRaises(httpx.ReadTimeout):
-                await client.start({'requestId': 'original-001', 'application': 'synthetic-summary', 'mode': 'summary', 'goal': 'Controlled example'})
-            result = await client.request('original-001')
-        self.assertEqual([item[0] for item in calls], ['POST', 'GET'])
-        self.assertEqual([item[2] for item in calls], ['alice', 'alice'])
-        self.assertEqual(result['state'], 'unknown')
-        self.assertFalse(result['automaticReplay'])
+            for identifier in ('.', '..', '../connections', 'request/001', 'request%2f001', 'request?001'):
+                with self.subTest(identifier=identifier), self.assertRaises(ValidationError): await client.request(identifier)
+        transport.assert_not_called()
 
     async def test_cancel_ack_is_not_converted_to_stop_and_artifacts_require_hash(self):
         calls = []

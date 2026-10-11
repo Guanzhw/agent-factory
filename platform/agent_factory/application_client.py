@@ -9,8 +9,11 @@ from urllib.parse import quote
 import re
 
 import httpx
+from pydantic import TypeAdapter
 
-from .application_interface import ApplicationStart
+from .application_interface import ApplicationRequestId, ApplicationStart
+
+_REQUEST_ID = TypeAdapter(ApplicationRequestId)
 
 
 def _pointer(value):
@@ -46,7 +49,11 @@ class ApplicationClient:
         return (await self._request('POST', '/application-interface/v1/starts', body)).json()
 
     async def request(self, request_id: str) -> dict[str, Any]:
-        return (await self._request('GET', '/application-interface/v1/starts/' + _pointer(request_id))).json()
+        # The exact same ID grammar owns start and recovery. Embedded dots and
+        # leading punctuation are valid single segments; slashes/percent escapes
+        # and the actual dot segments are excluded by the shared length/grammar.
+        identifier = _REQUEST_ID.validate_python(request_id)
+        return (await self._request('GET', '/application-interface/v1/starts/' + quote(identifier, safe=''))).json()
 
     async def query(self, task_id: str) -> dict[str, Any]:
         return (await self._request('GET', '/jobs/' + _pointer(task_id))).json()

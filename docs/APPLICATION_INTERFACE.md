@@ -102,6 +102,26 @@ After a lost start response, use `application.request(original_request_id)`.
 absence of a concurrent original request. Neither response permits automatic
 replay. The caller must retain the original request and its uncertain outcome.
 
+Start and original-request reads expose the original `planId`. A definitive
+existing `PLAN_REVIEW_REQUIRED`, `PLAN_REVIEW_DENIED` or `PLAN_REVIEW_EXPIRED`
+response also includes that ID and a `handoff` to the existing authorization,
+review-request and instance endpoints. No new review is created automatically.
+For work covered by the operator's existing managed policy, inspect
+`handoff.authorizationURL`; if that policy supports a review, explicitly request
+it at `handoff.reviewRequestURL` with the returned `planId` and a separately
+persisted review request ID. A distinct authorized reviewer makes the existing
+decision. After approval, explicitly use the existing instance endpoint with
+`handoff.instantiateBody`, which keeps the original plan and namespaced start
+request. Admission still rechecks current policy and reserves at most one
+original task. Ordinary eligible owner tasks retain their existing approval-free
+path. A handoff is a route reference, not permission or evidence of absent work;
+unknown acknowledgements still require original-request reads and never justify
+automatic resubmission.
+
+Start and recovery share the same 8–80 character request ID grammar, including
+leading dots/underscores and embedded dots. Recovery rejects path separators,
+escaped separators and actual dot segments before sending any request.
+
 Cancel requires a caller-persisted original `command_id` and returns the native
 control receipt unchanged. It does not translate an accepted cancellation into
 verified stop. Use the original command receipt and task query to observe
@@ -131,5 +151,5 @@ and operator-only services carry no such compatibility promise.
 
 Run `test_application_interface.py`, `test_application_interface_postgres.py`,
 existing native Workflow and definition v1/v2 regressions, and
-`scripts/check_boundaries_postgres.py`. The latter requires all 25 named cases
+`scripts/check_boundaries_postgres.py`. The latter requires all 26 named cases
 to run against a disposable PostgreSQL database without skips.

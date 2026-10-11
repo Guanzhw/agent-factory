@@ -16,6 +16,15 @@ class ApplicationRuns:
     def __init__(self, factory):
         self.factory = factory
 
+    @staticmethod
+    def _handoff(plan_id, original_request):
+        # Route/body references only, never an authorization or dispatch grant.
+        # The existing review and instance APIs recheck their own current policy.
+        return {'authorizationURL': '/api/factory/plans/' + plan_id + '/authorization',
+            'reviewRequestURL': '/api/factory/plan-reviews',
+            'instantiateURL': '/api/factory/instances',
+            'instantiateBody': {'planId': plan_id, 'requestId': original_request}}
+
     def _prepare(self, owner, body):
         store = self.factory.store
         self.factory.auth.require(owner, 'run')
@@ -34,8 +43,15 @@ class ApplicationRuns:
         # current policy, reserves the original task before dispatch, and never
         # re-admits a task whose acknowledgement is unknown. No new approval or
         # retry policy is implemented here.
-        job = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=key))
-        return {'interfaceVersion': 1, 'requestId': body.requestId, 'job': job}
+        try:
+            job = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=key))
+        except HTTPException as error:
+            reason = str(error.detail)
+            if error.status_code == 409 and reason.startswith(('PLAN_REVIEW_REQUIRED', 'PLAN_REVIEW_DENIED', 'PLAN_REVIEW_EXPIRED')):
+                raise HTTPException(409, {'code': reason.split(':', 1)[0], 'message': reason,
+                    'planId': plan['id'], 'handoff': self._handoff(plan['id'], key)}) from None
+            raise
+        return {'interfaceVersion': 1, 'requestId': body.requestId, 'planId': plan['id'], 'job': job}
 
     def request(self, owner, request_id):
         self.factory.auth.require(owner, 'read')
@@ -53,6 +69,7 @@ class ApplicationRuns:
             if error.status_code != 404: raise
             task = None
         return {'interfaceVersion': 1, 'requestId': request_id,
+            'planId': plan['id'], 'handoff': self._handoff(plan['id'], key),
             'state': 'prepared' if task is None else task['admission'],
             'taskId': task['id'] if task is not None else None,
             'runId': task['run_id'] if task is not None else None,
