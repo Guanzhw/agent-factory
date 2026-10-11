@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { webcrypto } from 'node:crypto';
+import projectedErrors from './fixtures/native-orx-terminal-error.json' with { type: 'json' };
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../web/PersonalAgentSessions.js';
-import { NativeCommandResult } from '../web/NativeCommandResult.js';
+import { NativeCommandResult, personalCommandRequest, taskResultSource } from '../web/NativeCommandResult.js';
 import { api, ApiError } from '../web/api.js';
 import { personalAgentApi, checkResearchContinuation, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote } from '../web/personalRemoteApi.js';
@@ -100,7 +101,64 @@ async function journey() {
   vi.mocked(personalAgentApi.project).mockResolvedValue({ namespace: session.namespace, executionContract: PERSONAL_CONTRACT, nativeProjectId: session.nativeProjectId, connectionPin: { ref: pin.ref }, upstreamOrxProjectId: session.nativeProjectId, budgetEnforcement: 'advisory', modelCredentialCustody: 'remote', stopGuarantee: 'unverified', sessionCreationSupported: true });
   await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask: () => undefined })));
 }
-async function goal(text: string, label = '研究目标') { await act(async () => { const field = host.querySelector<HTMLTextAreaElement>(`[aria-label="${label}"]`)!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true })); }); }
+async function goal(text: string, label = '研究目标') { await act(async () => { const field = host.querySelector<HTMLTextAreaElement>(`[aria-label="${label}"]`) ?? host.querySelector<HTMLTextAreaElement>('[aria-label="继续研究"]')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true })); }); }
+it('names the followup field like its visible label and opens the most recent admitted task', async () => {
+  const latest = { ...observed, factoryIdentity: { ...identity, taskId: 'creation-task' }, latestFactoryIdentity: identity };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([latest]); vi.mocked(personalAgentApi.session).mockResolvedValue(latest);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  const onTask = vi.fn();
+  await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask })));
+  expect(host.querySelector('[aria-label="继续研究"]')).not.toBeNull();
+  await act(async () => button('查看最近任务与事件').click());
+  expect(onTask).toHaveBeenCalledWith(job.id);
+});
+it('shows a native error reply as failure even when the remote message has completed', async () => {
+  vi.mocked(personalAgentApi.session).mockResolvedValue({ ...observed, observation: { ...observed.observation!, messages: [
+    { id: 'failed-answer', role: 'assistant', completed: true, usageProvenance: 'unavailable', events: [{ type: 'tool', tool: 'error', status: 'error', output: 'remote error recorded' }] }
+  ] } });
+  const detail = { job, snapshot: { content: JSON.stringify({ executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity }) } } as unknown as JobDetail;
+  await act(async () => root.render(createElement(NativeCommandResult, { detail })));
+  expect(host.textContent).toContain('远端执行失败'); expect(host.textContent).not.toContain('远端报告完成');
+});
+it.each(projectedErrors)('renders the checked native WirePart error projection as failure', async ({ projected }) => {
+  vi.mocked(personalAgentApi.session).mockResolvedValue({ ...observed, observation: { ...observed.observation!, messages: projected as import('../web/personalAgentApi.js').PersonalMessage[] } });
+  const detail = { job, snapshot: { content: JSON.stringify({ executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity }) } } as unknown as JobDetail;
+  await act(async () => root.render(createElement(NativeCommandResult, { detail })));
+  expect(host.textContent).toContain('远端执行失败'); expect(host.textContent).not.toContain('远端报告完成');
+  expect(host.textContent).not.toContain('synthetic-private-provider-token');
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([{ ...observed, observation: { ...observed.observation!, messages: projected as import('../web/personalAgentApi.js').PersonalMessage[] } }]);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  await journey();
+  expect(host.textContent).toContain('原生研究回复出现错误');
+});
+it.each(['queued', 'failed'] as const)('opens the admitted %s task before native dispatch, including after refresh', async status => {
+  const old = { ...observed, factoryIdentity: { ...identity, taskId: 'creation-task' }, latestFactoryIdentity: { ...identity, taskId: 'old-task' } };
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([old]); vi.mocked(personalAgentApi.session).mockResolvedValue(old);
+  localStorage.setItem(`factory-personal-session:${owner.id}:native-openresearch`, session.id);
+  const onTask = vi.fn();
+  const mountJourney = () => act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace, researchJourney: true, onTask })));
+  await mountJourney(); await goal('Synthetic followup');
+  vi.mocked(personalAgentApi.submit).mockResolvedValue({ ...job, status });
+  await act(async () => button('继续研究').click());
+  await act(async () => button('查看最近任务与事件').click());
+  expect(onTask).toHaveBeenLastCalledWith(job.id);
+  const saved = JSON.parse(localStorage.getItem(storage)!);
+  vi.mocked(personalAgentApi.recover).mockResolvedValue(recovery(saved.requestId, { job: { ...job, status }, receipt: null, nativeRunId: null }));
+  await act(async () => root.render(createElement('p'))); await mountJourney();
+  await act(async () => button('核对研究请求').click());
+  await act(async () => button('查看最近任务与事件').click());
+  expect(onTask).toHaveBeenLastCalledWith(job.id); expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+});
+it('classifies only an exact native command receipt separately and retains synthetic demo warnings', () => {
+  const detail = { job: { ...job, runtime: 'demo' }, snapshot: { content: { executionContract: PERSONAL_CONTRACT, action: 'prompt', requestId: 'original-request', factoryIdentity: identity } } } as unknown as JobDetail;
+  expect(personalCommandRequest(detail)).toBe('original-request');
+  expect(taskResultSource(detail)).toContain('命令记录为演示执行');
+  expect(taskResultSource(detail)).not.toContain('结果为合成数据');
+  const foreign = { ...detail, job: { ...detail.job, id: 'different-task' } };
+  expect(personalCommandRequest(foreign)).toBe('');
+  expect(taskResultSource(foreign)).toBe('确定性演示 · 结果为合成数据');
+  expect(taskResultSource({ ...detail, snapshot: undefined })).toBe('确定性演示 · 结果为合成数据');
+});
 it('ordinary expired history keeps results and submits one explicit followup without technical renewal steps', async () => {
   const expired = { ...observed, bindingStatus: 'expired' };
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([expired]); vi.mocked(personalAgentApi.session).mockResolvedValue(expired);
@@ -127,7 +185,7 @@ it.each(['ORX_LEASE_EXPLICIT_SELECTION_REQUIRED', 'REMOTE_CREDENTIAL_UNAVAILABLE
   expect(localStorage.getItem(storage)).toBeNull();
   expect(localStorage.getItem(setupKey)).toBe(JSON.stringify(['original-configuration-evidence']));
   expect(host.textContent).toContain('original-configuration-evidence');
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Preserve this authorized draft after lease rejection');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Preserve this authorized draft after lease rejection');
   expect(host.textContent).toContain('研究未提交');
   expect(host.querySelector('.research-setup')).not.toBeNull();
   expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Only a controlled protocol result');
@@ -209,7 +267,7 @@ it.each(preAdmissionCodes)('new research create refusal %s clears the unadmitted
   await act(async () => button('开始研究').click());
   expect(personalAgentApi.submit).toHaveBeenCalledTimes(1); expect(personalAgentApi.recover).not.toHaveBeenCalled();
   expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).not.toContain('正在确认研究会话');
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Retain the new study goal');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Retain the new study goal');
   expect(host.querySelector<HTMLTextAreaElement>('[aria-label="补充材料"]')!.value).toBe('Synthetic owner materials');
   expect(button('开始研究').disabled).toBe(false); expect(host.querySelector('.research-setup')).not.toBeNull();
 });
@@ -239,7 +297,7 @@ it.each(preAdmissionCodes)('first prompt after acknowledged creation handles exa
   await journey(); await goal('Retain goal after acknowledged creation'); await act(async () => button('开始研究').click());
   await act(async () => button('核对研究请求').click());
   expect(personalAgentApi.submit).toHaveBeenCalledTimes(2); expect(localStorage.getItem(storage)).toBeNull();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Retain goal after acknowledged creation');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Retain goal after acknowledged creation');
   expect(button('继续研究').disabled).toBe(false); expect(host.textContent).not.toContain('需要核对原请求');
   vi.mocked(personalAgentApi.submit).mockResolvedValue(job); await act(async () => button('继续研究').click());
   expect(personalAgentApi.submit).toHaveBeenCalledTimes(3);
@@ -260,7 +318,7 @@ it('ordinary journey keeps owner draft on navigation/reload and unknown requests
   const id = vi.mocked(personalAgentApi.submit).mock.calls[0][0].requestId;
   await act(async () => root.render(createElement('p')));
   vi.mocked(personalAgentApi.recover).mockResolvedValue(recovery(id, { receipt: null, job: null, nativeRunId: null }));
-  await journey(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Keep my unsent draft');
+  await journey(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('Keep my unsent draft');
   await act(async () => button('核对研究请求').click());
   expect(personalAgentApi.submit).toHaveBeenCalledTimes(1); expect(button('开始研究').disabled).toBe(true); expect(host.textContent).not.toContain('private upstream secret');
   expect(localStorage.getItem(storage)).toContain(id);
@@ -279,13 +337,13 @@ it('ordinary journey continues the restored original session and only displays a
 it('ordinary journey rejects stale-account and definitive failed starts while preserving only the right owner draft', async () => {
   await journey(); await goal('Private owner draft'); vi.mocked(api.session).mockResolvedValue({ ...owner, id: 'another-owner' });
   await act(async () => button('开始研究').click()); expect(personalAgentApi.submit).not.toHaveBeenCalled();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe(''); expect(host.textContent).toContain('登录账户已变化');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe(''); expect(host.textContent).toContain('登录账户已变化');
 });
 
 it('an expired stale-tab login clears the visible research draft before any intent is dispatched', async () => {
   await journey(); await goal('Private unsent text'); vi.mocked(api.session).mockRejectedValue(new ApiError('Expired', 401));
   await act(async () => button('开始研究').click()); expect(personalAgentApi.submit).not.toHaveBeenCalled();
-  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('');
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"], [aria-label="继续研究"]')!.value).toBe('');
   expect(host.textContent).toContain('登录账户已变化');
 });
 it('keeps the authorized goal while native creation is still running with a provisional unknown receipt', async () => {

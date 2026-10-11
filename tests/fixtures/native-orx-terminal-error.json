@@ -1,0 +1,77 @@
+[
+  {
+    "wire": {
+      "messages": [
+        {
+          "id": "native-error-reply",
+          "role": "assistant",
+          "completedAt": 42,
+          "parts": [
+            {
+              "type": "error",
+              "error": {
+                "message": "synthetic-private-provider-token 502"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "projected": [
+      {
+        "id": "native-error-reply",
+        "wireSha256": "93819631d1704c6813912790ddc7ef3ad586b4b36f5b932c5ceaa60c27452800",
+        "role": "assistant",
+        "parentId": null,
+        "completed": true,
+        "terminalResult": false,
+        "terminalError": true,
+        "events": [],
+        "usage": {},
+        "usageProvenance": "unavailable"
+      }
+    ]
+  },
+  {
+    "wire": {
+      "messages": [
+        {
+          "id": "native-error-reply",
+          "role": "assistant",
+          "completedAt": 42,
+          "parts": [
+            {
+              "type": "text",
+              "text": "Synthetic partial reply"
+            },
+            {
+              "type": "error",
+              "error": {
+                "message": "synthetic-private-provider-token 502"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "projected": [
+      {
+        "id": "native-error-reply",
+        "wireSha256": "37e9881ca41360fa97dae04223297a750b209c7b240e68dcdbada2bcd5ea047c",
+        "role": "assistant",
+        "parentId": null,
+        "completed": true,
+        "terminalResult": false,
+        "terminalError": true,
+        "events": [
+          {
+            "type": "text",
+            "text": "Synthetic partial reply"
+          }
+        ],
+        "usage": {},
+        "usageProvenance": "unavailable"
+      }
+    ]
+  }
+]

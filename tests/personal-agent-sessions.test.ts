@@ -41,7 +41,7 @@ it('lets OpenCode users with no history select an existing connection and prepar
 });
 function button(text: string) { const b = [...host.querySelectorAll('button')].find(b => b.textContent === text); if (!b) throw new Error(`Missing button ${text}`); return b; }
 async function click(text: string) { await act(async () => button(text).click()); }
-async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!; const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); }); }
+async function fill(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`) ?? (label === '研究目标' ? host.querySelector<HTMLTextAreaElement>('[aria-label="继续研究"]') : null)!; const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); }); }
 async function prepareCreate() { await mount(); await fill('新会话标题', 'Private session name'); await click('准备创建会话'); }
 async function approveStart() { await click('确认提交此命令'); }
 const key = `factory-personal-command:${owner.id}`;
@@ -240,7 +240,7 @@ it('shows native terminal tool failure in the research main view without replayi
   await act(async () => vi.advanceTimersByTimeAsync(4000)); expect(host.textContent).not.toContain('下一轮须等待原回复完成');
   const mainStatus = host.querySelector('.research-status')!;
   expect(mainStatus.textContent).toContain('原生研究回复出现错误'); expect(mainStatus.textContent).not.toContain('private-provider-token');
-  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('本条回复没有最终研究结果');
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('未取得最终回复');
   expect(button('继续研究').disabled).toBe(true); expect(button('开始新的研究').disabled).toBe(true);
   await click('刷新'); await act(async () => root.unmount()); root = createRoot(host); await render();
   expect(host.querySelector('.research-status')!.getAttribute('data-tone')).toBe('failed'); expect(button('继续研究').disabled).toBe(true);

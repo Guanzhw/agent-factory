@@ -1,16 +1,30 @@
 import { useEffect, useState } from 'react';
 import { checkPersonalRecovery, personalAgentApi, type PersonalSession } from './personalAgentApi.js';
 import type { JobDetail } from './models.js';
+import { researchReplyFailed } from './researchStatus.js';
+
+/** A command receipt identifies the Factory command, never a research verdict. */
+export function personalCommandRequest(detail: JobDetail): string {
+  try {
+    const receipt = typeof detail.snapshot?.content === 'string' ? JSON.parse(detail.snapshot.content) : detail.snapshot?.content;
+    if (receipt && receipt.executionContract === 'personal-external-v1' && receipt.factoryIdentity?.taskId === detail.job.id && receipt.factoryIdentity?.planId === detail.job.planId && typeof receipt.requestId === 'string' && /^[A-Za-z0-9_.:-]{8,100}$/.test(receipt.requestId) && ['create', 'prompt', 'interrupt'].includes(receipt.action)) return receipt.requestId;
+  } catch { /* Native content is not necessarily a personal command receipt. */ }
+  return '';
+}
+
+export function taskResultSource(detail: JobDetail): string {
+  if (detail.orxExperiment) return 'ORX 本地 toy 实验 · 实际执行与研究结论分别验证';
+  if (personalCommandRequest(detail)) return detail.job.runtime === 'demo'
+    ? '原生会话命令 · 命令记录为演示执行，远端回复单独列示'
+    : '原生会话命令 · 远端回复单独列示';
+  return detail.job.runtime === 'demo' ? '确定性演示 · 结果为合成数据' : '真实运行 · 证据需要单独验证';
+}
 
 /** Read the original command and session. No submit, fallback, or new task. */
 export function NativeCommandResult({ detail }: { detail: JobDetail }) {
   const [session, setSession] = useState<PersonalSession>(); const [error, setError] = useState('');
   const job = detail.job;
-  let requestId = '';
-  try {
-    const receipt = typeof detail.snapshot?.content === 'string' ? JSON.parse(detail.snapshot.content) : detail.snapshot?.content;
-    if (receipt && receipt.executionContract === 'personal-external-v1' && receipt.factoryIdentity?.taskId === job.id && receipt.factoryIdentity?.planId === job.planId && typeof receipt.requestId === 'string' && /^[A-Za-z0-9_.:-]{8,100}$/.test(receipt.requestId) && ['create', 'prompt', 'interrupt'].includes(receipt.action)) requestId = receipt.requestId;
-  } catch { /* Native content is not necessarily a personal command receipt. */ }
+  const requestId = personalCommandRequest(detail);
   useEffect(() => {
     setSession(undefined); setError('');
     if (!requestId) return;
@@ -29,5 +43,5 @@ export function NativeCommandResult({ detail }: { detail: JobDetail }) {
     void read(); return () => { ctrl.abort(); clearTimeout(timer); };
   }, [job.id, job.planId, job.ownerId, requestId]);
   if (!requestId) return null;
-  return <section aria-label="原生会话回复与结果"><h3>原生会话回复与结果</h3>{error && <p role="status">{error}</p>}{session ? <><p>项目 {session.nativeProjectId} · 会话 {session.nativeSessionId ?? '待确认'}</p><p>{session.activeRequestId ? '原请求仍待核对；命令任务完成不等于研究已完成。' : '以下为远程会话记录。科学结论与精确轮次关联未经验证。'}</p>{session.observation?.messages.length ? session.observation.messages.map(message => <article key={message.id}><h4>{message.role === 'assistant' ? '远程回复' : '你的研究目标'} · {message.completed ? '远端报告完成' : '进行中'}</h4>{message.events.map((event, i) => event.type === 'text' ? <p className="native-result-text" key={i}>{event.text}</p> : <details key={i}><summary>工具 {event.tool} · {event.status}</summary><pre className="native-result-text">{event.output}</pre></details>)}</article>) : <p>尚未观察到远程回复，正在读取原会话。</p>}</> : !error && <p role="status">正在读取原生会话…</p>}</section>;
+  return <section aria-label="原生会话回复与结果"><h3>原生会话回复与结果</h3>{error && <p role="status">{error}</p>}{session ? <><p>项目 {session.nativeProjectId} · 会话 {session.nativeSessionId ?? '待确认'}</p><p>{session.activeRequestId ? '原请求仍待核对；命令任务完成不等于研究已完成。' : '以下为原会话记录，研究结论仍需核实。'}</p>{session.observation?.messages.length ? session.observation.messages.map(message => <article key={message.id}><h4>{message.role === 'assistant' ? '远程回复' : '你的研究目标'} · {researchReplyFailed(message) ? '远端执行失败' : message.completed ? '远端报告完成' : '进行中'}</h4>{researchReplyFailed(message) && <p role="status">未取得最终回复。可刷新原会话核对错误记录。</p>}{message.events.map((event, i) => event.type === 'text' ? <p className="native-result-text" key={i}>{event.text}</p> : <details key={i}><summary>工具 {event.tool} · {event.status}</summary><pre className="native-result-text">{event.output}</pre></details>)}</article>) : <p>尚未观察到远程回复，正在读取原会话。</p>}</> : !error && <p role="status">正在读取原生会话…</p>}</section>;
 }

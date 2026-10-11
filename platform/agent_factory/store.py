@@ -245,6 +245,24 @@ class Store:
             raise InputCheckError("Immutable plan integrity mismatch")
         return row["body"]
 
+    def latest_personal_task(self, owner, session_id, project_id, native_session_id):
+        """Read durable Factory admission even before a native command exists."""
+        rows = self.sql("""SELECT t.id,t.plan_id,t.run_id FROM af_tasks t JOIN af_plans p ON p.id=t.plan_id
+            WHERE t.owner_id=:owner AND p.owner_id=:owner
+            AND t.request_id='personal:' || p.id
+            AND p.body->>'application'='personal-agent-command-v1'
+            AND p.body->'inputValues'->>'factorySessionId'=:session
+            AND p.body->'inputValues'->>'nativeProjectId'=:project
+            AND p.body->'inputValues'->>'nativeSessionId'=:native
+            AND p.body->'inputValues'->>'action' IN ('prompt','interrupt')
+            ORDER BY t.body->>'createdAt' DESC,t.id DESC LIMIT 1""",
+            owner=owner, session=session_id, project=project_id, native=native_session_id)
+        if not rows: return None
+        row = rows[0]
+        self.plan(row['plan_id'], owner)  # Check the immutable plan hash before returning its identity.
+        return {'planId': row['plan_id'], 'taskId': row['id'], 'nativeRunId': row['run_id'],
+                'executionContract': 'personal-external-v1'}
+
     def reserve_task(self, plan, request_id):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
         with self.transaction() as conn:
