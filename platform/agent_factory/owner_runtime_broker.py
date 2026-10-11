@@ -18,10 +18,11 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import MAX_BYTES, PinnedChatTransport, function_call
+from .byok_model import MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
 from .personal_remote_provider import reject_credential_echo
 
 
@@ -66,7 +67,7 @@ class OwnerRuntimeBroker:
     def authorized(self, token):
         return type(token) is str and hmac.compare_digest(token, self.capability) and time.monotonic() < self.deadline
 
-    async def completion(self, body):
+    async def completion(self, body, session_id=None):
         if type(body) is not dict or body.get('model') != 'owner-model': raise ValueError('MODEL_REQUEST_REJECTED')
         messages = body.get('messages')
         if type(messages) is not list or not 1 <= len(messages) <= 200: raise ValueError('MODEL_REQUEST_REJECTED')
@@ -93,13 +94,16 @@ class OwnerRuntimeBroker:
         self.handle.check()
         lease = self.handle.credential()
         transport_factory = self.handle.service.transport_factory
-        base = self.handle.body['baseURL']
-        transport = transport_factory() if transport_factory else PinnedChatTransport(base[:-3], before_send=self.handle.check)
+        base = base_url(self.handle.body['baseURL'])
+        headers = chat_headers(base, lease, session_id)
+        if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
+        transport = transport_factory() if transport_factory else PinnedChatTransport(
+            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check)
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()
             async with client.stream('POST', base + '/chat/completions', json=request,
-                    headers={'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}) as response:
+                    headers=headers) as response:
                 if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
                     raise ValueError('MODEL_REQUEST_FAILED')
                 chunks, size = [], 0
@@ -145,7 +149,7 @@ class OwnerRuntimeBroker:
                         if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
                         broker.remaining -= 1
                     body = json.loads(raw)
-                    value = asyncio.run(broker.completion(body))
+                    value = asyncio.run(broker.completion(body, self.headers.get('x-opencode-session')))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
                         delta = {'role': 'assistant', 'content': message.get('content')}

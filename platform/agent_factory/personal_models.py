@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from .applications import GovernedStorage
-from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel, base_url, model_id
+from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel, base_url, model_id, model_origin
 from .connections import TrustedConnectionBinding
 from .credential_vault import CredentialVaultError
 from .store import digest, now
@@ -41,6 +41,7 @@ class PersonalModels:
         enabled = self.vault is not None and PROVIDER_ID in self.vault.capabilities()['providerIds']
         return {'enabled': enabled, 'providerId': PROVIDER_ID, 'providers': ['openai', 'openai-compatible'],
             'protocol': 'chat-completions-text-functions-v1', 'baseURLPath': '/v1',
+            'additionalBaseURLs': ['https://opencode.ai/zen/go/v1'],
             'credentialInput': '/api/factory/personal-credentials', 'credentialUsername': 'api-key',
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False,
             'liveCompatibilityVerified': False}
@@ -48,7 +49,7 @@ class PersonalModels:
     def _authorize(self, owner, body):
         return self.vault is not None and self.vault.authorize(owner=owner,
             reference=body['credentialRef'], revision=body['credentialRevision'],
-            provider_id=PROVIDER_ID, destination=body['baseURL'][:-3])
+            provider_id=PROVIDER_ID, destination=model_origin(body['baseURL']))
 
     def _row(self, conn, owner, reference):
         self.connections._key(reference)
@@ -179,7 +180,7 @@ class OwnerModelHandle:
         self.check()
         try:
             lease = self.service.vault.resolve(owner=self.owner, reference=self.body['credentialRef'],
-                revision=self.body['credentialRevision'], provider_id=PROVIDER_ID, destination=self.body['baseURL'][:-3])
+                revision=self.body['credentialRevision'], provider_id=PROVIDER_ID, destination=model_origin(self.body['baseURL']))
             self.check()
             return lease
         except CredentialVaultError:

@@ -14,6 +14,41 @@ from agent_factory.personal_remote_provider import SecretLease
 
 
 class ByokModelTests(unittest.TestCase):
+    def test_official_go_base_url_without_general_path_expansion(self):
+        self.assertEqual(base_url('https://opencode.ai/zen/go/v1'), 'https://opencode.ai/zen/go/v1')
+        for url in ('https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1',
+                    'https://opencode.ai/zen/go/v1?key=fixture', 'https://opencode.ai.evil.example/zen/go/v1'):
+            with self.subTest(url=url), self.assertRaises(ValueError): base_url(url)
+
+    def test_go_agent_headers_and_tools_use_the_selected_model_without_retries(self):
+        requests = []
+        def wire(request):
+            requests.append(request)
+            return httpx.Response(200, json={'model': 'longcat-2.5-preview-free',
+                'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'synthetic answer'}}],
+                'usage': {'prompt_tokens': 12, 'completion_tokens': 3, 'total_tokens': 15}})
+        model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'longcat-2.5-preview-free',
+            'baseURL': 'https://opencode.ai/zen/go/v1'}, lambda: SecretLease('api-key', 'synthetic-key'),
+            transport_factory=lambda: httpx.MockTransport(wire))
+        for _ in range(2): asyncio.run(model.ainvoke([Message(role='user', content='synthetic')]))
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(str(requests[0].url), 'https://opencode.ai/zen/go/v1/chat/completions')
+        self.assertTrue(requests[0].headers['user-agent'].startswith('agent-factory/'))
+        self.assertEqual(requests[0].headers['x-opencode-session'], requests[1].headers['x-opencode-session'])
+        self.assertNotIn('synthetic-key', requests[0].headers['x-opencode-session'])
+        self.assertEqual(json.loads(requests[0].content)['model'], 'longcat-2.5-preview-free')
+
+    def test_go_pinned_transport_approves_only_its_exact_chat_route(self):
+        async def run():
+            transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1')
+            try:
+                for url in ('https://opencode.ai/v1/chat/completions', 'https://opencode.ai/zen/go/v1/models',
+                            'https://other.example.com/zen/go/v1/chat/completions'):
+                    with self.assertRaises(ValueError): await transport.handle_async_request(httpx.Request('POST', url))
+            finally: await transport.aclose()
+            with self.assertRaises(ValueError): PinnedChatTransport('https://other.example.com', base_path='/zen/go/v1')
+        asyncio.run(run())
+
     def model(self, handler, credential=None):
         return OwnerChatModel({'provider': 'openai-compatible', 'model': 'fixture-model',
             'baseURL': 'https://models.example.com/v1'},

@@ -17,6 +17,35 @@ from agent_factory.platform_openresearch import _UnixHTTP
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    def test_go_preserves_native_conversation_header_and_requires_it_before_dispatch(self):
+        self.handle.body['baseURL'] = 'https://opencode.ai/zen/go/v1'
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic coding task'}]}
+        for session in (None, 'invalid header', self.broker.capability, 'synthetic-private-key'):
+            with self.assertRaises(ValueError): asyncio.run(self.broker.completion(body, session))
+        self.assertEqual(self.calls, [])
+        for _ in range(2): asyncio.run(self.broker.completion(body, 'ses_syntheticnative123'))
+        self.assertEqual(len(self.calls), 2)
+        for request in self.calls:
+            self.assertEqual(str(request.url), 'https://opencode.ai/zen/go/v1/chat/completions')
+            self.assertEqual(request.headers['x-opencode-session'], 'ses_syntheticnative123')
+            self.assertTrue(request.headers['user-agent'].startswith('agent-factory/'))
+            self.assertEqual(json.loads(request.content)['model'], 'owner-selected-model')
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Native broker requires AF_UNIX')
+    def test_go_header_survives_the_actual_private_http_boundary(self):
+        self.handle.body['baseURL'] = 'https://opencode.ai/zen/go/v1'
+        self.broker.start(); self.addCleanup(self.broker.close)
+        client = _UnixHTTP(self.broker.path)
+        try:
+            client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
+                'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
+                'Authorization': 'Bearer ' + self.broker.capability,
+                'x-opencode-session': 'ses_syntheticnative123', 'Content-Type': 'application/json'})
+            response = client.getresponse()
+            self.assertEqual(response.status, 200); response.read()
+        finally: client.close()
+        self.assertEqual(self.calls[0].headers['x-opencode-session'], 'ses_syntheticnative123')
+
     def setUp(self):
         self.folder = TemporaryDirectory(); self.addCleanup(self.folder.cleanup)
         self.revoked, self.calls = False, []

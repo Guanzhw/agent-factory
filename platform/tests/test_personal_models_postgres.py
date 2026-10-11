@@ -21,6 +21,21 @@ from pg_fixture import IsolatedPostgres
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires independent disposable PostgreSQL')
 class PersonalModelsPostgresTests(unittest.TestCase):
+    def test_go_metadata_binds_exact_origin_without_invocation_and_rejects_wrong_custody(self):
+        credential = self.request('POST', '/personal-credentials', {'requestId': 'fixture-go-key',
+            'providerId': PROVIDER_ID, 'destination': 'https://opencode.ai',
+            'username': 'api-key', 'password': 'synthetic-test-password'}, expected=201)
+        body = {'provider': 'openai-compatible', 'baseURL': 'https://opencode.ai/zen/go/v1',
+            'model': 'longcat-2.5-preview-free', 'credentialRef': credential['credentialRef'],
+            'credentialRevision': credential['credentialRevision'], 'requestId': 'fixture-go-configure'}
+        model = self.request('POST', '/personal-models', body, expected=201)
+        self.assertEqual(model['baseURL'], body['baseURL'])
+        self.assertEqual(self.request('POST', '/personal-models', body, expected=201), model)
+        self.assertEqual(self.calls, [])
+        self.request('POST', '/personal-models', {**body, 'requestId': 'fixture-go-foreign'}, owner='bob', expected=403)
+        self.request('POST', '/personal-models', {**body, 'baseURL': 'https://other.example.com/v1',
+            'requestId': 'fixture-go-destination'}, expected=403)
+
     def setUp(self):
         self.database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()
         self.addCleanup(self.database.__exit__, None, None, None)

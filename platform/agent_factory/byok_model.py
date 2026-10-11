@@ -11,6 +11,7 @@ import json
 import re
 from typing import Callable, cast
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 from agno.exceptions import ModelProviderError
@@ -24,19 +25,39 @@ PROVIDER_ID = 'byok-chat-v1'
 ADAPTER_ID = 'owner-chat-completions-v1'
 CAPABILITY = 'model:invoke'
 MAX_BYTES = 1_048_576
+GO_BASE = 'https://opencode.ai/zen/go/v1'
+CLIENT_USER_AGENT = 'agent-factory/0.2 (+https://github.com/Guanzhw/agent-factory)'
 
 
 def base_url(value):
     try:
         parsed = urlsplit(value)
-        if parsed.path.rstrip('/') != '/v1':
+        path = parsed.path.rstrip('/')
+        if path not in {'/v1', '/zen/go/v1'}:
             raise ValueError()
-        destination = origin(value[:value.index('/v1')])
-        if value not in {destination + '/v1', destination + '/v1/'}:
+        destination = origin(f'{parsed.scheme}://{parsed.netloc}')
+        if path != '/v1' and destination + path != GO_BASE:
             raise ValueError()
-        return destination + '/v1'
+        if value not in {destination + path, destination + path + '/'}:
+            raise ValueError()
+        return destination + path
     except (ValueError, TypeError, AttributeError):
         raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED') from None
+
+
+def model_origin(value):
+    parsed = urlsplit(base_url(value))
+    return origin(f'{parsed.scheme}://{parsed.netloc}')
+
+
+def chat_headers(base, lease, session_id):
+    headers = {'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}
+    if base_url(base) == GO_BASE:
+        if (type(session_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', session_id)
+                or session_id == lease.password):
+            raise ValueError('PERSONAL_MODEL_SESSION_REQUIRED')
+        headers.update({'User-Agent': CLIENT_USER_AGENT, 'x-opencode-session': session_id})
+    return headers
 
 
 def model_id(value):
@@ -46,14 +67,15 @@ def model_id(value):
 
 
 class PinnedChatTransport(httpx.AsyncBaseTransport):
-    def __init__(self, destination, *, before_send=None):
+    def __init__(self, destination, *, before_send=None, base_path='/v1'):
         self.destination = origin(destination)
+        self.base = base_url(self.destination + base_path)
         self.before_send = before_send
         self.probe = PinnedHTTPSProbe()
         self.transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
 
     async def handle_async_request(self, request):
-        if request.method != 'POST' or str(request.url) != self.destination + '/v1/chat/completions':
+        if request.method != 'POST' or str(request.url) != self.base + '/chat/completions':
             raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED')
         addresses = await asyncio.to_thread(self.probe.addresses, self.destination)
         if self.before_send is not None:
@@ -93,6 +115,7 @@ class OwnerChatModel(Model):
         self._credential = credential
         self._transport_factory = transport_factory
         self._recheck = recheck
+        self._session_id = 'af-agent-' + uuid4().hex
 
     def __repr__(self):
         return 'OwnerChatModel(credentials=<redacted>)'
@@ -126,13 +149,14 @@ class OwnerChatModel(Model):
             body = self._body(messages, **kwargs)
             # Resolve on every call. Rotation/revocation never leaves a cached key.
             lease = await asyncio.to_thread(self._credential)
-            transport = self._transport_factory() if self._transport_factory else PinnedChatTransport(self._base[:-3], before_send=self._recheck)
+            transport = self._transport_factory() if self._transport_factory else PinnedChatTransport(
+                model_origin(self._base), base_path=urlsplit(self._base).path, before_send=self._recheck)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
             async with asyncio.timeout(30), httpx.AsyncClient(transport=transport, trust_env=False,
                     follow_redirects=False, timeout=10, auth=None) as client:
                 async with client.stream('POST', self._base + '/chat/completions', json=body,
-                        headers={'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}) as response:
+                        headers=chat_headers(self._base, lease, self._session_id)) as response:
                     if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
                         raise rejected('PERSONAL_MODEL_REQUEST_FAILED')
                     chunks, size = [], 0
