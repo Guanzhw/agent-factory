@@ -43,13 +43,39 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 describe('workspace mounted application boundaries', () => {
+  it('groups application, resource and task entry points while leaving advanced tools collapsed', async () => {
+    await render();
+    const primary = [...host.querySelectorAll('nav > button')].map(button => button.textContent);
+    expect(primary).toEqual(['应用', '资源', '任务', '高级与管理']);
+    expect(host.querySelector('#secondary-navigation')?.classList.contains('expanded')).toBe(false);
+    await click('资源');
+    expect(window.location.search).toContain('tab=resources');
+    expect(host.querySelector('h1')?.textContent).toBe('我的资源');
+    expect(text()).toContain('设置我的模型/API'); expect(text()).toContain('管理服务器与连接');
+    expect(text()).toContain('都需要在应用中明确发起');
+    expect(api.autoresearch.start).not.toHaveBeenCalled();
+    await click('任务'); expect(text()).toContain('选择已有任务查看进度');
+    await click('进入 OpenResearch'); expect(window.location.search).toContain('tab=openresearch');
+    expect(personalAgentApi.sessions).toHaveBeenCalled();
+    expect(api.autoresearch.start).not.toHaveBeenCalled();
+  });
+  it('restores resources on refresh and uses Back without creating work', async () => {
+    window.history.replaceState(null, '', '/?tab=resources'); await render();
+    expect(host.querySelector('h1')?.textContent).toBe('我的资源');
+    await click('应用');
+    await act(async () => { window.history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(host.querySelector('h1')?.textContent).toBe('我的资源');
+    await act(async () => root.unmount()); root = createRoot(host); await render();
+    expect(host.querySelector('h1')?.textContent).toBe('我的资源');
+    expect(api.autoresearch.start).not.toHaveBeenCalled();
+  });
   it('opens the catalog and places composition only in the developer entry', async () => {
     await render();
     expect(host.querySelector('h1')?.textContent).toBe('选择你的工作区');
     expect(host.querySelector('#application-selector')).toBeNull();
     expect(text()).toContain('进入 OpenResearch');
     expect(text()).not.toContain('Checksum 是开发示例'); expect(host.querySelector('.or-development-card')).toBeNull();
-    await click('工具、资源与管理入口');
+    await click('高级与管理');
     await click('开发者装配');
     expect(host.querySelector('#application-selector')).not.toBeNull();
     expect(host.querySelector('nav')?.textContent).not.toContain('应用管理');
@@ -79,7 +105,7 @@ describe('workspace mounted application boundaries', () => {
     window.history.replaceState(null, '', '/?tab=research&task=task-one'); await render();
     expect(api.detail).toHaveBeenCalledWith('task-one', expect.any(AbortSignal));
     expect(text()).toContain('任务不存在或无权访问');
-    await click('应用目录');
+    await click('应用');
     await act(async () => { window.history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
     expect(host.querySelector('h1')?.textContent).toBe('任务与证据');
     await act(async () => { window.history.forward(); await new Promise(resolve => setTimeout(resolve, 20)); });

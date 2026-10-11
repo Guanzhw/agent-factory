@@ -7,7 +7,7 @@ describe('Factory application workspace navigation', () => {
     expect(read('?tab=unknown')).toEqual(read(''));
   });
   it('restores task and research deep links on reload', () => {
-    for (const query of ['?tab=research&task=task-one', '?tab=autoresearch&run=run-one', '?tab=openresearch&project=orp-one']) {
+    for (const query of ['?tab=resources', '?tab=models', '?tab=connections', '?tab=research&task=task-one', '?tab=autoresearch&run=run-one', '?tab=openresearch&project=orp-one']) {
       const route = read(query); const href = workspaceUrl(new URL('https://factory.test/'), route);
       expect(read(href)).toEqual(route);
     }
