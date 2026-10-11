@@ -40,11 +40,26 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
             client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
                 'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
                 'Authorization': 'Bearer ' + self.broker.capability,
-                'x-opencode-session': 'ses_syntheticnative123', 'Content-Type': 'application/json'})
+                'x-opencode-session-id': 'ses_syntheticnative123', 'Content-Type': 'application/json'})
             response = client.getresponse()
             self.assertEqual(response.status, 200); response.read()
         finally: client.close()
         self.assertEqual(self.calls[0].headers['x-opencode-session'], 'ses_syntheticnative123')
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Native broker requires AF_UNIX')
+    def test_go_conflicting_native_conversation_headers_reject_before_dispatch(self):
+        self.handle.body['baseURL'] = 'https://opencode.ai/zen/go/v1'
+        self.broker.start(); self.addCleanup(self.broker.close)
+        client = _UnixHTTP(self.broker.path)
+        try:
+            client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
+                'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
+                'Authorization': 'Bearer ' + self.broker.capability,
+                'x-opencode-session-id': 'ses_syntheticnative123',
+                'x-opencode-session': 'ses_differentfixture123', 'Content-Type': 'application/json'})
+            response = client.getresponse(); self.assertEqual(response.status, 400); response.read()
+        finally: client.close()
+        self.assertEqual(self.calls, [])
 
     def setUp(self):
         self.folder = TemporaryDirectory(); self.addCleanup(self.folder.cleanup)

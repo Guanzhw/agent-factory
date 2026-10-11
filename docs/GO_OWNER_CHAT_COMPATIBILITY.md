@@ -14,8 +14,9 @@ model, discover models, change account settings, or select a fallback model.
 Model names and credentials remain the owner's explicit choices.
 
 The native ORX/OpenCode runtime owns its conversation and tool loop. Its private
-broker preserves `x-opencode-session` and sends an Agent Factory user agent on
-Go requests; missing or malformed session headers fail before external IO.
+broker maps the pinned custom provider's `x-opencode-session-id` to Go's
+`x-opencode-session`, and sends an Agent Factory user agent. Conflicting,
+missing or malformed session headers fail before external IO.
 The independent Agno executor uses its run-scoped owner model instance with a
 stable generated conversation ID. Neither path uses the development Go adapter
 or a private URL-rewriting test adapter.
@@ -24,6 +25,8 @@ Contract reference: [OpenCode Go documentation](https://opencode.ai/docs/go/),
 reviewed 2026-10-11. Controlled tests cover official routing, headers, safe
 credential custody, native broker HTTP forwarding and ordinary `/v1` behavior.
 They establish local behavior, not live Go compatibility.
+
+Native header reference: [OpenCode 1.18.35 request preparation](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/session/llm/request.ts).
 
 Live acceptance remains pending. A subsequent explicitly authorized bounded
 run must save the official URL through the normal UI, use the production pinned

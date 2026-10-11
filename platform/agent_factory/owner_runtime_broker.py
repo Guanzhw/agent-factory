@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
+from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
 from .personal_remote_provider import reject_credential_echo
 
 
@@ -143,13 +143,22 @@ class OwnerRuntimeBroker:
                     return self.reply(400, {'error': 'MODEL_REQUEST_REJECTED'})
                 token = self.headers.get('Authorization', '').removeprefix('Bearer ')
                 if not broker.authorized(token): return self.reply(401, {'error': 'MODEL_CAPABILITY_EXPIRED'})
+                # Pinned OpenCode's custom factory provider sends session-id;
+                # its built-in Go provider sends session. Preserve the native
+                # conversation, never substitute the secret broker capability.
+                session_id = self.headers.get('x-opencode-session')
+                native_session_id = self.headers.get('x-opencode-session-id')
+                if (broker.handle.body['baseURL'] == GO_BASE and session_id and native_session_id
+                        and session_id != native_session_id):
+                    return self.reply(400, {'error': 'MODEL_SESSION_REJECTED'})
+                session_id = session_id or native_session_id
                 if not broker.gate.acquire(blocking=False): return self.reply(429, {'error': 'MODEL_BUSY'})
                 try:
                     with broker.lock:
                         if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
                         broker.remaining -= 1
                     body = json.loads(raw)
-                    value = asyncio.run(broker.completion(body, self.headers.get('x-opencode-session')))
+                    value = asyncio.run(broker.completion(body, session_id))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
                         delta = {'role': 'assistant', 'content': message.get('content')}
