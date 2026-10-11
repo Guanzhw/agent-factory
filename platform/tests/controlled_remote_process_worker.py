@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 import stat
 import sys
-import time
 import threading
 from typing import Any
 from unittest.mock import patch
@@ -33,7 +32,7 @@ from agent_factory.main import create_app
 from agent_factory.material_governance import MaterialDefinition
 from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, birth, same_birth
 from agent_factory.process_provider import ProcessResourceProvider
-from agent_factory.process_runtime_profile import (MODEL_ID, TOOL_NAME, process_settings,
+from agent_factory.process_runtime_profile import (MODEL_ID, TOOL_NAME, ProcessFixtureModel, process_settings,
     publish_process_application, registrations)
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
@@ -136,10 +135,64 @@ def provider_observations(leases, rows):
     return result
 
 
+class LaunchBoundaryExit:
+    """Fixture-only crash after accepted dispatch and the same real guardian spawn."""
+    def __init__(self, marker):
+        self.marker = marker
+        self.lock = threading.Lock()
+        self.pending = False
+        self.task_id = None
+        self.launches = {}
+
+    def arm(self):
+        with self.lock:
+            if self.pending:
+                raise RuntimeError("A fixture crash boundary is already pending")
+            self.pending, self.task_id, self.launches = True, None, {}
+
+    def disarm(self):
+        with self.lock:
+            self.pending, self.task_id, self.launches = False, None, {}
+
+    def accepted(self, task_id):
+        if type(task_id) is not str or not task_id:
+            raise ValueError("Accepted fixture dispatch has no task identity")
+        with self.lock:
+            self.task_id = task_id
+            self._exit_if_ready()
+
+    def launched(self, original, process):
+        # Only the Popen retained by this original adapter is inspected. A launch
+        # attempt, queued native ticket or unpinned process is not start proof.
+        with self.lock:
+            if not self.pending:
+                return
+        if process is None or process.poll() is not None:
+            return
+        guardian = birth(process.pid)
+        if (not same_birth(guardian, guardian) or guardian["bootId"] != original["bootId"]
+                or guardian["group"] != process.pid or guardian["state"] == "Z"):
+            return
+        with self.lock:
+            if self.pending:
+                self.launches[original["taskId"]] = {"processId": original["id"],
+                    "taskId": original["taskId"], "guardian": guardian}
+                self._exit_if_ready()
+
+    def _exit_if_ready(self):
+        proof = self.launches.get(self.task_id)
+        if self.pending and proof is not None:
+            self.pending = False
+            self.marker.write_text(json.dumps({"phase": "after-process-launch-before-http-ack",
+                "pid": os.getpid(), **proof}))
+            os._exit(41)
+
+
 class DropControlAcknowledgement:
     """One post-effect acknowledgement loss; no dispatch/cancel call replay."""
-    def __init__(self, app, controls, store, marker):
+    def __init__(self, app, controls, store, marker, launch_exit=None):
         self.app, self.controls, self.store, self.marker = app, controls, store, marker
+        self.launch_exit = launch_exit
 
     async def __call__(self, scope, receive, send):
         fault = self.controls.get("fault")
@@ -180,22 +233,35 @@ class DropControlAcknowledgement:
         buffered = []
         async def capture(message):
             buffered.append(message)
+        if fault == "exit_after_dispatch":
+            if self.launch_exit is None:
+                raise RuntimeError("Fixture launch boundary is unavailable")
+            self.launch_exit.arm()
+            try:
+                await self.app(scope, receive, capture)
+                status = next(item["status"] for item in buffered if item["type"] == "http.response.start")
+                if 200 <= status < 300:
+                    body = json.loads(b"".join(item.get("body", b"") for item in buffered
+                        if item["type"] == "http.response.body"))
+                    self.launch_exit.accepted(body["remoteTaskId"])
+                    # Exit is driven by the original launch callback, in either
+                    # ordering. Bound a missing effect without forwarding a
+                    # success ACK or changing any execution/lease deadline.
+                    try:
+                        await asyncio.wait_for(asyncio.Event().wait(), timeout=45)
+                    except TimeoutError:
+                        self.launch_exit.disarm()
+                        return await JSONResponse({"detail": "CONTROLLED_CRASH_BOUNDARY_NOT_REACHED"}, status_code=503)(scope, receive, send)
+                for message in buffered:
+                    await send(message)
+                return
+            finally:
+                self.launch_exit.disarm()
         await self.app(scope, receive, capture)
         status = next(item["status"] for item in buffered if item["type"] == "http.response.start")
         if 200 <= status < 300:
-            if fault in {"exit_after_dispatch", "exit_after_queued_dispatch"}:
-                if fault == "exit_after_dispatch":
-                    deadline = time.monotonic() + 8
-                    while time.monotonic() < deadline:
-                        if self.store.sql("SELECT id FROM af_events WHERE type='fixture_process_launch_returned' LIMIT 1"):
-                            break
-                        await asyncio.sleep(.025)
-                    else:
-                        for message in buffered:
-                            await send(message)
-                        return
-                self.marker.write_text(json.dumps({"phase": "after-process-launch-before-http-ack" if fault == "exit_after_dispatch"
-                    else "after-native-queue-before-http-ack", "pid": os.getpid()}))
+            if fault == "exit_after_queued_dispatch":
+                self.marker.write_text(json.dumps({"phase": "after-native-queue-before-http-ack", "pid": os.getpid()}))
                 os._exit(41)
             self.controls["fault"] = None
             self.controls["droppedAcknowledgements"] += 1
@@ -314,6 +380,17 @@ def main():
     workload = configuration.get("workload", "normal")
     if workload not in {"normal", "sleep", "unknown", "deadline"}:
         raise ValueError("Only fixed synthetic workloads are supported")
+    model_delay = configuration.get("modelStartDelaySeconds", 0)
+    if type(model_delay) is not int or model_delay not in {0, 9}:
+        raise ValueError("Only the fixed synthetic startup-delay regression is supported")
+    if model_delay:
+        original_invoke = ProcessFixtureModel.ainvoke
+        async def delayed_invoke(self, messages, **kwargs):
+            if not getattr(self, "_fixture_start_delayed", False):
+                self._fixture_start_delayed = True
+                await asyncio.sleep(model_delay)
+            return await original_invoke(self, messages, **kwargs)
+        ProcessFixtureModel.ainvoke = delayed_invoke
     owner = ORIGIN_OWNER if role == "origin" else RECEIVER_OWNER
     target_ref = ORIGIN_PROCESS if role == "origin" else RECEIVER_PROCESS
     bootstrap = Store(configuration["dbUrl"], Settings(db_url=configuration["dbUrl"], workspace=workspace))
@@ -381,6 +458,7 @@ def main():
                                             "materials": configuration["sourceMaterials"]}
     snapshot, materials = _publish(state, source)
     controls = {"fault": None, "droppedAcknowledgements": 0}
+    launch_exit = LaunchBoundaryExit(directory / (role + "-fault.json"))
     allocation_diagnostics = AllocationDiagnostics()
     original_allocate = provider.allocate_bound
     async def diagnostic_allocate(lease, *, before_effect):
@@ -395,6 +473,7 @@ def main():
             with patch("agent_factory.process_enforcement.subprocess.Popen", side_effect=OSError("Controlled launch acknowledgement unknown")):
                 return original_launch(adapter, owner_id=owner_id, before_effect=before_effect)
         result = original_launch(adapter, owner_id=owner_id, before_effect=before_effect)
+        launch_exit.launched(original, adapter._process)
         state["store"].event(original["taskId"], "fixture_process_launch_returned", "Original guardian launch returned", {"processId": original["id"]})
         return result
     def counted_cancel(self, *, owner_id):
@@ -553,7 +632,7 @@ def main():
         return {"fixtureOnly": True, "op": op}
 
     import uvicorn
-    wrapped = DropControlAcknowledgement(app, controls, state["store"], directory / (role + "-fault.json"))
+    wrapped = DropControlAcknowledgement(app, controls, state["store"], directory / (role + "-fault.json"), launch_exit)
     uvicorn.run(wrapped, host="127.0.0.1", port=settings.port, access_log=False, log_level="warning")
 
 
