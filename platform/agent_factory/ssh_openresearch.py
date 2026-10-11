@@ -76,6 +76,10 @@ class SSHServer:
         require(root.is_absolute() and '..' not in root.parts and not any(c in str(root) for c in '\n\r,:'))
     def pin(self): return digest(self.__dict__)
 
+    def scope_pin(self):
+        return digest({key: getattr(self, key) for key in
+            ('reference', 'owner', 'address', 'port', 'username', 'host_key', 'allowed_root')})
+
 
 @dataclass(frozen=True, repr=False)
 class SSHOpenResearchConfig:
@@ -166,7 +170,7 @@ class SSHOpenResearchPackage:
         lease = self._credential(server)
         return {'location': 'ssh', 'serverRef': server.reference, 'serverRevision': server.revision,
             'serverPin': server.pin(), 'identityPin': hashlib.sha256(lease.public_key.encode()).hexdigest(),
-            'remoteDirectory': str(path)}, lease
+            'remoteDirectory': str(path), 'serverScopePin': server.scope_pin()}, lease
 
     def _credential(self, server):
         if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
@@ -176,12 +180,13 @@ class SSHOpenResearchPackage:
         require(isinstance(lease, SSHAgentLease)); lease.validate()
         return lease
 
-    def _scope(self, body):
+    def _scope(self, body, expected=None):
         require(body['packageVersion'] == self.version)
         server = self._server(body['ownerId'], body['serverRef'])
         selected, lease = self._selection(server, body['remoteDirectory'])
-        require(selected == {
-            key: body[key] for key in ('location', 'serverRef', 'serverRevision', 'serverPin', 'identityPin', 'remoteDirectory')})
+        keys = ('location', 'serverRef', 'serverRevision', 'serverPin', 'identityPin', 'remoteDirectory')
+        if 'serverScopePin' in body: keys += ('serverScopePin',)
+        require({key: selected[key] for key in keys} == (expected or {key: body[key] for key in keys}))
         return server, lease
 
     def _ssh(self, server, lease, local, command, forward=None):
@@ -280,7 +285,8 @@ class SSHOpenResearchPackage:
 
     def prepare(self, body, handle):
         with self.lock:
-            server, lease = self._scope(body); handle.check()
+            expected = getattr(handle, 'environment_selection', None)
+            server, lease = self._scope(body, expected); handle.check()
             if body['id'] in self.live and self.check(body): return
             old = self.live.pop(body['id'], None)
             if old: old['channel'].close(); old['broker'].close(); old['local'].cleanup()
@@ -289,9 +295,11 @@ class SSHOpenResearchPackage:
             try: result = self._install(server, lease, body, local, nonce)
             except Exception: folder.cleanup(); raise
             custody = self
+            connection_revision = getattr(handle, 'environment_credential_revision', body['modelRevision'])
             class OwnedHandle:
                 body, service = handle.body, handle.service
-                def check(self): custody._scope(body); handle.check()
+                environment_credential_revision = connection_revision
+                def check(self): custody._scope(body, expected); handle.check()
                 def credential(self): self.check(); return handle.credential()
             broker = OwnerRuntimeBroker(local / 'broker.sock', OwnedHandle(), ttl=self.config.runtime.max_active_seconds)
             remote_socket = str(Path(result['control']) / nonce / 'broker.sock')
@@ -352,7 +360,12 @@ class SSHOpenResearchPackage:
             'interruptedWorkRecovery': False, 'externalToolNetwork': False}
     def connection_configuration(self, body):
         return {'origin': 'https://' + body['id'] + '.platform.invalid', 'credentialRef': body['id'],
-            'credentialRevision': body['modelRevision'], 'authMode': 'bearer', 'projectId': body['projectId'],
+            'credentialRevision': self.connection_revision(body), 'authMode': 'bearer', 'projectId': body['projectId'],
             'sessionDefaults': {'harness': 'opencode', 'model': 'factory/owner-model'}}
+
+    def connection_revision(self, body):
+        live = self.live.get(body['id'])
+        revision = getattr(live['broker'].handle, 'environment_credential_revision', None) if live else None
+        return revision if type(revision) is str else body['modelRevision']
     def close(self):
         for live in list(self.live.values()): self.stop(live['body'])

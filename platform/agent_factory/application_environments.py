@@ -15,7 +15,7 @@ import re
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from .applications import GovernedStorage
@@ -43,6 +43,8 @@ class ApplicationEnvironments:
             Column('fingerprint', String, nullable=False), Column('environment_id', String, nullable=False),
             Column('action', String, nullable=False), Column('state', String, nullable=False),
             Column('diagnostic', String), Column('created_at', String, nullable=False))
+        from .environment_bindings import EnvironmentBindings
+        self.bindings = EnvironmentBindings(self, metadata)
         metadata.create_all(store.engine)
 
     def capabilities(self, owner):
@@ -57,6 +59,13 @@ class ApplicationEnvironments:
         self.auth.require(owner, 'read')
         package = self.packages.get('openresearch:ssh')
         return package.servers(owner) if package is not None else []
+
+    def list(self, owner):
+        self.auth.require(owner, 'read')
+        with self.db.read() as conn:
+            identifiers = conn.execute(select(self.environments.c.id).where(self.environments.c.owner_id == owner)
+                .order_by(self.environments.c.updated_at.desc()).limit(100)).scalars().all()
+            return [self._public(self._row(conn, owner, identifier)) for identifier in identifiers]
 
     def _package(self, application, body):
         location = body.get('location', 'platform')
@@ -82,7 +91,13 @@ class ApplicationEnvironments:
         if row is None: raise HTTPException(404, 'ENVIRONMENT_NOT_FOUND')
         if digest(row['body']) != row['body_hash'] or row['body']['ownerId'] != owner:
             raise HTTPException(409, 'ENVIRONMENT_INTEGRITY')
-        return dict(row)
+        result = dict(row)
+        result['credential_binding'] = self.bindings.current(conn, result)
+        operation = conn.execute(select(self.requests).where(self.requests.c.owner_id == owner,
+            self.requests.c.environment_id == identifier).order_by(self.requests.c.created_at.desc()).limit(1)).mappings().first()
+        result['last_operation'] = {'requestId': operation['request_id'], 'action': operation['action'],
+            'state': operation['state'].lower()} if operation else None
+        return result
 
     def _public(self, row):
         package = self._package(row['application_id'], row['body'])
@@ -91,7 +106,11 @@ class ApplicationEnvironments:
             **({key: row['body'][key] for key in ('serverRef', 'remoteDirectory')} if row['body'].get('location') == 'ssh' else {}),
             'state': row['state'].lower(), 'packageVersion': row['body']['packageVersion'],
             'projectId': row['body']['projectId'], 'connectionRef': row['connection_ref'],
-            'modelReference': row['body']['modelReference'], 'modelRevision': row['body']['modelRevision'],
+            'modelReference': row['credential_binding']['modelReference'],
+            'modelRevision': row['credential_binding']['modelRevision'],
+            'originalModelReference': row['body']['modelReference'], 'originalModelRevision': row['body']['modelRevision'],
+            'credentialBindingFingerprint': digest(row['credential_binding']),
+            'lastOperation': row['last_operation'],
             'dataRetained': True, 'researchSubmitted': False, 'updatedAt': row['updated_at'],
             **({'runtimeLimits': policy()} if callable(policy) else {})}
 
@@ -120,14 +139,22 @@ class ApplicationEnvironments:
             'diagnostic': result['diagnostic'], 'environment': self.inspect(owner, result['environment_id'])}
 
     def model_handle(self, owner, body):
+        with self.db.read() as conn: row = self._row(conn, owner, body['id'])
+        if row['body'] != body: raise HTTPException(409, 'ENVIRONMENT_INTEGRITY')
+        effective = row['credential_binding']
         with self.models.db.read() as conn:
-            binding = self.models.binding(conn, owner, body['modelReference'])
-            if binding.revision != body['modelRevision']: raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED')
-            return binding.opaque_handle
+            binding = self.models.binding(conn, owner, effective['modelReference'])
+            if binding.revision != effective['modelRevision']: raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED')
+            if effective == self.bindings.original(row): return binding.opaque_handle
+            from .environment_bindings import EnvironmentModelHandle
+            return EnvironmentModelHandle(self, owner, body, effective, binding.opaque_handle)
 
-    def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None):
+    def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None,
+                new_environment=False, environment_id=None):
         self.auth.require(owner, 'run')
         self.connections._key(request_id)
+        if new_environment and environment_id is not None:
+            raise HTTPException(422, 'ENVIRONMENT_INTENT_INVALID')
         package = self._package(application, {'location': location})
         if package is None: raise HTTPException(409, 'ENVIRONMENT_PACKAGE_UNAVAILABLE')
         selection = {}
@@ -140,7 +167,21 @@ class ApplicationEnvironments:
             intent.update(serverRef=server_ref, directory=selection['remoteDirectory'])
         elif location != 'platform' or server_ref is not None or directory is not None:
             raise HTTPException(422, 'ENVIRONMENT_LOCATION_INVALID')
+        if new_environment:
+            identity['generation'] = request_id
+            intent['newEnvironment'] = True
         identifier = 'env-' + digest(identity)[:32]
+        if environment_id is not None:
+            # An explicit restore selects existing owner custody, never derives
+            # a default generation or creates a replacement for a missing ID.
+            with self.db.read() as conn: original = self._row(conn, owner, environment_id)
+            body = original['body']
+            if (original['application_id'] != application or body.get('location', 'platform') != location
+                    or location == 'ssh' and (body['serverRef'] != server_ref
+                        or body['remoteDirectory'] != selection['remoteDirectory'])):
+                raise HTTPException(409, 'ENVIRONMENT_SELECTION_MISMATCH')
+            identifier = environment_id
+            intent['environmentId'] = identifier
         fingerprint = digest(intent)
         with self._fence(identifier):
             with self.db.write() as conn:
@@ -151,15 +192,30 @@ class ApplicationEnvironments:
                     # GET is the recovery operation. POST replay returns custody;
                     # an interrupted prepare requires a new explicit prepare.
                     return self.request(owner, request_id)
+                if new_environment and location == 'ssh':
+                    # The fixed SSH installer never overwrites different bytes
+                    # in factory_package. Another generation cannot silently
+                    # upgrade that directory or erase the original data.
+                    existing = conn.execute(select(self.environments.c.id).where(
+                        self.environments.c.owner_id == owner,
+                        self.environments.c.application_id == application)).scalars().all()
+                    for candidate in existing:
+                        original = self._row(conn, owner, candidate)['body']
+                        if (original.get('location') == 'ssh' and original.get('serverRef') == server_ref
+                                and original.get('remoteDirectory') == selection['remoteDirectory']
+                                and original['packageVersion'] != package.version):
+                            raise HTTPException(409, 'ENVIRONMENT_SSH_PACKAGE_UPDATE_UNSUPPORTED')
                 model = self.models.default(owner)
                 old = conn.execute(select(self.environments).where(self.environments.c.id == identifier,
                     self.environments.c.owner_id == owner)).mappings().first()
                 if old:
                     row = self._row(conn, owner, identifier)
                     body = row['body']
-                    if body['modelReference'] != model['reference'] or body['modelRevision'] != model['revision']:
+                    effective = row['credential_binding']
+                    if effective['modelReference'] != model['reference'] or effective['modelRevision'] != model['revision']:
                         raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED: keep original work; explicit migration required')
-                    if any(body.get(key) != value for key, value in selection.items()):
+                    selected = self.bindings.selection(body, selection)
+                    if selected != effective['serverSelection']:
                         raise HTTPException(409, 'ENVIRONMENT_SERVER_CHANGED: explicit migration required')
                     if body['packageVersion'] != package.version:
                         raise HTTPException(409, 'ENVIRONMENT_UPDATE_REQUIRES_MIGRATION')
@@ -249,6 +305,8 @@ class PrepareEnvironment(BaseModel):
     location: str = 'platform'
     serverRef: str | None = Field(default=None, max_length=80)
     directory: str | None = Field(default=None, max_length=4096)
+    newEnvironment: StrictBool = False
+    environmentId: str | None = Field(default=None, pattern=r'^env-[a-f0-9]{32}$')
 
 
 class StopEnvironment(BaseModel):
@@ -256,9 +314,18 @@ class StopEnvironment(BaseModel):
     requestId: str = Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_.:-]+$')
 
 
+class RebindEnvironment(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    requestId: str = Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_.:-]+$')
+    previewHash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    approved: StrictBool
+
+
 def environment_router(auth, service):
     router = APIRouter(prefix='/api/factory/application-environments')
     def owner(request): return auth.user(request)['id']
+    @router.get('')
+    def environments(request: Request): return service.list(owner(request))
     @router.get('/capabilities')
     def capabilities(request: Request): return service.capabilities(owner(request))
     @router.get('/servers')
@@ -269,7 +336,21 @@ def environment_router(auth, service):
         if request.headers.get('X-Factory-Expected-Owner') != current:
             raise HTTPException(409, 'EXPECTED_OWNER_MISMATCH')
         return service.prepare(current, body.applicationId, body.requestId, location=body.location,
-            server_ref=body.serverRef, directory=body.directory)
+            server_ref=body.serverRef, directory=body.directory, new_environment=body.newEnvironment,
+            environment_id=body.environmentId)
+
+    @router.get('/binding-requests/{request_id}')
+    def binding_request(request_id: str, request: Request): return service.bindings.request(owner(request), request_id)
+
+    @router.get('/{identifier}/continuation')
+    def continuation(identifier: str, request: Request): return service.bindings.preview(owner(request), identifier)
+
+    @router.post('/{identifier}/rebind')
+    def rebind(identifier: str, body: RebindEnvironment, request: Request):
+        current = owner(request)
+        if request.headers.get('X-Factory-Expected-Owner') != current: raise HTTPException(409, 'EXPECTED_OWNER_MISMATCH')
+        if body.approved is not True: raise HTTPException(403, 'ENVIRONMENT_BINDING_CONSENT_REQUIRED')
+        return service.bindings.rebind(current, identifier, body.requestId, body.previewHash)
     @router.get('/requests/{request_id}')
     def recovery(request_id: str, request: Request): return service.request(owner(request), request_id)
     @router.get('/{identifier}')
