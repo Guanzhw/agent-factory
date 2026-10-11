@@ -172,6 +172,25 @@ it('a fresh browser discovers the original preparing request and blocks another 
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
 
+it('opening original history discovers its environment when the expired SSH binding is absent from usable servers', async () => {
+  vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
+  vi.spyOn(applicationEnvironmentApi, 'servers').mockResolvedValue([]);
+  const original = { ...env, location: 'ssh' as const, serverRef: 'expired-owned-server', remoteDirectory: '/private/alice/research', state: 'unavailable' };
+  const history = { id: 'session-fixture', nativeProjectId: env.projectId, nativeSessionId: 'native-session-fixture',
+    namespace: 'native-openresearch', connectionRef: env.connectionRef, state: 'result_observed', activeRequestId: null,
+    bindingStatus: 'unavailable', connectionPin: { ownerId: owner.id, capabilities: ['session:read', 'session:prompt'] }, observation: null } as unknown as PersonalSession;
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([history]); vi.spyOn(personalAgentApi, 'session').mockResolvedValue(history);
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([original, { ...original, id: 'unrelated-environment', projectId: 'unrelated-project' }]);
+  vi.mocked(applicationEnvironmentApi.inspect).mockResolvedValue(original);
+  await mount();
+  const entry = host.querySelector<HTMLButtonElement>('.research-session-entry button')!;
+  await act(async () => entry.click());
+  expect(applicationEnvironmentApi.inspect).toHaveBeenCalledWith(owner.id, env.id, expect.any(AbortSignal));
+  expect(host.textContent).toContain('服务器环境：原环境当前不可用，原数据保留');
+  expect(host.textContent).toContain('核对恢复条件');
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
 it('explicit incompatible-package choice creates another environment without sending a retained goal', async () => {
   vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([{ ...env, state: 'stopped' }]);
   vi.mocked(applicationEnvironmentApi.inspect).mockResolvedValue({ ...env, state: 'stopped' });

@@ -113,20 +113,29 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
     return () => ctrl.abort();
   }, [ownerId, researchJourney, revision]);
   useEffect(() => {
-    if (!researchJourney || environmentRequest || location === 'existing') return;
+    const originalProject = session?.nativeProjectId ?? project?.nativeProjectId;
+    if (!researchJourney || environmentRequest || location === 'existing' && !originalProject) return;
     const ctrl = new AbortController();
     void (async () => {
       try {
         const records = await applicationEnvironmentApi.list(ownerId, ctrl.signal);
         if (ctrl.signal.aborted || !Array.isArray(records)) return;
-        const matches = records.filter(item => item.location === location && (location !== 'ssh' || item.serverRef === serverRef));
-        const original = matches.find(item => item.projectId === project?.nativeProjectId) ?? matches[0];
+        // An expired server binding can disappear from the usable-server list.
+        // The selected original session still identifies its owned environment;
+        // discovery never substitutes another project or confers server access.
+        const matches = records.filter(item => originalProject ? item.projectId === originalProject
+          : item.location === location && (location !== 'ssh' || item.serverRef === serverRef));
+        const original = matches.length === 1 ? matches[0] : undefined;
         if (!original) return;
         // Stored READY is not process proof. Inspect the owned original before
         // displaying availability; these GETs cannot install or submit a goal.
         const checked = await applicationEnvironmentApi.inspect(ownerId, original.id, ctrl.signal);
         if (!ctrl.signal.aborted && checked?.id === original.id && checked.projectId === original.projectId) {
           setEnvironment(checked);
+          if (originalProject) {
+            locationChosen.current = true; setLocation(checked.location);
+            if (checked.location === 'ssh') { setServerRef(checked.serverRef || ''); setServerDirectory(checked.remoteDirectory || ''); }
+          }
           const operation = checked.lastOperation;
           if (['preparing', 'stopping', 'unknown'].includes(checked.state) && operation
               && /^[A-Za-z0-9_.:-]{8,80}$/.test(operation.requestId) && ['prepare', 'stop'].includes(operation.action)) {
@@ -136,7 +145,7 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       } catch { /* Keep original results and explicit request recovery available. */ }
     })();
     return () => ctrl.abort();
-  }, [ownerId, researchJourney, location, serverRef, project?.nativeProjectId, revision, environmentRequest]);
+  }, [ownerId, researchJourney, location, serverRef, project?.nativeProjectId, session?.nativeProjectId, revision, environmentRequest]);
   const [setupOpen, setSetupOpen] = useState(false);
   const [projectSetupOpen, setProjectSetupOpen] = useState(false);
   const [creationConnection, setCreationConnection] = useState('');
