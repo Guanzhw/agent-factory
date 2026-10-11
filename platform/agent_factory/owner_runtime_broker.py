@@ -5,12 +5,15 @@ tool loop. Only a short-lived local capability enters that container; each model
 call resolves the original owner/vault revision outside it, without fallback.
 """
 import asyncio
+from copy import deepcopy
+import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
 import secrets
+import re
 import socketserver
 import stat
 from socketserver import ThreadingMixIn
@@ -58,6 +61,13 @@ class _SyntheticDispatchTransport(httpx.AsyncBaseTransport):
         await self.transport.aclose()
 
 
+class _NativeCall:
+    def __init__(self):
+        self.done = threading.Event()
+        self.value: Any = None
+        self.error: OwnerModelCallError | None = None
+
+
 class _Server(ThreadingMixIn, UnixServerBase):
     daemon_threads = True
     block_on_close = False
@@ -87,12 +97,55 @@ class OwnerRuntimeBroker:
         self.capability = secrets.token_urlsafe(32)
         self.deadline, self.remaining = time.monotonic() + ttl, max_calls
         self.lock = threading.Lock(); self.gate = threading.BoundedSemaphore(4)
+        self.native_calls: dict[tuple[str, str, str], _NativeCall] = {}
         self.server = None; self.thread = None
 
     def __repr__(self): return 'OwnerRuntimeBroker(capability=<redacted>)'
 
     def authorized(self, token):
         return type(token) is str and hmac.compare_digest(token, self.capability) and time.monotonic() < self.deadline
+
+    def native_completion(self, body, session_id, request_id):
+        # Pinned native user-message IDs distinguish legal turns even when their
+        # text is identical. The payload digest only distinguishes tool-loop
+        # calls within that turn; it is never a cross-turn deduplication key.
+        if (type(session_id) is not str or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id)
+                or type(request_id) is not str or not re.fullmatch(r'msg_[A-Za-z0-9]{8,120}', request_id)):
+            raise OwnerModelCallError(False)
+        fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        key = (session_id, request_id, fingerprint)
+        with self.lock:
+            record = self.native_calls.get(key)
+            fresh = record is None
+            if fresh:
+                if self.remaining <= 0: raise OwnerModelCallError(False)
+                self.remaining -= 1
+                record = _NativeCall()
+                # At most max_calls records. No eviction can turn an old retry
+                # into a new provider call during this broker's short lifetime.
+                self.native_calls[key] = record
+        assert record is not None
+        if fresh:
+            try:
+                record.value = asyncio.run(self.completion(body, session_id))
+            except OwnerModelCallError as error:
+                record.error = error
+            except (Exception, asyncio.CancelledError):
+                record.error = OwnerModelCallError(True)
+            finally:
+                # Record before writing any local response. A lost downstream
+                # reply may be read again, but can never dispatch again.
+                record.done.set()
+        elif not record.done.wait(timeout=120):
+            raise OwnerModelCallError(True)
+        if record.error is not None: raise record.error
+        if record.value is None: raise OwnerModelCallError(True)
+        try:
+            self.handle.check()
+            reject_credential_echo(record.value, self.handle.credential())
+        except Exception:
+            raise OwnerModelCallError(False) from None
+        return deepcopy(record.value)
 
     async def completion(self, body, session_id=None):
         dispatched = False
@@ -191,19 +244,16 @@ class OwnerRuntimeBroker:
                 session_id = session_id or native_session_id
                 if not broker.gate.acquire(blocking=False): return self.reply(429, {'error': 'MODEL_BUSY'})
                 try:
-                    with broker.lock:
-                        if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
-                        broker.remaining -= 1
                     try: body = json.loads(raw)
                     except ValueError: return self.reply(400, OwnerModelCallError(False).response())
-                    value = asyncio.run(broker.completion(body, session_id))
+                    value = broker.native_completion(body, session_id, self.headers.get('x-opencode-request'))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
                         delta = {'role': 'assistant', 'content': message.get('content')}
                         if message.get('tool_calls'):
                             delta['tool_calls'] = [dict(index=i, **call) for i, call in enumerate(message['tool_calls'])]
                         chunk = {'id': value.get('id', 'chatcmpl-owner'), 'object': 'chat.completion.chunk',
-                            'created': value.get('created', int(time.time())), 'model': 'factory/owner-model',
+                            'created': value.get('created', int(time.time())), 'model': 'opencode-factory/owner-model',
                             'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]}
                         terminal = {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': choice.get('finish_reason', 'stop')}],
                             **({'usage': value['usage']} if 'usage' in value else {})}
@@ -217,6 +267,9 @@ class OwnerRuntimeBroker:
                     # 409 is also SDK-retryable; use 422 for an unconfirmed
                     # dispatch, with no retryable status/text in its payload.
                     self.reply(422 if error.code == 'OWNER_MODEL_CALL_UNCONFIRMED' else 400, error.response())
+                except OSError:
+                    # The recorded outcome survives a lost local socket reply.
+                    pass
                 finally: broker.gate.release()
             def reply(self, status, value):
                 payload = json.dumps(value).encode()

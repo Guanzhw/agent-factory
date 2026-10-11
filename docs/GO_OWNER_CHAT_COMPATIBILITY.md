@@ -37,18 +37,38 @@ returned. HTTP 409 is insufficient: the SDK marks it retryable. Diagnostic IDs
 also omit numerals because the native policy scans response text for 5xx codes.
 See [the pinned native retry policy](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/session/retry.ts).
 
+A lost local reply is different from a provider error: the native harness never
+sees the terminal status and may send the same call again. The pinned native
+profile uses the distinct local provider ID `opencode-factory`, still with the
+same compatible SDK and private loopback broker. Its native request-preparation
+path emits the user-message ID as `x-opencode-request`. The broker requires that
+ID and the native session ID before admitting a call. No request-header plugin
+or transport rewriting is added.
+
+Within this broker's lifetime, a record is keyed by session ID, native user-turn
+ID and request-payload digest. The digest distinguishes model/tool-loop steps
+inside a turn; identical text in a different native turn has a different ID and
+executes normally. The original result or unconfirmed outcome is recorded
+before sending the local reply. Repeated/concurrent copies read that outcome
+after current owner/vault checks and do not dispatch again. Records are bounded
+by the existing 64-call budget, with no eviction that could turn an old copy into
+a new call. This is local model-call accounting, not a restart, distributed
+execution or tool-transaction guarantee.
+
 `scripts/check_owner_model_native_retry.py` runs the pinned 1.18.35 executable
 in a fresh container with `--network none` and a synthetic upstream. Both a
 disconnect and provider HTTP 502 produce exactly one provider dispatch and a
-visible native error. The native retry policy is unmodified. This explicit
+visible native error. A deliberately lost downstream response also dispatches
+once and the native retry reads the original result. Two identical goals in
+successive native turns produce two calls. The native retry policy is unmodified. This explicit
 offline check requires the installed binary (`--opencode`) and locked container
 image digest (`--image`); it neither downloads them nor uses real credentials.
 
 Current limits are historical implementation defaults, not a new billing gate:
 64 admitted calls per broker (`OwnerRuntimeBroker.max_calls`) and 4096 output
-tokens per forwarded request. The production runtime factory does not expose
-an 8-call per-environment override. Its lease/hard deadline and verified
-environment stop remain separate from the best-effort native interrupt.
+tokens per forwarded request. An 8-call small-test target is observational,
+not a new hard cap or billing confirmation requirement. Its lease/hard deadline
+and verified environment stop remain separate from the best-effort native interrupt.
 
 Live acceptance remains pending. A subsequent explicitly authorized bounded
 run must save the official URL through the normal UI, use the production pinned

@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 from pathlib import Path
 import subprocess
 import sys
@@ -29,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--opencode', required=True)
     parser.add_argument('--image', required=True)
+    parser.add_argument('--case', choices=('disconnect', 'provider_502', 'downstream_response_lost', 'normal_two_turns'))
     args = parser.parse_args()
     binary = Path(args.opencode).resolve()
     with binary.open('rb') as file:
@@ -39,7 +41,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     package = root / 'platform/agent_factory/runtime_packages/openresearch_v1'
     results = []
-    for outcome in ('disconnect', 'provider_502'):
+    for outcome in ((args.case,) if args.case else ('disconnect', 'provider_502', 'downstream_response_lost', 'normal_two_turns')):
         with TemporaryDirectory(prefix='af-native-retry-') as folder:
             private = Path(folder)
             for name in ('sockets', 'home', 'work', 'xdg/config', 'xdg/data', 'xdg/cache', 'xdg/state'):
@@ -48,12 +50,28 @@ def main():
             def wire(request):
                 calls.append(request)
                 if outcome == 'disconnect': raise httpx.ReadError('synthetic upstream disconnect')
-                return httpx.Response(502, json={'error': 'synthetic upstream rejection'})
+                if outcome == 'provider_502': return httpx.Response(502, json={'error': 'synthetic upstream rejection'})
+                return httpx.Response(200, json={'id': 'chatcmpl-synthetic', 'object': 'chat.completion', 'created': 1,
+                    'model': 'synthetic-owner-model', 'choices': [{'index': 0,
+                        'message': {'role': 'assistant', 'content': 'Synthetic settled reply'}, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}})
             handle = SimpleNamespace(body={'baseURL': 'https://opencode.ai/zen/go/v1', 'model': 'synthetic-owner-model'},
                 service=SimpleNamespace(transport_factory=lambda: httpx.MockTransport(wire)),
                 check=lambda: None, credential=lambda: SecretLease('api-key', 'synthetic-offline-credential'))
             broker = OwnerRuntimeBroker(private / 'sockets/broker.sock', handle)
             broker.start()
+            ingress, dropped = [], []
+            handler = broker.server.RequestHandlerClass
+            original = handler.send_response
+            def observe_reply(self, code, message=None):
+                ingress.append({'status': code, 'session': self.headers.get('x-opencode-session-id'),
+                    'nativeRequest': self.headers.get('x-opencode-request')})
+                if outcome == 'downstream_response_lost' and code == 200 and not dropped:
+                    dropped.append(True)
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    raise BrokenPipeError('synthetic lost downstream response after provider settled')
+                return original(self, code, message)
+            handler.send_response = observe_reply
             name = 'af-native-retry-' + uuid4().hex
             env = environment(broker.capability, 4096)
             # Whitelist a fresh environment. Never inherit a user's API keys.
@@ -70,14 +88,25 @@ def main():
             command += [args.image, '/bin/sh', '-c',
                 '/usr/local/bin/python3 -I -B /trusted/bridge.py --bridge & '
                 '/trusted/opencode-real --version; '
-                '/trusted/opencode-real run --format json --model factory/owner-model --agent factory "Synthetic offline retry check"']
+                '/trusted/opencode-real run --format json --model opencode-factory/owner-model --agent factory "Synthetic offline retry check"'
+                + ('; /trusted/opencode-real run --continue --format json --model opencode-factory/owner-model --agent factory "Synthetic offline retry check"'
+                   if outcome == 'normal_two_turns' else '')]
             try:
                 run = subprocess.run(command, env=launch_env, capture_output=True, timeout=150, check=False)
                 output = (run.stdout + run.stderr).decode(errors='replace')
-                accepted = (len(calls) == 1 and '1.18.35' in output and 'OWNER_MODEL_CALL_UNCONFIRMED' in output
-                    and 'diag_' in output and 'synthetic-offline-credential' not in output)
+                error_case = outcome in {'disconnect', 'provider_502'}
+                accepted = (len(calls) == (2 if outcome == 'normal_two_turns' else 1) and '1.18.35' in output
+                    and ('OWNER_MODEL_CALL_UNCONFIRMED' in output and 'diag_' in output if error_case
+                         else 'Synthetic settled reply' in output)
+                    and 'synthetic-offline-credential' not in output)
+                sessions = [request.headers.get('x-opencode-session') for request in calls]
+                if outcome == 'normal_two_turns':
+                    accepted = accepted and len(set(sessions)) == 1 and len({r['nativeRequest'] for r in ingress}) == 2
                 results.append({'outcome': outcome, 'providerDispatches': len(calls), 'accepted': accepted,
-                    'nativeVersion': '1.18.35', 'network': 'none', 'nativeRetryPolicyUnmodified': True})
+                    'nativeVersion': '1.18.35', 'network': 'none', 'nativeRetryPolicyUnmodified': True,
+                    'ingress': ingress,
+                    'providerSessionIds': sessions,
+                    'providerBodyHashes': [hashlib.sha256(request.content).hexdigest() for request in calls]})
             finally:
                 subprocess.run(['docker', 'rm', '-f', name], capture_output=True, check=False)
                 broker.close()

@@ -1,9 +1,11 @@
 """Synthetic model transport; no native research engine or network here."""
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import socket
 import sys
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -17,6 +19,54 @@ from agent_factory.platform_openresearch import _UnixHTTP
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    def test_native_accounting_reuses_a_lost_result_but_distinguishes_identical_legal_turns(self):
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'identical synthetic goal'}]}
+        first = self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
+        self.assertEqual(self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001'), first)
+        self.assertEqual(len(self.calls), 1)
+        self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.broker.remaining, 62)
+        # A changed tool-loop input is a separate call within the same user turn.
+        next_body = {**body, 'messages': body['messages'] + [{'role': 'tool', 'content': 'actual synthetic tool output'}]}
+        self.broker.native_completion(next_body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
+        self.assertEqual(len(self.calls), 3)
+        self.revoked = True
+        with self.assertRaises(ValueError):
+            self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
+        self.assertEqual(len(self.calls), 3)
+
+    def test_native_accounting_preserves_unknown_outcome_and_rejects_missing_turn_identity(self):
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic goal'}]}
+        def wire(request):
+            self.calls.append(request)
+            raise httpx.ReadError('synthetic upstream disconnect')
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+        diagnostics = []
+        for _ in range(2):
+            with self.assertRaises(ValueError) as caught:
+                self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
+            diagnostics.append(caught.exception.diagnostic_id)
+        self.assertEqual(diagnostics[0], diagnostics[1]); self.assertEqual(len(self.calls), 1)
+        with self.assertRaises(ValueError): self.broker.native_completion(body, 'ses_syntheticnative123', None)
+        self.assertEqual(len(self.calls), 1); self.assertEqual(self.broker.remaining, 63)
+
+    def test_concurrent_native_retries_share_the_original_inflight_call(self):
+        admitted, release = threading.Event(), threading.Event()
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic goal'}]}
+        def wire(request):
+            self.calls.append(request); admitted.set()
+            self.assertTrue(release.wait(timeout=3))
+            return httpx.Response(200, json=self.answer)
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.broker.native_completion, body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
+            self.assertTrue(admitted.wait(timeout=3))
+            second = pool.submit(self.broker.native_completion, body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
+            release.set()
+            self.assertEqual(first.result(timeout=3), second.result(timeout=3))
+        self.assertEqual(len(self.calls), 1); self.assertEqual(self.broker.remaining, 63)
+
     def test_go_preserves_native_conversation_header_and_requires_it_before_dispatch(self):
         self.handle.body['baseURL'] = 'https://opencode.ai/zen/go/v1'
         body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic coding task'}]}
@@ -40,7 +90,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
             client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
                 'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
                 'Authorization': 'Bearer ' + self.broker.capability,
-                'x-opencode-session-id': 'ses_syntheticnative123', 'Content-Type': 'application/json'})
+                'x-opencode-session-id': 'ses_syntheticnative123', 'x-opencode-request': 'msg_syntheticturn123', 'Content-Type': 'application/json'})
             response = client.getresponse()
             self.assertEqual(response.status, 200); response.read()
         finally: client.close()
@@ -55,7 +105,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
             client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
                 'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
                 'Authorization': 'Bearer ' + self.broker.capability,
-                'x-opencode-session-id': 'ses_syntheticnative123',
+                'x-opencode-session-id': 'ses_syntheticnative123', 'x-opencode-request': 'msg_syntheticturn123',
                 'x-opencode-session': 'ses_differentfixture123', 'Content-Type': 'application/json'})
             response = client.getresponse(); self.assertEqual(response.status, 400); response.read()
         finally: client.close()
@@ -115,7 +165,8 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
             try:
                 client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model', 'stream': True,
                     'messages': [{'role': 'user', 'content': text}]}),
-                    headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+                    headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json',
+                        'x-opencode-session-id': 'ses_fixtureconversation123', 'x-opencode-request': 'msg_fixtureturn123'})
                 response = client.getresponse()
                 return response.status, response.read().decode()
             finally: client.close()
@@ -161,7 +212,8 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         try:
             client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
                 'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
-                'Authorization': 'Bearer ' + self.broker.capability, 'Content-Type': 'application/json'})
+                'Authorization': 'Bearer ' + self.broker.capability, 'Content-Type': 'application/json',
+                'x-opencode-session-id': 'ses_fixtureconversation123', 'x-opencode-request': 'msg_fixtureturn123'})
             response = client.getresponse(); value = json.loads(response.read())
             self.assertEqual(response.status, 422)
             self.assertEqual(value['error']['code'], 'OWNER_MODEL_CALL_UNCONFIRMED')
@@ -188,7 +240,8 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         try:
             client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
                 'messages': [{'role': 'user', 'content': 'Synthetic surviving owner'}]}),
-                headers={'Authorization': 'Bearer ' + bob.capability})
+                headers={'Authorization': 'Bearer ' + bob.capability,
+                    'x-opencode-session-id': 'ses_syntheticnative123', 'x-opencode-request': 'msg_syntheticturn123'})
             self.assertEqual(client.getresponse().status, 200)
         finally: client.close()
 
