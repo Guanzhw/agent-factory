@@ -9,7 +9,7 @@ import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { openresearchApi } from '../web/openresearchApi.js';
 import { applicationEnvironmentApi, type ApplicationEnvironment } from '../web/applicationEnvironmentApi.js';
 import { personalSSHApi, type PersonalSSHServer } from '../web/personalSSHApi.js';
-import { ownerModelApi } from '../web/ownerModelApi.js';
+import { ownerModelApi, type OwnerModel } from '../web/ownerModelApi.js';
 import type { User } from '../web/models.js';
 vi.mock('../web/openresearchApi.js', () => ({ openresearchApi: { capabilities: vi.fn(), projects: vi.fn(), project: vi.fn(), sessions: vi.fn(), managedProfiles: vi.fn() } }));
 vi.mock('../web/personalAgentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalAgentApi.js')>(); return { ...original, personalAgentApi: { ...original.personalAgentApi, capabilities: vi.fn(), sessions: vi.fn(), prepare: vi.fn(), submit: vi.fn() } }; });
@@ -50,8 +50,11 @@ beforeEach(() => {
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([]);vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({locations:[],applications:[]});vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([]);vi.mocked(ownerModelApi.list).mockResolvedValue([]);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); });
-async function chooseServerB(options: { environmentUnknown?: boolean; savedRequest?: boolean; researchUnknown?: boolean; bindingUnknown?: boolean; requestDuringRead?: boolean; historyOnly?: boolean } = {}) {
+async function chooseServerB(options: { environmentUnknown?: boolean; savedRequest?: boolean; researchUnknown?: boolean; bindingUnknown?: boolean; requestDuringRead?: boolean; recoveryDuringRead?: 'environment' | 'command' | 'binding'; inspectionFails?: boolean; historyOnly?: boolean } = {}) {
     const server = (digit: string, name: string): PersonalSSHServer => ({ reference: 'remote-' + digit.repeat(32), name, address: '127.0.0.1', port: 2222, username: 'fixture', hostKey: 'ssh-ed25519 ' + 'A'.repeat(68), hostFingerprint: 'SHA256:synthetic-host-fingerprint', allowedRoot: '/tmp/af-owned-fixture', defaultDirectory: '/tmp/af-owned-fixture/' + name, status: 'verified', enabled: true, diagnostic: null, lastCheckRequestId: null, credentialRef: 'fixture-key', credentialRevision: 'one' });
+    vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true, ownerSubmit: '/api/factory/personal-agent/commands/submit', modelConfiguration: 'remote-configured-model', factoryBYOKForwarded: false });
+    vi.mocked(ownerModelApi.list).mockResolvedValue([{ isDefault: true, available: true } as OwnerModel]);
+    sessionStorage.setItem('factory-research-draft:alice', JSON.stringify({ goal: 'Synthetic retained goal', materials: '' }));
     const a = server('a', 'server-A'); const b = server('b', 'server-B');
     const original: ApplicationEnvironment = { id: 'env-' + 'a'.repeat(32), applicationId: 'openresearch', location: 'ssh', serverRef: a.reference, remoteDirectory: a.defaultDirectory, state: 'ready', packageVersion: 'fixture-package', projectId: 'project-A', connectionRef: 'binding-A', modelReference: 'fixture-model', modelRevision: 'one', dataRetained: true, researchSubmitted: false };
     if (options.environmentUnknown || options.savedRequest) { original.state = 'unknown'; original.lastOperation = { requestId: 'original-A-unknown', action: 'prepare', state: 'unknown' }; }
@@ -69,13 +72,22 @@ async function chooseServerB(options: { environmentUnknown?: boolean; savedReque
     vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({ locations: ['ssh'], applications: ['openresearch'] });
     vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([a, b]);
     vi.spyOn(applicationEnvironmentApi, 'list').mockResolvedValue([original]);
+    let recoveryPersisted = false;
+    let inspectionFailed = false;
     vi.spyOn(applicationEnvironmentApi, 'inspect').mockImplementation(async () => {
-      if (options.requestDuringRead) localStorage.setItem('factory-environment-prepare:alice', 'original-A-unknown');
+      if (!recoveryPersisted) {
+        recoveryPersisted = true;
+      if (options.requestDuringRead || options.recoveryDuringRead === 'environment') localStorage.setItem('factory-environment-prepare:alice', 'original-A-unknown');
+      if (options.recoveryDuringRead === 'command') localStorage.setItem('factory-personal-command:alice:native-openresearch', JSON.stringify({ requestId: 'original-A-command', submitAttempt: true }));
+      if (options.recoveryDuringRead === 'binding') localStorage.setItem(bindingKey, binding);
+      }
+      if (options.inspectionFails && !inspectionFailed) { inspectionFailed = true; throw new Error('Synthetic inspection unavailable'); }
       return original;
     });
     vi.spyOn(applicationEnvironmentApi, 'recover').mockResolvedValue({ requestId: 'original-A-unknown', action: 'prepare', state: 'unknown', diagnostic: null, environment: original });
     vi.mocked(personalAgentApi.sessions).mockResolvedValue([history]);
     vi.spyOn(personalAgentApi, 'session').mockResolvedValue(history);
+    vi.spyOn(personalAgentApi, 'snapshot').mockResolvedValue(history);
     window.history.replaceState(null, '', '/?tab=connections'); await render();
     const card = [...host.querySelectorAll('article')].find(item => item.querySelector('h3')?.textContent === b.name)!;
     await act(async () => [...card.querySelectorAll('button')].find(item => item.textContent === '去 OpenResearch 准备')!.click());
@@ -89,6 +101,7 @@ describe('workspace mounted application boundaries', () => {
     expect(localStorage.getItem('factory-environment-selection:alice')).toBeNull();
     expect(localStorage.getItem('factory-personal-session:alice:native-openresearch')).toBeNull();
     expect(host.querySelector('.research-session-entry')?.textContent).toContain('查看已有研究');
+    expect([...host.querySelectorAll('button')].find(button => button.textContent === '开始研究')?.disabled).toBe(false);
     expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
   });
   it.each([
@@ -107,6 +120,38 @@ describe('workspace mounted application boundaries', () => {
     if ('savedRequest' in options || 'environmentUnknown' in options || 'requestDuringRead' in options) expect(localStorage.getItem('factory-environment-prepare:alice')).toBe('original-A-unknown');
     if ('bindingUnknown' in options) expect(localStorage.getItem(bindingKey)).toBe(binding);
     if ('researchUnknown' in options) expect(host.textContent).toContain('需要核对原请求');
+    expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  });
+  it.each([['environment', false], ['command', false], ['binding', false], ['environment', true], ['command', true], ['binding', true]] as const)('reconciles %s recovery added during inspection (read failure %s) before allowing owner writes', async (kind, inspectionFails) => {
+    const commandRecover = vi.spyOn(personalAgentApi, 'recover').mockRejectedValue(new Error('Synthetic unknown receipt'));
+    const bindingRecover = vi.spyOn(applicationEnvironmentApi, 'bindingRequest').mockRejectedValue(new Error('Synthetic unknown receipt'));
+    const { bindingKey, binding } = await chooseServerB({ recoveryDuringRead: kind, inspectionFails });
+    const key = kind === 'environment' ? 'factory-environment-prepare:alice' : kind === 'command' ? 'factory-personal-command:alice:native-openresearch' : bindingKey;
+    const original = localStorage.getItem(key);
+    const label = kind === 'environment' ? '核对原环境准备' : kind === 'command' ? '核对研究请求' : '核对原绑定请求';
+    expect([...host.querySelectorAll('button')].some(button => button.textContent === label)).toBe(true);
+    if (kind === 'command') expect(text()).toContain('original-A-command');
+    const writes = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(button => /^(准备或恢复|明确恢复|开始研究$|继续研究$)/.test(button.textContent ?? ''));
+    expect(writes.length).toBeGreaterThan(0);
+    for (const button of writes) { expect(button.disabled).toBe(true); await act(async () => button.click()); }
+    await click(label);
+    expect(localStorage.getItem(key)).toBe(original);
+    if (kind === 'environment') expect(applicationEnvironmentApi.recover).toHaveBeenLastCalledWith('original-A-unknown');
+    if (kind === 'command') expect(commandRecover).toHaveBeenCalledWith('original-A-command');
+    if (kind === 'binding') { expect(bindingRecover).toHaveBeenCalledWith('alice', 'binding-A-unknown'); expect(original).toBe(binding); }
+    expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  });
+  it.each(['environment', 'binding'] as const)('unfreezes ordinary recovery after the original %s receipt settles', async kind => {
+    const { original } = await chooseServerB({ recoveryDuringRead: kind });
+    if (kind === 'environment') {
+      vi.mocked(applicationEnvironmentApi.recover).mockResolvedValue({ requestId: 'original-A-unknown', action: 'prepare', state: 'ready', diagnostic: null, environment: original });
+      await click('核对原环境准备');
+      expect([...host.querySelectorAll('button')].find(button => button.textContent === '明确恢复服务器环境')?.disabled).toBe(false);
+    } else {
+      vi.spyOn(applicationEnvironmentApi, 'bindingRequest').mockResolvedValue({ requestId: 'binding-A-unknown', state: 'committed', environment: original, runtimePrepared: false, researchSubmitted: false });
+      await click('核对原绑定请求');
+      expect([...host.querySelectorAll('button')].find(button => button.textContent === '准备或恢复服务器环境')?.disabled).toBe(false);
+    }
     expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
   });
   it('groups application, resource and task entry points while leaving advanced tools collapsed', async () => {
