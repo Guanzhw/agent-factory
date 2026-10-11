@@ -373,8 +373,13 @@ function PersonalSessions({ ownerId, onTask, onResources, connectionRef, namespa
       const ref = result.environment.connectionRef; const native = await personalAgentApi.project(ref);
       if (!current(epoch) || !await ownerIsCurrent(epoch)) return;
       if (native.namespace !== 'native-openresearch' || native.nativeProjectId !== result.environment.projectId || native.modelCredentialCustody !== 'owner-vault' || !native.sessionCreationSupported) throw new Error('scope');
-      clearEnvironmentRequest();
       rememberEnvironmentSelection(result.environment);
+      if (newEnvironment) {
+        // The explicit new choice supersedes only the selected old session.
+        // Its history/data stay intact; refresh must not auto-select it again.
+        localStorage.removeItem(selectionStorage); observationGeneration.current++; setSession(undefined);
+      }
+      clearEnvironmentRequest();
       setSelected(ref); setProject(native); setResourceReady(true);
       if (submitGoal) await submitNewSession(ref, native.nativeProjectId, goal, sessionTitle, epoch);
       else { refresh(n => n + 1); setNotice(`${environmentLabel}已就绪。原研究记录保留，尚未发送目标；可以明确开始或继续研究。`); }

@@ -230,6 +230,33 @@ it('restores the stopped explicit generation with its own ID and does not send a
   expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
 
+it('selects a new generation with a distinct connection after opening A, retaining A only in history across refresh',async()=>{
+  const a={id:'research-A',nativeProjectId:env.projectId,nativeSessionId:'native-A',namespace:'native-openresearch',connectionRef:env.connectionRef,state:'result_observed',activeRequestId:null,bindingStatus:'unavailable',connectionPin:{ownerId:owner.id,capabilities:['session:read','session:prompt']},observation:null} as unknown as PersonalSession;
+  const next={...env,id:'env-'+'b'.repeat(32),projectId:'new-generation-project',connectionRef:'binding-new-generation'};
+  const sessionStorageKey=`factory-personal-session:${owner.id}:native-openresearch`;
+  localStorage.setItem(sessionStorageKey,a.id);
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([a]);vi.spyOn(personalAgentApi,'session').mockResolvedValue(a);
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env]);
+  vi.mocked(applicationEnvironmentApi.inspect).mockImplementation(async(_,id)=>id===next.id?next:env);
+  vi.spyOn(applicationEnvironmentApi,'continuation').mockResolvedValue({environmentId:env.id,projectId:env.projectId,dataRetained:true,classification:'needs-new-run',canRebind:false,requiresCredentialRebind:false,sessionRebindRequired:false,originalWorkReplay:false,researchSubmitted:false,nativeCheckpointContinuationVerified:false,reason:'ENVIRONMENT_PACKAGE_CHANGED',nextAction:'new-environment',message:'SYNTHETIC package change'});
+  vi.mocked(applicationEnvironmentApi.prepare).mockImplementation(async(_,id)=>{vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env,next]);return {...request(id),environment:next};});
+  vi.mocked(personalAgentApi.project).mockImplementation(async ref=>ref===next.connectionRef?{...project,nativeProjectId:next.projectId,upstreamOrxProjectId:next.projectId,connectionPin:{ref:next.connectionRef}}:project);
+  await mount();expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('true');
+  await goal('SYNTHETIC retained new research draft');await act(async()=>button('核对恢复条件').click());await act(async()=>button('创建新环境，保留旧结果').click());
+  expect(localStorage.getItem(sessionStorageKey)).toBeNull();
+  expect(JSON.parse(localStorage.getItem(`factory-environment-selection:${owner.id}`)!)).toEqual({id:next.id,projectId:next.projectId,connectionRef:next.connectionRef});
+  expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('false');
+  await act(async()=>root.unmount());root=createRoot(host);await mount();
+  expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('false');
+  expect(applicationEnvironmentApi.inspect).toHaveBeenLastCalledWith(owner.id,next.id,expect.any(AbortSignal));
+  expect(applicationEnvironmentApi.prepare).toHaveBeenCalledTimes(1);expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('SYNTHETIC retained new research draft');
+  // The original research remains readable and requires an explicit selection.
+  await act(async()=>host.querySelector<HTMLButtonElement>('.research-session-entry button')!.click());
+  expect(host.querySelector('.research-session-entry button')?.getAttribute('aria-pressed')).toBe('true');
+  expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
 it.each(['missing','ambiguous','delayed'] as const)('revokes environment A writes when research B discovery is %s',async outcome => {
   const history = (id:string,projectId:string,connectionRef:string) => ({id,nativeProjectId:projectId,nativeSessionId:'native-'+id,namespace:'native-openresearch',connectionRef,state:'result_observed',activeRequestId:null,bindingStatus:'unavailable',connectionPin:{ownerId:owner.id,capabilities:['session:read','session:prompt']},observation:null}) as unknown as PersonalSession;
   const a=history('session-A',env.projectId,env.connectionRef); const b=history('session-B','project-B','binding-B');

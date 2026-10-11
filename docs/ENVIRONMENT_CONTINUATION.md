@@ -71,6 +71,10 @@ Only opaque environment/project/connection pointers are retained as the owner's
 selection hint. Discovery still inspects server-owned identity before enabling
 environment writes. Changing research or location removes the old write target;
 missing, ambiguous and late discovery responses cannot act on another project.
+Once an explicit new generation is positively prepared and its native identity
+is checked, its opaque selection is saved and the previously selected research
+is cleared. Refresh cannot select that old research again automatically; its
+history and results remain available for an explicit read.
 
 ## Validation scope
 
