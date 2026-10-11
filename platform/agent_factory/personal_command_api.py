@@ -128,7 +128,7 @@ class PersonalCommandAPI:
             'commandSuccessMeans': 'remote-command-acceptance-only', 'remoteStopVerified': False,
             'remoteBudgetEnforcement': 'advisory'}
 
-    async def prepared_request(self, owner, request_id):
+    def _prepared_request_metadata(self, owner, request_id):
         self.auth.require(owner, 'read')
         rows = self.store.sql('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:request',
             owner=owner, request=request_id)
@@ -150,6 +150,14 @@ class PersonalCommandAPI:
             if error.status_code != 404: raise
         else:
             result['nativeRunId'] = task['run_id']
+            return result, task
+        return result, None
+
+    async def prepared_request(self, owner, request_id):
+        # Current authorization can perform a bounded SSH health check. Keep
+        # that synchronous check off the ASGI loop without caching authority.
+        result, task = await asyncio.to_thread(self._prepared_request_metadata, owner, request_id)
+        if task is not None:
             detail = await self.factory.detail(task)
             result['job'] = detail['job']
             # Factory status remains unknown for an unresolved remote effect,
@@ -160,7 +168,7 @@ class PersonalCommandAPI:
             result['nativeStatus'] = (snapshot.get('queue') or snapshot.get('job') or {}).get('status') or (snapshot.get('run') or {}).get('status')
         return result
 
-    async def start(self, owner, plan_id):
+    def _authorize_start(self, owner, plan_id):
         plan = self.store.plan(plan_id, owner)
         if plan.get('application') not in {APPLICATION_ID, PROJECT_APPLICATION_ID} or plan.get('mode') != 'personal-command':
             raise HTTPException(409, 'PERSONAL_COMMAND_PLAN_REQUIRED')
@@ -168,6 +176,9 @@ class PersonalCommandAPI:
             command = command_from_plan(plan)
             self.projects.require_approval(owner, command['requestId'], plan_id, command['projectBundle'])
         self.store.owner_submissions.approve_personal(owner, plan)
+
+    async def start(self, owner, plan_id):
+        await asyncio.to_thread(self._authorize_start, owner, plan_id)
         return await self.factory.instantiate(owner, InstanceRequest(planId=plan_id, requestId='personal:' + plan_id))
 
     async def submit(self, owner, body):

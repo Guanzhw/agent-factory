@@ -13,7 +13,7 @@ except ImportError:
 import ipaddress
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import select
@@ -72,7 +72,7 @@ class SSHServer:
         require(type(self.port) is int and 1 <= self.port <= 65535)
         require(re.fullmatch('[a-z_][a-z0-9_-]{0,31}', self.username))
         require(re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{40,120}', self.host_key))
-        root = Path(self.allowed_root)
+        root = PurePosixPath(self.allowed_root)
         require(root.is_absolute() and '..' not in root.parts and not any(c in str(root) for c in '\n\r,:'))
     def pin(self): return digest(self.__dict__)
 
@@ -146,7 +146,7 @@ class SSHOpenResearchPackage:
         self.personal_servers: Any = None
 
     def servers(self, owner):
-        return [{'reference': s.reference, 'name': s.name, 'defaultDirectory': str(Path(s.allowed_root) / 'research')}
+        return [{'reference': s.reference, 'name': s.name, 'defaultDirectory': str(PurePosixPath(s.allowed_root) / 'research')}
             for s in self.config.servers if s.owner == owner] + (self.personal_servers.available(owner) if self.personal_servers else [])
 
     def _server(self, owner, reference):
@@ -157,13 +157,16 @@ class SSHOpenResearchPackage:
 
     def selection(self, owner, reference, directory):
         server = self._server(owner, reference)
-        path = Path(directory)
-        require(path.is_absolute() and path != Path(server.allowed_root) and path.is_relative_to(server.allowed_root)
+        return self._selection(server, directory)[0]
+
+    def _selection(self, server, directory):
+        path = PurePosixPath(directory)
+        require(path.is_absolute() and path != PurePosixPath(server.allowed_root) and path.is_relative_to(server.allowed_root)
             and '..' not in path.parts and len(str(path / 'connections' / ('a' * 24) / 'broker.sock').encode()) < 104 and not any(c in str(path) for c in '\n\r,:'))
         lease = self._credential(server)
         return {'location': 'ssh', 'serverRef': server.reference, 'serverRevision': server.revision,
             'serverPin': server.pin(), 'identityPin': hashlib.sha256(lease.public_key.encode()).hexdigest(),
-            'remoteDirectory': str(path)}
+            'remoteDirectory': str(path)}, lease
 
     def _credential(self, server):
         if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
@@ -176,9 +179,10 @@ class SSHOpenResearchPackage:
     def _scope(self, body):
         require(body['packageVersion'] == self.version)
         server = self._server(body['ownerId'], body['serverRef'])
-        require(self.selection(body['ownerId'], server.reference, body['remoteDirectory']) == {
+        selected, lease = self._selection(server, body['remoteDirectory'])
+        require(selected == {
             key: body[key] for key in ('location', 'serverRef', 'serverRevision', 'serverPin', 'identityPin', 'remoteDirectory')})
-        return server, self._credential(server)
+        return server, lease
 
     def _ssh(self, server, lease, local, command, forward=None):
         # No ~/.ssh config, agent forwarding, password fallback, proxy commands,

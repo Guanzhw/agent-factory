@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import secrets
 import select as io_select
 import shlex
@@ -187,7 +187,7 @@ class PersonalSSHServers:
         try:
             identity = endpoint(values['address'], values['port'], values['username'], values['hostKey'])
             if self.config.address_policy(identity['address'], identity['port']) is not True: raise ValueError()
-            root = Path(values['allowedRoot'])
+            root = PurePosixPath(values['allowedRoot'])
             if (not root.is_absolute() or '..' in root.parts or str(root) != values['allowedRoot']
                     or any(c in str(root) for c in '\n\r,:') or len(str(root / 'research' / 'connections' / ('a' * 24) / 'broker.sock').encode()) >= 104
                     or not isinstance(values['name'], str) or not 1 <= len(values['name']) <= 80
@@ -209,7 +209,6 @@ class PersonalSSHServers:
         self.auth.require(owner, 'run')
         with self.connections._read() as conn:
             _, body = self._configuration(conn, owner, reference)
-            self.connections.personal.binding(conn, owner, reference)
             rows = conn.execute(select(self.connections.references).where(
                 self.connections.references.c.owner_id == owner,
                 self.connections.references.c.registration_ref == reference,
@@ -232,7 +231,7 @@ class PersonalSSHServers:
         return {'reference': reference, 'name': config['name'], 'address': config['address'], 'port': config['port'],
             'username': config['username'], 'hostFingerprint': config['hostFingerprint'], 'allowedRoot': config['allowedRoot'],
             'hostKey': config['hostKey'],
-            'defaultDirectory': str(Path(config['allowedRoot']) / 'research'), 'status': public['status'], 'enabled': enabled,
+            'defaultDirectory': str(PurePosixPath(config['allowedRoot']) / 'research'), 'status': public['status'], 'enabled': enabled,
             'diagnostic': proof.get('errorCode'), 'lastCheckRequestId': proof.get('requestId'),
             'credentialRef': config['credentialRef'], 'credentialRevision': config['credentialRevision']}
 
@@ -254,10 +253,12 @@ class PersonalSSHServers:
                 _, body = self._configuration(conn, server.owner, server.reference)
                 configuration = body['configuration']
         def guard():
-            self.auth.require(server.owner, 'run')
-            if require_binding and self.server(server.owner, server.reference).pin() != server.pin():
-                raise RemoteConnectionError('SSH_CONFIGURATION_CHANGED')
-            if not self.provider.authorized(server.owner, configuration):
+            if require_binding:
+                # server() rechecks owner authority, active scoped binding,
+                # both network policies and the exact live vault revision.
+                if self.server(server.owner, server.reference).pin() != server.pin():
+                    raise RemoteConnectionError('SSH_CONFIGURATION_CHANGED')
+            elif not self.provider.authorized(server.owner, configuration):
                 raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
         return self.agents.acquire(server, configuration['origin'], guard)
 

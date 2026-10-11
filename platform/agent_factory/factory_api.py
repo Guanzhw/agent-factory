@@ -124,8 +124,7 @@ class FactoryAPI:
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
-    async def instantiate(self, owner, body: InstanceRequest):
-        """Shared governed admission, including durable unknown-ack handling."""
+    def _instantiate_preflight(self, owner, body: InstanceRequest):
         self.auth.require(owner, "run")
         self.store.require_current_policy()
         plan = self.store.plan(body.planId, owner)
@@ -142,6 +141,16 @@ class FactoryAPI:
             if authorization.get('source') == 'owner-submission':
                 raise HTTPException(403, 'OWNER_SUBMISSION_REMOTE_PLACEMENT_DENIED')
 
+            if self.remote is None:
+                raise HTTPException(503, "Trusted remote execution is unavailable")
+        return plan
+
+    async def instantiate(self, owner, body: InstanceRequest):
+        """Shared governed admission, including durable unknown-ack handling."""
+        # Trusted owner resources can require a synchronous remote health
+        # check. Preserve fresh checks without blocking other ASGI requests.
+        plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
+        if body.executionTargetRef:
             if self.remote is None:
                 raise HTTPException(503, "Trusted remote execution is unavailable")
             return await self.remote.instantiate(owner, plan["id"], body.executionTargetRef, body.requestId)

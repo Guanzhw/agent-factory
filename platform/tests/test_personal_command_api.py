@@ -1,11 +1,14 @@
 """Metadata-only rebind ingress does not create or replay native commands."""
+import asyncio
+import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from agent_factory.personal_command_api import PersonalCommandAPI
+from agent_factory.factory_api import FactoryAPI
 
 
 class PersonalCommandAPITests(unittest.TestCase):
@@ -75,3 +78,55 @@ class PersonalCommandAPITests(unittest.TestCase):
         result = self.client.post(self.base + '/sessions/personal-original/rebind', json=self.body)
         self.assertEqual(result.status_code, 403)
         self.sessions.rebind.assert_not_called()
+
+    def test_original_request_authorization_does_not_block_asgi_loop(self):
+        entered, release = threading.Event(), threading.Event()
+        def bounded_health_check(owner, request_id):
+            self.assertEqual((owner, request_id), ('alice', 'original'))
+            entered.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {'requestId': request_id, 'receipt': None}, None
+        self.api._prepared_request_metadata = bounded_health_check
+        async def observe():
+            pending = asyncio.create_task(self.api.prepared_request('alice', 'original'))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                self.assertFalse(pending.done())
+                # This loop remains able to serve another request while SSH
+                # checks current authority; it never skips or replays a check.
+                await asyncio.wait_for(asyncio.sleep(0), timeout=.2)
+            finally:
+                release.set()
+            self.assertEqual(await pending, {'requestId': 'original', 'receipt': None})
+        asyncio.run(observe())
+
+    def test_explicit_start_keeps_fresh_authorization_off_loop_before_native_admission(self):
+        from agent_factory.personal_command_profile import APPLICATION_ID
+        plan = {'id': 'plan-original', 'application': APPLICATION_ID, 'mode': 'personal-command',
+            'status': 'ready'}
+        self.api.store.plan.return_value = plan
+        factory = FactoryAPI.__new__(FactoryAPI)
+        factory.auth, factory.store, factory.remote = self.auth, self.api.store, None
+        factory.bridge = SimpleNamespace(submit=AsyncMock(return_value={'run_id': 'native-original'}))
+        factory.detail = AsyncMock(return_value={'job': {'id': 'task-original'}})
+        factory.store.reserve_task.return_value = ({'id': 'task-original'}, True)
+        self.api.factory = factory
+        entered, release = threading.Event(), threading.Event()
+        def current_authority(owner, current_plan):
+            self.assertEqual((owner, current_plan), ('alice', plan))
+            entered.set()
+            self.assertTrue(release.wait(timeout=2))
+        factory.store.require_plan_execution.side_effect = current_authority
+        async def observe():
+            pending = asyncio.create_task(self.api.start('alice', 'plan-original'))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                await asyncio.wait_for(asyncio.sleep(0), timeout=.2)
+                factory.bridge.submit.assert_not_awaited()
+                factory.store.reserve_task.assert_not_called()
+            finally:
+                release.set()
+            self.assertEqual(await pending, {'id': 'task-original'})
+            factory.bridge.submit.assert_awaited_once()
+            factory.store.require_plan_execution.assert_called_once_with('alice', plan)
+        asyncio.run(observe())
