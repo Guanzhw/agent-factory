@@ -117,8 +117,11 @@ class EncryptedCredentialVault:
 
     def _destination(self, provider_id, destination):
         try:
-            normalized = origin(destination)
             policy = self._policies.get(provider_id)
+            # Only trusted startup policies can install another credential
+            # destination domain. HTTP providers retain the existing rules.
+            normalize = getattr(policy, 'normalize_destination', origin)
+            normalized = normalize(destination)
             if policy is None or policy(normalized) != normalized:
                 raise CredentialRequestRejected()
             return normalized
@@ -134,6 +137,12 @@ class EncryptedCredentialVault:
         if not isinstance(username, str) or not isinstance(password, str):
             raise CredentialRequestRejected()
         try:
+            policy = self._policies.get(row['provider_id'])
+            validate = getattr(policy, 'prepare_secret', None)
+            if callable(validate):
+                prepared = validate(row['destination'], username, password)
+                if not isinstance(prepared, tuple) or len(prepared) != 2: raise CredentialRequestRejected()
+                username, password = prepared
             SecretLease(username, password)
         except RemoteConnectionError:
             raise CredentialRequestRejected() from None

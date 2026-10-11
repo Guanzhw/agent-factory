@@ -13,7 +13,7 @@ except ImportError:
 import ipaddress
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import select
@@ -22,7 +22,7 @@ import stat
 import subprocess
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 from tempfile import TemporaryDirectory
 
 from .owner_runtime_broker import OwnerRuntimeBroker
@@ -72,7 +72,7 @@ class SSHServer:
         require(type(self.port) is int and 1 <= self.port <= 65535)
         require(re.fullmatch('[a-z_][a-z0-9_-]{0,31}', self.username))
         require(re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{40,120}', self.host_key))
-        root = Path(self.allowed_root)
+        root = PurePosixPath(self.allowed_root)
         require(root.is_absolute() and '..' not in root.parts and not any(c in str(root) for c in '\n\r,:'))
     def pin(self): return digest(self.__dict__)
 
@@ -143,27 +143,34 @@ class SSHOpenResearchPackage:
             'installer': self.installer_pin, 'limits': {'maxActive': config.runtime.max_active,
                 'leaseSeconds': config.runtime.lease_seconds, 'maxActiveSeconds': config.runtime.max_active_seconds}})[:24]
         self.live = {}; self.lock = threading.RLock(); self.provider = SSHOrxProvider(self)
+        self.personal_servers: Any = None
 
     def servers(self, owner):
-        return [{'reference': s.reference, 'name': s.name, 'defaultDirectory': str(Path(s.allowed_root) / 'research')}
-            for s in self.config.servers if s.owner == owner]
+        return [{'reference': s.reference, 'name': s.name, 'defaultDirectory': str(PurePosixPath(s.allowed_root) / 'research')}
+            for s in self.config.servers if s.owner == owner] + (self.personal_servers.available(owner) if self.personal_servers else [])
 
     def _server(self, owner, reference):
         server = next((s for s in self.config.servers if s.reference == reference and s.owner == owner), None)
+        if server is None and self.personal_servers is not None: return self.personal_servers.server(owner, reference)
         if server is None: raise ValueError('SSH_OWNER_SERVER_UNAVAILABLE')
         return server
 
     def selection(self, owner, reference, directory):
         server = self._server(owner, reference)
-        path = Path(directory)
-        require(path.is_absolute() and path != Path(server.allowed_root) and path.is_relative_to(server.allowed_root)
+        return self._selection(server, directory)[0]
+
+    def _selection(self, server, directory):
+        path = PurePosixPath(directory)
+        require(path.is_absolute() and path != PurePosixPath(server.allowed_root) and path.is_relative_to(server.allowed_root)
             and '..' not in path.parts and len(str(path / 'connections' / ('a' * 24) / 'broker.sock').encode()) < 104 and not any(c in str(path) for c in '\n\r,:'))
         lease = self._credential(server)
         return {'location': 'ssh', 'serverRef': server.reference, 'serverRevision': server.revision,
             'serverPin': server.pin(), 'identityPin': hashlib.sha256(lease.public_key.encode()).hexdigest(),
-            'remoteDirectory': str(path)}
+            'remoteDirectory': str(path)}, lease
 
     def _credential(self, server):
+        if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
+            return self.personal_servers.lease(server)
         lease = self.config.credentials(owner=server.owner, reference=server.credential_ref,
             revision=server.credential_revision, destination=server.pin())
         require(isinstance(lease, SSHAgentLease)); lease.validate()
@@ -172,9 +179,10 @@ class SSHOpenResearchPackage:
     def _scope(self, body):
         require(body['packageVersion'] == self.version)
         server = self._server(body['ownerId'], body['serverRef'])
-        require(self.selection(body['ownerId'], server.reference, body['remoteDirectory']) == {
+        selected, lease = self._selection(server, body['remoteDirectory'])
+        require(selected == {
             key: body[key] for key in ('location', 'serverRef', 'serverRevision', 'serverPin', 'identityPin', 'remoteDirectory')})
-        return server, self._credential(server)
+        return server, lease
 
     def _ssh(self, server, lease, local, command, forward=None):
         # No ~/.ssh config, agent forwarding, password fallback, proxy commands,
@@ -233,6 +241,9 @@ class SSHOpenResearchPackage:
             finally: getattr(fcntl, 'flock')(fence, getattr(fcntl, 'LOCK_UN'))
 
     def _install(self, server, lease, body, local, nonce):
+        if self.personal_servers is not None and not any(s.reference == server.reference and s.owner == server.owner for s in self.config.servers):
+            # The environment intent was committed before this explicit effect.
+            self.personal_servers.probe(server, lease, 'prepare')
         self.config.runtime.validate()
         require(file_hash(BASE / 'ssh_install.py') == self.installer_pin)
         require(all(file_hash(path) == self.code_pins[name] for name, path in self.files.items()))
@@ -310,16 +321,19 @@ class SSHOpenResearchPackage:
 
     def check(self, body):
         try:
-            self._scope(body)
             live = self.live.get(body['id'])
-            if not live or not live['broker'].authorized(live['broker'].capability): return False
+            if not live or live['body'] != body or not live['broker'].authorized(live['broker'].capability): return False
+            # The owned broker handle already rechecks this exact body's scope
+            # and current model. The lease then rechecks the current server/key
+            # immediately before RPC; no authority survives this boundary.
             live['broker'].handle.check(); live['lease'].validate()
             return live['channel'].call('check', body) is True
         except Exception: return False
 
     def request(self, body, method, path, payload=None):
-        self._scope(body)
-        live = self.live[body['id']]; live['broker'].handle.check(); live['lease'].validate()
+        live = self.live[body['id']]
+        require(live['body'] == body)
+        live['broker'].handle.check(); live['lease'].validate()
         return live['channel'].call('request', body, method=method, path=path, payload=payload)
 
     def stop(self, body):

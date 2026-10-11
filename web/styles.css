@@ -174,3 +174,7 @@
 .native-result-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
 
 .model-settings button:not([class]) { background: #fff; color: #395575; border: 1px solid #bdcad8; border-radius: 5px; padding: 9px 15px; font-size: 13px; font-weight: 600; min-height: 44px; }
+
+.personal-ssh .model-record { display: block; }
+.personal-ssh .model-record .button-row { margin-top: 12px; }
+.personal-ssh textarea, .personal-credentials textarea { width: 100%; box-sizing: border-box; }
