@@ -128,7 +128,47 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         self.assertNotIn('synthetic-private-key', value)
         self.revoked = True
         status, value = call(broker.capability)
-        self.assertEqual(status, 502); self.assertNotIn('synthetic-private-key', value)
+        self.assertEqual(status, 400); self.assertNotIn('synthetic-private-key', value)
+        self.assertIn('OWNER_MODEL_REQUEST_REJECTED', value)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Native broker requires AF_UNIX')
+    def test_dispatched_disconnect_and_provider_502_are_terminal_not_native_retry_errors(self):
+        from agent_factory.owner_runtime_broker import OwnerModelCallError
+        for outcome in ('disconnect', 'provider_502'):
+            with self.subTest(outcome=outcome):
+                def wire(request):
+                    self.calls.append(request)
+                    if outcome == 'disconnect': raise httpx.ReadError('private-provider-secret socket hang up')
+                    return httpx.Response(502, json={'error': 'private-provider-secret'})
+                self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+                with self.assertRaises(OwnerModelCallError) as caught:
+                    asyncio.run(self.broker.completion({'model': 'owner-model',
+                        'messages': [{'role': 'user', 'content': 'synthetic input'}]}))
+                error = caught.exception
+                self.assertEqual(error.code, 'OWNER_MODEL_CALL_UNCONFIRMED')
+                self.assertRegex(error.diagnostic_id, r'^diag_[a-p]{32}$')
+                self.assertNotIn('private-provider-secret', json.dumps(error.response()))
+        self.assertEqual(len(self.calls), 2)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Native broker requires AF_UNIX')
+    def test_unknown_dispatch_http_response_has_safe_diagnostic_and_no_retry_status(self):
+        def wire(request):
+            self.calls.append(request)
+            raise httpx.ReadTimeout('private secret response timeout')
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+        self.broker.start(); self.addCleanup(self.broker.close)
+        client = _UnixHTTP(self.broker.path)
+        try:
+            client.request('POST', '/v1/chat/completions', body=json.dumps({'model': 'owner-model',
+                'messages': [{'role': 'user', 'content': 'synthetic fixture'}]}), headers={
+                'Authorization': 'Bearer ' + self.broker.capability, 'Content-Type': 'application/json'})
+            response = client.getresponse(); value = json.loads(response.read())
+            self.assertEqual(response.status, 422)
+            self.assertEqual(value['error']['code'], 'OWNER_MODEL_CALL_UNCONFIRMED')
+            self.assertIn(value['diagnosticId'], value['error']['message'])
+            self.assertNotIn('private secret', json.dumps(value))
+        finally: client.close()
+        self.assertEqual(len(self.calls), 1)
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux directory-relative socket custody')
     def test_close_parent_replacement_cannot_delete_another_owner_socket(self):

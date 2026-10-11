@@ -67,10 +67,11 @@ def model_id(value):
 
 
 class PinnedChatTransport(httpx.AsyncBaseTransport):
-    def __init__(self, destination, *, before_send=None, base_path='/v1'):
+    def __init__(self, destination, *, before_send=None, base_path='/v1', on_dispatch=None):
         self.destination = origin(destination)
         self.base = base_url(self.destination + base_path)
         self.before_send = before_send
+        self.on_dispatch = on_dispatch
         self.probe = PinnedHTTPSProbe()
         self.transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
 
@@ -85,6 +86,8 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
         forwarded = httpx.Request('POST', request.url.copy_with(host=addresses[0]),
             headers={**dict(request.headers), 'host': request.url.host}, content=await request.aread(),
             extensions={**request.extensions, 'sni_hostname': request.url.host})
+        if self.on_dispatch is not None:
+            self.on_dispatch()
         return await self.transport.handle_async_request(forwarded)
 
     async def aclose(self):

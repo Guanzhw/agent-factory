@@ -28,6 +28,28 @@ They establish local behavior, not live Go compatibility.
 
 Native header reference: [OpenCode 1.18.35 request preparation](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/session/llm/request.ts).
 
+The native harness has an outer retry loop in addition to SDK retry settings.
+An upstream disconnect or rejected response after possible dispatch ends with
+HTTP 422, a sanitized `OWNER_MODEL_CALL_UNCONFIRMED` error and an alphabetic
+diagnostic ID. A safely rejected pre-dispatch request ends with HTTP 400 and
+`OWNER_MODEL_REQUEST_REJECTED`. No provider exception text or credential is
+returned. HTTP 409 is insufficient: the SDK marks it retryable. Diagnostic IDs
+also omit numerals because the native policy scans response text for 5xx codes.
+See [the pinned native retry policy](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/session/retry.ts).
+
+`scripts/check_owner_model_native_retry.py` runs the pinned 1.18.35 executable
+in a fresh container with `--network none` and a synthetic upstream. Both a
+disconnect and provider HTTP 502 produce exactly one provider dispatch and a
+visible native error. The native retry policy is unmodified. This explicit
+offline check requires the installed binary (`--opencode`) and locked container
+image digest (`--image`); it neither downloads them nor uses real credentials.
+
+Current limits are historical implementation defaults, not a new billing gate:
+64 admitted calls per broker (`OwnerRuntimeBroker.max_calls`) and 4096 output
+tokens per forwarded request. The production runtime factory does not expose
+an 8-call per-environment override. Its lease/hard deadline and verified
+environment stop remain separate from the best-effort native interrupt.
+
 Live acceptance remains pending. A subsequent explicitly authorized bounded
 run must save the official URL through the normal UI, use the production pinned
 transport without `owner_model_transport_factory`, preserve a native session

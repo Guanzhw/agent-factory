@@ -31,6 +31,33 @@ from .personal_remote_provider import reject_credential_echo
 UnixServerBase: Any = getattr(socketserver, 'UnixStreamServer', object)
 
 
+class OwnerModelCallError(ValueError):
+    """Sanitized, non-retryable native outcome; never carries provider text."""
+    def __init__(self, dispatched):
+        self.code = 'OWNER_MODEL_CALL_UNCONFIRMED' if dispatched else 'OWNER_MODEL_REQUEST_REJECTED'
+        # OpenCode also scans response text for 5xx numerals. An alphabetic ID
+        # cannot accidentally turn a terminal rejection into a retryable error.
+        self.diagnostic_id = 'diag_' + ''.join(chr(97 + int(c, 16)) for c in secrets.token_hex(16))
+        super().__init__(self.code)
+
+    def response(self):
+        message = ('模型调用可能已发出，结果尚未确认；请保留原请求核对。' if self.code == 'OWNER_MODEL_CALL_UNCONFIRMED'
+                   else '模型请求在发送前被拒绝；请核对配置与权限。')
+        return {'error': {'message': message + ' 诊断编号：' + self.diagnostic_id,
+            'type': 'owner_model_boundary', 'code': self.code}, 'diagnosticId': self.diagnostic_id}
+
+
+class _SyntheticDispatchTransport(httpx.AsyncBaseTransport):
+    """Track the existing injected test transport at its dispatch boundary."""
+    def __init__(self, transport, on_dispatch):
+        self.transport, self.on_dispatch = transport, on_dispatch
+    async def handle_async_request(self, request):
+        self.on_dispatch()
+        return await self.transport.handle_async_request(request)
+    async def aclose(self):
+        await self.transport.aclose()
+
+
 class _Server(ThreadingMixIn, UnixServerBase):
     daemon_threads = True
     block_on_close = False
@@ -68,6 +95,16 @@ class OwnerRuntimeBroker:
         return type(token) is str and hmac.compare_digest(token, self.capability) and time.monotonic() < self.deadline
 
     async def completion(self, body, session_id=None):
+        dispatched = False
+        def on_dispatch():
+            nonlocal dispatched
+            dispatched = True
+        try:
+            return await self._completion(body, session_id, on_dispatch)
+        except Exception:
+            raise OwnerModelCallError(dispatched) from None
+
+    async def _completion(self, body, session_id, on_dispatch):
         if type(body) is not dict or body.get('model') != 'owner-model': raise ValueError('MODEL_REQUEST_REJECTED')
         messages = body.get('messages')
         if type(messages) is not list or not 1 <= len(messages) <= 200: raise ValueError('MODEL_REQUEST_REJECTED')
@@ -97,8 +134,8 @@ class OwnerRuntimeBroker:
         base = base_url(self.handle.body['baseURL'])
         headers = chat_headers(base, lease, session_id)
         if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
-        transport = transport_factory() if transport_factory else PinnedChatTransport(
-            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check)
+        transport = (_SyntheticDispatchTransport(transport_factory(), on_dispatch) if transport_factory else PinnedChatTransport(
+            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch))
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()
@@ -157,7 +194,8 @@ class OwnerRuntimeBroker:
                     with broker.lock:
                         if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
                         broker.remaining -= 1
-                    body = json.loads(raw)
+                    try: body = json.loads(raw)
+                    except ValueError: return self.reply(400, OwnerModelCallError(False).response())
                     value = asyncio.run(broker.completion(body, session_id))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
@@ -173,7 +211,12 @@ class OwnerRuntimeBroker:
                         self.send_response(200); self.send_header('Content-Type', 'text/event-stream')
                         self.send_header('Content-Length', str(len(payload))); self.end_headers(); self.wfile.write(payload)
                     else: self.reply(200, value)
-                except Exception: self.reply(502, {'error': 'OWNER_MODEL_CALL_UNCONFIRMED'})
+                except OwnerModelCallError as error:
+                    # The pinned native harness retries every 5xx, independently
+                    # of SDK retries=0. A possible paid dispatch must end here.
+                    # 409 is also SDK-retryable; use 422 for an unconfirmed
+                    # dispatch, with no retryable status/text in its payload.
+                    self.reply(422 if error.code == 'OWNER_MODEL_CALL_UNCONFIRMED' else 400, error.response())
                 finally: broker.gate.release()
             def reply(self, status, value):
                 payload = json.dumps(value).encode()
