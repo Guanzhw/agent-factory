@@ -19,6 +19,14 @@ class PlatformOpenResearchPackage(OpenResearchSupervisor):
         super().__init__(config, root)
         self.provider = PlatformOrxProvider(self)
 
+    def connection_revision(self, body):
+        live = self.live.get(body['id'])
+        revision = getattr(live['broker'].handle, 'environment_credential_revision', None) if live else None
+        return revision if type(revision) is str else body['modelRevision']
+
+    def connection_configuration(self, body):
+        return {**super().connection_configuration(body), 'credentialRevision': self.connection_revision(body)}
+
     @staticmethod
     def _new_broker(path, handle, *, ttl): return OwnerRuntimeBroker(path, handle, ttl=ttl)
     @staticmethod
@@ -33,7 +41,7 @@ class _PlatformSecrets:
     def __init__(self, package): self.package = package
     def authorize(self, *, owner, reference, revision, destination):
         live = self.package.live.get(reference)
-        return bool(live and live['body']['ownerId'] == owner and live['body']['modelRevision'] == revision
+        return bool(live and live['body']['ownerId'] == owner and self.package.connection_revision(live['body']) == revision
             and destination == 'https://' + reference + '.platform.invalid' and self.package.check(live['body']))
     def resolve(self, **scope):
         if not self.authorize(**scope): raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')

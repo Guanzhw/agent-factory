@@ -290,6 +290,14 @@ class NativeWorkflows:
     def _wrap(self, identifier, step):
         original = step.executor
         accepts_context = 'run_context' in inspect.signature(original).parameters
+        accepts_application = 'application_context' in inspect.signature(original).parameters
+
+        def arguments(root):
+            values = {'run_context': root} if accepts_context else {}
+            if accepts_application:
+                from ._application_context import FactoryApplicationContext
+                values['application_context'] = FactoryApplicationContext(self.store, root, step.name)
+            return values
 
         def authorize(run_context):
             if not isinstance(run_context, RunContext) or run_context.workflow_id not in (None, identifier):
@@ -305,13 +313,13 @@ class NativeWorkflows:
             @wraps(original)
             async def async_wrapped(step_input, run_context):
                 root = authorize(run_context)
-                return await original(step_input, **({'run_context': root} if accepts_context else {}))
+                return await original(step_input, **arguments(root))
             wrapped: Any = async_wrapped
         else:
             @wraps(original)
             def sync_wrapped(step_input, run_context):
                 root = authorize(run_context)
-                return original(step_input, **({'run_context': root} if accepts_context else {}))
+                return original(step_input, **arguments(root))
             wrapped = sync_wrapped
         # Agno inspects the executor signature to decide context injection.
         wrapped.__signature__ = inspect.Signature([
