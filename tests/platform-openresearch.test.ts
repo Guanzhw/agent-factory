@@ -364,3 +364,33 @@ it('exposes existing research outside collapsed settings and opens it without cr
   expect(localStorage.getItem(`factory-personal-session:${owner.id}:native-openresearch`)).toBe(existing.id);
   expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
+
+
+it('distinguishes a failed identity/capability read from loading and retries without dispatching', async () => {
+  vi.mocked(personalAgentApi.capabilities).mockRejectedValue(new Error('synthetic unavailable'));
+  sessionStorage.setItem(`factory-research-draft:${owner.id}`, JSON.stringify({goal:'Synthetic preserved draft',materials:''}));
+  await mount();
+  expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('暂时无法读取研究连接');
+  expect(button('开始研究').disabled).toBe(true);
+  expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic preserved draft');
+  vi.mocked(personalAgentApi.capabilities).mockResolvedValue({executionContract:PERSONAL_CONTRACT,nativeQueue:true,ownerSubmit:'/api/factory/personal-agent/commands/submit',modelConfiguration:'remote-configured-model',factoryBYOKForwarded:false});
+  await act(async () => button('刷新').click());
+  expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('可以开始研究');
+  expect(button('开始研究').disabled).toBe(false);
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
+it('keeps old replies distinct from a pending turn and exposes original tool evidence without new requests', async () => {
+  const existing = {id:'evidence-study',namespace:'native-openresearch',connectionRef:'original-binding',nativeSessionId:'native-original',nativeProjectId:'project-original',state:'ack_unknown',activeRequestId:'unknown-original',factoryIdentity:{taskId:'task-original'},
+    observation:{exactTurnVerified:false,messages:[{id:'g',role:'user',events:[{type:'text',text:'Synthetic original goal'}]},{id:'r',role:'assistant',completed:true,events:[{type:'text',text:'Synthetic older result'},{type:'tool',tool:'read_local_fixture',status:'completed',output:'Synthetic recorded tool output'}]}]}} as unknown as PersonalSession;
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([existing]);
+  await mount(); await act(async () => button('Synthetic original goal').click());
+  expect(host.querySelector('[aria-label="目标与下一步"]')!.textContent).toContain('Synthetic original goal');
+  expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('研究请求待核对');
+  expect(host.querySelector('[aria-label="研究进度"]')!.textContent).toContain('已有回复可能来自上一轮');
+  expect(host.querySelector('[aria-label="研究结果"]')!.textContent).toContain('Synthetic older result');
+  expect(host.querySelector('[aria-label="证据与来源"]')!.textContent).toContain('Synthetic recorded tool output');
+  expect(host.querySelector('[aria-label="证据与来源"]')!.textContent).toContain('精确轮次未验证');
+  expect(button('继续研究').disabled).toBe(true);
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
