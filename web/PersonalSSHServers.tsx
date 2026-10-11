@@ -32,11 +32,11 @@ function serverReceipt(value: PersonalSSHServer): PersonalSSHServer {
   return value;
 }
 
-type Props = { ownerId: string; onChanged: () => void; onResearch?: () => void };
+type Props = { ownerId: string; onChanged: () => void; onResearch?: () => void; revision?: number };
 export function PersonalSSHServers(props: Props) {
   return <OwnerSSHServers key={props.ownerId} {...props}/>;
 }
-function OwnerSSHServers({ ownerId, onChanged, onResearch }: Props) {
+function OwnerSSHServers({ ownerId, onChanged, onResearch, revision = 0 }: Props) {
   const storage = `factory-personal-ssh:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<Pending | null>(() => { try { return readPending(JSON.parse(localStorage.getItem(storage) ?? 'null'), ownerId); } catch { return null; } });
   const [archived, setArchived] = useState<Pending[]>(() => { try { const a: unknown = JSON.parse(localStorage.getItem(`${storage}:unresolved`) ?? '[]'); return Array.isArray(a) ? a.slice(0, 100).map(v => readPending(v, ownerId)).filter((p): p is Pending => !!p) : []; } catch { return []; } });
@@ -62,7 +62,13 @@ function OwnerSSHServers({ ownerId, onChanged, onResearch }: Props) {
       if (!ctrl.signal.aborted && alive.current) { setRows(servers.map(serverReceipt)); setCredentials(saved.map(credentialReceipt).filter(c => c.providerId === SSH_CREDENTIAL_PROVIDER && c.status === 'active')); setEnabled(cap.enabled); setReady(true); }
     })().catch(e => { if (!ctrl.signal.aborted && alive.current) { if (e instanceof RemoteRequestError && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else setError('暂时无法读取自己的服务器，请重新读取。原记录保留。'); } });
     return () => ctrl.abort();
-  }, [ownerId, refresh]);
+  }, [ownerId, refresh, revision]);
+  useEffect(() => {
+    if (ready && credential && !credentials.some(c => c.credentialRef === credential.credentialRef && c.credentialRevision === credential.credentialRevision && c.status === 'active')) {
+      setCredential(undefined); clearSecret();
+      setNotice('SSH 身份版本已改变或撤销，请重新选择当前身份并确认授权。');
+    }
+  }, [ready, credentials, credential]);
   function retain(p: Pending) { localStorage.setItem(storage, JSON.stringify(p)); setPending(p); }
   function acknowledge(p: Pending, archive = false) {
     if (archive) { const next = archived.filter(v => v.requestId !== p.requestId); localStorage.setItem(`${storage}:unresolved`, JSON.stringify(next)); setArchived(next); }

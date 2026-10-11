@@ -3,6 +3,7 @@
 Network policy and application package are global deployment configuration.
 Owners confirm each fixed host/identity themselves; no per-device administrator.
 """
+import asyncio
 import base64
 from dataclasses import dataclass
 import hashlib
@@ -353,19 +354,26 @@ def personal_ssh_router(auth, service):
 
     @router.post('/identity')
     async def identity(request: Request):
-        owner(request)
-        try: return service.identity((await body(request, IdentityRequest)).model_dump())
-        except RemoteConnectionError: raise HTTPException(422, {'code': 'SSH_IDENTITY_INVALID'}) from None
+        values = (await body(request, IdentityRequest)).model_dump()
+        def inspect_identity():
+            owner(request)
+            try: return service.identity(values)
+            except RemoteConnectionError: raise HTTPException(422, {'code': 'SSH_IDENTITY_INVALID'}) from None
+        return await asyncio.to_thread(inspect_identity)
 
     @router.get('')
     def listing(request: Request): return service.list(owner(request))
 
-    async def save_configuration(request, reference=None):
-        actor = owner(request, 'run'); values = (await body(request, ConfigureSSHRequest)).model_dump()
+    def persist_configuration(request, values, reference=None):
+        actor = owner(request, 'run')
         request_id = values.pop('requestId')
         if reference is not None: service.inspect(actor, reference)
         remote = service.connections.personal.configure(actor, PROVIDER_ID, values, request_id, reference=reference)
         return service.inspect(actor, remote['registrationRef'])
+
+    async def save_configuration(request, reference=None):
+        values = (await body(request, ConfigureSSHRequest)).model_dump()
+        return await asyncio.to_thread(persist_configuration, request, values, reference)
 
     @router.post('', status_code=201)
     async def configure(request: Request): return await save_configuration(request)
@@ -390,14 +398,17 @@ def personal_ssh_router(auth, service):
     @router.get('/{reference}')
     def inspect(reference: str, request: Request): return service.inspect(owner(request), reference)
 
-    @router.post('/{reference}/{action}')
-    async def command(reference: str, action: str, request: Request):
+    def execute_command(reference, action, request, request_id):
         actor = owner(request, 'read' if action == 'revoke' else 'run')
         service.inspect(actor, reference)
-        request_id = (await body(request, SSHCommand)).requestId
         if action == 'bind': service.connections.bind(actor, reference, request_id, capabilities=['ssh:prepare'])
         elif action == 'verify': service.connections.personal.verify(actor, reference, request_id)
         elif action == 'revoke': service.connections.personal.revoke(actor, reference, request_id)
         else: raise HTTPException(422, 'SSH_ACTION_INVALID')
         return service.inspect(actor, reference)
+
+    @router.post('/{reference}/{action}')
+    async def command(reference: str, action: str, request: Request):
+        request_id = (await body(request, SSHCommand)).requestId
+        return await asyncio.to_thread(execute_command, reference, action, request, request_id)
     return router

@@ -1,4 +1,5 @@
 """Synthetic keys and independent in-memory custody, never a real user/server."""
+import asyncio
 import base64
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from typing import cast
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
+
+import httpx
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -70,7 +73,7 @@ class PersonalSSHTests(unittest.TestCase):
             'hostKey': host, 'allowedRoot': '/tmp/af-personal-fixture'}
         self.identity = self.service.identity(self.input)
         self.private = fixture_key()
-        app = FastAPI()
+        app = FastAPI(); self.app = app
         app.include_router(credential_vault_router(self.auth, self.vault))
         app.include_router(personal_ssh_router(self.auth, self.service))
         self.client = TestClient(app); self.headers = {'x-fixture-owner': 'alice'}
@@ -248,6 +251,31 @@ class PersonalSSHTests(unittest.TestCase):
         response, _ = self.command(server, 'verify'); self.assertEqual(response.status_code, 403)
         self.auth.disabled = False
         self.assertFalse(self.service.inspect('alice', server['reference'])['enabled'])
+
+    def test_slow_ssh_check_keeps_other_gets_responsive_without_replay(self):
+        server, _, _ = self.registered()
+        entered, release = threading.Event(), threading.Event()
+        def slow_probe(*args):
+            entered.set()
+            if not release.wait(timeout=2): raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED')
+        self.service.probe.side_effect = slow_probe
+        async def observe():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app),
+                    base_url='http://fixture', headers=self.headers) as client:
+                pending = asyncio.create_task(client.post(f"{self.root}/{server['reference']}/verify",
+                    json={'requestId': 'slow-original-check'}))
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                    self.assertFalse(pending.done(), 'SSH probe blocked the ASGI loop')
+                    health = await asyncio.wait_for(client.get(self.root + '/capabilities'), timeout=.5)
+                    self.assertEqual(health.status_code, 200)
+                    self.assertTrue(health.json()['enabled'])
+                finally:
+                    release.set()
+                response = await pending
+                self.assertEqual(response.status_code, 200, response.text)
+                self.service.probe.assert_called_once()
+        asyncio.run(observe())
 
     def test_stale_agent_expiry_callback_cannot_close_replacement_agent(self):
         agents = object.__new__(SSHAgents); agents.lock = threading.RLock()

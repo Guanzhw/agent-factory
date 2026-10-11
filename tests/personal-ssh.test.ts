@@ -5,9 +5,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { api } from '../web/api.js';
 import { PersonalSSHServers } from '../web/PersonalSSHServers.js';
+import { ConnectionsPanel } from '../web/ConnectionsPanel.js';
 import { credentialDestination, credentialReceipt, SSH_CREDENTIAL_PROVIDER } from '../web/credentialManagement.js';
 import { personalRemoteApi, RemoteRequestError } from '../web/personalRemoteApi.js';
 import { personalSSHApi, type PersonalSSHServer, type SSHIdentityInput } from '../web/personalSSHApi.js';
+import { personalAgentApi } from '../web/personalAgentApi.js';
+import { applicationEnvironmentApi } from '../web/applicationEnvironmentApi.js';
+import { ownerModelApi } from '../web/ownerModelApi.js';
 
 const pin = 'a'.repeat(64); const destination = `ssh://fixture@127.0.0.1:2222?hostkey=${pin}`;
 const publicKey = 'ssh-ed25519 ' + 'A'.repeat(68);
@@ -74,6 +78,43 @@ it('uses an already saved exact-host credential without sending another secret',
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([credential, { ...credential, credentialRef: 'credential-other', destination: destination.replace('2222', '2223') }]);
   await mount(); await preview(); await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
   await act(async () => button('保存身份并登记服务器').click()); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalSSHApi.configure).toHaveBeenCalledTimes(1);
+});
+
+it('refreshes SSH identity revisions after rotation in the sibling credentials panel and requires new consent', async () => {
+  let current = credential;
+  vi.mocked(personalRemoteApi.credentials).mockImplementation(async () => [current]);
+  vi.mocked(personalSSHApi.list).mockResolvedValue([server]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [SSH_CREDENTIAL_PROVIDER] });
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'rotateCredential').mockImplementation(async () => { current = { ...credential, credentialRevision: 'r2' }; return current; });
+  vi.spyOn(api, 'userConnections').mockResolvedValue([]);
+  vi.spyOn(api, 'connectionRegistrations').mockResolvedValue([]);
+  vi.spyOn(api, 'resourceLeases').mockResolvedValue({ leases: [], nextCursor: null });
+  vi.spyOn(personalAgentApi, 'capabilities').mockResolvedValue({ executionContract: 'personal-remote-agent-v1', nativeQueue: false });
+  vi.spyOn(personalAgentApi, 'sessions').mockResolvedValue([]);
+  vi.spyOn(applicationEnvironmentApi, 'capabilities').mockResolvedValue({ locations: [], applications: [] });
+  vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
+  await act(async () => root.render(createElement(ConnectionsPanel, {
+    user: { id: 'alice', name: 'Alice', role: 'user' }, jobs: [], busy: '',
+    act: async (_name: string, work: () => Promise<void>) => { await work(); }, onNotice: vi.fn(),
+  })));
+  await act(async () => button('更换连接设置').click());
+  await act(async () => button('核对服务器身份').click());
+  await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
+  await act(async () => button('更换凭据').click());
+  await field('新的专用 Ed25519 SSH 私钥', secret);
+  await act(async () => host.querySelector<HTMLInputElement>('.personal-credentials input[type=checkbox]')!.click());
+  await act(async () => button('保存更换后的凭据').click());
+  expect(personalRemoteApi.rotateCredential).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain('SSH 身份版本已改变或撤销');
+  expect(button('保存身份并登记服务器').disabled).toBe(true);
+  await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
+  await act(async () => button('保存身份并登记服务器').click());
+  expect(personalSSHApi.configure).toHaveBeenLastCalledWith('alice', expect.objectContaining({
+    credentialRef: credential.credentialRef, credentialRevision: 'r2', confirmedHostKey: true,
+  }), server.reference);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
 });
 
 it('recovers a lost key receipt after remount with GET only, no secret resend and no automatic registration', async () => {
