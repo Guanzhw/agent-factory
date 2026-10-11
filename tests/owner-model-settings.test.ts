@@ -16,6 +16,7 @@ it('accepts the official Go Chat Completions base without accepting arbitrary pr
   const baseURL = 'https://opencode.ai/zen/go/v1';
   expect(modelEndpoint(baseURL)).toBe(baseURL);
   expect(ownerModel({ ...row, provider: 'openai-compatible', baseURL }, 'alice').baseURL).toBe(baseURL);
+  expect(modelEndpoint(' HTTPS://MODELS.EXAMPLE.COM/v1 ')).toBe('https://models.example.com/v1');
   for (const url of ['https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1', 'https://opencode.ai.evil.example/zen/go/v1']) expect(() => modelEndpoint(url)).toThrow();
 });
 let host: HTMLDivElement; let root: Root;
