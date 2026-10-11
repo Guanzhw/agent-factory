@@ -198,8 +198,12 @@ it('explicit incompatible-package choice creates another environment without sen
     dataRetained: true, classification: 'needs-new-run', canRebind: false, requiresCredentialRebind: false,
     sessionRebindRequired: false, originalWorkReplay: false, researchSubmitted: false, nativeCheckpointContinuationVerified: false,
     reason: 'ENVIRONMENT_PACKAGE_CHANGED', nextAction: 'new-environment', message: '原项目与结果保留。' });
-  const next = { ...env, id: 'new-environment', projectId: 'new-project' };
-  vi.mocked(applicationEnvironmentApi.prepare).mockImplementation(async (_, id) => ({ ...request(id), environment: next }));
+  const next = { ...env, id: 'env-'+'b'.repeat(32), projectId: 'new-project' };
+  vi.mocked(applicationEnvironmentApi.prepare).mockImplementation(async (_, id) => {
+    vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env,next]);
+    vi.mocked(applicationEnvironmentApi.inspect).mockResolvedValue(next);
+    return { ...request(id), environment: next };
+  });
   vi.mocked(personalAgentApi.project).mockResolvedValue({ ...project, nativeProjectId: next.projectId, upstreamOrxProjectId: next.projectId });
   await mount(); await goal('Synthetic retained goal');
   await act(async () => button('核对恢复条件').click());
@@ -207,6 +211,66 @@ it('explicit incompatible-package choice creates another environment without sen
   await act(async () => button('创建新环境，保留旧结果').click());
   expect(applicationEnvironmentApi.prepare).toHaveBeenCalledWith(owner.id, expect.any(String), { location: 'platform', newEnvironment: true });
   expect(personalAgentApi.submit).not.toHaveBeenCalled(); expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Synthetic retained goal');
+  await act(async () => root.unmount()); root=createRoot(host); await mount();
+  expect(personalAgentApi.submit).not.toHaveBeenCalled();
+  await act(async () => button('开始研究').click());
+  expect(applicationEnvironmentApi.prepare).toHaveBeenLastCalledWith(owner.id,expect.any(String),{location:'platform',environmentId:next.id});
+  expect(personalAgentApi.submit).toHaveBeenCalledTimes(1);
+  expect(personalAgentApi.submit).toHaveBeenCalledWith(expect.objectContaining({nativeProjectId:next.projectId}),owner.id);
+});
+
+it('restores the stopped explicit generation with its own ID and does not send a goal', async () => {
+  const generation = { ...env,id:'env-'+'b'.repeat(32),projectId:'distinct-generation-project',state:'stopped' };
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([generation]); vi.mocked(applicationEnvironmentApi.inspect).mockResolvedValue(generation);
+  vi.mocked(applicationEnvironmentApi.prepare).mockImplementation(async (_, id) => ({...request(id),environment:{...generation,state:'ready'}}));
+  vi.mocked(personalAgentApi.project).mockResolvedValue({...project,nativeProjectId:generation.projectId});
+  await mount(); await goal('SYNTHETIC retained goal');
+  await act(async () => button('准备或恢复平台环境').click());
+  expect(applicationEnvironmentApi.prepare).toHaveBeenCalledWith(owner.id,expect.any(String),{location:'platform',environmentId:generation.id});
+  expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
+it.each(['missing','ambiguous','delayed'] as const)('revokes environment A writes when research B discovery is %s',async outcome => {
+  const history = (id:string,projectId:string,connectionRef:string) => ({id,nativeProjectId:projectId,nativeSessionId:'native-'+id,namespace:'native-openresearch',connectionRef,state:'result_observed',activeRequestId:null,bindingStatus:'unavailable',connectionPin:{ownerId:owner.id,capabilities:['session:read','session:prompt']},observation:null}) as unknown as PersonalSession;
+  const a=history('session-A',env.projectId,env.connectionRef); const b=history('session-B','project-B','binding-B');
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([a,b]); vi.spyOn(personalAgentApi,'session').mockImplementation(async id=>id===a.id?a:b);
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env]);
+  vi.spyOn(applicationEnvironmentApi,'stop'); vi.spyOn(applicationEnvironmentApi,'rebind');
+  await mount();
+  await act(async () => host.querySelectorAll<HTMLButtonElement>('.research-session-entry button')[0].click());
+  expect(button('停止环境并保留数据')).toBeTruthy();
+  const resolves: Array<(values: typeof env[]) => void> = [];
+  const next = {...env,id:'env-'+'b'.repeat(32),projectId:'project-B',connectionRef:'binding-B'};
+  if(outcome==='delayed') vi.mocked(applicationEnvironmentApi.list).mockImplementation(()=>new Promise(done=>{resolves.push(done);}));
+  else vi.mocked(applicationEnvironmentApi.list).mockResolvedValue(outcome==='missing'?[]:[next,{...next,id:'env-'+'c'.repeat(32)}]);
+  await act(async () => host.querySelectorAll<HTMLButtonElement>('.research-session-entry button')[1].click());
+  expect(button('停止环境并保留数据')).toBeUndefined(); expect(button('核对恢复条件')).toBeUndefined();
+  if(outcome==='delayed') {
+    await act(async () => host.querySelectorAll<HTMLButtonElement>('.research-session-entry button')[0].click());
+    // B's delayed response cannot establish a write target after returning A.
+    await act(async()=>resolves[0]([next]));
+    expect(button('停止环境并保留数据')).toBeUndefined();
+    await act(async()=>resolves.at(-1)!([env]));
+    expect(button('停止环境并保留数据')).toBeTruthy();
+  }
+  expect(applicationEnvironmentApi.stop).not.toHaveBeenCalled(); expect(applicationEnvironmentApi.rebind).not.toHaveBeenCalled();
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
+});
+
+it('ignores late original environment inspect after switching research identity',async()=>{
+  const history=(id:string,projectId:string,ref:string)=>({id,nativeProjectId:projectId,nativeSessionId:'native-'+id,namespace:'native-openresearch',connectionRef:ref,state:'result_observed',activeRequestId:null,bindingStatus:'unavailable',connectionPin:{ownerId:owner.id,capabilities:['session:read','session:prompt']},observation:null}) as unknown as PersonalSession;
+  const a=history('A',env.projectId,env.connectionRef),b=history('B','project-B','binding-B');
+  vi.mocked(personalAgentApi.sessions).mockResolvedValue([a,b]);vi.spyOn(personalAgentApi,'session').mockImplementation(async id=>id===a.id?a:b);
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([env]);
+  let finish!: (value:typeof env)=>void;
+  vi.mocked(applicationEnvironmentApi.inspect).mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  await mount();await act(async()=>host.querySelectorAll<HTMLButtonElement>('.research-session-entry button')[0].click());
+  expect(button('停止环境并保留数据')).toBeUndefined();
+  vi.mocked(applicationEnvironmentApi.list).mockResolvedValue([]);
+  await act(async()=>host.querySelectorAll<HTMLButtonElement>('.research-session-entry button')[1].click());
+  await act(async()=>finish(env));
+  expect(button('停止环境并保留数据')).toBeUndefined();expect(button('核对恢复条件')).toBeUndefined();
+  expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();expect(personalAgentApi.submit).not.toHaveBeenCalled();
 });
 
 it('lost stop acknowledgement survives reload and only reads the original stop request', async () => {

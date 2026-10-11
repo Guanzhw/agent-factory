@@ -1,18 +1,69 @@
 """Credential continuation never rewrites native identity or dispatches work."""
 from copy import deepcopy
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from agent_factory.application_environments import PrepareEnvironment, RebindEnvironment
+from agent_factory.runtime_packages.openresearch_v1 import ssh_install
 import test_application_environments as fixtures
 
 
 class EnvironmentBindingTests(fixtures.ApplicationEnvironmentTests):
     def row(self, owner, identifier):
         with self.service.db.read() as conn: return self.service._row(conn, owner, identifier)
+
+    def test_different_actual_ssh_install_bytes_require_new_directory_and_preserve_original_package(self):
+        root = Path(self.folder.name)
+        root.chmod(0o700)
+        version = ['old-synthetic-package']
+        original_prepare = self.package.prepare
+        def install_bytes(directory):
+            files = {name: (version[0] + ':' + name).encode() for name in sorted(ssh_install.FILES)}
+            manifest = {'allowedRoot': str(root), 'directory': directory, 'image': 'sha256:'+'a'*64,
+                'nonce': 'a'*24, 'files': {name: {'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest()} for name,raw in files.items()}}
+            raw = json.dumps(manifest).encode()+b'\n'+b''.join(files.values())
+            inventory = SimpleNamespace(returncode=0, stdout=(manifest['image']+'\n').encode())
+            # Execute the unchanged installer against real private files. Only
+            # Docker inventory is synthetic; no image or runtime is launched.
+            with patch.object(ssh_install.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(raw))), \
+                    patch.object(ssh_install.subprocess, 'run', return_value=inventory):
+                ssh_install.install()
+        def prepare(body, handle):
+            install_bytes(body['remoteDirectory']); original_prepare(body,handle)
+        ssh = SimpleNamespace(**self.package.__dict__)
+        ssh.prepare = prepare
+        ssh.selection = lambda owner, ref, directory: {'location':'ssh','serverRef':ref,
+            'remoteDirectory':directory,'serverRevision':'one','serverPin':'one','serverScopePin':'owned-host'}
+        self.service.packages['openresearch:ssh'] = ssh
+        directory = str(root/'old-data')
+        previous_umask = os.umask(0o077); self.addCleanup(os.umask, previous_umask)
+        old = self.service.prepare('alice','openresearch','ssh-install-original',location='ssh',server_ref='owned',directory=directory)['environment']
+        package = Path(directory)/'factory_package'
+        original_bytes = {p.name:p.read_bytes() for p in package.iterdir()}
+        retained = Path(directory)/'retained-research.txt'; retained.write_text('SYNTHETIC ORIGINAL DATA')
+        version[0] = 'different-synthetic-package'; ssh.version = 'fixture-package-2'
+        preview = self.service.bindings.preview('alice',old['id'])
+        self.assertEqual(preview['reason'],'ENVIRONMENT_SSH_PACKAGE_UPDATE_UNSUPPORTED')
+        self.assertEqual(preview['nextAction'],'choose-new-location'); self.assertFalse(preview['canRebind'])
+        with self.assertRaises(HTTPException) as refused:
+            self.service.prepare('alice','openresearch','ssh-upgrade-denied',location='ssh',server_ref='owned',directory=directory,new_environment=True)
+        self.assertEqual(refused.exception.detail,'ENVIRONMENT_SSH_PACKAGE_UPDATE_UNSUPPORTED')
+        self.assertEqual(len(self.prepares),1)
+        with self.assertRaises(ValueError): install_bytes(directory)
+        self.assertEqual({name:(package/name).read_bytes() for name in original_bytes},original_bytes)
+        new = self.service.prepare('alice','openresearch','ssh-install-new-directory',location='ssh',server_ref='owned',directory=str(root/'new-data'),new_environment=True)['environment']
+        self.assertNotEqual(new['id'],old['id']); self.assertNotEqual(new['projectId'],old['projectId'])
+        self.assertNotEqual((Path(new['remoteDirectory'])/'factory_package'/'entry.py').read_bytes(),original_bytes['entry.py'])
+        self.assertEqual(retained.read_text(),'SYNTHETIC ORIGINAL DATA'); self.assertEqual(self.research,[])
 
     def test_explicit_stopped_model_binding_preserves_original_body_and_never_prepares_or_prompts(self):
         first = self.service.prepare('alice', 'openresearch', 'original-prepare')

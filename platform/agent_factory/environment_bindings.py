@@ -76,6 +76,10 @@ class EnvironmentBindings:
             return {**result, 'reason': 'ENVIRONMENT_PACKAGE_UNAVAILABLE', 'nextAction': 'new-environment',
                 'message': '原运行包不可用。保留已有结果；选择当前可用运行位置创建新环境。'}
         if package.version != body['packageVersion']:
+            if body.get('location') == 'ssh':
+                return {**result, 'reason': 'ENVIRONMENT_SSH_PACKAGE_UPDATE_UNSUPPORTED',
+                    'availablePackageVersion': package.version, 'nextAction': 'choose-new-location',
+                    'message': '此服务器目录的固定运行包不支持原地升级。原数据保留；请明确选择另一个已授权私有目录或运行位置创建新环境。'}
             return {**result, 'classification': 'needs-new-run', 'reason': 'ENVIRONMENT_PACKAGE_CHANGED',
                 'availablePackageVersion': package.version, 'nextAction': 'new-environment',
                 'message': '运行包版本已变化，不能自动迁移原生检查点。创建新环境使用当前版本，原项目与结果保留。'}

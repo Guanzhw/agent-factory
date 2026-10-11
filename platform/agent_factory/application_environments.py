@@ -149,9 +149,12 @@ class ApplicationEnvironments:
             from .environment_bindings import EnvironmentModelHandle
             return EnvironmentModelHandle(self, owner, body, effective, binding.opaque_handle)
 
-    def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None, new_environment=False):
+    def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None,
+                new_environment=False, environment_id=None):
         self.auth.require(owner, 'run')
         self.connections._key(request_id)
+        if new_environment and environment_id is not None:
+            raise HTTPException(422, 'ENVIRONMENT_INTENT_INVALID')
         package = self._package(application, {'location': location})
         if package is None: raise HTTPException(409, 'ENVIRONMENT_PACKAGE_UNAVAILABLE')
         selection = {}
@@ -168,6 +171,17 @@ class ApplicationEnvironments:
             identity['generation'] = request_id
             intent['newEnvironment'] = True
         identifier = 'env-' + digest(identity)[:32]
+        if environment_id is not None:
+            # An explicit restore selects existing owner custody, never derives
+            # a default generation or creates a replacement for a missing ID.
+            with self.db.read() as conn: original = self._row(conn, owner, environment_id)
+            body = original['body']
+            if (original['application_id'] != application or body.get('location', 'platform') != location
+                    or location == 'ssh' and (body['serverRef'] != server_ref
+                        or body['remoteDirectory'] != selection['remoteDirectory'])):
+                raise HTTPException(409, 'ENVIRONMENT_SELECTION_MISMATCH')
+            identifier = environment_id
+            intent['environmentId'] = identifier
         fingerprint = digest(intent)
         with self._fence(identifier):
             with self.db.write() as conn:
@@ -178,6 +192,19 @@ class ApplicationEnvironments:
                     # GET is the recovery operation. POST replay returns custody;
                     # an interrupted prepare requires a new explicit prepare.
                     return self.request(owner, request_id)
+                if new_environment and location == 'ssh':
+                    # The fixed SSH installer never overwrites different bytes
+                    # in factory_package. Another generation cannot silently
+                    # upgrade that directory or erase the original data.
+                    existing = conn.execute(select(self.environments.c.id).where(
+                        self.environments.c.owner_id == owner,
+                        self.environments.c.application_id == application)).scalars().all()
+                    for candidate in existing:
+                        original = self._row(conn, owner, candidate)['body']
+                        if (original.get('location') == 'ssh' and original.get('serverRef') == server_ref
+                                and original.get('remoteDirectory') == selection['remoteDirectory']
+                                and original['packageVersion'] != package.version):
+                            raise HTTPException(409, 'ENVIRONMENT_SSH_PACKAGE_UPDATE_UNSUPPORTED')
                 model = self.models.default(owner)
                 old = conn.execute(select(self.environments).where(self.environments.c.id == identifier,
                     self.environments.c.owner_id == owner)).mappings().first()
@@ -279,6 +306,7 @@ class PrepareEnvironment(BaseModel):
     serverRef: str | None = Field(default=None, max_length=80)
     directory: str | None = Field(default=None, max_length=4096)
     newEnvironment: StrictBool = False
+    environmentId: str | None = Field(default=None, pattern=r'^env-[a-f0-9]{32}$')
 
 
 class StopEnvironment(BaseModel):
@@ -308,7 +336,8 @@ def environment_router(auth, service):
         if request.headers.get('X-Factory-Expected-Owner') != current:
             raise HTTPException(409, 'EXPECTED_OWNER_MISMATCH')
         return service.prepare(current, body.applicationId, body.requestId, location=body.location,
-            server_ref=body.serverRef, directory=body.directory, new_environment=body.newEnvironment)
+            server_ref=body.serverRef, directory=body.directory, new_environment=body.newEnvironment,
+            environment_id=body.environmentId)
 
     @router.get('/binding-requests/{request_id}')
     def binding_request(request_id: str, request: Request): return service.bindings.request(owner(request), request_id)

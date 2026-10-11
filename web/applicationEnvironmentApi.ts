@@ -34,7 +34,7 @@ export const applicationEnvironmentApi = {
   bindingRequest: (owner: string, requestId: string, signal?: AbortSignal) => factoryRequest<EnvironmentBindingReceipt>(`/application-environments/binding-requests/${encodeURIComponent(requestId)}`, 'GET', undefined, signal, owner),
   capabilities: (signal?: AbortSignal) => factoryRequest<{ locations: string[]; applications: string[]; selfServiceSSH?: boolean }>('/application-environments/capabilities', 'GET', undefined, signal),
   servers: (signal?: AbortSignal) => factoryRequest<OwnedServer[]>('/application-environments/servers', 'GET', undefined, signal),
-  prepare: (owner: string, requestId: string, selection: { location: 'platform' | 'ssh'; serverRef?: string; directory?: string; newEnvironment?: boolean } = { location: 'platform' }) => factoryRequest<EnvironmentRequest>('/application-environments/prepare', 'POST', { requestId, applicationId: 'openresearch', ...selection }, undefined, owner),
+  prepare: (owner: string, requestId: string, selection: { location: 'platform' | 'ssh'; serverRef?: string; directory?: string; newEnvironment?: boolean; environmentId?: string } = { location: 'platform' }) => factoryRequest<EnvironmentRequest>('/application-environments/prepare', 'POST', { requestId, applicationId: 'openresearch', ...selection }, undefined, owner),
   recover: (requestId: string, signal?: AbortSignal) => factoryRequest<EnvironmentRequest>(`/application-environments/requests/${encodeURIComponent(requestId)}`, 'GET', undefined, signal),
   stop: (owner: string, id: string, requestId: string) => factoryRequest<EnvironmentRequest>(`/application-environments/${encodeURIComponent(id)}/stop`, 'POST', { requestId }, undefined, owner),
 };

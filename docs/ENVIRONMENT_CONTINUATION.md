@@ -13,7 +13,8 @@ check the original environment's recovery conditions. The read distinguishes:
 | Verified current credentials changed | Positively stop the environment, review the current choice, then explicitly confirm a credential binding. Restore separately and use the existing session rebind flow. |
 | Original operation is UNKNOWN, preparing or stopping | Read that original request. No automatic retry, work replay or checkpoint claim. |
 | Credentials unavailable | Repair and verify the owner's credentials, then check again. Original records remain readable. |
-| Package changed, or original SSH host scope cannot be established | Explicitly create a new environment and project; retain the old environment, session and results. No goal is submitted by this operation. |
+| Platform package changed, or original SSH host scope cannot be established | Explicitly create a new environment and project; retain the old environment, session and results. No goal is submitted by this operation. |
+| SSH package changed in an existing directory | In-place update is unsupported. Retain the old files and data; explicitly select another authorized private directory or runtime location. No install is attempted in the original directory. |
 
 ## Boundaries
 
@@ -56,11 +57,20 @@ this does not install or upgrade an operator's runtime package.
   true` for an explicit distinct generation. Its original request ID identifies
   that generation; replay returns the same custody record and never installs
   again. The existing request endpoint remains the recovery read.
+- Prepare also accepts `environmentId` for an explicit restore of existing owner
+  custody, including a distinct generation. It cannot be combined with
+  `newEnvironment`; application, location, SSH selection and original package
+  and credential pins must match. Missing or foreign IDs never select a default
+  environment. Start and restore use the selected ID, including after refresh.
 
 The browser persists original binding and stop request IDs before writing.
 Refresh/return can discover an owned pending operation, then reads that original
 request. Missing acknowledgements remain unresolved. Only named pre-commit
 rejections permit another explicit review; transport failures do not.
+Only opaque environment/project/connection pointers are retained as the owner's
+selection hint. Discovery still inspects server-owned identity before enabling
+environment writes. Changing research or location removes the old write target;
+missing, ambiguous and late discovery responses cannot act on another project.
 
 ## Validation scope
 

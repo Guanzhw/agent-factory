@@ -114,5 +114,41 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         self.assertEqual(repeated['environment']['id'], created['id'])
         self.assertEqual(len(self.fixture.prepares), 2); self.assertEqual(self.fixture.research, [])
 
+    def test_explicit_generation_restore_after_restart_rotation_and_lost_ack_never_selects_default(self):
+        default = self.service.prepare('alice', 'openresearch', 'pg-default-before-update')['environment']
+        self.fixture.package.version = 'new-fixed-fixture'
+        created = self.service.prepare('alice', 'openresearch', 'pg-new-explicit-generation', new_environment=True)['environment']
+        with self.service.db.read() as conn: original = deepcopy(self.service._row(conn, 'alice', created['id']))
+        self.service.stop('alice', created['id'], 'pg-stop-generation')
+        self.fixture.model_revision = 'rotated-generation-model'
+        preview = self.service.bindings.preview('alice', created['id'])
+        self.service.bindings.rebind('alice', created['id'], 'pg-rebind-generation', preview['previewHash'])
+        self.service = self.reopen()
+        actor = ['alice']
+        app = FastAPI(); app.include_router(environment_router(SimpleNamespace(user=lambda _: {'id': actor[0]}), self.service))
+        body = {'requestId': 'pg-restore-generation', 'environmentId': created['id']}
+        with TestClient(app) as client:
+            path = '/api/factory/application-environments/prepare'
+            actor[0] = 'bob'
+            self.assertEqual(client.post(path, json=body, headers={'X-Factory-Expected-Owner':'alice'}).status_code, 409)
+            self.assertEqual(client.post(path, json=body, headers={'X-Factory-Expected-Owner':'bob'}).status_code, 404)
+            actor[0] = 'alice'
+            for changed in ({'newEnvironment': True}, {'location': 'other'}, {'applicationId': 'other'}):
+                self.assertGreaterEqual(client.post(path, json={**body, **changed}, headers={'X-Factory-Expected-Owner':'alice'}).status_code, 400)
+            accepted = client.post(path, json=body, headers={'X-Factory-Expected-Owner':'alice'})
+            self.assertEqual(accepted.status_code, 202, accepted.text)
+            receipt = accepted.json(); self.assertEqual(receipt['state'], 'ready')
+            self.assertEqual(receipt['environment']['id'], created['id'])
+            self.assertEqual(receipt['environment']['projectId'], created['projectId'])
+            count = len(self.fixture.prepares)
+            self.assertEqual(client.get('/api/factory/application-environments/requests/pg-restore-generation').json(), receipt)
+            self.assertEqual(client.post(path, json=body, headers={'X-Factory-Expected-Owner':'alice'}).json(), receipt)
+            self.assertEqual(len(self.fixture.prepares), count)
+        with self.service.db.read() as conn: after = self.service._row(conn, 'alice', created['id'])
+        self.assertEqual(after['body'], original['body']); self.assertEqual(after['body_hash'], original['body_hash'])
+        self.assertEqual(self.service.inspect('alice', default['id'])['projectId'], default['projectId'])
+        self.assertEqual(after['credential_binding']['modelRevision'], 'rotated-generation-model')
+        self.assertEqual(self.fixture.research, [])
+
 
 if __name__ == '__main__': unittest.main()
