@@ -55,3 +55,21 @@
 
 .research-session-entry { margin: 20px 0; padding: 18px; border: 1px solid var(--line); border-radius: 10px; }
 .research-session-entry h3 { margin-top: 0; }
+
+/* Ordinary native research: show the next action beside observed progress. */
+.research-journey { max-width: none; }
+.research-main-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 20px; align-items: start; margin: 24px 0; }
+.research-main-grid > section { min-width: 0; margin: 0; padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.research-panel-heading h2 { margin: 8px 0 16px; font-size: 20px; }
+.research-panel-heading > .quiet { font-size: 12px; letter-spacing: .08em; }
+.research-goal-panel .research-composer { padding: 0; margin: 20px 0 0; border: 0; }
+.research-progress-panel .research-status { margin: 0 0 18px; }
+.research-progress-panel .research-status .text-button { white-space: nowrap; }
+.research-original-goals { margin: 16px 0; }
+.research-original-goals article + article { border-top: 1px solid var(--line); }
+.research-tool-evidence { padding: 14px 0; border-top: 1px solid var(--line); }
+.research-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; max-height: 400px; overflow: auto; }
+.research-session-entry > summary { font-weight: 600; cursor: pointer; }
+.research-session-entry .personal-session-history button { max-width: 100%; text-align: left; }
+@media (max-width: 1080px) { .research-main-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .research-main-grid { gap: 16px; } .research-main-grid > section { padding: 16px; } .research-result-heading > button { width: 100%; } }
