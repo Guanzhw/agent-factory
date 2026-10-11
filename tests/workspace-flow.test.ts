@@ -8,11 +8,15 @@ import { personalAgentApi } from '../web/personalAgentApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { openresearchApi } from '../web/openresearchApi.js';
 import { applicationEnvironmentApi } from '../web/applicationEnvironmentApi.js';
+import { personalSSHApi, type PersonalSSHServer } from '../web/personalSSHApi.js';
+import { ownerModelApi } from '../web/ownerModelApi.js';
 import type { User } from '../web/models.js';
 vi.mock('../web/openresearchApi.js', () => ({ openresearchApi: { capabilities: vi.fn(), projects: vi.fn(), project: vi.fn(), sessions: vi.fn(), managedProfiles: vi.fn() } }));
 vi.mock('../web/personalAgentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalAgentApi.js')>(); return { ...original, personalAgentApi: { ...original.personalAgentApi, capabilities: vi.fn(), sessions: vi.fn(), prepare: vi.fn(), submit: vi.fn() } }; });
-vi.mock('../web/applicationEnvironmentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/applicationEnvironmentApi.js')>(); return { ...original, applicationEnvironmentApi: { ...original.applicationEnvironmentApi, prepare: vi.fn() } }; });
-vi.mock('../web/personalRemoteApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalRemoteApi.js')>(); return { ...original, personalRemoteApi: { ...original.personalRemoteApi, list: vi.fn() } }; });
+vi.mock('../web/applicationEnvironmentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/applicationEnvironmentApi.js')>(); return { ...original, applicationEnvironmentApi: { ...original.applicationEnvironmentApi, prepare: vi.fn(), capabilities: vi.fn(), servers: vi.fn() } }; });
+vi.mock('../web/personalRemoteApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalRemoteApi.js')>(); return { ...original, personalRemoteApi: { ...original.personalRemoteApi, list: vi.fn(), credentials: vi.fn() } }; });
+vi.mock('../web/personalSSHApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/personalSSHApi.js')>(); return { ...original, personalSSHApi: { ...original.personalSSHApi, capabilities: vi.fn(), list: vi.fn() } }; });
+vi.mock('../web/ownerModelApi.js', async importOriginal => { const original = await importOriginal<typeof import('../web/ownerModelApi.js')>(); return { ...original, ownerModelApi: { ...original.ownerModelApi, list: vi.fn() } }; });
 vi.mock('../web/ControlRecovery.js', () => ({ ControlRecovery: () => null, commandNotice: () => '' }));
 vi.mock('../web/CompositionInbox.js', () => ({ CompositionInbox: () => createElement('p', null, '历史提案内容') }));
 vi.mock('../web/ApplicationGovernance.js', () => ({ ApplicationGovernance: () => createElement('p', null, '应用管理内容') }));
@@ -33,7 +37,7 @@ async function click(label: string) {
   await act(async () => { button!.click(); });
 }
 beforeEach(() => {
-  vi.clearAllMocks(); window.history.replaceState(null, '', '/'); window.sessionStorage.clear();
+  vi.clearAllMocks(); window.history.replaceState(null, '', '/'); window.sessionStorage.clear(); window.localStorage.clear();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2 } as Awaited<ReturnType<typeof api.status>>);
@@ -42,6 +46,8 @@ beforeEach(() => {
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([]); vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true }); vi.mocked(personalRemoteApi.list).mockResolvedValue([]);
   vi.mocked(openresearchApi.capabilities).mockResolvedValue({ contractVersion: 1, nativeProjectAttachment: true, upstreamProjectCreation: false, liveEndToEndVerified: false, workloads: [] }); vi.mocked(openresearchApi.projects).mockResolvedValue([]);
   vi.mocked(api.autoresearch.presets).mockResolvedValue([]); vi.mocked(api.detail).mockRejectedValue(new Error('任务不存在或无权访问'));
+  vi.mocked(personalSSHApi.capabilities).mockResolvedValue({enabled:false});vi.mocked(personalSSHApi.list).mockResolvedValue([]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([]);vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({locations:[],applications:[]});vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([]);vi.mocked(ownerModelApi.list).mockResolvedValue([]);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 describe('workspace mounted application boundaries', () => {
@@ -106,6 +112,24 @@ describe('workspace mounted application boundaries', () => {
     expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();
     expect(personalAgentApi.prepare).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
     expect(api.autoresearch.start).not.toHaveBeenCalled();
+  });
+  it('keeps general connection return managed but enters personal research for an explicitly chosen SSH server',async()=>{
+    const project={id:'orp-one',name:'合成受管项目',description:'',kind:'native-openresearch' as const,upstreamProjectId:'native-one',connectionRefs:{}};
+    vi.mocked(openresearchApi.project).mockResolvedValue(project);vi.mocked(openresearchApi.projects).mockResolvedValue([project]);vi.mocked(openresearchApi.sessions).mockResolvedValue([]);vi.mocked(openresearchApi.managedProfiles).mockResolvedValue([]);
+    const server:PersonalSSHServer={reference:'remote-'+'a'.repeat(32),name:'合成已启用服务器',address:'127.0.0.1',port:2222,username:'fixture',hostKey:'ssh-ed25519 '+'A'.repeat(68),hostFingerprint:'SHA256:synthetic-host-fingerprint',allowedRoot:'/tmp/af-owned-fixture',defaultDirectory:'/tmp/af-owned-fixture/research',status:'verified',enabled:true,diagnostic:null,lastCheckRequestId:null,credentialRef:'fixture-key',credentialRevision:'one'};
+    vi.mocked(personalSSHApi.capabilities).mockResolvedValue({enabled:true});vi.mocked(personalSSHApi.list).mockResolvedValue([server]);
+    vi.mocked(applicationEnvironmentApi.capabilities).mockResolvedValue({locations:['ssh'],applications:['openresearch']});
+    vi.mocked(applicationEnvironmentApi.servers).mockResolvedValue([{reference:server.reference,name:server.name,defaultDirectory:server.defaultDirectory}]);
+    window.history.replaceState(null,'','/?tab=openresearch&mode=managed&project=orp-one');await render();
+    await click('管理我的资源');await click('管理服务器与连接');await click('返回 OpenResearch');
+    expect(host.querySelector('h1')?.textContent).toBe(project.name);expect(new URL(window.location.href).searchParams.get('mode')).toBe('managed');
+    await click('管理我的资源');await click('管理服务器与连接');await click('去 OpenResearch 准备');
+    expect(new URL(window.location.href).searchParams.get('mode')).toBe('personal');expect(new URL(window.location.href).searchParams.get('project')).toBeNull();
+    expect(host.querySelector('h1')?.textContent).toBe('OpenResearch');
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="运行位置"]')?.value).toBe('ssh');
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="我的服务器"]')?.value).toBe(server.reference);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="研究数据目录"]')?.value).toBe(server.defaultDirectory);
+    expect(applicationEnvironmentApi.prepare).not.toHaveBeenCalled();expect(personalAgentApi.prepare).not.toHaveBeenCalled();expect(personalAgentApi.submit).not.toHaveBeenCalled();expect(api.autoresearch.start).not.toHaveBeenCalled();
   });
   it('opens the catalog and places composition only in the developer entry', async () => {
     await render();

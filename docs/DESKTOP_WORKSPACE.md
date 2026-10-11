@@ -17,6 +17,10 @@ valid. The new `tab=resources` pointer survives refresh and Back/Forward. URL
 pointers carry no permission or execution authority. Models preserve their
 allowlisted `modelReturn` view in the URL through refresh and Back/Forward;
 returning from resources preserves the chosen research mode and project.
+Connections also has a general return that preserves that context. The SSH
+card's explicit "Go to OpenResearch preparation" action instead enters personal
+mode and selects the owner's enabled server. It only navigates to setup; it does
+not prepare an environment or submit a research command.
 
 This change only reorganizes frontend entry points. Its desktop browser
 acceptance uses a loopback synthetic demo and an isolated disposable PostgreSQL
