@@ -16,6 +16,7 @@ def main():
         'test_application_interface_postgres.ApplicationInterfacePostgresTests',
         'test_application_interface_postgres.ApplicationContextNativePostgresTests',
         'test_application_contract_v2.NeutralChecksumNativeTests.test_neutral_checksum_native_artifact',
+        'test_environment_bindings_postgres.EnvironmentBindingPostgresTests',
         'test_personal_remote_postgres.PersonalRemotePostgresTests.test_actual_http_auth_scope_bind_restart_and_native_grant_revocation',
         'test_openresearch_workspace_postgres.WorkspacePostgresTests',
         'test_credential_vault_postgres.CredentialVaultPostgresTests',
@@ -30,7 +31,7 @@ def main():
         'test_remote_authority.OriginAuthorityPostgresTests.test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider',
     ]
     suite = unittest.defaultTestLoader.loadTestsFromNames(names)
-    expected = 26
+    expected = 31
     if suite.countTestCases() != expected:
         print('BOUNDARIES_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

@@ -15,6 +15,7 @@ implemented development flows from input-dependent code and real acceptance.
 Start with the [application development guide](docs/APPLICATION_DEVELOPMENT.md).
 Use the [public application interface](docs/APPLICATION_INTERFACE.md) for scoped
 inputs/resources, native step output, task lifecycle, events and artifacts.
+For an existing owner's research environment, see the [explicit continuation guide](docs/ENVIRONMENT_CONTINUATION.md).
 It separates developer implementation from administrator registration/publication,
 and covers the smallest material-driven application, trusted tool/model/runtime
 factories, bounded Pydantic inputs, native Agno Workflow/HITL, permissions, budgets
