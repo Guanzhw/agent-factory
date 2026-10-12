@@ -128,7 +128,7 @@ rejection, owner/model/credential/deployment scope, secret redaction and UNKNOWN
 cache behavior. Direct transport regressions remain in this suite. The PostgreSQL
 suite uses an independent disposable database, actual encrypted custody, normal
 owner HTTP configuration and the registered Agno executor with a fake provider.
-All 95 required owner/BYOK cases must execute without skips.
+All 98 required owner/BYOK cases must execute without skips.
 
 These tests do not verify live provider POST, billing, research results or the
 proxy's upstream route. No live-compatibility flag is promoted.
@@ -176,6 +176,12 @@ configuration objects are redacted and never persisted as user material or
 HTTP input. Revocation is `models.install_trusted_model_proxy(None)`; existing
 bound handles then stop before another call, and cached UNKNOWN remains held.
 The grant never changes the existing vault resolution/ownership/revision checks.
+
+Explicit environment credential/model rebind wrappers retain the exact delegate
+gateway grant. Their existing environment/delegate checks still run before and
+after credential resolution; revoked or changed bindings cannot inherit a stale
+grant or silently switch to direct.
+
 
 The operator supplies the already approved proxy and existing CA context
 explicitly, with full verification. This code does not modify CA files, firewall,

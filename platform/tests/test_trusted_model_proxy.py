@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 import ssl
 import subprocess
+import socket
+import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
@@ -18,6 +20,8 @@ import httpx
 
 from agent_factory.byok_model import OwnerChatModel, PinnedChatTransport
 from agent_factory.config import Settings
+from agent_factory.application_environments import ApplicationEnvironments
+from agent_factory.environment_bindings import EnvironmentModelHandle
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_models import OwnerModelHandle, PersonalModels
 from agent_factory.personal_remote_provider import PinnedHTTPSProbe, RemoteConnectionError, SecretLease
@@ -26,6 +30,31 @@ from trusted_proxy_test_streams import HOST, MemoryBackend, MemoryStream, PROXY
 
 IP = '93.184.216.34'
 SECRET = 'synthetic-owner-secret'
+
+
+def guarded_connect(original):
+    """Deny model sockets; admit only stdlib Windows event-loop self-pipe IPC."""
+    socket_file = Path(socket.__file__).resolve()
+    asyncio_dir = Path(asyncio.__file__).resolve().parent
+    def connect(sock, address):
+        pair, self_pipe = False, False
+        frame = sys._getframe(1)
+        while frame is not None:
+            module = frame.f_globals.get('__name__')
+            path = Path(frame.f_code.co_filename).resolve()
+            if frame.f_code.co_name == 'socketpair' and module == 'socket' and path == socket_file:
+                pair = True
+            if (frame.f_code.co_name == '_make_self_pipe'
+                    and module in {'asyncio.proactor_events','asyncio.selector_events'}
+                    and path.parent == asyncio_dir):
+                self_pipe = True
+            frame = frame.f_back
+        local = (isinstance(address,tuple) and len(address)>=2
+            and address[0] in {'127.0.0.1','::1'} and type(address[1]) is int)
+        if pair and self_pipe and local:
+            return original(sock,address)
+        raise AssertionError('REAL_NETWORK_DENIED')
+    return connect
 
 
 def body():
@@ -68,8 +97,11 @@ class GatewayBackend(MemoryBackend):
 
 class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.guards = [patch('socket.socket.connect', side_effect=AssertionError('REAL_NETWORK_DENIED')),
-            patch('socket.getaddrinfo', side_effect=AssertionError('REAL_DNS_DENIED'))]
+        self.guards = [patch('socket.socket.connect',new=guarded_connect(socket.socket.connect)),
+            patch('socket.socket.connect_ex',new=guarded_connect(socket.socket.connect_ex)),
+            patch('socket.getaddrinfo',side_effect=AssertionError('REAL_DNS_DENIED')),
+            patch('agent_factory.personal_remote_provider.subprocess.run',
+                side_effect=AssertionError('REAL_DNS_SUBPROCESS_DENIED'))]
         for guard in self.guards:
             guard.start()
 
@@ -105,6 +137,100 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.tls[0]['server_hostname'], 'opencode.ai')
         self.assertTrue(all(backend.tls[0][key] for key in ['verify_required','check_hostname','context_identity_preserved']))
         self.assertGreaterEqual(backend.closed, 1)
+
+    async def test_network_guard_still_denies_remote_and_non_selfpipe_loopback(self):
+        with socket.socket() as sock:
+            for address in [('93.184.216.34',443),('127.0.0.1',9),('::1',9)]:
+                with self.assertRaises(AssertionError):
+                    sock.connect(address)
+                with self.assertRaises(AssertionError):
+                    sock.connect_ex(address)
+        # Reproduce the exact stdlib frame shape without a real TCP connection.
+        # The old blanket guard rejected this Windows worker-loop initialization.
+        delegated = Mock(return_value='synthetic-self-pipe')
+        pair_scope = {'__name__':'socket','connect':guarded_connect(delegated)}
+        exec(compile('def socketpair(sock,address):\n    return connect(sock,address)\n',
+            socket.__file__,'exec'),pair_scope)
+        loop_scope = {'__name__':'asyncio.proactor_events','pair':pair_scope['socketpair']}
+        exec(compile('def _make_self_pipe(sock,address):\n    return pair(sock,address)\n',
+            str(Path(asyncio.__file__).parent/'proactor_events.py'),'exec'),loop_scope)
+        fake_socket = object()
+        self.assertEqual(loop_scope['_make_self_pipe'](fake_socket,('127.0.0.1',49152)),
+            'synthetic-self-pipe')
+        with self.assertRaises(AssertionError):
+            pair_scope['socketpair'](fake_socket,('127.0.0.1',49152))
+        with self.assertRaises(AssertionError):
+            loop_scope['_make_self_pipe'](fake_socket,('93.184.216.34',443))
+        delegated.assert_called_once_with(fake_socket,('127.0.0.1',49152))
+
+    def wrapped_environment(self, configuration):
+        class Read:
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+        current = body()
+        model_row = {'state':'ACTIVE','revision':current['revision'],'body':current}
+        models = object.__new__(PersonalModels)
+        models.transport_factory = None
+        models.proxy_environment_id = 'fixture-environment'
+        models.trusted_model_proxy = None
+        models.install_trusted_model_proxy(configuration)
+        models.auth = SimpleNamespace(require=lambda owner,action: None)
+        models.db = SimpleNamespace(read=Read)
+        models.connections = SimpleNamespace(_key=lambda value: None)
+        models._row = lambda conn,owner,reference: model_row
+        models._authorize = lambda owner,values: True
+        resolves = []
+        def resolve(**values):
+            resolves.append(values)
+            return SecretLease('api-key',SECRET)
+        models.vault = SimpleNamespace(resolve=resolve)
+        environment = {'id':'environment-fixture'}
+        effective = {'modelReference':current['reference'],'modelRevision':current['revision'],
+            'serverSelection':{'location':'platform','directory':'fixture-changed'}}
+        row = {'body':environment,'credential_binding':effective}
+        service = object.__new__(ApplicationEnvironments)
+        service.models, service.auth, service.db = models, models.auth, models.db
+        service._row = lambda conn,owner,identifier: row
+        service.bindings = SimpleNamespace(original=lambda value: {**effective,
+            'serverSelection':{'location':'platform','directory':'fixture-original'}})
+        handle = service.model_handle('alice',environment)
+        self.assertIsInstance(handle,EnvironmentModelHandle)
+        return handle,models,service,row,model_row,resolves
+
+    async def test_real_environment_rebind_wrapper_preserves_gateway_to_broker(self):
+        configuration = grant()
+        handle,models,service,row,model_row,resolves = self.wrapped_environment(configuration)
+        self.assertIs(handle.trusted_proxy,configuration)
+        backend = GatewayBackend(configuration)
+        with TemporaryDirectory() as folder:
+            broker = OwnerRuntimeBroker(Path(folder)/'broker.sock',handle)
+            with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses',return_value=[IP]), \
+                    patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend',return_value=backend):
+                result = await broker.completion({'model':'owner-model',
+                    'messages':[{'role':'user','content':'synthetic rebound goal'}]},'ses_syntheticproxy123')
+        self.assertEqual(result['choices'][0]['message']['content'],'synthetic gateway completion')
+        self.assertEqual(backend.connections,[{'host':PROXY,'port':8080}])
+        self.assertEqual(len(resolves),1)
+        self.assertEqual(resolves[0]['owner'],'alice')
+
+    async def test_environment_wrapper_revocation_or_revision_change_never_falls_back(self):
+        configuration = grant()
+        handle,models,service,row,model_row,resolves = self.wrapped_environment(configuration)
+        handle.check()
+        models.install_trusted_model_proxy(None)
+        with self.assertRaises(HTTPException):
+            handle.credential()
+        self.assertEqual(resolves,[])
+        models.install_trusted_model_proxy(configuration)
+        row['credential_binding'] = {**row['credential_binding'],'modelRevision':'changed-binding'}
+        with self.assertRaises(HTTPException):
+            handle.credential()
+        row['credential_binding'] = {**row['credential_binding'],'modelRevision':'changed-model-revision'}
+        model_row['revision'] = 'changed-model-revision'
+        model_row['body'] = {**model_row['body'],'revision':'changed-model-revision'}
+        with self.assertRaises(HTTPException):
+            service.model_handle('alice',row['body'])
+        self.assertEqual(resolves,[])
 
     async def test_https_gateway_has_separate_proxy_and_target_tls_names(self):
         configuration = grant(proxy_url='https://' + PROXY + ':8080')

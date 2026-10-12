@@ -185,6 +185,9 @@ class EnvironmentModelHandle:
         self._service, self._owner, self._environment = service, owner, environment
         self._binding, self._delegate = deepcopy(binding), delegate
         self.body, self.service = getattr(delegate, 'body', {}), getattr(delegate, 'service', None)
+        # Keep the delegate's exact approved route through an explicit session
+        # credential/model rebind; absence must not silently select direct.
+        self.trusted_proxy = getattr(delegate, 'trusted_proxy', None)
         # A change to either model or SSH credentials yields a new public
         # connection pin and therefore requires the existing session rebind.
         self.environment_credential_revision = 'env-binding-' + digest(binding)
@@ -199,6 +202,8 @@ class EnvironmentModelHandle:
             if row['body'] != self._environment or row['credential_binding'] != self._binding:
                 raise HTTPException(409, 'ENVIRONMENT_BINDING_CHANGED')
         self._delegate.check()
+        if getattr(self._delegate, 'trusted_proxy', None) is not self.trusted_proxy:
+            raise HTTPException(409, 'ENVIRONMENT_MODEL_ROUTE_CHANGED')
 
     def credential(self):
         self.check(); lease = self._delegate.credential(); self.check(); return lease
