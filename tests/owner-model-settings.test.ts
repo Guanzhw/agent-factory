@@ -12,6 +12,13 @@ import { modelEndpoint, readModelSetup, setupMetadata, type ModelSetup } from '.
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'credential-revision', providerId: 'byok-chat-v1', destination: 'https://api.openai.com', status: 'active' };
 const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
 const storage = 'factory-model-setup:alice'; const secret = 'synthetic-test-key-only';
+it('accepts the official Go Chat Completions base without accepting arbitrary provider prefixes', () => {
+  const baseURL = 'https://opencode.ai/zen/go/v1';
+  expect(modelEndpoint(baseURL)).toBe(baseURL);
+  expect(ownerModel({ ...row, provider: 'openai-compatible', baseURL }, 'alice').baseURL).toBe(baseURL);
+  expect(modelEndpoint(' HTTPS://MODELS.EXAMPLE.COM/v1 ')).toBe('https://models.example.com/v1');
+  for (const url of ['https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1', 'https://opencode.ai.evil.example/zen/go/v1']) expect(() => modelEndpoint(url)).toThrow();
+});
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear();
@@ -36,6 +43,34 @@ async function fill(name: string, value: string) {
   });
 }
 async function save() { await fill('模型名称', row.model); await fill('API 密钥', secret); await act(async () => { button('保存并设为默认').click(); button('保存并设为默认').click(); }); }
+it('saves the official Go endpoint with an origin-bound credential and no model invocation', async () => {
+  const baseURL = 'https://opencode.ai/zen/go/v1';
+  vi.mocked(personalRemoteApi.saveCredential).mockResolvedValue({ ...credential, destination: 'https://opencode.ai' });
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, provider: 'openai-compatible', baseURL });
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...row, provider: 'openai-compatible', baseURL, isDefault: true });
+  await mount();
+  await act(async () => { const select = host.querySelector('select')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await fill('API 端点', baseURL); await save();
+  expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://opencode.ai', password: secret }), 'alice');
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ baseURL }), undefined);
+  expect(host.textContent).toContain('模型已保存并设为默认');
+  expect(JSON.stringify(localStorage)).not.toContain(secret);
+});
+it('retains an unknown Go credential save without replaying its secret after refresh', async () => {
+  vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new Error('unconfirmed'));
+  await mount();
+  await act(async () => { const select = host.querySelector('select')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await fill('API 端点', 'https://opencode.ai/zen/go/v1'); await save();
+  expect(ownerModelApi.configure).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toContain('https://opencode.ai/zen/go/v1');
+  expect(localStorage.getItem(storage)).not.toContain(secret);
+  vi.mocked(personalRemoteApi.recoverCredential).mockRejectedValue(new Error('still unknown'));
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  await act(async () => button('核对并继续原保存').click());
+  expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.configure).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('上次保存尚未确认');
+});
 it('uses one Save to custody a secret, configure metadata and confirm the owner default without exposing the key', async () => {
   await mount(); expect(host.querySelector('[aria-label="API 密钥"]')?.getAttribute('type')).toBe('password');
   await save();

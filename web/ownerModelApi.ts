@@ -1,4 +1,5 @@
 import { ApiError, factoryRequest } from './api.js';
+import { modelEndpoint } from './modelEndpoint.js';
 
 export interface OwnerModel {
   reference: string; revision: string; connectionRef: string; ownerId: string;
@@ -34,8 +35,7 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
   }
   try {
-    const url = new URL(m.baseURL);
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/v1') throw new Error();
+    if (modelEndpoint(m.baseURL) !== m.baseURL) throw new Error();
   } catch { throw new ModelRequestError(200, 'INVALID_RESPONSE'); }
   return m;
 }

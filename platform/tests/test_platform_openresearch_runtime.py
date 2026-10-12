@@ -14,7 +14,7 @@ from agent_factory.runtime_packages.openresearch_v1.entry import (
 
 class PlatformOpenResearchRuntimeTests(unittest.TestCase):
     def agent(self):
-        return {'name': 'build', 'model': {'providerID': 'factory', 'modelID': 'owner-model'},
+        return {'name': 'build', 'model': {'providerID': 'opencode-factory', 'modelID': 'owner-model'},
             'permission': [{'permission': name, 'pattern': '*', 'action': action}
                 for name, action in PERMISSIONS.items()],
             'tools': {name: name in LOCAL_TOOLS for name in BUILTINS}}

@@ -95,13 +95,16 @@ def opencode_config(capability, max_output_tokens=512):
     # The pinned harness translates legacy tools into permissions before merging.
     # Repeating those keys can move '*' behind the specific allow rules and
     # disable every tool. Use the native permission contract only.
-    agent = {'model': 'factory/owner-model', 'permission': PERMISSIONS}
-    return {'$schema': 'https://opencode.ai/config.json', 'model': 'factory/owner-model', 'small_model': 'factory/owner-model',
-        'default_agent': 'factory', 'enabled_providers': ['factory'], 'autoupdate': False, 'share': 'disabled',
+    # The pinned harness emits its stable user-message request ID for opencode*
+    # providers. Use a distinct local provider ID, with the same compatible SDK
+    # and loopback broker; no built-in Go auth, plugin or extra provider is used.
+    agent = {'model': 'opencode-factory/owner-model', 'permission': PERMISSIONS}
+    return {'$schema': 'https://opencode.ai/config.json', 'model': 'opencode-factory/owner-model', 'small_model': 'opencode-factory/owner-model',
+        'default_agent': 'factory', 'enabled_providers': ['opencode-factory'], 'autoupdate': False, 'share': 'disabled',
         'plugin': [], 'lsp': False, 'formatter': False, 'permission': PERMISSIONS,
         'agent': {'factory': {**agent, 'mode': 'primary'}, 'build': agent, 'plan': agent,
                   'explore': {'disable': True}, 'general': {'disable': True}, 'title': {'disable': True}},
-        'provider': {'factory': {'npm': '@ai-sdk/openai-compatible', 'name': 'Owner model broker',
+        'provider': {'opencode-factory': {'npm': '@ai-sdk/openai-compatible', 'name': 'Owner model broker',
             'options': {'baseURL': 'http://127.0.0.1:4801/v1', 'apiKey': capability},
             'models': {'owner-model': {'name': 'Owner selected model', 'limit': {'context': 32768, 'output': max_output_tokens}}}}},
         'mcp': {}}
@@ -110,14 +113,14 @@ def opencode_config(capability, max_output_tokens=512):
 def verify_effective_config(value, expected):
     """Fail closed on permission merges, provider fallbacks, plugins or extra MCP."""
     require(type(value) is dict)
-    require(expected == opencode_config(expected['provider']['factory']['options']['apiKey'],
-        expected['provider']['factory']['models']['owner-model']['limit']['output']))
+    require(expected == opencode_config(expected['provider']['opencode-factory']['options']['apiKey'],
+        expected['provider']['opencode-factory']['models']['owner-model']['limit']['output']))
     value = deepcopy(value)
     # Pinned OpenCode 1.18.35 debug config redacts the local capability as ***.
     # This checks routing/policy; actual capability authentication is broker-owned.
-    current = value.get('provider', {}).get('factory', {}).get('options', {})
+    current = value.get('provider', {}).get('opencode-factory', {}).get('options', {})
     if current.get('apiKey') == '***':
-        current['apiKey'] = expected['provider']['factory']['options']['apiKey']
+        current['apiKey'] = expected['provider']['opencode-factory']['options']['apiKey']
     for key in ('model', 'small_model', 'default_agent', 'enabled_providers', 'autoupdate', 'share',
                 'plugin', 'lsp', 'formatter', 'provider', 'mcp'):
         require(value.get(key) == expected[key])
@@ -141,7 +144,7 @@ def verify_effective_config(value, expected):
         if agent.get('disable') is True:
             continue
         permissions(agent.get('permission'))
-        require(agent.get('model', 'factory/owner-model') == 'factory/owner-model')
+        require(agent.get('model', 'opencode-factory/owner-model') == 'opencode-factory/owner-model')
     return {'schema': 1, 'effectiveConfigVerified': True, 'localToolsOnly': True,
             'externalToolsDenied': True, 'titleAgentDisabled': True}
 
@@ -149,7 +152,7 @@ def verify_effective_config(value, expected):
 def verify_effective_agent(value, name):
     """Check final ordered rules and executable tools, not just config values."""
     require(type(value) is dict and value.get('name') == name
-        and value.get('model') == {'providerID': 'factory', 'modelID': 'owner-model'})
+        and value.get('model') == {'providerID': 'opencode-factory', 'modelID': 'owner-model'})
     rules, tools = value.get('permission'), value.get('tools')
     require(type(rules) is list and type(tools) is dict)
     rules = cast(list[dict[str, Any]], rules)
@@ -304,7 +307,7 @@ def container_main():
     verify_no_startup_dispatch(root / 'orx/orx.db')
     bridge = subprocess.Popen(['/usr/local/bin/python3', '-I', '-B', '/trusted/bridge.py', '--bridge'])
     try:
-        result = subprocess.run(['/trusted/orx', 'up', '--no-browser', '--port', '4791', '--model', 'factory/owner-model'], check=False)
+        result = subprocess.run(['/trusted/orx', 'up', '--no-browser', '--port', '4791', '--model', 'opencode-factory/owner-model'], check=False)
         return result.returncode
     finally:
         bridge.terminate()
