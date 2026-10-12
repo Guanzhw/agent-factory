@@ -22,9 +22,13 @@ from .store import digest, now
 
 
 class PersonalModels:
-    def __init__(self, store, auth, connections, vault, *, transport_factory=None):
+    def __init__(self, store, auth, connections, vault, *, transport_factory=None,
+            trusted_model_proxy=None, proxy_environment_id=None):
         self.store, self.auth, self.connections, self.vault = store, auth, connections, vault
         self.transport_factory = transport_factory
+        self.proxy_environment_id = proxy_environment_id
+        self.trusted_model_proxy = None
+        self.install_trusted_model_proxy(trusted_model_proxy)
         self.db = GovernedStorage(store, 'af_personal_models_v1')
         metadata = MetaData()
         self.models = Table('af_personal_models', metadata,
@@ -35,6 +39,23 @@ class PersonalModels:
             Column('owner_id', String, primary_key=True), Column('reference', String, nullable=False))
         self.commands = self.db.command_table('af_personal_model_commands', metadata)
         metadata.create_all(store.engine)
+
+    def install_trusted_model_proxy(self, proxy):
+        """Trusted same-process operator configuration only; no HTTP/env loader."""
+        if proxy is not None:
+            from .trusted_model_proxy import TrustedModelProxy
+            if not isinstance(proxy, TrustedModelProxy) or self.transport_factory is not None:
+                raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
+            proxy.validate_environment(self.proxy_environment_id)
+        self.trusted_model_proxy = proxy
+
+    def _model_proxy(self, owner, body):
+        if self.trusted_model_proxy is None:
+            return None
+        try:
+            return self.trusted_model_proxy.select(owner, body, self.proxy_environment_id)
+        except ValueError:
+            raise HTTPException(409, 'PERSONAL_MODEL_PROXY_SCOPE_CHANGED') from None
 
     def capabilities(self, owner):
         self.auth.require(owner, 'read')
@@ -157,7 +178,7 @@ class PersonalModels:
             if not isinstance(handle, OwnerModelHandle) or handle.owner != context.plan['ownerId']:
                 raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
             return OwnerChatModel(handle.body, handle.credential, transport_factory=self.transport_factory,
-                recheck=handle.check, session_id='af-plan-' + context.plan['id'])
+                recheck=handle.check, session_id='af-plan-' + context.plan['id'], trusted_proxy=handle.trusted_proxy)
         bindings.register('model', ADAPTER_ID, '1', create, connection_kind='model',
             required_capabilities=(CAPABILITY,), validator=validate)
 
@@ -165,6 +186,7 @@ class PersonalModels:
 class OwnerModelHandle:
     def __init__(self, service, owner, body):
         self.service, self.owner, self.body = service, owner, dict(body)
+        self.trusted_proxy = service._model_proxy(owner, self.body)
 
     def __repr__(self): return 'OwnerModelHandle(credentials=<redacted>)'
 
@@ -176,6 +198,10 @@ class OwnerModelHandle:
                 raise HTTPException(409, 'PERSONAL_MODEL_CHANGED')
             if not self.service._authorize(self.owner, row['body']):
                 raise HTTPException(409, 'PERSONAL_MODEL_CREDENTIAL_UNAVAILABLE')
+            if self.service._model_proxy(self.owner, row['body']) is not self.trusted_proxy:
+                raise HTTPException(409, 'PERSONAL_MODEL_PROXY_ROUTE_CHANGED')
+            if self.service._model_proxy(self.owner, self.body) is not self.trusted_proxy:
+                raise HTTPException(409, 'PERSONAL_MODEL_PROXY_SCOPE_CHANGED')
 
     def credential(self):
         self.check()

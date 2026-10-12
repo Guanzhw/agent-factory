@@ -1,9 +1,13 @@
 # Explicit trusted model-proxy deployment mode (design only)
 
-Status: proposed security boundary, disabled and not implemented. This draft adds
-documentation and offline test fixtures only. It does not register a runtime
-route, read proxy configuration, change provider schemas, or enable network use.
-The existing direct `PinnedChatTransport` remains the only production route.
+Status: implemented but disabled by default. The existing direct route remains
+unchanged unless trusted same-process operator configuration installs an explicit
+`TrustedModelProxy` grant for one deployment, owner and exact model/credential
+reference and version. There is no HTTP, material or ambient-environment loader.
+No real credentialed request or live research is authorized by this implementation.
+
+This draft is stacked on the reviewed PR80 owner transport/accounting changes.
+Neither draft is merged; PR80 still requires its complete normal real-flow gate.
 
 ## Problem and minimum proposal
 
@@ -14,20 +18,20 @@ whereas the target needs its credential-bound hostname. This compatibility gap
 can be addressed using the public network-backend API, without changing installed
 HTTPX/HTTPcore internals or disabling certificate verification.
 
-The proposed route is an explicit trusted-gateway deployment mode. Direct is the
+The optional route is an explicit trusted-gateway deployment mode. Direct is the
 default. A future implementation would accept a validated, immutable deployment
 grant, supplied by a trusted configuration boundary, rather than automatically
 reading `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, or CA variables from ambient
 process state. Owners, models, request bodies and material definitions must not
 provide or enlarge that grant. No arbitrary proxy setting is added to owner UI.
 
-The grant would bind the approved gateway endpoint and approved existing TLS
+The grant binds the approved gateway endpoint and approved existing TLS
 context to the permitted destination and authorization scope. Exact origin,
 path, method, owner/lease revision and permission rechecks remain in the current
 production guards. Their identity and accounting must not be replaced by a
 proxy-specific authority. Rotations/revocations still take effect on every call.
 
-Each invocation would resolve and validate all target addresses using the
+Each invocation resolves and validate all target addresses using the
 existing public-address policy, then bind only its first checked address.
 CONNECT targets that literal IP; the target TLS handshake and HTTP Host use the
 exact credential-bound hostname. For an HTTPS proxy, its outer TLS handshake
@@ -42,10 +46,19 @@ invocation avoids connection reuse across owner, origin, SNI or lease changes.
 No redirects, retry loops, alternate IP/host or direct fallback after a proxy,
 policy, certificate or protocol error. Cancellation closes owned resources.
 
-No activation flag, production bridge, configuration loader or general-purpose
-proxy framework is introduced in this draft. The tests contain only a reference
-adapter and in-memory streams. Its IPv4-only scope is explicit; IPv6 CONNECT
-authority formatting needs separate review before general production support.
+The narrow bridge uses the public HTTPcore pool/backend API; no general-purpose
+proxy framework is added. IPv4-only scope is explicit: a first validated IPv6
+address fails closed, with no alternate address selection. A transport is used
+once; a second pool connection is rejected. Its approved CA-set fingerprint and
+hostname-verification flags are checked before I/O and each TLS handshake.
+
+The grant binds `environment_id`, `owner_id`, `model_reference`, `model_revision`,
+`credential_reference`, `credential_revision` and `model_id`. Only the official
+Go base is eligible. Unrelated owners/models retain direct mode. A matching
+selected model with changed revision/credential/model/base fails closed. Existing
+handles also reject replacement/revocation of their grant. Clear the old grant
+before updating an approved model configuration, then install a newly reviewed
+version-bound grant; never silently retarget it.
 
 ## Different security guarantee
 
@@ -67,10 +80,10 @@ authorize other owners' credentials.
 
 A minimal user-facing disclosure for a later implementation is: requests use an
 explicitly trusted gateway; it may read credentials and request data; upstream
-routing follows its deployment policy. The deployment route must be identifiable
-for an affected owner before sending data, without exposing gateway credentials.
-That disclosure and consent scope require product/security review; no UI or
-approval system is added here.
+routing follows its deployment policy. The affected owner must accept that boundary before sending data. The constructor
+requires `acknowledge_interception=True`, supplied by the trusted operator after
+that approval. No UI or generic approval system is added; it does not infer
+consent from an installed CA or a chat message, nor read/export any model key.
 
 Provider origin and lease checks remain necessary, but do not certify what an
 intercepting proxy does upstream. If policy rejects the destination or the
@@ -87,10 +100,12 @@ category; they do not settle an unconfirmed model call.
 
 A managed resolver may take longer than the existing three-second isolated
 helper deadline. A bounded diagnostic may allocate a larger part of its own
-total deadline without changing production configuration. This draft does not
-increase a global timeout or change resolver settings. A production deadline
-change requires separate evidence and review, while preserving the maximum
-address count, every public-address check and child timeout termination/reaping.
+total deadline without changing production configuration. The direct/global default remains three seconds. Only an explicit scoped grant
+may select a bounded DNS wait from three through ten seconds, within the existing
+model invocation deadline. No resolver/system setting changes. The maximum
+address count, every public-address check and child timeout termination/reaping
+are retained. The operator must choose this deliberately; it is not enabled by
+an ambient environment variable.
 
 ## Activation conditions and offline evidence
 
@@ -106,17 +121,67 @@ Before a later production implementation is enabled:
 5. Run the normal product's complete real flow when authorized. PR80 remains
    unmerged until its separate complete-real-flow condition is met.
 
-`test_trusted_model_proxy_design.py` exercises the installed HTTPcore protocol
-state machine over in-memory network streams: CONNECT/SNI/Host separation,
-HTTPS proxy's two TLS names, denial/certificate failure without fallback,
-full-verification-context preservation, rejected private targets, explicit
-IPv6 scope and untrusted input rejection. Additional tests use the actual direct
-transport and existing model error boundary to verify direct behavior and secret
-redaction. Real sockets and DNS are blocked in these tests.
+`test_trusted_model_proxy.py` exercises the actual production bridge over in-memory
+streams: literal-IP CONNECT and Host/SNI separation, both HTTPS proxy TLS names,
+context immutability, no second connection/fallback/reuse, private/IPv6 target
+rejection, owner/model/credential/deployment scope, secret redaction and UNKNOWN
+cache behavior. Direct transport regressions remain in this suite. The PostgreSQL
+suite uses an independent disposable database, actual encrypted custody, normal
+owner HTTP configuration and the registered Agno executor with a fake provider.
+All 95 required owner/BYOK cases must execute without skips.
 
-This does not verify a real gateway's certificate chain, upstream routing,
-provider POST, credentials, billing or research result. No implementation status
-or acceptance matrix is promoted by this design draft.
+These tests do not verify live provider POST, billing, research results or the
+proxy's upstream route. No live-compatibility flag is promoted.
+
+## Explicit activation after independent review
+
+Keep `Settings.owner_model_trusted_proxy=None` for normal direct behavior. For the
+approved acceptance process only, declare its environment identity at startup:
+
+```python
+settings = Settings(
+    # Existing database/workspace/auth/vault registrations stay as configured.
+    db_url=existing_db_url,
+    owner_model_proxy_environment_id=approved_current_environment_id,
+)
+```
+
+After normal owner model configuration, trusted same-process operator code can
+use metadata from that owner/default model to install the grant. Do not derive
+owner identity from a display name; use the authenticated owner ID. Do not
+resolve, export, copy or print the model key for this step:
+
+```python
+metadata = models.default(approved_owner_id)  # Metadata, never vault.resolve().
+grant = TrustedModelProxy(
+    environment_id=approved_current_environment_id,
+    owner_id=approved_owner_id,
+    model_reference=metadata["reference"],
+    model_revision=metadata["revision"],
+    credential_reference=metadata["credentialRef"],
+    credential_revision=metadata["credentialRevision"],
+    model_id=metadata["model"],
+    proxy_url=explicitly_approved_existing_proxy_url,
+    ssl_context=explicitly_approved_existing_verified_context,
+    acknowledge_interception=True,
+    dns_timeout_seconds=10,  # Optional scoped value; default is 3.
+)
+models.install_trusted_model_proxy(grant)
+```
+
+Alternatively supply the same grant in `Settings.owner_model_trusted_proxy` when
+metadata already exists. It must match the configured environment; fixture
+`owner_model_transport_factory` and a real gateway grant cannot coexist. These
+configuration objects are redacted and never persisted as user material or
+HTTP input. Revocation is `models.install_trusted_model_proxy(None)`; existing
+bound handles then stop before another call, and cached UNKNOWN remains held.
+The grant never changes the existing vault resolution/ownership/revision checks.
+
+The operator supplies the already approved proxy and existing CA context
+explicitly, with full verification. This code does not modify CA files, firewall,
+resolver, or environment settings. It does not provision or transport a new key.
+If the supporting credential tool requires a secure handoff, use that mechanism
+and stop pending it; this grant is not authority to upload plaintext API keys.
 
 Sources: [HTTPcore public network backends](https://www.encode.io/httpcore/network-backends/),
 [request extensions](https://www.encode.io/httpcore/extensions/),

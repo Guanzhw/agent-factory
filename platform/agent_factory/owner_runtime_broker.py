@@ -192,7 +192,8 @@ class OwnerRuntimeBroker:
         headers = chat_headers(base, lease, session_id)
         if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
         transport = (_SyntheticDispatchTransport(transport_factory(), on_dispatch) if transport_factory else PinnedChatTransport(
-            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch))
+            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch,
+            trusted_proxy=getattr(self.handle, 'trusted_proxy', None)))
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()

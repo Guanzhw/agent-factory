@@ -67,13 +67,19 @@ def model_id(value):
 
 
 class PinnedChatTransport(httpx.AsyncBaseTransport):
-    def __init__(self, destination, *, before_send=None, base_path='/v1', on_dispatch=None):
+    def __init__(self, destination, *, before_send=None, base_path='/v1', on_dispatch=None, trusted_proxy=None):
         self.destination = origin(destination)
         self.base = base_url(self.destination + base_path)
         self.before_send = before_send
         self.on_dispatch = on_dispatch
-        self.probe = PinnedHTTPSProbe()
-        self.transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+        self.trusted_proxy = trusted_proxy
+        if trusted_proxy is not None:
+            from .trusted_model_proxy import TrustedModelProxy
+            if not isinstance(trusted_proxy, TrustedModelProxy) or self.base != GO_BASE:
+                raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
+        self.probe = (PinnedHTTPSProbe(dns_timeout_seconds=trusted_proxy.dns_timeout_seconds)
+            if trusted_proxy else PinnedHTTPSProbe())
+        self.transport = None if trusted_proxy else httpx.AsyncHTTPTransport(retries=0, trust_env=False)
 
     async def handle_async_request(self, request):
         if request.method != 'POST' or str(request.url) != self.base + '/chat/completions':
@@ -86,12 +92,21 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
         forwarded = httpx.Request('POST', request.url.copy_with(host=addresses[0]),
             headers={**dict(request.headers), 'host': request.url.host}, content=await request.aread(),
             extensions={**request.extensions, 'sni_hostname': request.url.host})
+        if self.trusted_proxy is not None:
+            if self.transport is not None:
+                raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
+            self.trusted_proxy.validate_payload(forwarded.content)
+            self.transport = self.trusted_proxy.transport(addresses[0], request.url.host)
+        transport = self.transport
+        if transport is None:
+            raise ValueError('PERSONAL_MODEL_TRANSPORT_REQUIRED')
         if self.on_dispatch is not None:
             self.on_dispatch()
-        return await self.transport.handle_async_request(forwarded)
+        return await transport.handle_async_request(forwarded)
 
     async def aclose(self):
-        await self.transport.aclose()
+        if self.transport is not None:
+            await self.transport.aclose()
 
 
 def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
@@ -111,12 +126,21 @@ def function_call(call):
 
 
 class OwnerChatModel(Model):
-    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None):
+    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None, trusted_proxy=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Chat Completions', retries=0)
         self._base = base_url(configuration['baseURL'])
         self._credential = credential
         self._transport_factory = transport_factory
+        if transport_factory is not None and trusted_proxy is not None:
+            raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
+        if trusted_proxy is not None:
+            from .trusted_model_proxy import TrustedModelProxy
+            if (not isinstance(trusted_proxy, TrustedModelProxy)
+                    or trusted_proxy.select(configuration.get('ownerId'), configuration,
+                        trusted_proxy.environment_id) is not trusted_proxy):
+                raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED')
+        self._trusted_proxy = trusted_proxy
         self._recheck = recheck
         self._session_id = session_id or 'af-agent-' + uuid4().hex
 
@@ -150,10 +174,13 @@ class OwnerChatModel(Model):
     async def _request(self, messages, **kwargs):
         try:
             body = self._body(messages, **kwargs)
+            if self._trusted_proxy is not None and self.id != self._trusted_proxy.model_id:
+                raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED')
             # Resolve on every call. Rotation/revocation never leaves a cached key.
             lease = await asyncio.to_thread(self._credential)
             transport = self._transport_factory() if self._transport_factory else PinnedChatTransport(
-                model_origin(self._base), base_path=urlsplit(self._base).path, before_send=self._recheck)
+                model_origin(self._base), base_path=urlsplit(self._base).path, before_send=self._recheck,
+                trusted_proxy=self._trusted_proxy)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
             async with asyncio.timeout(30), httpx.AsyncClient(transport=transport, trust_env=False,

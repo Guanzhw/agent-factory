@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import http.client
 import ipaddress
 import json
+import math
 import re
 import socket
 import ssl
@@ -169,8 +170,12 @@ class RemoteNetworkPolicy:
 
 class PinnedHTTPSProbe:
     """Read-only fixed paths, no redirects/retries/proxy/netrc and bounded IO."""
-    def __init__(self, policy=None):
+    def __init__(self, policy=None, *, dns_timeout_seconds: float = 3):
         self.policy = policy or RemoteNetworkPolicy()
+        if (type(dns_timeout_seconds) not in {int, float} or not math.isfinite(dns_timeout_seconds)
+                or not 3 <= dns_timeout_seconds <= 10):
+            raise ValueError('REMOTE_DNS_TIMEOUT_INVALID')
+        self.dns_timeout_seconds = dns_timeout_seconds
 
     def addresses(self, destination):
         host = urlsplit(origin(destination)).hostname
@@ -180,7 +185,7 @@ class PinnedHTTPSProbe:
             # is killed and reaped on timeout; no unbounded resolver thread remains.
             result = subprocess.run([sys.executable, "-I", "-c",
                 "import socket,json,sys; a=sorted({r[4][0] for r in socket.getaddrinfo(sys.argv[1],443,type=socket.SOCK_STREAM)}); print(json.dumps(a if len(a)<=16 else []))",
-                host], capture_output=True, timeout=3, check=True, text=True)
+                host], capture_output=True, timeout=self.dns_timeout_seconds, check=True, text=True)
             addresses = json.loads(result.stdout)
             if not addresses or len(addresses) > 16 or any(not self.policy.permits(host, ip) for ip in addresses):
                 raise ValueError()
