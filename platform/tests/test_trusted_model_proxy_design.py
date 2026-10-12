@@ -121,19 +121,19 @@ async def send(pool, *, legacy_sni_extension=False):
 
 
 class TrustedProxyDesignTests(unittest.IsolatedAsyncioTestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.network_guards = [
+    async def asyncSetUp(self):
+        # Install guards after unittest creates its isolated event loop, whose
+        # Windows self-pipe setup may legitimately require a local socket pair.
+        self.network_guards = [
             patch('socket.socket.connect', side_effect=AssertionError('REAL_NETWORK_FORBIDDEN')),
             patch('socket.socket.connect_ex', side_effect=AssertionError('REAL_NETWORK_FORBIDDEN')),
             patch('socket.getaddrinfo', side_effect=AssertionError('REAL_DNS_FORBIDDEN')),
         ]
-        for guard in cls.network_guards:
+        for guard in self.network_guards:
             guard.start()
 
-    @classmethod
-    def tearDownClass(cls):
-        for guard in reversed(cls.network_guards):
+    async def asyncTearDown(self):
+        for guard in reversed(self.network_guards):
             guard.stop()
 
     async def exercise(self, label, *, adapted=True, denied=False, bad_certificate=False, https=False):
