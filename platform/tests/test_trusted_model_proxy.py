@@ -1,5 +1,6 @@
 """Actual scoped production route, fake network/provider/custody only."""
 import asyncio
+from asyncio import proactor_events, selector_events
 import json
 from pathlib import Path
 import ssl
@@ -9,7 +10,7 @@ import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
@@ -34,19 +35,21 @@ SECRET = 'synthetic-owner-secret'
 
 def guarded_connect(original):
     """Deny model sockets; admit only stdlib Windows event-loop self-pipe IPC."""
-    socket_file = Path(socket.__file__).resolve()
-    asyncio_dir = Path(asyncio.__file__).resolve().parent
+    # Windows socket.socketpair aliases _fallback_socketpair; its actual frame
+    # name is not "socketpair". Match installed stdlib code objects, not names or
+    # synthetic filenames/globals that another function could impersonate.
+    pair_codes = {getattr(function,'__code__',None) for function in
+        [socket.socketpair,getattr(socket,'_fallback_socketpair',None)]}
+    pair_codes.discard(None)
+    pipe_codes = {proactor_events.BaseProactorEventLoop._make_self_pipe.__code__,
+        selector_events.BaseSelectorEventLoop._make_self_pipe.__code__}
     def connect(sock, address):
         pair, self_pipe = False, False
         frame = sys._getframe(1)
         while frame is not None:
-            module = frame.f_globals.get('__name__')
-            path = Path(frame.f_code.co_filename).resolve()
-            if frame.f_code.co_name == 'socketpair' and module == 'socket' and path == socket_file:
+            if frame.f_code in pair_codes and frame.f_globals is socket.__dict__:
                 pair = True
-            if (frame.f_code.co_name == '_make_self_pipe'
-                    and module in {'asyncio.proactor_events','asyncio.selector_events'}
-                    and path.parent == asyncio_dir):
+            if frame.f_code in pipe_codes:
                 self_pipe = True
             frame = frame.f_back
         local = (isinstance(address,tuple) and len(address)>=2
@@ -145,23 +148,21 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                     sock.connect(address)
                 with self.assertRaises(AssertionError):
                     sock.connect_ex(address)
-        # Reproduce the exact stdlib frame shape without a real TCP connection.
-        # The old blanket guard rejected this Windows worker-loop initialization.
-        delegated = Mock(return_value='synthetic-self-pipe')
-        pair_scope = {'__name__':'socket','connect':guarded_connect(delegated)}
-        exec(compile('def socketpair(sock,address):\n    return connect(sock,address)\n',
-            socket.__file__,'exec'),pair_scope)
-        loop_scope = {'__name__':'asyncio.proactor_events','pair':pair_scope['socketpair']}
-        exec(compile('def _make_self_pipe(sock,address):\n    return pair(sock,address)\n',
-            str(Path(asyncio.__file__).parent/'proactor_events.py'),'exec'),loop_scope)
-        fake_socket = object()
-        self.assertEqual(loop_scope['_make_self_pipe'](fake_socket,('127.0.0.1',49152)),
-            'synthetic-self-pipe')
+        # Exercise the real Windows fallback and real standard event-loop method,
+        # including the actual _fallback_socketpair frame identity. No model data
+        # is sent; these sockets are only the event loop's internal loopback IPC.
+        loop = SimpleNamespace(_internal_fds=0)
+        with patch('socket.socketpair',socket._fallback_socketpair):
+            proactor_events.BaseProactorEventLoop._make_self_pipe(loop)
+        try:
+            self.assertEqual(loop._internal_fds,1)
+            self.assertIn(loop._ssock.getsockname()[0],{'127.0.0.1','::1'})
+        finally:
+            loop._ssock.close()
+            loop._csock.close()
+        # Calling the same fallback outside the standard self-pipe is still denied.
         with self.assertRaises(AssertionError):
-            pair_scope['socketpair'](fake_socket,('127.0.0.1',49152))
-        with self.assertRaises(AssertionError):
-            loop_scope['_make_self_pipe'](fake_socket,('93.184.216.34',443))
-        delegated.assert_called_once_with(fake_socket,('127.0.0.1',49152))
+            socket._fallback_socketpair()
 
     def wrapped_environment(self, configuration):
         class Read:
@@ -402,8 +403,32 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
             broker = OwnerRuntimeBroker(Path(folder)/'broker.sock', handle)
             request = {'model':'owner-model','messages':[{'role':'user','content':'synthetic goal'}]}
             diagnostics = []
+            safe_failures = []
+            original_run = asyncio.run
+            def observed_run(coroutine):
+                try:
+                    return original_run(coroutine)
+                except BaseException as failure:
+                    chain,seen = [],set()
+                    while failure is not None and id(failure) not in seen:
+                        seen.add(id(failure))
+                        trace = failure.__traceback__
+                        frames = []
+                        while trace is not None:
+                            frames.append({'file':Path(trace.tb_frame.f_code.co_filename).name,
+                                'function':trace.tb_frame.f_code.co_name,'line':trace.tb_lineno})
+                            trace = trace.tb_next
+                        item = {'class':type(failure).__module__+'.'+type(failure).__name__,
+                            'frames':frames[-12:]}
+                        if isinstance(getattr(failure,'errno',None),int):
+                            item['errno'] = failure.errno
+                        chain.append(item)
+                        failure = failure.__cause__ or failure.__context__
+                    safe_failures.append(chain)
+                    raise
             with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses', return_value=[IP]), \
-                    patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                    patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend), \
+                    patch('agent_factory.owner_runtime_broker.asyncio.run',side_effect=observed_run):
                 for _ in range(2):
                     with self.assertRaises(ValueError) as error:
                         # native_completion owns a fresh loop in its existing worker.
@@ -414,7 +439,8 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn(SECRET, json.dumps(error.exception.response()))
             self.assertEqual(diagnostics[0], diagnostics[1])
             self.assertEqual(broker.remaining, 63)
-            self.assertEqual(len(backend.connections), 1)
+            self.assertEqual(len(backend.connections), 1,
+                'SAFE_NATIVE_WORKER_FAILURES='+json.dumps(safe_failures))
             original_errors = [record.error for record in broker.native_calls.values()]
             revoked[0] = True
             with self.assertRaises(ValueError):
