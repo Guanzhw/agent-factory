@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-13",
+  "baselineCommit": "615a23f06039dcfa9e55b93c6913c691b3693bc3",
+  "departmentIntegrationCommit": "f14556ff4c250b981949da683feb80501d9c28bf",
+  "boundaries": {
+    "core": "platform/agent_factory",
+    "application": "apps/research/agent_factory_research",
+    "applicationFrontend": "apps/research/web",
+    "applicationTests": "apps/research/tests",
+    "pythonComposition": "deployment/agent_factory_server/main.py",
+    "frontendComposition": "web/composition.tsx",
+    "standaloneCoreDistribution": "platform/pyproject.toml",
+    "discovery": "scripts/check_python.py"
+  },
+  "validation": [
+    {
+      "name": "core portable unittest discovery",
+      "collected": 1460,
+      "skipped": 412,
+      "result": "passed"
+    },
+    {
+      "name": "research portable unittest discovery",
+      "collected": 1363,
+      "skipped": 107,
+      "result": "passed"
+    },
+    {
+      "name": "npm run check after department private-draft fix",
+      "files": 54,
+      "tests": 572,
+      "result": "passed"
+    },
+    {
+      "name": "Chromium synthetic desktop/narrow/browser navigation and prepared/unknown receipts",
+      "scenarios": 7,
+      "result": "passed",
+      "externalRequests": 0,
+      "liveModelCalls": 0
+    },
+    {
+      "name": "latest department PostgreSQL tests and standalone core distribution",
+      "tests": 32,
+      "result": "passed"
+    },
+    {
+      "name": "actual TCP PostgreSQL Agno HTTP receipt/restart/artifact tests",
+      "tests": 5,
+      "result": "passed"
+    },
+    {
+      "name": "assembly defaults/failed-install cleanup/real restart and lifecycle graph",
+      "tests": 4,
+      "result": "passed"
+    },
+    {
+      "name": "legacy material and native workflow PostgreSQL tests",
+      "tests": 6,
+      "result": "passed"
+    },
+    {
+      "name": "ruff platform apps/research deployment scripts",
+      "result": "passed"
+    },
+    {
+      "name": "pyright production core/application/deployment",
+      "files": 215,
+      "errors": 0,
+      "result": "passed"
+    },
+    {
+      "name": "npm audit",
+      "vulnerabilities": 0,
+      "result": "passed"
+    }
+  ],
+  "standaloneCoreProof": {
+    "wheelBuilt": true,
+    "applicationPackagesAbsent": true,
+    "allCoreModulesImported": true,
+    "realAgentOSLifespan": true,
+    "researchTablesCreated": false,
+    "materials": [],
+    "applications": [],
+    "researchRouteStatus": 404
+  },
+  "preserved": [
+    "native OpenResearch/OpenCode executors and runtime package licenses",
+    "original HTTP and persisted project/request identifiers",
+    "unknown acknowledgement never replayed",
+    "historical scientific runtime namespace and supplied source pins",
+    "explicit legacy policy fixtures and native hazardous-operation consent"
+  ],
+  "pendingIntegration": [
+    "C owns CI: expand ruff paths and replace platform-only discovery in .github/workflows/ci.yml with scripts/check_python.py",
+    "B model/provider head e1ac87d is not included pending parent review",
+    "Real external model, SSH, OpenResearch/OpenCode live integration remains parent-scheduled; no such calls were made"
+  ]
+}
