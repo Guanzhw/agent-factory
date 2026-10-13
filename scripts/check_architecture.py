@@ -58,10 +58,13 @@ def module_index(root: Path, source_roots: list[str]) -> dict[str, Module]:
     return modules
 
 
-def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]], list[str]]:
+def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]], list[tuple[str, str]]]:
     graph, gaps = {}, []
     for name, module in modules.items():
         edges = {}
+
+        def gap(message):
+            gaps.append((name, message))
 
         def add(target, line):
             # Even a missing/unindexed submodule executes existing parent
@@ -90,7 +93,7 @@ def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]],
                     try:
                         base = importlib.util.resolve_name("." * node.level + (node.module or ""), module.package)
                     except (ImportError, ValueError) as error:
-                        gaps.append(f"{module.path}:{node.lineno}: invalid relative import: {error}")
+                        gap(f"{module.path}:{node.lineno}: invalid relative import: {error}")
                         continue
                 else:
                     base = node.module or ""
@@ -127,12 +130,12 @@ def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]],
                     shadowed = shadowed or any(argument.arg == loader_name for argument in arguments)
                 scope = parents.get(scope)
             if shadowed:
-                gaps.append(f"{module.path}:{node.lineno}: shadowed import loader; static analysis cannot determine its target")
+                gap(f"{module.path}:{node.lineno}: shadowed import loader; static analysis cannot determine its target")
                 continue
             if isinstance(function, ast.Name) and function.id == "__import__":
                 level = node.args[4] if len(node.args) > 4 else next((k.value for k in node.keywords if k.arg == "level"), None)
                 if level is not None and (not isinstance(level, ast.Constant) or level.value != 0):
-                    gaps.append(f"{module.path}:{node.lineno}: relative __import__ requires explicit package analysis; use import_module")
+                    gap(f"{module.path}:{node.lineno}: relative __import__ requires explicit package analysis; use import_module")
                     continue
             target_node = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "name"), None)
             target = target_node.value if isinstance(target_node, ast.Constant) and isinstance(target_node.value, str) else None
@@ -145,8 +148,8 @@ def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]],
                 except (ImportError, ValueError):
                     target = None
             if target is None:
-                gaps.append(f"{module.path}:{node.lineno}: unresolved dynamic import; use an explicit trusted registration "
-                            "or a statically named import before claiming dependency coverage")
+                gap(f"{module.path}:{node.lineno}: unresolved dynamic import; use an explicit trusted registration "
+                    "or a statically named import before claiming dependency coverage")
             else:
                 add(target, node.lineno)
         graph[name] = sorted(edges.values(), key=lambda edge: edge.target)
@@ -196,7 +199,7 @@ def check(root: Path, config: dict):
     def owner(name):
         return next((key for key, app in apps.items() if within(name, app["package"])), None)
 
-    violations = []
+    violations, covered = [], set()
     for source in sorted(modules):
         is_composition = source in composition
         source_app = owner(source)
@@ -228,7 +231,8 @@ def check(root: Path, config: dict):
                     violations.append(Violation(path, reason))
                 else:
                     queue.append((target, path))
-    return modules, graph, violations, gaps
+        covered.update(visited)
+    return modules, graph, violations, [message for name, message in gaps if name in covered]
 
 
 def main(argv=None):
