@@ -35,7 +35,8 @@ class MCPProtocolServer:
     actual tool execution. Blocking calls are controlled by owner-specific
     ``wait_started``/``wait_release`` events; cancellation records the owner in
     ``wait_cancelled``. Clear ``delete_release`` to pause session teardown until
-    the test sets it again. ``tool_schemas`` and ``response_headers`` can inject
+    the test sets it again; set ``delete_drip_interval`` to stream response bytes
+    while paused. ``tool_schemas`` and ``response_headers`` can inject
     synthetic peer responses. This fixture never contacts an external service.
     """
 
@@ -49,6 +50,8 @@ class MCPProtocolServer:
         self.delete_started = asyncio.Event()
         self.delete_release = asyncio.Event()
         self.delete_release.set()
+        self.delete_drip_interval: float | None = None
+        self.delete_chunks = 0
         self.tool_schemas: dict[str, dict] = {}
         self.response_headers: dict[str, str] = {}
         self.url = ''
@@ -139,6 +142,18 @@ class MCPProtocolServer:
             scope.setdefault('state', {})['fixture_owner'] = owner
             if scope['method'] == 'DELETE':
                 self.delete_started.set()
+                if self.delete_drip_interval is not None:
+                    await send({'type': 'http.response.start', 'status': 200,
+                                'headers': [(b'content-type', b'application/json')]})
+                    while not self.delete_release.is_set():
+                        await send({'type': 'http.response.body', 'body': b' ', 'more_body': True})
+                        self.delete_chunks += 1
+                        try:
+                            await asyncio.wait_for(self.delete_release.wait(), self.delete_drip_interval)
+                        except TimeoutError:
+                            pass
+                    await send({'type': 'http.response.body', 'body': b'{}', 'more_body': False})
+                    return
                 await self.delete_release.wait()
 
         async def response(message):

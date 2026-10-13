@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+import ipaddress
 import json
 import logging
 import math
@@ -29,6 +30,7 @@ from .personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocati
 
 
 _private_wire: ContextVar[bool] = ContextVar('personal_mcp_private_wire', default=False)
+_CLOSE_DEADLINE = 'agent_factory_mcp_close_deadline'
 
 
 class _PrivateWireFilter(logging.Filter):
@@ -120,24 +122,46 @@ class _InvocationState:
 
 
 class _OwnerAuth(httpx2.Auth):
-    def __init__(self, state: _InvocationState, endpoint: httpx2.URL):
+    def __init__(self, state: _InvocationState, endpoint: httpx2.URL, teardown_timeout_seconds: float):
         self._state, self._endpoint = state, endpoint
+        self._teardown_timeout_seconds = teardown_timeout_seconds
 
     async def async_auth_flow(self, request: httpx2.Request):
         if request.url != self._endpoint:
             raise self._state.error('MCP_DESTINATION_REJECTED')
-        lease = await self._state.credential()
-        request.headers['authorization'] = 'Bearer ' + lease.password
+        deadline = None
+        if request.method == 'DELETE':
+            # One total bound spans fresh authorization, response headers and
+            # every body chunk. An inactivity timeout cannot bound drip feeds.
+            deadline = asyncio.get_running_loop().time() + self._teardown_timeout_seconds
+            request.extensions[_CLOSE_DEADLINE] = deadline
+        try:
+            async with asyncio.timeout_at(deadline):
+                lease = await self._state.credential()
+                request.headers['authorization'] = 'Bearer ' + lease.password
+        except TimeoutError:
+            # The SDK swallows DELETE failures. Preserve an incomplete auth
+            # check so the completed operation cannot bypass the final guard.
+            self._state.authorization_rejected = True
+            raise self._state.error('MCP_AUTHORIZATION_REJECTED') from None
         yield request
 
 
 class _BoundedStream(httpx2.AsyncByteStream):
-    def __init__(self, stream: httpx2.AsyncByteStream, limit: int, state: _InvocationState):
+    def __init__(self, stream: httpx2.AsyncByteStream, limit: int, state: _InvocationState,
+                 deadline: float | None = None):
         self._stream, self._limit, self._state = stream, limit, state
+        self._deadline = deadline
 
     async def __aiter__(self):
         size = 0
-        async for chunk in self._stream:
+        iterator = self._stream.__aiter__()
+        while True:
+            try:
+                async with asyncio.timeout_at(self._deadline):
+                    chunk = await anext(iterator)
+            except StopAsyncIteration:
+                return
             size += len(chunk)
             if size > self._limit:
                 raise self._state.error('MCP_RESPONSE_LIMIT')
@@ -153,13 +177,15 @@ class _BoundedTransport(httpx2.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         request.headers['accept-encoding'] = 'identity'
-        response = await self._transport.handle_async_request(request)
+        deadline = request.extensions.pop(_CLOSE_DEADLINE, None)
+        async with asyncio.timeout_at(deadline):
+            response = await self._transport.handle_async_request(request)
         if response.headers.get('content-encoding', 'identity').lower() != 'identity':
             await response.aclose()
             raise self._state.error('MCP_ENCODING_REJECTED')
         if not isinstance(response.stream, httpx2.AsyncByteStream):
             raise self._state.error('MCP_TRANSPORT_ERROR')
-        response.stream = _BoundedStream(response.stream, self._limit, self._state)
+        response.stream = _BoundedStream(response.stream, self._limit, self._state, deadline)
         return response
 
     async def aclose(self) -> None:
@@ -202,27 +228,42 @@ class MCPToolAdapter:
     separately for every invocation. Credentials never live on this adapter.
     Stateful and stateless servers use the same per-invocation lifecycle, so
     there are no idle sessions or authentication pools to share across owners.
+    HTTPS is required; ``allow_loopback_http`` enables numeric loopback test
+    servers only. ``teardown_timeout_seconds`` bounds the whole session DELETE,
+    including authorization and a continuously streaming response.
     """
 
     def __init__(self, descriptor: ToolDescriptor, *, url: str,
                  remote_tool_name: str | None = None, authorization_interval: float = 0.05,
+                 allow_loopback_http: bool = False, teardown_timeout_seconds: float = 2.0,
                  http_transport_factory: Callable[[], httpx2.AsyncBaseTransport] | None = None):
         parsed = urlsplit(url)
-        if (descriptor.transport != 'mcp' or parsed.scheme not in {'http', 'https'}
+        loopback_http = False
+        if allow_loopback_http and parsed.scheme == 'http' and parsed.hostname and '%' not in parsed.hostname:
+            try:
+                loopback_http = ipaddress.ip_address(parsed.hostname).is_loopback
+            except ValueError:
+                pass
+        if (descriptor.transport != 'mcp' or (parsed.scheme != 'https' and not loopback_http)
                 or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
                 or any(ord(char) < 33 for char in url)
                 or not math.isfinite(descriptor.timeout_seconds) or descriptor.timeout_seconds <= 0
                 or descriptor.max_output_bytes < 1
-                or not math.isfinite(authorization_interval) or authorization_interval <= 0):
+                or not math.isfinite(authorization_interval) or authorization_interval <= 0
+                or not math.isfinite(teardown_timeout_seconds) or teardown_timeout_seconds <= 0):
             raise ValueError('MCP_CONFIGURATION_INVALID')
         self.descriptor = descriptor
         self._endpoint = httpx2.URL(url)
         self._remote_tool_name = remote_tool_name or descriptor.tool_name
         self._schema = json.loads(json.dumps(dict(descriptor.input_schema), allow_nan=False))
         Draft202012Validator.check_schema(self._schema)
+        # Match the SDK's JSON schema comparison: Python equality conflates
+        # True/1 and False/0, including nested const and enum values.
+        self._schema_json = json.dumps(_schema_contract(self._schema), sort_keys=True, allow_nan=False)
         # No implicit network retrieval for an external schema reference.
         self._validator = Draft202012Validator(self._schema, registry=Registry())
         self._authorization_interval = authorization_interval
+        self._teardown_timeout_seconds = teardown_timeout_seconds
         self._http_transport_factory = http_transport_factory
 
     async def invoke(self, invocation: ToolInvocation) -> dict[str, Any]:
@@ -302,7 +343,7 @@ class MCPToolAdapter:
         )
         transport = _BoundedTransport(raw_transport, max(1048576, self.descriptor.max_output_bytes * 2), state)
         async with httpx2.AsyncClient(
-            auth=_OwnerAuth(state, self._endpoint), transport=transport,
+            auth=_OwnerAuth(state, self._endpoint, self._teardown_timeout_seconds), transport=transport,
             timeout=self.descriptor.timeout_seconds, trust_env=False,
             follow_redirects=False, max_redirects=0,
         ) as http:
@@ -346,7 +387,8 @@ class MCPToolAdapter:
             page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
             for tool in page.tools:
                 if tool.name == self._remote_tool_name:
-                    if _schema_contract(tool.input_schema) != _schema_contract(self._schema):
+                    remote_schema_json = json.dumps(_schema_contract(tool.input_schema), sort_keys=True, allow_nan=False)
+                    if remote_schema_json != self._schema_json:
                         raise state.error('MCP_SCHEMA_CHANGED')
                     return
             cursor = page.next_cursor

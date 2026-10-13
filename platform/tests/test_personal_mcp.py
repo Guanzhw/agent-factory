@@ -6,6 +6,7 @@ from dataclasses import replace
 import io
 import json
 import logging
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -77,9 +78,23 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(ALICE_TOKEN, repr(error))
         self.assertNotIn(BOB_TOKEN, repr(error))
 
+    def test_https_is_default_and_plain_http_requires_explicit_numeric_loopback(self):
+        for endpoint in ('http://127.0.0.1:8123/mcp', 'http://[::1]:8123/mcp',
+                         'http://synthetic-public.invalid/mcp'):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                MCPToolAdapter(descriptor(), url=endpoint)
+        for endpoint in ('http://synthetic-public.invalid/mcp', 'http://192.0.2.10/mcp',
+                         'http://localhost/mcp', 'http://127.0.0.1.example.invalid/mcp'):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                MCPToolAdapter(descriptor(), url=endpoint, allow_loopback_http=True)
+        MCPToolAdapter(descriptor(), url='https://synthetic-public.invalid/mcp')
+        for endpoint in ('http://127.0.0.1:8123/mcp', 'http://[::1]:8123/mcp'):
+            with self.subTest(endpoint=endpoint):
+                MCPToolAdapter(descriptor(), url=endpoint, allow_loopback_http=True)
+
     async def test_two_owners_share_schema_but_keep_stateless_auth_and_results_separate(self):
         async with MCPProtocolServer() as server:
-            adapter = MCPToolAdapter(descriptor('echo'), url=server.url)
+            adapter = MCPToolAdapter(descriptor('echo'), url=server.url, allow_loopback_http=True)
             alice, bob = Authority(), Authority('bob', BOB_TOKEN)
             outputs = await asyncio.gather(
                 adapter.invoke(alice.invocation({'value': 'alice-input'})),
@@ -102,7 +117,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stateful_calls_get_distinct_owner_sessions_and_authenticated_delete(self):
         async with MCPProtocolServer(stateless=False) as server:
-            adapter = MCPToolAdapter(descriptor(), url=server.url)
+            adapter = MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True)
             outputs = await asyncio.gather(
                 adapter.invoke(Authority().invocation()),
                 adapter.invoke(Authority('bob', BOB_TOKEN).invocation()),
@@ -125,7 +140,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_revoked_foreign_and_stale_credentials_fail_before_http(self):
         async with MCPProtocolServer() as server:
-            adapter = MCPToolAdapter(descriptor(), url=server.url)
+            adapter = MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True)
             for case in ('missing', 'revoked', 'foreign-owner', 'foreign-ref', 'stale-revision'):
                 with self.subTest(case=case):
                     authority = Authority()
@@ -145,7 +160,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_revoke_during_dispatched_call_returns_unknown_and_no_new_calls(self):
         async with MCPProtocolServer(stateless=False) as server:
             authority = Authority()
-            adapter = MCPToolAdapter(descriptor('wait'), url=server.url, authorization_interval=0.01)
+            adapter = MCPToolAdapter(descriptor('wait'), url=server.url, allow_loopback_http=True, authorization_interval=0.01)
             pending = asyncio.create_task(adapter.invoke(authority.invocation()))
             await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
             authority.revoked = True
@@ -162,7 +177,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_rotation_invalidates_inflight_revision_and_next_call_uses_new_token(self):
         async with MCPProtocolServer(stateless=False) as server:
             authority = Authority()
-            adapter = MCPToolAdapter(descriptor('wait'), url=server.url, authorization_interval=0.01)
+            adapter = MCPToolAdapter(descriptor('wait'), url=server.url, allow_loopback_http=True, authorization_interval=0.01)
             pending = asyncio.create_task(adapter.invoke(authority.invocation()))
             await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
             authority.revision, authority.token = 'connection-v2', ALICE_ROTATED_TOKEN
@@ -172,7 +187,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(pending, 2)
             self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED')
             split = len(server.requests)
-            output = await MCPToolAdapter(descriptor(), url=server.url).invoke(authority.invocation())
+            output = await MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True).invoke(authority.invocation())
             self.assertEqual(output['structuredContent'], {'owner': 'alice'})
             self.assertTrue(server.requests[split:])
             self.assertTrue(all(request.headers['authorization'] == f'Bearer {ALICE_ROTATED_TOKEN}'
@@ -181,7 +196,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_caller_cancellation_preserves_unknown_despite_transport_close(self):
         async with MCPProtocolServer(stateless=False) as server:
-            adapter = MCPToolAdapter(descriptor('wait'), url=server.url)
+            adapter = MCPToolAdapter(descriptor('wait'), url=server.url, allow_loopback_http=True)
             pending = asyncio.create_task(adapter.invoke(Authority().invocation()))
             await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
             pending.cancel()
@@ -196,7 +211,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_of_dispatched_call_is_unknown_without_replay(self):
         async with MCPProtocolServer(stateless=False) as server:
-            adapter = MCPToolAdapter(descriptor('wait', timeout_seconds=1), url=server.url)
+            adapter = MCPToolAdapter(descriptor('wait', timeout_seconds=1), url=server.url, allow_loopback_http=True)
             with self.assertRaises(ToolInvocationError) as failure:
                 await adapter.invoke(Authority().invocation())
             self.assert_error(failure.exception, 'MCP_TIMEOUT')
@@ -210,7 +225,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.subTest(tool=tool):
                     with self.assertRaises(ToolInvocationError) as failure:
-                        await MCPToolAdapter(descriptor(tool), url=server.url).invoke(Authority().invocation())
+                        await MCPToolAdapter(descriptor(tool), url=server.url, allow_loopback_http=True).invoke(Authority().invocation())
                     self.assert_error(failure.exception, code, outcome=outcome)
             self.assertEqual(server.calls, [('error', 'alice'), ('secret_echo', 'alice')])
 
@@ -230,7 +245,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     logger.addHandler(handler)
                 for tool in ('error', 'secret_echo'):
                     with self.assertRaises(ToolInvocationError):
-                        await MCPToolAdapter(descriptor(tool), url=server.url).invoke(Authority().invocation())
+                        await MCPToolAdapter(descriptor(tool), url=server.url, allow_loopback_http=True).invoke(Authority().invocation())
                 logging.getLogger('mcp.client.streamable_http').debug('unrelated-mcp-client-still-visible')
             finally:
                 for logger, level in zip(loggers, levels, strict=True):
@@ -243,7 +258,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_output_limit_rejects_large_success_without_replaying_tool(self):
         async with MCPProtocolServer() as server:
-            adapter = MCPToolAdapter(descriptor('echo', max_output_bytes=128), url=server.url)
+            adapter = MCPToolAdapter(descriptor('echo', max_output_bytes=128), url=server.url, allow_loopback_http=True)
             with self.assertRaises(ToolInvocationError) as failure:
                 await adapter.invoke(Authority().invocation({'value': 'x' * 2048}))
             self.assert_error(failure.exception, 'MCP_OUTPUT_LIMIT')
@@ -252,7 +267,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_arguments_fail_before_credentials_or_http(self):
         async with MCPProtocolServer() as server:
             authority = Authority()
-            adapter = MCPToolAdapter(descriptor('echo'), url=server.url)
+            adapter = MCPToolAdapter(descriptor('echo'), url=server.url, allow_loopback_http=True)
             for arguments in ({}, {'value': 12}):
                 with self.subTest(arguments=arguments), self.assertRaises(ToolInvocationError) as failure:
                     await adapter.invoke(authority.invocation(arguments))
@@ -269,7 +284,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.subTest(tool=tool):
                     with self.assertRaises(ToolInvocationError) as failure:
-                        await MCPToolAdapter(descriptor(tool, input_schema=schema), url=server.url).invoke(
+                        await MCPToolAdapter(descriptor(tool, input_schema=schema), url=server.url, allow_loopback_http=True).invoke(
                             Authority().invocation())
                     self.assert_error(failure.exception, code, outcome='failed')
             self.assertEqual(server.calls, [])
@@ -279,7 +294,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             declared = json.loads(json.dumps(ECHO_SCHEMA))
             declared['description'] = 'Local documentation'
             declared['properties']['value']['$comment'] = 'Human explanation'
-            adapter = MCPToolAdapter(descriptor('echo', input_schema=declared), url=server.url)
+            adapter = MCPToolAdapter(descriptor('echo', input_schema=declared), url=server.url, allow_loopback_http=True)
             declared['properties']['value']['type'] = 'integer'
             output = await adapter.invoke(Authority().invocation({'value': 'still-a-string'}))
             self.assertEqual(output['structuredContent'], {'owner': 'alice', 'value': 'still-a-string'})
@@ -302,12 +317,12 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
         async with MCPProtocolServer(stateless=False) as server:
             authority = Authority()
-            successful_adapter = MCPToolAdapter(descriptor(), url=server.url,
+            successful_adapter = MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True,
                                                 http_transport_factory=ObservedTransport)
             for call_number, tool in enumerate(('whoami', 'whoami', 'error')):
                 invocation = replace(authority.invocation(), call_id=f'synthetic-original-call-{call_number}')
                 if tool == 'error':
-                    adapter = MCPToolAdapter(descriptor(tool), url=server.url,
+                    adapter = MCPToolAdapter(descriptor(tool), url=server.url, allow_loopback_http=True,
                                              http_transport_factory=ObservedTransport)
                     with self.assertRaises(ToolInvocationError):
                         await adapter.invoke(invocation)
@@ -323,7 +338,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
         async with MCPProtocolServer() as server:
             authority = Authority(token='synthetic-wrong-token')
             with self.assertRaises(ToolInvocationError) as failure:
-                await MCPToolAdapter(descriptor(), url=server.url).invoke(authority.invocation())
+                await MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True).invoke(authority.invocation())
             self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR')
             self.assertEqual(len(server.requests), 1)
             self.assertIsNone(server.requests[0].owner)
@@ -344,10 +359,35 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(declared=declared, remote=remote):
                     server.tool_schemas['whoami'] = remote
                     with self.assertRaises(ToolInvocationError) as failure:
-                        await MCPToolAdapter(descriptor(input_schema=declared), url=server.url).invoke(
+                        await MCPToolAdapter(descriptor(input_schema=declared), url=server.url, allow_loopback_http=True).invoke(
                             Authority().invocation())
                     self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
             self.assertEqual(server.calls, [])
+
+    async def test_schema_boolean_and_numeric_literals_remain_distinct(self):
+        nested_bools = {'values': [True, {'enabled': False}]}
+        nested_numbers = {'values': [1, {'enabled': 0}]}
+        literal_pairs = (
+            (True, 1), (1, True), (False, 0), (0, False),
+            (nested_bools, nested_numbers), (nested_numbers, nested_bools),
+        )
+        async with MCPProtocolServer() as server:
+            for keyword in ('const', 'enum'):
+                for local_literal, remote_literal in literal_pairs:
+                    with self.subTest(keyword=keyword, local=local_literal, remote=remote_literal):
+                        local_value = [local_literal] if keyword == 'enum' else local_literal
+                        remote_value = [remote_literal] if keyword == 'enum' else remote_literal
+                        declared = {'type': 'object', 'properties': {'payload': {keyword: local_value}}}
+                        server.tool_schemas['whoami'] = {
+                            'type': 'object', 'properties': {'payload': {keyword: remote_value}},
+                        }
+                        # The optional payload is absent, so argument validation
+                        # succeeds and the live discovery contract is compared.
+                        with self.assertRaises(ToolInvocationError) as failure:
+                            await MCPToolAdapter(descriptor(input_schema=declared), url=server.url, allow_loopback_http=True).invoke(
+                                Authority().invocation())
+                        self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
+                        self.assertEqual(server.calls, [])
 
     async def test_stateful_delete_credential_rejection_cannot_return_success(self):
         async with MCPProtocolServer(stateless=False) as server:
@@ -362,7 +402,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
             invocation = replace(invocation, resolve_credential=reject_after_tool)
             with self.assertRaises(ToolInvocationError) as failure:
-                await MCPToolAdapter(descriptor(), url=server.url).invoke(invocation)
+                await MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True).invoke(invocation)
             self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED')
             self.assertEqual(server.calls, [('whoami', 'alice')])
             self.assertFalse(any(request.method == 'DELETE' for request in server.requests))
@@ -374,7 +414,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             calls.append(request)
             raise httpx2.ReadError(f'Synthetic network error containing {ALICE_TOKEN}', request=request)
 
-        adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp',
+        adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp', allow_loopback_http=True,
                                  http_transport_factory=lambda: httpx2.MockTransport(broken))
         with self.assertRaises(ToolInvocationError) as failure:
             await adapter.invoke(Authority().invocation())
@@ -397,9 +437,9 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 logger.addHandler(handler)
             async with MCPProtocolServer() as server:
                 server.response_headers['x-synthetic-secret'] = ALICE_TOKEN
-                output = await MCPToolAdapter(descriptor(), url=server.url).invoke(Authority().invocation())
+                output = await MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True).invoke(Authority().invocation())
                 self.assertEqual(output['structuredContent']['owner'], 'alice')
-            adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp',
+            adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp', allow_loopback_http=True,
                                      http_transport_factory=lambda: httpx2.MockTransport(secret_reason))
             with self.assertRaises(ToolInvocationError):
                 await adapter.invoke(Authority().invocation())
@@ -432,7 +472,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     return httpx2.Response(200, request=request, stream=HugeJSON(),
                                            headers={'content-type': 'application/json'})
 
-                adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp',
+                adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp', allow_loopback_http=True,
                                          http_transport_factory=lambda: httpx2.MockTransport(response))
                 with self.assertRaises(ToolInvocationError) as failure:
                     await adapter.invoke(Authority().invocation())
@@ -458,7 +498,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             logger.addHandler(handler)
             async with MCPProtocolServer(stateless=False) as server:
                 server.delete_release.clear()
-                adapter = MCPToolAdapter(descriptor('wait'), url=server.url,
+                adapter = MCPToolAdapter(descriptor('wait'), url=server.url, allow_loopback_http=True,
                                          http_transport_factory=ObservedTransport)
 
                 async def invocation_task():
@@ -519,7 +559,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                           'data': {'synthetic-private': ALICE_TOKEN}},
             })
 
-        adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp',
+        adapter = MCPToolAdapter(descriptor(), url='http://127.0.0.1:1/mcp', allow_loopback_http=True,
                                  http_transport_factory=lambda: httpx2.MockTransport(upstream_error))
         with patch.object(_otel, '_tracer', RecordingTracer()):
             with self.assertRaises(ToolInvocationError) as failure:
@@ -541,12 +581,108 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                                    headers={'location': 'http://synthetic-untrusted.invalid/mcp'})
 
         endpoint = 'http://127.0.0.1:1/mcp'
-        adapter = MCPToolAdapter(descriptor(), url=endpoint,
+        adapter = MCPToolAdapter(descriptor(), url=endpoint, allow_loopback_http=True,
                                  http_transport_factory=lambda: httpx2.MockTransport(redirect))
         with self.assertRaises(ToolInvocationError) as failure:
             await adapter.invoke(Authority().invocation())
         self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR')
         self.assertEqual([str(request.url) for request in requests], [endpoint])
+
+    async def test_slow_delete_cannot_extend_cancellation_teardown_indefinitely(self):
+        closed = asyncio.Event()
+
+        class ObservedTransport(httpx2.AsyncHTTPTransport):
+            async def aclose(self):
+                try:
+                    await super().aclose()
+                finally:
+                    closed.set()
+
+        async with MCPProtocolServer(stateless=False) as server:
+            server.delete_release.clear()
+            server.delete_drip_interval = 0.01
+            adapter = MCPToolAdapter(
+                descriptor('wait'), url=server.url, allow_loopback_http=True,
+                teardown_timeout_seconds=0.1, http_transport_factory=ObservedTransport,
+            )
+            pending = asyncio.create_task(adapter.invoke(Authority().invocation()))
+            await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
+            started = asyncio.get_running_loop().time()
+            pending.cancel()
+            try:
+                await asyncio.wait_for(server.delete_started.wait(), 2)
+                pending.cancel()
+                # A wait with no cancellation side effect makes the deadline
+                # assertion independent from the adapter's own cancellation.
+                done, _ = await asyncio.wait({pending}, timeout=2)
+                self.assertIn(pending, done)
+                with self.assertRaises(ToolInvocationError) as failure:
+                    await pending
+                self.assert_error(failure.exception, 'MCP_CANCELLED')
+                self.assertLess(asyncio.get_running_loop().time() - started, 2)
+                self.assertTrue(server.delete_started.is_set())
+                self.assertGreaterEqual(server.delete_chunks, 2)
+                self.assertTrue(closed.is_set())
+                self.assertEqual(server.calls, [('wait', 'alice')])
+            finally:
+                server.delete_release.set()
+                if not pending.done():
+                    await asyncio.gather(pending, return_exceptions=True)
+
+    async def test_delete_credential_resolution_is_bounded_even_when_callback_blocks(self):
+        blocked, release, finished = threading.Event(), threading.Event(), threading.Event()
+        closed = asyncio.Event()
+
+        class ObservedTransport(httpx2.AsyncHTTPTransport):
+            async def aclose(self):
+                try:
+                    await super().aclose()
+                finally:
+                    closed.set()
+
+        async with MCPProtocolServer(stateless=False) as server:
+            invocation = Authority().invocation()
+            resolve = invocation.resolve_credential
+
+            def blocking_after_tool():
+                # Before the result, normal initialize/discovery/tool requests
+                # resolve immediately. The next credential lookup is teardown.
+                if server.calls:
+                    blocked.set()
+                    try:
+                        release.wait(5)
+                    finally:
+                        finished.set()
+                return resolve()
+
+            adapter = MCPToolAdapter(
+                descriptor(), url=server.url, allow_loopback_http=True,
+                teardown_timeout_seconds=0.1, http_transport_factory=ObservedTransport,
+            )
+            pending = asyncio.create_task(adapter.invoke(replace(
+                invocation, resolve_credential=blocking_after_tool,
+            )))
+            try:
+                async with asyncio.timeout(2):
+                    while not blocked.is_set():
+                        await asyncio.sleep(0.005)
+                started = asyncio.get_running_loop().time()
+                done, _ = await asyncio.wait({pending}, timeout=2)
+                self.assertIn(pending, done)
+                with self.assertRaises(ToolInvocationError) as failure:
+                    await pending
+                self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED')
+                self.assertLess(asyncio.get_running_loop().time() - started, 2)
+                self.assertTrue(closed.is_set())
+                self.assertFalse(finished.is_set())
+                self.assertFalse(any(request.method == 'DELETE' for request in server.requests))
+                self.assertEqual(server.calls, [('whoami', 'alice')])
+            finally:
+                release.set()
+                if not pending.done():
+                    await asyncio.gather(pending, return_exceptions=True)
+                if blocked.is_set():
+                    self.assertTrue(await asyncio.to_thread(finished.wait, 2))
 
 
 if __name__ == '__main__':
