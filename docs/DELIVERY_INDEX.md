@@ -1,5 +1,13 @@
 # Current delivery and review index
 
+## Low-priority roadmap — after PR #86 acceptance
+
+[Personal CLI / MCP connection lifecycle proposal](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
+is **documentation only** and depends on [PR #86](https://github.com/Guanzhw/agent-factory/pull/86)
+being accepted and merged into main before implementation. Reuse shared tools with private
+owner connections and on-demand calls; first validate one real CLI and one personally
+authenticated MCP service with two concurrent users. No capability is marked implemented.
+
 ## Latest accepted local milestone — 2026-10-07
 
 See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for the owner-verified real result at
