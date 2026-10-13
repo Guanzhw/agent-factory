@@ -140,6 +140,16 @@ describe('existing reusable connection binding boundary', () => {
 });
 
 describe('safe tool connection request failures', () => {
+  it('preserves precise bind precondition codes without leaking raw response details or replaying the request', async () => {
+    for (const code of ['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED']) {
+      request.mockRejectedValueOnce(new ApiError('synthetic private credential detail', 409, code));
+      const failure = await api.bind('alice', tool.registrationRef, 'bind:one', ['lookup:read']).catch(error => error);
+      expect(failure).toBeInstanceOf(ToolConnectionError); expect(failure).toMatchObject({ status: 409, code });
+      expect(failure.message).not.toContain('synthetic');
+    }
+    expect(request).toHaveBeenCalledTimes(4); expect(request.mock.calls.every(call => call[1] === 'POST')).toBe(true);
+  });
+
   it('never retries or recovers a mutation automatically and exposes no raw error content', async () => {
     request.mockRejectedValueOnce(new ApiError('synthetic credential in upstream stderr', 503, 'synthetic credential code'));
     const failure = await api.configure('alice', configuration).catch(error => error);

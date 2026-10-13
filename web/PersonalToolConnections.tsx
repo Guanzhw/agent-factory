@@ -172,8 +172,21 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
       const installed = await personalToolConnectionApi.descriptors(ownerId);
       if (!alive.current) return;
       const current = installed.find(d => d.adapterId === s.adapterId);
-      if (!current || current.revision !== s.descriptorRevision || current.credentialProviderId !== s.credentialProviderId || current.credentialDestination !== s.credentialDestination) throw new Error('Installed tool changed');
-      connection = await post(s, () => personalToolConnectionApi.bind(ownerId, s.registrationRef!, s.bindRequestId, s.capabilities));
+      if (!current || current.revision !== s.descriptorRevision || current.credentialProviderId !== s.credentialProviderId || current.credentialDestination !== s.credentialDestination) {
+        setError('已安装工具已变化或移除，绑定尚未发送。可以结束未发送步骤；已保存的工具配置保留。'); return;
+      }
+      try { connection = await post(s, () => personalToolConnectionApi.bind(ownerId, s.registrationRef!, s.bindRequestId, s.capabilities)); }
+      catch (failure) {
+        // Only these direct bind POST responses prove that its precondition
+        // failed before a binding/receipt was written. Never apply this to GET
+        // recovery, unknown conflicts or an invalid/missing success response.
+        if (alive.current && failure instanceof ToolConnectionError && failure.status === 409
+            && ['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'].includes(failure.code ?? '')) {
+          release(s); setToken(''); setConsent(false); setCredentialRef(''); changed();
+          setNotice('绑定请求已被明确拒绝。已保存的工具配置和原保存回执保留；没有重发绑定或更换凭据。'); return;
+        }
+        throw failure;
+      }
     }
     if (!alive.current) return;
     if (connection.ownerId !== ownerId || connection.registrationRef !== s.registrationRef || connection.kind !== 'tool'
@@ -231,13 +244,26 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
       release(original); changed(); setNotice('原撤销已核对；没有重发撤销请求。');
     });
   }
+  function endUnsent() {
+    if (!pending || pending.dispatched) return;
+    const original = pending;
+    void run(async () => {
+      // Another tab may have sent or advanced this command while the owner
+      // check was pending. Only the same still-unsent step can be discarded.
+      const current = readToolCommand(localStorage.getItem(storage), ownerId);
+      if (!current || current.requestId !== original.requestId || current.action !== original.action || current.dispatched
+          || current.action === 'setup' && original.action === 'setup' && current.stage !== original.stage) throw new Error('Original step changed');
+      release(original); setToken(''); setConsent(false); setCredentialRef(''); changed();
+      setNotice('已结束未发送步骤。已保存的工具配置和原保存回执保留；没有发送或重发请求。');
+    });
+  }
   const disabled = busy || blocked || !ready || !!pending;
   const canSave = !!descriptor && (source === 'saved' ? !!selected : !!token && consent && providers.includes(descriptor.credentialProviderId));
   return <section aria-labelledby="personal-tools-title"><h2 id="personal-tools-title">我的工具连接</h2>
     <p>选择已安装的 CLI 或 MCP 工具，并绑定你自己的凭据。应用只在声明了此工具和连接时使用；这里不会执行工具。</p>
     <button className="secondary" disabled={busy || blocked} onClick={() => setRefresh(n => n + 1)}>重新读取工具连接</button>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {pending && <aside className="state-note"><p>原工具{pending.action === 'revoke' ? '撤销' : '保存或绑定'}尚待核对。仅恢复原请求，已发送的步骤不会重发。</p><button disabled={busy || blocked} onClick={recover}>核对原工具请求</button></aside>}
+    {pending && <aside className="state-note"><p>原工具{pending.action === 'revoke' ? '撤销' : '保存或绑定'}尚待核对。仅恢复原请求，已发送的步骤不会重发。</p><button disabled={busy || blocked} onClick={recover}>核对原工具请求</button>{!pending.dispatched && <button className="secondary" disabled={busy || blocked} onClick={endUnsent}>结束未发送步骤</button>}</aside>}
     {!ready ? <p className="quiet">正在读取已安装工具与本人连接。</p> : !descriptors.length ? <p className="list-empty">此部署尚未安装个人 CLI/MCP 工具。安装后可在这里绑定自己的凭据；无需添加凭据或提交审批。</p> : <form className="material-editor" aria-label="添加个人工具连接" onSubmit={event => { event.preventDefault(); save(); }}>
       <fieldset disabled={disabled}><label>工具<select aria-label="个人工具" value={adapterId} onChange={event => { setAdapterId(event.target.value); setCredentialRef(''); setToken(''); setConsent(false); }}><option value="">选择已安装工具</option>{descriptors.map(d => <option key={d.adapterId} value={d.adapterId}>{d.toolName} · {d.transport.toUpperCase()}</option>)}</select></label>
         {descriptor && <><p>{descriptor.description}</p>{descriptor.transport === 'cli' && <p className="quiet">CLI 在部署服务器上运行；当前适配器支持 Linux/POSIX 服务器，Windows 浏览器可管理连接。</p>}<dl className="plan-details"><dt>凭据用途</dt><dd>{descriptor.credentialProviderId}</dd><dt>固定服务目标</dt><dd>{descriptor.credentialDestination}</dd><dt>允许能力</dt><dd>{descriptor.capabilities.join('、')}</dd></dl>

@@ -87,9 +87,108 @@ it('recovers a lost binding response with GET only and the original binding requ
   vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(0));
   await mount(); await chooseSaved(); await click('保存并绑定工具');
   const requestId = vi.mocked(tools.bind).mock.calls[0][2];
-  await remount(); await click('核对原工具请求');
+  await remount();
+  vi.mocked(tools.recoverBinding).mockRejectedValueOnce(new ToolConnectionError(404));
+  await click('核对原工具请求');
+  expect(localStorage.getItem(storage)).not.toBeNull(); expect(button('结束未发送步骤')).toBeUndefined();
+  expect(button('保存并绑定工具').closest('fieldset')?.disabled).toBe(true);
+  await click('核对原工具请求');
   expect(tools.recoverBinding).toHaveBeenCalledWith('alice', requestId); expect(tools.bind).toHaveBeenCalledTimes(1); expect(tools.configure).toHaveBeenCalledTimes(1);
   expect(localStorage.getItem(storage)).toBeNull();
+});
+
+it.each(['removed', 'upgraded'])('can end an unsent binding after its descriptor is %s without losing the saved tool or replaying setup', async change => {
+  vi.mocked(tools.configure).mockImplementation(async () => {
+    vi.mocked(tools.descriptors).mockResolvedValue(change === 'removed' ? [] : [{ ...descriptor, revision: 'descriptor-v2' }]);
+    vi.mocked(tools.list).mockResolvedValue([{ ...configured, status: 'adapter_changed', available: false, allowedActions: ['inspect', 'revoke'] }]);
+    return configured;
+  });
+  await mount(); await chooseSaved(); await click('保存并绑定工具');
+  const pending = JSON.parse(localStorage.getItem(storage)!);
+  expect(pending).toMatchObject({ stage: 'bind', dispatched: false, registrationRef: configured.registrationRef });
+  await remount(); await click('核对原工具请求');
+  expect(JSON.parse(localStorage.getItem(storage)!)).toEqual(pending);
+  expect(host.textContent).toContain('绑定尚未发送');
+  await click('结束未发送步骤');
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('已保存的工具配置和原保存回执保留');
+  expect(host.textContent).toContain(configured.registrationRef); expect(button('撤销工具配置').disabled).toBe(false);
+  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).not.toHaveBeenCalled();
+  expect(tools.recoverBinding).not.toHaveBeenCalled(); expect(vault.saveCredential).not.toHaveBeenCalled();
+  await click('撤销工具配置'); expect(tools.revoke).toHaveBeenCalledTimes(1);
+});
+
+it.each(['dispatched', 'request', 'action', 'stage'])('does not discard an unsent step if another tab changed its %s', async change => {
+  vi.mocked(tools.configure).mockImplementation(async () => {
+    vi.mocked(tools.descriptors).mockResolvedValue([]); return configured;
+  });
+  await mount(); await chooseSaved(); await click('保存并绑定工具');
+  const pending = JSON.parse(localStorage.getItem(storage)!);
+  const latest = change === 'dispatched' ? { ...pending, dispatched: true }
+    : change === 'request' ? { ...pending, requestId: 'another-request' }
+      : change === 'action' ? { action: 'revoke', owner: 'alice', requestId: pending.requestId, registrationRef: pending.registrationRef, dispatched: false }
+        : { ...pending, stage: 'configure' };
+  localStorage.setItem(storage, JSON.stringify(latest));
+  await click('结束未发送步骤');
+  expect(JSON.parse(localStorage.getItem(storage)!)).toEqual(latest);
+  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).not.toHaveBeenCalled(); expect(tools.revoke).not.toHaveBeenCalled();
+});
+
+it('rechecks the current owner before ending an unsent step', async () => {
+  vi.mocked(tools.configure).mockImplementation(async () => {
+    vi.mocked(tools.descriptors).mockResolvedValue([]); return configured;
+  });
+  await mount(); await chooseSaved(); await click('保存并绑定工具');
+  const pending = localStorage.getItem(storage);
+  vi.mocked(api.session).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' });
+  await click('结束未发送步骤');
+  expect(localStorage.getItem(storage)).toBe(pending); expect(host.textContent).toContain('当前登录账户已改变');
+  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).not.toHaveBeenCalled();
+});
+
+it.each(['rotated', 'revoked'])('settles a directly rejected binding after the credential is %s while preserving its saved configuration', async change => {
+  vi.mocked(tools.configure).mockImplementation(async () => {
+    vi.mocked(vault.credentials).mockResolvedValue(change === 'rotated' ? [{ ...saved, credentialRevision: 'credential-r2' }] : [{ ...saved, status: 'revoked' }]);
+    vi.mocked(tools.list).mockResolvedValue([{ ...configured, status: 'credential_unavailable', available: false, allowedActions: ['inspect', 'revoke'] }]);
+    return configured;
+  });
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'));
+  await mount(); await chooseSaved(); await click('保存并绑定工具');
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('绑定请求已被明确拒绝');
+  expect(host.textContent).toContain('已保存的工具配置和原保存回执保留'); expect(host.textContent).not.toContain('操作尚未确认');
+  expect(host.textContent).toContain(configured.registrationRef); expect(button('撤销工具配置').disabled).toBe(false);
+  expect(host.querySelector<HTMLFieldSetElement>('fieldset')?.disabled).toBe(false);
+  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).toHaveBeenCalledTimes(1);
+  expect(tools.recoverBinding).not.toHaveBeenCalled(); expect(vault.saveCredential).not.toHaveBeenCalled();
+  await remount(); expect(localStorage.getItem(storage)).toBeNull();
+  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).toHaveBeenCalledTimes(1);
+});
+
+it.each(['PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'])('settles only a direct binding precondition rejection %s', async code => {
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409, code));
+  await mount(); await chooseNew(); await click('保存并绑定工具');
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('绑定请求已被明确拒绝');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="工具访问令牌"]')?.value).toBe('');
+  expect(host.querySelector<HTMLInputElement>('input[type=checkbox]')?.checked).toBe(false);
+  expect(vault.saveCredential).toHaveBeenCalledTimes(1); expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).toHaveBeenCalledTimes(1);
+  expect(tools.recoverBinding).not.toHaveBeenCalled();
+});
+
+it.each([undefined, 'PERSONAL_TOOL_UNKNOWN', 'IDEMPOTENCY_CONFLICT'])('keeps an unclassified binding 409 (%s) pending and never permits discarding or replaying it', async code => {
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409, code));
+  vi.mocked(tools.recoverBinding).mockRejectedValue(new ToolConnectionError(404));
+  await mount(); await chooseSaved(); await click('保存并绑定工具'); await remount(); await click('核对原工具请求');
+  expect(JSON.parse(localStorage.getItem(storage)!)).toMatchObject({ stage: 'bind', dispatched: true });
+  expect(button('结束未发送步骤')).toBeUndefined(); expect(host.textContent).toContain('操作尚未确认');
+  expect(tools.bind).toHaveBeenCalledTimes(1); expect(tools.configure).toHaveBeenCalledTimes(1);
+});
+
+it('does not treat a credential rejection during GET recovery as proof that the original binding was rejected', async () => {
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(0));
+  vi.mocked(tools.recoverBinding).mockRejectedValue(new ToolConnectionError(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'));
+  await mount(); await chooseSaved(); await click('保存并绑定工具'); await click('核对原工具请求');
+  expect(JSON.parse(localStorage.getItem(storage)!)).toMatchObject({ stage: 'bind', dispatched: true });
+  expect(button('结束未发送步骤')).toBeUndefined(); expect(host.textContent).toContain('操作尚未确认');
+  expect(tools.bind).toHaveBeenCalledTimes(1); expect(tools.configure).toHaveBeenCalledTimes(1);
 });
 
 it('recovers an uncertain vault save without resending the token', async () => {
