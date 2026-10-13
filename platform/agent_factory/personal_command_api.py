@@ -194,7 +194,8 @@ class PersonalCommandAPI:
         plan = self.store.plan(plan_id, owner)
         if plan.get('application') not in {APPLICATION_ID, PROJECT_APPLICATION_ID} or plan.get('mode') != 'personal-command':
             raise HTTPException(409, 'PERSONAL_COMMAND_PLAN_REQUIRED')
-        self.store.require_plan_execution(owner, plan)
+        # Factory admission runs the installed command guard off the event loop
+        # immediately before reserving the task, for this and generic ingress.
 
     async def start(self, owner, plan_id):
         await asyncio.to_thread(self._authorize_start, owner, plan_id)

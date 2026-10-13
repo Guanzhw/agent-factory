@@ -39,7 +39,7 @@ No .agents/skills files existed in the selected environment.
 4. After A extracts app bootstraps, change normal application publication setup to
    service.publish(...) (no request_publication/decide_publication pair). Explicit
    historical fixtures using separate-admin can continue exercising old contracts.
-   personal_command_api now calls store.require_plan_execution directly. Its
+   personal_command_api now delegates permission recheck to Factory admission. Its
    installed `personal-command` execution guard retains current connection expiry,
    owner scope and exact project-create consent checks for every ingress, including
    generic /instances. Keep this guard when extracting the application; these are
@@ -66,3 +66,18 @@ Public edits create new immutable versions. Existing exact-version references st
 unchanged; owner chooses a new version explicitly. Personal credentials are not public
 materials; native identity, current access, owner isolation, TLS/SSRF, tool contracts,
 request identity, effect idempotency, UNKNOWN reconciliation, and stop evidence remain.
+
+## Retained application boundaries for A
+
+- OwnerSubmissions has no research session/project imports or injected dependencies.
+  It no longer grants admission and needs no new application exception interface.
+- PlanPolicyService._project still calls project_review_summary only when rendering
+  an old project-create review. A may supply this history-only formatter from the
+  research application; it must not become an approval or dispatch hook.
+- PersonalCommandAPI installs `_require_command_current` through the existing Store
+  execution guard. This preserves private inputValues connection-pin freshness and
+  exact project-create consent for both personal and generic task admission.
+- ResourceService.execution_runtime still has its pre-existing research effect
+  binding. This branch makes no resource executor changes; A can replace that import
+  with its proposed explicit static research binding. No dynamic policy engine or
+  new resource approval interface is needed.
