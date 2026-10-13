@@ -14,6 +14,8 @@ This discovers the suite once, retains one test instance per full unittest ID, a
 
 The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments.
 
+CI runs on pull requests, pushes to `main`, and explicit workflow dispatch. A feature-branch push with an open PR therefore starts one workflow, while merged code is still checked on `main`.
+
 ## Dependency checker preparation
 
 ```sh
