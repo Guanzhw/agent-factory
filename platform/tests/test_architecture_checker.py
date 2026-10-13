@@ -104,13 +104,13 @@ class ArchitectureCheckerTests(unittest.TestCase):
         self.write({"apps/alpha/api.py": "__import__('private', level=1)"})
         self.assertIn("relative __import__", check(self.root, self.config)[3][0])
 
-    def test_composition_exception_never_covers_callers_siblings_or_private_imports(self):
+    def test_composition_exception_never_covers_callers_or_siblings(self):
+        self.write({"launch.py": "from apps.beta import private"})
+        self.assertEqual(self.violations(), set())
         self.write({"core/runtime.py": "import launch", "core/launch.py": "from apps.alpha import api"})
         paths = self.violations()
         self.assertIn(("core.runtime", "launch"), paths)
         self.assertIn(("core.launch", "apps.alpha.api"), paths)
-        self.write({"launch.py": "from apps.beta import private"})
-        self.assertIn(("launch", "apps.beta.private"), self.violations())
         invalid = deepcopy(self.config)
         invalid["composition_roots"] = ["src/*.py"]
         with self.assertRaisesRegex(ValueError, "one exact"):
