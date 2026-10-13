@@ -127,9 +127,9 @@ class CandidateAssemblyTests(unittest.TestCase):
                     registration.validator({**config, 'variantSha256': self.manifest['baselineSourceManifestSha256']})
         for item in (training, evaluation):
             self.assertEqual(item['settings'].runtime_tool_contract, 'research-bootstrap-v1')
-            self.assertEqual(item['settings'].policy_revision, 'task-research-bootstrap-v1')
-            self.assertEqual(item['settings'].material_policy_revision, 'task-research-bootstrap-v1')
-            self.assertEqual(item['settings'].temporary_policy, 'admin-review')
+            self.assertEqual(item['settings'].policy_revision, 'task-research-bootstrap-department-v1')
+            self.assertEqual(item['settings'].material_policy_revision, 'task-research-bootstrap-department-v1')
+            self.assertEqual(item['settings'].temporary_policy, 'member-self-service')
             self.assertEqual(item['settings'].max_workers, 1)
             self.assertIs(item['checkpoints'].store, item['state']['store'])
             self.assertFalse(item['syntheticProvider'])  # real adapter configured, NOT execution proof

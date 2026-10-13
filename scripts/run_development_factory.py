@@ -57,7 +57,8 @@ def main(argv=None):
         bind_host = "127.0.0.1" if parsed.hostname == "localhost" else parsed.hostname
         settings = Settings(db_url=database_url, workspace=workspace, demo=True,
             development_mock_login=True, development_public_origin=origin,
-            temporary_policy="admin-review", max_workers=1, host=bind_host, port=parsed.port)
+            temporary_policy="member-self-service", material_review_mode="member-self-service",
+            max_workers=1, host=bind_host, port=parsed.port)
         with ExitStack() as lifecycle:
             if args.profile == "controlled-workflows":
                 settings = lifecycle.enter_context(controlled_workflow_settings(settings))

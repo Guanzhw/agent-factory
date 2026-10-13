@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import sys
 import unittest
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from agent_factory_research.research_bootstrap_assembly import prepare_application, REVISION
-from agent_factory.process_runtime_profile import publish_process_application
+from agent_factory.process_runtime_profile import publish_process_application, TOOL_NAME
 import test_research_preparation_postgres as fixture
 from test_research_preparation_harness import tokenizer
 
@@ -16,11 +17,22 @@ from test_research_preparation_harness import tokenizer
 class BootstrapAssemblyPostgresTests(unittest.TestCase):
     setUp = fixture.PreparationPostgresTests.setUp
     request = fixture.PreparationPostgresTests.request
-    submit = fixture.PreparationPostgresTests.submit
     until = fixture.PreparationPostgresTests.until
     lease = fixture.PreparationPostgresTests.lease
     cleanup_processes = fixture.PreparationPostgresTests.cleanup_processes
     test_original_native_export_import_lost_ack_and_reopen = fixture.PreparationPostgresTests.test_original_native_export_import_lost_ack_and_reopen
+
+    def submit(self):
+        def post(path, body):
+            return self.request('POST', path, {'requestId': str(uuid4()), **body})
+        proposal = post('/compositions/proposals', {'goal': 'Run the pinned synthetic process once',
+            'mode': 'controlled-fixture', 'applicationRef': {
+                key: self.application[key] for key in ('id', 'version', 'sha256')}})
+        self.assertEqual(proposal['candidate']['status'], 'ready', proposal)
+        plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {})
+        self.assertEqual(plan['tools'], [TOOL_NAME])
+        self.assertEqual(plan['policy'], 'member-self-service')
+        return post('/instances', {'planId': plan['id']}), plan
 
     def start(self):
         program = self.root / 'program'; program.mkdir(mode=0o700)
@@ -43,11 +55,11 @@ class BootstrapAssemblyPostgresTests(unittest.TestCase):
         self.assertEqual(self.settings.policy_revision, REVISION)
         self.assertEqual(self.settings.runtime_tool_contract, 'research-bootstrap-v1')
         self.assertFalse(bundle['target'].synthetic_fixture)
-        self.auth.directory.upsert('prep-reviewer', name='Synthetic development test reviewer')
-        self.auth.authorization.assign('prep-reviewer', 'factory-manager')
+        self.assertEqual(self.settings.temporary_policy, 'member-self-service')
+        self.assertEqual(self.settings.material_review_mode, 'member-self-service')
         self.target_ref = 'preparation'
         self.application = publish_process_application(self.state, target_ref=self.target_ref,
-            author='manager', reviewer='prep-reviewer')
+            author='alice')
         self.client = TestClient(self.app).__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.addCleanup(self.cleanup_processes)

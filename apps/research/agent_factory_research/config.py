@@ -30,8 +30,8 @@ class ResearchSettings(Settings):
             self.tool_policies = (*self.tool_policies, tool_policy())
             self.usage_pricing = (*self.usage_pricing, pricing())
         if type(self.source_synthesis_enabled) is not bool or (self.source_synthesis_enabled
-                and (self.demo is not True or self.temporary_policy != "admin-review")):
-            raise ValueError("Controlled source synthesis requires explicit demo mode and independent plan review")
+                and (self.demo is not True or self.temporary_policy not in {"admin-review", "member-self-service"})):
+            raise ValueError("Controlled source synthesis requires explicit demo mode and configured admission")
         super().__post_init__()
 
     @classmethod
@@ -40,6 +40,6 @@ class ResearchSettings(Settings):
         # environment reader does not know any installed application.
         settings = super().from_env()
         settings.source_synthesis_enabled = os.getenv("FACTORY_SOURCE_SYNTHESIS_ENABLED", "false") == "true"
-        if settings.source_synthesis_enabled and (not settings.demo or settings.temporary_policy != "admin-review"):
-            raise ValueError("Controlled source synthesis requires explicit demo mode and independent plan review")
+        if settings.source_synthesis_enabled and (not settings.demo or settings.temporary_policy not in {"admin-review", "member-self-service"}):
+            raise ValueError("Controlled source synthesis requires explicit demo mode and configured admission")
         return settings

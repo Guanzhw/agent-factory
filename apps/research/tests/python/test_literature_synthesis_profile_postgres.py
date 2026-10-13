@@ -93,7 +93,7 @@ class LiteratureSynthesisProfilePostgresTests(unittest.TestCase):
         auth = self.state["auth"]
         auth.authorization.unassign("bob", "factory-user")
         auth.authorization.assign("bob", "factory-manager")
-        application = publish_synthesis_application(self.state, self.question, self.sources, author="manager", reviewer="bob")
+        application = publish_synthesis_application(self.state, self.question, self.sources, author="alice")
         self.reference = {key: application[key] for key in ("id", "version", "sha256")}
         self.connection = self.state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()),
             capabilities=[SCIENTIFIC_CAPABILITY])

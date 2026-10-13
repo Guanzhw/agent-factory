@@ -87,7 +87,10 @@ class PlanPolicyTests(unittest.TestCase):
         self.auth.initialize_demo()
         self.store = MetadataFixture(self.db, self.settings)
         self.at = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-        self.service = PlanPolicyService(self.store, self.auth, clock=lambda: self.at)
+        # This suite preserves the historical explicit policy contract. New
+        # departmental defaults are exercised by DepartmentPlanPolicyTests.
+        self.service = PlanPolicyService(self.store, self.auth,
+            PlanPolicyConfig(name="admin-review", revision="plan-policy-v1"), clock=lambda: self.at)
         self.plan = self.store.add()
 
     def test_owner_plan_filter_keeps_review_recovery_scoped(self):
@@ -232,7 +235,7 @@ class PlanPolicyTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.service.replace_configuration(PlanPolicyConfig(revision="stale"), expected_revision=previous)
         with self.assertRaises(ValueError):
-            PlanPolicyService(self.store, self.auth)
+            PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name="admin-review", revision="plan-policy-v1"))
         restarted = PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name="admin-review", revision=current["revision"], review_ttl_seconds=60), clock=lambda: self.at)
         self.assertEqual(restarted.inspect("manager", approved["id"])["id"], approved["id"])
 
@@ -296,7 +299,7 @@ class PlanPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PlanPolicyConfig(revision="../policy")
         with self.assertRaises(ValueError):
-            self.service.replace_configuration(PlanPolicyConfig(name="unset"), expected_revision="plan-policy-v1")
+            self.service.replace_configuration(PlanPolicyConfig(name="unset", revision="plan-policy-v1"), expected_revision="plan-policy-v1")
 
     def test_router_uses_native_identity_and_admin_auth_not_body_owner(self):
         native = AgentOS(id="policy-router-fixture", agents=[Agent(id="factory-executor", db=self.db, model=DemoModel(), telemetry=False)],
@@ -389,7 +392,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(receipts[0]["id"], receipts[1]["id"])
         self.assertEqual(len(self.service.list_reviews("alice")), 1)
         self.service.decide("manager", receipts[0]["id"], True, "persisted-decision")
-        restarted = PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name="read-only-auto"),
+        restarted = PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name="read-only-auto", revision="plan-policy-v1"),
                                       ancestor_guard=persisted_ancestor_guard(self.store))
         self.assertTrue(restarted.require_execution("alice", plan["id"])["allowed"])
         self.assertEqual(restarted.inspect("manager", receipts[0]["id"])["decision"], "approved")

@@ -105,7 +105,8 @@ class BootstrapAssemblyTests(unittest.TestCase):
             self.assertEqual(item['settings'].runtime_tool_contract, 'research-bootstrap-v1')
             self.assertEqual(item['settings'].policy_revision, assembly.REVISION)
             self.assertEqual(item['settings'].material_policy_revision, assembly.REVISION)
-            self.assertEqual(item['settings'].temporary_policy, 'admin-review')
+            self.assertEqual(item['settings'].temporary_policy, 'member-self-service')
+            self.assertEqual(item['settings'].material_review_mode, 'member-self-service')
             self.assertEqual(item['settings'].max_workers, 1)
             self.assertIs(item['checkpoints'].store, item['state']['store'])
             self.assertFalse(item['syntheticProvider'])  # real adapter configured, NOT execution proof
@@ -162,13 +163,19 @@ class BootstrapAssemblyTests(unittest.TestCase):
         evaluation['state']['store'].artifact.assert_not_called()
         self.assertEqual(evaluation['pending']['evaluationContract'], value['evaluationContract'])
 
-    def test_development_policy_rejects_nonlocal_or_unreviewed_settings(self):
+    def test_development_policy_rejects_nonlocal_or_unsupported_settings(self):
         settings = assembly.Settings(db_url='postgresql+psycopg://invalid/no-network',
-            workspace=Path('/synthetic'), demo=True, host='127.0.0.1', max_workers=1, temporary_policy='admin-review')
-        for changes in ({'demo': False}, {'host': '0.0.0.0'}, {'max_workers': 2}):
+            workspace=Path('/synthetic'), demo=True, host='127.0.0.1', max_workers=1, temporary_policy='member-self-service', material_review_mode='member-self-service')
+        for changes in ({'demo': False}, {'host': '0.0.0.0'}, {'max_workers': 2}, {'temporary_policy': 'bounded-synthetic'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 assembly.development_settings(replace(settings, **changes))
         self.assertEqual(assembly.development_settings(settings).runtime_tool_contract, 'research-bootstrap-v1')
+        self.assertEqual(assembly.development_settings(settings).policy_revision, assembly.REVISION)
+        legacy = assembly.development_settings(replace(settings, temporary_policy='admin-review',
+            material_review_mode='separate-admin'))
+        self.assertEqual(legacy.policy_revision, 'task-research-bootstrap-v1')
+        self.assertEqual(legacy.material_policy_revision, 'task-research-bootstrap-v1')
+        self.assertEqual(legacy.temporary_policy, 'admin-review')
 
 
 if __name__ == '__main__':

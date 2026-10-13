@@ -24,7 +24,7 @@ class ResearchRuntimeProfileTests(unittest.TestCase):
         self.manifest = example_manifest()
         self.entries = profile.registrations(target_ref='research-target', comparison_manifest=self.manifest)
         self.ctx: Any = SimpleNamespace(spec={'config': {'targetRef': 'research-target', 'comparisonManifestSha256': manifest_fingerprint(self.manifest), 'variantSha256': self.manifest['baselineSourceManifestSha256']}},
-            settings=SimpleNamespace(demo=True, temporary_policy='admin-review'),
+            settings=SimpleNamespace(demo=True, temporary_policy='member-self-service'),
             run_context=RunContext(user_id='alice', session_id='task', run_id='native'), store=Mock(),
             plan={'ownerId': 'alice', 'application': profile.APPLICATION_ID, 'applicationRef': {'id': profile.APPLICATION_ID},
                 'mode': 'controlled-fixture', 'tools': [profile.TOOL_NAME], 'capabilities': [profile.PERMISSION]})
@@ -101,7 +101,8 @@ class ResearchRuntimeProfileTests(unittest.TestCase):
             workspace=Path('/synthetic/workspace'), target_ref='research-target', remote_targets={'research-target': object()},
             comparison_manifest=self.manifest)
         self.assertEqual(settings.runtime_tool_contract, profile.TOOL_CONTRACT)
-        self.assertEqual(settings.temporary_policy, 'admin-review')
+        self.assertEqual(settings.temporary_policy, 'member-self-service')
+        self.assertEqual(settings.material_review_mode, 'member-self-service')
         self.assertEqual(settings.max_workers, 1)
         self.assertIs(settings.usage_pricing[0].local_model_type, profile.ResearchProcessFixtureModel)
         materials = profile.material_drafts(target_ref='research-target', comparison_manifest=self.manifest)
@@ -147,8 +148,36 @@ class ResearchRuntimeProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 operation(target_ref='research-target', comparison_manifest=oversized)
 
-    def test_publication_is_explicit_and_requires_distinct_reviewers(self):
-        governance = SimpleNamespace(create_draft=Mock(side_effect=lambda owner, definition, key: definition | {'version': 1, 'sha256': digest(definition)}),
+    def test_member_publication_uses_exact_versions_without_admin(self):
+        governance = SimpleNamespace(member_publication=Mock(return_value=True),
+            create_draft=Mock(side_effect=lambda owner, definition, key:
+                definition | {'version': 1, 'sha256': digest(definition)}),
+            publish=Mock(), request_publication=Mock(), decide_publication=Mock())
+        state = {'auth': Mock(), 'material_governance': governance, 'applications': governance}
+        result = profile.publish_research_application(state, target_ref='research-target',
+            comparison_manifest=self.manifest, author='alice')
+        self.assertEqual(result['id'], profile.APPLICATION_ID)
+        state['auth'].require.assert_called_once_with('alice', 'run')
+        self.assertEqual(governance.publish.call_count, 6)
+        for draft, published in zip(governance.create_draft.call_args_list, governance.publish.call_args_list, strict=True):
+            self.assertEqual(published.args[:3], ('alice', draft.args[1]['id'], 1))
+            self.assertEqual(published.args[3], draft.args[2].removesuffix(':draft') + ':publish')
+        governance.request_publication.assert_not_called()
+        governance.decide_publication.assert_not_called()
+
+    def test_explicit_legacy_settings_and_scope_remain_available(self):
+        settings = profile.research_settings(db_url='postgresql+psycopg://fixture@localhost/fixture',
+            workspace=Path('/synthetic/workspace'), target_ref='research-target',
+            remote_targets={'research-target': object()}, comparison_manifest=self.manifest,
+            temporary_policy='admin-review', material_review_mode='separate-admin')
+        self.assertEqual(settings.temporary_policy, 'admin-review')
+        self.assertEqual(settings.material_review_mode, 'separate-admin')
+        self.assertEqual(settings.policy_revision, profile.APPLICATION_ID)
+        self.ctx.settings.temporary_policy = settings.temporary_policy
+        self.assertIsInstance(self.entry('model').factory(self.ctx), profile.ResearchProcessFixtureModel)
+
+    def test_legacy_publication_is_explicit_and_requires_distinct_reviewers(self):
+        governance = SimpleNamespace(member_publication=Mock(return_value=False), publish=Mock(), create_draft=Mock(side_effect=lambda owner, definition, key: definition | {'version': 1, 'sha256': digest(definition)}),
             request_publication=Mock(return_value={'id': 'review'}), decide_publication=Mock())
         state = {'auth': Mock(), 'material_governance': governance, 'applications': governance}
         args = dict(target_ref='research-target', comparison_manifest=self.manifest, author='manager', reviewer='manager2')

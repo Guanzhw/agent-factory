@@ -8,13 +8,15 @@ from agent_factory.config import Settings
 from agent_factory.material_governance import GovernanceConfig
 from agent_factory.plan_policy import PlanPolicyConfig, PolicyName, ToolContract
 from agent_factory.tool_policy_registry import resolve_tool_policies
-from agent_factory_research.assembly import install_research, research_bindings, research_lifespan
+from agent_factory_research.assembly import (install_research, research_bindings, research_lifespan,
+    research_shutdown, abort_research_install)
 from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
 from agent_factory_research.config import ResearchSettings
 from agent_factory_research.factory_compatibility import ResearchFactoryAPI
 from agent_factory_research.handoff_compatibility import ResearchHandoffClient, ResearchPreparedHandoffService
 from agent_factory_research.lifecycle_compatibility import ResearchLifecycleObserver
 from agent_factory_research.model_compatibility import ResearchDelegatingModel
+from agent_factory_research.policy_compatibility import ResearchPlanPolicyService
 from agent_factory_research.storage_compatibility import ResearchStorageGovernance
 from agent_factory_research.synthetic_runtime import default_zero_prices
 from agent_factory_research.tools import build_tools
@@ -47,7 +49,7 @@ def create_app(settings=None, *, diagnostics=None):
     settings.usage_pricing = (*extra_prices, *settings.usage_pricing)
     policies = resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)
     governance = GovernanceConfig(
-        review_mode=cast(Literal['separate-admin', 'demo-self-review'], settings.material_review_mode),
+        review_mode=cast(Literal['member-self-service', 'separate-admin', 'demo-self-review'], settings.material_review_mode),
         revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract),
         source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=policies)
     policy = PlanPolicyConfig(name=cast(PolicyName, settings.temporary_policy),
@@ -60,9 +62,15 @@ def create_app(settings=None, *, diagnostics=None):
         handoff_client_type=ResearchHandoffClient, handoff_receiver_type=ResearchPreparedHandoffService,
         bindings_factory=research_bindings, seed_materials=SEEDS, demo_definitions=all_demo_definitions,
         governance_config=governance, policy_config=policy, tool_catalog_factory=build_tools,
-        lifespan_context=research_lifespan,
+        lifespan_context=research_lifespan, shutdown_callback=research_shutdown,
+        plan_policy_type=ResearchPlanPolicyService,
         queue_max_attempts=1 if settings.development_live_validation or settings.runtime_tool_contract == 'autoresearch-session-v1' else 2)
-    install_research(factory_state(app))
+    state = factory_state(app)
+    try:
+        install_research(state)
+    except BaseException:
+        abort_research_install(state)
+        raise
     return app
 
 

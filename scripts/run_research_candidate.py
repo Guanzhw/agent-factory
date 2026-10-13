@@ -87,8 +87,10 @@ def preparation_phase(bundle, client, request_id, progress, journal):
     from agent_factory.process_runtime_profile import publish_process_application
     state, store = bundle['state'], bundle['state']['store']
     progress.at('PREPARATION_PUBLICATION')
-    reviewer = ensure_task_development_reviewer(state)
-    app = publish_process_application(state, target_ref='preparation', author='manager', reviewer=reviewer)
+    member_submission = state['settings'].temporary_policy == 'member-self-service'
+    reviewer = None if member_submission else ensure_task_development_reviewer(state)
+    app = publish_process_application(state, target_ref='preparation',
+        author='alice' if member_submission else 'manager', reviewer=reviewer)
     original_request = request_client(bundle, client)
     deadline, task_id, plan_id = time.monotonic() + 60, None, None
     def request(*args, **kwargs):
@@ -104,10 +106,11 @@ def preparation_phase(bundle, client, request_id, progress, journal):
         progress.at('PREPARATION_PLAN')
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {}, 'accept')
         plan_id = plan['id']
-        progress.at('PREPARATION_REVIEW')
-        review = post('/plan-reviews', {'planId': plan['id']}, 'review')
-        progress.at('PREPARATION_APPROVAL')
-        post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
+        if not member_submission:
+            progress.at('PREPARATION_REVIEW')
+            review = post('/plan-reviews', {'planId': plan['id']}, 'review')
+            progress.at('PREPARATION_APPROVAL')
+            post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
         try:
             progress.at('PREPARATION_SUBMIT')
             task = post('/instances', {'planId': plan['id']}, 'instance')
@@ -304,9 +307,11 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
             with TestClient(bundle['app']) as client:
                 try:
                     progress.at(stage.upper() + '_PUBLICATION')
-                    reviewer = ensure_task_development_reviewer(bundle['state'])
+                    member_submission = bundle['state']['settings'].temporary_policy == 'member-self-service'
+                    reviewer = None if member_submission else ensure_task_development_reviewer(bundle['state'])
                     app = publish_research_application(bundle['state'], target_ref=stage,
-                        comparison_manifest=captured['comparisonManifest'], author='manager', reviewer=reviewer,
+                        comparison_manifest=captured['comparisonManifest'],
+                        author='alice' if member_submission else 'manager', reviewer=reviewer,
                         variant_sha256=variant, adapter_suffix='-candidate-' + stage)
                     assert client.portal is not None
                     portal = client.portal

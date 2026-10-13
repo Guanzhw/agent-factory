@@ -19,7 +19,7 @@ from agent_factory.store import digest
 def context(choice='linear-v1', adapter=MODEL_ID) -> Any:
     run = RunContext(user_id='alice', session_id='task', run_id='native')
     config = {'targetRef': 'fixed-target'}
-    return SimpleNamespace(settings=SimpleNamespace(demo=True, temporary_policy='admin-review'),
+    return SimpleNamespace(settings=SimpleNamespace(demo=True, temporary_policy='member-self-service'),
         run_context=run, spec={'config': config if adapter == TOOL_ID else {**config, 'choice': choice}},
         plan={'ownerId': 'alice', 'application': APPLICATION_ID, 'applicationRef': {'id': APPLICATION_ID},
               'mode': choice, 'tools': [TOOL_NAME], 'capabilities': ['compute:local'],
@@ -104,9 +104,32 @@ class ComparisonProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app['modes']['linear-v1']['capabilities'], ['compute:local'])
         self.assertEqual(rows, original)
 
-    def test_publication_calls_distinct_reviewer_for_every_material_and_application(self):
+    def test_member_publishes_without_reviewer_and_keeps_exact_pins(self):
+        def service():
+            return SimpleNamespace(member_publication=Mock(return_value=True),
+                create_draft=Mock(side_effect=lambda author, definition, key:
+                    {**deepcopy(definition), 'version': 1, 'sha256': digest(definition)}),
+                publish=Mock(), request_publication=Mock(), decide_publication=Mock())
+        state = {'auth': SimpleNamespace(require=Mock()), 'material_governance': service(), 'applications': service()}
+        app = publish_comparison_application(state, {'linear-v1': 'fixed-target'}, author='alice')
+        state['auth'].require.assert_called_once_with('alice', 'run')
+        self.assertEqual(state['material_governance'].publish.call_count, 6)
+        state['applications'].publish.assert_called_once_with('alice', app['id'], app['version'],
+            'comparison-app:' + digest(application_definition({'linear-v1': [
+                {**call.args[1], 'version': 1, 'sha256': digest(call.args[1])}
+                for call in state['material_governance'].create_draft.call_args_list]})) + ':publish')
+        for name in ('material_governance', 'applications'):
+            state[name].request_publication.assert_not_called()
+            state[name].decide_publication.assert_not_called()
+
+    def test_explicit_legacy_scope_preserves_historical_fixture(self):
+        ctx = context()
+        ctx.settings.temporary_policy = 'admin-review'
+        self.assertIsInstance(self.entries[MODEL_ID].factory(ctx), ComparisonFixtureModel)
+
+    def test_legacy_publication_calls_distinct_reviewer_for_every_material_and_application(self):
         def manager():
-            return SimpleNamespace(create_draft=Mock(side_effect=lambda author, definition, key:
+            return SimpleNamespace(member_publication=Mock(return_value=False), publish=Mock(), create_draft=Mock(side_effect=lambda author, definition, key:
                 {**deepcopy(definition), 'version': 1, 'sha256': digest(definition)}),
                 request_publication=Mock(return_value={'id': 'review'}), decide_publication=Mock())
         state = {'auth': SimpleNamespace(require=Mock()), 'material_governance': manager(), 'applications': manager()}

@@ -67,13 +67,25 @@ class Harness:
     def run(self, **kwargs):
         controller = ResearchBootstrapController(self.state, self.request,
             lambda method: asyncio.run(method()), clock=lambda: self.now, sleep=self.sleep)
-        return controller.run(owner='alice', reviewer='task-dev-reviewer',
+        return controller.run(owner='alice', reviewer=kwargs.get('reviewer', 'task-dev-reviewer'),
             application_ref={'id': 'approved-app', 'version': 1, 'sha256': 'a' * 64},
             goal='Original governed training', request_id='operator-attempt', after_reclaimed=self.imported,
             on_progress=self.progress.append, timeout_seconds=kwargs.get('timeout_seconds', 1))
 
 
 class ControllerTests(unittest.TestCase):
+    def test_member_admission_keeps_native_consent_without_plan_review(self):
+        h = Harness()
+        result = h.run(reviewer=None)
+        self.assertEqual(result['progress']['phase'], 'COMPLETED')
+        self.assertFalse(any('/plan-reviews' in path for _, path, _, _ in h.calls))
+        self.assertEqual(sum(path.endswith('/instances') for _, path, _, _ in h.calls), 1)
+        h.runtime.submit.assert_awaited_once_with('alice', 'original-task')
+        approval = next(body for _, path, body, _ in h.calls if path.endswith('/approve'))
+        self.assertEqual(approval, {'requirementId': 'original-requirement',
+            'version': 'original-version', 'approved': True})
+        self.assertEqual(h.progress[1]['phase'], 'PLAN_READY')
+
     def test_original_lifecycle_review_import_and_continuation_order(self):
         h = Harness()
         result = h.run()

@@ -25,6 +25,15 @@ CONTROL_NAME = "factory_resume_inference"
 MAX_FAILURES = 2
 
 
+def initialize(store):
+    store.sql("CREATE TABLE IF NOT EXISTS af_inference_waits (task_id TEXT PRIMARY KEY REFERENCES af_tasks(id), body JSONB NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL)")
+
+
+def mark_cancel_requested(store, task_id):
+    # Called by Store inside the original task cancellation transaction.
+    store.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:id AND state IN ('WAITING','RESUMING')", id=task_id)
+
+
 def transient(error):
     # 429 can mean quota exhaustion. Authentication, quota, context and unknown
     # errors are deliberately excluded; providers cannot self-declare a pause.

@@ -2,7 +2,7 @@
 
 No public JSON adapter registry, provider credentials or task identities enter
 this module. Callers supply locally captured input evidence and existing pinned
-executables. The application still creates its native identities and approvals.
+executables. The application still creates its native identities and execution authorization.
 """
 from .services import services_for
 from copy import deepcopy
@@ -50,7 +50,7 @@ def prepare_application(*, db_url, workspace, program_root, program_identity,
             diagnostics.at(stage)
     at('PREPARATION_SETTINGS')
     bootstrap_settings = development_settings(Settings(db_url=db_url, workspace=workspace,
-        max_workers=1, temporary_policy='admin-review'))
+        max_workers=1, temporary_policy='member-self-service', material_review_mode='member-self-service'))
     at('PREPARATION_DATABASE')
     bootstrap = Store(db_url, bootstrap_settings)
     try:
@@ -153,7 +153,7 @@ def research_application(*, db_url, workspace, upstream_files, captured_inputs,
         environment['environment-kernel'], bounds_profile=bounds_profile)
     pending = {}
     bootstrap = Store(db_url, development_settings(Settings(db_url=db_url, workspace=Path(workspace),
-        max_workers=1, temporary_policy='admin-review')))
+        max_workers=1, temporary_policy='member-self-service', material_review_mode='member-self-service')))
     try:
         evaluating = training is not None
         reference = 'evaluation' if evaluating else 'training'

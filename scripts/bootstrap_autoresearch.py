@@ -18,6 +18,8 @@ from agent_factory.usage_ledger import UsagePolicy
 
 POLICY_REVISION = 'autoresearch-goal-plan-v1'
 MATERIAL_POLICY_REVISION = 'autoresearch-goal-material-v1'
+MEMBER_POLICY_REVISION = 'autoresearch-goal-department-plan-v1'
+MEMBER_MATERIAL_POLICY_REVISION = 'autoresearch-goal-department-material-v1'
 ERROR = 'AUTORESEARCH_BOOTSTRAP_INVALID'
 
 
@@ -36,7 +38,8 @@ def application_budget(preset):
     return Budget.model_validate(value).model_dump()
 
 
-def settings(*, db_url: str, workspace: Path, preset: ResearchPreset, jwt_key: str = ''):
+def settings(*, db_url: str, workspace: Path, preset: ResearchPreset, jwt_key: str = '',
+             temporary_policy: str = 'member-self-service', material_review_mode: str = 'member-self-service'):
     """Build task-development settings; caller owns existing DB and private workspace.
 
     This installs only the selected native profile. It neither publishes the
@@ -50,8 +53,9 @@ def settings(*, db_url: str, workspace: Path, preset: ResearchPreset, jwt_key: s
     return Settings(db_url=db_url, workspace=workspace, demo=True, jwt_key=jwt_key,
         host='127.0.0.1', native_timeout_seconds=max(60, preset.limits['totalSeconds']), max_workers=1, max_tool_calls=budget['toolCalls'],
         experiment_timeout_seconds=budget['experimentSeconds'], experiment_output_bytes=budget['outputBytes'],
-        temporary_policy='admin-review', material_review_mode='separate-admin',
-        policy_revision=POLICY_REVISION, material_policy_revision=MATERIAL_POLICY_REVISION,
+        temporary_policy=temporary_policy, material_review_mode=material_review_mode,
+        policy_revision=MEMBER_POLICY_REVISION if temporary_policy == 'member-self-service' else POLICY_REVISION,
+        material_policy_revision=MEMBER_MATERIAL_POLICY_REVISION if material_review_mode == 'member-self-service' else MATERIAL_POLICY_REVISION,
         runtime_tool_contract=RUNTIME_ID, runtime_adapters=registrations(external_session=preset.external_session)
             + (children.registrations(preset.id) if preset.external_session else []),
         usage_pricing=(pricing_registration(output_tokens=output),)
@@ -62,24 +66,31 @@ def settings(*, db_url: str, workspace: Path, preset: ResearchPreset, jwt_key: s
         autoresearch_presets={preset.id: preset})
 
 
-def publish_application(state, preset: ResearchPreset, *, author: str, reviewer: str):
-    """Publish all material kinds and the app with existing separate review APIs.
+def publish_application(state, preset: ResearchPreset, *, author: str, reviewer: str | None = None):
+    """Publish exact material/app versions using the configured governance mode.
 
     Returns a replacement preset with the approved exact application reference;
     does not mutate Settings, register callbacks, or mark a blocked preset ready.
     Permission and idempotency checks remain in the existing governance services.
     """
-    require(type(preset) is ResearchPreset and type(author) is str and bool(author)
-            and type(reviewer) is str and bool(reviewer) and author != reviewer)
+    require(type(preset) is ResearchPreset and type(author) is str and bool(author))
     budget = application_budget(preset)
-    state['auth'].require(author, 'components:write')
-    state['auth'].require(reviewer, 'agent_os:admin')
     governance, applications = state['material_governance'], state['applications']
+    member_publication = governance.member_publication()
+    if member_publication:
+        state['auth'].require(author, 'run')
+    else:
+        require(type(reviewer) is str and bool(reviewer) and author != reviewer)
+        state['auth'].require(author, 'components:write')
+        state['auth'].require(reviewer, 'agent_os:admin')
     def publish_material(definition):
         key = 'ar-material:' + digest(definition)
         material = governance.create_draft(author, definition, key + ':draft')
-        review = governance.request_publication(author, material['id'], material['version'], key + ':review')
-        governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+        if member_publication:
+            governance.publish(author, material['id'], material['version'], key + ':publish')
+        else:
+            review = governance.request_publication(author, material['id'], material['version'], key + ':review')
+            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
         return material
     materials = [publish_material(row) for row in material_drafts(preset.id, external_session=preset.external_session)]
     modes = None
@@ -91,6 +102,9 @@ def publish_application(state, preset: ResearchPreset, *, author: str, reviewer:
         external_session=preset.external_session, scientific_modes=modes)
     key = 'ar-application:' + digest(definition)
     application = applications.create_draft(author, definition, key + ':draft')
-    review = applications.request_publication(author, application['id'], application['version'], key + ':review')
-    applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    if member_publication:
+        applications.publish(author, application['id'], application['version'], key + ':publish')
+    else:
+        review = applications.request_publication(author, application['id'], application['version'], key + ':review')
+        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
     return replace(preset, application_ref={k: application[k] for k in ('id', 'version', 'sha256')})

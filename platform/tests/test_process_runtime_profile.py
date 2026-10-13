@@ -92,16 +92,57 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
         settings = process_settings(db_url="postgresql://synthetic", workspace=Path("/tmp/synthetic-process-profile"),
             target_ref="reviewed-target", remote_targets={"reviewed-target": object()})
         self.assertEqual(settings.runtime_tool_contract, "bounded-process-v1")
-        self.assertEqual(settings.temporary_policy, "admin-review")
+        self.assertEqual(settings.temporary_policy, "member-self-service")
+        self.assertEqual(settings.material_review_mode, "member-self-service")
+        self.assertEqual(settings.policy_revision, APPLICATION_ID + "-department-v1")
+        self.assertEqual(settings.material_policy_revision, APPLICATION_ID + "-department-v1")
         self.assertEqual(settings.usage_pricing[0].local_model_type, ProcessFixtureModel)
 
-    def test_publication_requires_distinct_operator_review(self):
+    def test_explicit_legacy_settings_keep_the_original_policy_revisions(self):
+        settings = process_settings(db_url="postgresql://synthetic", workspace=Path("/tmp/synthetic-process-profile"),
+            target_ref="reviewed-target", remote_targets={"reviewed-target": object()},
+            temporary_policy="admin-review", material_review_mode="separate-admin")
+        self.assertEqual(settings.temporary_policy, "admin-review")
+        self.assertEqual(settings.material_review_mode, "separate-admin")
+        self.assertEqual(settings.policy_revision, APPLICATION_ID)
+        self.assertEqual(settings.material_policy_revision, APPLICATION_ID)
+
+    def publication_state(self, *, member):
         auth, governance, applications = Mock(), Mock(), Mock()
+        governance.member_publication.return_value = member
         governance.create_draft.side_effect = lambda author, definition, key: {**definition, "version": 1, "sha256": "a"*64}
         governance.request_publication.return_value = {"id": "review"}
         applications.create_draft.side_effect = lambda author, definition, key: {**definition, "version": 1, "sha256": "b"*64}
         applications.request_publication.return_value = {"id": "app-review"}
-        state = {"auth": auth, "material_governance": governance, "applications": applications}
+        return {"auth": auth, "material_governance": governance, "applications": applications}
+
+    def test_member_publishes_exact_pinned_materials_without_a_reviewer(self):
+        state = self.publication_state(member=True)
+        result = publish_process_application(state, target_ref="reviewed-target", author="alice")
+        state["auth"].require.assert_called_once_with("alice", "run")
+        governance, applications = state["material_governance"], state["applications"]
+        self.assertEqual(governance.publish.call_count, 4)
+        for draft, publication in zip(governance.create_draft.call_args_list, governance.publish.call_args_list):
+            definition = draft.args[1]
+            self.assertEqual(publication.args, ("alice", definition["id"], 1, definition["id"] + ":reviewed-target:publish"))
+            if definition["kind"] != "prompt":
+                self.assertEqual(definition["runtimeBinding"]["config"], {"targetRef": "reviewed-target"})
+        applications.publish.assert_called_once_with("alice", APPLICATION_ID, 1,
+            APPLICATION_ID + ":reviewed-target:publish")
+        for service in (governance, applications):
+            service.request_publication.assert_not_called()
+            service.decide_publication.assert_not_called()
+        mode = result["modes"]["controlled-fixture"]
+        self.assertEqual(mode["connectionRequirements"], [])
+        self.assertEqual(mode["toolOrder"], [TOOL_NAME])
+        self.assertEqual(len(mode["materialRefs"]), 4)
+        self.assertEqual(mode["capabilities"], [PERMISSION])
+
+    def test_legacy_publication_requires_distinct_operator_review(self):
+        state = self.publication_state(member=False)
+        auth, governance, applications = state["auth"], state["material_governance"], state["applications"]
+        with self.assertRaises(ValueError):
+            publish_process_application(state, target_ref="reviewed-target", author="admin")
         with self.assertRaises(ValueError):
             publish_process_application(state, target_ref="reviewed-target", author="admin", reviewer="admin")
         auth.require.assert_not_called()
@@ -111,6 +152,10 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mode["toolOrder"], [TOOL_NAME])
         self.assertEqual(len(mode["materialRefs"]), 4)
         self.assertEqual(governance.decide_publication.call_count, 4)
+        governance.publish.assert_not_called()
+        applications.publish.assert_not_called()
+        applications.decide_publication.assert_called_once_with("reviewer", "app-review", True,
+            APPLICATION_ID + ":reviewed-target:approve")
 
 
 if __name__ == "__main__":

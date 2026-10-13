@@ -159,7 +159,8 @@ class ActualInferenceRestartTests(ActualInferenceWaitTests):
     def boot_worker(self):
         env={**os.environ,'AT10_FIXTURE_DATABASE_URL':self.database.url,'AT10_FIXTURE_WORKSPACE':str(self.root),
             'AT10_FIXTURE_PORT':str(self.port),'AT10_FIXTURE_JWT_KEY':self.settings.jwt_key}
-        self.worker=subprocess.Popen([sys.executable,str(Path(__file__).with_name('inference_wait_worker.py'))],
+        worker = Path(__file__).resolve().parents[2] / 'apps/research/tests/python/inference_wait_worker.py'
+        self.worker=subprocess.Popen([sys.executable,str(worker)],
             env=env,stdout=self.log,stderr=self.log)
         end=time.monotonic()+30
         while time.monotonic()<end:

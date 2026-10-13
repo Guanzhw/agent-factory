@@ -23,6 +23,7 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         store.runtime_effect_held = None
         store.runtime_ended_reason = None
         store.runtime_cancel_owned = None
+        store.runtime_mark_cancel_requested = None
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []

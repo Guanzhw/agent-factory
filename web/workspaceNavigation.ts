@@ -2,7 +2,7 @@
 export const workspaceTabs = {
   catalog: '应用目录', resources: '我的资源', models: '我的模型/API', developer: '开发者装配', research: '任务与证据',
   connections: '我的凭据与连接', schedules: '计划任务', storage: '存储与回收',
-  materials: '共享材料管理', applications: '应用管理', reviews: '方案审查',
+  materials: '共享材料管理', applications: '应用管理', reviews: '历史方案审查',
 } as const;
 export type WorkspaceTab = string;
 export type WorkspaceRoute = { tab: WorkspaceTab; task: string; modelReturn?: string; [key: string]: string | undefined };
@@ -15,15 +15,14 @@ export interface WorkspaceNavigation {
   readQuery?: (url: URL) => Record<string, string>;
 }
 export const defaultNavigation: WorkspaceNavigation = { tabs: workspaceTabs };
-const managerTabs = new Set(['materials', 'applications', 'reviews']);
 export const routePointer = (value: string | null) => value && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value) && !value.includes('..') ? value : '';
 /** URL pointers are navigation only. Every record still needs server authorization. */
-export function readWorkspaceRoute(url: URL, manager: boolean, navigation = defaultNavigation): WorkspaceRoute {
+export function readWorkspaceRoute(url: URL, _administrator: boolean, navigation = defaultNavigation): WorkspaceRoute {
   const requested = url.searchParams.get('tab');
   const tab = requested && Object.hasOwn(navigation.tabs, requested) ? requested : 'catalog';
   const modelReturn = url.searchParams.get('modelReturn');
   const modelReturns = navigation.modelReturns ?? ['catalog', 'resources', 'connections'];
-  return { ...navigation.readQuery?.(url), tab: !manager && managerTabs.has(tab) ? 'catalog' : tab,
+  return { ...navigation.readQuery?.(url), tab,
     task: routePointer(url.searchParams.get('task')),
     ...(modelReturn && modelReturns.includes(modelReturn) ? { modelReturn } : {}) };
 }

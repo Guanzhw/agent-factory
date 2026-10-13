@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "date": "2026-10-13",
+  "baseline": "615a23f",
+  "codeCommit": "af88848de1dc72ced8a1937cca3717d85eb36029",
+  "scope": "Department member submission and shared immutable resource publication",
+  "execution": "Synthetic models/tools, actual Agno native queue, isolated loopback PostgreSQL and controlled local HTTP peers",
+  "liveModelRequests": false,
+  "deploymentPerformed": false,
+  "externalAccountOrProxyGrantsChanged": false,
+  "checks": [
+    {
+      "name": "npm run check",
+      "status": "PASS",
+      "testFiles": 52,
+      "testsPassed": 524,
+      "includes": [
+        "eslint",
+        "typescript",
+        "vitest",
+        "vite build"
+      ]
+    },
+    {
+      "name": "ruff check platform scripts",
+      "status": "PASS"
+    },
+    {
+      "name": "pyright",
+      "status": "PASS",
+      "errors": 0,
+      "warnings": 0
+    },
+    {
+      "name": "python -m unittest discover -s platform/tests -v",
+      "status": "PASS",
+      "testsDiscovered": 2773,
+      "testsPassed": 2257,
+      "testsSkipped": 516,
+      "skipMeaning": "Tests requiring external/PG environment are skipped in the portable pass; selected critical PG/native tests are executed separately below."
+    },
+    {
+      "name": "Consolidated PostgreSQL and native lifecycle suite",
+      "status": "PASS",
+      "testsPassed": 45,
+      "testsSkipped": 0
+    },
+    {
+      "name": "Final personal command API suite",
+      "status": "PASS",
+      "testsPassed": 6
+    },
+    {
+      "name": "Final project cancellation and expiry preflight regression",
+      "status": "PASS",
+      "testsPassed": 2
+    },
+    {
+      "name": "npm audit",
+      "status": "PASS",
+      "knownVulnerabilities": 0
+    },
+    {
+      "name": "pip-audit locked production requirements",
+      "status": "PASS",
+      "packages": 49,
+      "knownVulnerabilities": 0
+    }
+  ],
+  "behaviorEvidence": [
+    "Two arbitrary applications and a native Workflow execute for a member without a plan review or publication review",
+    "Member publication and cross-author revision preserve exact old plan and material pins",
+    "Members cannot archive or withdraw public definitions; inactive bodies and review history remain stored",
+    "Own draft is visible after reload, another owner's draft and secret bindings are not readable",
+    "Legacy pending, denied, approved and UNKNOWN plans remain unchanged and never dispatch after policy migration",
+    "Same request retains one task/native job; two independent workers produce one original project-create effect",
+    "Native hazardous-tool confirmation remains separate; project-create exact consent and connection expiry are rechecked before admission",
+    "UNKNOWN workflow operations are only reconciled against original identity; cancel retains resources until positive original-stop evidence",
+    "Current disabled/revoked identity and expected-owner mismatches still deny operations",
+    "Task UI does not request or poll administrator reviews; historical reviews remain read-only"
+  ],
+  "integrationRemaining": [
+    "A-owned Settings/main assembly must select and accept member-self-service defaults and new policy revisions",
+    "A-owned App/navigation must expose application and material management to members",
+    "A application extraction must retain the personal-command execution guard, inject only historical research review summaries, and explicitly bind the existing research resource effect"
+  ],
+  "limitations": [
+    "No actual paid/live provider request or deployed environment was exercised",
+    "Historical explicitly selected policy fixtures remain for compatibility; they are not the new product default",
+    "Changing Settings, source extraction or shared navigation requires integrated verification on A's branch"
+  ],
+  "postgresModules": [
+    "test_department_admission_postgres",
+    "test_department_publication",
+    "test_personal_command_postgres",
+    "test_personal_orx_projects_postgres",
+    "test_plan_policy.PlanPolicyPostgresTests",
+    "test_credential_vault_postgres",
+    "test_credential_vault_wiring_postgres",
+    "test_personal_remote_postgres",
+    "test_native_workflow_factory_postgres",
+    "test_resources_native_cancel"
+  ]
+}

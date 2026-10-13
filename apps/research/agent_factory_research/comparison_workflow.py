@@ -1,6 +1,6 @@
 """Verified controlled comparisons over the original native process lifecycle.
 
-One reviewed paired computation is one existing process effect. This service
+One bounded paired computation is one existing process effect. This service
 never launches, schedules, retries or repairs execution. Its report is a derived
 artifact, not scientific validation or permission to execute arbitrary code.
 """
@@ -43,7 +43,7 @@ def validate_plan(store, plan, *, current=True):
     related = plan.get("application") == APPLICATION or any(item.get("adapterId") in _ADAPTERS.values() for item in items)
     if not related:
         return None
-    _require(store.settings.demo is True and store.settings.temporary_policy == "admin-review"
+    _require(store.settings.demo is True and store.settings.temporary_policy in {"member-self-service", "admin-review"}
              and plan.get("application") == APPLICATION and (plan.get("applicationRef") or {}).get("id") == APPLICATION
              and plan.get("mode") in CHOICES and not plan.get("delegation") and not plan.get("remoteHandoff")
              and plan.get("tools") == [TOOL] and plan.get("capabilities") == ["compute:local"])
@@ -75,9 +75,9 @@ class ComparisonService:
         self.store, self.auth = store, auth
 
     def catalog(self, owner):
-        self.auth.require(owner, "components:read")
+        self.auth.require(owner, "run" if self.store.settings.temporary_policy == "member-self-service" else "components:read")
         items = []
-        if self.store.settings.demo and self.store.settings.temporary_policy == "admin-review":
+        if self.store.settings.demo and self.store.settings.temporary_policy in {"member-self-service", "admin-review"}:
             apps = [app for app in self.store.applications.list_active(owner) if app["id"] == APPLICATION]
             for app in apps[:1]:
                 for choice in CHOICES:

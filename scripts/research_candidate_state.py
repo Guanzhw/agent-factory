@@ -1,6 +1,7 @@
 """Narrow existing-database composition, without native workers or demo seeding.
 
-Stop-only mode opens existing metadata. Full evidence verification additionally
+Stop-only mode opens existing task metadata and the application wait journal.
+Full evidence verification additionally
 initializes existing service metadata/configuration; it never seeds identities,
 materials, applications, starts lifespans or schedules execution.
 """
@@ -18,6 +19,7 @@ def open_state(settings, *, full_verification=False):
     from agent_factory.process_runtime import ProcessRuntimeService
     from agent_factory_research.research_runtime import ResearchProcessRuntimeService
     from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
+    from agent_factory_research.inference_wait import initialize as initialize_inference_wait, mark_cancel_requested
     from agent_factory_research.storage_compatibility import ResearchStorageGovernance
     from agent_factory.delegation import DelegationService
     from agent_factory.native_bridge import NativeBridge
@@ -50,6 +52,8 @@ def open_state(settings, *, full_verification=False):
     native = PostgresDb(db_url=settings.db_url, id='factory-native-postgres')
     try:
         store.native_db = native
+        initialize_inference_wait(store)
+        store.runtime_mark_cancel_requested = lambda task_id: mark_cancel_requested(store, task_id)
         auth = store.auth = AuthService(settings, native)
         resources = PersistentResourceService(store, auth, settings.remote_targets)
         store.process_runtime = ProcessRuntimeService(store, auth, resources)

@@ -166,7 +166,7 @@ class CorePackageDistributionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires isolated PostgreSQL/native queue acceptance')
     def test_installed_core_lifespan_never_creates_research_tables_or_seeds(self):
-        from pg_fixture import IsolatedPostgres
+        from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
 
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database:
             result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', RUN_CORE,

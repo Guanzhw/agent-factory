@@ -41,10 +41,10 @@ class Settings:
     storage_retention_grace_seconds: int = 86400
     storage_allow_purge: bool = False
     temporary_policy: str | None = None
-    policy_revision: str = "plan-policy-v1"
+    policy_revision: str = "department-member-v1"
     plan_review_ttl_seconds: int = 3600
-    material_review_mode: str = "separate-admin"
-    material_policy_revision: str = "material-governance-v1"
+    material_review_mode: str = "member-self-service"
+    material_policy_revision: str = "material-department-v1"
     port: int = 3100
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
@@ -130,21 +130,21 @@ class Settings:
             raise ValueError("Production retention needs a positive recovery window")
         if self.runtime_tool_contract not in {"legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1", "autoresearch-session-v1"}:
             raise ValueError("Unsupported runtime tool contract")
-        if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision == "plan-policy-v1" or self.material_policy_revision == "material-governance-v1"):
+        if self.runtime_tool_contract != "legacy-v1" and (self.policy_revision in {"plan-policy-v1", "department-member-v1"} or self.material_policy_revision in {"material-governance-v1", "material-department-v1"}):
             raise ValueError("Registered runtime tools require distinct operator policy/governance revisions")
         if not self.demo and len(self.jwt_key) < 32:
             raise ValueError("Production requires an explicitly configured JWT key")
         if self.demo and not self.jwt_key:
             self.jwt_key = secrets.token_urlsafe(48)
-        if self.material_review_mode not in {"separate-admin", "demo-self-review"}:
+        if self.material_review_mode not in {"member-self-service", "separate-admin", "demo-self-review"}:
             raise ValueError("Unsupported material review mode")
         if not self.demo and self.material_review_mode == "demo-self-review":
             raise ValueError("Material self-review compatibility requires explicit demo mode")
         if not 1 <= self.max_workers <= 4:
             raise ValueError("Worker concurrency must be 1–4 until a capacity benchmark is approved")
         if self.temporary_policy is None:
-            self.temporary_policy = "bounded-synthetic" if self.demo else "admin-review"
-        if self.temporary_policy not in {"bounded-synthetic", "unset", "admin-review", "read-only-auto"}:
+            self.temporary_policy = "bounded-synthetic" if self.demo else "member-self-service"
+        if self.temporary_policy not in {"member-self-service", "bounded-synthetic", "unset", "admin-review", "read-only-auto"}:
             raise ValueError("Unsupported temporary-plan policy")
         if not self.demo and self.temporary_policy == "bounded-synthetic":
             raise ValueError("The synthetic temporary-plan policy is restricted to demo mode")
@@ -166,15 +166,15 @@ class Settings:
         key = os.getenv("FACTORY_JWT_KEY", "")
         if not demo and len(key) < 32:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 characters)")
-        policy = os.getenv("FACTORY_TEMPORARY_POLICY", "bounded-synthetic" if demo else "admin-review")
+        policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
         if not demo and policy == "bounded-synthetic":
             raise ValueError("The synthetic temporary-plan policy is restricted to demo mode")
         return cls(db_url=url, demo=demo, jwt_key=key or secrets.token_urlsafe(48),
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
-                   temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "plan-policy-v1"),
+                   temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "department-member-v1"),
                    plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
-                   material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
-                   material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
+                   material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "member-self-service"),
+                   material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-department-v1"),
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
                    development_profile=os.getenv("FACTORY_DEVELOPMENT_PROFILE", "disabled"),
                    storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),

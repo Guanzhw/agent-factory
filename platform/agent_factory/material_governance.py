@@ -1,4 +1,4 @@
-"""Inert material import, exact-version admin publication and current withdrawal.
+"""Inert material import, member publication and administrator withdrawal.
 
 Governance metadata never changes a material's immutable body/hash or historical
 plans. The factory must wire filter_active and require_materials_current; this
@@ -141,8 +141,8 @@ class MaterialDefinition(BaseModel):
 
 @dataclass(frozen=True)
 class GovernanceConfig:
-    review_mode: Literal["separate-admin", "demo-self-review"] = "separate-admin"
-    revision: str = "material-governance-v1"
+    review_mode: Literal["member-self-service", "separate-admin", "demo-self-review"] = "member-self-service"
+    revision: str = "material-department-v1"
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
     tool_policies: tuple[ResolvedToolPolicy, ...] = ()
@@ -153,9 +153,9 @@ class GovernanceConfig:
         merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
-        if self.tool_contract != "legacy-v1" and self.revision == "material-governance-v1":
+        if self.tool_contract != "legacy-v1" and self.revision in {"material-governance-v1", "material-department-v1"}:
             raise ValueError("Registered runtime tools require a distinct governance revision")
-        if self.review_mode not in {"separate-admin", "demo-self-review"}:
+        if self.review_mode not in {"member-self-service", "separate-admin", "demo-self-review"}:
             raise ValueError("Unsupported material publication review mode")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
             raise ValueError("Material governance revision must be a bounded identifier")
@@ -213,7 +213,18 @@ class MaterialGovernance:
             if revision is None:
                 conn.execute(self.current_config.insert().values(id="current", revision=initial.revision))
             elif revision != initial.revision:
-                raise ValueError("Material governance configuration differs from persisted current revision")
+                previous = self._config(conn)
+                old_contract = policy_body(previous)
+                new_contract = policy_body(initial)
+                for field in ("revision", "review_mode"):
+                    old_contract.pop(field)
+                    new_contract.pop(field)
+                if (initial.review_mode != "member-self-service"
+                        or previous.review_mode == "member-self-service" or old_contract != new_contract):
+                    raise ValueError("Material governance configuration differs from persisted current revision")
+                # Only the publication workflow changes. Immutable versions,
+                # reviews, tool contracts and historical states stay untouched.
+                conn.execute(self.current_config.update().values(revision=initial.revision))
 
     def _mode(self, config):
         require_installed_policies(self.store, config.tool_policies)
@@ -268,7 +279,21 @@ class MaterialGovernance:
         with self._read() as conn:
             config = self._config(conn)
         return {**policy_body(config), "fingerprint": config.fingerprint, "demoCompatibility": config.review_mode == "demo-self-review",
-                "taskApprovalSeparate": True, "importExecutesCode": False}
+                "taskApprovalSeparate": config.review_mode != "member-self-service", "importExecutesCode": False,
+                "memberPublication": config.review_mode == "member-self-service"}
+
+    def member_publication(self):
+        with self._read() as conn:
+            return self._config(conn).review_mode == "member-self-service"
+
+    def _require_read(self, actor):
+        self.auth.require(actor, "run" if self.member_publication() else "components:read")
+
+    def _require_write(self, actor):
+        if self.member_publication():
+            self.auth.require(actor, "run")
+        else:
+            self.auth.require(actor, "components:write")
 
     def replace_configuration(self, config: GovernanceConfig, *, expected_revision: str):
         """Trusted operator method, never registered as a user HTTP mutation."""
@@ -381,7 +406,7 @@ class MaterialGovernance:
             raise
 
     def _owner_admin(self, actor, version):
-        self.auth.require(actor, "components:read")
+        self._require_read(actor)
         if actor != version["author_id"] and not self._admin(actor):
             raise HTTPException(404, "Scoped material governance record not found")
 
@@ -399,11 +424,11 @@ class MaterialGovernance:
         if version["bootstrap"]:
             if not self.store.settings.demo:
                 raise HTTPException(409, "Demo bootstrap approval cannot authorize production")
-        else:
+        elif not (config.review_mode == "member-self-service" and version["review_id"] is None):
             review = conn.execute(select(self.reviews).where(self.reviews.c.id == version["review_id"])).mappings().first()
             if not review or review["decision"] != "approved" or review["material_sha"] != body["sha256"] or review["immutable_digest"] != self._immutable(body):
                 raise HTTPException(409, "Published material lacks exact administrator review")
-            if review["reviewer_id"] == version["author_id"] and config.review_mode != "demo-self-review":
+            if review["reviewer_id"] == version["author_id"] and config.review_mode == "separate-admin":
                 raise HTTPException(409, "REVIEW_SEPARATION_REQUIRED: current policy requires a distinct administrator")
         return version
 
@@ -452,7 +477,7 @@ class MaterialGovernance:
         return self._create(actor, definitions, request_id, imported=True)
 
     def _create(self, actor, definitions, request_id, imported):
-        self.auth.require(actor, "components:write")
+        self._require_write(actor)
         if not isinstance(definitions, list) or not 1 <= len(definitions) <= 30:
             raise HTTPException(422, "Import must contain one through thirty structured definitions")
         values = [self.validate_definition(value, imported=imported) for value in definitions]
@@ -475,8 +500,11 @@ class MaterialGovernance:
                 if latest:
                     prior = conn.execute(select(self.versions).where(self.versions.c.material_id == mid,
                         self.versions.c.version == latest)).mappings().first()
-                    if (prior is None or prior["author_id"] != actor) and not self._admin(actor):
-                        raise HTTPException(403, "A manager cannot overwrite another author's material lineage")
+                    shared = config.review_mode == "member-self-service" and conn.execute(
+                        select(self.versions.c.material_id).where(self.versions.c.material_id == mid,
+                            self.versions.c.state == "published").limit(1)).first() is not None
+                    if not shared and (prior is None or prior["author_id"] != actor) and not self._admin(actor):
+                        raise HTTPException(403, "A private material lineage belongs to its author")
                 self._dependencies(conn, value, config)
                 at = now()
                 body = {**value, "id": mid, "version": latest + 1, "createdAt": at, "published": False,
@@ -487,12 +515,45 @@ class MaterialGovernance:
                     material_sha=body["sha256"], immutable_digest=self._immutable(body), state="draft", bootstrap=False,
                     created_at=at, updated_at=at))
                 results.append(body)
-            self.auth.require(actor, "components:write")
+            self._require_write(actor)
             return self._record(conn, actor, request_id, fingerprint, "material.import" if imported else "material.draft",
                                 {"materials": results, "outcomeSource": "persisted_governance_command", "executesCode": False})
 
+    def publish(self, actor, material_id, version, request_id):
+        self.auth.require(actor, "run")
+        with self._write() as conn:
+            config = self._config(conn)
+            if config.review_mode != "member-self-service":
+                raise HTTPException(409, "Direct publication requires member self-service mode")
+            material = self._material(conn, material_id, version)
+            governed = self._version(conn, material_id, version)
+            if governed["state"] != "published":
+                self._owner_admin(actor, governed)
+            fingerprint = digest({"operation": "publish", "materialRef": {
+                key: material["body"][key] for key in ("id", "version", "sha256")}})
+            old = self._old_command(conn, actor, request_id, fingerprint)
+            if old is not None:
+                return old
+            if governed["state"] in {"withdrawn", "archived"}:
+                raise HTTPException(409, "Inactive material versions require a new draft")
+            if (governed["material_sha"] != material["body"]["sha256"]
+                    or governed["immutable_digest"] != self._immutable(material["body"])):
+                raise HTTPException(409, "Material differs from its immutable version")
+            self.validate_definition({key: value for key, value in material["body"].items()
+                if key not in {"version", "createdAt", "published", "archived", "origin", "sha256"}})
+            self._dependencies(conn, material["body"], config)
+            self.auth.require(actor, "run")
+            conn.execute(self.materials.update().where(self.materials.c.id == material_id,
+                self.materials.c.version == version).values(published=True))
+            conn.execute(self.versions.update().where(self.versions.c.material_id == material_id,
+                self.versions.c.version == version).values(state="published", updated_at=now()))
+            return self._record(conn, actor, request_id, fingerprint, "material.publish",
+                                {**material["body"], "published": True})
+
     def request_publication(self, actor, material_id, version, request_id):
-        self.auth.require(actor, "components:write")
+        self._require_write(actor)
+        if self.member_publication():
+            raise HTTPException(410, "Publication reviews are read-only; publish the exact version directly")
         with self._write() as conn:
             material = self._material(conn, material_id, version)
             governed = self._version(conn, material_id, version)
@@ -510,7 +571,7 @@ class MaterialGovernance:
                    "material_sha": material["body"]["sha256"], "immutable_digest": self._immutable(material["body"]),
                    "policy_revision": config.revision, "policy_hash": config.fingerprint, "requested_by": actor,
                    "created_at": now(), "decision": "pending"}
-            self.auth.require(actor, "components:write")
+            self._require_write(actor)
             conn.execute(self.reviews.insert().values(**row))
             result = self._review_projection(conn, row)
             return self._record(conn, actor, request_id, fingerprint, "material.review.request", result)
@@ -524,9 +585,13 @@ class MaterialGovernance:
                 "currentPolicy": row["policy_hash"] == config.fingerprint, "decision": row["decision"],
                 "reviewerId": row.get("reviewer_id"), "requestedBy": row["requested_by"], "createdAt": row["created_at"],
                 "decidedAt": row.get("decided_at"), "state": governed["state"], "material": material["body"],
-                "demoCompatibility": config.review_mode == "demo-self-review", "taskApprovalSeparate": True}
+                "demoCompatibility": config.review_mode == "demo-self-review",
+                "taskApprovalSeparate": True, "readOnly": config.review_mode == "member-self-service"}
 
     def decide_publication(self, actor, review_id, approved, request_id):
+        if self.member_publication():
+            self.auth.require(actor, "run")
+            raise HTTPException(410, "Historical publication reviews are read-only")
         self.auth.require(actor, "agent_os:admin")
         if type(approved) is not bool:
             raise HTTPException(400, "A typed material publication decision is required")
@@ -570,7 +635,10 @@ class MaterialGovernance:
             return self._review_projection(conn, dict(row))
 
     def list_reviews(self, actor, *, all_authors=False):
-        self.auth.require(actor, "agent_os:admin" if all_authors else "components:read")
+        if all_authors:
+            self.auth.require(actor, "agent_os:admin")
+        else:
+            self._require_read(actor)
         with self._read() as conn:
             query = select(self.reviews).order_by(self.reviews.c.created_at.desc()).limit(100)
             if not all_authors:
@@ -578,7 +646,7 @@ class MaterialGovernance:
             return [self._review_projection(conn, dict(row)) for row in conn.execute(query).mappings()]
 
     def inspect_version(self, actor, material_id, version):
-        self.auth.require(actor, "components:read")
+        self._require_read(actor)
         with self._read() as conn:
             material = self._material(conn, material_id, version)
             governed = self._version(conn, material_id, version)
@@ -588,21 +656,19 @@ class MaterialGovernance:
                     "immutableBodyPreserved": True}
 
     def _deactivate(self, actor, material_id, version, request_id, reason, state):
-        self.auth.require(actor, "agent_os:admin" if state == "withdrawn" else "components:write")
+        self.auth.require(actor, "agent_os:admin")
         if not isinstance(reason, str) or len(reason) > 2000:
             raise HTTPException(422, "Material status reason exceeds bounds")
         self._safe_data(reason)
         with self._write() as conn:
             governed = self._version(conn, material_id, version)
-            if state == "archived":
-                self._owner_admin(actor, governed)
             self._material(conn, material_id, version)
             fingerprint = digest({"operation": state, "materialId": material_id, "version": version,
                                   "sha256": governed["material_sha"], "reason": reason})
             old = self._old_command(conn, actor, request_id, fingerprint)
             if old is not None:
                 return old
-            self.auth.require(actor, "agent_os:admin" if state == "withdrawn" else "components:write")
+            self.auth.require(actor, "agent_os:admin")
             conn.execute(self.versions.update().where(self.versions.c.material_id == material_id, self.versions.c.version == version).values(state=state, reason=reason, updated_at=now()))
             result = {"materialId": material_id, "version": version, "sha256": governed["material_sha"], "state": state,
                       "reason": reason, "immutableBodyPreserved": True, "outcomeSource": "persisted_governance_command"}
@@ -717,7 +783,7 @@ def material_governance_router(auth, service):
 
     @router.get("/policy")
     def policy(request: Request):
-        auth.require(actor(request), "components:read")
+        service._require_read(actor(request))
         return service.current()
 
     @router.post("/drafts", status_code=201)
@@ -747,6 +813,10 @@ def material_governance_router(auth, service):
     @router.get("/versions/{material_id}/{version}")
     def inspect(material_id: str, version: int, request: Request):
         return service.inspect_version(actor(request), material_id, version)
+
+    @router.post("/versions/{material_id}/{version}/publish")
+    def publish(material_id: str, version: int, body: Command, request: Request):
+        return service.publish(actor(request), material_id, version, body.requestId)
 
     @router.post("/versions/{material_id}/{version}/archive")
     def archive(material_id: str, version: int, body: StatusCommand, request: Request):

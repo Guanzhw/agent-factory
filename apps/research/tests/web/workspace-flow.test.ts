@@ -249,7 +249,8 @@ describe('workspace mounted application boundaries', () => {
     await click('高级与管理');
     await click('开发者装配');
     expect(host.querySelector('#application-selector')).not.toBeNull();
-    expect(host.querySelector('nav')?.textContent).not.toContain('应用管理');
+    expect(host.querySelector('nav')?.textContent).toContain('应用管理');
+    expect(host.querySelector('.identity small')?.textContent).toBe('成员');
     expect(researchApi.autoresearch.start).not.toHaveBeenCalled();
   });
   it('enters OpenResearch from the catalog without a second application selector or controlled runner', async () => {
@@ -305,13 +306,16 @@ describe('workspace mounted application boundaries', () => {
     expect(host.querySelector('#autoresearch-title')).not.toBeNull();
     expect(researchApi.autoresearch.start).toHaveBeenCalledTimes(1);
   });
-  it('normalizes unauthorized admin links while preserving a manager route', async () => {
+  it('opens shared publication for members and labels only actual administrators', async () => {
     window.history.replaceState(null, '', '/?tab=applications'); await render();
-    expect(window.location.search).toContain('tab=catalog');
+    expect(window.location.search).toContain('tab=applications');
+    expect(text()).toContain('应用管理内容');
+    expect(host.querySelector('nav')?.textContent).toContain('共享应用与材料');
+    expect(host.querySelector('.identity small')?.textContent).toBe('成员');
     await act(async () => root.unmount()); root = createRoot(host);
     window.history.replaceState(null, '', '/?tab=applications');
     const manager: User = { id: 'manager', name: 'Manager', role: 'manager' }; vi.mocked(api.session).mockResolvedValue(manager);
     await render(manager); expect(text()).toContain('应用管理内容');
-    expect(host.querySelector('nav')?.textContent).toContain('管理员');
+    expect(host.querySelector('.identity small')?.textContent).toBe('管理员');
   });
 });

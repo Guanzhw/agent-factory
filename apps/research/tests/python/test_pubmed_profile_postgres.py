@@ -59,7 +59,7 @@ class PubMedProfilePostgresTests(unittest.TestCase):
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.state['auth'].authorization.unassign('bob', 'factory-user')
         self.state['auth'].authorization.assign('bob', 'factory-manager')
-        self.application = publish_pubmed_application(self.state, author='manager', reviewer='bob')
+        self.application = publish_pubmed_application(self.state, author='alice')
         self.connection = self.state['connections'].bind('alice', REGISTRATION_REF, str(uuid4()), capabilities=['research:read'])
         self.client = TestClient(self.app).__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
@@ -80,8 +80,11 @@ class PubMedProfilePostgresTests(unittest.TestCase):
         self.assertEqual(proposal['candidate']['status'], 'ready', proposal)
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {})
         self.assertEqual(plan['tools'], [TOOL])
-        review = post('/plan-reviews', {'planId': plan['id']})
-        post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'manager')
+        self.assertEqual(plan['policy'], 'member-self-service')
+        authorization = self.store.plan_policy.status('alice', plan)
+        self.assertTrue(authorization['executionAllowed'])
+        self.assertFalse(authorization['reviewRequired'])
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_reviews')[0]['n'], 0)
         return post('/instances', {'planId': plan['id']})['id'], plan
 
     def wait_detail(self, task):

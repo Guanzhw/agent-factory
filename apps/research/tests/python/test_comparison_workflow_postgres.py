@@ -58,7 +58,7 @@ class ComparisonWorkflowFixture:
                 self.providers[reference] = provider
             self.settings = Settings(db_url=database.url, workspace=self.root, demo=True, max_workers=1,
                 development_mock_login=public_origin is not None, development_public_origin=public_origin,
-                max_tool_calls=1, temporary_policy='admin-review', runtime_tool_contract='bounded-process-v1',
+                max_tool_calls=1, temporary_policy='admin-review', material_review_mode='separate-admin', runtime_tool_contract='bounded-process-v1',
                 policy_revision=APPLICATION_ID, material_policy_revision=APPLICATION_ID,
                 remote_targets=targets, runtime_adapters=registrations(), usage_pricing=(pricing_registration(),))
             self.app = create_app(self.settings)

@@ -104,7 +104,7 @@ async function recoverControlled(value: ResearchSession = { ...session, state: '
   await mountManaged(); await click('核对原请求');
   return requestId;
 }
-it('retains the rejected original request through reload and explicitly resumes its fixed input once', async () => {
+it('retains a legacy review fixture request through reload and explicitly resumes its fixed input once', async () => {
   let current: ResearchSession[] = [];
   vi.mocked(openresearchApi.projects).mockResolvedValue([group]);
   vi.mocked(openresearchApi.sessions).mockImplementation(async () => current);
@@ -120,7 +120,7 @@ it('retains the rejected original request through reload and explicitly resumes 
   await input('已批准工作负载', session.workloadPresetId!); await input('研究目标', session.goal);
   await click('确认范围并提交受控会话');
   const original = vi.mocked(openresearchApi.start).mock.calls[0][3];
-  expect(host.textContent).toContain('原方案需要审查');
+  expect(host.textContent).toContain('历史受控方案尚未获准执行');
   expect(localStorage.getItem('factory-or-pending:alice')).toBe(original);
   expect(find('继续原受控会话请求')).toBeUndefined();
   await click('核对原请求');
@@ -142,6 +142,27 @@ it('retains the rejected original request through reload and explicitly resumes 
   expect(openresearchApi.start).toHaveBeenLastCalledWith(group.id, session.workloadPresetId, session.goal, original);
   expect(localStorage.getItem('factory-or-pending:alice')).toBeNull();
   await click('任务、证据与取消'); expect(onTask).toHaveBeenCalledWith('original-task');
+});
+it.each(['PLAN_AUTHORIZATION_REQUIRED', 'LEGACY_PLAN_READ_ONLY'])('keeps a refused controlled request for read-only recovery after %s', async code => {
+  vi.mocked(openresearchApi.projects).mockResolvedValue([group]);
+  vi.mocked(openresearchApi.start).mockRejectedValue(new ApiError(code, 403, code));
+  await mountManaged(); await act(async () => host.querySelector<HTMLButtonElement>('.or-project-card')!.click());
+  await input('已批准工作负载', session.workloadPresetId!); await input('研究目标', session.goal);
+  await click('确认范围并提交受控会话');
+  const original = vi.mocked(openresearchApi.start).mock.calls[0][3];
+  expect(localStorage.getItem('factory-or-pending:alice')).toBe(original);
+  expect(find('继续原受控会话请求')).toBeUndefined();
+  expect(find('确认范围并提交受控会话').disabled).toBe(true);
+  expect(host.textContent).not.toContain('请先完成方案审查');
+  await act(async () => root.unmount()); root = createRoot(host); await mountManaged();
+  vi.mocked(openresearchApi.sessions).mockResolvedValue([session]);
+  await click('核对原请求');
+  expect(openresearchApi.recover).toHaveBeenCalledWith(original);
+  expect(localStorage.getItem('factory-or-pending:alice')).toBe(original);
+  expect(find('继续原受控会话请求')).toBeUndefined();
+  await click('核对原会话');
+  expect(openresearchApi.reconcile).toHaveBeenCalledWith(group.id, session.id);
+  expect(openresearchApi.start).toHaveBeenCalledTimes(1);
 });
 it.each(['unknown', 'dispatch-intent'])('keeps %s admission read-only and retains its original request', async state => {
   const requestId = await recoverControlled({ ...session, state });
@@ -197,7 +218,7 @@ it('does not replace a prepared session with a fresh request when its original p
 });
 
 const usage = { schema: 1, currency: 'USD', amountMicros: 10000, tokenLimit: 2000, provider: 'test-provider', model: 'test-model', adapterId: 'managed-orx-pause-model-v1', adapterRevision: '1', pricingRevision: 'fixture', pricingSha256: hash, perAttemptInputTokens: 1000, perAttemptOutputTokens: 1000, bindingSha256: hash, sha256: hash };
-const blockedAuthorization: PlanAuthorization = { executionAllowed: false, reviewRequired: true, nativeToolConfirmationRequired: false, policy: { name: 'admin-review', revision: 'one', fingerprint: hash, review_ttl_seconds: 300, nativeToolConfirmationSeparate: true } };
+const blockedAuthorization: PlanAuthorization = { ownerId: owner.id, planId: 'plan-managed', planFingerprint: hash, executionAllowed: false, reviewRequired: false, reviewRequestSupported: false, nativeToolConfirmationRequired: false, policy: { name: 'member-self-service', revision: 'one', fingerprint: hash, review_ttl_seconds: 300, nativeToolConfirmationSeparate: true } };
 const managed: ManagedResearchSession = { id: 'ors-managed', projectId: project.id, goal: '检查文本往返', state: 'prepared', taskId: null, executionContract: 'managed-native-attachment-v1', contextSource: 'original-native-project-session', verificationStatus: 'not-live-verified', managedProfileId: 'installed-one', nativeProfileId: 'original-profile', upstreamSessionId: 'native-session-one', planId: 'plan-managed', authorization: blockedAuthorization,
   plan: { id: 'plan-managed', fingerprint: hash, status: 'ready', normalizedGoal: '检查文本往返', materialRefs: [], capabilities: [], missing: [], createdAt: '2026-10-08T00:00:00Z', usageBudget: usage, inputValues: { managedAttachment: { ownerId: owner.id, connectionRef: connection.ref, profile: { harness: 'opencode', model: 'test-model' }, projectId: native.id, sessionId: 'native-session-one', projectIdentityHash: hash, modelRequests: 1, nativeTools: 'disabled' } } } };
 async function nativeEntry() { await mount(); await act(async () => host.querySelector<HTMLButtonElement>('.or-project-card')!.click()); }
@@ -212,7 +233,7 @@ function managedMocks() {
   vi.spyOn(api, 'planReviews').mockResolvedValue([]);
   return { set: (value: ManagedResearchSession) => { current = value; } };
 }
-it('keeps prepared managed probes on their existing approval path without a controlled retry', async () => {
+it('keeps prepared managed probes on their owner scope and budget path without a controlled retry', async () => {
   const fixture = managedMocks(); fixture.set(managed);
   localStorage.setItem('factory-or-pending:alice', 'original-managed-prepare');
   vi.mocked(openresearchApi.recover).mockResolvedValue({ session: managed });
@@ -222,23 +243,18 @@ it('keeps prepared managed probes on their existing approval path without a cont
   expect(localStorage.getItem('factory-or-pending:alice')).toBeNull();
   expect(openresearchApi.start).not.toHaveBeenCalled(); expect(openresearchApi.startManaged).not.toHaveBeenCalled();
 });
-it('prepares without execution, requests the existing plan review, then starts the original one-turn probe only after approval', async () => {
+it('prepares without execution and starts the original one-turn probe after owner scope and budget confirmation', async () => {
   managedMocks();
-  vi.spyOn(api, 'requestPlanReview').mockImplementation(async (_planId, requestId) => {
-    const review = { id: 'review-one', ownerId: owner.id, planId: managed.planId, planDigest: hash, planFingerprint: hash, policyDigest: hash, policyRevision: 'one', requestId, createdAt: '2026-10-08T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z', expired: false, currentPolicy: true, planIntegrityMatches: true, decision: 'pending' as const, approvalEffective: false, reviewerId: null, planSummary: {} };
-    vi.mocked(api.planReviews).mockResolvedValue([review]); return review;
-  });
+  vi.spyOn(api, 'requestPlanReview');
+  vi.mocked(api.planAuthorization).mockResolvedValue({ ...blockedAuthorization, executionAllowed: true });
   await nativeEntry();
   expect(host.textContent).toContain('多步研究、原生工具循环与研究结果验证尚不可用');
   await input('已安装验证配置', 'installed-one'); await input('文本探测目标', managed.goal); await click('准备单轮连接验证方案');
   expect(openresearchApi.prepareManaged).toHaveBeenCalledWith(project.id, 'installed-one', managed.goal, expect.any(String));
   expect(openresearchApi.startManaged).not.toHaveBeenCalled(); expect(openresearchApi.start).not.toHaveBeenCalled();
-  expect(find('确认预算并执行单轮文本探测').disabled).toBe(true);
+  expect(find('确认预算并执行单轮文本探测').disabled).toBe(false);
   expect(host.textContent).toContain('原生工具禁用'); expect(host.textContent).toContain(managed.upstreamSessionId);
-  await click('提交方案审查'); expect(api.requestPlanReview).toHaveBeenCalledTimes(1);
-  expect(find('确认预算并执行单轮文本探测').disabled).toBe(true);
-  vi.mocked(api.planAuthorization).mockResolvedValue({ ...blockedAuthorization, executionAllowed: true });
-  await click('刷新授权与审查状态'); expect(find('确认预算并执行单轮文本探测').disabled).toBe(false);
+  expect(host.textContent).not.toContain('提交方案审查'); expect(api.requestPlanReview).not.toHaveBeenCalled(); expect(api.planReviews).not.toHaveBeenCalled();
   await act(async () => { find('确认预算并执行单轮文本探测').click(); find('确认预算并执行单轮文本探测').click(); });
   expect(openresearchApi.startManaged).toHaveBeenCalledTimes(1);
   expect(openresearchApi.startManaged).toHaveBeenCalledWith(project.id, expect.objectContaining({ id: managed.id, planId: managed.planId, upstreamSessionId: managed.upstreamSessionId }), expect.any(String));

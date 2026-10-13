@@ -62,7 +62,7 @@ class ConcreteOperatorTests(unittest.TestCase):
                 settings = bindings.describe_settings(value, 'postgresql://unused')
             self.assertEqual(settings.host, '127.0.0.1')
             self.assertEqual(settings.runtime_tool_contract, 'autoresearch-session-v1')
-            self.assertEqual(settings.temporary_policy, 'admin-review')
+            self.assertEqual(settings.temporary_policy, 'member-self-service')
             self.assertEqual(bool(settings.autoresearch_presets), role == 'controller')
 
     def test_cross_role_extra_credentials_and_candidate_are_rejected(self):
@@ -147,6 +147,7 @@ class ConcreteOperatorTests(unittest.TestCase):
                 value['project']['applicationSnapshot'] = deepcopy(source_snapshot)
             settings = bindings.describe_settings(value, 'postgresql://unused')
             governance, applications = Mock(), Mock()
+            governance.member_publication.return_value = False  # Explicit historical publication fixture.
             catalogue = []
             def material(owner, definition, request):
                 catalogue.append(deepcopy(definition))

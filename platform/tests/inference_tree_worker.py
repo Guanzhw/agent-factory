@@ -205,7 +205,7 @@ class RecoveryRecorder:
 
 
 def install_recovery_timing(path):
-    from agent_factory.control_commands import ControlCommands
+    from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
     from agent_factory.delegation import DelegationService
     recorder = RecoveryRecorder(path)
     from agent_factory_research import inference_wait

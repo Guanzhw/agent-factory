@@ -26,8 +26,11 @@ class DatabasePreflightTests(unittest.TestCase):
         self.settings = settings()
 
     def seed(self, *, legacy=False):
-        material = GovernanceConfig() if legacy else GovernanceConfig(revision=self.settings.material_policy_revision, tool_contract=self.settings.runtime_tool_contract)
-        policy = PlanPolicyConfig() if legacy else PlanPolicyConfig(revision=self.settings.policy_revision,
+        material = GovernanceConfig(review_mode='separate-admin', revision='material-governance-v1') if legacy else GovernanceConfig(
+            review_mode=self.settings.material_review_mode, revision=self.settings.material_policy_revision,
+            tool_contract=self.settings.runtime_tool_contract)
+        policy = PlanPolicyConfig(name='admin-review', revision='plan-policy-v1') if legacy else PlanPolicyConfig(
+            name=self.settings.temporary_policy, revision=self.settings.policy_revision,
             tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=86400)
         with self.engine.begin() as conn:
             for statement in ('CREATE TABLE af_bootstrap (id TEXT PRIMARY KEY, mode TEXT)',
@@ -98,7 +101,7 @@ class DatabasePreflightTests(unittest.TestCase):
 
     def test_same_revision_valid_but_different_body_cannot_rebind(self):
         self.seed()
-        changed = PlanPolicyConfig(revision=self.settings.policy_revision, tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=3600)
+        changed = PlanPolicyConfig(name=self.settings.temporary_policy, revision=self.settings.policy_revision, tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=3600)
         with self.engine.begin() as conn:
             conn.execute(text('UPDATE af_plan_policy_configs SET body=:body,policy_hash=:hash'),
                 {'body': json.dumps(asdict(changed)), 'hash': changed.fingerprint})

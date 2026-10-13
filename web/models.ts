@@ -8,7 +8,7 @@ export type FactoryMaterial = Material & {
   provenance?: { kind: 'original' | 'upstream'; source?: string | null; revision?: string | null; notice: string };
 };
 export interface MaterialGovernancePolicy {
-  review_mode: 'separate-admin' | 'demo-self-review'; revision: string; fingerprint: string;
+  review_mode: 'member-self-service' | 'separate-admin' | 'demo-self-review'; revision: string; fingerprint: string;
   demoCompatibility: boolean; taskApprovalSeparate: boolean; importExecutesCode: boolean;
 }
 export interface MaterialReview {

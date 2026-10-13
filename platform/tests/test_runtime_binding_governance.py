@@ -43,14 +43,14 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
         self.fixture.tearDown()
 
     def test_legacy_fingerprints_and_old_persisted_config_body_remain_exact(self):
-        legacy = GovernanceConfig()
+        legacy = GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1")
         expected = digest({"review_mode": "separate-admin", "revision": "material-governance-v1",
             "licenses": LICENSES, "toolBindings": LEGACY_TOOLS, "schemaVersion": "structured-material/v1"})
         self.assertEqual(legacy.fingerprint, expected)
         old_body = {key: value for key, value in asdict(legacy).items() if key != "tool_contract"}
         with self.store.engine.begin() as connection:
             connection.execute(self.service.configs.update().values(body=old_body))
-        restarted = MaterialGovernance(self.store, self.fixture.auth, seed_materials=governance_fixture.SEEDS)
+        restarted = MaterialGovernance(self.store, self.fixture.auth, legacy, seed_materials=governance_fixture.SEEDS)
         self.assertEqual(restarted.current()["fingerprint"], expected)
         self.store.seed()
         before = [self.store.raw({"id": seed[0], "version": 1})["body"] for seed in governance_fixture.SEEDS]
@@ -127,20 +127,21 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
             runtimeBinding=binding("orx-discover-v1", connectionName="literatureProvider"))
         with self.assertRaises(HTTPException):
             self.service.create_draft("manager", definition, "legacy-orx")
-        with self.assertRaises(ValueError):
-            GovernanceConfig(tool_contract="registered-runtime-v1")
-        new = GovernanceConfig(revision="material-runtime-v2", tool_contract="registered-runtime-v1")
+        for revision in ("material-governance-v1", "material-department-v1"):
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                GovernanceConfig(tool_contract="registered-runtime-v1", revision=revision)
+        new = GovernanceConfig(review_mode="separate-admin", revision="material-runtime-v2", tool_contract="registered-runtime-v1")
         self.service.replace_configuration(new, expected_revision="material-governance-v1")
         created = self.service.create_draft("manager", definition, "registered-orx")
         self.assertEqual(created["permissions"], ["research:read"])
-        self.assertNotEqual(new.fingerprint, GovernanceConfig().fingerprint)
+        self.assertNotEqual(new.fingerprint, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1").fingerprint)
         for tool in ("orx_run", "orx_spawn", "orx_login", "orx_up", "orx_serve"):
             with self.assertRaises(HTTPException):
                 self.service.create_draft("manager", {**definition, "content": tool}, str(uuid4()))
         self.fixture.publish(created)
         plan = {"materialRefs": [governance_fixture.ref(created)]}
         self.assertTrue(self.service.require_materials_current(plan)["allowed"])
-        self.service.replace_configuration(GovernanceConfig(revision="legacy-contract-again"), expected_revision=new.revision)
+        self.service.replace_configuration(GovernanceConfig(review_mode="separate-admin", revision="legacy-contract-again"), expected_revision=new.revision)
         with self.assertRaises(HTTPException):
             self.service.require_materials_current(plan)
 
@@ -154,7 +155,7 @@ class RuntimeToolPolicyTests(unittest.TestCase):
         self.fixture.tearDown()
 
     def test_old_policy_hash_and_old_persisted_body_are_preserved(self):
-        old = PlanPolicyConfig()
+        old = PlanPolicyConfig(name="admin-review", revision="plan-policy-v1")
         expected = digest({"name": "admin-review", "revision": "plan-policy-v1", "review_ttl_seconds": 3600,
             "knownTools": LEGACY_TOOLS, "readOnlyTools": ["ask_scope", "checksum", "literature_search"],
             "readOnlyCapabilities": ["checksum:read", "question:ask", "research:read"]})
@@ -169,8 +170,9 @@ class RuntimeToolPolicyTests(unittest.TestCase):
         fixture.service.replace_configuration(PlanPolicyConfig(name="read-only-auto", revision="legacy-read-only"), expected_revision="plan-policy-v1")
         with self.assertRaises(HTTPException):
             fixture.service.require_execution("alice", plan["id"])
-        with self.assertRaises(ValueError):
-            PlanPolicyConfig(tool_contract="registered-runtime-v1")
+        for revision in ("plan-policy-v1", "department-member-v1"):
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                PlanPolicyConfig(tool_contract="registered-runtime-v1", revision=revision)
         configuration = PlanPolicyConfig(name="read-only-auto", revision="registered-read-only", tool_contract="registered-runtime-v1")
         fixture.service.replace_configuration(configuration, expected_revision="legacy-read-only")
         approved = fixture.service.require_tool("alice", plan["id"], "orx_discover")

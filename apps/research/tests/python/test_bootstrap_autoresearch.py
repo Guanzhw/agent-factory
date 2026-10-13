@@ -19,21 +19,28 @@ def preset():
         blockers=('Actual baseline and subordinate executor unavailable',))
 
 
-def state():
+def state(*, member=False):
     events = []
     def service(kind):
         obj = Mock()
+        obj.member_publication.return_value = member
+        drafts = {}
         def draft(author, definition, key):
             (MaterialDefinition if kind == 'material' else ApplicationDefinition).model_validate(definition)
             events.append((kind, 'draft', author, key))
-            return {**definition, 'version': 1, 'sha256': 'a'*64}
+            drafts[definition['id']] = {**definition, 'version': 1, 'sha256': 'a'*64}
+            return drafts[definition['id']]
         def request(author, identifier, version, key):
             events.append((kind, 'review', author, key)); return {'id': key}
         def decision(reviewer, identifier, approved, key):
             events.append((kind, 'decision', reviewer, key)); assert approved is True
+        def publish(author, identifier, version, key):
+            events.append((kind, 'publish', author, key))
+            return drafts[identifier]
         obj.create_draft.side_effect = draft
         obj.request_publication.side_effect = request
         obj.decide_publication.side_effect = decision
+        obj.publish.side_effect = publish
         return obj
     return {'auth': Mock(), 'material_governance': service('material'), 'applications': service('app')}, events
 
@@ -44,14 +51,26 @@ class BootstrapAutoResearchTests(unittest.TestCase):
         config = module.settings(db_url='postgresql+psycopg://synthetic.invalid/not-connected',
             workspace=Path('/synthetic/not-created'), preset=original, jwt_key='synthetic-not-a-real-credential')
         self.assertEqual(config.max_workers, 1)
-        self.assertEqual(config.temporary_policy, 'admin-review')
-        self.assertEqual(config.material_review_mode, 'separate-admin')
+        self.assertEqual(config.temporary_policy, 'member-self-service')
+        self.assertEqual(config.material_review_mode, 'member-self-service')
         self.assertNotEqual(config.policy_revision, config.material_policy_revision)
         self.assertEqual(config.runtime_tool_contract, 'autoresearch-session-v1')
         self.assertIs(config.autoresearch_presets[original.id], original)
         self.assertEqual(len(config.runtime_adapters), 8); self.assertEqual(len(config.usage_pricing), 1)
         self.assertIsNone(config.usage_pricing[0].local_model_type)
         self.assertTrue(original.unavailable()); self.assertEqual(original.application_ref, {})
+
+    def test_member_publication_needs_no_reviewer_and_keeps_runtime_blockers(self):
+        original = preset()
+        services, events = state(member=True)
+        result = module.publish_application(services, original, author='alice')
+        self.assertEqual([event[1] for event in events], ['draft', 'publish'] * 11)
+        self.assertTrue(all(event[2] == 'alice' for event in events))
+        services['auth'].require.assert_called_with('alice', 'run')
+        services['material_governance'].request_publication.assert_not_called()
+        services['applications'].request_publication.assert_not_called()
+        self.assertEqual(result.blockers, original.blockers)
+        self.assertEqual(original.application_ref, {})
 
     def test_explicit_publication_has_eleven_separate_reviews_and_preserves_original(self):
         original = preset(); services, events = state()

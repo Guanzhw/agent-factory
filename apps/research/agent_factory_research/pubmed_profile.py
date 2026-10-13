@@ -183,18 +183,19 @@ def pubmed_settings(*, db_url: str, workspace: Path, provider: PubMedProvider, o
         available=True, opaque_handle=provider, handle_ref=PROFILE)
     return Settings(db_url=db_url, workspace=workspace, port=port, demo=True, max_workers=1,
         max_tool_calls=1, experiment_timeout_seconds=30, experiment_output_bytes=65536,
-        storage_task_reserve_bytes=8 * 1024 * 1024, temporary_policy="admin-review",
-        policy_revision=PROFILE, material_policy_revision=PROFILE, material_review_mode="separate-admin",
+        storage_task_reserve_bytes=8 * 1024 * 1024, temporary_policy="member-self-service",
+        policy_revision=PROFILE, material_policy_revision=PROFILE, material_review_mode="member-self-service",
         runtime_tool_contract="pubmed-host-evidence-v1", trusted_connections={REGISTRATION_REF: trusted},
         runtime_adapters=registrations(), usage_pricing=(PricingRevision(MODEL_ID, "1", "local-deterministic",
             MODEL_ID, "zero-local-v1", local_model_type=PubMedEvidenceModel),))
 
 
-def publish_pubmed_application(state, *, author, reviewer):
-    if author == reviewer:
+def publish_pubmed_application(state, *, author, reviewer=None):
+    member_publication = state["material_governance"].member_publication()
+    if not member_publication and author == reviewer:
         raise ValueError("A distinct publication reviewer is required")
-    state["auth"].require(author, "components:write")
-    state["auth"].require(reviewer, "agent_os:admin")
+    state["auth"].require(author, "run" if member_publication else "components:write")
+    if not member_publication: state["auth"].require(reviewer, "agent_os:admin")
     governance, applications, store = state["material_governance"], state["applications"], state["store"]
     materials = []
     for kind, adapter, revision in (("model", MODEL_ID, "1"), ("environment", ENVIRONMENT_ID, "1"), ("tool", ADAPTER_ID, REVISION)):
@@ -205,8 +206,11 @@ def publish_pubmed_application(state, *, author, reviewer):
             "runtimeBinding": {"adapterId": adapter, "revision": revision,
                 "config": {"connectionName": CONNECTION_NAME, **CONFIG} if kind == "tool" else {}},
             "provenance": {"kind": "original", "notice": "Original host-HTTP public bibliography workflow; no model provider."}}, PROFILE + ":draft:" + kind)
-        review = governance.request_publication(author, identifier, item["version"], PROFILE + ":review:" + kind)
-        governance.decide_publication(reviewer, review["id"], True, PROFILE + ":approve:" + kind)
+        if member_publication:
+            governance.publish(author, identifier, item["version"], PROFILE + ":publish:" + kind)
+        else:
+            review = governance.request_publication(author, identifier, item["version"], PROFILE + ":review:" + kind)
+            governance.decide_publication(reviewer, review["id"], True, PROFILE + ":approve:" + kind)
         materials.append(next(row for row in store.materials(published_only=True) if row["id"] == identifier and row["version"] == item["version"]))
     app = applications.create_draft(author, {"id": APPLICATION_ID, "name": "PubMed 公开文献证据（主机 HTTP）",
         "description": "书目与摘要证据；无模型综合，不声称容器隔离。", "defaultMode": "bibliography", "discoveryKeywords": ["公开文献", "PubMed", "public literature"],
@@ -214,6 +218,9 @@ def publish_pubmed_application(state, *, author, reviewer):
             "capabilities": [CAPABILITY], "toolOrder": [TOOL], "config": {},
             "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [CAPABILITY], "required": True}],
             "budget": {"toolCalls": 1, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 30, "outputBytes": 65536}}}}, PROFILE + ":application")
-    review = applications.request_publication(author, app["id"], app["version"], PROFILE + ":app-review")
-    applications.decide_publication(reviewer, review["id"], True, PROFILE + ":app-approve")
+    if member_publication:
+        applications.publish(author, app["id"], app["version"], PROFILE + ":app-publish")
+    else:
+        review = applications.request_publication(author, app["id"], app["version"], PROFILE + ":app-review")
+        applications.decide_publication(reviewer, review["id"], True, PROFILE + ":app-approve")
     return app

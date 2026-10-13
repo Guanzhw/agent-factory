@@ -55,7 +55,8 @@ class BootstrapPolicyAlignmentTests(unittest.TestCase):
         self.store = PortableMetadata(self.db, self.actual)
 
     def legacy(self):
-        return replace(self.actual, material_policy_revision='material-governance-v1',
+        return replace(self.actual, temporary_policy='admin-review', material_review_mode='separate-admin',
+            material_policy_revision='material-governance-v1',
             policy_revision='plan-policy-v1', runtime_tool_contract='legacy-v1',
             plan_review_ttl_seconds=3600)
 
@@ -69,12 +70,26 @@ class BootstrapPolicyAlignmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '^Configured policy differs from persisted current revision; reconcile operator configuration$'):
             PlanPolicyService(self.store, None, policy(self.canonical))
 
+    def test_explicit_legacy_bootstrap_migrates_only_review_policy(self):
+        legacy = development_settings(replace(self.canonical, temporary_policy='admin-review',
+            material_review_mode='separate-admin'))
+        self.assertEqual(legacy.runtime_tool_contract, self.canonical.runtime_tool_contract)
+        self.assertEqual(legacy.policy_revision, 'task-research-bootstrap-v1')
+        MaterialGovernance(self.store, None, governance(legacy))
+        PlanPolicyService(self.store, None, policy(legacy))
+        material = MaterialGovernance(self.store, None, governance(self.canonical))
+        plans = PlanPolicyService(self.store, None, policy(self.canonical))
+        self.assertTrue(material.member_publication())
+        self.assertEqual(plans.current()['name'], 'member-self-service')
+
     def test_shared_development_settings_can_reopen_both_governance_services(self):
         for _ in range(2):
             MaterialGovernance(self.store, None, governance(self.canonical))
             PlanPolicyService(self.store, None, policy(self.canonical))
 
     def test_actual_control_entry_then_canonical_reopens_without_policy_migration(self):
+        self.assertEqual(self.actual.temporary_policy, 'member-self-service')
+        self.assertEqual(self.actual.material_review_mode, 'member-self-service')
         MaterialGovernance(self.store, None, governance(self.actual))
         PlanPolicyService(self.store, None, policy(self.actual))
         MaterialGovernance(self.store, None, governance(self.canonical))

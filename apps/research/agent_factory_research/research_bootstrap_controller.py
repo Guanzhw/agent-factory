@@ -67,7 +67,7 @@ class ResearchBootstrapController:
         self.state, self.request, self.call_async = state, request, call_async
         self.clock, self.sleep = clock, sleep
 
-    def run(self, *, owner, reviewer, application_ref, goal, request_id, after_reclaimed,
+    def run(self, *, owner, reviewer=None, application_ref, goal, request_id, after_reclaimed,
             timeout_seconds=900, on_progress=lambda value: None):
         """Run once; `after_reclaimed(owner, task, lease)` imports original evidence.
 
@@ -77,7 +77,8 @@ class ResearchBootstrapController:
         Request IDs are correlation keys, never invented task/run/lease IDs.
         """
         _require(type(request_id) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,60}', request_id)
-                 and type(owner) is str and owner and type(reviewer) is str and reviewer != owner
+                 and type(owner) is str and owner
+                 and (reviewer is None or (type(reviewer) is str and reviewer != owner))
                  and type(goal) is str and 1 <= len(goal) <= 4000
                  and type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= 86400
                  and callable(after_reclaimed) and callable(on_progress))
@@ -152,9 +153,12 @@ class ResearchBootstrapController:
                 'applicationRef': deepcopy(application_ref)}, key='proposal')
             plan = post('/compositions/proposals/' + proposal['id'] + '/accept', key='accept')
             progress['planId'] = plan['id']
-            review = post('/plan-reviews', {'planId': plan['id']}, key='review')
-            post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, key='decision', actor=reviewer)
-            mark('PLAN_APPROVED')
+            if reviewer is not None:
+                review = post('/plan-reviews', {'planId': plan['id']}, key='review')
+                post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, key='decision', actor=reviewer)
+                mark('PLAN_APPROVED')
+            else:
+                mark('PLAN_READY')
             instance_attempted = True
             task = post('/instances', {'planId': plan['id']}, key='instance')
             progress['taskId'] = task['id']

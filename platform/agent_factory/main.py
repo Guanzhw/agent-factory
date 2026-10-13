@@ -65,7 +65,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
                bindings_factory=None, seed_materials=(),
                demo_definitions=None, governance_config=None, policy_config=None,
-               queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None):
+               queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
+               plan_policy_type=None, shutdown_callback=None):
     """Build the application-neutral Factory; deployment code selects trusted implementations.
 
     These are ordinary constructor arguments, never request-driven discovery or
@@ -100,7 +101,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         seed_catalog(store, seed_materials)
     at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, governance_config or GovernanceConfig(
-        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), seed_materials=seed_materials)
+        review_mode=cast(Literal["member-self-service", "separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), seed_materials=seed_materials)
     at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
@@ -176,7 +177,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     delegation.initialize()
     store.delegation = delegation
     at('PREPARATION_APP_PLAN_POLICY')
-    policy = PlanPolicyService(store, auth, policy_config or PlanPolicyConfig(
+    policy = (plan_policy_type or PlanPolicyService)(store, auth, policy_config or PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
         review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
@@ -302,7 +303,11 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                         yield state or {}
         finally:
             # Observer and native worker finish before their shared lock pool.
-            store.dispose_root_locks()
+            try:
+                store.dispose_root_locks()
+            finally:
+                if shutdown_callback is not None:
+                    shutdown_callback(native.state.factory)
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}

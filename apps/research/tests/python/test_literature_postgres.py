@@ -64,7 +64,7 @@ class LiteraturePostgresTests(unittest.TestCase):
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.state['auth'].authorization.unassign('bob', 'factory-user')
         self.state['auth'].authorization.assign('bob', 'factory-manager')
-        self.application = publish_literature_application(self.state, author='manager', reviewer='bob')
+        self.application = publish_literature_application(self.state, author='alice')
         self.connection = self.state['connections'].bind('alice', REGISTRATION_REF, 'literature-connection', capabilities=['research:read'])
         self.client = TestClient(self.app).__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
@@ -83,8 +83,11 @@ class LiteraturePostgresTests(unittest.TestCase):
             'connectionRefs': {CONNECTION_NAME: self.connection['ref']}})
         self.assertEqual(proposal['candidate']['status'], 'ready', proposal)
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {})
-        review = post('/plan-reviews', {'planId': plan['id']})
-        post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'manager')
+        self.assertEqual(plan['policy'], 'member-self-service')
+        authorization = self.store.plan_policy.status('alice', plan)
+        self.assertTrue(authorization['executionAllowed'])
+        self.assertFalse(authorization['reviewRequired'])
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_reviews')[0]['n'], 0)
         job = post('/instances', {'planId': plan['id']})
         deadline = time.monotonic() + 80
         while time.monotonic() < deadline:

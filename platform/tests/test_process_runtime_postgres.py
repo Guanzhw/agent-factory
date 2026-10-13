@@ -63,7 +63,8 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
             provider=MustNotAllocate(), synthetic_fixture=True, max_cpu=1, max_memory_mb=128,
             max_disk_mb=1, max_seconds=5, capacity_pool=self.pool)
         self.settings = process_settings(db_url=self.database.url, workspace=self.root,
-            target_ref=self.target_ref, remote_targets={self.target_ref: target, "capacity-probe": probe})
+            target_ref=self.target_ref, remote_targets={self.target_ref: target, "capacity-probe": probe},
+            temporary_policy="admin-review", material_review_mode="separate-admin")
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]

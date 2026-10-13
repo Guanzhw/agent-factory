@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_factory.factory_api import InstanceRequest
-from .personal_command_profile import APPLICATION_ID, PROJECT_APPLICATION_ID, CONTRACT, command_from_plan, reconcile_command
+from .personal_command_profile import APPLICATION_ID, PROJECT_APPLICATION_ID, CONTRACT, TOOL_NAME, command_from_plan, reconcile_command
 from agent_factory.store import canonical
 
 
@@ -77,10 +77,24 @@ class PersonalCommandAPI:
         self.artifacts = NativeResearchArtifacts(self.sessions)
         from .personal_orx_projects import PersonalOrxProjects
         self.projects = PersonalOrxProjects(store.connections, admission=deny_direct_admission)
+        # Connection freshness and exact project-create consent belong to this
+        # application's effect boundary, not to a generic plan-review exception.
+        store.register_execution_guard('personal-command', self._require_command_current)
         from .personal_orx_lease import PersonalOrxLease
         self.leases = PersonalOrxLease(self.sessions)
         self.router = APIRouter(prefix='/api/factory/personal-agent')
         self.routes()
+
+    def _require_command_current(self, owner, plan, _context, _tool):
+        if TOOL_NAME not in plan.get('tools', []):
+            return
+        if plan.get('ownerId') != owner:
+            raise HTTPException(403, 'PERSONAL_COMMAND_OWNER_MISMATCH')
+        command = command_from_plan(plan)
+        capability = 'project:create' if command['action'] == 'project_create' else 'session:' + command['action']
+        self.sessions._handle(owner, command['connectionPin'], capability=capability)
+        if command['action'] == 'project_create':
+            self.projects.require_approval(owner, command['requestId'], plan['id'], command['projectBundle'])
 
     def prepare(self, owner, body, *, refresh_lease=False):
         self.auth.require(owner, 'run')
@@ -180,10 +194,8 @@ class PersonalCommandAPI:
         plan = self.store.plan(plan_id, owner)
         if plan.get('application') not in {APPLICATION_ID, PROJECT_APPLICATION_ID} or plan.get('mode') != 'personal-command':
             raise HTTPException(409, 'PERSONAL_COMMAND_PLAN_REQUIRED')
-        if plan['application'] == PROJECT_APPLICATION_ID:
-            command = command_from_plan(plan)
-            self.projects.require_approval(owner, command['requestId'], plan_id, command['projectBundle'])
-        self.store.owner_submissions.approve_personal(owner, plan)
+        # Factory admission runs the installed command guard off the event loop
+        # immediately before reserving the task, for this and generic ingress.
 
     async def start(self, owner, plan_id):
         await asyncio.to_thread(self._authorize_start, owner, plan_id)

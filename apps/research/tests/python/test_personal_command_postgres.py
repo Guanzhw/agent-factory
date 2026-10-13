@@ -17,7 +17,30 @@ import test_personal_agent_sessions as wire_fixture
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL; required CI runner rejects skips')
 class PersonalCommandPostgresTests(unittest.TestCase):
-    def test_native_queue_review_exact_remote_command_and_uncertain_ack(self):
+    def test_member_publishes_command_template_without_a_review(self):
+        with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
+            settings = Settings(db_url=database.url, workspace=Path(folder),
+                personal_agent_commands_enabled=True, temporary_policy='member-self-service',
+                material_review_mode='member-self-service')
+            app = create_app(settings)
+            state = app.app.state.factory
+            store = state['store']
+            self.addCleanup(store.engine.dispose)
+            self.addCleanup(store.native_db.db_engine.dispose)
+            # Publication persists definitions only; no lifespan or executor is started.
+            first = publish_application(state, author='alice')
+            second = publish_application(state, author='alice')
+            self.assertEqual(first, second)
+            published = state['applications'].require_current({key: first[key]
+                for key in ('id', 'version', 'sha256')})
+            self.assertEqual(published['id'], first['id'])
+            self.assertEqual(len(published['modes']['personal-command']['materialRefs']), 4)
+            self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_plan_reviews')[0]['n'], 0)
+            self.assertEqual(store.sql('SELECT COUNT(*) AS n FROM af_tasks')[0]['n'], 0)
+            self.assertFalse(state['material_governance'].list_reviews('alice'))
+            self.assertFalse(state['applications'].list_reviews('alice'))
+
+    def test_native_queue_self_service_exact_remote_command_and_uncertain_ack(self):
         wire = wire_fixture.Sessions('test_real_wire_multiturn_tool_result_unknown_restart_and_interrupt')
         wire.setUp(); self.addCleanup(wire.doCleanups)
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
@@ -25,6 +48,11 @@ class PersonalCommandPostgresTests(unittest.TestCase):
                 personal_agent_commands_enabled=True, temporary_policy='admin-review',
                 policy_revision='personal-command-ci-v1', material_policy_revision='personal-command-ci-v1',
                 personal_connection_providers={PERSONAL_PROVIDER_ID: wire.provider})
+            settings.temporary_policy = 'member-self-service'
+            settings.policy_revision = 'personal-command-department-v1'
+            # This existing publication fixture retains its historical setup;
+            # ordinary task execution uses the same rule as every other app.
+            settings.material_review_mode = 'separate-admin'
             app = create_app(settings)
             state = app.app.state.factory; store, auth = state['store'], state['auth']
             self.addCleanup(store.engine.dispose); self.addCleanup(store.native_db.db_engine.dispose)
@@ -49,8 +77,9 @@ class PersonalCommandPostgresTests(unittest.TestCase):
                         {'requestId': key, 'action': action, **values})
                     plan = result['plan']; self.assertEqual(plan['status'], 'ready', plan)
                     self.assertFalse(result['authorization']['reviewRequired'])
-                    self.assertTrue(result['authorization']['ownerSubmissionSupported'])
-                    # Starting this exact owner command is its business approval.
+                    self.assertTrue(result['authorization']['executionAllowed'])
+                    self.assertEqual(result['authorization']['approval']['source'], 'member-self-service')
+                    # Starting this exact owner command needs no app exemption.
                     task = request('POST', '/personal-agent/commands/start', {'planId': plan['id']})
                     return key, task
                 def terminal(task, status):

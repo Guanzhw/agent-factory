@@ -1,8 +1,8 @@
 # Agent Factory
 
-An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Managers maintain versioned materials and approved application definitions; users compose exact, scoped task plans and inspect native runs. Auto-Research is the first application. New approved applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
+An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators handle public deletion, withdrawal and archival. Auto-Research is the first application. New published applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
 
-This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: native authorization, PostgreSQL queue, questions, approvals, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled by default. Historical live and failed retrieval evidence stays scoped to its recorded run; controlled fixtures do not establish scientific validity. Full production acceptance remains open.
+This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: native authorization, PostgreSQL queue, questions, native operation confirmations, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled by default. Historical live and failed retrieval evidence stays scoped to its recorded run; controlled fixtures do not establish scientific validity. Full production acceptance remains open.
 
 For the persistent Linux mock-login instance with synthetic source → synthesis,
 fixed baseline/candidate comparisons and schedule diagnostics, use the
@@ -16,7 +16,7 @@ Start with the [application development guide](docs/APPLICATION_DEVELOPMENT.md).
 Use the [public application interface](docs/APPLICATION_INTERFACE.md) for scoped
 inputs/resources, native step output, task lifecycle, events and artifacts.
 For an existing owner's research environment, see the [explicit continuation guide](docs/ENVIRONMENT_CONTINUATION.md).
-It separates developer implementation from administrator registration/publication,
+It separates business implementation, trusted deployment registration and member publication,
 and covers the smallest material-driven application, trusted tool/model/runtime
 factories, bounded Pydantic inputs, native Agno Workflow/HITL, permissions, budgets
 and executable checks. The [workflow governance reference](docs/GOVERNED_WORKFLOW_AGENTS.md)
@@ -38,10 +38,10 @@ The Factory core and the research application have separate source ownership:
 
 OpenResearch and the existing AutoResearch execution paths belong to one research
 application. They retain their native executors and existing session/project
-journeys. The deployment installs its reviewed materials and adapters explicitly;
+journeys. The deployment installs its material definitions and trusted adapters explicitly;
 creating the core alone does not seed research materials or install research
 routes. There is no dynamic application discovery. An application that only
-combines existing tools still needs only a reviewed declaration and materials,
+combines existing tools still needs only a published declaration and materials,
 without a core code change.
 
 The root [`pyproject.toml`](pyproject.toml) builds the complete
@@ -69,21 +69,31 @@ npm start
 
 Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or material administrator. The demo script initializes only `.local/postgres`, binds both services to loopback and stops its owned services on Ctrl+C. Its trust authentication belongs only to the disposable local cluster. Do not expose the demo to a network. Logs, database, runtime files and credentials are ignored by Git.
 
-For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate clean database and native managed users/roles; it provisions no identities. Execution is checked per plan against exact approved applications, materials, installed adapters, owner connection pins and the configured approval policy. Missing items block that plan; there is no automatic demo-model fallback. Real provider SDK attempt/retry enforcement, production browser identity entry, reviewed mutable research workloads and production OS acceptance remain implementation/integration work; credentials alone do not complete them. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
+For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate clean database and native managed users/roles; it provisions no identities. Execution is checked per plan against exact published applications and materials, installed adapters, owner connection pins and current admission policy. Missing items block that plan; there is no automatic demo-model fallback. Real provider SDK attempt/retry enforcement, production browser identity entry, reviewed mutable research workloads and production OS acceptance remain implementation/integration work; credentials alone do not complete them. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
+
+Normal entrypoints use `Settings.from_env()` / `ResearchSettings.from_env()` with
+`member-self-service` for task admission and material/application publication.
+Members publish their versions directly and submit new tasks without ordinary
+plan approval. Native hazardous-tool and exact project-creation confirmations
+remain. Historical plans and reviews stay readable, but cannot authorize new
+execution; create a new plan explicitly. An unknown original outcome still
+requires original-request reconciliation. Explicit `Settings(demo=True)` synthetic
+fixtures can retain legacy policies; they do not set the normal product default.
+See [department collaboration and migration](docs/department-minimal-integration.md).
 
 ## Implemented boundary
 
-- Six material kinds, immutable content versions/digests, author drafts, separate-administrator review, archive/withdrawal and inert structured import, pinned transitive dependency preflight and bounded approved-material discovery.
-- Approved immutable application definitions, bounded goal-based discovery and proposal/revise/reject/accept, exact permitted material alternatives, and separate-administrator shared publication.
+- Six material kinds, immutable content versions/digests, member drafts and direct publication, administrator-only public archive/withdrawal, inert structured import, pinned transitive dependency preflight and bounded published-material discovery.
+- Published immutable application definitions, bounded goal-based discovery and proposal/revise/reject/accept, exact permitted material alternatives, and member publication of new shared versions.
 - Trusted registered model/tool/knowledge/environment factories selected by immutable material bindings; current owner connection references with bind/revoke, expiry, rotation and redacted metadata.
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
 - Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicit demo identity with HttpOnly cookie.
 - Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation including bounded experiment process trees, persistent application events and artifact hashes.
 - Bounded native child delegation: independent tickets, inherited scope, depth/count and durable shared tool budgets, group inspection and cascading cancellation.
 - Guarded native schedule poller: owner-scoped immutable-plan definitions, per-occurrence admission, current rights/quotas, no blind UNKNOWN replay.
-- Original research frontend: preflight, submission, polling, questions, approvals, cancellation acknowledgements, evidence and material manager. API facts bypass the model queue.
+- Original research frontend: preflight, submission, polling, questions, native operation confirmations, cancellation acknowledgements, evidence and member material/application management. API facts bypass the model queue.
 - Remote target/lease API and selected Agno HTTP adapter: trusted references, version/auth checks, UNKNOWN reconciliation, disconnect/cancel distinction and guarded reclaim. Actual native tests cover metadata attachment; lifecycle tests use explicit synthetic fixtures.
-- Governed remote Factory execution: exact immutable receiver adapter/connection mapping proofs, current source authorization over trusted HTTP, separate receiver plan review and inherited receiver-owned children; default startup configures no remote access. See [remote bindings](docs/REMOTE_BINDINGS.md).
+- Governed remote Factory execution: exact immutable receiver adapter/connection mapping proofs, current source authorization over trusted HTTP, receiver admission checks and inherited receiver-owned children; default startup configures no remote access. See [remote bindings](docs/REMOTE_BINDINGS.md).
 - Registered OpenResearch discovery and revision-2 paper/text/evidence tools: controlled transport is tested through native composition/queue/artifacts; actual public connectivity and model-driven research remain unverified. Operator registration, reviewed tool contract, owner connection and exact binary pin are required. Its pinned source is `f336b121525d99364e2dee4fe90b2784894a54e6` (ORX 0.2.13); an installed 0.2.10 is not assumed compatible. Factory retains session ownership.
 
 Experiment metrics are computed by an actual bounded synthetic subprocess with evaluator/version/dataset/runtime hashes. They prove the integration pipeline, not scientific improvement. A native COMPLETED response alone never validates research or an uncertain effect.
@@ -155,7 +165,7 @@ See [minimum decisions](docs/PRODUCTION_DECISIONS.md) and
 not being re-requested; the authorized bounded campaign is now stopped after an
 unknown outcome. A new live attempt requires a follow-up decision.
 
-Plan approval is configurable with a conservative production administrator-review default. The real UI supports review requests and administrative decisions; see [plan policy and tested boundaries](docs/PLAN_POLICY.md). Live identity/model/ORX acceptance remains separate.
+The normal department policy is now `member-self-service`: new tasks do not require ordinary plan approval, and historical review pages are read-only. Earlier administrator-review behavior remains documented in [historical plan policy and tested boundaries](docs/PLAN_POLICY.md); the current behavior and migration rules are in [department collaboration](docs/department-minimal-integration.md). Native hazardous-operation consent and live identity/model/ORX acceptance remain separate.
 
 Trusted execution location selection and receiver-owned task trees are described in
 [REMOTE_HANDOFF](docs/REMOTE_HANDOFF.md). No remote target is enabled by default.
@@ -163,7 +173,7 @@ Guarded hard-process schedule recovery and its native lease-release limitation a
 recorded in [SCHEDULING](docs/SCHEDULING.md). Exact-source ORX build/preflight is
 recorded separately from unverified live research.
 
-Material-driven composition, adapter registration and compatibility rules are described in [MATERIAL_ASSEMBLY.md](docs/MATERIAL_ASSEMBLY.md). The default CLI installs only explicit demo adapters and safe native primitives. Real integrations require trusted same-process `Settings.runtime_adapters` and `Settings.trusted_connections`; these cannot be installed over HTTP. Enabling `FACTORY_RUNTIME_TOOL_CONTRACT=registered-runtime-v1` also requires new `FACTORY_POLICY_REVISION` and `FACTORY_MATERIAL_POLICY_REVISION` values. Preserve existing v1 policy hashes. Older demo plans need explicit exact `ApplicationService.adopt_legacy_demo_plan` proof before execution; startup does not silently adopt them.
+Material-driven composition, adapter registration and compatibility rules are described in [MATERIAL_ASSEMBLY.md](docs/MATERIAL_ASSEMBLY.md). The default CLI installs only explicit demo adapters and safe native primitives. Real integrations require trusted same-process `Settings.runtime_adapters` and `Settings.trusted_connections`; these cannot be installed over HTTP. Enabling `FACTORY_RUNTIME_TOOL_CONTRACT=registered-runtime-v1` also requires new `FACTORY_POLICY_REVISION` and `FACTORY_MATERIAL_POLICY_REVISION` values. Preserve existing v1 policy hashes. Normal member-mode admission rejects historical plans with `LEGACY_PLAN_READ_ONLY`; old reviews and request IDs are not reused for new execution. `ApplicationService.adopt_legacy_demo_plan` remains an explicit legacy fixture path, not a migration shortcut for the normal deployment.
 
 Versioned publication/import and current material guards are described in
 [material governance](docs/MATERIAL_GOVERNANCE.md). History pagination is documented

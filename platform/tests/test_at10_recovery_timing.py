@@ -14,7 +14,7 @@ from inference_tree_worker import RecoveryRecorder, install_recovery_timing
 class RecoveryTimingTests(unittest.TestCase):
     def setUp(self):
         from agent_factory_research import inference_wait
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         for method in ('prepare_pause', 'publish_pause', 'observe', 'validate_requirement'):
             self.enterContext(patch.object(inference_wait, method, getattr(inference_wait, method)))
         for method in ('_prepare', 'dispatch'):
@@ -59,7 +59,7 @@ class RecoveryTimingTests(unittest.TestCase):
         from contextlib import ExitStack
         from unittest.mock import AsyncMock, Mock
         from agent_factory_research import inference_wait
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         with ExitStack() as stack:
             for method in ('approved_recovery', '_approval_payload', '_completed_launch'):
@@ -107,7 +107,7 @@ class RecoveryTimingTests(unittest.TestCase):
         self.assertNotIn('private-value', self.path.read_text())
 
     def test_root_lock_yields_exact_connection_in_both_contexts(self):
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         connection = object()
         released = []
@@ -134,7 +134,7 @@ class RecoveryTimingTests(unittest.TestCase):
                          ['root-lock-wait', 'root-lock-held'])
 
     def test_real_static_approval_payload_retains_class_and_instance_signature(self):
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         # Real implementation must reach its domain proof rejection, not fail on
         # an injected instance argument. No database or native fixture is needed.
@@ -165,7 +165,7 @@ class RecoveryTimingTests(unittest.TestCase):
                          ['OK', 'OK', 'APPROVED_RECOVERY_PROOF', 'APPROVED_RECOVERY_PROOF'])
 
     def test_scoped_root_lock_release_preserves_denial(self):
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         entered = []
         error = PermissionError('private-value')
@@ -196,7 +196,7 @@ class RecoveryTimingTests(unittest.TestCase):
         self.assertNotIn('private-value', self.path.read_text())
 
     def test_wrapped_eligibility_propagates_context_to_thread_and_preserves_result(self):
-        from agent_factory.control_commands import ControlCommands
+        from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         async def original(_self, _task, _snapshot, **kwargs):
             self.assertTrue(await asyncio.to_thread(recorder.active.get))

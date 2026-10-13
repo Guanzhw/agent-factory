@@ -75,7 +75,6 @@ def personal_research_router(auth, store, factory):
                 request_id='research-plan-' + body.requestId,
                 connection_refs={CONNECTION_NAME: model['connectionRef']})
         plan = store.admit_plan(owner, body.requestId, {'personalResearch': body.model_dump()}, create)
-        store.owner_submissions.approve(owner, plan)
         result = await factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=body.requestId))
         return {**result, 'planId': plan['id'], 'billing': {
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False, 'payer': 'owner-provider-account'}}
@@ -91,17 +90,19 @@ def personal_research_router(auth, store, factory):
     return router
 
 
-def publish_application(state, *, author, reviewer):
+def publish_application(state, *, author, reviewer=None):
     """Trusted one-time shared template publication, separate from owner tasks.
 
     Operators may compose other approved read-only research tools with this model
     adapter. The bundled minimal template retains honest synthetic tool evidence.
     """
+    member_publication = state["material_governance"].member_publication()
     auth = state['auth']
     if not state['store'].settings.demo:
         raise HTTPException(409, 'PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY')
-    auth.require(author, 'components:write'); auth.require(reviewer, 'agent_os:admin')
-    if author == reviewer: raise HTTPException(403, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
+    auth.require(author, 'run' if member_publication else 'components:write')
+    if not member_publication: auth.require(reviewer, 'agent_os:admin')
+    if not member_publication and author == reviewer: raise HTTPException(403, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
     governance, applications, store = state['material_governance'], state['applications'], state['store']
     definition = {'id': APPLICATION_ID + '-model', 'kind': 'model', 'name': 'Owner BYOK model',
         'description': 'Owner configured text/function Chat Completions; live compatibility unverified.',
@@ -110,8 +111,11 @@ def publish_application(state, *, author, reviewer):
         'runtimeBinding': {'adapterId': ADAPTER_ID, 'revision': '1', 'config': {'connectionName': CONNECTION_NAME}},
         'provenance': {'kind': 'original', 'notice': 'Native model wire subset; live compatibility unverified.'}}
     model = governance.create_draft(author, definition, APPLICATION_ID + ':model-draft')
-    review = governance.request_publication(author, model['id'], model['version'], APPLICATION_ID + ':model-review')
-    governance.decide_publication(reviewer, review['id'], True, APPLICATION_ID + ':model-approve')
+    if member_publication:
+        governance.publish(author, model['id'], model['version'], APPLICATION_ID + ':model-publish')
+    else:
+        review = governance.request_publication(author, model['id'], model['version'], APPLICATION_ID + ':model-review')
+        governance.decide_publication(reviewer, review['id'], True, APPLICATION_ID + ':model-approve')
     seeds = {item['id']: item for item in store.materials() if item['published']}
     required = ['research-skill', 'research-prompt', 'literature-tool', 'question-tool', 'local-environment']
     if any(key not in seeds for key in required): raise HTTPException(409, 'PERSONAL_RESEARCH_MATERIALS_REQUIRED')
@@ -124,6 +128,9 @@ def publish_application(state, *, author, reviewer):
                 'required': True, 'requiredCapabilities': []}],
             'budget': {'toolCalls': 8, 'maxDepth': 2, 'maxChildren': 4, 'experimentSeconds': 8, 'outputBytes': 65536}}}}
     application = applications.create_draft(author, definition, APPLICATION_ID + ':draft')
-    review = applications.request_publication(author, application['id'], application['version'], APPLICATION_ID + ':review')
-    applications.decide_publication(reviewer, review['id'], True, APPLICATION_ID + ':approve')
+    if member_publication:
+        applications.publish(author, application['id'], application['version'], APPLICATION_ID + ':publish')
+    else:
+        review = applications.request_publication(author, application['id'], application['version'], APPLICATION_ID + ':review')
+        applications.decide_publication(reviewer, review['id'], True, APPLICATION_ID + ':approve')
     return application

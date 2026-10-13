@@ -247,11 +247,12 @@ def input_schema():
     return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
 
 
-def publish_application(state, *, author, reviewer, project_creation=False):
-    """Explicit trusted installer; independent material/application review required."""
-    require(author != reviewer, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
-    state['auth'].require(author, 'components:write')
-    state['auth'].require(reviewer, 'agent_os:admin')
+def publish_application(state, *, author, reviewer=None, project_creation=False):
+    """Publish native command materials through the current governance policy."""
+    member_publication = state["material_governance"].member_publication()
+    require(member_publication or author != reviewer, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
+    state['auth'].require(author, 'run' if member_publication else 'components:write')
+    if not member_publication: state['auth'].require(reviewer, 'agent_os:admin')
     governance, applications = state['material_governance'], state['applications']
     application_id = PROJECT_APPLICATION_ID if project_creation else APPLICATION_ID
     materials = []
@@ -265,8 +266,11 @@ def publish_application(state, *, author, reviewer, project_creation=False):
             'provenance': {'kind': 'original', 'notice': 'Remote command acceptance only; live integration unverified.'}}
         if adapter: definition['runtimeBinding'] = {'adapterId': adapter, 'revision': '1', 'config': {}}
         material = governance.create_draft(author, definition, identifier + ':draft')
-        review = governance.request_publication(author, identifier, material['version'], identifier + ':review')
-        governance.decide_publication(reviewer, review['id'], True, identifier + ':approve')
+        if member_publication:
+            governance.publish(author, identifier, material['version'], identifier + ':publish')
+        else:
+            review = governance.request_publication(author, identifier, material['version'], identifier + ':review')
+            governance.decide_publication(reviewer, review['id'], True, identifier + ':approve')
         materials.append(material)
     schema = input_schema()
     if project_creation: schema['properties']['action']['enum'] = ['project_create']
@@ -277,6 +281,9 @@ def publish_application(state, *, author, reviewer, project_creation=False):
             'inputSchema': schema, 'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1,
                 'experimentSeconds': 30, 'outputBytes': 65536}}}}
     application = applications.create_draft(author, definition, application_id + ':draft')
-    review = applications.request_publication(author, application['id'], application['version'], application_id + ':review')
-    applications.decide_publication(reviewer, review['id'], True, application_id + ':approve')
+    if member_publication:
+        applications.publish(author, application['id'], application['version'], application_id + ':publish')
+    else:
+        review = applications.request_publication(author, application['id'], application['version'], application_id + ':review')
+        applications.decide_publication(reviewer, review['id'], True, application_id + ':approve')
     return application

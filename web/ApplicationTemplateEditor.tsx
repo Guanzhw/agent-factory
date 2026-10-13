@@ -19,7 +19,7 @@ function InputSchemaEditor({ value, disabled, onChange }: { value: unknown; disa
   return <details><summary>高级：可选应用输入定义</summary><p>使用有界 JSON 对象定义任务输入字段。字符串和数组必须限制长度；只支持内联字段，不支持引用或执行逻辑。</p>
     <label>输入定义 JSON<textarea aria-label="输入定义 JSON" value={text} rows={8} maxLength={32768} disabled={disabled} onChange={event => { setText(event.target.value); setError(''); }}/></label>
     <button type="button" className="secondary" disabled={disabled} onClick={() => { try { const next = text.trim() ? applicationInputSchema(JSON.parse(text)) : undefined; onChange(next); setError(''); } catch { setError('输入定义无效，请核对有界字段结构。'); } }}>应用输入定义</button>
-    <p className="quiet">留空并应用会移除本方式的自定义输入。此修改仍需独立审查发布。</p>{error && <p role="alert">{error}</p>}
+    <p className="quiet">留空并应用会移除本方式的自定义输入。保存为新版本后可由成员发布。</p>{error && <p role="alert">{error}</p>}
   </details>;
 }
 export function ApplicationTemplateEditor({ definition, materials, onChange, disabled = false }: ApplicationTemplateEditorProps) {
@@ -41,7 +41,7 @@ export function ApplicationTemplateEditor({ definition, materials, onChange, dis
     change({ kind: 'toolOrder', mode: mode.name, tools: next });
   }
   return <section className="application-template-editor" aria-label="应用模板编辑">
-    <h2>编辑应用模板</h2><p>从已载入的模板调整名称、固定材料和执行预算。这里只修改作者草稿；保存后仍需另一位管理员审查发布，之后才能供任务装配。</p>
+    <h2>编辑应用模板</h2><p>从已载入的模板调整名称、固定材料和执行预算。这里只修改作者草稿；保存后可发布新版本，之后供任务装配。</p>
     {inspection.errors.length > 0 && <div className="error-message" role="alert"><div><strong>草稿需要核对</strong><ul>{inspection.errors.map((error, index) => <li key={index}>{error}</li>)}</ul></div></div>}
     {inspection.warnings.length > 0 && <div className="policy-note"><ul>{inspection.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
     {changeError && <p className="error-message" role="alert">{changeError}</p>}
@@ -68,7 +68,7 @@ export function ApplicationTemplateEditor({ definition, materials, onChange, dis
         {toolOrder.length ? <ol>{toolOrder.map((tool, index) => <li key={tool}><span>{tool}</span><button type="button" className="text-button" aria-label={`上移工具 ${tool}`} disabled={disabled || index === 0} onClick={() => moveTool(index, -1)}>上移</button><button type="button" className="text-button" aria-label={`下移工具 ${tool}`} disabled={disabled || index === toolOrder.length - 1} onClick={() => moveTool(index, 1)}>下移</button></li>)}</ol> : <p>沿用服务端根据材料确定的默认顺序。</p>}
         {!toolOrder.length && mode.toolNames.length > 0 && <button type="button" className="secondary" onClick={() => change({ kind: 'toolOrder', mode: mode.name, tools: mode.toolNames })}>载入当前工具顺序以调整</button>}
         {toolOrder.length > 0 && <button type="button" className="text-button" onClick={() => change({ kind: 'toolOrder', mode: mode.name, tools: [] })}>恢复服务端默认工具顺序</button>}
-        <details className="technical-detail"><summary>保留的能力、连接与准确版本</summary><p>可视化编辑不修改这些高级范围；如需调整，请使用高级 JSON 并重新提交发布审查。</p><pre>{JSON.stringify({ capabilities: modeDefinition.capabilities, connectionRequirements: modeDefinition.connectionRequirements, materialRefs: modeDefinition.materialRefs, materialChoices: modeDefinition.materialChoices, config: modeDefinition.config }, null, 2)}</pre></details>
+        <details className="technical-detail"><summary>保留的能力、连接与准确版本</summary><p>可视化编辑不修改这些高级范围；如需调整，请使用高级 JSON 并保存并发布新版本。</p><pre>{JSON.stringify({ capabilities: modeDefinition.capabilities, connectionRequirements: modeDefinition.connectionRequirements, materialRefs: modeDefinition.materialRefs, materialChoices: modeDefinition.materialChoices, config: modeDefinition.config }, null, 2)}</pre></details>
       </fieldset>}
     </>}
   </section>;

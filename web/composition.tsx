@@ -40,8 +40,8 @@ function Pages({ context: original }: { context: WorkspaceContext }) {
     {tab === 'schedules' && <><ScheduleDiagnostics key={`diagnostics:${user.id}`} ownerId={user.id} api={api.scheduleDiagnostics}/><SchedulesPanel key={`SchedulesPanel:${user.id}`} ownerId={user.id} canManage={user.role === 'manager'} seed={schedule} api={api.schedules} disabled={!!busy} onTask={onTask}/></>}
     {tab === 'storage' && <StoragePanel key={`StoragePanel:${user.id}`} ownerId={user.id} busy={busy} act={act} onNotice={notice}/>}
     {tab === 'connections' && <ConnectionsPanel user={user} jobs={jobs} busy={busy} act={act} onNotice={notice} onModels={() => navigate({ tab: 'models', modelReturn: 'connections' })} applicationLabel="OpenResearch" onResearch={() => navigate({ tab: 'openresearch' })} onPrepareResearch={() => navigate({ tab: 'openresearch', mode: 'personal', project: '' })} remoteServices={(refresh, onChanged) => <PersonalRemotes key={`${user.id}:${refresh}`} user={user} jobs={jobs} onTask={onTask} onChanged={onChanged}/>}/>}
-    {tab === 'materials' && user.role === 'manager' && <MaterialGovernancePanel user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
-    {tab === 'applications' && user.role === 'manager' && <ApplicationGovernance user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
-    {tab === 'reviews' && user.role === 'manager' && <ResearchPlanReviews ownerId={user.id} busy={busy} act={act}/>}
+    {tab === 'materials' && <MaterialGovernancePanel user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
+    {tab === 'applications' && <ApplicationGovernance user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
+    {tab === 'reviews' && <ResearchPlanReviews ownerId={user.id} busy={busy} act={act}/>}
   </>;
 }

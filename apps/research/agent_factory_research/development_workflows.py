@@ -1,7 +1,7 @@
 """Explicit persistent synthetic development profile; no external providers.
 
 Setup installs trusted local adapters. Publication and initial connection binding
-are separate, explicit bootstrap operations; task-plan reviews remain untouched.
+are separate, explicit bootstrap operations governed by the selected policy.
 """
 from contextlib import contextmanager
 from dataclasses import replace
@@ -69,7 +69,7 @@ def comparison_targets():
 def controlled_workflow_settings(base: Settings):
     """Keep provider SQL custody alive for the server; never delete supplied data."""
     _require(sys.platform == 'linux' and base.demo is True and base.development_mock_login is True
-             and base.temporary_policy == 'admin-review' and not base.remote_targets
+             and base.temporary_policy in {'member-self-service', 'admin-review'} and not base.remote_targets
              and not base.runtime_adapters and not base.trusted_connections
              and not base.handoff_targets and not base.handoff_origins and not base.remote_binding_mappings
              and base.development_profile == 'disabled')
@@ -85,10 +85,12 @@ def controlled_workflow_settings(base: Settings):
             frozenset({pubmed_profile.CAPABILITY}), PROFILE, available=True,
             opaque_handle=provider, handle_ref=PROFILE)
         bindings[refs['model']] = trusted_model_binding(owner)
+    member_publication = base.temporary_policy == 'member-self-service'
+    revision = PROFILE + '-department-v1' if member_publication else PROFILE
     settings = replace(base, source_synthesis_enabled=True, max_workers=1, max_tool_calls=8,
         experiment_timeout_seconds=30, experiment_output_bytes=65536,
-        runtime_tool_contract=PROFILE, policy_revision=PROFILE, material_policy_revision=PROFILE,
-        material_review_mode='separate-admin', trusted_connections=bindings,
+        runtime_tool_contract=PROFILE, policy_revision=revision, material_policy_revision=revision,
+        material_review_mode='member-self-service' if member_publication else 'separate-admin', trusted_connections=bindings,
         runtime_adapters=[*pubmed_profile.registrations(), *comparison_profile.registrations()],
         usage_pricing=(PricingRevision(pubmed_profile.MODEL_ID, '1', 'local-deterministic',
             pubmed_profile.MODEL_ID, 'zero-local-v1', local_model_type=pubmed_profile.PubMedEvidenceModel),
@@ -113,29 +115,35 @@ def controlled_workflow_settings(base: Settings):
         bootstrap.engine.dispose()
 
 
-def _publish_materials(state, definitions):
+def _publish_materials(state, definitions, *, author, reviewer):
     governance = state['material_governance']
     materials = []
     for definition in definitions:
         key = PROFILE + ':material:' + digest(definition)
-        material = governance.create_draft('manager', definition, key + ':draft')
-        review = governance.request_publication('manager', material['id'], material['version'], key + ':review')
-        governance.decide_publication('manager2', review['id'], True, key + ':approve')
+        material = governance.create_draft(author, definition, key + ':draft')
+        if governance.member_publication():
+            governance.publish(author, material['id'], material['version'], key + ':publish')
+        else:
+            review = governance.request_publication(author, material['id'], material['version'], key + ':review')
+            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
         # A replay never reactivates withdrawn material or replaces its version.
-        current = governance.inspect_version('manager', material['id'], material['version'])
+        current = governance.inspect_version(author, material['id'], material['version'])
         _require(current['material']['published'] is True and not current['material'].get('archived')
                  and current.get('governance', {}).get('state') == 'published')
         materials.append(current['material'])
     return materials
 
 
-def _publish_application(state, definition):
+def _publish_application(state, definition, *, author, reviewer):
     applications = state['applications']
     key = PROFILE + ':application:' + digest(definition)
-    application = applications.create_draft('manager', definition, key + ':draft')
-    review = applications.request_publication('manager', application['id'], application['version'], key + ':review')
-    applications.decide_publication('manager2', review['id'], True, key + ':approve')
-    current = applications.inspect('manager', application['id'], application['version'])
+    application = applications.create_draft(author, definition, key + ':draft')
+    if state['material_governance'].member_publication():
+        applications.publish(author, application['id'], application['version'], key + ':publish')
+    else:
+        review = applications.request_publication(author, application['id'], application['version'], key + ':review')
+        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    current = applications.inspect(author, application['id'], application['version'])
     _require(current['governance']['state'] == 'published')
     return current['application']
 
@@ -155,15 +163,20 @@ def _source_definitions():
     return rows
 
 
-def initialize_controlled_fixtures(state):
-    """Explicit operator bootstrap through existing separate-review services."""
+def initialize_controlled_fixtures(state, *, author='manager', reviewer=None):
+    """Explicit operator bootstrap; members publish their exact immutable versions."""
     settings = state['store'].settings
     _require(settings.demo is True and settings.development_mock_login is True
              and settings.runtime_tool_contract == PROFILE and settings.source_synthesis_enabled is True
-             and settings.temporary_policy == 'admin-review' and settings.material_review_mode == 'separate-admin')
-    state['auth'].require('manager', 'components:write')
-    state['auth'].require('manager2', 'agent_os:admin')
-    sources = _publish_materials(state, _source_definitions())
+             and (settings.temporary_policy, settings.material_review_mode) in {
+                 ('member-self-service', 'member-self-service'), ('admin-review', 'separate-admin')})
+    member_publication = state['material_governance'].member_publication()
+    state['auth'].require(author, 'run' if member_publication else 'components:write')
+    if not member_publication:
+        _require(type(reviewer) is str and bool(reviewer) and author != reviewer)
+        state['auth'].require(reviewer, 'agent_os:admin')
+    publication = {'author': author, 'reviewer': reviewer}
+    sources = _publish_materials(state, _source_definitions(), **publication)
     source_app = _publish_application(state, {'id': pubmed_profile.APPLICATION_ID,
         'name': '开发合成文献来源（无外网）', 'description': '内存合成数据，不是实际检索或科研证据。',
         'defaultMode': 'bibliography', 'discoveryKeywords': ['合成来源', '开发来源'],
@@ -171,12 +184,12 @@ def initialize_controlled_fixtures(state):
             'capabilities': [pubmed_profile.CAPABILITY], 'toolOrder': [pubmed_profile.TOOL], 'config': {},
             'connectionRequirements': [{'name': pubmed_profile.CONNECTION_NAME, 'kind': 'orx',
                 'requiredCapabilities': [pubmed_profile.CAPABILITY], 'required': True}],
-            'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1, 'experimentSeconds': 30, 'outputBytes': 65536}}}})
+            'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1, 'experimentSeconds': 30, 'outputBytes': 65536}}}}, **publication)
     synthesis_app = _publish_application(state, synthesis_runtime.application_definition(
-        _publish_materials(state, synthesis_runtime.material_drafts())))
-    compared = {choice: _publish_materials(state, comparison_profile.material_drafts(choice, target))
+        _publish_materials(state, synthesis_runtime.material_drafts(), **publication)), **publication)
+    compared = {choice: _publish_materials(state, comparison_profile.material_drafts(choice, target), **publication)
                 for choice, target in comparison_targets().items()}
-    comparison_app = _publish_application(state, comparison_profile.application_definition(compared))
+    comparison_app = _publish_application(state, comparison_profile.application_definition(compared), **publication)
     for owner in OWNERS:
         refs = registration_refs(owner)
         for kind, capabilities in (('source', [pubmed_profile.CAPABILITY]), ('model', [SCIENTIFIC_CAPABILITY])):

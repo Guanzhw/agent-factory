@@ -1,4 +1,4 @@
-"""Explicit public-query evidence application; ordinary two-admin publication."""
+"""Explicit public-query evidence application with member publication."""
 from pathlib import Path
 
 from agent_factory_research.config import ResearchSettings as Settings
@@ -22,17 +22,18 @@ def literature_settings(*, db_url: str, workspace: Path, provider, owner="alice"
         # Match the reviewed ORX profile: vfs may clone the preloaded image.
         # This is conservative admission headroom, not a hard filesystem quota.
         storage_task_reserve_bytes=4 * 1024 * 1024 * 1024,
-        temporary_policy="admin-review", policy_revision=PROFILE, material_policy_revision=PROFILE,
-        material_review_mode="separate-admin", runtime_tool_contract="orx-evidence-v2",
+        temporary_policy="member-self-service", policy_revision=PROFILE, material_policy_revision=PROFILE,
+        material_review_mode="member-self-service", runtime_tool_contract="orx-evidence-v2",
         trusted_connections={REGISTRATION_REF: trusted}, runtime_adapters=[environment_registration()])
 
 
-def publish_literature_application(state, *, author, reviewer):
-    if author == reviewer:
+def publish_literature_application(state, *, author, reviewer=None):
+    member_publication = state["material_governance"].member_publication()
+    if not member_publication and author == reviewer:
         raise ValueError("A distinct publication reviewer is required")
     governance, applications, store = state["material_governance"], state["applications"], state["store"]
-    state["auth"].require(author, "components:write")
-    state["auth"].require(reviewer, "agent_os:admin")
+    state["auth"].require(author, "run" if member_publication else "components:write")
+    if not member_publication: state["auth"].require(reviewer, "agent_os:admin")
     materials = []
     for kind, name, adapter_id, revision in [("model", "model", MODEL_ID, "1"),
             ("environment", "environment", ENVIRONMENT_ADAPTER_ID, "1"),
@@ -45,8 +46,11 @@ def publish_literature_application(state, *, author, reviewer):
             "permissions": [CAPABILITY] if kind == "tool" else [],
             "runtimeBinding": {"adapterId": adapter_id, "revision": revision, "config": config},
             "provenance": {"kind": "original", "notice": "Original no-provider public-query workflow."}}, PROFILE + ":draft:" + name)
-        review = governance.request_publication(author, identifier, material["version"], PROFILE + ":review:" + name)
-        governance.decide_publication(reviewer, review["id"], True, PROFILE + ":approve:" + name)
+        if member_publication:
+            governance.publish(author, identifier, material["version"], PROFILE + ":publish:" + name)
+        else:
+            review = governance.request_publication(author, identifier, material["version"], PROFILE + ":review:" + name)
+            governance.decide_publication(reviewer, review["id"], True, PROFILE + ":approve:" + name)
         materials.append(next(row for row in store.materials(published_only=True) if row["id"] == identifier and row["version"] == material["version"]))
     application = applications.create_draft(author, {"id": APPLICATION_ID, "name": "公开文献来源证据",
         "description": "批准的公开查询、书目、摘录、缺正文状态与可下载证据包；无模型服务。",
@@ -56,6 +60,9 @@ def publish_literature_application(state, *, author, reviewer):
             "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [CAPABILITY], "required": True}],
             "budget": {"toolCalls": 8, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 30, "outputBytes": 65536}}},
         "discoveryKeywords": ["公开文献", "来源证据", "literature evidence"]}, PROFILE + ":application")
-    review = applications.request_publication(author, application["id"], application["version"], PROFILE + ":app-review")
-    applications.decide_publication(reviewer, review["id"], True, PROFILE + ":app-approve")
+    if member_publication:
+        applications.publish(author, application["id"], application["version"], PROFILE + ":app-publish")
+    else:
+        review = applications.request_publication(author, application["id"], application["version"], PROFILE + ":app-review")
+        applications.decide_publication(reviewer, review["id"], True, PROFILE + ":app-approve")
     return application

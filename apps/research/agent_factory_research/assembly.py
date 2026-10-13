@@ -28,6 +28,9 @@ def install_research(state):
     research = services_for(store)
     from .orx_experiment_tools import initialize_orx_experiments
     initialize_orx_experiments(store)
+    from .inference_wait import initialize, mark_cancel_requested
+    initialize(store)
+    store.runtime_mark_cancel_requested = lambda task_id: mark_cancel_requested(store, task_id)
     from .research_runtime_hooks import ResearchRuntimeHooks
     store.runtime_effect_held = ResearchRuntimeHooks.effect_held
     store.runtime_cancel_owned = lambda task: ResearchRuntimeHooks.cancel(store, task)
@@ -163,4 +166,31 @@ async def research_lifespan(app):
             store.application_environments.close()
         if store.personal_ssh is not None:
             store.personal_ssh.close()
+
+
+
+def research_shutdown(state):
+    """Release the application graph only after native/observer shutdown drains."""
+    release_services(state['store'])
+
+
+def abort_research_install(state):
+    """Undo local constructor resources when no HTTP/native lifespan has started."""
+    store = state['store']
+    # Async controllers start owned work only through HTTP/native admission.
+    # Package/SSH constructors can already own local handles, so close each even
+    # if a different constructor or closer failed. Preserve the startup error.
+    for service in (store.application_environments, store.personal_ssh):
+        if service is not None:
+            try:
+                service.close()
+            except Exception:
+                pass
+    try:
+        for close in (store.dispose_root_locks, store.engine.dispose):
+            try:
+                close()
+            except Exception:
+                pass
+    finally:
         release_services(store)

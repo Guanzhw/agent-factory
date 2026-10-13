@@ -20,6 +20,6 @@ export function ResearchPages({ context }: { context: WorkspaceContext }) {
     onTask={onTask} onResources={() => navigate({ tab: 'resources' })} onCatalog={() => navigate({ tab: 'catalog' })}/>;
   if (route.tab === 'autoresearch') return <AutoResearch key={`${user.id}:${route.run || 'entry'}`} ownerId={user.id} api={researchApi.autoresearch}
     runId={route.run || undefined} onRun={(run, passive) => { if (!passive) navigate({ tab: 'autoresearch', run }); }} onOpenTasks={() => navigate({ tab: 'catalog' })}/>;
-  if (route.tab === 'comparison') return <ComparisonPanel ownerId={user.id} api={researchApi.comparisons} disabled={!!busy} onPrepare={seed => onCompose?.({ key: `${seed.applicationRef.sha256}:${seed.mode}`, applicationRef: seed.applicationRef, mode: seed.mode, goal: seed.goal }, '比较输入已固定，请生成提案并完成独立方案审查。')}/>;
+  if (route.tab === 'comparison') return <ComparisonPanel ownerId={user.id} api={researchApi.comparisons} disabled={!!busy} onPrepare={seed => onCompose?.({ key: `${seed.applicationRef.sha256}:${seed.mode}`, applicationRef: seed.applicationRef, mode: seed.mode, goal: seed.goal }, '比较输入已固定，请生成提案并确认本次任务范围。')}/>;
   return null;
 }

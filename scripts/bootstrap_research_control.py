@@ -143,7 +143,8 @@ def main(argv=None, *, build_application=None, serve=None):
         from agent_factory_research.config import ResearchSettings as Settings
         settings = Settings(db_url=url, workspace=workspace, demo=True, max_workers=1,
                             max_user_tasks=1, max_total_tasks=1, max_queued=1,
-                            temporary_policy='admin-review', host='127.0.0.1', port=args.port)
+                            temporary_policy='member-self-service', material_review_mode='member-self-service',
+                            host='127.0.0.1', port=args.port)
         from agent_factory_research.research_bootstrap_policy import development_settings
         settings = development_settings(settings)
         if args.check_config:

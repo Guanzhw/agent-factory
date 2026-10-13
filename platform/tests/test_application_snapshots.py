@@ -195,7 +195,7 @@ class OwnedFactory:
         test.addCleanup(self.database.__exit__, None, None, None)
         self.directory = TemporaryDirectory()
         test.addCleanup(self.directory.cleanup)
-        self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
+        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
         self.client: Any = None
         test.addCleanup(self.stop)
         self.start()

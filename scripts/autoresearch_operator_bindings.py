@@ -259,21 +259,29 @@ def _state(app):
 
 
 def prepare_publication(app, publication):
-    """Use actual distinct-manager governance; never approve a task here."""
+    """Publish exact shared versions under the current governance policy."""
     from agent_factory_research.services import services_for
     from agent_factory_research import remote_scientific_profile as profile
     from agent_factory.store import digest
     from agent_factory_research.autoresearch_profile import material_drafts, application_definition
     state = _state(app); config = app.operator_config; project = project_descriptor(config)
-    author, reviewer = publication['author'], publication['reviewer']
-    require(author != reviewer)
-    state['auth'].require(author, 'components:write'); state['auth'].require(reviewer, 'agent_os:admin')
+    author, reviewer = publication['author'], publication.get('reviewer')
     governance, applications = state['material_governance'], state['applications']
+    member_publication = governance.member_publication()
+    if member_publication:
+        state['auth'].require(author, 'run')
+    else:
+        require(type(reviewer) is str and bool(reviewer) and author != reviewer)
+        state['auth'].require(author, 'components:write')
+        state['auth'].require(reviewer, 'agent_os:admin')
     def material(definition):
         key = 'remote-science:' + digest(definition)
         row = governance.create_draft(author, definition, key + ':draft')
-        review = governance.request_publication(author, row['id'], row['version'], key + ':review')
-        governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+        if member_publication:
+            governance.publish(author, row['id'], row['version'], key + ':publish')
+        else:
+            review = governance.request_publication(author, row['id'], row['version'], key + ':review')
+            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
         return row
     budget = {key: project['limits'][key] for key in ('toolCalls', 'experimentSeconds', 'outputBytes')}
     budget.update(maxDepth=1, maxChildren=3)
@@ -298,8 +306,11 @@ def prepare_publication(app, publication):
     else:
         key = 'remote-science-app:' + digest(definition)
         row = applications.create_draft(author, definition, key + ':draft')
-    review = applications.request_publication(author, row['id'], row['version'], key + ':review')
-    applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    if member_publication:
+        applications.publish(author, row['id'], row['version'], key + ':publish')
+    else:
+        review = applications.request_publication(author, row['id'], row['version'], key + ':review')
+        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
     ref = {key: row[key] for key in ('id', 'version', 'sha256')}
     if config['role'] == 'controller':
         from dataclasses import replace

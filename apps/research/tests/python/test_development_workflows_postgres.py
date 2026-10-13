@@ -39,7 +39,7 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
         self.runtime = runtime
         base = Settings(db_url=self.database.url, workspace=self.workspace, demo=True,
             development_mock_login=True, development_public_origin='https://127.0.0.1:3443',
-            temporary_policy='admin-review', storage_task_reserve_bytes=8*1024*1024)
+            temporary_policy='member-self-service', material_review_mode='member-self-service', storage_task_reserve_bytes=8*1024*1024)
         settings = runtime.enter_context(controlled_workflow_settings(base))
         app = create_app(settings)
         self.state = app.app.state.factory
@@ -47,7 +47,7 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
         runtime.callback(self.store.engine.dispose)
         runtime.callback(self.store.native_db.db_engine.dispose)
         if initialize:
-            initialize_controlled_fixtures(self.state)
+            initialize_controlled_fixtures(self.state, author='alice')
         self.sessions = {}
         self.client = runtime.enter_context(TestClient(app, base_url='https://127.0.0.1:3443', follow_redirects=False))  # pyright: ignore[reportArgumentType]
 
@@ -101,9 +101,7 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
             'mode': mode, 'goal': goal, **extra})
         self.assertEqual(proposal['candidate']['status'], 'ready', proposal)
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        self.post('/instances', {'planId': plan['id']}, status=409)
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager2', status=200)
+        self.assertEqual(plan['policy'], 'member-self-service')
         task = self.post('/instances', {'planId': plan['id']}, status=202)
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
@@ -114,7 +112,9 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
             time.sleep(.05)
         self.fail('DEVELOPMENT_WORKFLOW_TIMEOUT')
 
-    def test_single_profile_source_snapshot_synthesis_and_comparison_with_separate_plan_reviews(self):
+    def test_member_source_snapshot_synthesis_and_comparison_without_plan_review(self):
+        catalog = self.request('GET', '/comparisons/catalog')
+        self.assertIn('linear-v1', {item['mode'] for item in catalog['items']})
         source, detail = self.execute(SOURCE, 'bibliography', 'Inspect the synthetic development source.',
             connectionRefs={SOURCE_CONNECTION: self.connection('source')['ref']})
         self.assertEqual(detail['literatureEvidence']['evidenceKind'], 'controlled_literature_fixture')
@@ -150,7 +150,7 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
         before_connections = self.state['connections'].list('alice')
         selected = self.connection('source')
         self.state['connections'].revoke('alice', selected['ref'], str(uuid4()))
-        initialize_controlled_fixtures(self.state)
+        initialize_controlled_fixtures(self.state, author='alice')
         self.assertEqual(len(self.state['connections'].list('alice')), len(before_connections))
         self.assertEqual(self.connection('source')['ref'], selected['ref'])
         self.assertEqual(self.connection('source')['status'], 'revoked')

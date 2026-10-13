@@ -10,16 +10,16 @@ from agent_factory.plan_policy import PlanPolicyConfig, application_tool_catalog
 
 class SynthesisConfigurationTests(unittest.TestCase):
     def test_disabled_preserves_exact_legacy_policy_and_governance_hashes(self):
-        self.assertEqual(PlanPolicyConfig(source_synthesis_enabled=False).fingerprint,
+        self.assertEqual(PlanPolicyConfig(name="admin-review", revision="plan-policy-v1", source_synthesis_enabled=False).fingerprint,
                          'b03c7ab3571b7a01236685a940580a67197e4e91b236952bfb7a496b711fae72')
-        self.assertEqual(GovernanceConfig(source_synthesis_enabled=False).fingerprint,
+        self.assertEqual(GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1", source_synthesis_enabled=False).fingerprint,
                          '84a5dd82dea562781e732c0884ed870971ddb4f8fb1257d3b75907f1411d283e')
 
     def test_disabled_preserves_exact_nonlegacy_policy_and_governance_hashes(self):
-        self.assertEqual(PlanPolicyConfig(tool_contract='orx-evidence-v2',
+        self.assertEqual(PlanPolicyConfig(name='admin-review', tool_contract='orx-evidence-v2',
             revision='synthesis-compat-evidence-v2', source_synthesis_enabled=False).fingerprint,
             '223c551c6afa8d42e6f143e214a17f8ed10bb61d91504da15aae28dcc7dc64e9')
-        self.assertEqual(GovernanceConfig(tool_contract='orx-evidence-v2',
+        self.assertEqual(GovernanceConfig(review_mode='separate-admin', tool_contract='orx-evidence-v2',
             revision='synthesis-compat-evidence-v2', source_synthesis_enabled=False).fingerprint,
             '42d679f63c37f3601b773253a6042b0376d207af9e13c5da4fc5673657e20501')
 

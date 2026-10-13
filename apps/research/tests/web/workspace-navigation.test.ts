@@ -16,9 +16,9 @@ describe('Factory application workspace navigation', () => {
   it('retains unrelated URL state without exposing goal or approval data', () => {
     expect(workspaceUrl(new URL('https://factory.test/workspace?lang=zh&task=old#details'), { tab: 'research', task: 'new', run: '' }, researchNavigation)).toBe('/workspace?lang=zh&task=new&tab=research#details');
   });
-  it('does not show administrator views to ordinary users', () => {
+  it('allows members to open publication and their historical review views', () => {
     for (const tab of ['materials', 'applications', 'reviews']) {
-      expect(read(`?tab=${tab}`).tab).toBe('catalog');
+      expect(read(`?tab=${tab}`).tab).toBe(tab);
       expect(read(`?tab=${tab}`, true).tab).toBe(tab);
     }
   });

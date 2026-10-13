@@ -119,7 +119,7 @@ def database_preflight(engine, settings):
                             if not current and config is not None:
                                 valid = valid and saved.fingerprint == config.fingerprint and asdict(saved) == asdict(config)
                             if isinstance(saved, PlanPolicyConfig) and current:
-                                policy_valid = saved.name in {'unset', 'admin-review', 'read-only-auto', 'bounded-synthetic'}
+                                policy_valid = saved.name in {'unset', 'member-self-service', 'admin-review', 'read-only-auto', 'bounded-synthetic'}
                                 check('plan.policyEnum', policy_valid and (saved.name != 'bounded-synthetic' or mode is True), 'POLICY_ENUM_OR_MODE_INVALID')
                             if isinstance(saved, GovernanceConfig) and saved.review_mode == 'demo-self-review' and mode is not True:
                                 valid = False

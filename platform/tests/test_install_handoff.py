@@ -120,7 +120,7 @@ class InstallHandoffTests(unittest.TestCase):
         # PR49's one-file repair is immutable, not a rolling latest-code overlay.
         self.assertEqual(closure.PATH_FIX_SHA256,
             'ee479cf871534572d62b292bdd616e7e657ddc2a93e1d2713e26af78c91bc587')
-        runtime = Path(__file__).parents[1] / closure.PATH_FIX_FILE
+        runtime = Path(__file__).parents[2] / 'apps/research/agent_factory_research' / Path(closure.PATH_FIX_FILE).name
         wheel = self.root / 'later-runtime.whl'
         with zipfile.ZipFile(wheel, 'w') as archive:
             archive.writestr(closure.PATH_FIX_FILE, runtime.read_bytes())

@@ -16,7 +16,7 @@ describe('guided application template rendering', () => {
   it('shows Chinese fields, fixed material slots, bounded budgets and preserved scope without writes', () => {
     const onChange = vi.fn(); const original = definition(); const before = structuredClone(original);
     const html = renderToStaticMarkup(createElement(ApplicationTemplateEditor, { definition: original, materials: [tool], onChange }));
-    for (const label of ['应用名称', '应用说明', '发现关键词 1', '默认执行方式', '编辑执行方式', '固定材料', '默认材料 reader', '预算 工具调用次数', '上移工具 read_source', '另一位管理员审查发布', '保留的能力、连接与准确版本']) expect(html).toContain(label);
+    for (const label of ['应用名称', '应用说明', '发现关键词 1', '默认执行方式', '编辑执行方式', '固定材料', '默认材料 reader', '预算 工具调用次数', '上移工具 read_source', '保存后可发布新版本', '保留的能力、连接与准确版本']) expect(html).toContain(label);
     expect(html).not.toContain('type="submit"'); expect(onChange).not.toHaveBeenCalled(); expect(original).toEqual(before);
   });
   it('disables guided controls while saving or authority is unavailable', () => {
