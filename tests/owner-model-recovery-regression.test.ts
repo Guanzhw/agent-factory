@@ -304,6 +304,91 @@ it('does not send the next stage after another tab archives the still-running re
   expect(JSON.parse(localStorage.getItem(unresolvedStorage)!)).toEqual([original]);
 });
 
+it('does not resume a delayed configure after another tab settles its archive and chooses a new default', async () => {
+  let completeConfigure!: (value: OwnerModel) => void;
+  const other = { ...model, reference: 'second-tab-model', model: 'second-tab-model' };
+  let currentDefault: string | undefined;
+  vi.mocked(ownerModelApi.configure).mockImplementation(() => new Promise(resolve => { completeConfigure = resolve; }));
+  vi.mocked(ownerModelApi.list).mockImplementation(async () => [other, model].map(record => ({ ...record, isDefault: currentDefault === record.reference })));
+  vi.mocked(ownerModelApi.default).mockImplementation(async (_owner, reference) => {
+    currentDefault = reference;
+    return { ...(reference === other.reference ? other : model), isDefault: true };
+  });
+  await mount(); await saveWithExistingCredential();
+  const firstRequest = JSON.parse(localStorage.getItem(storage)!) as ModelSetup;
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: owner, requestId: firstRequest.modelRequest,
+    action: 'model.configure', result: model, completedAt: '2026-10-13T00:01:00Z' });
+
+  // Two live ModelSettings roots share browser storage; the first POST is still
+  // awaiting its response while the second root uses the actual recovery UI.
+  const firstHost = host; const firstRoot = root;
+  const secondHost = document.createElement('div'); document.body.append(secondHost);
+  const secondRoot = createRoot(secondHost);
+  host = secondHost; root = secondRoot;
+  try {
+    await mount(); await click('停止等待此保存'); await click('确认停止等待并保留原请求');
+    expect(JSON.parse(localStorage.getItem(unresolvedStorage)!)).toHaveLength(1);
+    await click('核对保留的原请求');
+    expect(ownerModelApi.recover).toHaveBeenCalledWith(owner, firstRequest.modelRequest);
+    expect(JSON.parse(localStorage.getItem(unresolvedStorage)!)).toEqual([]);
+    expect(localStorage.getItem(storage)).toBeNull();
+    await click('设为默认');
+    expect(currentDefault).toBe(other.reference);
+    expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(storage)).toBeNull();
+
+    await act(async () => completeConfigure(model));
+    expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+    expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
+    expect(ownerModelApi.default).not.toHaveBeenCalledWith(owner, model.reference, firstRequest.defaultRequest);
+    expect(currentDefault).toBe(other.reference);
+    expect(localStorage.getItem(storage)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(unresolvedStorage)!)).toEqual([]);
+    expect(firstHost.textContent).not.toContain('模型已保存并设为默认');
+  } finally {
+    await act(async () => secondRoot.unmount()); secondHost.remove(); host = firstHost; root = firstRoot;
+  }
+});
+
+it('ignores a delayed default completion after another tab settles it and selects another default', async () => {
+  let completeDefault!: (value: OwnerModel) => void;
+  const other = { ...model, reference: 'new-default-model', model: 'new-default-model' };
+  let currentDefault: string | undefined;
+  vi.mocked(ownerModelApi.list).mockImplementation(async () => [model, other].map(record => ({ ...record, isDefault: currentDefault === record.reference })));
+  vi.mocked(ownerModelApi.default).mockImplementation(async (_owner, reference) => {
+    currentDefault = reference;
+    if (reference === model.reference) return new Promise(resolve => { completeDefault = resolve; });
+    return { ...other, isDefault: true };
+  });
+  await mount(); await click('设为默认');
+  const original = JSON.parse(localStorage.getItem(storage)!) as ModelSetup;
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: owner, requestId: original.defaultRequest,
+    action: 'model.default', result: { ...model, isDefault: true }, completedAt: '2026-10-13T00:01:00Z' });
+
+  const firstHost = host; const firstRoot = root;
+  const secondHost = document.createElement('div'); document.body.append(secondHost);
+  const secondRoot = createRoot(secondHost);
+  host = secondHost; root = secondRoot;
+  try {
+    await mount(); await click('停止等待此保存'); await click('确认停止等待并保留原请求');
+    await click('核对保留的原请求');
+    expect(ownerModelApi.recover).toHaveBeenCalledWith(owner, original.defaultRequest);
+    expect(JSON.parse(localStorage.getItem(unresolvedStorage)!)).toEqual([]);
+    await click('设为默认');
+    expect(currentDefault).toBe(other.reference);
+    await act(async () => completeDefault({ ...model, isDefault: true }));
+    expect(ownerModelApi.configure).not.toHaveBeenCalled();
+    expect(ownerModelApi.default).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(ownerModelApi.default).mock.calls.map(call => call[1])).toEqual([model.reference, other.reference]);
+    expect(currentDefault).toBe(other.reference);
+    expect(localStorage.getItem(storage)).toBeNull();
+    expect(firstHost.textContent).not.toContain('默认模型已更新');
+    expect(firstHost.textContent).not.toContain('模型已保存并设为默认');
+  } finally {
+    await act(async () => secondRoot.unmount()); secondHost.remove(); host = firstHost; root = firstRoot;
+  }
+});
+
 it('finishes a valid saved-credential configuration and default without leaving pending state', async () => {
   await mount(); await saveWithExistingCredential();
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);

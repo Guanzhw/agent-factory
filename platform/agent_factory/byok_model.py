@@ -28,7 +28,7 @@ from .model_endpoint_policy import (
     model_origin as model_origin,
 )
 from .model_protocol import (
-    decode_response, encode_request, function_call as function_call,
+    assistant_message_matches, decode_response, encode_request, function_call as function_call,
     protocol_name, protocol_path,
 )
 from .model_transport import MAX_BYTES as MAX_BYTES, PinnedChatTransport as PinnedChatTransport, read_response_json
@@ -73,7 +73,7 @@ class OwnerChatModel(Model):
         if response_format is not None:
             raise rejected('PERSONAL_MODEL_UNSUPPORTED_FORMAT')
         encoded, continuation = [], []
-        for message in messages:
+        for index, message in enumerate(messages):
             if (message.role not in {'system', 'user', 'assistant', 'tool'}
                     or message.content is not None and type(message.content) is not str
                     or any(getattr(message, field, None) for field in ('images', 'videos', 'audio', 'files'))):
@@ -81,12 +81,22 @@ class OwnerChatModel(Model):
             item = {'role': message.role, 'content': message.content}
             if message.role == 'tool': item['tool_call_id'] = message.tool_call_id
             if message.tool_calls: item['tool_calls'] = [function_call(call) for call in message.tool_calls]
-            if self._protocol == 'responses' and message.role == 'assistant' and message.tool_calls:
-                data = (message.provider_data or {}).get('owner_responses')
-                if (type(data) is not dict or data.get('scope') != self._scope
-                        or data.get('session') != self._session_id):
+            if message.role == 'assistant':
+                private = message.provider_data or {}
+                data = private.get('owner_model_continuation', private.get('owner_responses'))
+                required = bool(message.tool_calls) or self._protocol == 'chat-completions' and bool(tools)
+                if data is not None:
+                    if (type(data) is not dict or data.get('scope') != self._scope
+                            or data.get('session') != self._session_id):
+                        raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
+                    record = data.get('continuation')
+                    expected = data.get('message', record.get('message') if type(record) is dict else None)
+                    if not assistant_message_matches(expected, item):
+                        raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
+                    if record is not None:
+                        continuation.append({**record, 'message_index': index})
+                elif required:
                     raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
-                continuation.append(data.get('continuation'))
             encoded.append(item)
         chat = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if tools:
@@ -149,14 +159,17 @@ class OwnerChatModel(Model):
             message = response['choices'][0]['message']
             result = ModelResponse(role='assistant', content=message.get('content'),
                 tool_calls=message.get('tool_calls', []))
-            if continuation is not None:
-                result.provider_data = {'owner_responses': {'scope': self._scope,
-                    'session': self._session_id, 'continuation': continuation}}
+            result.provider_data = {'owner_model_continuation': {'scope': self._scope,
+                'session': self._session_id, 'message': message, 'continuation': continuation}}
             usage = response.get('usage')
             if usage is not None:
                 result.response_usage = MessageMetrics(input_tokens=usage['prompt_tokens'],
                     output_tokens=usage['completion_tokens'], total_tokens=usage['total_tokens'])
             return result
+        except ValueError as error:
+            code = {'MODEL_PROTOCOL_EMPTY_OUTPUT': 'PERSONAL_MODEL_EMPTY_OUTPUT',
+                'MODEL_PROTOCOL_REFUSAL': 'PERSONAL_MODEL_REFUSAL'}.get(str(error))
+            raise rejected(code or 'PERSONAL_MODEL_RESPONSE_REJECTED') from None
         except Exception:
             raise rejected() from None
 

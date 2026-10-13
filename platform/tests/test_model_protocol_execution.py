@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
 import httpx
@@ -154,7 +155,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                         else:
                             message = {'role': 'assistant', 'content': 'synthetic completion'}
                             if turn < 3:
-                                message.update(content=None, tool_calls=[{'type': 'function', 'id': f'call_synthetic{turn}',
+                                message.update(content=None, reasoning_content=f'synthetic-private-reasoning-{turn}',
+                                    tool_calls=[{'type': 'function', 'id': f'call_synthetic{turn}',
                                     'function': {'name': 'checksum_fixture', 'arguments': '{}'}}])
                             payload = {'choices': [{'message': message, 'finish_reason': 'tool_calls' if turn < 3 else 'stop'}]}
                         return httpx.Response(200, json=payload)
@@ -179,6 +181,156 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                         final_input = json.loads(self.calls[2].content)['input']
                         self.assertEqual([item['id'] for item in final_input if item.get('type') == 'reasoning'],
                             ['rs_synthetic1', 'rs_synthetic2'])
+                    else:
+                        final_messages = json.loads(self.calls[2].content)['messages']
+                        self.assertEqual([message['reasoning_content'] for message in final_messages if message['role'] == 'assistant'],
+                            ['synthetic-private-reasoning-1', 'synthetic-private-reasoning-2'])
+
+    def test_agno_preserves_cc_final_reasoning_across_persisted_user_turns(self):
+        self.config.update(protocol='chat-completions', model='deepseek-flash')
+        def wire(request):
+            self.calls.append(request)
+            turn = len(self.calls)
+            message = {'role': 'assistant', 'content': 'synthetic first answer' if turn == 1 else 'synthetic completion',
+                'reasoning_content': f'synthetic-private-reasoning-{turn}'}
+            if turn == 2:
+                message.update(content=None, tool_calls=[{'id': 'call_synthetic', 'type': 'function',
+                    'function': {'name': 'checksum_fixture', 'arguments': '{}'}}])
+            return httpx.Response(200, json={'choices': [{'message': message,
+                'finish_reason': 'tool_calls' if turn == 2 else 'stop'}]})
+        self.wire = wire
+        def checksum_fixture(): return 'synthetic-checksum'
+        agent = Agent(model=self.model(), tools=[checksum_fixture], db=InMemoryDb(), add_history_to_context=True,
+            session_id='synthetic-persisted-session', markdown=False)
+        self.assertEqual(asyncio.run(agent.arun('synthetic first user')).content, 'synthetic first answer')
+        self.assertEqual(asyncio.run(agent.arun('synthetic second user')).content, 'synthetic completion')
+        self.assertEqual(len(self.calls), 3)
+        final = json.loads(self.calls[2].content)
+        self.assertEqual([message['reasoning_content'] for message in final['messages'] if message['role'] == 'assistant'],
+            ['synthetic-private-reasoning-1', 'synthetic-private-reasoning-2'])
+
+    def test_empty_or_refusal_is_terminal_in_both_protocols_and_execution_paths(self):
+        cc_messages = [{'role': 'assistant', 'content': value} for value in (None, '', ' \n ')] + [
+            {'role': 'assistant', 'content': None, 'reasoning_content': 'synthetic thinking only'},
+            {'role': 'assistant', 'content': None, 'refusal': 'synthetic refusal'}]
+        responses_outputs = [
+            [{'type': 'message', 'role': 'assistant', 'content': []}],
+            [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': ''}]}],
+            [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': ' \n '}]}],
+            [{'type': 'reasoning', 'id': 'rs_synthetic_empty', 'summary': [], 'encrypted_content': 'synthetic thinking only'}],
+            [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'refusal', 'refusal': 'synthetic refusal'}]}],
+        ]
+        for protocol, payloads in (
+                ('chat-completions', [{'choices': [{'finish_reason': 'stop', 'message': message}]} for message in cc_messages]),
+                ('responses', [{'status': 'completed', 'output': output} for output in responses_outputs])):
+            for index, payload in enumerate(payloads):
+                for execution in ('agno', 'broker'):
+                    with self.subTest(protocol=protocol, payload=index, execution=execution):
+                        self.config.update(protocol=protocol, model='gpt-6-luna' if protocol == 'responses' else 'deepseek-flash')
+                        self.calls = []; self.answer = payload
+                        if execution == 'agno':
+                            with self.assertRaises(ModelProviderError) as caught:
+                                asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic task')]))
+                            self.assertIn('PERSONAL_MODEL_REFUSAL' if index == 4 else 'PERSONAL_MODEL_EMPTY_OUTPUT', str(caught.exception))
+                        else:
+                            broker = self.broker()
+                            body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic task'}]}
+                            diagnostics = []
+                            for _ in range(2):
+                                with self.assertRaises(OwnerModelCallError) as caught:
+                                    broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001')
+                                self.assertEqual(caught.exception.code, 'OWNER_MODEL_CALL_UNCONFIRMED')
+                                expected_reason = 'MODEL_REFUSAL' if index == 4 else 'MODEL_EMPTY_OUTPUT'
+                                self.assertEqual(caught.exception.response()['error']['terminalReason'], expected_reason)
+                                diagnostics.append(caught.exception.diagnostic_id)
+                            self.assertEqual(diagnostics[0], diagnostics[1]); self.assertEqual(broker.continuations, {})
+                        self.assertEqual(len(self.calls), 1)
+
+    def test_unmarked_tool_history_is_not_silently_resumed_after_restart(self):
+        assistant = {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'call_synthetic', 'type': 'function',
+            'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}
+        tool = {'role': 'tool', 'tool_call_id': 'call_synthetic', 'content': 'synthetic result'}
+        for protocol in ('chat-completions', 'responses'):
+            with self.subTest(protocol=protocol):
+                self.config['protocol'] = protocol
+                messages = [{'role': 'user', 'content': 'synthetic task'}, assistant, tool]
+                with self.assertRaises(ModelProviderError):
+                    asyncio.run(self.model().ainvoke([Message(**message) for message in messages]))
+                with self.assertRaises(OwnerModelCallError) as caught:
+                    self.broker().native_completion({'model': 'owner-model', 'messages': messages},
+                        'ses_synthetic0001', 'msg_synthetic0001')
+                self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+        self.assertEqual(self.calls, [])
+
+    def test_known_truncated_history_is_rejected_before_another_dispatch(self):
+        for protocol in ('chat-completions', 'responses'):
+            with self.subTest(protocol=protocol):
+                self.config['protocol'] = protocol
+                self.answer = response_output() if protocol == 'responses' else {
+                    'choices': [{'message': {'role': 'assistant', 'content': 'synthetic first answer'}, 'finish_reason': 'stop'}]}
+                self.calls = []
+                broker = self.broker()
+                body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic task'}]}
+                first = broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001')
+                self.assertEqual(broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001'), first)
+                with self.assertRaises(OwnerModelCallError) as caught:
+                    broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0002')
+                self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+                self.assertEqual(len(self.calls), 1)
+
+    def test_cc_private_markers_cannot_fall_back_after_scope_changes(self):
+        self.config.update(protocol='chat-completions', model='deepseek-flash')
+        self.answer = {'choices': [{'message': {'role': 'assistant', 'content': None,
+            'reasoning_content': 'synthetic-private-reasoning', 'tool_calls': [{'id': 'call_synthetic', 'type': 'function',
+                'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}, 'finish_reason': 'tool_calls'}]}
+        original = dict(self.config)
+        model = self.model()
+        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')]))
+        messages = [Message(role='user', content='synthetic task'), Message(role='assistant', content=first.content,
+            tool_calls=first.tool_calls, provider_data=first.provider_data),
+            Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]
+        for field, value in (('ownerId', 'another-owner'), ('revision', 'model-r2'),
+                ('credentialRevision', 'credential-r2'), ('model', 'different-model'),
+                ('baseURL', 'https://models.example.com/v1'), ('protocol', 'responses')):
+            with self.subTest(path='agno', field=field):
+                self.config = {**original, field: value}
+                with self.assertRaises(ModelProviderError): asyncio.run(self.model().ainvoke(messages))
+        self.config = original
+        model = self.model(); model._session_id = 'another-synthetic-session'
+        with self.assertRaises(ModelProviderError): asyncio.run(model.ainvoke(messages))
+        self.assertEqual(len(self.calls), 1)
+
+        broker = self.broker()
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic task'}]}
+        result = broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001')
+        body['messages'].extend([result['choices'][0]['message'],
+            {'role': 'tool', 'tool_call_id': 'call_synthetic', 'content': 'synthetic result'}])
+        for number, (field, value) in enumerate((('revision', 'model-r2'), ('credentialRevision', 'credential-r2'),
+                ('model', 'different-model'), ('baseURL', 'https://models.example.com/v1'), ('protocol', 'responses'))):
+            with self.subTest(path='broker', field=field):
+                broker.handle.body = {**original, field: value}
+                with self.assertRaises(OwnerModelCallError) as caught:
+                    broker.native_completion(body, 'ses_synthetic0001', f'msg_syntheticchange{number}')
+                self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+        broker.handle.body = original
+        for session, owner in (('ses_synthetic0002', 'synthetic-owner'), ('ses_synthetic0001', 'another-owner')):
+            broker.handle.owner = owner
+            with self.assertRaises(OwnerModelCallError) as caught:
+                broker.native_completion(body, session, 'msg_syntheticfinalchange')
+            self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+        self.assertEqual(len(self.calls), 2)
+
+    def test_legacy_agno_responses_private_record_can_still_be_read(self):
+        self.answer = response_output(tool=True)
+        model = self.model()
+        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')]))
+        private = first.provider_data['owner_model_continuation']
+        legacy = {'owner_responses': {field: private[field] for field in ('scope', 'session', 'continuation')}}
+        self.answer = response_output()
+        result = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic task'),
+            Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=legacy),
+            Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]))
+        self.assertEqual(result.content, 'synthetic completion')
 
     def test_broker_continuation_cannot_cross_credential_revision_or_owner(self):
         broker = self.broker(); self.answer = response_output(tool=True)

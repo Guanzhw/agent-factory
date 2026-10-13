@@ -62,10 +62,13 @@ class MetadataOnlyVault:
 class ModelCommandRecoveryTests(unittest.TestCase):
     root = '/api/factory/personal-models'
 
-    def setUp(self):
+    def make_engine(self):
         directory = TemporaryDirectory(prefix='model-command-recovery-')
         self.addCleanup(directory.cleanup)
-        self.engine = create_engine('sqlite:///' + str(Path(directory.name) / 'owned-metadata.sqlite'))
+        return create_engine('sqlite:///' + str(Path(directory.name) / 'owned-metadata.sqlite'))
+
+    def setUp(self):
+        self.engine = self.make_engine()
         self.addCleanup(self.engine.dispose)
         self.mutations = []
 

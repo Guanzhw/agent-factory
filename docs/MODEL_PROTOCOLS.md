@@ -28,16 +28,40 @@ Explicit null and unknown protocols are rejected. Responses is always explicit,
 including for an unfamiliar model name. Public APIs contain no model-to-protocol
 switch. Both codecs support bounded text and function tools; function IDs,
 arguments, tool choice and token limits are mapped. Invalid/incomplete/refused
-provider outputs fail with fixed safe errors. Optional usage is a metric only.
+provider outputs fail with fixed safe errors. An empty, whitespace-only or
+reasoning-only response without a valid tool call is an explicit empty-output
+failure, never an empty successful answer. Optional usage is a metric only.
 
 Responses uses `store:false` and carries validated reasoning/function output
-items through the associated tool turn. Private continuation data is bound to
-the original owner, model/credential revisions, destination, protocol and session.
-Agno retains it in message provider data; the broker retains it within the existing
-scoped broker lifecycle. Missing or mismatched tool continuation fails closed.
-There is no general conversation store or guarantee of reasoning continuity
-across unrelated user turns or broker restarts. The original native call receipt
-and UNKNOWN rule still prevent blind provider resubmission.
+items through the associated tool turn. Matching accepts the actual SDK's
+`null`/empty tool-message text and equivalent JSON argument serialization;
+function names, ordered IDs and JSON values remain exact in meaning, including
+the distinction between booleans and numbers. Original provider replay payloads
+are preserved. Private continuation data is bound to the original owner,
+model/credential revisions, destination, protocol and session.
+
+CC preserves `reasoning_content` privately for every assistant turn that returns
+it, including final answers without tool calls. This follows the
+[DeepSeek thinking contract](https://api-docs.deepseek.com/guides/thinking_mode/):
+requests carrying tools need prior reasoning even from earlier non-tool turns.
+It is a generic field contract, with no model-name switch or automatic disabling
+of thinking. Provider support for forced tool choice is separate; for example,
+DeepSeek documents that forced selection is unsupported while thinking is on.
+The adapter does not silently change thinking or retry to obtain an answer.
+
+Agno retains continuation markers in message provider data; the broker uses its
+existing bounded session cache indexed by assistant position. All tool messages,
+and all assistant history in CC requests carrying tools, need their original
+scoped markers. Missing, changed or reordered context is rejected before a new
+dispatch. **Old CC tool histories without these markers, broker restarts and
+trimmed histories cannot be assumed lossless.** No history is deleted, no new
+session is created automatically, and no persistence service is added. Plain
+text history without tools still works. Responses final-answer reasoning without
+tools is not promised across user turns. Continuation assumes a complete,
+linear assistant history and callers must serialize turns within a session;
+concurrent branches and edited histories are not supported recovery paths.
+The original native call receipt and UNKNOWN rule still prevent blind provider
+resubmission.
 
 Transport remains HTTPS/443 with public DNS checks on each request, connection
 to the checked address, original Host/SNI and certificate verification. No
@@ -62,6 +86,8 @@ The endpoint table currently names `deepseek-v4.1-flash`; the
 [legacy public model catalog](https://opencode.ai/zen/go/v1/models) also lists
 `deepseek-flash`. The latter remains the requested HTTP alias in the preset.
 Its presence in that catalog does not verify inference on the new prefix.
+The [fixed OpenCode model metadata](https://raw.githubusercontent.com/anomalyco/models.dev/2858118c7109c87cdaaeeb6db35d8e6a10f3ea46/providers/opencode-go/models/deepseek-flash.toml)
+marks that alias deprecated and declares `interleaved.reasoning_content`.
 Go requests include the application's User-Agent and stable conversation header.
 Generic public HTTPS `/v1` providers remain configurable without Go headers.
 
@@ -101,14 +127,19 @@ Users can leave an uncertain setup to continue other work. Its secret-free
 metadata is archived under the same owner for read-only receipt checking. This
 does not revoke resources, resend requests, or claim the operation failed.
 Credential UNKNOWN remains on the existing credential GET recovery path.
+A continuation must still own its original active setup slot. Even after another
+tab checks and removes the archive, a late response cannot recreate the old
+setup or send its previously unsent default selection. Only a new explicit user
+operation can acquire an empty slot; a late response also cannot report success
+after that slot has been released.
 
 ## Verification limits
 
-Regression suites use synthetic credentials, temporary SQLite where applicable,
-and in-memory provider transports. They exercise both execution paths, both
-protocols, function turns, endpoint pinning, original command results and native
-non-replay. They do not verify real Go/OpenAI service behavior, subscription
-eligibility, billing, native ORX deployment, or PostgreSQL concurrency.
+Regression suites use synthetic credentials, temporary SQLite or isolated
+PostgreSQL databases, and in-memory provider transports. They exercise both
+execution paths, both protocols, function turns, endpoint pinning, original
+command results and native non-replay. They do not verify real Go/OpenAI service
+behavior, subscription eligibility, billing, or the complete ORX process.
 
 Responses conversion follows the official
 [function-calling](https://developers.openai.com/api/docs/guides/function-calling)
@@ -117,9 +148,9 @@ including reasoning-item continuation with tool outputs. This is a protocol
 implementation reference, not evidence of provider parity. Real model acceptance
 must be separately arranged by the parent task with approved credentials.
 
-Local validation on 2026-10-13: `npm run check` passed (537 tests, lint,
+Local validation on 2026-10-13: `npm run check` passed (539 tests, lint,
 TypeScript and production build); `npm audit` reported zero vulnerabilities.
-Repository Ruff and Pyright passed. The selected Python suites passed 120 tests:
+Repository Ruff and Pyright passed. The selected Python suites passed 133 tests:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v \
@@ -129,6 +160,71 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests .venv/bin/python -m
   test_go_development_profile test_go_luna_output_revision test_execution_bindings
 ```
 
-No disposable PostgreSQL service was available for the existing PostgreSQL
-boundary suites. No provider credential was read or created, and no real
-inference request was sent.
+PostgreSQL verification uses a disposable loopback-only PostgreSQL 17.11
+container, the CI-pinned image digest
+`sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f`,
+synthetic database credentials, tmpfs data, and a separate `af_test_*` database
+per test. No shared database is used. With `FACTORY_TEST_DATABASE_URL` pointing
+to that disposable service:
+
+```sh
+AGNO_TELEMETRY=false .venv/bin/python scripts/check_owner_byok_postgres.py
+AGNO_TELEMETRY=false .venv/bin/python scripts/check_boundaries_postgres.py
+AGNO_TELEMETRY=false PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v \
+  test_model_command_recovery_postgres
+```
+
+The owner gate passed 109/109, the boundary gate passed 32/32, and the new
+original-result recovery suite passed 15/15, all with zero skips.
+For the initial head `19ca4d532c926c1db59f8efccd21e955bc7b1581`, the
+[PR PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383491119/job/115249437827)
+and [push PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383467044/job/115249354831)
+completed all five required zero-skip gates (109 owner, 32 boundary, 9 candidate,
+11 AutoResearch and 10 workflow cases). Their full PostgreSQL suite was still
+running when checked at 10:51 UTC; that is not a full-CI success claim or evidence
+for a later commit.
+
+Actual OpenCode 1.18.35 binary acceptance passed 6/6 cases: upstream disconnect,
+502, lost downstream response, two user turns, CC tools and Responses tools.
+Both tool cases executed the real native `read` tool twice. CC additionally
+continued the same native session and restored all three prior reasoning fields,
+including the final answer. The first three failure/recovery cases each made
+exactly one synthetic provider dispatch. Containers used `--network none` and
+the production broker with an injected upstream `MockTransport`.
+
+```sh
+.venv/bin/python scripts/check_owner_model_native_retry.py \
+  --opencode /path/to/opencode-1.18.35-baseline \
+  --image sha256:09fac22af2fd4a25594a5b259f918e1a2b77cb15b00b21db260487f1cfcf8503
+```
+
+The binary SHA-256 is
+`77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa`.
+The image is the local immutable image ID for the repository's pinned
+`python:3.12.14-trixie` runtime; see [runtime provenance](ORX_BUILD_PROVENANCE.json).
+The script checks the binary hash and requires an immutable local image ID.
+
+A separate actual `ai.streamText` SDK test passed 3/3 scenarios: CC tool turns,
+Responses tool turns, and a CC final answer followed by a user/tool turn.
+It uses `@ai-sdk/openai-compatible@2.0.41`, `ai@6.0.168`, `zod@4.1.8` and the
+[OpenCode v1.18.35 SDK patch](https://raw.githubusercontent.com/anomalyco/opencode/53d1eabb61e21162157817bf677da0a4ad3332e3/patches/@ai-sdk%252Fopenai-compatible@2.0.41.patch).
+The test verifies exact package versions and patched SDK entry hashes, then
+routes the actual SDK's fetch only through the broker's Unix socket. It asserts
+the SDK's real `null` to empty-text conversion and JSON argument reserialization;
+passing copied broker responses would not pass these checks.
+
+```sh
+# Prepare a separate temporary SDK directory; no application dependencies change.
+npm install --prefix /tmp/owner-model-sdk --no-save --ignore-scripts --no-audit --no-fund \
+  @ai-sdk/openai-compatible@2.0.41 ai@6.0.168 zod@4.1.8
+curl --fail --silent --show-error \
+  'https://raw.githubusercontent.com/anomalyco/opencode/53d1eabb61e21162157817bf677da0a4ad3332e3/patches/@ai-sdk%252Fopenai-compatible@2.0.41.patch' \
+  -o /tmp/owner-model-sdk/openai-compatible.patch
+patch -d /tmp/owner-model-sdk/node_modules/@ai-sdk/openai-compatible -p1 --forward \
+  -i /tmp/owner-model-sdk/openai-compatible.patch
+.venv/bin/python scripts/check_owner_model_native_protocols.py --sdk-root /tmp/owner-model-sdk
+```
+
+The real native executable and SDK tests are offline protocol acceptance, not
+complete ORX or live-provider acceptance. No provider credential was read or
+created, and no real inference request was sent.

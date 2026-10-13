@@ -28,7 +28,9 @@ import httpx
 from .model_endpoint_policy import (
     base_url, chat_headers, continuation_scope, generation_options, model_origin, requires_session,
 )
-from .model_protocol import decode_response, encode_request, function_call, protocol_name, protocol_path
+from .model_protocol import (
+    assistant_message_matches, decode_response, encode_request, function_call, protocol_name, protocol_path,
+)
 from .model_transport import MAX_BYTES, PinnedChatTransport, read_response_json
 from .personal_remote_provider import reject_credential_echo
 
@@ -40,18 +42,20 @@ UnixServerBase: Any = getattr(socketserver, 'UnixStreamServer', object)
 
 class OwnerModelCallError(ValueError):
     """Sanitized, non-retryable native outcome; never carries provider text."""
-    def __init__(self, dispatched, *, diagnostic_id=None):
+    def __init__(self, dispatched, *, diagnostic_id=None, terminal_reason=None):
         self.code = 'OWNER_MODEL_CALL_UNCONFIRMED' if dispatched else 'OWNER_MODEL_REQUEST_REJECTED'
         # OpenCode also scans response text for 5xx numerals. An alphabetic ID
         # cannot accidentally turn a terminal rejection into a retryable error.
         self.diagnostic_id = diagnostic_id or 'diag_' + ''.join(chr(97 + int(c, 16)) for c in secrets.token_hex(16))
+        self.terminal_reason = terminal_reason if terminal_reason in {'MODEL_EMPTY_OUTPUT', 'MODEL_REFUSAL'} else None
         super().__init__(self.code)
 
     def response(self):
         message = ('模型调用可能已发出，结果尚未确认；请保留原请求核对。' if self.code == 'OWNER_MODEL_CALL_UNCONFIRMED'
                    else '模型请求在发送前被拒绝；请核对配置与权限。')
         return {'error': {'message': message + ' 诊断编号：' + self.diagnostic_id,
-            'type': 'owner_model_boundary', 'code': self.code}, 'diagnosticId': self.diagnostic_id}
+            'type': 'owner_model_boundary', 'code': self.code,
+            **({'terminalReason': self.terminal_reason} if self.terminal_reason else {})}, 'diagnosticId': self.diagnostic_id}
 
 
 class _SyntheticDispatchTransport(httpx.AsyncBaseTransport):
@@ -70,7 +74,7 @@ class _NativeCall:
         self.done = threading.Event()
         self.value: Any = None
         # Do not retain exception tracebacks/contexts, which can hold a lease.
-        self.error: tuple[str, str] | None = None
+        self.error: tuple[str, str, str | None] | None = None
 
 
 class _Server(ThreadingMixIn, UnixServerBase):
@@ -104,11 +108,11 @@ class OwnerRuntimeBroker:
         self.lock = threading.Lock(); self.gate = threading.BoundedSemaphore(4)
         self.native_calls: dict[tuple[str, str, str], _NativeCall] = {}
         self.server = None; self.thread = None
-        # Tool reasoning stays outside the native container. The broker lifetime,
+        # Assistant reasoning stays outside the native container. The broker lifetime,
         # call count and bounded response reader bound this cache; never evict a
         # continuation and silently resume a tool call without its reasoning.
         self.continuation_limit = max_calls
-        self.continuations: dict[tuple[str, str, tuple[str, ...]], dict] = {}
+        self.continuations: dict[tuple[str | None, str, int], dict] = {}
 
     def __repr__(self): return 'OwnerRuntimeBroker(capability=<redacted>)'
 
@@ -139,10 +143,10 @@ class OwnerRuntimeBroker:
             try:
                 record.value = asyncio.run(self.completion(body, session_id))
             except OwnerModelCallError as error:
-                record.error = (error.code, error.diagnostic_id)
+                record.error = (error.code, error.diagnostic_id, error.terminal_reason)
             except (Exception, asyncio.CancelledError):
                 error = OwnerModelCallError(True)
-                record.error = (error.code, error.diagnostic_id)
+                record.error = (error.code, error.diagnostic_id, error.terminal_reason)
             finally:
                 # Record before writing any local response. A lost downstream
                 # reply may be read again, but can never dispatch again.
@@ -150,8 +154,9 @@ class OwnerRuntimeBroker:
         elif not record.done.wait(timeout=120):
             raise OwnerModelCallError(True)
         if record.error is not None:
-            code, diagnostic_id = record.error
-            raise OwnerModelCallError(code == 'OWNER_MODEL_CALL_UNCONFIRMED', diagnostic_id=diagnostic_id)
+            code, diagnostic_id, terminal_reason = record.error
+            raise OwnerModelCallError(code == 'OWNER_MODEL_CALL_UNCONFIRMED', diagnostic_id=diagnostic_id,
+                terminal_reason=terminal_reason)
         if record.value is None: raise OwnerModelCallError(True)
         try:
             self.handle.check()
@@ -167,6 +172,8 @@ class OwnerRuntimeBroker:
             dispatched = True
         try:
             return await self._completion(body, session_id, on_dispatch)
+        except OwnerModelCallError:
+            raise
         except Exception:
             raise OwnerModelCallError(dispatched) from None
 
@@ -190,19 +197,31 @@ class OwnerRuntimeBroker:
         protocol = protocol_name(self.handle.body)
         scope = continuation_scope(self.handle.body, getattr(self.handle, 'owner', None))
         continuation = []
-        if protocol == 'responses':
-            if type(session_id) is not str or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id):
-                raise ValueError('MODEL_SESSION_REJECTED')
-            with self.lock:
-                if len(self.continuations) >= self.continuation_limit:
-                    raise ValueError('MODEL_CONTINUATION_LIMIT')
-                for message in encoded:
-                    if message.get('role') == 'assistant' and message.get('tool_calls'):
-                        key = (session_id, scope, tuple(call['id'] for call in message['tool_calls']))
-                        record = self.continuations.get(key)
-                        if record is None:
-                            raise ValueError('MODEL_CONTINUATION_REQUIRED')
-                        continuation.append(deepcopy(record))
+        if protocol == 'responses' and (type(session_id) is not str
+                or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id)):
+            raise ValueError('MODEL_SESSION_REJECTED')
+        ordinal = 0
+        with self.lock:
+            if len(self.continuations) >= self.continuation_limit:
+                raise ValueError('MODEL_CONTINUATION_LIMIT')
+            for index, message in enumerate(encoded):
+                if message.get('role') != 'assistant':
+                    continue
+                entry = self.continuations.get((session_id, scope, ordinal))
+                required = bool(message.get('tool_calls')) or protocol == 'chat-completions' and bool(body.get('tools'))
+                if entry is not None:
+                    if not assistant_message_matches(entry['message'], message):
+                        raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                    if entry['continuation'] is not None:
+                        continuation.append({**deepcopy(entry['continuation']), 'message_index': index})
+                elif required:
+                    raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                ordinal += 1
+            # Exact retries were settled by native_calls before reaching here.
+            # A new call cannot discard an already produced assistant turn and
+            # discover only after dispatch that its continuation would collide.
+            if (session_id, scope, ordinal) in self.continuations:
+                raise ValueError('MODEL_CONTINUATION_REQUIRED')
         chat = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if body.get('tools'):
             chat.update(tools=body['tools'], parallel_tool_calls=False)
@@ -228,16 +247,25 @@ class OwnerRuntimeBroker:
                     headers=headers) as response:
                 value = await read_response_json(response, lease)
         self.handle.check()
-        value, record = decode_response(protocol, value)
-        if record is not None:
-            key = (session_id, scope, tuple(call['id'] for call in record['message']['tool_calls']))
-            with self.lock:
-                existing = self.continuations.get(key)
-                if existing is not None and existing != record:
-                    raise ValueError('MODEL_CONTINUATION_CONFLICT')
-                if existing is None and len(self.continuations) >= self.continuation_limit:
-                    raise ValueError('MODEL_CONTINUATION_LIMIT')
-                self.continuations[key] = record
+        try:
+            value, record = decode_response(protocol, value)
+        except ValueError as error:
+            reason = {'MODEL_PROTOCOL_EMPTY_OUTPUT': 'MODEL_EMPTY_OUTPUT',
+                'MODEL_PROTOCOL_REFUSAL': 'MODEL_REFUSAL'}.get(str(error))
+            if reason:
+                raise OwnerModelCallError(True, terminal_reason=reason) from None
+            raise
+        # Ordinal follows the validated transcript, so repeated final text can
+        # never attach reasoning from an unrelated turn by a text-only match.
+        key = (session_id, scope, ordinal)
+        entry = {'message': value['choices'][0]['message'], 'continuation': record}
+        with self.lock:
+            existing = self.continuations.get(key)
+            if existing is not None and existing != entry:
+                raise ValueError('MODEL_CONTINUATION_CONFLICT')
+            if existing is None and len(self.continuations) >= self.continuation_limit:
+                raise ValueError('MODEL_CONTINUATION_LIMIT')
+            self.continuations[key] = entry
         return value
 
     def start(self):

@@ -38,18 +38,26 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
       .catch(() => { if (!controller.signal.aborted) setError('暂时无法读取模型设置。请重新连接；未确认的保存请求会保留。'); });
     return () => controller.abort();
   }, [ownerId, refresh]);
-  function retain(value: ModelSetup) {
+  function retain(value: ModelSetup, { begin = false }: { begin?: boolean } = {}) {
     const safe = setupMetadata(value);
     const previous = readModelSetup(localStorage.getItem(storage), ownerId);
     if (previous && previous.modelRequest !== safe.modelRequest) { setPending(previous); throw new Error('另一个模型保存仍待核对。'); }
+    // Only a new user intent can claim an empty slot. A delayed response cannot
+    // reclaim it after another tab stopped waiting and settled the archive.
+    if (!begin && previous?.modelRequest !== safe.modelRequest) { setPending(previous); throw new Error('原保存已停止等待或已完成。'); }
     if (readModelSetups(localStorage.getItem(unresolvedStorage), ownerId).some(s => s.modelRequest === safe.modelRequest)) throw new Error('原保存已停止等待。');
     localStorage.setItem(storage, JSON.stringify(safe)); setPending(safe); return safe;
   }
   function releaseActive(s: ModelSetup) {
-    if (readModelSetup(localStorage.getItem(storage), ownerId)?.modelRequest === s.modelRequest) localStorage.removeItem(storage);
+    const owned = readModelSetup(localStorage.getItem(storage), ownerId)?.modelRequest === s.modelRequest;
+    if (owned) localStorage.removeItem(storage);
     setPending(readModelSetup(localStorage.getItem(storage), ownerId));
+    return owned;
   }
-  function finished(s: ModelSetup) { releaseActive(s); setConfirmStopWaiting(false); setEditing(undefined); setKey(''); setRefresh(n => n + 1); }
+  function finished(s: ModelSetup) {
+    if (!releaseActive(s)) return false;
+    setConfirmStopWaiting(false); setEditing(undefined); setKey(''); setRefresh(n => n + 1); return true;
+  }
   function accountChanged() {
     setKey(''); setModel(''); setEditing(undefined); setConfirmRevoke(''); setRecords([]); setPending(null); setReady(false);
     setCredentials([]); setUnresolved([]); setConfirmStopWaiting(false); setError('当前登录账户已改变。已清除输入，请刷新页面后重新进入自己的模型设置。');
@@ -78,7 +86,8 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     // Only the first POST's explicit rejection settles that attempt. Recovery
     // errors, including 403/404, never prove an earlier request did not commit.
     if (!(failure instanceof ModelRequestError) || ![403, 422].includes(failure.status)) return;
-    releaseActive(s); setEditing(undefined); setKey('');
+    if (!releaseActive(s)) return;
+    setEditing(undefined); setKey('');
     if (s.credential) {
       setCredentials(values => [...values.filter(c => c.credentialRef !== s.credential!.credentialRef), s.credential!]);
       setCredentialSource('saved'); setSavedReference(s.credential.credentialRef);
@@ -123,7 +132,9 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
       matchDefault(selected, s);
     }
     if (!alive.current) return;
-    finished(s); setNotice(checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
+    if (!finished(s)) return false;
+    setNotice(checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
+    return true;
   }
   function stopWaiting() {
     if (!pending || busy || unresolved.length >= 100) return;
@@ -144,7 +155,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     localStorage.setItem(unresolvedStorage, JSON.stringify(next)); setUnresolved(next); setRefresh(n => n + 1);
     setNotice('原阶段已核对。尚未发送的后续设置不会自动执行；当前模型以最新列表为准。');
   }
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<unknown>) {
     if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice('');
     try { await verifyOwner(); await work(); }
     catch (e) { if (alive.current && (e instanceof ModelRequestError || e instanceof RemoteRequestError) && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else if (alive.current) setError(e instanceof ModelRequestError || e instanceof RemoteRequestError ? e.message : '设置尚未确认，请核对原请求或重新读取设置。'); }
@@ -164,7 +175,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
         credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
         stage: !editing && credentialSource === 'saved' ? 'model' : 'credential', chooseDefault: editing ? editing.isDefault : true,
         ...(!editing && credentialSource === 'saved' ? { credential: selectedCredential! } : {}),
-        ...(editing ? { reference: editing.reference, rotating: { credentialRef: editing.credentialRef, credentialRevision: editing.credentialRevision } } : {}) });
+        ...(editing ? { reference: editing.reference, rotating: { credentialRef: editing.credentialRef, credentialRevision: editing.credentialRevision } } : {}) }, { begin: true });
       if (s.credential) { await continueSetup(s); return; }
       const secret = key; setKey('');
       let credential;
@@ -184,11 +195,11 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
   function command(record: OwnerModel, action: 'default' | 'revoke') {
     void run(async () => {
       if (action === 'default') {
-        await continueSetup(retain({ owner: ownerId, provider: record.provider, baseURL: record.baseURL, model: record.model,
+        const completed = await continueSetup(retain({ owner: ownerId, provider: record.provider, baseURL: record.baseURL, model: record.model,
           ...(record.protocol ? { protocol: record.protocol } : {}), ...(record.thinkingMode ? { thinkingMode: record.thinkingMode } : {}),
           credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
-          stage: 'default', reference: record.reference, chooseDefault: true, dispatched: {} }));
-        setNotice('默认模型已更新。'); return;
+          stage: 'default', reference: record.reference, chooseDefault: true, dispatched: {} }, { begin: true }));
+        if (completed) setNotice('默认模型已更新。'); return;
       }
       const scope = `${action}:${record.reference}:${record.revision}`;
       const key = await commandKeys(scope, { reference: record.reference, revision: record.revision });
@@ -209,7 +220,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
         ...(record.thinkingMode ? { thinkingMode: record.thinkingMode } : {}),
         credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
         stage: 'model', chooseDefault: record.isDefault, reference: record.reference, credential,
-        rotating: { credentialRef: record.credentialRef, credentialRevision: record.credentialRevision } }));
+        rotating: { credentialRef: record.credentialRef, credentialRevision: record.credentialRevision } }, { begin: true }));
     });
   }
   const availableDefault = records.find(r => r.isDefault && r.available);

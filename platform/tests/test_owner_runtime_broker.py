@@ -38,14 +38,18 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         first = self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
         self.assertEqual(self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001'), first)
         self.assertEqual(len(self.calls), 1)
-        self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
+        second_body = {**body, 'messages': [*body['messages'], first['choices'][0]['message'], *body['messages']]}
+        self.answer = {'choices': [{'message': {'role': 'assistant', 'content': None,
+            'tool_calls': [{'id': 'call_synthetic', 'type': 'function',
+                'function': {'name': 'synthetic_tool', 'arguments': '{}'}}]}, 'finish_reason': 'tool_calls'}]}
+        second = self.broker.native_completion(second_body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(self.broker.remaining, 62)
         # A changed tool-loop input is a separate call within the same user turn.
-        next_body = {**body, 'messages': body['messages'] + [
-            {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'call_synthetic', 'type': 'function',
-                'function': {'name': 'synthetic_tool', 'arguments': '{}'}}]},
+        next_body = {**body, 'messages': second_body['messages'] + [
+            second['choices'][0]['message'],
             {'role': 'tool', 'tool_call_id': 'call_synthetic', 'content': 'actual synthetic tool output'}]}
+        self.answer = {'choices': [{'message': {'role': 'assistant', 'content': 'Synthetic final'}, 'finish_reason': 'stop'}]}
         self.broker.native_completion(next_body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
         self.assertEqual(len(self.calls), 3)
         self.revoked = True
@@ -91,7 +95,9 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         for session in (None, 'invalid header', self.broker.capability, 'synthetic-private-key'):
             with self.assertRaises(ValueError): asyncio.run(self.broker.completion(body, session))
         self.assertEqual(self.calls, [])
-        for _ in range(2): asyncio.run(self.broker.completion(body, 'ses_syntheticnative123'))
+        for _ in range(2):
+            answer = asyncio.run(self.broker.completion(body, 'ses_syntheticnative123'))
+            body['messages'].extend([answer['choices'][0]['message'], {'role': 'user', 'content': 'synthetic coding task'}])
         self.assertEqual(len(self.calls), 2)
         for request in self.calls:
             self.assertEqual(str(request.url), 'https://opencode.ai/zen/go/v1/chat/completions')

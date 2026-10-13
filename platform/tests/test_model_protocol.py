@@ -4,7 +4,7 @@ import json
 import unittest
 
 from agent_factory.model_protocol import (
-    MAX_BYTES, decode_response, encode_request, function_call, protocol_name, protocol_path,
+    MAX_BYTES, assistant_message_matches, decode_response, encode_request, function_call, protocol_name, protocol_path,
 )
 
 
@@ -119,6 +119,157 @@ class ModelProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
             encode_request('chat-completions', request([message]), [context])
 
+    def test_native_tool_turn_normalization_preserves_original_responses_replay(self):
+        original_args = '{ "label": "\\u6d4b\\u8bd5", "nested": {"b":2, "a":[1.0,true,null]} }'
+        native_args = '{"nested":{"a":[1,true,null],"b":2},"label":"测试"}'
+        for original_content in (None, ''):
+            output = ([] if original_content is None else [text_item('')]) + [
+                response_item(arguments=original_args)]
+            answer, context = decode_response('responses', responses(output))
+            native_message = deepcopy(answer['choices'][0]['message'])
+            native_message['content'] = '' if original_content is None else None
+            native_message['tool_calls'][0]['function']['arguments'] = native_args
+            before = deepcopy(context)
+            encoded = encode_request('responses', request([native_message,
+                {'role': 'tool', 'tool_call_id': 'call-1', 'content': 'result'}]), [context])
+            self.assertEqual(encoded['input'][:-1], context['output'])
+            self.assertEqual(next(item for item in encoded['input'] if item.get('type') == 'function_call')['arguments'],
+                original_args)
+            self.assertEqual(context, before)
+
+    def test_tool_turn_semantics_reject_real_changes_and_boolean_number_coercion(self):
+        arguments = '{"nested":{"number":1,"flag":true,"list":[1,2]}}'
+        answer, context = decode_response('responses', responses([response_item(arguments=arguments)]))
+        original = answer['choices'][0]['message']
+        for changed_args in (
+            '{"nested":{"number":true,"flag":true,"list":[1,2]}}',
+            '{"nested":{"number":1,"flag":1,"list":[1,2]}}',
+            '{"nested":{"number":1,"flag":true,"list":[2,1]}}',
+            '{"nested":{"number":1.0000000000000001,"flag":true,"list":[1,2]}}',
+            '{"nested":{"number":NaN,"flag":true,"list":[1,2]}}',
+            '[]',
+        ):
+            changed = deepcopy(original)
+            changed['content'] = ''
+            changed['tool_calls'][0]['function']['arguments'] = changed_args
+            with self.subTest(arguments=changed_args), self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_'):
+                encode_request('responses', request([changed]), [context])
+        changed_messages = []
+        for field, value in (('name', 'different'), ('arguments', '{"different":true}')):
+            changed = deepcopy(original)
+            changed['tool_calls'][0]['function'][field] = value
+            changed_messages.append(changed)
+        changed_messages.extend([{**original, 'content': ' '}, {**original, 'content': 'different'},
+            {**original, 'tool_calls': [call('other-call')]},
+            {**original, 'tool_calls': original['tool_calls'] * 2}])
+        multi, multi_context = decode_response('responses', responses([response_item('call-1'), response_item('call-2')]))
+        reversed_turn = deepcopy(multi['choices'][0]['message'])
+        reversed_turn['tool_calls'].reverse()
+        for changed, record in [(message, context) for message in changed_messages] + [(reversed_turn, multi_context)]:
+            with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_'):
+                encode_request('responses', request([changed]), [record])
+
+    def test_cc_reasoning_is_private_and_restored_for_normalized_tool_turn(self):
+        arguments = '{ "number": 1.0, "flag": true }'
+        source = {'role': 'assistant', 'content': None, 'tool_calls': [call(arguments=arguments)],
+            'reasoning_content': 'synthetic private reasoning'}
+        answer, context = decode_response('chat-completions', {'choices': [
+            {'finish_reason': 'tool_calls', 'message': source}]})
+        self.assertNotIn('reasoning_content', answer['choices'][0]['message'])
+        self.assertEqual(context, {'message': answer['choices'][0]['message'],
+            'reasoning_content': source['reasoning_content']})
+        native_message = deepcopy(answer['choices'][0]['message'])
+        native_message['content'] = ''
+        native_message['tool_calls'][0]['function']['arguments'] = '{"flag":true,"number":1}'
+        before = deepcopy(context)
+        encoded = encode_request('chat-completions', request([native_message,
+            {'role': 'tool', 'tool_call_id': 'call-1', 'content': 'result'}]), [context])
+        self.assertEqual(encoded['messages'][0], {**source})
+        self.assertEqual(context, before)
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_MESSAGE$'):
+            encode_request('chat-completions', request([source]))  # Untrusted public input cannot supply private reasoning.
+
+    def test_cc_reasoning_shape_and_context_are_checked_without_requiring_usage(self):
+        for reasoning in (None, ''):
+            source = {'role': 'assistant', 'content': None, 'tool_calls': [call()], 'reasoning_content': reasoning}
+            answer, record = decode_response('chat-completions', {'choices': [
+                {'finish_reason': 'tool_calls', 'message': source}]})
+            self.assertNotIn('usage', answer)
+            if reasoning is None:
+                self.assertIsNone(record)
+            else:
+                self.assertEqual(record['reasoning_content'], '')
+        for reasoning in (True, 1, [], {}, 'x' * MAX_BYTES):
+            with self.subTest(reasoning_type=type(reasoning)), self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_'):
+                decode_response('chat-completions', {'choices': [{'finish_reason': 'tool_calls', 'message': {
+                    'role': 'assistant', 'content': None, 'tool_calls': [call()], 'reasoning_content': reasoning}}]})
+        message = {'role': 'assistant', 'content': None, 'tool_calls': [call()]}
+        for reasoning in (True, 1, [], {}, None):
+            with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_'):
+                encode_request('chat-completions', request([message]), [{'message': message, 'reasoning_content': reasoning}])
+
+    def test_cc_final_reasoning_replays_at_explicit_positions_even_with_identical_answers(self):
+        answer = {'role': 'assistant', 'content': 'Same synthetic answer'}
+        records = []
+        for reasoning in ('first synthetic reasoning', 'second synthetic reasoning'):
+            envelope, record = decode_response('chat-completions', {'choices': [{'finish_reason': 'stop',
+                'message': {**answer, 'reasoning_content': reasoning}}]})
+            self.assertEqual(envelope['choices'][0]['message'], answer)
+            self.assertEqual(record, {'message': answer, 'reasoning_content': reasoning})
+            records.append(record)
+        history = [{'role': 'user', 'content': 'First'}, answer, {'role': 'user', 'content': 'Second'}, answer,
+            {'role': 'user', 'content': 'Now inspect with tools'}]
+        encoded = encode_request('chat-completions', request(history,
+            tools=[{'type': 'function', 'function': {'name': 'inspect', 'parameters': {'type': 'object'}}}]),
+            [{**records[0], 'message_index': 1}, {**records[1], 'message_index': 3}])
+        self.assertEqual(encoded['messages'][1]['reasoning_content'], 'first synthetic reasoning')
+        self.assertEqual(encoded['messages'][3]['reasoning_content'], 'second synthetic reasoning')
+        self.assertNotIn('reasoning_content', history[1])
+        for record in (records[0], {**records[0], 'message_index': 0},
+                {**records[0], 'message_index': 20}, {**records[0], 'message_index': True}):
+            with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
+                encode_request('chat-completions', request(history), [record])
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
+            encode_request('chat-completions', request(history), [{**records[0], 'message_index': 1}] * 2)
+
+    def test_public_assistant_comparison_validates_shape_and_keeps_text_turns_exact(self):
+        self.assertTrue(assistant_message_matches({'role': 'assistant', 'content': 'same'},
+            {'role': 'assistant', 'content': 'same'}))
+        self.assertFalse(assistant_message_matches({'role': 'assistant', 'content': None},
+            {'role': 'assistant', 'content': ''}))
+        self.assertFalse(assistant_message_matches({'role': 'assistant', 'content': 'same'},
+            {'role': 'assistant', 'content': 'same '}))
+        self.assertTrue(assistant_message_matches({'role': 'assistant', 'content': None,
+            'tool_calls': [call(arguments='{ "number": 1.0 }')]}, {'role': 'assistant', 'content': '',
+            'tool_calls': [call(arguments='{"number":1}')]}))
+        self.assertFalse(assistant_message_matches({'role': 'assistant', 'content': None,
+            'tool_calls': [call(arguments='{"number":1}')]}, {'role': 'assistant', 'content': '',
+            'tool_calls': [call(arguments='{"number":true}')]}))
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_'):
+            assistant_message_matches({'role': 'assistant', 'content': 'same'},
+                {'role': 'assistant', 'content': 'same', 'reasoning_content': 'untrusted'})
+
+    def test_completed_empty_outputs_are_rejected_but_tool_only_turns_remain_valid(self):
+        for content in (None, '', ' \n\t', '\u3000'):
+            message = {'role': 'assistant', 'content': content}
+            with self.subTest(protocol='chat-completions', content=content), self.assertRaisesRegex(
+                    ValueError, '^MODEL_PROTOCOL_EMPTY_OUTPUT$'):
+                decode_response('chat-completions', {'choices': [{'finish_reason': 'stop', 'message': message}]})
+            result, _ = decode_response('chat-completions', {'choices': [{'finish_reason': 'tool_calls',
+                'message': {**message, 'tool_calls': [call()]}}]})
+            self.assertEqual(result['choices'][0]['message']['tool_calls'], [call()])
+        reasoning = {'type': 'reasoning', 'id': 'rs_fixture', 'summary': [], 'encrypted_content': 'opaque'}
+        for output in ([], [reasoning], [text_item(content=[])], [text_item('')], [text_item(' \n\t')],
+                [reasoning, text_item('\u3000')]):
+            with self.subTest(protocol='responses', output=output), self.assertRaisesRegex(
+                    ValueError, '^MODEL_PROTOCOL_EMPTY_OUTPUT$'):
+                decode_response('responses', responses(output))
+            result, _ = decode_response('responses', responses([*output, response_item()]))
+            self.assertEqual(result['choices'][0]['message']['tool_calls'], [call()])
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_EMPTY_OUTPUT$'):
+            decode_response('chat-completions', {'choices': [{'finish_reason': 'stop', 'message': {
+                'role': 'assistant', 'content': None, 'reasoning_content': 'synthetic reasoning without answer'}}]})
+
     def test_plain_canonical_tool_history_can_be_encoded_without_private_context(self):
         body = request([{'role': 'assistant', 'content': 'Checking', 'tool_calls': [call()]},
             {'role': 'tool', 'tool_call_id': 'call-1', 'content': 'result'}])
@@ -168,7 +319,7 @@ class ModelProtocolTests(unittest.TestCase):
             (responses([text_item(content=[{'type': 'image', 'data': 'unknown'}])]), 'UNSUPPORTED_OUTPUT'),
             (responses([{'type': 'reasoning', 'summary': []}]), 'RESPONSE'),
             (responses([{'type': 'reasoning', 'summary': [], 'encrypted_content': 'opaque'}, response_item()]), 'RESPONSE'),
-            (responses([]), 'RESPONSE'),
+            (responses([]), 'EMPTY_OUTPUT'),
             (responses([text_item(role='user')]), 'RESPONSE'),
         ]
         for payload, code in cases:

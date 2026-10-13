@@ -1,13 +1,14 @@
 """Pure text/function-tool codecs; execution, credentials and accounting stay outside.
 
-Responses continuations are private replay data for a tool turn, not a public
-Chat Completions extension. Callers keep them in their existing scoped history.
+Continuations are private replay data for a tool turn, not public request
+extensions. Callers keep them in their existing scoped history.
 """
 from __future__ import annotations
 
 import json
 import math
 import re
+from decimal import Decimal
 from typing import Any, NoReturn, cast
 
 MAX_BYTES = 1_048_576
@@ -178,7 +179,7 @@ def _usage(value, responses):
 
 
 def _response_items(output):
-    if type(output) is not list or not output or len(output) > 200:
+    if type(output) is not list or len(output) > 200:
         _fail('RESPONSE')
     content, calls, replay = [], [], []
     for source in output:
@@ -237,15 +238,54 @@ def _response_items(output):
             item['id'] = _identifier(source['id'])
         replay.append(item)
     calls = _calls(calls)
-    if not content and not calls:
-        _fail('RESPONSE')
+    if not calls and not ''.join(content).strip():
+        _fail('EMPTY_OUTPUT')
     message = {'role': 'assistant', 'content': ''.join(content) if content else None}
     if calls:
         message['tool_calls'] = calls
     return message, replay
 
 
-def _continuations(value):
+def _json_equal(left, right):
+    """Compare JSON types, not Python's interchangeable bool/int values."""
+    if type(left) in {int, Decimal} and type(right) in {int, Decimal}:
+        return left == right  # JSON has one number type; 1 and 1.0 are equivalent.
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(_json_equal(left[key], right[key]) for key in left)
+    if type(left) is list:
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def assistant_message_matches(expected, actual) -> bool:
+    """Validate and compare a canonical assistant message without rewriting it.
+
+    SDKs normalize empty assistant text and parse/stringify tool arguments.
+    Compare that meaning while leaving the original replay payload untouched.
+    Decimal avoids treating a changed JSON decimal as equal through rounding.
+    """
+    _bounded([expected, actual])
+    expected, actual = _message(expected), _message(actual)
+    if expected['role'] != 'assistant' or actual['role'] != 'assistant':
+        return False
+    left, right = expected.get('tool_calls', []), actual.get('tool_calls', [])
+    if not left and not right:
+        return expected['content'] == actual['content']
+    if (not left or len(left) != len(right)
+            or (expected['content'] or '') != (actual['content'] or '')):
+        return False
+    for a, b in zip(left, right):
+        if a['id'] != b['id'] or a['function']['name'] != b['function']['name']:
+            return False
+        if not _json_equal(json.loads(a['function']['arguments'], parse_float=Decimal),
+                json.loads(b['function']['arguments'], parse_float=Decimal)):
+            return False
+    return True
+
+
+def _continuations(protocol, value):
     if value is None:
         return {}
     _bounded(value)
@@ -253,17 +293,33 @@ def _continuations(value):
         _fail('CONTINUATION')
     records, identifiers = {}, set()
     for record in value:
-        if type(record) is not dict or set(record) != {'message', 'output'}:
+        field = 'output' if protocol == 'responses' else 'reasoning_content'
+        if (type(record) is not dict or set(record) not in (
+                {'message', field}, {'message', field, 'message_index'})):
             _fail('CONTINUATION')
         message = _message(record['message'])
-        decoded, replay = _response_items(record['output'])
         calls = message.get('tool_calls', [])
-        if not calls or message != decoded:
+        if message['role'] != 'assistant' or not calls and (protocol == 'responses' or 'message_index' not in record):
             _fail('CONTINUATION')
-        key = tuple(call['id'] for call in calls)
-        if identifiers.intersection(key):
+        if protocol == 'responses':
+            decoded, replay = _response_items(record['output'])
+            if message != decoded:
+                _fail('CONTINUATION')
+        else:
+            if type(record['reasoning_content']) is not str:
+                _fail('CONTINUATION')
+            replay = {**message, 'reasoning_content': record['reasoning_content']}
+        call_ids = tuple(call['id'] for call in calls)
+        if 'message_index' in record:
+            position = record['message_index']
+            if type(position) is not int or not 0 <= position < 200:
+                _fail('CONTINUATION')
+            key = ('index', position)
+        else:
+            key = ('calls', call_ids)
+        if key in records or identifiers.intersection(call_ids):
             _fail('CONTINUATION')
-        identifiers.update(key)
+        identifiers.update(call_ids)
         records[key] = (message, replay)
     return records
 
@@ -271,8 +327,9 @@ def _continuations(value):
 def encode_request(protocol, chat_body, continuation=None):
     """Encode a canonical CC request; continuation is a list of decode records.
 
-    A replay record must match exactly one assistant tool turn, by ordered call
-    IDs and the complete canonical message. Nothing is appended speculatively.
+    A replay record must match exactly one assistant message by ordered call
+    IDs or an explicit message_index, and canonical message semantics. Text-only
+    CC reasoning requires an index so identical answers cannot select a turn.
     """
     protocol_path(protocol)
     _bounded(chat_body)
@@ -284,23 +341,24 @@ def encode_request(protocol, chat_body, continuation=None):
             or type(limit) is not int or limit <= 0 or chat_body.get('stream', False) is not False):
         _fail('REQUEST')
     responses = protocol == 'responses'
-    records = _continuations(continuation)
-    if records and not responses:
-        _fail('CONTINUATION')
+    records = _continuations(protocol, continuation)
     canonical = [_message(message) for message in messages]
     encoded, used = [], set()
-    for message in canonical:
-        if not responses:
-            encoded.append(message)
-            continue
+    for index, message in enumerate(canonical):
         calls = message.get('tool_calls', [])
-        key = tuple(call['id'] for call in calls)
+        indexed = ('index', index)
+        key = indexed if indexed in records else ('calls', tuple(call['id'] for call in calls))
         if key in records:
             expected, replay = records[key]
-            if key in used or expected != message:
+            if key in used or not assistant_message_matches(expected, message):
                 _fail('CONTINUATION')
-            encoded.extend(replay)
+            if responses:
+                encoded.extend(replay)
+            else:
+                encoded.append(replay)
             used.add(key)
+        elif not responses:
+            encoded.append(message)
         elif message['role'] == 'tool':
             encoded.append({'type': 'function_call_output', 'call_id': message['tool_call_id'],
                 'output': message['content'] or ''})
@@ -328,7 +386,7 @@ def encode_request(protocol, chat_body, continuation=None):
 
 
 def decode_response(protocol, raw):
-    """Return (safe CC envelope, private tool-turn replay record or None).
+    """Return (safe CC envelope, private replay record or None).
 
     Missing or invalid usage is omitted, never a zero count or an execution
     failure. This codec makes no inference about billing or dispatch outcomes.
@@ -359,6 +417,13 @@ def decode_response(protocol, raw):
         message = _message({key: source[key] for key in ('role', 'content', 'tool_calls') if key in source})
         if (reason == 'tool_calls') != bool(message.get('tool_calls')):
             _fail('RESPONSE')
+        reasoning = source.get('reasoning_content')
+        if reasoning is not None and type(reasoning) is not str:
+            _fail('RESPONSE')
+        if not message.get('tool_calls') and not (message['content'] or '').strip():
+            _fail('EMPTY_OUTPUT')
+        if reasoning is not None:
+            continuation = {'message': json.loads(json.dumps(message)), 'reasoning_content': reasoning}
     value = {'id': 'chatcmpl-owner', 'object': 'chat.completion', 'created': 0, 'model': 'owner-model',
         'choices': [{'index': 0, 'message': message, 'finish_reason': reason}]}
     usage = _usage(raw.get('usage'), responses)
