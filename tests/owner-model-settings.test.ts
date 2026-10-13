@@ -5,9 +5,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { api } from '../web/api.js';
 import { ModelSettings } from '../web/ModelSettings.js';
-import { ownerModel, ownerModelApi, ModelRequestError, type OwnerModel } from '../web/ownerModelApi.js';
+import { ownerModel, ownerModelApi, ModelRequestError, type OwnerModel, type OwnerModelReceipt } from '../web/ownerModelApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { modelEndpoint, readModelSetup, setupMetadata, type ModelSetup } from '../web/ownerModelSetup.js';
+import { MODEL_PROVIDER_PRESETS } from '../web/modelProviderConfig.js';
 
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'credential-revision', providerId: 'byok-chat-v1', destination: 'https://api.openai.com', status: 'active' };
 const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
@@ -17,6 +18,7 @@ const thinkingRow: OwnerModel = { ...row, provider: 'openai-compatible', baseURL
 it('accepts the official Go Chat Completions base without accepting arbitrary provider prefixes', () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
   expect(modelEndpoint(baseURL)).toBe(baseURL);
+  expect(modelEndpoint('https://opencode.ai/inference/go/v1')).toBe('https://opencode.ai/inference/go/v1');
   expect(ownerModel({ ...row, provider: 'openai-compatible', baseURL }, 'alice').baseURL).toBe(baseURL);
   expect(modelEndpoint(' HTTPS://MODELS.EXAMPLE.COM/v1 ')).toBe('https://models.example.com/v1');
   for (const url of ['https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1', 'https://opencode.ai.evil.example/zen/go/v1']) expect(() => modelEndpoint(url)).toThrow();
@@ -24,12 +26,14 @@ it('accepts the official Go Chat Completions base without accepting arbitrary pr
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear();
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network forbidden in model settings test'); }));
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
   vi.spyOn(ownerModelApi, 'capabilities').mockResolvedValue({ enabled: true, providers: ['openai', 'openai-compatible'], liveCompatibilityVerified: false });
   vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
   vi.spyOn(ownerModelApi, 'configure').mockResolvedValue(row);
   vi.spyOn(ownerModelApi, 'default').mockResolvedValue({ ...row, isDefault: true });
+  vi.spyOn(ownerModelApi, 'recover').mockImplementation(async (_owner, requestId): Promise<OwnerModelReceipt> => ({ ownerId: 'alice', requestId, action: 'model.configure', result: row, completedAt: '2026-10-09T00:00:01Z' }));
   vi.spyOn(personalRemoteApi, 'saveCredential').mockResolvedValue(credential);
   vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([]);
   vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue(credential);
@@ -44,6 +48,9 @@ async function fill(name: string, value: string) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
+async function choose(label: string, value: string) {
+  await act(async () => { const select = host.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); });
+}
 async function save() { await fill('模型名称', row.model); await fill('API 密钥', secret); await act(async () => { button('保存并设为默认').click(); button('保存并设为默认').click(); }); }
 it('saves the official Go endpoint with an origin-bound credential and no model invocation', async () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
@@ -51,17 +58,42 @@ it('saves the official Go endpoint with an origin-bound credential and no model 
   vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, provider: 'openai-compatible', baseURL });
   vi.mocked(ownerModelApi.default).mockResolvedValue({ ...row, provider: 'openai-compatible', baseURL, isDefault: true });
   await mount();
-  await act(async () => { const select = host.querySelector('select')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => { const select = host.querySelector<HTMLSelectElement>('[aria-label="模型提供方"]')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   await fill('API 端点', baseURL); await save();
   expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://opencode.ai', password: secret }), 'alice');
   expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ baseURL }), undefined);
   expect(host.textContent).toContain('模型已保存并设为默认');
   expect(JSON.stringify(localStorage)).not.toContain(secret);
 });
+it.each(MODEL_PROVIDER_PRESETS)('applies and saves preset $id with its explicit protocol and Go base', async preset => {
+  vi.mocked(personalRemoteApi.saveCredential).mockResolvedValue({ ...credential, destination: 'https://opencode.ai' });
+  const configured = { ...row, provider: 'openai-compatible' as const, baseURL: preset.baseURL, model: preset.model,
+    ...(preset.protocol === 'responses' ? { protocol: preset.protocol } : {}) };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(configured);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...configured, isDefault: true });
+  await mount(); await choose('模型快捷配置', preset.id);
+  expect((host.querySelector('[aria-label="模型 API 协议"]') as HTMLSelectElement).value).toBe(preset.protocol);
+  expect((host.querySelector('[aria-label="API 端点"]') as HTMLInputElement).value).toBe('https://opencode.ai/inference/go/v1');
+  await fill('API 密钥', secret); await act(async () => button('保存并设为默认').click());
+  expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://opencode.ai', password: secret }), 'alice');
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ baseURL: preset.baseURL, model: preset.model, protocol: preset.protocol }), undefined);
+  expect(localStorage.getItem(storage)).toBeNull();
+  expect(host.textContent).toContain('模型已保存并设为默认');
+});
+it('uses the manual protocol selection and never infers protocol from an arbitrary model name', async () => {
+  const configured = { ...row, model: 'gpt-6-luna-custom', protocol: 'responses' as const };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(configured);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...configured, isDefault: true });
+  await mount(); await fill('模型名称', configured.model);
+  expect((host.querySelector('[aria-label="模型 API 协议"]') as HTMLSelectElement).value).toBe('chat-completions');
+  await choose('模型 API 协议', 'responses'); await fill('API 密钥', secret);
+  await act(async () => button('保存并设为默认').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ model: configured.model, protocol: 'responses' }), undefined);
+});
 it('retains an unknown Go credential save without replaying its secret after refresh', async () => {
   vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new Error('unconfirmed'));
   await mount();
-  await act(async () => { const select = host.querySelector('select')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => { const select = host.querySelector<HTMLSelectElement>('[aria-label="模型提供方"]')!; select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   await fill('API 端点', 'https://opencode.ai/zen/go/v1'); await save();
   expect(ownerModelApi.configure).not.toHaveBeenCalled();
   expect(localStorage.getItem(storage)).toContain('https://opencode.ai/zen/go/v1');
@@ -91,14 +123,16 @@ it('recovers an uncertain vault save after remount without replaying the key or 
   await act(async () => root.unmount()); root = createRoot(host); await mount();
   await act(async () => button('核对并继续原保存').click());
   expect(personalRemoteApi.recoverCredential).toHaveBeenCalledWith(request, 'alice'); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
-  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('模型已保存并设为默认');
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('原保存已核对完成');
 });
-it('replays only the original non-secret metadata request when configuration acknowledgement is lost', async () => {
+it('recovers the original non-secret metadata request when configuration acknowledgement is lost', async () => {
   vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
   await mount(); await save(); const original = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   expect(localStorage.getItem(storage)).not.toContain(secret);
   await act(async () => button('核对并继续原保存').click());
-  expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenNthCalledWith(2, 'alice', original, undefined);
+  expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1); expect(ownerModelApi.recover).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', original.requestId);
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', original, undefined);
   expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
 });
 it('does not claim default selection when the server reports a different current default', async () => {
@@ -113,14 +147,39 @@ it('settles a failed read with a retry action and exposes no secret field when c
   await act(async () => button('重新读取设置').click());
   expect(host.textContent).toContain('无需向管理员发送 API 密钥'); expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
 });
-it('rejects foreign, unexpected secret-bearing, and malformed model receipts', () => {
-  for (const value of [{ ...row, ownerId: 'bob' }, { ...row, password: secret }, { ...row, available: false }, { ...row, baseURL: 'javascript:alert(1)' }]) expect(() => ownerModel(value, 'alice')).toThrow();
-  expect(ownerModel(row, 'alice')).toBe(row);
+it('projects harmless/secret unknown model fields while rejecting malformed required fields', () => {
+  for (const value of [{ ...row, ownerId: 'bob' }, { ...row, available: false }, { ...row, status: 'odd' }, { ...row, protocol: 'unknown' }, { ...row, baseURL: 'javascript:alert(1)' }]) expect(() => ownerModel(value, 'alice')).toThrow();
+  expect(ownerModel({ ...row, password: secret, harmless: 'ignored' }, 'alice')).toEqual(row);
+  expect(ownerModel({ ...row, password: secret }, 'alice')).not.toHaveProperty('password');
+});
+it('fetches model receipts by GET with owner scope, projects unknown fields, and rejects mismatched receipts', async () => {
+  const requestId = 'fixture-model-request-001';
+  const receipt = { ownerId: 'alice', requestId, action: 'model.configure', result: { ...row, password: secret, harmless: 'ignored' }, completedAt: '2026-10-09T00:00:01Z', extra: 'ignored' };
+  const mockedFetch = vi.fn(async () => new Response(JSON.stringify(receipt), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  vi.mocked(ownerModelApi.recover).mockRestore();
+  vi.stubGlobal('fetch', mockedFetch);
+  const result = await ownerModelApi.recover('alice', requestId);
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  const [url, init] = mockedFetch.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe(`/api/factory/personal-models/requests/${requestId}`);
+  expect(init.method).toBe('GET'); expect(init.headers).toMatchObject({ 'X-Factory-Expected-Owner': 'alice' });
+  expect(result).toEqual({ ownerId: 'alice', requestId, action: 'model.configure', result: row, completedAt: receipt.completedAt });
+  expect(JSON.stringify(result)).not.toContain(secret);
+  for (const invalid of [
+    { ...receipt, ownerId: 'bob' }, { ...receipt, requestId: 'different-request' }, { ...receipt, action: 'credential.save' },
+    { ...receipt, completedAt: 'not-a-date' }, { ...receipt, result: { ...row, ownerId: 'bob' } },
+    { ...receipt, result: { ...row, status: 'unknown' } },
+  ]) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(invalid), { status: 200 })));
+    await expect(ownerModelApi.recover('alice', requestId)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  }
 });
 it('accepts the actual persisted thinking field and rejects invalid values, scope and unknown fields', () => {
-  expect(ownerModel(thinkingRow, 'alice')).toBe(thinkingRow);
+  expect(ownerModel(thinkingRow, 'alice')).toEqual(thinkingRow);
   for (const thinkingMode of ['enabled', 'default', null, false, {}, 0]) expect(() => ownerModel({ ...thinkingRow, thinkingMode }, 'alice')).toThrow();
-  for (const value of [{ ...thinkingRow, password: secret }, { ...thinkingRow, otherOption: 'disabled' }, { ...thinkingRow, model: 'other-model' }, { ...thinkingRow, baseURL: row.baseURL }]) expect(() => ownerModel(value, 'alice')).toThrow();
+  expect(() => ownerModel({ ...thinkingRow, protocol: 'responses' }, 'alice')).toThrow();
+  expect(ownerModel({ ...thinkingRow, password: secret, otherOption: 'disabled' }, 'alice')).toEqual(thinkingRow);
+  for (const value of [{ ...thinkingRow, model: 'other-model' }, { ...thinkingRow, baseURL: row.baseURL }]) expect(() => ownerModel(value, 'alice')).toThrow();
 });
 it('reads actual JSON thinking metadata on the settings page and validates default/revoke receipts', async () => {
   vi.mocked(ownerModelApi.list).mockRestore(); vi.mocked(ownerModelApi.default).mockRestore();
@@ -135,7 +194,7 @@ it('reads actual JSON thinking metadata on the settings page and validates defau
   }));
   await mount(); expect(host.textContent).toContain(thinkingRow.model); expect(host.textContent).not.toContain('暂时无法读取模型设置');
   await act(async () => { button('设为默认').click(); await new Promise(resolve => setTimeout(resolve, 20)); }); expect(host.textContent).toContain('默认模型已更新');
-  await act(async () => button('撤销模型').click()); await act(async () => { button('确认撤销').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+  await act(async () => button('撤销模型').click()); await act(async () => { button('确认撤销').click(); await new Promise(resolve => setTimeout(resolve, 200)); });
   expect(host.textContent).toContain('模型已撤销，不能用于新任务');
   expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
 });
@@ -144,17 +203,58 @@ it('retains scoped thinking metadata through password rotation, lost configure a
   const updated = { ...original, credentialRevision: 'rotated-r2', revision: 'model-r2' };
   vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([goCredential]);
-  const rotate = vi.spyOn(ownerModelApi, 'rotateCredential').mockResolvedValue({ ...goCredential, credentialRevision: 'rotated-r2' });
+  const rotate = vi.spyOn(personalRemoteApi, 'rotateCredential').mockResolvedValue({ ...goCredential, credentialRevision: 'rotated-r2' });
   vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0)).mockResolvedValue(updated);
   vi.mocked(ownerModelApi.default).mockResolvedValue(updated);
   await mount(); await act(async () => button('更新密钥').click()); await fill('API 密钥', secret);
   await act(async () => button('保存新密钥').click());
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1]; expect(request.thinkingMode).toBe('disabled');
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
   expect(localStorage.getItem(storage)).toContain('"thinkingMode":"disabled"'); expect(localStorage.getItem(storage)).not.toContain(secret);
   await act(async () => root.unmount()); root = createRoot(host); await mount();
   await act(async () => button('核对并继续原保存').click());
-  expect(ownerModelApi.configure).toHaveBeenNthCalledWith(2, 'alice', request, original.reference);
-  expect(rotate).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('密钥已更新。旧任务绑定会按服务端规则重新检查。');
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
+  expect(rotate).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('原保存已核对完成');
+});
+const legacyGoRow: OwnerModel = { ...row, provider: 'openai-compatible', baseURL: 'https://opencode.ai/zen/go/v1', isDefault: false, status: 'credential_unavailable', available: false };
+it.each(['rotate', 'rebind'] as const)('keeps protocol absent for legacy Go records during %s', async operation => {
+  vi.mocked(ownerModelApi.list).mockResolvedValue([legacyGoRow]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue(operation === 'rotate' ? [] : [{ ...goCredential, credentialRevision: 'rotated-r2' }]);
+  const updated = { ...legacyGoRow, credentialRevision: 'rotated-r2', status: 'configured' as const, available: true };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(updated);
+  await mount();
+  if (operation === 'rotate') {
+    vi.spyOn(personalRemoteApi, 'rotateCredential').mockResolvedValue({ ...goCredential, credentialRevision: 'rotated-r2' });
+    await act(async () => button('更新密钥').click()); await fill('API 密钥', secret); await act(async () => button('保存新密钥').click());
+  } else await act(async () => button('绑定更新后的凭据').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(ownerModelApi.configure).mock.calls[0][1]).not.toHaveProperty('protocol');
+  expect(localStorage.getItem(storage)).toBeNull();
+});
+it('retains Responses protocol through rotation and receipt recovery', async () => {
+  const original = { ...legacyGoRow, protocol: 'responses' as const, isDefault: true };
+  const updated = { ...original, credentialRevision: 'rotated-r2', revision: 'model-r2', status: 'configured' as const, available: true };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([goCredential]);
+  vi.spyOn(personalRemoteApi, 'rotateCredential').mockResolvedValue({ ...goCredential, credentialRevision: 'rotated-r2' });
+  vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...updated, isDefault: true });
+  await mount(); await act(async () => button('更新密钥').click()); await fill('API 密钥', secret); await act(async () => button('保存新密钥').click());
+  const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
+  expect(request.protocol).toBe('responses'); expect(localStorage.getItem(storage)).toContain('"protocol":"responses"');
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
+  await act(async () => root.unmount()); root = createRoot(host); await mount(); await act(async () => button('核对并继续原保存').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
+  expect(host.textContent).toContain('原保存已核对完成'); expect(localStorage.getItem(storage)).toBeNull();
+});
+it('retains Responses protocol during credential rebind', async () => {
+  const stale = { ...legacyGoRow, protocol: 'responses' as const, isDefault: false };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([stale]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([{ ...goCredential, credentialRevision: 'rotated-r2' }]);
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...stale, credentialRevision: 'rotated-r2', status: 'configured', available: true });
+  await mount(); await act(async () => button('绑定更新后的凭据').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ protocol: 'responses' }), stale.reference);
+  expect(localStorage.getItem(storage)).toBeNull();
 });
 it('keeps thinking disabled on credential rebind and refuses a receipt that silently loses it', async () => {
   const original = { ...thinkingRow, isDefault: true, available: false, status: 'credential_unavailable' as const };
@@ -172,6 +272,14 @@ it('persists thinking as bounded metadata and rejects malformed storage values',
   for (const thinkingMode of ['default', 'enabled', null, false, {}]) expect(readModelSetup(JSON.stringify({ ...setup, thinkingMode }), 'alice')).toBeNull();
   expect(readModelSetup(JSON.stringify({ ...setup, baseURL: row.baseURL }), 'alice')).toBeNull();
 });
+it('preserves explicit Responses metadata and retains missing protocol on legacy setup records', () => {
+  const legacy: ModelSetup = { owner: 'alice', provider: 'openai-compatible', baseURL: legacyGoRow.baseURL, model: legacyGoRow.model,
+    credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'model', chooseDefault: false };
+  const responses = { ...legacy, protocol: 'responses' as const };
+  expect(readModelSetup(JSON.stringify(setupMetadata(legacy)), 'alice')).toEqual(legacy);
+  expect(readModelSetup(JSON.stringify(setupMetadata(responses)), 'alice')).toEqual(responses);
+  expect(readModelSetup(JSON.stringify({ ...responses, protocol: 'other' }), 'alice')).toBeNull();
+});
 it('persists only owner-scoped safe setup metadata and rejects unsupported destinations before custody', () => {
   const setup: ModelSetup = { owner: 'alice', provider: 'openai', baseURL: row.baseURL, model: row.model, credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'credential', chooseDefault: true };
   const metadata = setupMetadata({ ...setup, password: secret } as ModelSetup); expect(JSON.stringify(metadata)).not.toContain(secret);
@@ -181,19 +289,24 @@ it('persists only owner-scoped safe setup metadata and rejects unsupported desti
 
 it('clears stale drafts when another tab changes the cookie owner before Save, without submitting any secret', async () => {
   await mount(); vi.mocked(api.session).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' }); await save();
+  expect(api.session).toHaveBeenCalledTimes(1);
   expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(ownerModelApi.configure).not.toHaveBeenCalled();
   expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull(); expect(host.textContent).toContain('当前登录账户已改变');
   expect(localStorage.getItem(storage)).toBeNull();
 });
-it('stops metadata writes when the account changes after secret custody', async () => {
-  vi.mocked(api.session).mockResolvedValueOnce({ id: 'alice', name: 'Alice', role: 'user' }).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' });
+it('preflights once and honors the server expected-owner response after secret custody', async () => {
+  vi.mocked(api.session).mockResolvedValueOnce({ id: 'alice', name: 'Alice', role: 'user' });
+  vi.mocked(ownerModelApi.configure).mockRejectedValue(new ModelRequestError(403, 'EXPECTED_OWNER_MISMATCH'));
   await mount(); await save(); expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1);
-  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(ownerModelApi.default).not.toHaveBeenCalled();
+  expect(api.session).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.anything(), undefined);
+  expect(ownerModelApi.default).not.toHaveBeenCalled();
   expect(host.textContent).toContain('当前登录账户已改变'); expect(JSON.stringify(localStorage)).not.toContain(secret);
 });
 it('clears drafts on a server-side owner mismatch in the race after live preflight', async () => {
-  vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new (await import('../web/personalRemoteApi.js')).RemoteRequestError(true, 'EXPECTED_OWNER_MISMATCH'));
-  await mount(); await save(); expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(host.textContent).toContain('当前登录账户已改变');
+  vi.mocked(ownerModelApi.configure).mockRejectedValue(new ModelRequestError(403, 'EXPECTED_OWNER_MISMATCH'));
+  await mount(); await save(); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.anything(), undefined);
+  expect(ownerModelApi.default).not.toHaveBeenCalled(); expect(host.textContent).toContain('当前登录账户已改变');
   expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
 });
 
@@ -219,12 +332,14 @@ it('creates a new model from an existing matching reference without custody or s
   expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision }), undefined);
   expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled(); expect(localStorage.getItem(storage)).toBeNull();
 });
-it('retains only metadata when saved-reference configuration acknowledgement is lost', async () => {
+it('recovers saved-reference configuration acknowledgement without repeating its POST', async () => {
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([credential]); vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
   await mount(); await fill('模型名称', row.model);
   await act(async () => { const source = host.querySelector<HTMLSelectElement>('[aria-label="模型凭据来源"]')!; source.value = 'saved'; source.dispatchEvent(new Event('change', { bubbles: true })); });
   await act(async () => { const saved = host.querySelector<HTMLSelectElement>('[aria-label="已保存的模型凭据"]')!; saved.value = credential.credentialRef; saved.dispatchEvent(new Event('change', { bubbles: true })); });
   await act(async () => button('保存模型并设为默认').click()); const original = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   await act(async () => button('核对并继续原保存').click());
-  expect(ownerModelApi.configure).toHaveBeenNthCalledWith(2, 'alice', original, undefined); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', original, undefined);
+  expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', original.requestId);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
 });

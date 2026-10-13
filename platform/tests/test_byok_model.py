@@ -46,19 +46,19 @@ class ByokModelTests(unittest.TestCase):
         requests = []
         def wire(request):
             requests.append(request)
-            return httpx.Response(200, json={'model': 'longcat-2.5-preview-free',
+            return httpx.Response(200, json={'model': 'deepseek-flash',
                 'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'synthetic answer'}}],
                 'usage': {'prompt_tokens': 12, 'completion_tokens': 3, 'total_tokens': 15}})
-        model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'longcat-2.5-preview-free',
-            'baseURL': 'https://opencode.ai/zen/go/v1'}, lambda: SecretLease('api-key', 'synthetic-key'),
+        model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'deepseek-flash',
+            'baseURL': 'https://opencode.ai/inference/go/v1'}, lambda: SecretLease('api-key', 'synthetic-key'),
             transport_factory=lambda: httpx.MockTransport(wire))
         for _ in range(2): asyncio.run(model.ainvoke([Message(role='user', content='synthetic')]))
         self.assertEqual(len(requests), 2)
-        self.assertEqual(str(requests[0].url), 'https://opencode.ai/zen/go/v1/chat/completions')
+        self.assertEqual(str(requests[0].url), 'https://opencode.ai/inference/go/v1/chat/completions')
         self.assertTrue(requests[0].headers['user-agent'].startswith('agent-factory/'))
         self.assertEqual(requests[0].headers['x-opencode-session'], requests[1].headers['x-opencode-session'])
         self.assertNotIn('synthetic-key', requests[0].headers['x-opencode-session'])
-        self.assertEqual(json.loads(requests[0].content)['model'], 'longcat-2.5-preview-free')
+        self.assertEqual(json.loads(requests[0].content)['model'], 'deepseek-flash')
 
     def test_go_conversation_id_can_survive_model_reconstruction_for_an_immutable_plan(self):
         requests = []

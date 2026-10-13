@@ -116,7 +116,9 @@ Factory hard external money limit**.
   "providerId": "byok-chat-v1",
   "providers": ["openai", "openai-compatible"],
   "protocol": "chat-completions-text-functions-v1",
+  "protocols": ["chat-completions", "responses"],
   "baseURLPath": "/v1",
+  "additionalBaseURLs": ["https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go/v1"],
   "credentialInput": "/api/factory/personal-credentials",
   "credentialUsername": "api-key",
   "platformBillingEnabled": false,
@@ -185,22 +187,32 @@ The response contains `reference`, `revision`, `connectionRef`, `ownerId`,
 `provider`, `baseURL`, `model`, credential refs, `updatedAt`, `status`, `available`,
 `isDefault`, and `hardExternalBudgetEnforced:false`. Only authenticated-owner
 metadata is listed by `GET /api/factory/personal-models`. Repeating a matching
-requestId returns current metadata for the original configuration; changed
+requestId returns the original recorded result; changed
 intent returns an idempotency conflict. **API keys belong only to the vault
 endpoint**, never to this metadata endpoint. Invalid input responses are redacted.
+
+`GET /personal-models/requests/{requestId}` returns the original owner-scoped
+`{ownerId,requestId,action,result,completedAt}` receipt without requiring the old
+credential to remain available. It does not submit anything. Read the model list
+separately for current status/default: another tab may have changed either since
+the original operation. A missing receipt does not prove that an uncertain
+request was never sent. See [protocol and recovery boundaries](MODEL_PROTOCOLS.md).
 
 3. `POST /api/factory/personal-models/{reference}/default` with `{requestId}`:
    choose that current owner configuration as the default. Model metadata states
    `configured`, `credential_unavailable`, or `revoked`. `configured` proves
    local custody/scope, not remote provider compatibility or account balance.
 
-Supported protocol is only non-streaming text and function tools over
-`POST https://host/v1/chat/completions`. HTTPS/443, DNS hostname, exact `/v1` base
-path, no URL credentials/query/fragment, public DNS/IP checks, pinned address,
+Supported protocols are non-streaming text and function tools over
+`POST https://host/v1/chat/completions` or `POST https://host/v1/responses`.
+Set optional `protocol:"responses"` explicitly; omission and explicit
+`"chat-completions"` retain the legacy CC contract and idempotency fingerprint.
+HTTPS/443, DNS hostname, exact `/v1` base path (plus the two exact Go prefixes
+above), no URL credentials/query/fragment, public DNS/IP checks, pinned address,
 original TLS hostname, no redirect, no environment proxy/key lookup, no SDK
 retry, bounded body/response sizes, and an async deadline are enforced. Responses
 may omit usage; any reported usage is native model metrics, not an authoritative
-Factory bill. Responses containing the exact credential are rejected. Responses,
+Factory bill. Responses containing the exact credential are rejected.
 Anthropic, multimodal, arbitrary base paths, and arbitrary API compatibility are
 not claimed. Native streaming surfaces emit the bounded complete response;
 provider SSE streaming is not implemented.
