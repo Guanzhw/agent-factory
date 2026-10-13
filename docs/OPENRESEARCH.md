@@ -166,7 +166,7 @@ local-only status lookup for a nonexistent experiment timed out at 10 seconds;
 cleanup ran, but its cause and successful real status parsing remain unverified.
 There is no successful live project/experiment workflow evidence.
 
-`platform/tests/test_actual_orx_preflight.py` is opt-in with an operator-supplied
+`apps/research/tests/python/test_actual_orx_preflight.py` is opt-in with an operator-supplied
 `FACTORY_ORX_BINARY` and `FACTORY_ORX_SHA256`. It runs only version preflight and
 wrong-pin rejection. Ordinary CI does not download/build/run ORX. This manifest
 attests one local build, not reproducibility or production approval. Neither the

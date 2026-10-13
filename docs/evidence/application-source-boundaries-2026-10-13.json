@@ -96,5 +96,80 @@
     "C owns CI: expand ruff paths and replace platform-only discovery in .github/workflows/ci.yml with scripts/check_python.py",
     "B model/provider head e1ac87d is not included pending parent review",
     "Real external model, SSH, OpenResearch/OpenCode live integration remains parent-scheduled; no such calls were made"
-  ]
+  ],
+  "testOwnershipFollowup": {
+    "baseCommit": "e517330beb38de1b9da1a2c508df24ce6f9149c1",
+    "movedUnchangedExceptWorkerSourceRoots": [
+      "test_actual_orx_local.py",
+      "test_actual_orx_preflight.py",
+      "test_actual_retrieval_boundary.py",
+      "test_inference_control_validation.py",
+      "test_managed_workspace.py",
+      "test_completed_log_scope.py",
+      "test_personal_session_rebind.py"
+    ],
+    "destination": "apps/research/tests/python",
+    "mixedGuardTests": {
+      "originalMethods": 6,
+      "originalAssertionsPreserved": true,
+      "retainedCoreMethods": 1,
+      "movedApplicationMethods": 5,
+      "newCoreMechanismTests": 2,
+      "applicationFile": "test_inference_application_guard_scope.py"
+    },
+    "standaloneCoreCollection": {
+      "isolatedPythonFlags": [
+        "-I",
+        "-S"
+      ],
+      "applicationPackagesAbsent": [
+        "agent_factory_research",
+        "agent_factory_server"
+      ],
+      "module": "test_inference_guard_scope",
+      "passed": 3,
+      "skipped": 0
+    },
+    "targetRegression": {
+      "collected": 66,
+      "passed": 42,
+      "skipped": 24,
+      "skipReason": "Existing opt-in native ORX and PostgreSQL acceptance requirements; no live invocation"
+    },
+    "fullDiscovery": {
+      "platform/tests": 1420,
+      "apps/research/tests/python": 1415,
+      "importErrors": 0,
+      "previousTotal": 2832,
+      "currentTotal": 2835,
+      "addedTests": 3
+    },
+    "crossServiceFilesKept": [
+      "platform/tests/test_actual_orx_receiver.py",
+      "platform/tests/test_actual_inference_tree.py"
+    ],
+    "boundaryNote": "The production core and core wheel are independent. platform/tests also retains explicit application fixtures and cross-service integration; the entire directory is not an application-free test suite.",
+    "ciOwnerHandoff": {
+      "owner": "C",
+      "entry": "scripts/check_python.py",
+      "requiredDiscoveryRoots": [
+        "platform/tests",
+        "apps/research/tests/python"
+      ],
+      "ruffRoots": [
+        "platform",
+        "apps/research",
+        "deployment",
+        "scripts"
+      ],
+      "preserve": [
+        "PostgreSQL log wrapper",
+        "required no-skip suites",
+        "historical source manifests"
+      ]
+    },
+    "ruff": "passed",
+    "diffCheck": "passed",
+    "modelProviderBranchIncluded": false
+  }
 }

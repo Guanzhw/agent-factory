@@ -383,6 +383,12 @@ npm audit
 ```
 
 完整 Python 回归需要分别发现公共底座与应用测试；只运行原 `platform/tests` 不再覆盖研究业务。
+纯研究被测对象（包括 ORX 本地日志、研究等待恢复、个人原生会话重绑定）归入应用测试。
+`platform/tests` 仍包含公共机制的装配测试和明确的跨服务集成测试，例如
+`test_actual_orx_receiver.py`、`test_actual_inference_tree.py`；其中使用应用 fixture 的测试
+需要完整部署依赖，不能把整个目录当作无应用依赖的测试集。
+独立底座边界由 `test_core_package_distribution.py` 的隔离 wheel 验证，以及
+`test_core_runtime_boundaries.py` 禁止导入应用包的公共模块/Store 测试收集与执行验证负责。
 保留上面的测试 `PYTHONPATH` 后可分别运行：
 
 ```bash
