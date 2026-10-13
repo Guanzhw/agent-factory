@@ -9,6 +9,7 @@ not a sandbox for hostile executables or proof of remote effect termination.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -71,6 +72,9 @@ class PersonalCliAdapter:
     This initial implementation deliberately has no persistent refresh/cache
     state. A future persistent mode needs an owner+connection cross-process lock
     and revision-scoped directories; temporary calls do not share mutable files.
+    Asyncio debug tracing can log pipe payloads before echo filtering, so calls
+    require a loop whose debug setting remains disabled throughout execution.
+    This adapter never changes shared loop or logging configuration.
     """
 
     def __init__(self, *, descriptor: ToolDescriptor, executable: str,
@@ -192,19 +196,25 @@ class PersonalCliAdapter:
         root: Path | None = None
         stopped, dispatched = True, False
         deadline = time.monotonic() + self.descriptor.timeout_seconds
+
+        def check_authorized() -> None:
+            if asyncio.get_running_loop().get_debug():
+                raise ToolInvocationError("CLI_DEBUG_LOGGING_UNSAFE", outcome="failed", stopped=True)
+            invocation.check_authorized()
+
         try:
             arguments = self._arguments(invocation.arguments)
-            invocation.check_authorized()
+            check_authorized()
             lease = invocation.resolve_credential()
             if not isinstance(lease, SecretLease):
                 raise ToolInvocationError("CLI_CREDENTIAL_UNAVAILABLE", outcome="failed", stopped=True)
-            invocation.check_authorized()
+            check_authorized()
             root = Path(tempfile.mkdtemp(prefix="personal-cli-", dir=self._temporary_root))
             env = self._environment(root)
             auth_arguments = self._auth_arguments(root)
 
             def guard() -> None:
-                invocation.check_authorized()
+                check_authorized()
                 if self._digest() != self._executable_digest:
                     raise ToolInvocationError("CLI_EXECUTABLE_CHANGED", outcome="failed")
 
@@ -217,7 +227,7 @@ class PersonalCliAdapter:
                     result = await run_cli_process(executable=self._executable,
                         argv=(*self._fixed, *auth_arguments, *extra), env=env, cwd=root, stdin=stdin,
                         timeout_seconds=remaining, max_output_bytes=self.descriptor.max_output_bytes,
-                        before_spawn=guard, check_authorized=invocation.check_authorized)
+                        before_spawn=guard, check_authorized=check_authorized)
                     stopped = result.stopped
                     if business:
                         dispatched = result.dispatched
@@ -251,7 +261,7 @@ class PersonalCliAdapter:
             value = self._result(result, lease)
             if result.returncode != 0:
                 raise ToolInvocationError("CLI_COMMAND_FAILED", outcome="unknown", stopped=True)
-            invocation.check_authorized()
+            check_authorized()
             return value
         except ToolInvocationError as error:
             if dispatched:

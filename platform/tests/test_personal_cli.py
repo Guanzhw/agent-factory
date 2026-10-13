@@ -8,11 +8,13 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import traceback
 from typing import Any, Literal, cast
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import agent_factory.personal_cli as personal_cli
+from agent_factory._personal_cli_process import CLIProcessError
 from agent_factory.personal_cli import CliCredentialDelivery, PersonalCliAdapter
 from agent_factory.personal_remote_provider import SecretLease
 from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
@@ -39,6 +41,11 @@ def lease(account: str = "alice") -> SecretLease:
 
 @unittest.skipUnless(os.name == "posix", "CLI process groups require POSIX")
 class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        # Each test owns its loop. Production adapters reject debug tracing
+        # because stdlib slow-callback logs can include raw pipe payloads.
+        asyncio.get_running_loop().set_debug(False)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="personal-cli-test-")
         self.addCleanup(self.temporary.cleanup)
@@ -49,7 +56,7 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
             tool_name="synthetic_lookup", description="Offline synthetic lookup",
             input_schema=INPUT_SCHEMA, transport="cli",
             credential_provider_id="synthetic-cli", credential_destination="synthetic-service",
-            capabilities=("lookup",), timeout_seconds=8, max_output_bytes=65536)
+            capabilities=("lookup",), timeout_seconds=30, max_output_bytes=65536)
 
     def adapter(self, mode: Mode = "stdin", *, fixed: tuple[str, ...] = (),
                 options: dict[str, str] | None = None, **overrides: Any) -> PersonalCliAdapter:
@@ -90,7 +97,7 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
         return calls, patch.object(personal_cli, "run_cli_process", side_effect=run)
 
     async def wait_for_state(self, path: Path) -> dict[str, Any]:
-        async with asyncio.timeout(4):
+        async with asyncio.timeout(15):
             while True:
                 try:
                     state = json.loads(path.read_text())
@@ -148,6 +155,24 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("synthetic-vault-denied", str(caught.exception))
                 run.assert_not_called()
                 self.assert_private_cleaned()
+
+    async def test_debug_logging_rejects_before_credential_or_process(self):
+        invocation = self.invocation()
+        loop = asyncio.get_running_loop()
+        loop.set_debug(True)
+        try:
+            with patch.object(personal_cli, "run_cli_process", new_callable=AsyncMock) as run:
+                with self.assertRaises(ToolInvocationError) as caught:
+                    await self.adapter().invoke(invocation)
+            self.assertEqual((caught.exception.code, caught.exception.outcome, caught.exception.stopped),
+                ("CLI_DEBUG_LOGGING_UNSAFE", "failed", True))
+            cast(Mock, invocation.resolve_credential).assert_not_called()
+            run.assert_not_called()
+            self.assertNotIn(lease().password, str(caught.exception))
+            self.assertTrue(loop.get_debug())  # Adapter must not change a shared loop.
+            self.assert_private_cleaned()
+        finally:
+            loop.set_debug(False)
 
     async def test_missing_probe_rejects_unsafe_host_fallback_before_business(self):
         state = self.root / "unsafe-business.json"
@@ -283,6 +308,69 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse((set(canaries) - {"HOME"}) & set(runtime["environmentNames"]))
                 self.assertFalse(directory.exists())
                 self.assert_private_cleaned()
+
+    async def test_cleanup_failure_after_business_is_unknown_and_sanitized(self):
+        completed = False
+        real_rmtree = personal_cli.shutil.rmtree
+
+        def after(count):
+            nonlocal completed
+            completed = count == 3
+
+        def remove(path, *args, **kwargs):
+            if completed:
+                raise PermissionError(f"synthetic-cleanup-private-detail: {path}")
+            return real_rmtree(path, *args, **kwargs)
+
+        calls, recording = self.record_processes(after=after)
+        with recording, patch.object(personal_cli.shutil, "rmtree", side_effect=remove):
+            with self.assertRaises(ToolInvocationError) as caught:
+                await self.adapter("file").invoke(self.invocation())
+        error = caught.exception
+        self.assertEqual((error.code, error.outcome, error.stopped),
+            ("CLI_CREDENTIAL_CLEANUP_FAILED", "unknown", True))
+        self.assertEqual(len(calls), 3)
+        retained = Path(calls[-1]["cwd"])
+        self.assertEqual(list(self.private.iterdir()), [retained])
+        self.assertTrue((retained / "credentials").is_file())
+        diagnostics = str(error) + repr(vars(error)) + "".join(traceback.format_exception(error))
+        self.assertNotIn(str(retained), diagnostics)
+        self.assertNotIn("synthetic-cleanup-private-detail", diagnostics)
+        self.assertNotIn(lease().password, diagnostics)
+        # The fixture's own TemporaryDirectory reclaims this synthetic residue.
+
+    async def test_unconfirmed_stop_retains_directory_without_reusing_for_next_owner(self):
+        calls: list[dict[str, Any]] = []
+        real_run = personal_cli.run_cli_process
+
+        async def run(**kwargs):
+            calls.append({"argv": kwargs["argv"], "cwd": str(kwargs["cwd"])})
+            if len(calls) == 3:
+                raise CLIProcessError("PERSONAL_CLI_STOP_UNCONFIRMED", dispatched=True, stopped=False)
+            return await real_run(**kwargs)
+
+        adapter = self.adapter("file")
+        second = self.invocation(account="bob", arguments={"inspect": True})
+        with patch.object(personal_cli, "run_cli_process", side_effect=run):
+            with self.assertRaises(ToolInvocationError) as caught:
+                await adapter.invoke(self.invocation())
+            self.assertEqual((caught.exception.code, caught.exception.outcome, caught.exception.stopped),
+                ("PERSONAL_CLI_STOP_UNCONFIRMED", "unknown", False))
+            retained = Path(calls[-1]["cwd"])
+            self.assertEqual(list(self.private.iterdir()), [retained])
+            self.assertTrue((retained / "credentials").is_file())
+            result = await adapter.invoke(second)
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(result["account"], "bob")
+        cast(Mock, second.resolve_credential).assert_called_once_with()
+        next_directory = Path(result["runtime"]["cwd"])
+        self.assertNotEqual(retained, next_directory)
+        self.assertEqual([call["cwd"] for call in calls[:3]], [str(retained)] * 3)
+        self.assertEqual([call["cwd"] for call in calls[3:]], [str(next_directory)] * 3)
+        self.assertFalse(next_directory.exists())
+        self.assertEqual(list(self.private.iterdir()), [retained])
+        self.assertTrue((retained / "credentials").is_file())
+        # No actual process is left by the injected failure; test cleanup owns it.
 
     async def test_revocation_while_business_runs_stops_locally_without_replay(self):
         state = self.root / "revoke-running.json"
