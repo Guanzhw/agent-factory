@@ -83,7 +83,9 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
             input_schema={'type': 'object', 'properties': {'value': {'type': 'string'}}, 'required': ['value']},
             credential_provider_id='fixture-inventory', credential_destination='https://inventory.example.com',
             capabilities=(native_fixture.CAPABILITY,), permission=native_fixture.CAPABILITY,
-            read_only=True, timeout_seconds=5,
+            # Real vault/permission callbacks can take over five seconds per call.
+            # Timeout semantics have separate adapter tests; this checks capacity.
+            read_only=True, timeout_seconds=20,
         )
         self.adapter = MCPToolAdapter(descriptor, url=self.mcp.url, remote_tool_name='echo',
                                       allow_loopback_http=True, teardown_timeout_seconds=1,
@@ -153,8 +155,13 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         next_run = self.request('POST', '/application-interface/v1/starts',
                                 {**body, 'requestId': 'after-known-mcp-failure'}, expected=202)
         self.assertNotEqual(next_run['job']['id'], task['id'])
-        self.wait(next_run, 'alice')
+        next_task = self.wait(next_run, 'alice')
+        self.wait_terminal(next_task)
         self.assertEqual(self.mcp.calls, [('echo', 'alice'), ('echo', 'alice')])
+        next_effects = self.store.effects(next_task['id'])
+        self.assertEqual(len(next_effects), 2)
+        self.assertTrue(all(effect['status'] == 'DONE' for effect in next_effects), next_effects)
+        self.assertTrue(all(effect['result']['outcome'] == 'completed' for effect in next_effects), next_effects)
 
     def test_schema_failure_releases_capacity_and_keeps_original_receipt_after_restart(self):
         connection = self.configure('alice')
