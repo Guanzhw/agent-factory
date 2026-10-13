@@ -199,6 +199,155 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(state.exists())
                 self.assert_private_cleaned()
 
+    async def test_probe_process_errors_fail_without_business_dispatch_or_retry(self):
+        for stage in (1, 2):
+            for code in ("PERSONAL_CLI_TIMEOUT", "PERSONAL_CLI_OUTPUT_LIMIT", "PERSONAL_CLI_PROCESS_FAILED"):
+                with self.subTest(stage=stage, code=code):
+                    calls: list[tuple[str, ...]] = []
+                    real_run = personal_cli.run_cli_process
+
+                    async def run(**kwargs):
+                        calls.append(kwargs["argv"])
+                        if len(calls) == stage:
+                            raise CLIProcessError(code, dispatched=True, stopped=True)
+                        return await real_run(**kwargs)
+
+                    with patch.object(personal_cli, "run_cli_process", side_effect=run):
+                        with self.assertRaises(ToolInvocationError) as caught:
+                            await self.adapter("file").invoke(self.invocation())
+                    self.assertEqual((caught.exception.code, caught.exception.outcome, caught.exception.stopped),
+                        (code, "failed", True))
+                    self.assertEqual(len(calls), stage)
+                    self.assertTrue(all("--probe" in argv for argv in calls))
+                    self.assert_private_cleaned()
+
+    async def test_probe_cancellation_is_cancelled_only_when_stop_is_confirmed(self):
+        for stage in (1, 2):
+            for stopped in (True, False):
+                with self.subTest(stage=stage, stopped=stopped):
+                    calls: list[tuple[str, ...]] = []
+                    real_run = personal_cli.run_cli_process
+
+                    async def run(**kwargs):
+                        calls.append(kwargs["argv"])
+                        if len(calls) == stage:
+                            raise CLIProcessError("PERSONAL_CLI_CANCELLED", dispatched=True,
+                                stopped=stopped, cancelled=True)
+                        return await real_run(**kwargs)
+
+                    with patch.object(personal_cli, "run_cli_process", side_effect=run):
+                        with self.assertRaises(ToolInvocationError) as caught:
+                            await self.adapter("file").invoke(self.invocation())
+                    self.assertEqual((caught.exception.outcome, caught.exception.stopped),
+                        ("cancelled" if stopped else "failed", stopped))
+                    self.assertEqual(len(calls), stage)
+                    self.assertTrue(all("--probe" in argv for argv in calls))
+                    retained = list(self.private.iterdir())
+                    self.assertEqual(len(retained), 0 if stopped else 1)
+                    for directory in retained:
+                        # Injected stop uncertainty creates no live subprocess.
+                        personal_cli.shutil.rmtree(directory)
+                    self.assert_private_cleaned()
+
+    async def test_probe_unconfirmed_stop_fails_but_retains_private_directory(self):
+        for stage in (1, 2):
+            with self.subTest(stage=stage):
+                calls: list[dict[str, Any]] = []
+                real_run = personal_cli.run_cli_process
+
+                async def run(**kwargs):
+                    calls.append({"argv": kwargs["argv"], "cwd": str(kwargs["cwd"])})
+                    if len(calls) == stage:
+                        raise CLIProcessError("PERSONAL_CLI_STOP_UNCONFIRMED", dispatched=True, stopped=False)
+                    return await real_run(**kwargs)
+
+                with patch.object(personal_cli, "run_cli_process", side_effect=run):
+                    with self.assertRaises(ToolInvocationError) as caught:
+                        await self.adapter("file").invoke(self.invocation())
+                self.assertEqual((caught.exception.code, caught.exception.outcome, caught.exception.stopped),
+                    ("PERSONAL_CLI_STOP_UNCONFIRMED", "failed", False))
+                self.assertEqual(len(calls), stage)
+                self.assertTrue(all("--probe" in call["argv"] for call in calls))
+                retained = Path(calls[-1]["cwd"])
+                self.assertEqual(list(self.private.iterdir()), [retained])
+                self.assertEqual((retained / "credentials").exists(), stage == 2)
+                # Only this test's injected failure remains; no child was spawned.
+                personal_cli.shutil.rmtree(retained)
+
+    async def test_real_probe_timeout_output_limit_or_revocation_never_starts_business(self):
+        for stage in (1, 2):
+            for failure, code in (("timeout", "PERSONAL_CLI_TIMEOUT"),
+                    ("output", "PERSONAL_CLI_OUTPUT_LIMIT"), ("revocation", "PERSONAL_CLI_PROCESS_FAILED")):
+                with self.subTest(stage=stage, failure=failure):
+                    calls: list[tuple[str, ...]] = []
+                    real_run = personal_cli.run_cli_process
+
+                    async def run(**kwargs):
+                        calls.append(kwargs["argv"])
+                        if len(calls) == stage:
+                            if failure == "timeout":
+                                # Child mode is a read-only sleeping fixture path.
+                                kwargs["argv"] = (*kwargs["argv"], "--child", "--delay-seconds=20")
+                                kwargs["timeout_seconds"] = .2
+                            elif failure == "output":
+                                kwargs["max_output_bytes"] = 8
+                            else:
+                                original_check = kwargs["check_authorized"]
+                                checks = 0
+
+                                def check():
+                                    nonlocal checks
+                                    original_check()
+                                    checks += 1
+                                    if checks >= 2:  # The subprocess handle has been acquired.
+                                        raise ToolInvocationError("SYNTHETIC_AUTHORITY_CHANGED", outcome="failed")
+
+                                kwargs["check_authorized"] = check
+                        return await real_run(**kwargs)
+
+                    with patch.object(personal_cli, "run_cli_process", side_effect=run):
+                        with self.assertRaises(ToolInvocationError) as caught:
+                            await self.adapter("file").invoke(self.invocation())
+                    self.assertEqual((caught.exception.code, caught.exception.outcome, caught.exception.stopped),
+                        (code, "failed", True))
+                    self.assertEqual(len(calls), stage)
+                    self.assertTrue(all("--probe" in argv for argv in calls))
+                    self.assert_private_cleaned()
+
+    async def test_probe_cleanup_failure_is_failed_and_sanitized_without_business(self):
+        calls: list[dict[str, Any]] = []
+        real_run = personal_cli.run_cli_process
+        real_rmtree = personal_cli.shutil.rmtree
+
+        async def run(**kwargs):
+            calls.append({"argv": kwargs["argv"], "cwd": str(kwargs["cwd"])})
+            if len(calls) == 2:
+                raise CLIProcessError("PERSONAL_CLI_TIMEOUT", dispatched=True, stopped=True)
+            return await real_run(**kwargs)
+
+        def remove(path, *args, **kwargs):
+            if len(calls) == 2:
+                raise PermissionError(f"synthetic-probe-cleanup-private-detail: {path}")
+            return real_rmtree(path, *args, **kwargs)
+
+        with patch.object(personal_cli, "run_cli_process", side_effect=run), \
+                patch.object(personal_cli.shutil, "rmtree", side_effect=remove):
+            with self.assertRaises(ToolInvocationError) as caught:
+                await self.adapter("file").invoke(self.invocation())
+        error = caught.exception
+        self.assertEqual((error.code, error.outcome, error.stopped),
+            ("CLI_CREDENTIAL_CLEANUP_FAILED", "failed", True))
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all("--probe" in call["argv"] for call in calls))
+        retained = Path(calls[-1]["cwd"])
+        self.assertEqual(list(self.private.iterdir()), [retained])
+        self.assertTrue((retained / "credentials").is_file())
+        diagnostics = str(error) + repr(vars(error)) + "".join(traceback.format_exception(error))
+        self.assertNotIn(str(retained), diagnostics)
+        self.assertNotIn("synthetic-probe-cleanup-private-detail", diagnostics)
+        self.assertNotIn(lease().password, diagnostics)
+        # Test-owned temporary storage reclaims the synthetic credential residue.
+
     async def test_unknown_or_identity_arguments_rejected_before_lease_or_spawn(self):
         for arguments in ({"username": "synthetic-bob"}, {"credentials-file": "other.json"},
                 {"argv": ["--account=other"]}, {"value": {"nested": "unsupported"}},
@@ -371,6 +520,48 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(self.private.iterdir()), [retained])
         self.assertTrue((retained / "credentials").is_file())
         # No actual process is left by the injected failure; test cleanup owns it.
+
+    async def test_unexpected_helper_failure_keeps_business_and_local_custody_separate(self):
+        for stage in (1, 2, 3):
+            for exception_type in (RuntimeError, asyncio.CancelledError):
+                with self.subTest(stage=stage, exception=exception_type.__name__):
+                    calls = []
+                    real_run = personal_cli.run_cli_process
+
+                    async def run(**kwargs):
+                        calls.append(kwargs["argv"])
+                        if len(calls) == stage:
+                            raise exception_type("synthetic-private-helper-detail")
+                        return await real_run(**kwargs)
+
+                    previous = set(self.private.iterdir())
+                    with patch.object(personal_cli, "run_cli_process", side_effect=run):
+                        with self.assertRaises(ToolInvocationError) as caught:
+                            await self.adapter("file").invoke(self.invocation())
+                    error = caught.exception
+                    self.assertEqual((error.code, error.outcome, error.stopped),
+                        ("CLI_PROCESS_STATE_UNCONFIRMED", "unknown" if stage == 3 else "failed", False))
+                    self.assertEqual(len(calls), stage)
+                    self.assertEqual(sum("--probe" not in argv for argv in calls), int(stage == 3))
+                    self.assertEqual(len(set(self.private.iterdir()) - previous), 1)
+                    self.assertNotIn("synthetic-private-helper-detail", str(error))
+
+    async def test_confirmed_business_spawn_rejection_remains_failed(self):
+        calls = []
+        real_run = personal_cli.run_cli_process
+
+        async def run(**kwargs):
+            calls.append(kwargs["argv"])
+            if len(calls) == 3:
+                raise CLIProcessError("PERSONAL_CLI_PROCESS_FAILED", dispatched=False, stopped=True)
+            return await real_run(**kwargs)
+
+        with patch.object(personal_cli, "run_cli_process", side_effect=run):
+            with self.assertRaises(ToolInvocationError) as caught:
+                await self.adapter().invoke(self.invocation())
+        self.assertEqual((caught.exception.outcome, caught.exception.stopped), ("failed", True))
+        self.assertEqual(len(calls), 3)
+        self.assert_private_cleaned()
 
     async def test_revocation_while_business_runs_stops_locally_without_replay(self):
         state = self.root / "revoke-running.json"

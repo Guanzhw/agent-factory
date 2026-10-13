@@ -194,7 +194,7 @@ class PersonalCliAdapter:
 
     async def invoke(self, invocation: ToolInvocation) -> Any:
         root: Path | None = None
-        stopped, dispatched = True, False
+        stopped, business_dispatched = True, False
         deadline = time.monotonic() + self.descriptor.timeout_seconds
 
         def check_authorized() -> None:
@@ -219,10 +219,10 @@ class PersonalCliAdapter:
                     raise ToolInvocationError("CLI_EXECUTABLE_CHANGED", outcome="failed")
 
             async def run(extra: tuple[str, ...], stdin: bytes, *, business: bool = False) -> CLIProcessResult:
-                nonlocal stopped, dispatched
+                nonlocal stopped, business_dispatched
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise ToolInvocationError("CLI_TIMEOUT", outcome="unknown" if dispatched else "failed")
+                    raise ToolInvocationError("CLI_TIMEOUT", outcome="unknown" if business_dispatched else "failed")
                 try:
                     result = await run_cli_process(executable=self._executable,
                         argv=(*self._fixed, *auth_arguments, *extra), env=env, cwd=root, stdin=stdin,
@@ -230,15 +230,25 @@ class PersonalCliAdapter:
                         before_spawn=guard, check_authorized=check_authorized)
                     stopped = result.stopped
                     if business:
-                        dispatched = result.dispatched
+                        business_dispatched = result.dispatched
                     if not stopped:
                         raise ToolInvocationError("CLI_STOP_UNCONFIRMED", stopped=False)
                     return result
                 except CLIProcessError as error:
                     stopped = error.stopped or not error.dispatched
                     if business:
-                        dispatched = error.dispatched
+                        business_dispatched = error.dispatched
                     raise
+                except (Exception, asyncio.CancelledError):
+                    # Only the process helper's typed result/error can prove
+                    # whether dispatch happened and local custody was closed.
+                    # An unexpected helper failure must not inherit stop proof
+                    # from the preceding probe or permit credential deletion.
+                    stopped = False
+                    if business:
+                        business_dispatched = True
+                    raise ToolInvocationError("CLI_PROCESS_STATE_UNCONFIRMED",
+                        outcome="unknown" if business else "failed", stopped=False) from None
 
             missing = await run(self._probe, b"")
             reject_credential_echo(missing.stdout.decode("utf-8", errors="replace"), lease)
@@ -264,18 +274,23 @@ class PersonalCliAdapter:
             check_authorized()
             return value
         except ToolInvocationError as error:
-            if dispatched:
+            if business_dispatched:
                 # Local process termination cannot prove that a CLI's remote
                 # operation was cancelled. Preserve the original effect as
                 # UNKNOWN even when credential cleanup is safe locally.
                 raise ToolInvocationError(error.code, outcome="unknown", stopped=stopped) from None
-            raise
+            # Probes are registered read-only operations. Their process-level
+            # uncertainty does not make an undispatched business effect UNKNOWN.
+            # Keep local stop evidence separate: an unconfirmed probe still
+            # retains its private directory, and cannot be reported cancelled.
+            outcome = "cancelled" if error.outcome == "cancelled" and stopped else "failed"
+            raise ToolInvocationError(error.code, outcome=outcome, stopped=stopped) from None
         except Exception:
             raise ToolInvocationError("CLI_INVOCATION_REJECTED",
-                outcome="unknown" if dispatched else "failed", stopped=stopped) from None
+                outcome="unknown" if business_dispatched else "failed", stopped=stopped) from None
         finally:
             # Never delete credentials out from under a process whose stop was
-            # not proved. Such a call remains UNKNOWN for core reconciliation.
+            # not proved, independently of whether business was dispatched.
             if root is not None and stopped:
                 try:
                     shutil.rmtree(root)
@@ -283,4 +298,4 @@ class PersonalCliAdapter:
                     pass
                 except OSError:
                     raise ToolInvocationError("CLI_CREDENTIAL_CLEANUP_FAILED",
-                        outcome="unknown" if dispatched else "failed", stopped=True) from None
+                        outcome="unknown" if business_dispatched else "failed", stopped=True) from None

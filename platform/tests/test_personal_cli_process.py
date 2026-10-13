@@ -29,9 +29,14 @@ class PersonalCLIProcessTests(unittest.IsolatedAsyncioTestCase):
 
     async def wait_file(self, path):
         async with asyncio.timeout(3):
-            while not path.exists():
+            while True:
+                try:
+                    return json.loads(path.read_text())
+                except (FileNotFoundError, json.JSONDecodeError):
+                    # The subprocess publishes this small fixture directly;
+                    # existence alone does not mean its JSON write has finished.
+                    pass
                 await asyncio.sleep(.01)
-        return json.loads(path.read_text())
 
     async def test_explicit_environment_cwd_stdin_and_nonzero_exit_are_returned_without_output_repr(self):
         source = ('import json,os,sys; print(json.dumps({"environment":dict(os.environ),'
