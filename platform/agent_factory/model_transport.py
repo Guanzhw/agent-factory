@@ -10,7 +10,7 @@ import json
 
 import httpx
 
-from .model_endpoint_policy import GO_BASE, base_url
+from .model_endpoint_policy import base_url
 from .personal_remote_provider import PinnedHTTPSProbe, origin, reject_credential_echo
 
 MAX_BYTES = 1_048_576
@@ -30,8 +30,8 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
         if trusted_proxy is not None:
             from .trusted_model_proxy import TrustedModelProxy
             # An existing scoped grant cannot authorize another route/protocol.
-            if (not isinstance(trusted_proxy, TrustedModelProxy) or self.base != GO_BASE
-                    or protocol != 'chat-completions'):
+            if (not isinstance(trusted_proxy, TrustedModelProxy) or self.base != trusted_proxy.base_url
+                    or protocol != trusted_proxy.protocol):
                 raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
         self.probe = (PinnedHTTPSProbe(dns_timeout_seconds=trusted_proxy.dns_timeout_seconds)
             if trusted_proxy else PinnedHTTPSProbe())
