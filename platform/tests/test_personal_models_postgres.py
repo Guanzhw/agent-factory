@@ -77,7 +77,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         with self.store.personal_models.db.read() as conn:
             old=self.store.personal_models.binding(conn,'alice',original['reference']).opaque_handle
         changed=self.request('POST','/personal-models/'+original['reference']+'/configure',
-            values|{'requestId':'thinking-fixture-change','thinkingMode':'disabled'},expected=201)
+            values|{'requestId':'thinking-fixture-change','thinkingMode':'disabled'},expected=200)
         self.assertEqual(changed['thinkingMode'],'disabled')
         self.assertNotEqual(changed['revision'],original['revision'])
         with self.assertRaises(HTTPException):old.check()
