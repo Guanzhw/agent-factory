@@ -24,6 +24,13 @@ OPTIONS = {"value": "--value", "delay": "--delay-seconds", "cache": "--cache-fil
     "state": "--state-file", "inspect": "--inspect-runtime", "leak": "--leak",
     "exitCode": "--exit-code", "spawnChild": "--spawn-child",
     "ignoreSigterm": "--ignore-sigterm", "writeEffect": "--write-effect"}
+INPUT_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
+    **{key: {"type": "string", "maxLength": 8192} for key in
+       ("value", "cache", "state", "leak", "writeEffect")},
+    **{key: {"type": "boolean"} for key in ("inspect", "spawnChild", "ignoreSigterm")},
+    "delay": {"type": "number", "minimum": 0, "maximum": 300},
+    "exitCode": {"type": "integer", "minimum": 0, "maximum": 125},
+}}
 
 
 def lease(account: str = "alice") -> SecretLease:
@@ -40,7 +47,7 @@ class PersonalCliAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.private.mkdir()
         self.descriptor = ToolDescriptor(adapter_id="synthetic-cli", revision="fixture-v1",
             tool_name="synthetic_lookup", description="Offline synthetic lookup",
-            input_schema={"type": "object"}, transport="cli",
+            input_schema=INPUT_SCHEMA, transport="cli",
             credential_provider_id="synthetic-cli", credential_destination="synthetic-service",
             capabilities=("lookup",), timeout_seconds=8, max_output_bytes=65536)
 
