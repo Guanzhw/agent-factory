@@ -24,7 +24,7 @@ class ArtifactWire(NativeOrxWire):
         parsed = urlsplit(path)
         if parsed.path.endswith('/worktree'):
             self.calls.append((method, path, payload, lease is not None))
-            value = {'exists': True, 'files': [{'path': str(f.relative_to(self.root)), 'status': 'untracked'}
+            value = {'exists': True, 'files': [{'path': f.relative_to(self.root).as_posix(), 'status': 'untracked'}
                 for f in sorted(self.root.rglob('*')) if f.is_file()]}
             return 200, value
         if parsed.path.endswith('/file'):
@@ -51,7 +51,7 @@ class ArtifactFixtureProvider(PersonalOrxProvider):
 class NativeArtifactWireTests(unittest.TestCase):
     def setUp(self):
         temp = TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name); (self.root/'report.txt').write_text('Actual fixture bytes\n')
+        self.root = Path(temp.name); (self.root/'report.txt').write_bytes(b'Actual fixture bytes\n')
         self.wire = ArtifactWire(self.root)
         self.provider = ArtifactFixtureProvider(Secrets(), transport=self.wire)
         self.config = {'origin': 'https://runtime.example.com', 'credentialRef': 'synthetic-reference',
@@ -59,7 +59,7 @@ class NativeArtifactWireTests(unittest.TestCase):
         self.handle = PersonalOrxHandle(self.provider, 'alice', self.config, lambda _: None)
 
     def test_native_inventory_and_exact_file_bytes_are_not_inferred_from_chat(self):
-        (self.root/'reports').mkdir(); (self.root/'reports/比较.tsv').write_text('item\tvalue\nA\t7\n')
+        (self.root/'reports').mkdir(); (self.root/'reports/比较.tsv').write_bytes(b'item\tvalue\nA\t7\n')
         (self.root/'.env').write_text('Private fixture control')
         (self.root/'opencode.json').write_text('Runtime fixture control')
         self.assertEqual(self.handle.worktree_files('chat_original'), ['report.txt', 'reports/比较.tsv'])
