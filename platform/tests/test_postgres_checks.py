@@ -68,6 +68,26 @@ class PostgresCheckTests(unittest.TestCase):
         self.assertEqual(result.successful_ids, {module + '.Child.test_inherited'})
         self.assertEqual(sys.modules[module].calls, ['Child'])
 
+    def test_completed_case_can_be_collected_before_the_next_case_runs(self):
+        _, discovered, required = self.fixture('''
+            import gc
+            import weakref
+            completed = []
+            class Case(unittest.TestCase):
+                def test_1_finish(self):
+                    self.application_state = bytearray(1024 * 1024)
+                    self.cycle = self
+                    completed.append(weakref.ref(self))
+                def test_2_collect_previous(self):
+                    gc.collect()
+                    self.assertIsNone(completed[0](), 'Runner retained a completed test instance')
+        ''')
+        expected_ids = set(discovered)
+        result, summary = checks.run_checks(discovered, required, stream=io.StringIO())
+        self.assertTrue(summary['accepted'], result.failures)
+        self.assertEqual(discovered, {})
+        self.assertEqual(result.successful_ids, expected_ids)
+
     def test_missing_exact_test_empty_selector_and_import_error_fail_collection(self):
         for source, selector, files in [
             ('class Case(unittest.TestCase):\n    def test_other(self): pass\n', 'Case.test_required', None),
