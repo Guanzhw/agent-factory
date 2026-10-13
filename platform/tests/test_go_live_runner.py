@@ -95,9 +95,6 @@ class GoLiveRunnerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
     def test_member_publication_reaches_first_smoke_without_review_or_privilege_escalation(self):
-        class StopBeforeDispatch(Exception):
-            pass
-
         states = []
         original_create = runner.create_app
 
@@ -110,11 +107,11 @@ class GoLiveRunnerTests(unittest.TestCase):
                 IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \
                 patch.object(runner, "create_app", side_effect=capture_application), \
                 patch.object(runner, "credential", side_effect=AssertionError("No provider credential needed")) as credential, \
-                patch.object(runner, "GoDevelopmentModel", side_effect=StopBeforeDispatch) as model:
+                patch.object(runner, "GoDevelopmentModel", side_effect=RuntimeError("Synthetic stop before dispatch")) as model:
             result = runner.run(self.arguments(directory, database_url=database.url))
             self.assertEqual(result["status"], "stopped")
             self.assertEqual(result["stoppedPhase"], runner.MODELS[0] + ":smoke")
-            self.assertEqual(result["diagnostic"]["errorType"], "StopBeforeDispatch")
+            self.assertEqual(result["diagnostic"]["errorType"], "RuntimeError")
             self.assertEqual(model.call_count, 1)
             self.assertEqual(model.call_args.kwargs["model_id"], runner.MODELS[0])
             credential.assert_not_called()

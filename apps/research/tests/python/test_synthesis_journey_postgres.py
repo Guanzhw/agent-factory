@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi.testclient import TestClient
+from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory_server.main import create_app
 from agent_factory_research import synthesis_runtime
 from agent_factory_research.literature_synthesis_profile import (trusted_model_binding, ScientificFixtureModel,
@@ -54,9 +55,7 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
             trusted_connections={**settings.trusted_connections, REGISTRATION_REF: trusted_model_binding("alice")})
         self.start()
         self.addCleanup(self.stop)
-        self.state['auth'].authorization.unassign('bob', 'factory-user')
-        self.state['auth'].authorization.assign('bob', 'factory-manager')
-        self.pubmed_app = publish_pubmed_application(self.state, author='manager', reviewer='bob')
+        self.pubmed_app = publish_pubmed_application(self.state, author='alice')
         self.pubmed_connection = self.state['connections'].bind('alice', PUBMED_REF, str(uuid4()), capabilities=['research:read'])
         self.model_connection = self.state['connections'].bind('alice', REGISTRATION_REF, str(uuid4()), capabilities=[SCIENTIFIC_CAPABILITY])
         self.synthesis_app = self.publish_synthesis()
@@ -85,9 +84,11 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
     def post(self, path, body=None, *, owner='alice', status=201):
         return self.request('POST', path, {'requestId': str(uuid4()), **(body or {})}, owner=owner, status=status)
 
-    def approve(self, plan):
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager', status=200)
+    def assert_member_admission(self, plan):
+        authorization = self.request('GET', '/plans/' + plan['id'] + '/authorization')
+        self.assertFalse(authorization['reviewRequired'])
+        self.assertFalse(authorization['reviewRequestSupported'])
+        self.assertTrue(authorization['executionAllowed'], authorization)
 
     def detail(self, task):
         deadline = time.monotonic() + 40
@@ -103,7 +104,7 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
             'mode': 'bibliography', 'applicationRef': {key: self.pubmed_app[key] for key in ('id', 'version', 'sha256')},
             'connectionRefs': {PUBMED_CONNECTION: self.pubmed_connection['ref']}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        self.approve(plan)
+        self.assert_member_admission(plan)
         task = self.post('/instances', {'planId': plan['id']}, status=202)['id']
         self.assertEqual(self.detail(task)['job']['status'], 'completed')
         preview = self.request('GET', '/synthesis/sources/' + task)
@@ -146,13 +147,11 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
         governance = self.state['material_governance']
         materials = []
         for definition in synthesis_runtime.material_drafts():
-            draft = governance.create_draft('manager', definition, str(uuid4()))
-            review = governance.request_publication('manager', draft['id'], draft['version'], str(uuid4()))
-            governance.decide_publication('bob', review['id'], True, str(uuid4()))
+            draft = governance.create_draft('alice', definition, str(uuid4()))
+            governance.publish('alice', draft['id'], draft['version'], str(uuid4()))
             materials.append(draft)
-        app = self.state['applications'].create_draft('manager', synthesis_runtime.application_definition(materials), str(uuid4()))
-        review = self.state['applications'].request_publication('manager', app['id'], app['version'], str(uuid4()))
-        self.state['applications'].decide_publication('bob', review['id'], True, str(uuid4()))
+        app = self.state['applications'].create_draft('alice', synthesis_runtime.application_definition(materials), str(uuid4()))
+        self.state['applications'].publish('alice', app['id'], app['version'], str(uuid4()))
         return app
 
     def synthesis_plan(self, snapshot, *, accept_request=None):
@@ -165,8 +164,12 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
         plan = self.request('POST', '/compositions/proposals/' + proposal['id'] + '/accept', command, status=201)
         return plan, proposal, command
 
-    def run_synthesis(self, plan):
-        self.approve(plan)
+    def run_synthesis(self, plan, *, legacy_review=False):
+        if legacy_review:
+            review = self.post('/plan-reviews', {'planId': plan['id']})
+            self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager', status=200)
+        else:
+            self.assert_member_admission(plan)
         task = self.post('/instances', {'planId': plan['id']}, status=202)['id']
         detail = self.detail(task)
         self.assertEqual(detail['job']['status'], 'completed', detail)
@@ -182,10 +185,20 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
     def test_selected_snapshot_approved_plan_native_report_and_owner_download(self):
         source, preview = self.source()
         snapshot, _ = self.snapshot(source, preview)
+        # This case keeps historical exact-plan approval coverage explicitly;
+        # the other synthesis journeys use the normal member policy.
+        service = self.state['plan_policy']
+        current = service.current()
+        legacy = PlanPolicyConfig(**{key: value for key, value in current.items()
+            if key in PlanPolicyConfig.__dataclass_fields__})
+        legacy = replace(legacy, name='admin-review', revision=legacy.revision + ':legacy-review')
+        service.replace_configuration(legacy, expected_revision=current['revision'])
+        self.store.settings.temporary_policy = legacy.name
+        self.store.settings.policy_revision = legacy.revision
         plan, _, _ = self.synthesis_plan(snapshot)
         self.assertEqual(plan['sourceSnapshotRef'], {key: snapshot[key] for key in ('id', 'fingerprint')})
         self.post('/instances', {'planId': plan['id']}, status=409)
-        task, detail, report, path = self.run_synthesis(plan)
+        task, detail, report, path = self.run_synthesis(plan, legacy_review=True)
         self.assertEqual(report['snapshotSha256'], snapshot['contextFingerprint'])
         self.assertTrue(report['citationIntegrityVerified'])
         self.assertFalse(report['scientificConclusionVerified'])
@@ -218,7 +231,7 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
         for action in ('cancel', 'revoke'):
             with self.subTest(action=action):
                 plan, _, _ = self.synthesis_plan(snapshot)
-                self.approve(plan)
+                self.assert_member_admission(plan)
                 entered, release = threading.Event(), threading.Event()
                 original = ScientificFixtureModel.ainvoke
                 async def paused(model, *args, **kwargs):

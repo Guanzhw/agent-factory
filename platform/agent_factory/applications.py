@@ -44,7 +44,14 @@ class GovernedStorage:
             yield conn
         else:
             with self.store.engine.connect() as conn:
-                yield conn
+                # Nested current-publication checks must borrow this read's
+                # connection, including when the metadata pool has one slot.
+                token = shared.set(conn) if shared is not None else None
+                try:
+                    yield conn
+                finally:
+                    if shared is not None and token is not None:
+                        shared.reset(token)
 
     @contextmanager
     def write(self):

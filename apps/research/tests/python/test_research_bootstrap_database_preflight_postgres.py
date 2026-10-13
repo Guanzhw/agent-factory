@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 from agent_factory.material_governance import GovernanceConfig
 from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory_research.research_bootstrap_database_preflight import database_preflight
+from agent_factory_research.research_bootstrap_policy import REVISION
 import test_research_bootstrap_database_preflight as fixture  # pyright: ignore[reportMissingImports]
 
 _TABLES = ('af_bootstrap', 'af_material_governance_current', 'af_material_governance_configs',
@@ -37,6 +38,9 @@ class DatabasePreflightPostgresTests(unittest.TestCase):
         self.engine = create_engine(url, connect_args={'options': '-c search_path=' + self.schema})
         self.addCleanup(self.engine.dispose)
         self.settings = fixture.settings()
+        self.settings.temporary_policy = 'member-self-service'
+        self.settings.material_review_mode = 'member-self-service'
+        self.settings.policy_revision = self.settings.material_policy_revision = REVISION
         with self.engine.begin() as conn:
             for statement in ('CREATE TABLE af_bootstrap (id TEXT PRIMARY KEY, mode TEXT)',
                 'CREATE TABLE af_material_governance_current (id TEXT PRIMARY KEY, revision TEXT)',
@@ -45,9 +49,10 @@ class DatabasePreflightPostgresTests(unittest.TestCase):
                 'CREATE TABLE af_plan_policy_configs (revision TEXT PRIMARY KEY, policy_hash TEXT, body JSONB)'):
                 conn.execute(text(statement))
             conn.execute(text("INSERT INTO af_bootstrap VALUES ('mode','demo')"))
-        self.register(GovernanceConfig(revision=self.settings.material_policy_revision,
+        self.register(GovernanceConfig(review_mode=self.settings.material_review_mode,
+            revision=self.settings.material_policy_revision,
             tool_contract=self.settings.runtime_tool_contract), 'material')
-        self.register(PlanPolicyConfig(revision=self.settings.policy_revision,
+        self.register(PlanPolicyConfig(name=self.settings.temporary_policy, revision=self.settings.policy_revision,
             tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=86400), 'plan')
 
     def drop_owned_schema(self):
@@ -110,8 +115,8 @@ class DatabasePreflightPostgresTests(unittest.TestCase):
         self.assertIs(report['executionVerified'], False)
         self.assertEqual(self.rows(), before)
 
-        self.register(GovernanceConfig(), 'material')
-        self.register(PlanPolicyConfig(), 'plan')
+        self.register(GovernanceConfig(review_mode='separate-admin', revision='material-governance-v1'), 'material')
+        self.register(PlanPolicyConfig(name='admin-review', revision='plan-policy-v1'), 'plan')
         before = self.rows()
         report = self.probe()
         rows = {row['field']: row for row in report['checks']}
@@ -128,4 +133,17 @@ class DatabasePreflightPostgresTests(unittest.TestCase):
         report = self.probe()
         rows = {row['field']: row for row in report['checks']}
         self.assertEqual(rows['plan.expectedConfig']['code'], 'CONFIG_BODY_INVALID')
+        self.assertEqual(self.rows(), before)
+
+    def test_explicit_legacy_configuration_remains_read_only_and_compatible(self):
+        self.settings = fixture.settings()
+        self.register(GovernanceConfig(review_mode=self.settings.material_review_mode,
+            revision=self.settings.material_policy_revision,
+            tool_contract=self.settings.runtime_tool_contract), 'material')
+        self.register(PlanPolicyConfig(name=self.settings.temporary_policy, revision=self.settings.policy_revision,
+            tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=86400), 'plan')
+        before = self.rows()
+        report = self.probe()
+        self.assertEqual(report['status'], 'PASS', report)
+        self.assertIs(report['executionVerified'], False)
         self.assertEqual(self.rows(), before)

@@ -53,7 +53,7 @@ class CandidateDatabaseAuthPostgresTests(unittest.TestCase):
         def request(method, path, body, *, owner):
             return self.request(method, path.removeprefix('/api/factory'), body, owner=owner)
         return ResearchBootstrapController(self.state, request, self.portal.call).run(
-            owner='alice', reviewer='manager', application_ref={k: self.application[k] for k in ('id', 'version', 'sha256')},
+            owner='alice', application_ref={k: self.application[k] for k in ('id', 'version', 'sha256')},
             goal='Synthetic native evidence for ephemeral database routing', request_id=str(uuid4()),
             after_reclaimed=imported, timeout_seconds=45, on_progress=progress)
 

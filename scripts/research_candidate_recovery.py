@@ -27,7 +27,7 @@ ERROR = 'RESEARCH_CANDIDATE_CUSTODY_UNCONFIRMED'
 IDENTITY = frozenset({'configSha256', 'candidateSha256', 'baselineManifestSha256'})
 PROGRESS_IDS = ('requestId', 'taskId', 'planId', 'nativeRunId', 'leaseId', 'providerJobId', 'artifactId')
 STAGES = ('preparation', 'training', 'evaluation')
-PHASES = frozenset({'STARTED', 'PLAN_APPROVED', 'TASK_ACCEPTED', 'NATIVE_PAUSED',
+PHASES = frozenset({'STARTED', 'PLAN_READY', 'PLAN_APPROVED', 'TASK_ACCEPTED', 'NATIVE_PAUSED',
     'PROCESS_SUBMITTED', 'PRELAUNCH_REJECTED', 'PROCESS_RECLAIMED', 'EVIDENCE_IMPORTED',
     'COMPLETED', 'STOPPED', 'ACCEPTED', 'IMPORTED'})
 MAXIMUM = 32768

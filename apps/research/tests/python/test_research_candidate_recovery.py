@@ -84,6 +84,26 @@ class CandidateJournalTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 journal.begin_stage('training')
 
+    def test_current_and_legacy_plan_phases_reopen_without_new_attempt(self):
+        for phase in ('PLAN_READY', 'PLAN_APPROVED'):
+            with self.subTest(phase=phase):
+                path = self.path.with_name(phase + '.json')
+                with helper.CandidateJournal(path, identity=self.identity, total_seconds=60) as journal:
+                    journal.begin_stage('training')
+                    journal.record_progress('training', {'phase': phase, 'planId': 'original-plan'})
+                    original = journal.snapshot()
+                    self.assertEqual(original['stages']['training']['progress'],
+                                     {'phase': phase, 'planId': 'original-plan'})
+                with helper.CandidateJournal(path, identity=self.identity) as reopened:
+                    self.assertEqual(reopened.snapshot(), original)
+                    with self.assertRaises(ValueError):
+                        reopened.begin_stage('training')
+                    with self.assertRaises(ValueError):
+                        reopened.record_progress('training', {'phase': phase + '_OTHER'})
+                    with self.assertRaises(ValueError):
+                        reopened.record_progress('training', {'planId': 'replacement-plan'})
+                    self.assertEqual(reopened.snapshot(), original)
+
     def test_completed_training_required_and_attempts_bounded(self):
         with self.journal(total_seconds=60) as journal:
             with self.assertRaises(ValueError):

@@ -27,7 +27,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
         self.folder = TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         settings = Settings(db_url=self.database.url, workspace=Path(self.folder.name), max_workers=1,
-            temporary_policy='admin-review', owner_model_proxy_environment_id='fixture-environment',
+            temporary_policy='member-self-service', owner_model_proxy_environment_id='fixture-environment',
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b's' * 32, {PROVIDER_ID: origin}))
         self.app = create_app(settings)
         self.state = self.app.app.state.factory

@@ -52,12 +52,12 @@ class CandidateExecutePostgresTests(unittest.TestCase):
 
     def test_execute_runs_one_training_and_evaluation_and_writes_real_receipts(self):
         scripts = str(Path(__file__).resolve().parents[4] / 'scripts')
-        with patch.object(sys, 'path', [scripts, *sys.path]):
-            runner = importlib.import_module('run_research_candidate')
-            recovery = importlib.import_module('research_candidate_recovery')
-            assembly = importlib.import_module('research_candidate_assembly')
-            baseline_auth = importlib.import_module('research_candidate_baseline')
-            snapshots = importlib.import_module('research_candidate_reopen')
+        self.enterContext(patch.object(sys, 'path', [scripts, *sys.path]))
+        runner = importlib.import_module('run_research_candidate')
+        recovery = importlib.import_module('research_candidate_recovery')
+        assembly = importlib.import_module('research_candidate_assembly')
+        baseline_auth = importlib.import_module('research_candidate_baseline')
+        snapshots = importlib.import_module('research_candidate_reopen')
         workspace = self.work.parent / 'candidate-execute'; workspace.mkdir(mode=0o700)
         variant = self.manifest['baselineSourceManifestSha256']
         baseline_variant = 'e' * 64

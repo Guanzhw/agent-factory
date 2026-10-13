@@ -25,6 +25,7 @@ class FactoryPostgresTests(unittest.TestCase):
         cls.workspace = tempfile.TemporaryDirectory()
         cls.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
         cls.app = create_app(cls.settings)
+        cls.settings = cls.app.app.state.factory["settings"]
         cls.client = TestClient(cls.app).__enter__()
 
     @classmethod

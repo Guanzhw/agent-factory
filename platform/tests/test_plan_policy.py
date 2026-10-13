@@ -329,7 +329,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         self.directory = TemporaryDirectory()
         settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
-                            temporary_policy="read-only-auto")
+                            temporary_policy="read-only-auto", policy_revision="plan-policy-v1")
         self.app = create_app(settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]

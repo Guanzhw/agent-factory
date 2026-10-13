@@ -105,8 +105,16 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal)
         plan = post("/compositions/proposals/" + proposal["id"] + "/accept", {})
         self.assertEqual(plan["tools"], [TOOL_NAME])
-        review = post("/plan-reviews", {"planId": plan["id"]})
-        post("/plan-reviews/" + review["id"] + "/decision", {"approved": True}, "manager")
+        if plan["policy"] == "admin-review":
+            # This class retains explicit historical approval coverage; research
+            # preparation also reuses the helper with ordinary member settings.
+            review = post("/plan-reviews", {"planId": plan["id"]})
+            post("/plan-reviews/" + review["id"] + "/decision", {"approved": True}, "manager")
+        else:
+            self.assertEqual(plan["policy"], "member-self-service")
+            authorization = self.request("GET", "/plans/" + plan["id"] + "/authorization")
+            self.assertTrue(authorization["executionAllowed"])
+            self.assertFalse(authorization["reviewRequired"])
         return post("/instances", {"planId": plan["id"]}), plan
 
     def until(self, probe, *, timeout=20):

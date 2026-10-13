@@ -27,7 +27,7 @@ from agent_factory.auth import AuthService
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.delegation import DelegationService
 from agent_factory_research.demo_model import DemoModel
-from agent_factory_research.synthetic_runtime import default_bindings
+from agent_factory_research.synthetic_runtime import default_bindings, default_zero_prices
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.runtime import build_runtime
 from agent_factory.store import Store, canonical, digest, now
@@ -317,7 +317,7 @@ class UsageLedgerPostgresTests(unittest.TestCase):
 
     def test_10_legacy_zero_migration_preserves_plan_bytes_and_nonlocal_fails(self):
         self.set_policy(task_token_limit=100_000, user_token_limit=1_000_000)
-        ledger = UsageLedger(self.store, policy=self.policy)
+        ledger = UsageLedger(self.store, default_zero_prices(), policy=self.policy)
         self.store.usage_ledger = ledger
         self.ledger = ledger
         plan = self.plan(model_adapter="local-synthetic-model-v1", legacy=True)

@@ -37,6 +37,7 @@ class ResearchBootstrapControllerPostgresTests(unittest.TestCase):
 
         def request(method, path, body, *, owner):
             self.assertTrue(path.startswith('/api/factory/'))
+            self.assertNotIn('/plan-reviews', path)
             return self.request(method, path.removeprefix('/api/factory'), body, owner=owner)
 
         def progress(value):
@@ -55,7 +56,7 @@ class ResearchBootstrapControllerPostgresTests(unittest.TestCase):
             return {'artifactId': artifact['id'], 'identity': identity}
 
         controller = ResearchBootstrapController(self.state, request, self.portal.call)
-        result = controller.run(owner='alice', reviewer='manager',
+        result = controller.run(owner='alice',
             application_ref={key: self.application[key] for key in ('id', 'version', 'sha256')},
             goal='Controlled stdlib checkpoint; mocked device, no training', request_id=str(uuid4()),
             after_reclaimed=import_checkpoint, timeout_seconds=45, on_progress=progress)
@@ -67,6 +68,7 @@ class ResearchBootstrapControllerPostgresTests(unittest.TestCase):
         task = self.store.task(final['taskId'], 'alice')
         self.assertEqual(task['run_id'], final['nativeRunId'])
         self.assertEqual(task['plan_id'], final['planId'])
+        self.assertEqual(self.store.plan(task['plan_id'], 'alice')['policy'], 'member-self-service')
         self.assertEqual(self.store.native_db.get_job(task['run_id'], strict=True)['status'], 'completed')
         lease = self.runtime.resources.inspect('alice', final['leaseId'])
         self.assertEqual(lease['providerJobId'], final['providerJobId'])
@@ -78,13 +80,14 @@ class ResearchBootstrapControllerPostgresTests(unittest.TestCase):
         self.assertTrue(lease['syntheticFixture'])
         self.assertEqual(len(self.store.sql('SELECT id FROM af_process_allocations')), 1)
         self.assertEqual(sum(call['operation'] == 'launch' for call in self.observer.calls), 1)
-        self.assertEqual([value['phase'] for value in events], ['STARTED', 'PLAN_APPROVED', 'TASK_ACCEPTED',
+        self.assertEqual([value['phase'] for value in events], ['STARTED', 'PLAN_READY', 'TASK_ACCEPTED',
             'NATIVE_PAUSED', 'PROCESS_SUBMITTED', 'PROCESS_RECLAIMED', 'EVIDENCE_IMPORTED', 'COMPLETED'])
         self.assertEqual({value['taskId'] for value in events if value['taskId']}, {task['id']})
 
     def test_failure_after_dispatch_stops_original_guardian_before_lifespan_closes(self):
         from agent_factory_research.research_bootstrap_controller import ResearchBootstrapError
         def request(method, path, body, *, owner):
+            self.assertNotIn('/plan-reviews', path)
             return self.request(method, path.removeprefix('/api/factory'), body, owner=owner)
         def progress(value):
             if value['phase'] == 'PROCESS_SUBMITTED':
@@ -93,13 +96,14 @@ class ResearchBootstrapControllerPostgresTests(unittest.TestCase):
             self.fail('Running or cancelled process cannot import a checkpoint')
         controller = ResearchBootstrapController(self.state, request, self.portal.call)
         with self.assertRaises(ResearchBootstrapError) as caught:
-            controller.run(owner='alice', reviewer='manager',
+            controller.run(owner='alice',
                 application_ref={key: self.application[key] for key in ('id', 'version', 'sha256')},
                 goal='Controlled failure while original stdlib process is running', request_id=str(uuid4()),
                 after_reclaimed=never_import, timeout_seconds=45, on_progress=progress)
         result = caught.exception.progress
         self.assertTrue(result['cancelRequested'])
         self.assertTrue(result['cleanupConfirmed'])
+        self.assertEqual(self.store.plan(result['planId'], 'alice')['policy'], 'member-self-service')
         lease = self.runtime.resources.inspect('alice', result['leaseId'])
         self.assertEqual(lease['state'], 'RECLAIMED')
         self.assertFalse(lease['capacityHeld'])

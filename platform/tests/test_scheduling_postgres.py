@@ -34,6 +34,7 @@ class SchedulingPostgresTests(unittest.TestCase):
         cls.settings.schedule_poll_seconds = 1
         cls.app = create_app(cls.settings)
         cls.state = cls.app.app.state.factory
+        cls.settings = cls.state['settings']
         cls.store, cls.auth, cls.bridge = (cls.state[key] for key in ("store", "auth", "bridge"))
         cls.db = cls.store.native_db
         cls.client = TestClient(cls.app).__enter__()

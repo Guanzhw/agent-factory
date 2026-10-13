@@ -276,8 +276,9 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         proposal = self.post('/compositions/proposals', {'goal': 'Controlled research original native execution',
             'mode': 'controlled-fixture', 'applicationRef': {key: self.application[key] for key in ('id', 'version', 'sha256')}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager')
+        authorization = self.request('GET', '/plans/' + plan['id'] + '/authorization')
+        self.assertTrue(authorization['executionAllowed'])
+        self.assertFalse(authorization['reviewRequired'])
         task = self.post('/instances', {'planId': plan['id']})
         detail = self.until(lambda: self.detail(task['id']), lambda d: d['job']['status'] == 'waiting_approval') if wait else None
         if wait:

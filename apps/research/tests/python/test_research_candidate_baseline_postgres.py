@@ -39,7 +39,7 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
         return ResearchBootstrapController(self.state, request, self.portal.call)
 
     def run_stage(self, imported, progress=lambda value: None):
-        return self.controller().run(owner='alice', reviewer='manager',
+        return self.controller().run(owner='alice',
             application_ref={key: self.application[key] for key in ('id', 'version', 'sha256')},
             goal='Synthetic original checkpoint verification after reopening', request_id=str(uuid4()),
             after_reclaimed=imported, timeout_seconds=45, on_progress=progress)
@@ -67,9 +67,9 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
         counts = tuple(len(self.store.sql('SELECT id FROM ' + table)) for table in
                        ('af_tasks', 'af_process_allocations'))
         scripts = str(Path(__file__).resolve().parents[4] / 'scripts')
-        with patch.object(sys, 'path', [scripts, *sys.path]):
-            reopen = importlib.import_module('research_candidate_state')
-            baseline = importlib.import_module('research_candidate_baseline')
+        self.enterContext(patch.object(sys, 'path', [scripts, *sys.path]))
+        reopen = importlib.import_module('research_candidate_state')
+        baseline = importlib.import_module('research_candidate_baseline')
         with reopen.open_state(self.state['settings'], full_verification=True) as state:
             self.assertEqual(set(state['store'].execution_guards), set(self.store.execution_guards))
             checkpoints = ResearchCheckpointStore(state['store'], state['auth'], state['resources'],

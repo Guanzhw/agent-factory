@@ -41,6 +41,8 @@ class ResearchCandidatePostgresTests(unittest.TestCase):
     until = fixture.ResearchLocalPostgresTests.until
 
     def setUp(self):
+        scripts = str(Path(__file__).resolve().parents[4] / 'scripts')
+        self.enterContext(patch.object(sys, 'path', [scripts, *sys.path]))
         fixture.ResearchLocalPostgresTests.setUp(self)
         source = Path(__file__).resolve().parents[4] / 'scripts/research_candidate_recovery.py'
         spec = importlib.util.spec_from_file_location('candidate_pg_recovery', source)
@@ -58,7 +60,7 @@ class ResearchCandidatePostgresTests(unittest.TestCase):
 
     def run_once(self, journal, progress, imported):
         journal.begin_stage('training')
-        return self.controller().run(owner='alice', reviewer='manager',
+        return self.controller().run(owner='alice',
             application_ref={key: self.application[key] for key in ('id', 'version', 'sha256')},
             goal='Synthetic candidate journal acceptance; mocked device, no training',
             request_id=str(uuid4()), after_reclaimed=imported, timeout_seconds=45,

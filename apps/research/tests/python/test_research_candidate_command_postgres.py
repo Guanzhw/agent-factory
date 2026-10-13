@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from agent_factory_research.research_runtime_profile import registrations, publish_research_application
+from agent_factory_research.research_runtime_profile import MODEL_ID, registrations, publish_research_application
 from agent_factory.usage_ledger import UsageLedger
 import test_research_local_postgres as fixture
 
@@ -43,7 +43,8 @@ class CandidateCommandPostgresTests(unittest.TestCase):
                 tool_name=entry.tool_name, connection_kind=entry.connection_kind,
                 required_capabilities=entry.required_capabilities, permissions=entry.permissions,
                 demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
-        original_price = self.store.settings.usage_pricing[0]
+        original_price = next(price for price in self.store.settings.usage_pricing
+                              if (price.adapter_id, price.adapter_revision) == (MODEL_ID, '1'))
         self.store.usage_ledger = UsageLedger(self.store,
             prices=(*self.store.usage_ledger.prices,
                     replace(original_price, adapter_id=original_price.adapter_id + '-candidate-training')),
@@ -54,8 +55,11 @@ class CandidateCommandPostgresTests(unittest.TestCase):
         proposal = self.post('/compositions/proposals', {'goal': 'Synthetic top-level stop command',
             'mode': 'controlled-fixture', 'applicationRef': {key: self.application[key] for key in ('id', 'version', 'sha256')}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager')
+        self.assertEqual(plan['status'], 'ready', plan['missing'])
+        self.assertEqual(plan['policy'], 'member-self-service')
+        authorization = self.store.plan_policy.status('alice', plan)
+        self.assertTrue(authorization['executionAllowed'], authorization)
+        self.assertFalse(authorization['reviewRequired'])
         task = self.post('/instances', {'planId': plan['id'], 'requestId': invocation + ':training:instance'})
         self.until(lambda: self.detail(task['id']), lambda detail: detail['job']['status'] == 'waiting_approval')
         lease = self.portal.call(self.runtime.submit, 'alice', task['id'])

@@ -92,8 +92,9 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         proposal = self.post('/compositions/proposals', {'goal': 'Controlled research original native execution',
             'mode': 'controlled-fixture', 'applicationRef': {key: self.application[key] for key in ('id', 'version', 'sha256')}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager')
+        authorization = self.request('GET', '/plans/' + plan['id'] + '/authorization')
+        self.assertTrue(authorization['executionAllowed'])
+        self.assertFalse(authorization['reviewRequired'])
         task = self.post('/instances', {'planId': plan['id']})
         detail = self.until(lambda: self.detail(task['id']), lambda d: d['job']['status'] == 'waiting_approval') if wait else None
         if wait:
@@ -243,8 +244,9 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         for owner, target in (('alice', 'research-alias'), ('bob', 'research-alias')):
             with self.subTest(owner=owner):
                 plan = create_plan(self.store, owner, 'Isolated synthetic capacity probe', 'literature')
-                review = self.post('/plan-reviews', {'planId': plan['id']}, owner=owner)
-                self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager')
+                authorization = self.request('GET', '/plans/' + plan['id'] + '/authorization', owner=owner)
+                self.assertTrue(authorization['executionAllowed'])
+                self.assertFalse(authorization['reviewRequired'])
                 probe, _ = self.store.reserve_task(plan, str(uuid4()))
                 run_id = str(uuid4())
                 self.store.accept(probe['id'], run_id)

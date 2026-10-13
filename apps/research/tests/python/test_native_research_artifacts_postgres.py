@@ -31,6 +31,7 @@ class NativeArtifactPostgresTests(unittest.TestCase):
             wire = ArtifactWire(files)
             provider = ArtifactFixtureProvider(Secrets(), transport=wire)
             app = create_app(Settings(db_url=database.url, workspace=root/'factory', max_workers=1,
+                temporary_policy='member-self-service',
                 personal_agent_commands_enabled=True, personal_connection_providers={provider.provider_id: provider}))
             state = app.app.state.factory; store, auth = state['store'], state['auth']
             self.addCleanup(store.engine.dispose); self.addCleanup(store.native_db.db_engine.dispose)

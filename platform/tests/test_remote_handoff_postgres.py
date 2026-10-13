@@ -75,6 +75,8 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             cls.remote_app = create_app(cls.remote_settings)
         cls.origin = cls.origin_app.app.state.factory
         cls.remote = cls.remote_app.app.state.factory
+        cls.origin_settings = cls.origin['settings']
+        cls.remote_settings = cls.remote['settings']
         for state in (cls.origin, cls.remote):
             cls.addClassCleanup(state["store"].engine.dispose)
             cls.addClassCleanup(state["store"].native_db.db_engine.dispose)
