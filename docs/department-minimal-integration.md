@@ -4,6 +4,10 @@ User scope, 2026-10-13: a trusted department of a few dozen people. Members crea
 configure, publish and use public resources themselves. Only public deletion /
 withdrawal / archival needs an administrator; history and immutable versions stay.
 Personal secrets and data remain owner-scoped. No OS/network/provider grants change.
+Members may archive their own never-published private drafts. Archived drafts stay
+private and retain their bodies; archiving a private new version leaves published
+versions and existing pins unchanged. Previously public versions remain subject to
+administrator-only withdrawal / archival after their first deactivation.
 
 ## Ownership
 

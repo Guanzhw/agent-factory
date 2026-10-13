@@ -91,11 +91,62 @@ class DepartmentPublicationCases:
                 self.assertEqual(denied.exception.status_code, 403)
             result = service.archive("manager", item["id"], 1, "admin-archive", "Retained fixture")
             self.assertTrue(result["immutableBodyPreserved"])
+            # Deactivation does not turn a formerly public version private.
+            for action in ("archive", "withdraw"):
+                with self.assertRaises(HTTPException) as denied:
+                    getattr(service, action)("alice", item["id"], 1, action + "-after-admin")
+                self.assertEqual(denied.exception.status_code, 403)
             with self.assertRaises(HTTPException) as inactive:
                 service.publish("manager", item["id"], 1, "no-silent-restore")
             self.assertEqual(inactive.exception.status_code, 409)
         self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], application)
         self.assertEqual(self.governance.inspect_version("manager", material["id"], 1)["material"]["sha256"], material["sha256"])
+
+    def test_owner_can_archive_private_drafts_idempotently_without_losing_bodies(self):
+        material, application = self.material(), self.application()
+        receipts = []
+        for service, item in ((self.governance, material), (self.applications, application)):
+            result = service.archive("alice", item["id"], 1, "own-draft", "No longer needed")
+            self.assertEqual(result["state"], "archived")
+            self.assertTrue(result["immutableBodyPreserved"])
+            self.assertEqual(service.archive("alice", item["id"], 1, "own-draft", "No longer needed"), result)
+            self.assertEqual(service.archive("alice", item["id"], 1, "own-draft-again", "No longer needed"), result)
+            with self.assertRaises(HTTPException) as conflict:
+                service.archive("alice", item["id"], 1, "own-draft", "Changed intent")
+            self.assertEqual(conflict.exception.status_code, 409)
+            receipts.append((service, item))
+        self.assertEqual(self.applications.inspect("alice", application["id"], 1)["application"], application)
+        self.assertEqual(self.governance.inspect_version("alice", material["id"], 1)["material"], material)
+        self.auth.authorization.unassign("alice", "factory-user")
+        for service, item in receipts:
+            with self.assertRaises(HTTPException) as revoked:
+                service.archive("alice", item["id"], 1, "own-draft", "No longer needed")
+            self.assertEqual(revoked.exception.status_code, 403)
+
+    def test_other_member_cannot_deactivate_private_draft_before_or_after_archive(self):
+        material, application = self.material(), self.application()
+        for service, item in ((self.governance, material), (self.applications, application)):
+            for archived in (False, True):
+                if archived:
+                    service.archive("alice", item["id"], 1, "own-draft")
+                for action in ("archive", "withdraw"):
+                    with self.assertRaises(HTTPException) as denied:
+                        getattr(service, action)("bob", item["id"], 1, action + "-other")
+                    self.assertEqual(denied.exception.status_code, 403)
+
+    def test_archiving_own_unpublished_revision_preserves_public_version_pins(self):
+        material, application = self.material(), self.application()
+        self.governance.publish("alice", material["id"], 1, "public-material")
+        self.applications.publish("alice", application["id"], 1, "public-application")
+        draft_material = self.material("bob", id=material["id"], content="Unpublished replacement")
+        draft_app = self.applications.revise("bob", application["id"], 1,
+            app_definition(self.store, application["id"], name="Unpublished replacement"), "draft-revision")
+        self.governance.archive("bob", draft_material["id"], 2, "discard-private-material")
+        self.applications.archive("bob", draft_app["id"], 2, "discard-private-app")
+        self.assertEqual(self.applications.require_current(pin(application)), application)
+        self.assertTrue(self.governance.require_materials_current({"materialRefs": [pin(material)]})["allowed"])
+        self.assertEqual(self.applications.inspect("bob", draft_app["id"], 2)["application"], draft_app)
+        self.assertEqual(self.governance.inspect_version("bob", draft_material["id"], 2)["material"], draft_material)
 
     def test_idempotency_and_current_membership_are_checked_before_recovery(self):
         first = self.application(identifier="first")
@@ -248,3 +299,23 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
                                      json={"requestId": "compatible-publish"})
         self.assertEqual(published.status_code, 202, published.text)
         self.assertTrue(published.json()["published"])
+
+    def test_http_own_private_archive_preserves_owner_visibility(self):
+        headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
+        bob_headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("bob")}
+        material, application = self.material(), self.application()
+        for path in (f"/api/factory/material-governance/versions/{material['id']}/1",
+                     f"/api/factory/applications/{application['id']}/versions/1"):
+            denied = self.client.post(path + "/archive", headers=bob_headers, json={"requestId": "foreign-draft"})
+            self.assertEqual(denied.status_code, 403, denied.text)
+            archived = self.client.post(path + "/archive", headers=headers, json={"requestId": "own-draft"})
+            self.assertEqual(archived.status_code, 200, archived.text)
+            self.assertTrue(archived.json()["immutableBodyPreserved"])
+            self.assertEqual(self.client.get(path, headers=headers).status_code, 200)
+            self.assertIn(self.client.get(path, headers=bob_headers).status_code, (403, 404))
+        for identity, expected in ((headers, True), (bob_headers, False)):
+            response = self.client.get("/api/factory/materials", headers=identity)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(any(row["id"] == material["id"] for row in response.json()), expected)
+        self.assertFalse(any(row["application"]["id"] == application["id"]
+            for row in self.applications.list_definitions("bob", all_authors=True)))

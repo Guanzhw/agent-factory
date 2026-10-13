@@ -656,19 +656,25 @@ class MaterialGovernance:
                     "immutableBodyPreserved": True}
 
     def _deactivate(self, actor, material_id, version, request_id, reason, state):
-        self.auth.require(actor, "agent_os:admin")
+        self.auth.require(actor, "run")
         if not isinstance(reason, str) or len(reason) > 2000:
             raise HTTPException(422, "Material status reason exceeds bounds")
         self._safe_data(reason)
         with self._write() as conn:
             governed = self._version(conn, material_id, version)
-            self._material(conn, material_id, version)
+            material = self._material(conn, material_id, version)
+            # published remains true after public withdrawal/archive; an old
+            # public version must never become a privately managed draft again.
+            private_draft = (governed["state"] in {"draft", "archived"} and not material["published"]
+                and not governed["bootstrap"] and governed["review_id"] is None)
+            permission = "run" if state == "archived" and private_draft and governed["author_id"] == actor else "agent_os:admin"
+            self.auth.require(actor, permission)
             fingerprint = digest({"operation": state, "materialId": material_id, "version": version,
                                   "sha256": governed["material_sha"], "reason": reason})
             old = self._old_command(conn, actor, request_id, fingerprint)
             if old is not None:
                 return old
-            self.auth.require(actor, "agent_os:admin")
+            self.auth.require(actor, permission)
             conn.execute(self.versions.update().where(self.versions.c.material_id == material_id, self.versions.c.version == version).values(state=state, reason=reason, updated_at=now()))
             result = {"materialId": material_id, "version": version, "sha256": governed["material_sha"], "state": state,
                       "reason": reason, "immutableBodyPreserved": True, "outcomeSource": "persisted_governance_command"}
