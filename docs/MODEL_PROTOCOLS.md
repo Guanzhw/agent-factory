@@ -93,7 +93,13 @@ to the checked address, original Host/SNI and certificate verification. No
 arbitrary paths, headers, environment proxies, redirects or automatic retries
 are added. An existing trusted gateway grant remains restricted to its exact
 legacy Go CC route and original owner/model/credential revisions; it cannot
-authorize Responses or the new Go prefix.
+authorize Responses or the new Go prefix. A new explicit grant binds `base_url`
+and `protocol` to the selected model metadata. It supports either protocol at a
+matching existing-policy endpoint, including generic HTTPS `/v1` providers.
+The checked address, exact URL/Host/SNI and one-dispatch transport rules still
+apply; changing the endpoint or protocol requires a new scoped grant. This does
+not automatically enable a proxy or alter an existing deployment's network/TLS
+configuration. See [trusted gateway configuration](TRUSTED_MODEL_PROXY_DESIGN.md).
 
 ## Go and historical configurations
 

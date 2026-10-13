@@ -14,6 +14,8 @@ FAST_PYTHON_TESTS = {
     'owner_model_protocols': (
         'test_byok_model.ByokModelTests',
         'test_model_protocol_execution.OwnerProtocolExecutionTests',
+        'test_trusted_model_proxy.TrustedModelProxyTests.test_explicit_routes_use_real_codec_and_exact_gateway_wire',
+        'test_trusted_model_proxy.TrustedModelProxyTests.test_legacy_grant_does_not_authorize_new_protocol_or_prefix',
     ),
     'selected_model_and_current_authority': (
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_concurrent_native_runs_keep_models_knowledge_and_owner_context_separate',
@@ -47,6 +49,7 @@ FAST_POSTGRES_TESTS = {
         'test_model_command_recovery_postgres.ModelCommandRecoveryPostgresTests.test_default_replay_recovers_original_receipt_after_another_default_command',
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_stale_tab_expected_owner_rejects_secret_and_metadata_before_any_write',
         'test_environment_bindings_postgres.EnvironmentBindingPostgresTests.test_explicit_generation_restore_after_restart_rotation_and_lost_ack_never_selects_default',
+        'test_trusted_model_proxy_postgres.TrustedModelProxyPostgresTests.test_generic_protocols_complete_native_task_with_existing_owner_vault',
     ),
     'member_self_service': (
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_single_submit_native_queue_no_billing_no_admin_and_replay',

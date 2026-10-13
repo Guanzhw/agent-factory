@@ -19,7 +19,8 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
-GO_BASE = 'https://opencode.ai/zen/go/v1'
+from .model_endpoint_policy import GO_BASE, base_url as normalize_base_url
+from .model_protocol import protocol_name, protocol_path
 
 
 def _verified(context):
@@ -42,9 +43,13 @@ class TrustedModelProxy:
     ssl_context: ssl.SSLContext = field(repr=False)
     acknowledge_interception: bool = False
     dns_timeout_seconds: float = 3
+    # Omitted fields retain the exact legacy grant rather than expanding it.
+    base_url: str = GO_BASE
+    protocol: str = 'chat-completions'
     _ca_digest: bytes = field(init=False, repr=False)
     _proxy_host: str = field(init=False, repr=False)
     _proxy_port: int = field(init=False, repr=False)
+    _target_host: str = field(init=False, repr=False)
 
     def __post_init__(self):
         try:
@@ -58,6 +63,10 @@ class TrustedModelProxy:
                     or not math.isfinite(self.dns_timeout_seconds)
                     or not 3 <= self.dns_timeout_seconds <= 10):
                 raise ValueError()
+            target_base = normalize_base_url(self.base_url)
+            protocol_path(self.protocol)
+            object.__setattr__(self, 'base_url', target_base)
+            object.__setattr__(self, '_target_host', httpx.URL(target_base).host)
             url = urlsplit(self.proxy_url)
             if (type(self.proxy_url) is not str or any(char.isspace() for char in self.proxy_url)
                     or url.scheme not in {'http', 'https'} or not url.hostname
@@ -89,9 +98,13 @@ class TrustedModelProxy:
         self.validate_environment(environment_id)
         expected = {'ownerId': self.owner_id, 'reference': self.model_reference,
             'revision': self.model_revision, 'credentialRef': self.credential_reference,
-            'credentialRevision': self.credential_revision, 'model': self.model_id, 'baseURL': GO_BASE}
-        if any(body.get(key) != value for key, value in expected.items()):
-            raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED')
+            'credentialRevision': self.credential_revision, 'model': self.model_id, 'baseURL': self.base_url}
+        try:
+            if (any(body.get(key) != value for key, value in expected.items())
+                    or protocol_name(body) != self.protocol):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED') from None
         return self
 
     def validate_payload(self, value):
@@ -109,7 +122,7 @@ class TrustedModelProxy:
         # Narrow current-cloud route. IPv6 support is not silently approximated.
         try:
             address = ipaddress.IPv4Address(checked_ip)
-            if not address.is_global or str(address) != checked_ip or hostname != 'opencode.ai':
+            if not address.is_global or str(address) != checked_ip or hostname != self._target_host:
                 raise ValueError()
         except (ValueError, TypeError):
             raise ValueError('TRUSTED_MODEL_PROXY_TARGET_DENIED') from None
@@ -140,7 +153,7 @@ class _BoundStream(httpcore.AsyncNetworkStream):
         if self.stage == 'proxy' and server_hostname == self.grant._proxy_host:
             name, next_stage = server_hostname, 'target'
         elif self.stage == 'target' and server_hostname == self.checked_ip:
-            name, next_stage = 'opencode.ai', 'ready'
+            name, next_stage = self.grant._target_host, 'ready'
         else:
             raise ValueError('TRUSTED_MODEL_PROXY_TLS_BINDING_DENIED')
         self.stream = await self.stream.start_tls(
@@ -186,6 +199,7 @@ class _ResponseStream(httpx.AsyncByteStream):
 class _ProxyTransport(httpx.AsyncBaseTransport):
     def __init__(self, grant, checked_ip):
         self.grant, self.checked_ip = grant, checked_ip
+        self.target_url = httpx.URL(grant.base_url + protocol_path(grant.protocol)).copy_with(host=checked_ip)
         self.started = False
         self.pool = httpcore.AsyncConnectionPool(
             proxy=httpcore.Proxy(grant.proxy_url, ssl_context=grant.ssl_context),
@@ -194,8 +208,8 @@ class _ProxyTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request):
         if (self.started or request.method != 'POST'
-                or str(request.url) != 'https://' + self.checked_ip + '/zen/go/v1/chat/completions'
-                or request.headers.get('host') != 'opencode.ai'):
+                or request.url != self.target_url
+                or request.headers.get('host') != self.grant._target_host):
             raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
         self.grant.validate_tls()
         self.grant.validate_payload(await request.aread())
