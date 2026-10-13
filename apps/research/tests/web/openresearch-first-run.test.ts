@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../../web/PersonalAgentSessions.js';
 import { api } from '../../../../web/api.js';
+import { ownerModelApi } from '../../../../web/ownerModelApi.js';
+import { applicationEnvironmentApi } from '../../web/applicationEnvironmentApi.js';
 import { personalAgentApi, ORX_PERSONAL_PROVIDER } from '../../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote, type PersonalCredential } from '../../../../web/personalRemoteApi.js';
 import { personalOrxProjectApi, type OrxProjectReceipt, type ProjectPreview, type OrxProjectPrepared } from '../../web/personalOrxProjectApi.js';
@@ -25,8 +27,11 @@ const credential: PersonalCredential = { providerId: ORX_PERSONAL_PROVIDER, dest
 const configured: PersonalRemote = { ...remote, origin: credential.destination, projectId: '', configRevision: 'r1', revision: 'r1', status: 'configured', available: false, capabilities: ['runtime:health', 'project:read', 'project:create'], expiresAt: null, allowedActions: ['verify'] };
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear();
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected API request in first-run fixture')));
   host = document.createElement('div'); document.body.append(host); root = createRoot(host); bindings = []; records = [];
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'userConnections').mockImplementation(async () => bindings);
+  vi.spyOn(applicationEnvironmentApi, 'capabilities').mockResolvedValue({ locations: [], applications: [] });
+  vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
   vi.spyOn(personalAgentApi, 'capabilities').mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true, ownerSubmit: '/api/factory/personal-agent/commands/submit', modelConfiguration: 'remote-configured-model', factoryBYOKForwarded: false });
   vi.spyOn(personalAgentApi, 'sessions').mockResolvedValue([]); vi.spyOn(personalAgentApi, 'submit');
   vi.spyOn(personalRemoteApi, 'list').mockImplementation(async () => records);
@@ -43,28 +48,59 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (name: string) => [...host.querySelectorAll('button')].find(b => b.textContent === name)!;
-async function click(name: string) { await act(async () => { button(name).click(); await new Promise(resolve => setTimeout(resolve, 10)); }); }
+const nativeDigest = webcrypto.subtle.digest.bind(webcrypto.subtle);
+function pauseNextCommandKey() {
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  vi.spyOn(webcrypto.subtle, 'digest').mockImplementationOnce(async (...args) => { await ready; return nativeDigest(...args); });
+  return release;
+}
+async function waitForView(check: () => void) {
+  await vi.waitFor(async () => { await act(async () => {}); check(); });
+}
+async function click(name: string, completed?: () => void) {
+  await waitForView(() => { expect(button(name), name).toBeDefined(); expect(button(name).disabled, name).toBe(false); });
+  await act(async () => { button(name).click(); if (completed) await vi.waitFor(completed); });
+}
 async function fill(label: string, value: string) { await act(async () => {
   const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!;
   Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(el, value);
   el.dispatchEvent(new Event('input', { bubbles: true }));
 }); }
-it('adds, verifies and binds an empty service on the same first-run page, then previews its first project without remounting or losing the goal', async () => {
+it.each([false, true])('adds, verifies and binds an empty service, then previews its first project without remounting or losing the goal (pending command keys: %s)', async pendingKeys => {
   await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true })));
   expect(bindings).toEqual([]); expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.options.length).toBe(1);
   await fill('研究目标', 'Preserve my first research goal'); await fill('HTTPS 服务源', credential.destination);
   await click('输入并保存个人凭据'); await fill('OpenResearch 服务令牌', 'synthetic-only');
   await act(async () => host.querySelector<HTMLInputElement>('[aria-label="安全保存个人凭据"] input[type="checkbox"]')!.click());
-  await click('确认安全保存凭据'); await click('确认保存配置'); await click('验证远程服务'); await click('确认绑定项目创建连接');
+  await click('确认安全保存凭据');
+  await click('确认保存配置', () => expect(personalRemoteApi.configure).toHaveBeenCalledTimes(1));
+  const releaseVerification = pendingKeys ? pauseNextCommandKey() : undefined;
+  await click('验证远程服务', pendingKeys ? undefined : () => expect(personalRemoteApi.command).toHaveBeenCalledTimes(1));
+  if (pendingKeys) {
+    // A pending native digest keeps the next step disabled; clicking it now
+    // would be ignored, even though the verification intent was accepted.
+    expect(personalRemoteApi.command).not.toHaveBeenCalled(); expect(api.bindConnection).not.toHaveBeenCalled();
+    expect(button('确认绑定项目创建连接').disabled).toBe(true);
+    await act(async () => { releaseVerification!(); await vi.waitFor(() => expect(personalRemoteApi.command).toHaveBeenCalledTimes(1)); });
+  }
+  const releaseBinding = pendingKeys ? pauseNextCommandKey() : undefined;
+  await click('确认绑定项目创建连接', pendingKeys ? undefined : () => expect(api.bindConnection).toHaveBeenCalledTimes(1));
+  if (pendingKeys) {
+    expect(api.bindConnection).not.toHaveBeenCalled(); expect(button('确认绑定项目创建连接').disabled).toBe(true);
+    await act(async () => { releaseBinding!(); await vi.waitFor(() => expect(api.bindConnection).toHaveBeenCalledTimes(1)); });
+  }
+  await waitForView(() => expect(host.textContent).toContain('此服务还没有可读取的项目'));
   expect(api.bindConnection).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('此服务还没有可读取的项目');
   await click('设置我的第一个研究项目');
   const select = host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!;
   expect(select.value).toBe(connection.ref); expect(select.options.length).toBe(2);
   await fill('远端项目绝对路径', request.path); expect(button('预览项目创建').disabled).toBe(false);
-  await click('预览项目创建');
+  await click('预览项目创建', () => expect(personalOrxProjectApi.prepare).toHaveBeenCalledTimes(1));
   expect(personalOrxProjectApi.prepare).toHaveBeenCalledWith(expect.objectContaining({ connectionRef: connection.ref, project: expect.objectContaining({ path: request.path, source: 'empty' }) }));
   expect(host.querySelector('[aria-label="项目创建副作用预览"]')).not.toBeNull();
   expect(host.querySelector<HTMLTextAreaElement>('[aria-label="研究目标"]')!.value).toBe('Preserve my first research goal');
   expect(personalOrxProjectApi.submit).not.toHaveBeenCalled(); expect(personalAgentApi.submit).not.toHaveBeenCalled();
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-only');
+  expect(fetch).not.toHaveBeenCalled();
 });

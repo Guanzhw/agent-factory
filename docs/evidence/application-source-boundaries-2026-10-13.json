@@ -92,11 +92,6 @@
     "historical scientific runtime namespace and supplied source pins",
     "explicit legacy policy fixtures and native hazardous-operation consent"
   ],
-  "pendingIntegration": [
-    "C owns CI: expand ruff paths and replace platform-only discovery in .github/workflows/ci.yml with scripts/check_python.py",
-    "B model/provider head e1ac87d is not included pending parent review",
-    "Real external model, SSH, OpenResearch/OpenCode live integration remains parent-scheduled; no such calls were made"
-  ],
   "testOwnershipFollowup": {
     "baseCommit": "e517330beb38de1b9da1a2c508df24ce6f9149c1",
     "movedUnchangedExceptWorkerSourceRoots": [
@@ -171,5 +166,85 @@
     "ruff": "passed",
     "diffCheck": "passed",
     "modelProviderBranchIncluded": false
+  },
+  "priorPendingIntegration": [
+    "C owns CI: expand ruff paths and replace platform-only discovery in .github/workflows/ci.yml with scripts/check_python.py",
+    "B model/provider head e1ac87d is not included pending parent review",
+    "Real external model, SSH, OpenResearch/OpenCode live integration remains parent-scheduled; no such calls were made"
+  ],
+  "pendingIntegration": [
+    "Real external model, SSH and complete live ORX acceptance remains parent-scheduled; none was requested in this integration."
+  ],
+  "integrationFollowup": {
+    "mergeInputs": {
+      "A": "86cea692309aa09fd37019c05a22f0ec0477b11a",
+      "B": "61859f2198bf19c51f1a7499f11b249cd4f3b071",
+      "C": "38452896af930ae35ed81fe8017fa79da4ed2863",
+      "D": "f14556ff4c250b981949da683feb80501d9c28bf"
+    },
+    "implementationHead": "5ecdffee4128aba780f717760935d94e6996f83d",
+    "repairs": [
+      "Research assembly receives its deployment factory explicitly; no app-to-server import remains.",
+      "Browser main and composition are exact startup files; reusable callers still cannot bypass boundaries.",
+      "Go diagnostics use normal member publication without privilege escalation.",
+      "Candidate journal accepts PLAN_READY and retains historical PLAN_APPROVED.",
+      "Nested application/material reads reuse the existing metadata connection, including a one-slot pool.",
+      "Moved fixtures retain owner, custody, policy withdrawal, UNKNOWN and original-receipt assertions.",
+      "Lint uses portable file globs; the first-run fixture waits for real async completion and denies unmocked fetch."
+    ],
+    "checks": {
+      "ordinaryPython": {
+        "testsRun": 2952,
+        "skipped": 540,
+        "passed": true,
+        "sourceHead": "5ecdffee4128aba780f717760935d94e6996f83d"
+      },
+      "frontend": {
+        "tests": 599,
+        "files": 55,
+        "lint": true,
+        "types": true,
+        "build": true
+      },
+      "browserSynthetic": {
+        "scenarios": 7,
+        "externalRequests": 0,
+        "pageErrors": 0
+      },
+      "boundaries": {
+        "pythonModules": 674,
+        "webModules": 100,
+        "violations": 0,
+        "coverageGaps": 0
+      },
+      "standaloneCore": {
+        "wheelInstalled": true,
+        "actualPostgresLifespan": true,
+        "appPackagesAbsent": true,
+        "researchTablesAbsent": true,
+        "healthOK": true,
+        "cleanShutdown": true
+      },
+      "focusedPostgres": {
+        "researchAndPublication": 104,
+        "policyAndStorage": 74,
+        "goDiagnosticAndCoding": 25,
+        "candidateAndBootstrapUniqueCases": 13,
+        "remoteRuntimeUsageAndGovernance": 28,
+        "skipped": 0
+      },
+      "nativeOffline": {
+        "opencodeCases": 8,
+        "actualSdkCases": 3,
+        "passed": true,
+        "realModelCalls": 0,
+        "binarySha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+        "imageId": "sha256:09fac22af2fd4a25594a5b259f918e1a2b77cb15b00b21db260487f1cfcf8503",
+        "testedHead": "81fb7176d426367aca07e2483e8913f1e7e881a8"
+      }
+    },
+    "currentFullPostgresAndCrossPlatformResults": "See the exact-head verification and checks on https://github.com/Guanzhw/agent-factory/pull/86; focused groups above are not a full-suite or live-compatibility claim.",
+    "historicalResultsPreserved": true,
+    "mergedToMain": false
   }
 }

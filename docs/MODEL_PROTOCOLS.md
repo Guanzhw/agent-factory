@@ -204,6 +204,13 @@ original-result recovery suite passed 15/15, all with zero skips.
 Those PostgreSQL runs covered `e1ac87d`; the later compaction follow-up changes
 the broker and offline regressions, without changing the model command service
 or database contract. They are not represented as reruns on the later head.
+The standalone `61859f2` [CI run](https://github.com/Guanzhw/agent-factory/actions/runs/38390686076)
+then stopped before PostgreSQL test execution because the old owner runner still
+required exactly 109 cases after three broker regressions were added. This was
+a collection-gate failure, not a passing run or evidence of a database defect.
+The integrated runner is `scripts/check_postgres.py`: it discovers both source
+trees once and requires the selected semantic cases to succeed without skips;
+it has no fixed historical case count.
 For the initial head `19ca4d532c926c1db59f8efccd21e955bc7b1581`, the
 [PR PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383491119/job/115249437827)
 and [push PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383467044/job/115249354831)
