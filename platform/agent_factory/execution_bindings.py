@@ -375,8 +375,10 @@ class ExecutionBindings:
         validate_plan_source(self.store, plan)
         from .comparison_workflow import validate_plan as validate_comparison_plan
         validate_comparison_plan(self.store, plan)
-        from .go_development import preflight_plan
-        preflight_plan(self.settings, plan, self.connections, context)
+        from .go_legacy import is_go_plan
+        if is_go_plan(plan):
+            from .go_development import preflight_plan
+            preflight_plan(self.settings, plan, self.connections, context)
         return manifest
 
     def inspect(self, plan: Mapping[str, Any], context: Any = None) -> dict[str, Any]:

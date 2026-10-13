@@ -1,4 +1,4 @@
-"""Native Agno text/function-tool adapter for the reviewed Chat Completions subset.
+"""Native Agno execution for the shared text/function-tool protocols.
 
 No SDK environment key lookup, redirects, proxies, retry, discovery or billing.
 Each invocation resolves the exact owner/vault revision and pins public DNS.
@@ -8,8 +8,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-import re
-from typing import Callable, cast
+from typing import Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -19,128 +18,38 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
-from .personal_remote_provider import PinnedHTTPSProbe, origin, reject_credential_echo
+# Re-export the established names for callers while keeping endpoint policy,
+# transport and protocol conversion independent of the Agno execution adapter.
+from .model_endpoint_policy import (
+    CLIENT_USER_AGENT as CLIENT_USER_AGENT, GO_BASE as GO_BASE,
+    GO_CURRENT_BASE as GO_CURRENT_BASE, base_url as base_url,
+    chat_headers as chat_headers, continuation_scope,
+    generation_options as generation_options, model_id as model_id,
+    model_origin as model_origin,
+)
+from .model_protocol import (
+    decode_response, encode_request, function_call as function_call,
+    protocol_name, protocol_path,
+)
+from .model_transport import MAX_BYTES as MAX_BYTES, PinnedChatTransport as PinnedChatTransport, read_response_json
+from .personal_remote_provider import PinnedHTTPSProbe as PinnedHTTPSProbe
 
 PROVIDER_ID = 'byok-chat-v1'
 ADAPTER_ID = 'owner-chat-completions-v1'
 CAPABILITY = 'model:invoke'
-MAX_BYTES = 1_048_576
-GO_BASE = 'https://opencode.ai/zen/go/v1'
-CLIENT_USER_AGENT = 'agent-factory/0.2 (+https://github.com/Guanzhw/agent-factory)'
-
-
-def base_url(value):
-    try:
-        parsed = urlsplit(value)
-        path = parsed.path.rstrip('/')
-        if path not in {'/v1', '/zen/go/v1'}:
-            raise ValueError()
-        destination = origin(f'{parsed.scheme}://{parsed.netloc}')
-        if path != '/v1' and destination + path != GO_BASE:
-            raise ValueError()
-        if value not in {destination + path, destination + path + '/'}:
-            raise ValueError()
-        return destination + path
-    except (ValueError, TypeError, AttributeError):
-        raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED') from None
-
-
-def model_origin(value):
-    parsed = urlsplit(base_url(value))
-    return origin(f'{parsed.scheme}://{parsed.netloc}')
-
-
-def chat_headers(base, lease, session_id):
-    headers = {'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}
-    if base_url(base) == GO_BASE:
-        if (type(session_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', session_id)
-                or session_id == lease.password):
-            raise ValueError('PERSONAL_MODEL_SESSION_REQUIRED')
-        headers.update({'User-Agent': CLIENT_USER_AGENT, 'x-opencode-session': session_id})
-    return headers
-
-
-def model_id(value):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}', value):
-        raise ValueError('PERSONAL_MODEL_ID_INVALID')
-    return value
-
-
-class PinnedChatTransport(httpx.AsyncBaseTransport):
-    def __init__(self, destination, *, before_send=None, base_path='/v1', on_dispatch=None, trusted_proxy=None):
-        self.destination = origin(destination)
-        self.base = base_url(self.destination + base_path)
-        self.before_send = before_send
-        self.on_dispatch = on_dispatch
-        self.trusted_proxy = trusted_proxy
-        if trusted_proxy is not None:
-            from .trusted_model_proxy import TrustedModelProxy
-            if not isinstance(trusted_proxy, TrustedModelProxy) or self.base != GO_BASE:
-                raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
-        self.probe = (PinnedHTTPSProbe(dns_timeout_seconds=trusted_proxy.dns_timeout_seconds)
-            if trusted_proxy else PinnedHTTPSProbe())
-        self.transport = None if trusted_proxy else httpx.AsyncHTTPTransport(retries=0, trust_env=False)
-
-    async def handle_async_request(self, request):
-        if request.method != 'POST' or str(request.url) != self.base + '/chat/completions':
-            raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED')
-        addresses = await asyncio.to_thread(self.probe.addresses, self.destination)
-        if self.before_send is not None:
-            await asyncio.to_thread(self.before_send)
-        # DNS is checked once per invocation, then the connection uses a literal
-        # address. Host and TLS SNI retain the exact credential-bound hostname.
-        forwarded = httpx.Request('POST', request.url.copy_with(host=addresses[0]),
-            headers={**dict(request.headers), 'host': request.url.host}, content=await request.aread(),
-            extensions={**request.extensions, 'sni_hostname': request.url.host})
-        if self.trusted_proxy is not None:
-            if self.transport is not None:
-                raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
-            self.trusted_proxy.validate_payload(forwarded.content)
-            self.transport = self.trusted_proxy.transport(addresses[0], request.url.host)
-        transport = self.transport
-        if transport is None:
-            raise ValueError('PERSONAL_MODEL_TRANSPORT_REQUIRED')
-        if self.on_dispatch is not None:
-            self.on_dispatch()
-        return await transport.handle_async_request(forwarded)
-
-    async def aclose(self):
-        if self.transport is not None:
-            await self.transport.aclose()
 
 
 def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
-    return ModelProviderError(message=code, status_code=400, model_name='Owner Chat Completions')
-
-
-def function_call(call):
-    if (type(call) is not dict or type(call.get('id')) is not str or not 1 <= len(call['id']) <= 200
-            or call.get('type') != 'function' or type(call.get('function')) is not dict):
-        raise rejected()
-    function = call['function']
-    if (type(function.get('name')) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', function['name'])
-            or type(function.get('arguments')) is not str or type(json.loads(function['arguments'])) is not dict):
-        raise rejected()
-    return {'id': call['id'], 'type': 'function', 'function': {
-        'name': function['name'], 'arguments': function['arguments']}}
-
-
-def generation_options(configuration):
-    """One explicit model option; default wire and 4096-token bound unchanged."""
-    mode = configuration.get('thinkingMode')
-    if mode is None or mode == 'default':
-        return {}
-    if (mode != 'disabled' or configuration.get('baseURL') != GO_BASE
-            or configuration.get('model') != 'longcat-2.5-preview-free'):
-        raise ValueError('PERSONAL_MODEL_THINKING_MODE_UNSUPPORTED')
-    return {'thinking': {'type': 'disabled'}}
+    return ModelProviderError(message=code, status_code=400, model_name='Owner Model')
 
 
 class OwnerChatModel(Model):
     def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None, trusted_proxy=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
-            name='Owner Chat Completions', retries=0)
+            name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
+        self._protocol = protocol_name(configuration)
+        self._scope = continuation_scope(configuration)
         generation_options(configuration)
         self._thinking_mode = configuration.get('thinkingMode')
         self._credential = credential
@@ -163,7 +72,7 @@ class OwnerChatModel(Model):
     def _body(self, messages, *, tools=None, tool_choice=None, response_format=None, **kwargs):
         if response_format is not None:
             raise rejected('PERSONAL_MODEL_UNSUPPORTED_FORMAT')
-        encoded = []
+        encoded, continuation = [], []
         for message in messages:
             if (message.role not in {'system', 'user', 'assistant', 'tool'}
                     or message.content is not None and type(message.content) is not str
@@ -172,17 +81,24 @@ class OwnerChatModel(Model):
             item = {'role': message.role, 'content': message.content}
             if message.role == 'tool': item['tool_call_id'] = message.tool_call_id
             if message.tool_calls: item['tool_calls'] = [function_call(call) for call in message.tool_calls]
+            if self._protocol == 'responses' and message.role == 'assistant' and message.tool_calls:
+                data = (message.provider_data or {}).get('owner_responses')
+                if (type(data) is not dict or data.get('scope') != self._scope
+                        or data.get('session') != self._session_id):
+                    raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
+                continuation.append(data.get('continuation'))
             encoded.append(item)
-        body = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
-        body.update(generation_options({'baseURL': self._base, 'model': self.id,
-            'thinkingMode': self._thinking_mode}))
+        chat = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if tools:
-            if any(tool.get('type') != 'function' or type(tool.get('function')) is not dict for tool in tools):
-                raise rejected('PERSONAL_MODEL_FUNCTION_TOOLS_ONLY')
-            body.update(tools=tools, parallel_tool_calls=False)
+            chat.update(tools=tools, parallel_tool_calls=False)
         if tool_choice is not None:
-            if tool_choice not in ('none', 'auto', 'required'): raise rejected('PERSONAL_MODEL_TOOL_CHOICE_DENIED')
-            body['tool_choice'] = tool_choice
+            chat['tool_choice'] = tool_choice
+        body = encode_request(self._protocol, chat, continuation=continuation)
+        # Existing provider extensions are a configuration concern, never codec
+        # logic and never an untrusted native request override.
+        if self._protocol == 'chat-completions':
+            body.update(generation_options({'baseURL': self._base, 'model': self.id,
+                'thinkingMode': self._thinking_mode}))
         if len(json.dumps(body).encode()) > MAX_BYTES: raise rejected('PERSONAL_MODEL_REQUEST_TOO_LARGE')
         return body
 
@@ -195,23 +111,17 @@ class OwnerChatModel(Model):
             lease = await asyncio.to_thread(self._credential)
             transport = self._transport_factory() if self._transport_factory else PinnedChatTransport(
                 model_origin(self._base), base_path=urlsplit(self._base).path, before_send=self._recheck,
-                trusted_proxy=self._trusted_proxy)
+                trusted_proxy=self._trusted_proxy, protocol=self._protocol)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
             async with asyncio.timeout(30), httpx.AsyncClient(transport=transport, trust_env=False,
                     follow_redirects=False, timeout=10, auth=None) as client:
-                async with client.stream('POST', self._base + '/chat/completions', json=body,
+                async with client.stream('POST', self._base + protocol_path(self._protocol), json=body,
                         headers=chat_headers(self._base, lease, self._session_id)) as response:
-                    if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
-                        raise rejected('PERSONAL_MODEL_REQUEST_FAILED')
-                    chunks, size = [], 0
-                    async for chunk in response.aiter_bytes():
-                        size += len(chunk)
-                        if size > MAX_BYTES: raise rejected()
-                        chunks.append(chunk)
-                    value = json.loads(b''.join(chunks))
-                    reject_credential_echo(value, lease)
-                    return value
+                    value = await read_response_json(response, lease)
+            if self._recheck is not None:
+                await asyncio.to_thread(self._recheck)
+            return value
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -235,20 +145,17 @@ class OwnerChatModel(Model):
     def _parse_provider_response(self, response, **kwargs):
         if isinstance(response, ModelResponse): return response
         try:
-            if type(response.get('choices')) is not list or len(response['choices']) != 1: raise rejected()
-            choice = response['choices'][0]
-            message = choice['message']
-            if (choice.get('finish_reason') not in {'stop', 'tool_calls'} or message.get('role') != 'assistant'
-                    or message.get('content') is not None and type(message['content']) is not str):
-                raise rejected()
-            calls = [function_call(call) for call in message.get('tool_calls', [])]
-            if len(calls) > 16 or len({call['id'] for call in calls}) != len(calls): raise rejected()
-            result = ModelResponse(role='assistant', content=message.get('content'), tool_calls=calls)
+            response, continuation = decode_response(self._protocol, response)
+            message = response['choices'][0]['message']
+            result = ModelResponse(role='assistant', content=message.get('content'),
+                tool_calls=message.get('tool_calls', []))
+            if continuation is not None:
+                result.provider_data = {'owner_responses': {'scope': self._scope,
+                    'session': self._session_id, 'continuation': continuation}}
             usage = response.get('usage')
-            if type(usage) is dict:
-                incoming, outgoing, total = (usage.get(k) for k in ('prompt_tokens', 'completion_tokens', 'total_tokens'))
-                if all(type(n) is int and n >= 0 for n in (incoming, outgoing, total)) and cast(int, total) == cast(int, incoming) + cast(int, outgoing):
-                    result.response_usage = MessageMetrics(input_tokens=cast(int, incoming), output_tokens=cast(int, outgoing), total_tokens=cast(int, total))
+            if usage is not None:
+                result.response_usage = MessageMetrics(input_tokens=usage['prompt_tokens'],
+                    output_tokens=usage['completion_tokens'], total_tokens=usage['total_tokens'])
             return result
         except Exception:
             raise rejected() from None

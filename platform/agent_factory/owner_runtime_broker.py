@@ -1,4 +1,4 @@
-"""Owner-funded Chat Completions boundary for a private application runtime.
+"""Owner-funded protocol boundary for a private application runtime.
 
 No research controller lives here. Original ORX and its declared harness own the
 tool loop. Only a short-lived local capability enters that container; each model
@@ -25,7 +25,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, generation_options, model_origin
+from .model_endpoint_policy import (
+    base_url, chat_headers, continuation_scope, generation_options, model_origin, requires_session,
+)
+from .model_protocol import decode_response, encode_request, function_call, protocol_name, protocol_path
+from .model_transport import MAX_BYTES, PinnedChatTransport, read_response_json
 from .personal_remote_provider import reject_credential_echo
 
 
@@ -100,6 +104,11 @@ class OwnerRuntimeBroker:
         self.lock = threading.Lock(); self.gate = threading.BoundedSemaphore(4)
         self.native_calls: dict[tuple[str, str, str], _NativeCall] = {}
         self.server = None; self.thread = None
+        # Tool reasoning stays outside the native container. The broker lifetime,
+        # call count and bounded response reader bound this cache; never evict a
+        # continuation and silently resume a tool call without its reasoning.
+        self.continuation_limit = max_calls
+        self.continuations: dict[tuple[str, str, tuple[str, ...]], dict] = {}
 
     def __repr__(self): return 'OwnerRuntimeBroker(capability=<redacted>)'
 
@@ -178,13 +187,30 @@ class OwnerRuntimeBroker:
             if message.get('tool_calls'):
                 for call in message['tool_calls']: function_call(call)
             encoded.append(message)
-        request = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
-        request.update(generation_options(self.handle.body))
+        protocol = protocol_name(self.handle.body)
+        scope = continuation_scope(self.handle.body, getattr(self.handle, 'owner', None))
+        continuation = []
+        if protocol == 'responses':
+            if type(session_id) is not str or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id):
+                raise ValueError('MODEL_SESSION_REJECTED')
+            with self.lock:
+                if len(self.continuations) >= self.continuation_limit:
+                    raise ValueError('MODEL_CONTINUATION_LIMIT')
+                for message in encoded:
+                    if message.get('role') == 'assistant' and message.get('tool_calls'):
+                        key = (session_id, scope, tuple(call['id'] for call in message['tool_calls']))
+                        record = self.continuations.get(key)
+                        if record is None:
+                            raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                        continuation.append(deepcopy(record))
+        chat = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if body.get('tools'):
-            if type(body['tools']) is not list or len(body['tools']) > 64 or any(type(tool) is not dict
-                    or tool.get('type') != 'function' or type(tool.get('function')) is not dict for tool in body['tools']):
-                raise ValueError('MODEL_FUNCTION_TOOLS_ONLY')
-            request.update(tools=body['tools'], parallel_tool_calls=False)
+            chat.update(tools=body['tools'], parallel_tool_calls=False)
+        if body.get('tool_choice') is not None:
+            chat['tool_choice'] = body['tool_choice']
+        request = encode_request(protocol, chat, continuation=continuation)
+        if protocol == 'chat-completions':
+            request.update(generation_options(self.handle.body))
         if len(json.dumps(request).encode()) > MAX_BYTES: raise ValueError('MODEL_REQUEST_TOO_LARGE')
         self.handle.check()
         lease = self.handle.credential()
@@ -194,29 +220,24 @@ class OwnerRuntimeBroker:
         if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
         transport = (_SyntheticDispatchTransport(transport_factory(), on_dispatch) if transport_factory else PinnedChatTransport(
             model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch,
-            trusted_proxy=getattr(self.handle, 'trusted_proxy', None)))
+            trusted_proxy=getattr(self.handle, 'trusted_proxy', None), protocol=protocol))
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()
-            async with client.stream('POST', base + '/chat/completions', json=request,
+            async with client.stream('POST', base + protocol_path(protocol), json=request,
                     headers=headers) as response:
-                if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
-                    raise ValueError('MODEL_REQUEST_FAILED')
-                chunks, size = [], 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_BYTES: raise ValueError('MODEL_RESPONSE_TOO_LARGE')
-                    chunks.append(chunk)
-                value = json.loads(b''.join(chunks))
-                reject_credential_echo(value, lease)
+                value = await read_response_json(response, lease)
         self.handle.check()
-        if type(value) is not dict or type(value.get('choices')) is not list or len(value['choices']) != 1:
-            raise ValueError('MODEL_RESPONSE_REJECTED')
-        message = value['choices'][0].get('message')
-        if type(message) is not dict or message.get('role') != 'assistant' or message.get('content') is not None and type(message['content']) is not str:
-            raise ValueError('MODEL_RESPONSE_REJECTED')
-        if message.get('tool_calls'):
-            message['tool_calls'] = [function_call(call) for call in message['tool_calls']]
+        value, record = decode_response(protocol, value)
+        if record is not None:
+            key = (session_id, scope, tuple(call['id'] for call in record['message']['tool_calls']))
+            with self.lock:
+                existing = self.continuations.get(key)
+                if existing is not None and existing != record:
+                    raise ValueError('MODEL_CONTINUATION_CONFLICT')
+                if existing is None and len(self.continuations) >= self.continuation_limit:
+                    raise ValueError('MODEL_CONTINUATION_LIMIT')
+                self.continuations[key] = record
         return value
 
     def start(self):
@@ -244,7 +265,7 @@ class OwnerRuntimeBroker:
                 # conversation, never substitute the secret broker capability.
                 session_id = self.headers.get('x-opencode-session')
                 native_session_id = self.headers.get('x-opencode-session-id')
-                if (broker.handle.body['baseURL'] == GO_BASE and session_id and native_session_id
+                if (requires_session(broker.handle.body['baseURL']) and session_id and native_session_id
                         and session_id != native_session_id):
                     return self.reply(400, {'error': 'MODEL_SESSION_REJECTED'})
                 session_id = session_id or native_session_id

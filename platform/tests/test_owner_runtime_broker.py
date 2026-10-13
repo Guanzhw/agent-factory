@@ -42,7 +42,10 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(self.broker.remaining, 62)
         # A changed tool-loop input is a separate call within the same user turn.
-        next_body = {**body, 'messages': body['messages'] + [{'role': 'tool', 'content': 'actual synthetic tool output'}]}
+        next_body = {**body, 'messages': body['messages'] + [
+            {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'call_synthetic', 'type': 'function',
+                'function': {'name': 'synthetic_tool', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': 'call_synthetic', 'content': 'actual synthetic tool output'}]}
         self.broker.native_completion(next_body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
         self.assertEqual(len(self.calls), 3)
         self.revoked = True

@@ -1,18 +1,26 @@
 import { ApiError, factoryRequest } from './api.js';
 import { modelEndpoint } from './modelEndpoint.js';
+import { validModelProtocol, validThinkingMetadata, type ModelProtocol } from './modelProviderConfig.js';
+export { validThinkingMetadata } from './modelProviderConfig.js';
 
 export interface OwnerModel {
   reference: string; revision: string; connectionRef: string; ownerId: string;
   provider: 'openai' | 'openai-compatible'; baseURL: string; model: string;
+  protocol?: ModelProtocol;
   credentialRef: string; credentialRevision: string; updatedAt: string;
   thinkingMode?: 'disabled';
   status: 'configured' | 'credential_unavailable' | 'revoked'; available: boolean; isDefault: boolean;
 }
-export interface ModelCapabilities { enabled: boolean; providers: string[]; liveCompatibilityVerified: boolean }
+export interface ModelCapabilities { enabled: boolean; providers: string[]; liveCompatibilityVerified: boolean; protocols?: ModelProtocol[] }
 export interface ModelConfiguration {
   provider: OwnerModel['provider']; baseURL: string; model: string;
   credentialRef: string; credentialRevision: string; requestId: string;
+  protocol?: ModelProtocol;
   thinkingMode?: 'default' | 'disabled';
+}
+export interface OwnerModelReceipt {
+  ownerId: string; requestId: string; action: 'model.configure' | 'model.default' | 'model.revoke';
+  result: OwnerModel; completedAt: string;
 }
 export class ModelRequestError extends Error {
   constructor(public readonly status: number, public readonly code?: string) {
@@ -26,42 +34,53 @@ async function safe<T>(path: string, method = 'GET', body?: unknown, signal?: Ab
   catch (error) { throw new ModelRequestError(error instanceof ApiError ? error.status : 0, error instanceof ApiError ? error.code : undefined); }
 }
 export function ownerModel(value: unknown, owner: string): OwnerModel {
-  const m = value as OwnerModel;
-  const fields = new Set(['reference', 'revision', 'connectionRef', 'ownerId', 'provider', 'baseURL', 'model', 'credentialRef', 'credentialRevision', 'updatedAt', 'thinkingMode', 'status', 'available', 'isDefault', 'hardExternalBudgetEnforced']);
-  if (!m || typeof m !== 'object' || Array.isArray(m) || Object.keys(m).some(key => !fields.has(key))
-      || m.ownerId !== owner || !['openai', 'openai-compatible'].includes(m.provider)
+  const m = value as Record<string, unknown>;
+  if (!m || typeof m !== 'object' || Array.isArray(m)
+      || m.ownerId !== owner || !['openai', 'openai-compatible'].includes(String(m.provider))
       || !['reference', 'revision', 'connectionRef', 'credentialRef', 'credentialRevision'].every(key => typeof m[key as keyof OwnerModel] === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(String(m[key as keyof OwnerModel])))
       || typeof m.baseURL !== 'string' || typeof m.model !== 'string' || !m.model || m.model.length > 120
-      || !validThinkingMetadata(m)
-      || !['configured', 'credential_unavailable', 'revoked'].includes(m.status)
+      || typeof m.updatedAt !== 'string' || !Number.isFinite(Date.parse(m.updatedAt))
+      || Object.prototype.hasOwnProperty.call(m, 'protocol') && !validModelProtocol(m.protocol)
+      || !validThinkingMetadata(m as { baseURL: string; model: string; thinkingMode?: unknown })
+      || !['configured', 'credential_unavailable', 'revoked'].includes(String(m.status))
       || typeof m.isDefault !== 'boolean' || typeof m.available !== 'boolean' || m.available !== (m.status === 'configured')) {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
   }
   try {
     if (modelEndpoint(m.baseURL) !== m.baseURL) throw new Error();
   } catch { throw new ModelRequestError(200, 'INVALID_RESPONSE'); }
-  return m;
-}
-/** Default is omitted by the backend; the sole persisted option is scoped. */
-export function validThinkingMetadata(value: { baseURL: string; model: string; thinkingMode?: unknown }): boolean {
-  return !Object.prototype.hasOwnProperty.call(value, 'thinkingMode')
-    || value.thinkingMode === 'disabled' && value.baseURL === 'https://opencode.ai/zen/go/v1'
-      && value.model === 'longcat-2.5-preview-free';
+  return {
+    reference: m.reference as string, revision: m.revision as string, connectionRef: m.connectionRef as string,
+    ownerId: m.ownerId as string, provider: m.provider as OwnerModel['provider'], baseURL: m.baseURL as string,
+    model: m.model as string, credentialRef: m.credentialRef as string, credentialRevision: m.credentialRevision as string,
+    updatedAt: m.updatedAt as string, ...(Object.prototype.hasOwnProperty.call(m, 'protocol') ? { protocol: m.protocol as ModelProtocol } : {}),
+    ...(Object.prototype.hasOwnProperty.call(m, 'thinkingMode') ? { thinkingMode: m.thinkingMode as 'disabled' } : {}),
+    status: m.status as OwnerModel['status'], available: m.available as boolean, isDefault: m.isDefault as boolean,
+  };
 }
 const ref = encodeURIComponent;
 export const ownerModelApi = {
   capabilities: async (signal?: AbortSignal) => {
     const value = await safe<ModelCapabilities>('/personal-models/capabilities', 'GET', undefined, signal);
-    if (!value || typeof value.enabled !== 'boolean' || typeof value.liveCompatibilityVerified !== 'boolean' || !Array.isArray(value.providers) || value.providers.some(p => !['openai', 'openai-compatible'].includes(p))) throw new ModelRequestError(200, 'INVALID_RESPONSE');
-    return value;
+    if (!value || typeof value.enabled !== 'boolean' || typeof value.liveCompatibilityVerified !== 'boolean' || !Array.isArray(value.providers) || value.providers.some(p => !['openai', 'openai-compatible'].includes(String(p)))
+        || Object.prototype.hasOwnProperty.call(value, 'protocols') && (!Array.isArray(value.protocols) || value.protocols.some(p => !validModelProtocol(p)))) throw new ModelRequestError(200, 'INVALID_RESPONSE');
+    return { enabled: value.enabled, providers: [...value.providers], liveCompatibilityVerified: value.liveCompatibilityVerified,
+      ...(value.protocols ? { protocols: [...value.protocols] } : {}) };
   },
   list: async (owner: string, signal?: AbortSignal) => {
     const values = await safe<unknown>('/personal-models', 'GET', undefined, signal, owner);
     if (!Array.isArray(values) || values.length > 100) throw new ModelRequestError(200, 'INVALID_RESPONSE');
     return values.map(value => ownerModel(value, owner));
   },
+  recover: async (owner: string, requestId: string): Promise<OwnerModelReceipt> => {
+    const raw = await safe<unknown>(`/personal-models/requests/${ref(requestId)}`, 'GET', undefined, undefined, owner);
+    const receipt = raw as Record<string, unknown>;
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || receipt.ownerId !== owner || receipt.requestId !== requestId
+        || !['model.configure', 'model.default', 'model.revoke'].includes(String(receipt.action))
+        || typeof receipt.completedAt !== 'string' || !Number.isFinite(Date.parse(receipt.completedAt))) throw new ModelRequestError(200, 'INVALID_RESPONSE');
+    return { ownerId: owner, requestId, action: receipt.action as OwnerModelReceipt['action'], result: ownerModel(receipt.result, owner), completedAt: receipt.completedAt };
+  },
   configure: async (owner: string, body: ModelConfiguration, reference?: string) => ownerModel(await safe(`/personal-models${reference ? `/${ref(reference)}/configure` : ''}`, 'POST', body, undefined, owner), owner),
   default: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/default`, 'POST', { requestId }, undefined, owner), owner),
   revoke: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/revoke`, 'POST', { requestId }, undefined, owner), owner),
-  rotateCredential: (owner: string, reference: string, credentialRevision: string, password: string, requestId: string) => safe<{ credentialRef: string; credentialRevision: string; status: string; providerId: string; destination: string }>(`/personal-credentials/${ref(reference)}/rotate`, 'POST', { credentialRevision, username: 'api-key', password, requestId }, undefined, owner),
 };
