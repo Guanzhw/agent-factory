@@ -15,6 +15,7 @@ dependencies = [
   "sqlalchemy[asyncio]==2.1.1",
   "psycopg[binary]==3.3.6",
   "httpx==0.28.1",
+  "mcp==2.3.0",
   "pyjwt[crypto]==2.15.1",
   "cryptography==50.0.2",
   "python-multipart==0.0.32",
