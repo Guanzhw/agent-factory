@@ -1,6 +1,6 @@
 """Pure text/function-tool codecs; execution, credentials and accounting stay outside.
 
-Continuations are private replay data for a tool turn, not public request
+Continuations are private replay data for an assistant turn, not public request
 extensions. Callers keep them in their existing scoped history.
 """
 from __future__ import annotations
@@ -299,7 +299,7 @@ def _continuations(protocol, value):
             _fail('CONTINUATION')
         message = _message(record['message'])
         calls = message.get('tool_calls', [])
-        if message['role'] != 'assistant' or not calls and (protocol == 'responses' or 'message_index' not in record):
+        if message['role'] != 'assistant' or not calls and 'message_index' not in record:
             _fail('CONTINUATION')
         if protocol == 'responses':
             decoded, replay = _response_items(record['output'])
@@ -329,7 +329,8 @@ def encode_request(protocol, chat_body, continuation=None):
 
     A replay record must match exactly one assistant message by ordered call
     IDs or an explicit message_index, and canonical message semantics. Text-only
-    CC reasoning requires an index so identical answers cannot select a turn.
+    reasoning requires an index so identical answers cannot select a turn.
+    Callers verify the scoped transcript before assigning those indices.
     """
     protocol_path(protocol)
     _bounded(chat_body)
@@ -401,8 +402,7 @@ def decode_response(protocol, raw):
             _fail('INCOMPLETE')
         message, replay = _response_items(raw.get('output'))
         reason = 'tool_calls' if message.get('tool_calls') else 'stop'
-        if message.get('tool_calls'):
-            continuation = {'message': json.loads(json.dumps(message)), 'output': replay}
+        continuation = {'message': json.loads(json.dumps(message)), 'output': replay}
     else:
         choices = raw.get('choices')
         if type(choices) is not list or len(choices) != 1 or type(choices[0]) is not dict:

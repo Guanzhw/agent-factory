@@ -99,7 +99,51 @@ class ModelProtocolTests(unittest.TestCase):
         self.assertEqual([history, first_context, second_context], before)
         final, final_context = decode_response('responses', responses([reasoning, text_item('Done')]))
         self.assertEqual(final['choices'][0]['message']['content'], 'Done')
-        self.assertIsNone(final_context)  # No promise of cross-user-turn reasoning memory.
+        self.assertEqual(final_context, {'message': final['choices'][0]['message'],
+            'output': [reasoning, text_item('Done')]})
+
+    def test_responses_final_reasoning_replays_at_explicit_positions_with_identical_answers(self):
+        answer = {'role': 'assistant', 'content': 'Same synthetic answer'}
+        records = []
+        for turn in ('first', 'second'):
+            output = [{'type': 'reasoning', 'id': 'rs_' + turn, 'summary': [],
+                'encrypted_content': turn + '-synthetic-ciphertext'}, text_item(answer['content'], id='msg_' + turn)]
+            envelope, record = decode_response('responses', responses(output))
+            self.assertEqual(envelope['choices'][0]['message'], answer)
+            self.assertEqual(record, {'message': answer, 'output': output})
+            self.assertNotIn('synthetic-ciphertext', json.dumps(envelope))
+            records.append(record)
+        history = [{'role': 'user', 'content': 'First'}, answer, {'role': 'user', 'content': 'Second'}, answer,
+            {'role': 'user', 'content': 'Continue with tools'}]
+        before = deepcopy([history, records])
+        encoded = encode_request('responses', request(history,
+            tools=[{'type': 'function', 'function': {'name': 'inspect', 'parameters': {'type': 'object'}}}]),
+            [{**records[0], 'message_index': 1}, {**records[1], 'message_index': 3}])
+        self.assertEqual(encoded['input'], [history[0], *records[0]['output'], history[2],
+            *records[1]['output'], history[4]])
+        self.assertEqual([item['encrypted_content'] for item in encoded['input'] if item.get('type') == 'reasoning'],
+            ['first-synthetic-ciphertext', 'second-synthetic-ciphertext'])
+        self.assertEqual([history, records], before)
+
+    def test_responses_text_continuations_require_valid_unique_matching_indices(self):
+        envelope, record = decode_response('responses', responses())
+        answer = envelope['choices'][0]['message']
+        self.assertEqual(record, {'message': answer, 'output': [text_item()]})
+        history = [{'role': 'user', 'content': 'First'}, answer,
+            {'role': 'assistant', 'content': 'Different synthetic answer'}]
+        valid = {**record, 'message_index': 1}
+        self.assertEqual(encode_request('responses', request(history), [valid])['input'][1], text_item())
+        for invalid in (record, {**record, 'message_index': 0}, {**record, 'message_index': 2},
+                {**record, 'message_index': 20}, {**record, 'message_index': -1},
+                {**record, 'message_index': True}, {**record, 'message_index': '1'}):
+            with self.subTest(record=invalid), self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
+                encode_request('responses', request(history), [invalid])
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
+            encode_request('responses', request(history), [valid, valid])
+        changed = deepcopy(valid)
+        changed['output'][0]['content'][0]['text'] = 'Changed output'
+        with self.assertRaisesRegex(ValueError, '^MODEL_PROTOCOL_CONTINUATION$'):
+            encode_request('responses', request(history), [changed])
 
     def test_continuations_cannot_be_attached_to_changed_or_missing_tool_turn(self):
         answer, context = decode_response('responses', responses([response_item()]))

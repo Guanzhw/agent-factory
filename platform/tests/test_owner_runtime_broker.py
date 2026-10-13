@@ -1,6 +1,7 @@
 """Synthetic model transport; no native research engine or network here."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import json
 import os
 import socket
@@ -19,6 +20,143 @@ from agent_factory.platform_openresearch import _UnixHTTP
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    def test_compaction_retained_suffix_distinguishes_identical_final_text_and_keeps_unknown_receipt(self):
+        from agent_factory.owner_runtime_broker import OwnerModelCallError
+        session = 'ses_syntheticcompaction123'
+        tools = [{'type': 'function', 'function': {'name': 'synthetic_tool',
+            'parameters': {'type': 'object', 'properties': {}}}}]
+        def final(reasoning, text='Identical synthetic final'):
+            self.answer = {'choices': [{'message': {'role': 'assistant', 'content': text,
+                'reasoning_content': reasoning}, 'finish_reason': 'stop'}]}
+        def call(messages, number, enabled=True):
+            return self.broker.native_completion({'model': 'owner-model', 'messages': messages,
+                'tools': tools if enabled else []}, session, f'msg_syntheticcompact{number}')
+        first_user = {'role': 'user', 'content': 'First old user turn'}
+        second_user = {'role': 'user', 'content': 'Retained user turn'}
+        final('private-first')
+        first = call([first_user], 1)['choices'][0]['message']
+        final('private-second')
+        second = call([first_user, first, second_user], 2)['choices'][0]['message']
+        self.assertEqual(first, second)
+        preserved = deepcopy(self.broker.histories)
+        with self.assertRaises(OwnerModelCallError):
+            call([{'role': 'user', 'content': 'Changed original prefix'}, second], 998, False)
+        with self.assertRaises(OwnerModelCallError):
+            call([first_user, first, second_user, second,
+                {'role': 'assistant', 'content': 'Invented extra final'}, {'role': 'user', 'content': 'Continue'}], 997, False)
+        self.assertEqual(self.broker.histories, preserved)
+        self.assertEqual(len(self.calls), 2)
+        uncertain = [first_user, first, second_user, second, {'role': 'user', 'content': 'Uncertain old turn'}]
+        transport = self.handle.service.transport_factory
+        def old_unknown(request):
+            self.calls.append(request)
+            raise httpx.ReadError('synthetic old disconnect')
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(old_unknown)
+        with self.assertRaises(OwnerModelCallError) as old_error:
+            call(uncertain, 999)
+        self.assertEqual(self.broker.histories, preserved)
+        self.handle.service.transport_factory = transport
+        final('private-summary', 'Synthetic summary')
+        summary_input = [{'role': 'user', 'content': 'Summarize the old conversation'}]
+        summary = call(summary_input, 3, False)['choices'][0]['message']
+        original_count = len(self.calls)
+        self.assertEqual(call(summary_input, 3, False)['choices'][0]['message'], summary)
+        self.assertEqual(len(self.calls), original_count)
+        compacted = [{'role': 'user', 'content': 'What did we do so far?'}, summary,
+            second_user, second, {'role': 'user', 'content': 'Use a tool after compaction'}]
+        # Changing the retained slice or transplanting a reference across owner
+        # cannot select reasoning by identical text or resolve a credential.
+        state = next(iter(self.broker.histories.values()))
+        original = deepcopy(state)
+        credential = self.handle.credential
+        resolved = []
+        def observe_credential():
+            resolved.append(True)
+            return credential()
+        self.handle.credential = observe_credential
+        key = state['summary_parent'][-1]['record']
+        state['summary_parent'][-1]['record'] = (key[0], 'foreign-owner-scope', key[2])
+        with self.assertRaises(OwnerModelCallError) as caught:
+            call(compacted, 4)
+        self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+        state.clear(); state.update(original)
+        altered = deepcopy(compacted); altered[2]['content'] = 'Altered retained user'
+        with self.assertRaises(OwnerModelCallError): call(altered, 5)
+        self.assertEqual(len(self.calls), original_count)
+        self.assertEqual(resolved, [])
+        self.handle.credential = credential
+        self.answer = {'choices': [{'message': {'role': 'assistant', 'content': None,
+            'reasoning_content': 'private-tool', 'tool_calls': [{'id': 'call_aftercompaction', 'type': 'function',
+                'function': {'name': 'synthetic_tool', 'arguments': '{ "n": 1.0 }'}}]}, 'finish_reason': 'tool_calls'}]}
+        assistant = call(compacted, 6)['choices'][0]['message']
+        sent = json.loads(self.calls[-1].content)
+        self.assertEqual([m['reasoning_content'] for m in sent['messages'] if m['role'] == 'assistant'],
+            ['private-summary', 'private-second'])
+        assistant['content'] = ''
+        assistant['tool_calls'][0]['function']['arguments'] = '{"n":1}'
+        following = compacted + [assistant,
+            {'role': 'tool', 'tool_call_id': 'call_aftercompaction', 'content': 'Synthetic tool result'}]
+        def unknown(request):
+            self.calls.append(request)
+            raise httpx.ReadError('synthetic disconnect')
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(unknown)
+        diagnostics = []
+        count = len(self.calls)
+        preserved = deepcopy(self.broker.histories)
+        for _ in range(2):
+            with self.assertRaises(OwnerModelCallError) as caught:
+                call(following, 6)
+            diagnostics.append(caught.exception.diagnostic_id)
+        self.assertEqual(diagnostics[0], diagnostics[1]); self.assertEqual(len(self.calls), count + 1)
+        self.assertEqual(self.broker.histories, preserved)
+        self.assertEqual([m['reasoning_content'] for m in json.loads(self.calls[-1].content)['messages']
+            if m['role'] == 'assistant'], ['private-summary', 'private-second', 'private-tool'])
+        self.assertEqual(call(summary_input, 3, False)['choices'][0]['message'], summary)
+        self.assertEqual(len(self.calls), count + 1)
+        with self.assertRaises(OwnerModelCallError) as replayed:
+            call(uncertain, 999)
+        self.assertEqual(replayed.exception.diagnostic_id, old_error.exception.diagnostic_id)
+        self.assertEqual(len(self.calls), count + 1)
+
+    def test_compaction_allows_empty_tail_and_tail_starting_with_assistant(self):
+        for keep in (False, True):
+            with self.subTest(keep=keep):
+                broker = OwnerRuntimeBroker(Path(self.folder.name) / 'unused.sock', self.handle)
+                session = 'ses_synthetictail123'
+                def call(messages, request, tools=False):
+                    return broker.native_completion({'model': 'owner-model', 'messages': messages,
+                        **({'tools': [{'type': 'function', 'function': {'name': 'synthetic_tool'}}]} if tools else {})},
+                        session, request)['choices'][0]['message']
+                first = call([{'role': 'user', 'content': 'Original turn'}], 'msg_synthetictail0001')
+                self.answer = {'choices': [{'message': {'role': 'assistant', 'content': 'Synthetic summary'}, 'finish_reason': 'stop'}]}
+                summary = call([{'role': 'user', 'content': 'Summarize'}], 'msg_synthetictail0002')
+                self.answer = {'choices': [{'message': {'role': 'assistant', 'content': 'Synthetic continued'}, 'finish_reason': 'stop'}]}
+                call([{'role': 'user', 'content': 'Native summary marker'}, summary,
+                    *([first] if keep else []), {'role': 'user', 'content': 'Continue'}], 'msg_synthetictail0003', True)
+                self.assertEqual(len(broker.native_calls), 3)
+
+    def test_concurrent_summary_cannot_overwrite_a_newer_inflight_transcript(self):
+        from agent_factory.owner_runtime_broker import OwnerModelCallError
+        admitted, release = threading.Event(), threading.Event()
+        body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'Original task'}]}
+        first = self.broker.native_completion(body, 'ses_syntheticbranch123', 'msg_syntheticbranch0001')
+        continued = {**body, 'messages': [*body['messages'], first['choices'][0]['message'],
+            {'role': 'user', 'content': 'Next task'}]}
+        def wire(request):
+            self.calls.append(request); admitted.set()
+            self.assertTrue(release.wait(timeout=3))
+            return httpx.Response(200, json=self.answer)
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            active = pool.submit(self.broker.native_completion, continued, 'ses_syntheticbranch123', 'msg_syntheticbranch0002')
+            self.assertTrue(admitted.wait(timeout=3))
+            with self.assertRaises(OwnerModelCallError) as caught:
+                self.broker.native_completion(body, 'ses_syntheticbranch123', 'msg_syntheticbranch0003')
+            self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
+            release.set(); active.result(timeout=3)
+        self.assertEqual(len(self.calls), 2)
+        self.assertFalse(self.broker.history_inflight)
+
     def test_native_go_thinking_option_comes_only_from_the_bound_owner_configuration(self):
         self.handle.body.update(baseURL='https://opencode.ai/zen/go/v1',
             model='longcat-2.5-preview-free', thinkingMode='disabled')

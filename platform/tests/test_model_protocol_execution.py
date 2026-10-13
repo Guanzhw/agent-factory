@@ -1,5 +1,6 @@
 """Offline owner model protocol execution; synthetic responses and credentials only."""
 import asyncio
+from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -262,7 +263,7 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
         self.assertEqual(self.calls, [])
 
-    def test_known_truncated_history_is_rejected_before_another_dispatch(self):
+    def test_user_only_summary_branch_does_not_replay_or_replace_original_receipt(self):
         for protocol in ('chat-completions', 'responses'):
             with self.subTest(protocol=protocol):
                 self.config['protocol'] = protocol
@@ -273,10 +274,15 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                 body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'synthetic task'}]}
                 first = broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001')
                 self.assertEqual(broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001'), first)
+                summary = broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0002')
+                self.assertEqual(broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0002'), summary)
+                self.assertEqual(broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0001'), first)
+                self.assertEqual(len(self.calls), 2)
+                # A third unseen request cannot overwrite an unconsumed summary.
                 with self.assertRaises(OwnerModelCallError) as caught:
-                    broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0002')
+                    broker.native_completion(body, 'ses_synthetic0001', 'msg_synthetic0003')
                 self.assertEqual(caught.exception.code, 'OWNER_MODEL_REQUEST_REJECTED')
-                self.assertEqual(len(self.calls), 1)
+                self.assertEqual(len(self.calls), 2)
 
     def test_cc_private_markers_cannot_fall_back_after_scope_changes(self):
         self.config.update(protocol='chat-completions', model='deepseek-flash')
@@ -331,6 +337,95 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
             Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=legacy),
             Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]))
         self.assertEqual(result.content, 'synthetic completion')
+
+    def test_agno_retained_private_markers_follow_the_current_message_positions(self):
+        original = dict(self.config)
+        for protocol, legacy in (('chat-completions', False), ('responses', False), ('responses', True)):
+            with self.subTest(protocol=protocol, legacy=legacy):
+                self.config = {**original, 'protocol': protocol}
+                self.calls = []
+                self.answer = response_output(tool=True) if protocol == 'responses' else {'choices': [{
+                    'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
+                        'reasoning_content': 'synthetic-private-reasoning', 'tool_calls': [{'id': 'call_synthetic',
+                            'type': 'function', 'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}}]}
+                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')]))
+                marker = deepcopy(first.provider_data)
+                if legacy:
+                    private = marker['owner_model_continuation']
+                    marker = {'owner_responses': {field: private[field] for field in ('scope', 'session', 'continuation')}}
+                self.answer = response_output() if protocol == 'responses' else {'choices': [{
+                    'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'synthetic completion'}}]}
+                # Agno owns the messages: dropping earlier complete turns and
+                # prepending a summary must not depend on the broker's ordinal.
+                result = asyncio.run(self.model().ainvoke([
+                    Message(role='system', content='Synthetic summary of earlier complete turns.'),
+                    Message(role='user', content='synthetic current task'),
+                    Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=marker),
+                    Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]))
+                self.assertEqual(result.content, 'synthetic completion')
+                self.assertEqual(len(self.calls), 2)
+                sent = json.loads(self.calls[1].content)
+                if protocol == 'responses':
+                    self.assertEqual([item['encrypted_content'] for item in sent['input'] if item.get('type') == 'reasoning'],
+                        ['synthetic-encrypted-reasoning'])
+                else:
+                    self.assertEqual(sent['messages'][2]['reasoning_content'], 'synthetic-private-reasoning')
+
+    def test_agno_current_and_legacy_markers_reject_foreign_bindings_before_credentials(self):
+        original = dict(self.config)
+        for protocol, legacy in (('chat-completions', False), ('responses', False), ('responses', True)):
+            with self.subTest(protocol=protocol, legacy=legacy):
+                bound = {**original, 'protocol': protocol}
+                self.config = bound
+                self.answer = response_output(tool=True) if protocol == 'responses' else {'choices': [{
+                    'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
+                        'reasoning_content': 'synthetic-private-reasoning', 'tool_calls': [{'id': 'call_synthetic',
+                            'type': 'function', 'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}}]}
+                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')]))
+                marker = deepcopy(first.provider_data)
+                if legacy:
+                    private = marker['owner_model_continuation']
+                    marker = {'owner_responses': {field: private[field] for field in ('scope', 'session', 'continuation')}}
+                messages = [Message(role='system', content='Synthetic compacted prior context.'),
+                    Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=marker),
+                    Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]
+                resolutions = []
+                def credential():
+                    resolutions.append('resolved')
+                    return SecretLease('api-key', 'synthetic-private-key')
+                calls_before = len(self.calls)
+                for field, value in (('ownerId', 'another-synthetic-owner'), ('reference', 'another-model-reference'),
+                        ('revision', 'model-r2'), ('credentialRef', 'another-credential-reference'),
+                        ('credentialRevision', 'credential-r2'), ('model', 'another-model'),
+                        ('baseURL', 'https://models.example.com/v1'),
+                        ('protocol', 'responses' if protocol == 'chat-completions' else 'chat-completions')):
+                    with self.subTest(field=field):
+                        self.config = {**bound, field: value}
+                        model = self.model(); model._credential = credential
+                        with self.assertRaises(ModelProviderError): asyncio.run(model.ainvoke(messages))
+                self.config = bound
+                model = self.model(); model._credential = credential
+                model._session_id = 'another-synthetic-session'
+                with self.assertRaises(ModelProviderError): asyncio.run(model.ainvoke(messages))
+
+                # Invalid existing metadata cannot be treated as absent, even
+                # with a valid legacy record alongside the current marker.
+                model = self.model(); model._credential = credential
+                marker_name = 'owner_responses' if legacy else 'owner_model_continuation'
+                changed = deepcopy(marker)
+                changed[marker_name]['scope'] = 'foreign-owner-scope'
+                if not legacy and protocol == 'responses':
+                    changed['owner_responses'] = deepcopy(marker[marker_name])
+                invalid = Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=changed)
+                with self.assertRaises(ModelProviderError):
+                    asyncio.run(model.ainvoke([messages[0], invalid, messages[2]]))
+                changed = deepcopy(marker)
+                changed[marker_name]['session'] = 'foreign-session'
+                invalid = Message(role='assistant', content=first.content, tool_calls=first.tool_calls, provider_data=changed)
+                with self.assertRaises(ModelProviderError):
+                    asyncio.run(model.ainvoke([messages[0], invalid, messages[2]]))
+                self.assertEqual(resolutions, [])
+                self.assertEqual(len(self.calls), calls_before)
 
     def test_broker_continuation_cannot_cross_credential_revision_or_owner(self):
         broker = self.broker(); self.answer = response_output(tool=True)

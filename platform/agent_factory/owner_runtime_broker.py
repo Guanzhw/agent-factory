@@ -112,7 +112,12 @@ class OwnerRuntimeBroker:
         # call count and bounded response reader bound this cache; never evict a
         # continuation and silently resume a tool call without its reasoning.
         self.continuation_limit = max_calls
-        self.continuations: dict[tuple[str | None, str, int], dict] = {}
+        self.continuations: dict[tuple, dict] = {}
+        # One bounded, verified transcript per scoped session, with references
+        # to immutable continuation records. Positions align retained suffixes;
+        # they are never the identity of an assistant or its private reasoning.
+        self.histories: dict[tuple[str | None, str], dict] = {}
+        self.history_inflight: set[tuple[str | None, str]] = set()
 
     def __repr__(self): return 'OwnerRuntimeBroker(capability=<redacted>)'
 
@@ -167,15 +172,106 @@ class OwnerRuntimeBroker:
 
     async def completion(self, body, session_id=None):
         dispatched = False
+        reserved = None
         def on_dispatch():
             nonlocal dispatched
             dispatched = True
         try:
+            key = (session_id, continuation_scope(self.handle.body, getattr(self.handle, 'owner', None)))
+            with self.lock:
+                if key in self.history_inflight:
+                    raise OwnerModelCallError(False)
+                self.history_inflight.add(key)
+                reserved = key
             return await self._completion(body, session_id, on_dispatch)
         except OwnerModelCallError:
             raise
         except Exception:
             raise OwnerModelCallError(dispatched) from None
+        finally:
+            if reserved is not None:
+                with self.lock:
+                    self.history_inflight.discard(reserved)
+
+    @staticmethod
+    def _same_message(expected, actual):
+        if expected.get('role') == actual.get('role') == 'assistant':
+            return assistant_message_matches(expected, actual)
+        return expected == actual
+
+    def _history(self, encoded, session_id, scope, *, tools, require_text):
+        """Associate a native transcript with previously verified records.
+
+        OpenCode sends compaction as a separate user-only, no-tools request,
+        then projects its answer before a retained suffix of the old history.
+        Anchor that suffix at the original end, not at matching text or an
+        assistant ordinal. Identical final answers keep their distinct records.
+        """
+        current = [message for message in encoded if message['role'] != 'system']
+        state = self.histories.get((session_id, scope))
+        previous = state['transcript'] if state else []
+        mapped = [None] * len(current)
+        verified_prefix = 0
+        parent = None
+        if not any(message['role'] == 'assistant' for message in current):
+            if state and state['summary_parent'] is not None:
+                # Wire messages carry no native summary ID. Do not replace an
+                # unconsumed summary with another possibly identical answer.
+                raise ValueError('MODEL_CONTINUATION_REQUIRED')
+            if not tools and len(current) == 1 and current[0]['role'] == 'user' and state:
+                parent = previous
+            elif state:
+                raise ValueError('MODEL_CONTINUATION_REQUIRED')
+        elif previous and len(current) >= len(previous) and all(
+                self._same_message(item['message'], message) for item, message in zip(previous, current)):
+            mapped[:len(previous)] = [item['record'] for item in previous]
+            verified_prefix = len(previous)
+        elif state and state['summary_parent'] is not None:
+            # Only the just-produced summary can introduce a reordered tail.
+            # Native replaces the summary's input prompt with a user marker.
+            old = state['summary_parent']
+            if (len(current) < 2 or current[0]['role'] != 'user'
+                    or not self._same_message(previous[-1]['message'], current[1])):
+                raise ValueError('MODEL_CONTINUATION_REQUIRED')
+            last = max(index for index, message in enumerate(current) if message['role'] == 'assistant')
+            tail = current[2:last + 1]
+            retained = old[len(old) - len(tail):] if tail else []
+            if len(tail) > len(old) or not all(
+                    self._same_message(item['message'], message) for item, message in zip(retained, tail)):
+                raise ValueError('MODEL_CONTINUATION_REQUIRED')
+            mapped[1] = previous[-1]['record']
+            mapped[2:last + 1] = [item['record'] for item in retained]
+            verified_prefix = last + 1
+        elif state and any(message['role'] == 'assistant' and not message.get('tool_calls') for message in current):
+            # A changed prefix must not turn known final reasoning into an
+            # unmarked text answer and overwrite the verified active history.
+            raise ValueError('MODEL_CONTINUATION_REQUIRED')
+        continuation, transcript, position = [], [], 0
+        for index, message in enumerate(encoded):
+            if message['role'] == 'system':
+                continue
+            key = mapped[position]
+            position += 1
+            if message['role'] == 'assistant':
+                if state and key is None and position > verified_prefix and not message.get('tool_calls'):
+                    raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                if key is None and message.get('tool_calls'):
+                    key = (session_id, scope, ('tools', *(call['id'] for call in message['tool_calls'])))
+                required = bool(message.get('tool_calls')) or require_text
+                if key is not None:
+                    # A transcript reference never authorizes a different owner,
+                    # configuration revision, destination, protocol or session.
+                    if key[:2] != (session_id, scope):
+                        raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                    entry = self.continuations.get(key)
+                    if entry is None or not assistant_message_matches(entry['message'], message):
+                        raise ValueError('MODEL_CONTINUATION_REQUIRED')
+                    if entry['continuation'] is not None:
+                        continuation.append({**deepcopy(entry['continuation']), 'message_index': index})
+                elif required:
+                    raise ValueError('MODEL_CONTINUATION_REQUIRED')
+            transcript.append({'message': deepcopy(message), 'record': key})
+        return continuation, transcript, parent
 
     async def _completion(self, body, session_id, on_dispatch):
         if type(body) is not dict or body.get('model') != 'owner-model': raise ValueError('MODEL_REQUEST_REJECTED')
@@ -200,28 +296,11 @@ class OwnerRuntimeBroker:
         if protocol == 'responses' and (type(session_id) is not str
                 or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id)):
             raise ValueError('MODEL_SESSION_REJECTED')
-        ordinal = 0
         with self.lock:
             if len(self.continuations) >= self.continuation_limit:
                 raise ValueError('MODEL_CONTINUATION_LIMIT')
-            for index, message in enumerate(encoded):
-                if message.get('role') != 'assistant':
-                    continue
-                entry = self.continuations.get((session_id, scope, ordinal))
-                required = bool(message.get('tool_calls')) or protocol == 'chat-completions' and bool(body.get('tools'))
-                if entry is not None:
-                    if not assistant_message_matches(entry['message'], message):
-                        raise ValueError('MODEL_CONTINUATION_REQUIRED')
-                    if entry['continuation'] is not None:
-                        continuation.append({**deepcopy(entry['continuation']), 'message_index': index})
-                elif required:
-                    raise ValueError('MODEL_CONTINUATION_REQUIRED')
-                ordinal += 1
-            # Exact retries were settled by native_calls before reaching here.
-            # A new call cannot discard an already produced assistant turn and
-            # discover only after dispatch that its continuation would collide.
-            if (session_id, scope, ordinal) in self.continuations:
-                raise ValueError('MODEL_CONTINUATION_REQUIRED')
+            continuation, transcript, parent = self._history(encoded, session_id, scope,
+                tools=bool(body.get('tools')), require_text=protocol == 'chat-completions' and bool(body.get('tools')))
         chat = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if body.get('tools'):
             chat.update(tools=body['tools'], parallel_tool_calls=False)
@@ -255,10 +334,13 @@ class OwnerRuntimeBroker:
             if reason:
                 raise OwnerModelCallError(True, terminal_reason=reason) from None
             raise
-        # Ordinal follows the validated transcript, so repeated final text can
-        # never attach reasoning from an unrelated turn by a text-only match.
-        key = (session_id, scope, ordinal)
-        entry = {'message': value['choices'][0]['message'], 'continuation': record}
+        message = value['choices'][0]['message']
+        calls = message.get('tool_calls', [])
+        if parent is not None and calls:
+            raise ValueError('MODEL_CONTINUATION_REQUIRED')
+        identity = ('tools', *(call['id'] for call in calls)) if calls else ('text', secrets.token_hex(16))
+        key = (session_id, scope, identity)
+        entry = {'message': message, 'continuation': record}
         with self.lock:
             existing = self.continuations.get(key)
             if existing is not None and existing != entry:
@@ -266,6 +348,8 @@ class OwnerRuntimeBroker:
             if existing is None and len(self.continuations) >= self.continuation_limit:
                 raise ValueError('MODEL_CONTINUATION_LIMIT')
             self.continuations[key] = entry
+            self.histories[(session_id, scope)] = {'transcript': [*transcript,
+                {'message': deepcopy(message), 'record': key}], 'summary_parent': parent}
         return value
 
     def start(self):

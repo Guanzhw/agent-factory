@@ -1,0 +1,182 @@
+{
+  "kind": "owner-model-protocols-offline",
+  "checkedAt": "2026-10-13T11:30:20.243158+00:00",
+  "previousHead": "e1ac87d6610be8f12fcfdf44236d3b94564c9a1c",
+  "testedFileSha256": {
+    "platform/agent_factory/model_protocol.py": "ee295001f1ae8f17ad589b456a33b24bac2a66ff02f11bd314a38c54a9168c39",
+    "platform/agent_factory/owner_runtime_broker.py": "7e08ee639d7b19b18727e0e4ea8806a3cab1da029c6b4c1bdd3d22785bd39c94",
+    "platform/tests/test_model_protocol.py": "f5cb4cd7e8289ee670c913e376b84fbaee517d500a8eed5826d14e9781a080a4",
+    "platform/tests/test_model_protocol_execution.py": "12b6174f3c7101482c696ceb3e313956c9e388d972e5866fd071e73cd7b34c09",
+    "platform/tests/test_owner_runtime_broker.py": "645d23f86b18d481b755499a8d195903810e0cb83309b965c00a2865a021dc47",
+    "scripts/check_owner_model_native_retry.py": "f4d93c655723be3ad837580257212ee40cce5f66095200a41cc8a433e39fb4b6",
+    "scripts/owner_model_native_compaction.py": "41a40f0e9add7d1109954d8f11b81ccd627d696838343164512ba5981ae4dd57",
+    "scripts/check_owner_model_native_protocols.py": "7561fead99b3b895e278c683bed0f0782fc22ebbd9036ac16a1fb95784bbffbc",
+    "scripts/owner_model_native_sdk.cjs": "f94148ebdb5734067ed7a112acb6e27529952217511647fb3cdbfa9bed16675d"
+  },
+  "checks": {
+    "selectedPython": {
+      "passed": 140,
+      "skipped": 0
+    },
+    "npmCheck": {
+      "passed": 539,
+      "lint": true,
+      "types": true,
+      "build": true
+    },
+    "ruff": true,
+    "pyright": true
+  },
+  "native": {
+    "harness": "actual-pinned-opencode-binary",
+    "binarySha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+    "imageId": "sha256:09fac22af2fd4a25594a5b259f918e1a2b77cb15b00b21db260487f1cfcf8503",
+    "cases": [
+      {
+        "outcome": "disconnect",
+        "accepted": true,
+        "providerDispatches": 1,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true
+      },
+      {
+        "outcome": "provider_502",
+        "accepted": true,
+        "providerDispatches": 1,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true
+      },
+      {
+        "outcome": "downstream_response_lost",
+        "accepted": true,
+        "providerDispatches": 1,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true
+      },
+      {
+        "outcome": "normal_two_turns",
+        "accepted": true,
+        "providerDispatches": 2,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true
+      },
+      {
+        "outcome": "cc_tool_rounds",
+        "accepted": true,
+        "providerDispatches": 4,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true,
+        "protocol": "chat-completions",
+        "nativeCompletedReadEvents": 2,
+        "actualNativeReadResults": true,
+        "privateReasoningRestored": true,
+        "continuedUserTurnRestoredFinalReasoning": true,
+        "privateReasoningAbsentFromNativeOutput": true,
+        "upstreamProtocolPathVerified": true
+      },
+      {
+        "outcome": "responses_tool_rounds",
+        "accepted": true,
+        "providerDispatches": 3,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true,
+        "protocol": "responses",
+        "nativeCompletedReadEvents": 2,
+        "actualNativeReadResults": true,
+        "privateReasoningRestored": true,
+        "continuedUserTurnRestoredFinalReasoning": null,
+        "privateReasoningAbsentFromNativeOutput": true,
+        "upstreamProtocolPathVerified": true
+      },
+      {
+        "outcome": "cc_compaction",
+        "accepted": true,
+        "providerDispatches": 8,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true,
+        "protocol": "chat-completions",
+        "nativeCompletedReadEvents": 4,
+        "explicitNativeCompaction": true,
+        "compactedReasoningRestored": true,
+        "retainedNativeTail": true,
+        "sameFinalTextDifferentReasoning": true,
+        "summaryComplete": true,
+        "continuedComplete": true,
+        "compactionAccepted": true
+      },
+      {
+        "outcome": "responses_compaction",
+        "accepted": true,
+        "providerDispatches": 8,
+        "nativeVersion": "1.18.35",
+        "network": "none",
+        "nativeRetryPolicyUnmodified": true,
+        "protocol": "responses",
+        "nativeCompletedReadEvents": 4,
+        "explicitNativeCompaction": true,
+        "compactedReasoningRestored": true,
+        "retainedNativeTail": true,
+        "sameFinalTextDifferentReasoning": true,
+        "summaryComplete": true,
+        "continuedComplete": true,
+        "compactionAccepted": true
+      }
+    ]
+  },
+  "sdk": {
+    "harness": "actual-pinned-sdk-streamText",
+    "versions": {
+      "opencodeContract": "1.18.35",
+      "compatible": "2.0.41",
+      "ai": "6.0.168",
+      "zod": "4.1.8"
+    },
+    "cases": [
+      {
+        "protocol": "chat-completions",
+        "scenario": "tool_rounds",
+        "accepted": true,
+        "toolsExecuted": 2,
+        "sdkRequests": 3,
+        "providerDispatches": 3,
+        "privateReasoningRestored": true,
+        "actualSdkNormalization": true
+      },
+      {
+        "protocol": "responses",
+        "scenario": "tool_rounds",
+        "accepted": true,
+        "toolsExecuted": 2,
+        "sdkRequests": 3,
+        "providerDispatches": 3,
+        "privateReasoningRestored": true,
+        "actualSdkNormalization": true
+      },
+      {
+        "protocol": "chat-completions",
+        "scenario": "final_then_tools",
+        "accepted": true,
+        "toolsExecuted": 1,
+        "sdkRequests": 3,
+        "providerDispatches": 3,
+        "privateReasoningRestored": true,
+        "actualSdkNormalization": true
+      }
+    ]
+  },
+  "realModelCalls": 0,
+  "orx": "not-run",
+  "productionAutocompactionSetting": "unchanged from base main; explicit compaction tested",
+  "limits": [
+    "One unconsumed summary per scoped session",
+    "Unchanged retained suffix required; native pruning rewrites not covered",
+    "No continuation persistence across broker restart"
+  ]
+}

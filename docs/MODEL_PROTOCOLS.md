@@ -49,19 +49,44 @@ of thinking. Provider support for forced tool choice is separate; for example,
 DeepSeek documents that forced selection is unsupported while thinking is on.
 The adapter does not silently change thinking or retry to obtain an answer.
 
-Agno retains continuation markers in message provider data; the broker uses its
-existing bounded session cache indexed by assistant position. All tool messages,
-and all assistant history in CC requests carrying tools, need their original
-scoped markers. Missing, changed or reordered context is rejected before a new
-dispatch. **Old CC tool histories without these markers, broker restarts and
-trimmed histories cannot be assumed lossless.** No history is deleted, no new
-session is created automatically, and no persistence service is added. Plain
-text history without tools still works. Responses final-answer reasoning without
-tools is not promised across user turns. Continuation assumes a complete,
-linear assistant history and callers must serialize turns within a session;
-concurrent branches and edited histories are not supported recovery paths.
-The original native call receipt and UNKNOWN rule still prevent blind provider
-resubmission.
+Agno retains continuation markers in message provider data. The broker keeps
+scoped, immutable continuation records: tools are identified by ordered call IDs
+and verified message semantics; text-only answers receive separate private
+identities even when their visible text is identical. A bounded verified
+transcript carries references to these records. Message positions locate a
+retained slice but are not continuation identities.
+
+The fixed native client's explicit compaction is a user-only, no-tools request.
+Its successful summary retains the parent transcript without discarding any
+call receipts. The next request may contain the summary followed by a retained
+suffix of that transcript and a new user turn. The complete suffix is checked
+against the parent's fixed end, including user/tool messages, so identical
+final text with different reasoning maps to the correct original record.
+An empty suffix or a suffix starting with an assistant is also supported.
+Summary reasoning is restored separately from the retained tail.
+
+Each session/scope reserves its history transition before dispatch; exact
+native retries still wait on their existing call receipt. Only one unconsumed
+summary is kept. Replacing it with another unidentified summary is rejected,
+since the CC wire carries no native summary-message ID. Changed retained
+messages, missing records and foreign bindings fail before dispatch. Failed or
+UNKNOWN calls do not advance history, erase receipts or trigger resubmission.
+
+**Old CC tool histories without markers, broker restarts and arbitrarily edited
+histories cannot be assumed lossless.** Compaction supports an unchanged
+retained tail; rewriting old tool results through native pruning is not covered.
+No history is deleted, session silently reset, or persistence service added.
+Plain text history without tools still works. Responses final-answer reasoning
+and summary output items are retained through the same scoped record references;
+text-only replay requires an explicit mapped message index, never text lookup.
+
+The base main commit already set `OPENCODE_DISABLE_AUTOCOMPACT=1` in the native
+entry environment; this PR did not introduce or change that setting. Native
+pruning also defaults off. The new explicit-compaction test uses the real
+[fixed native compaction API and conversion](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/session/compaction.ts)
+with a nonempty retained tail. Support is implemented in the protocol boundary,
+not by relying on disabled automatic compaction; runtime policy remains with
+the application assembly owner.
 
 Transport remains HTTPS/443 with public DNS checks on each request, connection
 to the checked address, original Host/SNI and certificate verification. No
@@ -150,7 +175,7 @@ must be separately arranged by the parent task with approved credentials.
 
 Local validation on 2026-10-13: `npm run check` passed (539 tests, lint,
 TypeScript and production build); `npm audit` reported zero vulnerabilities.
-Repository Ruff and Pyright passed. The selected Python suites passed 133 tests:
+Repository Ruff and Pyright passed. The selected Python suites passed 140 tests:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v \
@@ -176,6 +201,9 @@ AGNO_TELEMETRY=false PYTHONPATH=platform:platform/tests .venv/bin/python -m unit
 
 The owner gate passed 109/109, the boundary gate passed 32/32, and the new
 original-result recovery suite passed 15/15, all with zero skips.
+Those PostgreSQL runs covered `e1ac87d`; the later compaction follow-up changes
+the broker and offline regressions, without changing the model command service
+or database contract. They are not represented as reruns on the later head.
 For the initial head `19ca4d532c926c1db59f8efccd21e955bc7b1581`, the
 [PR PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383491119/job/115249437827)
 and [push PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383467044/job/115249354831)
@@ -184,13 +212,25 @@ completed all five required zero-skip gates (109 owner, 32 boundary, 9 candidate
 running when checked at 10:51 UTC; that is not a full-CI success claim or evidence
 for a later commit.
 
-Actual OpenCode 1.18.35 binary acceptance passed 6/6 cases: upstream disconnect,
-502, lost downstream response, two user turns, CC tools and Responses tools.
+Actual OpenCode 1.18.35 binary acceptance passed 8/8 cases: upstream disconnect,
+502, lost downstream response, two user turns, CC tools, Responses tools, and
+explicit compaction followed by tools for both protocols.
 Both tool cases executed the real native `read` tool twice. CC additionally
 continued the same native session and restored all three prior reasoning fields,
 including the final answer. The first three failure/recovery cases each made
 exactly one synthetic provider dispatch. Containers used `--network none` and
 the production broker with an injected upstream `MockTransport`.
+
+Two further cases invoke the actual native session `summarize` API with
+`auto:false`, then continue with two more real file reads. The fixture retains
+one recent user turn. Two pre-compaction final answers have identical visible
+text and different private reasoning; the CC case checks that only the retained
+answer's reasoning returns, alongside the summary and new tool continuations.
+The Responses case applies the same strict check to encrypted reasoning items.
+The native persisted compaction marker, summary assistant and nonempty
+`tail_start_id` are inspected through the native session API. No model request
+is manually rewritten to simulate compaction. The fixture's tail selection is
+temporary and does not change the production entry or safety settings.
 
 ```sh
 .venv/bin/python scripts/check_owner_model_native_retry.py \
@@ -227,4 +267,6 @@ patch -d /tmp/owner-model-sdk/node_modules/@ai-sdk/openai-compatible -p1 --forwa
 
 The real native executable and SDK tests are offline protocol acceptance, not
 complete ORX or live-provider acceptance. No provider credential was read or
-created, and no real inference request was sent.
+created, and no real inference request was sent. A compact
+[acceptance record](evidence/owner-model-protocols-offline-2026-10-13.json)
+includes exact tested file hashes, binary/image pins and individual results.
