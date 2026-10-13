@@ -413,7 +413,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(server.calls, [])
             self.assertTrue(any(request.method == 'DELETE' for request in server.requests))
 
-    async def test_pending_or_refused_delete_is_not_predispatch_stop_proof(self):
+    async def test_remote_idle_session_delete_does_not_hold_undispatched_capacity(self):
         async with MCPProtocolServer(stateless=False) as server:
             schema = {'type': 'object', 'properties': {'undeclared': {'type': 'string'}}}
             adapter = MCPToolAdapter(descriptor(input_schema=schema), url=server.url, allow_loopback_http=True)
@@ -422,7 +422,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     server.delete_status = status
                     with self.assertRaises(ToolInvocationError) as failure:
                         await adapter.invoke(Authority().invocation())
-                    self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
+                    self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed', stopped=True)
             self.assertEqual(server.calls, [])
             self.assertEqual(sum(request.method == 'DELETE' for request in server.requests), 2)
 

@@ -11,6 +11,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+from mcp import ClientSession
+
 from agent_factory.config import Settings
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
@@ -56,6 +58,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.server_stop = threading.Event()
 
         async def serve():
+            self.server_loop = asyncio.get_running_loop()
             async with self.mcp:
                 ready.set_result(None)
                 await asyncio.to_thread(self.server_stop.wait)
@@ -144,6 +147,9 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.start()
         self.assert_original_receipt(body, task, effects, request_count)
         self.mcp.tool_schemas.clear()
+        self.mcp.delete_status = None
+        self.mcp.delete_drip_interval = None
+        self.server_loop.call_soon_threadsafe(self.mcp.delete_release.set)
         next_run = self.request('POST', '/application-interface/v1/starts',
                                 {**body, 'requestId': 'after-known-mcp-failure'}, expected=202)
         self.assertNotEqual(next_run['job']['id'], task['id'])
@@ -177,19 +183,45 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.assertEqual(self.mcp.calls, [])
         self.prove_released(body, started)
 
-    def test_uncertain_schema_failure_cleanup_keeps_capacity_and_never_redispatches(self):
+    def test_delete_not_supported_releases_predispatch_failure_capacity(self):
+        connection = self.configure('alice')
+        self.schema_drift()
+        self.mcp.delete_status = 405
+        body, started = self.submit('alice', connection)
+        self.wait(started, 'alice', expected={'failed', 'completed', 'cancelled'})
+        self.assertTrue(self.mcp.delete_started.is_set())
+        self.assertTrue(any(request.method == 'DELETE' for request in self.mcp.requests))
+        self.prove_released(body, started)
+
+    def test_slow_delete_releases_predispatch_failure_after_local_cleanup(self):
         connection = self.configure('alice')
         self.schema_drift()
         self.mcp.delete_release.clear()
         self.mcp.delete_drip_interval = 0.01
         body, started = self.submit('alice', connection)
-        task = self.wait(started, 'alice', expected={'completed', 'cancelled'})
+        self.prove_released(body, started)
+        self.assertGreaterEqual(self.mcp.delete_chunks, 2)
+
+    def test_sdk_exit_failure_keeps_capacity_and_never_redispatches(self):
+        exit_failed = threading.Event()
+
+        class BrokenExitSession(ClientSession):
+            async def __aexit__(self, *args):
+                await super().__aexit__(*args)
+                exit_failed.set()
+                raise RuntimeError('SYNTHETIC_SDK_EXIT_FAILED')
+
+        connection = self.configure('alice')
+        self.schema_drift()
+        with patch('agent_factory.personal_mcp.ClientSession', BrokenExitSession):
+            body, started = self.submit('alice', connection)
+            task = self.wait(started, 'alice', expected={'completed', 'cancelled'})
+        self.assertTrue(exit_failed.is_set())
         effects = self.store.effects(task['id'])
         self.assertEqual(len(effects), 1)
         self.assertEqual(effects[0]['status'], 'UNKNOWN')
-        self.assertEqual(effects[0]['result'], {'outcome': 'failed', 'stopped': False})
+        self.assertIsNone(effects[0]['result'])
         self.assertFalse(self.store.task(task['id'])['terminal'])
-        self.assertGreaterEqual(self.mcp.delete_chunks, 2)
         request_count = len(self.mcp.requests)
         self.assert_original_receipt(body, task, effects, request_count)
         self.request('POST', '/application-interface/v1/starts',

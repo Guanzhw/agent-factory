@@ -102,8 +102,6 @@ class _InvocationState:
     sdk_closed: bool = False
     initialized: bool = False
     initialization_refused: bool = False
-    session_ids: set[str] = field(default_factory=set, repr=False)
-    deleted_sessions: set[str] = field(default_factory=set, repr=False)
     callbacks_finished: list[threading.Event] = field(default_factory=list, repr=False)
 
     def error(self, code: str) -> ToolInvocationError:
@@ -124,11 +122,10 @@ class _InvocationState:
 
     def stopped_before_dispatch(self) -> bool:
         # Called only after the invocation's operation and monitor have joined.
-        # An interrupted initialization can hide a remote session allocation.
+        # Remote idle-session DELETE is best effort (405 is valid MCP). Before
+        # tools/call, only the invocation's local work must be confirmed stopped.
         return (not self.dispatched and all(event.is_set() for event in self.callbacks_finished)
-                and (not self.transport_started or (self.transport_closed and self.sdk_closed
-                    and (self.initialized or self.initialization_refused)
-                    and self.session_ids <= self.deleted_sessions)))
+                and (not self.transport_started or (self.transport_closed and self.sdk_closed)))
 
     async def check(self) -> None:
         try:
@@ -214,16 +211,10 @@ class _BoundedTransport(httpx2.AsyncBaseTransport):
         deadline = request.extensions.pop(_CLOSE_DEADLINE, None)
         async with asyncio.timeout_at(deadline):
             response = await self._transport.handle_async_request(request)
-        if session_id := response.headers.get('mcp-session-id'):
-            self._state.session_ids.add(session_id)
 
         def received():
-            if (response.status_code in {401, 403} and not self._state.initialized
-                    and not self._state.session_ids):
+            if response.status_code in {401, 403} and not self._state.initialized:
                 self._state.initialization_refused = True
-            if request.method == 'DELETE' and response.status_code in {200, 204}:
-                if session_id := request.headers.get('mcp-session-id'):
-                    self._state.deleted_sessions.add(session_id)
 
         if response.headers.get('content-encoding', 'identity').lower() != 'identity':
             await response.aclose()
