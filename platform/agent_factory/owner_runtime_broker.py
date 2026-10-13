@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
+from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, generation_options, model_origin
 from .personal_remote_provider import reject_credential_echo
 
 
@@ -179,6 +179,7 @@ class OwnerRuntimeBroker:
                 for call in message['tool_calls']: function_call(call)
             encoded.append(message)
         request = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
+        request.update(generation_options(self.handle.body))
         if body.get('tools'):
             if type(body['tools']) is not list or len(body['tools']) > 64 or any(type(tool) is not dict
                     or tool.get('type') != 'function' or type(tool.get('function')) is not dict for tool in body['tools']):
@@ -192,7 +193,8 @@ class OwnerRuntimeBroker:
         headers = chat_headers(base, lease, session_id)
         if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
         transport = (_SyntheticDispatchTransport(transport_factory(), on_dispatch) if transport_factory else PinnedChatTransport(
-            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch))
+            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch,
+            trusted_proxy=getattr(self.handle, 'trusted_proxy', None)))
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()

@@ -122,7 +122,9 @@ def create_app(settings=None, *, diagnostics=None):
     store.connections = connections
     from .personal_models import PersonalModels, personal_model_router
     store.personal_models = PersonalModels(store, auth, connections, credential_vault,
-        transport_factory=settings.owner_model_transport_factory)
+        transport_factory=settings.owner_model_transport_factory,
+        trusted_model_proxy=settings.owner_model_trusted_proxy,
+        proxy_environment_id=settings.owner_model_proxy_environment_id)
     connections.owner_models = store.personal_models
     from .application_environments import ApplicationEnvironments, environment_router
     environment_packages = {}

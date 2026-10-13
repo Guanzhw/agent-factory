@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PersonalAgentSessions } from '../web/PersonalAgentSessions.js';
 import { NativeCommandResult, personalCommandRequest, taskResultSource } from '../web/NativeCommandResult.js';
+import * as nativeArtifacts from '../web/nativeResearchArtifacts.js';
 import { api, ApiError } from '../web/api.js';
 import { personalAgentApi, checkResearchContinuation, PERSONAL_CONTRACT, ORX_PERSONAL_PROVIDER, type PersonalSession, type PersonalRecovery } from '../web/personalAgentApi.js';
 import { personalRemoteApi, type PersonalRemote } from '../web/personalRemoteApi.js';
@@ -36,6 +37,27 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent === text)!;
+it('collects real-file receipts from an ended current native command without another research submission', async () => {
+  vi.mocked(personalAgentApi.session).mockResolvedValue({ ...observed, latestFactoryIdentity: identity });
+  const artifact = { id: 'actual-output-fixture', jobId: job.id, name: 'general-output.tsv', mediaType: 'text/plain', size: 12,
+    sha256: 'b'.repeat(64), createdAt: '2026-10-13T00:00:00Z' };
+  const capture = vi.spyOn(nativeArtifacts, 'captureNativeArtifacts').mockResolvedValue({ artifacts: [artifact], skipped: 1 });
+  const received = vi.fn();
+  const detail = { job, events: [], artifacts: [], snapshot: { content: JSON.stringify({ requestId: 'original-request', executionContract: PERSONAL_CONTRACT, action: 'prompt', factoryIdentity: identity }) } } as JobDetail;
+  await act(async () => root.render(createElement(NativeCommandResult, { detail, onArtifacts: received })));
+  await act(async () => { button('收集平台研究文本产物').click(); button('收集平台研究文本产物').click(); });
+  expect(capture).toHaveBeenCalledTimes(1); expect(received).toHaveBeenCalledWith([artifact]);
+  expect(host.textContent).toContain('已收集 1 份真实文本产物'); expect(host.textContent).toContain('另有 1 项未收集');
+  expect(personalAgentApi.submit).not.toHaveBeenCalled(); expect(personalAgentApi.start).not.toHaveBeenCalled();
+});
+it('disables capture while another native turn is pending or this task is not the latest', async () => {
+  const capture = vi.spyOn(nativeArtifacts, 'captureNativeArtifacts');
+  vi.mocked(personalAgentApi.session).mockResolvedValue({ ...observed, activeRequestId: 'pending-turn', latestFactoryIdentity: identity });
+  const detail = { job, events: [], artifacts: [], snapshot: { content: JSON.stringify({ requestId: 'original-request', executionContract: PERSONAL_CONTRACT, action: 'prompt', factoryIdentity: identity }) } } as JobDetail;
+  await act(async () => root.render(createElement(NativeCommandResult, { detail })));
+  expect(button('收集平台研究文本产物').disabled).toBe(true);
+  button('收集平台研究文本产物').click(); expect(capture).not.toHaveBeenCalled();
+});
 async function mount() { await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: session.namespace }))); }
 async function choose() { await act(async () => button('选择会话 original-session').click()); }
 async function fill(text = 'Controlled research goal') { await act(async () => { const field = host.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true })); }); }

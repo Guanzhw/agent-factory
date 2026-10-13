@@ -23,6 +23,14 @@ from .personal_remote_provider import OpenCodeServeProvider, RemoteConnectionErr
 from .orx_research_session import OpenResearchSessionHTTP, UPSTREAM_COMMIT
 from .store import digest
 
+
+def worktree_file_path(value):
+    """Ordinary relative output paths, excluding runtime/private control files."""
+    return (type(value) is str and 0 < len(value) <= 512 and value == value.strip()
+        and value.isprintable() and not any(c in value for c in '\\%\x7f')
+        and all(part and not part.startswith('.') and len(part) <= 120 for part in value.split('/'))
+        and value.split('/')[-1] != 'opencode.json')
+
 PERSONAL_ORX_PROVIDER_ID = 'openresearch-personal-session-v1'
 CAPABILITIES = frozenset({'runtime:health', 'project:read', 'agent:read', 'session:read',
     'session:create', 'session:prompt', 'session:interrupt'})
@@ -53,15 +61,18 @@ class PersonalOrxHTTPS(PersonalAgentTransport):
         route = parsed.path
         if parsed.query:
             try:
-                query = parse_qs(parsed.query, strict_parsing=True)
+                query = parse_qs(parsed.query, strict_parsing=True, keep_blank_values=True)
             except ValueError:
                 return False
-            return bool(method == 'GET' and route == '/api/chat/sessions' and payload is None
-                and set(query) == {'projectId'} and len(query['projectId']) == 1
-                and re.fullmatch(_ID, query['projectId'][0]))
+            if method != 'GET' or payload is not None: return False
+            return bool(route == '/api/chat/sessions' and set(query) == {'projectId'}
+                and len(query['projectId']) == 1 and re.fullmatch(_ID, query['projectId'][0])
+                or re.fullmatch(rf'/api/projects/{_ID}/file', route)
+                and set(query) == {'sessionId', 'path'} and all(len(v) == 1 for v in query.values())
+                and re.fullmatch(_ID, query['sessionId'][0]) and worktree_file_path(query['path'][0]))
         if method == 'GET' and payload is None:
             return bool(route in {'/api/health', '/api/projects'} or re.fullmatch(rf'/api/projects/{_ID}', route)
-                or re.fullmatch(rf'/api/chat/sessions/{_ID}/messages', route))
+                or re.fullmatch(rf'/api/chat/sessions/{_ID}/(?:messages|worktree)', route))
         if method == 'POST':
             if route == '/api/projects':
                 from .personal_orx_projects import valid_native_request
@@ -234,9 +245,15 @@ class PersonalOrxHandle:
             require(callable(before_send), 'PERSONAL_ADMISSION_REQUIRED')
         query = parse_qs(urlsplit(path).query)
         if query:
-            require(query == {'projectId': [self.configuration['projectId']]}, 'REMOTE_IDENTITY_MISMATCH')
+            if 'sessionId' in query:
+                require(urlsplit(path).path == '/api/projects/' + self.configuration['projectId'] + '/file', 'REMOTE_IDENTITY_MISMATCH')
+                self._session_row(query['sessionId'][0])  # Native project/session ownership, not a caller path.
+                self._check(('project:read', 'session:read'))
+            else:
+                require(query == {'projectId': [self.configuration['projectId']]}, 'REMOTE_IDENTITY_MISMATCH')
         if path.startswith('/api/projects/'):
-            require(path == '/api/projects/' + self.configuration['projectId'], 'REMOTE_IDENTITY_MISMATCH')
+            require(urlsplit(path).path in {'/api/projects/' + self.configuration['projectId'],
+                '/api/projects/' + self.configuration['projectId'] + '/file'}, 'REMOTE_IDENTITY_MISMATCH')
         if self.configuration.get('projectCreation'):
             require(path in {'/api/health', '/api/projects'}, 'REMOTE_PATH_DENIED')
         elif method == 'POST' and path == '/api/projects':
@@ -394,6 +411,41 @@ class PersonalOrxHandle:
             exactTurnVerified=False, usageStatus='unavailable', correlationSource='remote-session-observation')
         return result
 
+    def worktree_files(self, session_id):
+        """Pinned original ORX git-change inventory; never parse chat filenames."""
+        self._session_row(session_id)
+        value = self.call('GET', '/api/chat/sessions/' + session_id + '/worktree')
+        require(type(value) is dict and type(value.get('exists')) is bool, 'NATIVE_FILES_INVALID')
+        if not value['exists']: return []
+        files = value.get('files')
+        require(type(files) is list and len(files) <= 2000, 'NATIVE_FILES_INVALID')
+        result: list[str] = []
+        for item in cast(list[dict[str, Any]], files):
+            require(type(item) is dict and type(item.get('path')) is str
+                and item.get('status') in {'added', 'modified', 'deleted', 'renamed', 'untracked'}, 'NATIVE_FILES_INVALID')
+            if item['status'] != 'deleted' and worktree_file_path(item['path']): result.append(item['path'])
+        require(len(result) == len(set(result)), 'NATIVE_FILES_INVALID')
+        return sorted(result)
+
+    def worktree_file(self, session_id, path):
+        require(worktree_file_path(path), 'NATIVE_FILE_PATH_DENIED')
+        self._session_row(session_id)
+        self._check(('project:read', 'session:read'))
+        reader = getattr(self.provider, 'worktree_file_bytes', None)
+        require(callable(reader), 'NATIVE_FILE_READER_UNAVAILABLE')
+        # Selected local adapter rejects links/special files before the native
+        # API can follow them. Other providers need their own reviewed reader.
+        raw = cast(Callable, reader)(self.owner, self.configuration, session_id, path)
+        value = self.call('GET', '/api/projects/' + self.configuration['projectId'] + '/file?'
+            + urlencode({'sessionId': session_id, 'path': path}))
+        require(type(value) is dict and value.get('path') == path and value.get('root') == 'worktree'
+            and value.get('notFound') is False and value.get('binary') is False
+            and value.get('truncated') is False and type(value.get('content')) is str
+            and type(value.get('version')) is str, 'NATIVE_FILE_INCOMPLETE')
+        require(type(raw) is bytes and raw == value['content'].encode('utf-8')
+            and hashlib.sha256(raw).hexdigest() == value['version'], 'NATIVE_FILE_CHANGED')
+        return raw
+
     @staticmethod
     def result_matches(observation, command):
         # Do not recover unknown ACK from resemblance or remote idle status.
@@ -415,8 +467,13 @@ class PersonalOrxHandle:
         text = '\n'.join(e['text'] for e in users[0]['events'] if e.get('type') == 'text')
         if hashlib.sha256(text.encode()).hexdigest() != receipt.get('promptSha256'):
             return False
+        # A completed, acknowledged native turn can end with a failed tool or
+        # no readable answer. Release the turn guard without claiming success.
+        # Running tools and unresolved native prompts must still hold it.
         matches = [m for m in added if m['role'] == 'assistant' and m.get('parentId') == users[0]['id']
-                   and m['id'] == observation.get('activeLeafId') and m['terminalResult']]
+                   and m['id'] == observation.get('activeLeafId') and m.get('completed') is True
+                   and all(e.get('type') != 'tool' or e.get('status') in {'completed', 'error'}
+                       for e in m.get('events', []))]
         if len(matches) != 1:
             return False
         observation.update(correlationSource='inferred-transcript-delta', exactTurnVerified=False,

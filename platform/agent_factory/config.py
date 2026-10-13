@@ -81,6 +81,10 @@ class Settings:
     platform_paid_models_enabled: bool = False
     # Trusted test transport only; never accepted from HTTP or environment.
     owner_model_transport_factory: Callable | None = field(default=None, repr=False)
+    # Explicit, owner/model-version-scoped gateway grant for one deployment only.
+    # Never loaded from ambient proxy/CA variables or HTTP/material configuration.
+    owner_model_trusted_proxy: object | None = field(default=None, repr=False)
+    owner_model_proxy_environment_id: str | None = field(default=None, repr=False)
     # Operator-installed immutable artifacts; no runtime paths/commands in HTTP.
     # None leaves preparation unavailable. Owners only configure their own model.
     platform_openresearch: object | None = field(default=None, repr=False)
@@ -91,6 +95,12 @@ class Settings:
     usage_policy: "UsagePolicy | None" = None
 
     def __post_init__(self):
+        if self.owner_model_trusted_proxy is not None:
+            from .trusted_model_proxy import TrustedModelProxy
+            if (not isinstance(self.owner_model_trusted_proxy, TrustedModelProxy)
+                    or self.owner_model_transport_factory is not None):
+                raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
+            self.owner_model_trusted_proxy.validate_environment(self.owner_model_proxy_environment_id)
         if type(self.fee_management_enabled) is not bool or type(self.platform_paid_models_enabled) is not bool:
             raise ValueError('Billing enablement requires explicit booleans')
         if self.platform_paid_models_enabled and not self.fee_management_enabled:

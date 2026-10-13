@@ -3,9 +3,12 @@ import subprocess as subprocess  # Compatibility hooks used by custody tests.
 import threading as threading  # Compatibility hooks used by custody tests.
 import time as time  # Compatibility hooks used by custody tests.
 import re
+import os
+import stat
+import sys
 
 from .owner_runtime_broker import OwnerRuntimeBroker
-from .personal_orx_transport import PersonalOrxHTTPS, PersonalOrxProvider
+from .personal_orx_transport import PersonalOrxHTTPS, PersonalOrxProvider, worktree_file_path
 from .personal_remote_provider import RemoteConnectionError, SecretLease
 from .runtime_packages.openresearch_v1.supervisor import (
     OpenResearchSupervisor, PlatformOpenResearchConfig as PlatformOpenResearchConfig, PACKAGE_VERSION, PROVIDER_ID,
@@ -76,6 +79,42 @@ class PlatformOrxProvider(PersonalOrxProvider):
         if live is None or result != self.package.connection_configuration(live['body']):
             raise RemoteConnectionError('REMOTE_CONFIGURATION_INVALID')
         return result
+    def worktree_file_bytes(self, owner, configuration, session_id, path):
+        """One exact owned native worktree file; no caller-supplied host path."""
+        if sys.platform != 'linux': raise RemoteConnectionError('NATIVE_FILE_READER_UNAVAILABLE')
+        from .runtime_packages.openresearch_v1.entry import require
+        require(worktree_file_path(path) and re.fullmatch(r'chat_[A-Za-z0-9_-]{1,190}', session_id)
+            and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,199}', configuration['projectId']))
+        scope = self._scope(owner, configuration)
+        if not self.secrets.authorize(**scope): raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
+        live = self.package.live[configuration['credentialRef']]
+        require(live['body']['ownerId'] == owner and live['body']['projectId'] == configuration['projectId'])
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        directory = os.open(live['root'], flags | os.O_DIRECTORY)
+        try:
+            for part in ['orx', 'worktrees', configuration['projectId'], session_id, *path.split('/')[:-1]]:
+                following = os.open(part, flags | os.O_DIRECTORY, dir_fd=directory)
+                os.close(directory); directory = following
+            file = os.open(path.split('/')[-1], flags, dir_fd=directory)
+            try:
+                before = os.fstat(file)
+                require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and before.st_size <= 512000)
+                chunks, total = [], 0
+                while True:
+                    chunk = os.read(file, min(65536, 512001 - total))
+                    if not chunk: break
+                    chunks.append(chunk); total += len(chunk)
+                    require(total <= 512000)
+                after = os.fstat(file)
+                require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    and total == before.st_size)
+                if not self.secrets.authorize(**scope): raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
+                return b''.join(chunks)
+            finally: os.close(file)
+        except (OSError, ValueError):
+            raise RemoteConnectionError('NATIVE_FILE_UNAVAILABLE') from None
+        finally: os.close(directory)
     def verify(self, owner, configuration):
         result = super().verify(owner, configuration)
         return {**result, 'identityBasis': 'owner-package-private-unix-native-project', 'sourceRevisionVerified': True}

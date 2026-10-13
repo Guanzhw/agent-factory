@@ -192,6 +192,29 @@ class PersonalOrxTests(unittest.TestCase):
         self.wire.messages['chat_original'].append(extra)
         self.assertEqual(self.service.inspect('alice', sid, refresh=True)['activeRequestId'], 'tool-turn')
 
+    def test_acknowledged_completed_failed_tool_turn_can_continue_without_claiming_success(self):
+        sid = self.attach()['session']['id']
+        self.service.prompt('alice',sid,'Original ended turn','failed-tool-turn')
+        message=self.wire.messages['chat_original'][-1]
+        message['parts'][1]['state'].update(status='error',output='synthetic tool failure')
+        observed=self.service.inspect('alice',sid,refresh=True)
+        self.assertIsNone(observed['activeRequestId'])
+        answer=observed['observation']['messages'][-1]
+        self.assertTrue(answer['completed'])
+        self.assertFalse(answer['terminalResult'])
+        count=len(self.posts())
+        self.service.inspect('alice',sid,refresh=True)
+        self.assertEqual(len(self.posts()),count)
+        self.service.prompt('alice',sid,'New continuation turn','after-failed-tool')
+        self.assertEqual(len(self.posts()),count+1)
+
+    def test_completed_but_unresolved_native_prompt_keeps_original_guard(self):
+        sid=self.attach()['session']['id']
+        self.service.prompt('alice',sid,'Original interactive turn','prompt-wait')
+        self.wire.messages['chat_original'][-1]['parts'].append({'type':'prompt',
+            'prompt':{'resolved':False,'kind':'permission','question':'Synthetic pending action'}})
+        self.assertEqual(self.service.inspect('alice',sid,refresh=True)['activeRequestId'],'prompt-wait')
+
     def test_queued_ack_does_not_mislabel_client_id_as_native_turn(self):
         sid = self.attach()['session']['id']
         self.wire.queued_ack = True
