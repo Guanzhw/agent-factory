@@ -10,7 +10,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agno.exceptions import RunCancelledException
+from agno.exceptions import RunCancelledException, StopAgentRun
+from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.tools.function import FunctionCall
 
@@ -23,6 +26,35 @@ from agent_factory.store import digest
 
 SCHEMA = {'type': 'object', 'properties': {'query': {'type': 'string', 'maxLength': 100}},
     'required': ['query'], 'additionalProperties': False}
+
+
+class ReplacementCallModel(Model):
+    def __init__(self):
+        super().__init__(id='offline-replacement-model', provider='synthetic')
+        self.responses = 0
+
+    def invoke(self, messages, **kwargs):
+        self.responses += 1
+        if self.responses <= 2:
+            return ModelResponse(role='assistant', tool_calls=[{
+                'id': 'native-replacement-' + str(self.responses), 'type': 'function',
+                'function': {'name': 'fixture_query', 'arguments': '{"query":"bounded"}'}}])
+        return ModelResponse(role='assistant', content='Unexpected replacement completed.')
+
+    async def ainvoke(self, messages, **kwargs):
+        return self.invoke(messages, **kwargs)
+
+    def invoke_stream(self, messages, **kwargs):
+        yield self.invoke(messages, **kwargs)
+
+    async def ainvoke_stream(self, messages, **kwargs):
+        yield self.invoke(messages, **kwargs)
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
 
 
 class Adapter:
@@ -98,12 +130,23 @@ class Store:
         with self.lock:
             previous = self.effects.get((run_id, key))
             if previous is None:
-                self.effects[run_id, key] = {'fingerprint': digest(request), 'status': 'UNKNOWN', 'result': None}
+                self.effects[run_id, key] = {'fingerprint': digest(request), 'status': 'UNKNOWN', 'result': None,
+                    'effect_key': run_id + ':' + key, 'run_id': run_id, 'task_id': request['taskId']}
                 return {'status': 'new'}
             if previous['fingerprint'] != digest(request):
                 raise ValueError('fixture effect conflict')
             return {'status': 'done' if previous['status'] in {'DONE', 'CANCELLED'} else 'unknown',
                 'result': copy.deepcopy(previous['result'])}
+
+    def sql(self, statement, **values):
+        with self.lock:
+            matched = [row for row in self.effects.values()
+                if row['effect_key'] == values['effect_key'] and row['run_id'] == values['run_id']
+                and row['task_id'] == values['task_id'] and row['fingerprint'] == values['fingerprint']
+                and row['status'] == 'UNKNOWN' and row['result'] is None]
+            for row in matched:
+                row['result'] = json.loads(values['result'])
+            return [{'effect_key': row['effect_key']} for row in matched]
 
     def effect_complete(self, run_id, key, result):
         with self.lock:
@@ -167,6 +210,88 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handle.resolutions, 1)
         self.assertEqual(self.effect(call_id='provider-original-call')['status'], 'DONE')
         self.assertTrue(all(count >= 4 for count in self.store.checks.values()))
+
+    async def test_unknown_stops_native_model_loop_before_replacement_call_id(self):
+        async def unknown(invocation):
+            invocation.resolve_credential()
+            raise ToolInvocationError('synthetic-ack-lost', outcome='unknown')
+
+        self.adapter.behavior = unknown
+        fc, handle, _ = self.call()
+        model = ReplacementCallModel()
+        result = await model.aresponse([Message(role='user', content='Offline bounded lookup')],
+            tools=[fc.function], tool_call_limit=4)
+        self.assertEqual(model.responses, 1, 'UNKNOWN must stop before a replacement model turn')
+        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(handle.resolutions, 1)
+        self.assertEqual(len(self.store.effects), 1)
+        self.assertEqual(self.effect(call_id='native-replacement-1')['status'], 'UNKNOWN')
+        self.assertIsNone(self.effect(call_id='native-replacement-1')['result'])
+        self.assertEqual(len(result.tool_executions), 1)
+        self.assertTrue(result.tool_executions[0].stop_after_tool_call)
+        self.assertEqual(result.tool_executions[0].result, 'PERSONAL_TOOL_OUTCOME_UNKNOWN')
+
+    async def test_failed_business_with_unconfirmed_stop_holds_effect_and_stops_native_replacement(self):
+        async def failed_probe(invocation):
+            invocation.resolve_credential()
+            raise ToolInvocationError('synthetic-probe-cleanup-detail', outcome='failed', stopped=False)
+
+        self.adapter.behavior = failed_probe
+        fc, handle, _ = self.call()
+        model = ReplacementCallModel()
+        result = await model.aresponse([Message(role='user', content='Offline bounded lookup')],
+            tools=[fc.function], tool_call_limit=4)
+        self.assertEqual(model.responses, 1, 'Unconfirmed cleanup must stop replacement model turns')
+        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(handle.resolutions, 1)
+        self.assertEqual(len(self.store.effects), 1)
+        effect = self.effect(call_id='native-replacement-1')
+        self.assertEqual(effect['status'], 'UNKNOWN')
+        self.assertEqual(effect['result'], {'outcome': 'failed', 'stopped': False})
+        self.assertEqual(len(result.tool_executions), 1)
+        self.assertTrue(result.tool_executions[0].stop_after_tool_call)
+        self.assertEqual(result.tool_executions[0].result, 'PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED')
+        fc.call_id = 'native-replacement-1'
+        with self.assertRaisesRegex(StopAgentRun, '^PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED$'):
+            await self.invoke(fc)
+        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(handle.resolutions, 1)
+        self.assertEqual(effect['result'], {'outcome': 'failed', 'stopped': False})
+
+    async def test_failed_cleanup_receipt_write_failure_keeps_unknown_and_does_not_complete(self):
+        async def failed_probe(invocation):
+            raise ToolInvocationError('synthetic-cleanup-failed', outcome='failed', stopped=False)
+        self.adapter.behavior = failed_probe
+        fc, _, _ = self.call()
+        with patch.object(self.store, 'sql', side_effect=RuntimeError('synthetic-private-database-detail')), \
+                patch.object(self.store, 'effect_complete', wraps=self.store.effect_complete) as complete:
+            with self.assertRaisesRegex(StopAgentRun, '^PERSONAL_TOOL_OUTCOME_UNKNOWN$'):
+                await self.invoke(fc)
+            complete.assert_not_called()
+        self.assertEqual(self.effect()['status'], 'UNKNOWN')
+        self.assertIsNone(self.effect()['result'])
+        with self.assertRaisesRegex(StopAgentRun, '^PERSONAL_TOOL_OUTCOME_UNKNOWN$'):
+            await self.invoke(fc)
+        self.assertEqual(len(self.adapter.calls), 1)
+
+    async def test_failed_cleanup_compare_and_set_never_overwrites_existing_receipt(self):
+        async def failed_probe(invocation):
+            raise ToolInvocationError('synthetic-cleanup-failed', outcome='failed', stopped=False)
+        self.adapter.behavior = failed_probe
+        fc, _, _ = self.call()
+        previous = {'outcome': 'failed', 'stopped': False, 'original': True}
+        sql = self.store.sql
+        def already_recorded(statement, **values):
+            self.effect()['result'] = copy.deepcopy(previous)
+            return sql(statement, **values)
+        with patch.object(self.store, 'sql', side_effect=already_recorded), \
+                patch.object(self.store, 'effect_complete', wraps=self.store.effect_complete) as complete:
+            with self.assertRaisesRegex(StopAgentRun, '^PERSONAL_TOOL_OUTCOME_UNKNOWN$'):
+                await self.invoke(fc)
+            complete.assert_not_called()
+        self.assertEqual(self.effect()['status'], 'UNKNOWN')
+        self.assertEqual(self.effect()['result'], previous)
+        self.assertEqual(len(self.adapter.calls), 1)
 
     async def test_native_injected_identity_cannot_be_overridden_by_arguments(self):
         fc, _, _ = self.call(arguments={'query': 'safe', 'run_context': 'forged', 'fc': 'forged'})
@@ -317,7 +442,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         fc, _, _ = self.call()
         await self.invoke(fc)
         fc.arguments = {'query': 'different'}
-        with self.assertRaisesRegex(ToolInvocationError, 'PERSONAL_TOOL_OUTCOME_UNKNOWN'):
+        with self.assertRaisesRegex(StopAgentRun, 'PERSONAL_TOOL_OUTCOME_UNKNOWN'):
             await self.invoke(fc)
         self.assertEqual(len(self.adapter.calls), 1)
         self.assertEqual(self.effect()['result']['output']['query'], 'bounded')
@@ -333,7 +458,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.invoke(fc))
         await asyncio.wait_for(started.wait(), 2)
         try:
-            with self.assertRaisesRegex(ToolInvocationError, 'PERSONAL_TOOL_OUTCOME_UNKNOWN'):
+            with self.assertRaisesRegex(StopAgentRun, 'PERSONAL_TOOL_OUTCOME_UNKNOWN'):
                 await self.invoke(fc)
         finally:
             finish.set()
@@ -349,9 +474,10 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             try:
                 await self.invoke(fc)
-            except ToolInvocationError as error:
+            except StopAgentRun as error:
                 rendered = ''.join(traceback.format_exception(error))
                 self.assertEqual(str(error), 'PERSONAL_TOOL_OUTCOME_UNKNOWN')
+                self.assertTrue(error.stop_execution)
                 self.assertNotIn(handle.lease.password, rendered)
             else:
                 self.fail('unknown adapter outcome must fail')
@@ -361,14 +487,14 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_known_failure_receipt_prevents_redispatch_and_redacts_adapter_code(self):
         async def behavior(invocation):
-            raise ToolInvocationError('secret-adapter-detail', outcome='failed')
+            raise ToolInvocationError('secret-adapter-detail', outcome='failed', stopped=True)
         self.adapter.behavior = behavior
         fc, _, _ = self.call()
         for _ in range(2):
             with self.assertRaisesRegex(ToolInvocationError, '^PERSONAL_TOOL_FAILED$'):
                 await self.invoke(fc)
         self.assertEqual(self.effect()['status'], 'DONE')
-        self.assertEqual(self.effect()['result'], {'outcome': 'failed'})
+        self.assertEqual(self.effect()['result'], {'outcome': 'failed', 'stopped': True})
         self.assertEqual(len(self.adapter.calls), 1)
 
     async def test_only_positive_stop_evidence_settles_cancellation(self):
@@ -377,7 +503,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
                 raise ToolInvocationError('secret-cancellation-detail', outcome='cancelled', stopped=stopped)
             self.adapter.behavior = behavior
             fc, _, _ = self.call(call_id='cancel-' + str(index))
-            expected = RunCancelledException if stopped is True else ToolInvocationError
+            expected = RunCancelledException if stopped is True else StopAgentRun
             with self.assertRaises(expected):
                 await self.invoke(fc)
             effect = self.effect(call_id='cancel-' + str(index))
@@ -454,7 +580,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.store.tool_allowed = False
             invocation.resolve_credential()
         self.adapter.behavior = behavior
-        with self.assertRaises(ToolInvocationError):
+        with self.assertRaises(StopAgentRun):
             await self.invoke(fc)
         self.assertEqual(handle.resolutions, 0)
         self.assertEqual(self.effect()['status'], 'UNKNOWN')
@@ -481,7 +607,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
                     'bearer': {'data': 'Bearer ' + lease.password}, 'key': {lease.password: 'value'}}[form]
             self.adapter.behavior = behavior
             fc, handle, _ = self.call(call_id='echo-' + str(index))
-            with self.assertRaisesRegex(ToolInvocationError, '^PERSONAL_TOOL_OUTCOME_UNKNOWN$'):
+            with self.assertRaisesRegex(StopAgentRun, '^PERSONAL_TOOL_OUTCOME_UNKNOWN$'):
                 await self.invoke(fc)
             self.assertNotIn(handle.lease.password, json.dumps(list(self.store.effects.values())))
             self.assertIsNone(self.effect(call_id='echo-' + str(index))['result'])
@@ -492,7 +618,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
                 return value
             self.adapter.behavior = behavior
             fc, _, _ = self.call(call_id='invalid-' + str(index))
-            with self.assertRaises(ToolInvocationError):
+            with self.assertRaises(StopAgentRun):
                 await self.invoke(fc)
             self.assertIsNone(self.effect(call_id='invalid-' + str(index))['result'])
 
@@ -510,7 +636,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             schema['properties'][field] = {'type': 'string', 'maxLength': 20}
             with self.assertRaises(ValueError):
                 replace(self.adapter.descriptor, input_schema=schema)
-        for values in ({'timeout_seconds': float('nan')}, {'max_output_bytes': 1}, {'permission': ''}):
+        for values in ({'timeout_seconds': float('nan')}, {'max_output_bytes': 0}, {'permission': ''}):
             with self.assertRaises(ValueError):
                 replace(self.adapter.descriptor, **values)
 
