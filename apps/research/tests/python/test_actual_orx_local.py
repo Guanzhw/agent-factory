@@ -230,8 +230,8 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
             "git": str(self.provider.git_binary), "python": str(self.provider.python_binary),
             "scope": str(self.scope), "taskId": self.task_id, "ownerId": self.owner,
             "binarySha256": self.pin.sha256, "marker": str(marker),
-            "platform": str(Path(__file__).resolve().parents[1]),
-            "research": str(Path(__file__).resolve().parents[2] / "apps/research"), "processLimit": self.process_limit,
+            "platform": str(Path(__file__).resolve().parents[4] / "platform"),
+            "research": str(Path(__file__).resolve().parents[4] / "apps/research"), "processLimit": self.process_limit,
         }
         worker.write_text("\n".join([
             "import sys,os,json,asyncio", "from pathlib import Path",

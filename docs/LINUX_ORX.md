@@ -62,7 +62,7 @@ Set `FACTORY_ORX_BINARY`, `FACTORY_ORX_SOURCE_ARCHIVE`,
 `af_test_*` databases; do not point this at a production service.
 
 ```sh
-PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest \
+PYTHONPATH=platform:apps/research:deployment:platform/tests:apps/research/tests/python .venv/bin/python -m unittest \
   test_actual_orx_local.ActualLinuxLocalORXTests \
   test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests -v
 ```

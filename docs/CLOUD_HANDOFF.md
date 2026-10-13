@@ -153,8 +153,8 @@ $env:FACTORY_ORX_SOURCE_ARCHIVE = '<verified-exact-revision-source.zip-path>'
 $env:FACTORY_ORX_GIT_BINARY = (Get-Command git.exe).Source
 $env:FACTORY_ORX_SHA256 = 'd602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7'
 # FACTORY_ORX_PYTHON_BINARY optionally pins the absolute evaluator Python executable.
-uv run python -m unittest discover -s platform/tests -p test_actual_orx_local.py -v
-uv run python -m unittest discover -s platform/tests -p test_orx_experiment_factory.py -v
+uv run python -m unittest discover -s apps/research/tests/python -p test_actual_orx_local.py -v
+uv run python -m unittest discover -s apps/research/tests/python -p test_orx_experiment_factory.py -v
 uv run python scripts/start_orx_local.py --help
 ```
 

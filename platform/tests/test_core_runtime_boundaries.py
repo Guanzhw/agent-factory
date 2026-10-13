@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sysconfig
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
@@ -16,6 +17,29 @@ from agent_factory.usage_ledger import default_zero_prices
 
 
 class CoreRuntimeBoundaryTests(unittest.TestCase):
+    def test_store_guard_tests_collect_and_run_without_application_packages(self):
+        platform = Path(__file__).resolve().parents[1]
+        code = '''
+import importlib.abc, importlib.util, sys, unittest
+sys.path[:0] = sys.argv[1:]
+for name in ('agent_factory_research', 'agent_factory_server'):
+    assert importlib.util.find_spec(name) is None, name
+class NoApplication(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'agent_factory_research', 'agent_factory_server'}:
+            raise AssertionError('Core test imported application code: ' + fullname)
+sys.meta_path.insert(0, NoApplication())
+suite = unittest.defaultTestLoader.loadTestsFromName('test_inference_guard_scope')
+assert not unittest.defaultTestLoader.errors, unittest.defaultTestLoader.errors
+assert suite.countTestCases() == 3
+result = unittest.TextTestRunner().run(suite)
+assert result.wasSuccessful() and not result.skipped
+'''
+        result = subprocess.run([sys.executable, '-I', '-S', '-c', code, str(platform),
+            str(platform / 'tests'), sysconfig.get_path('purelib')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_core_imports_without_loading_any_research_package(self):
         platform = Path(__file__).resolve().parents[1]
         code = '''
