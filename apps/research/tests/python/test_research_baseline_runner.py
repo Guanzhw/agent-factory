@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -126,7 +127,8 @@ class RunnerTests(unittest.TestCase):
         store.process_runtime.resources.inspect.return_value = lease
         prep = Mock(); prep.import_completed.return_value = {'id': 'original-artifact'}
         prep.input_pin.return_value = {'binding': {'taskId': 'original-task'}}
-        bundle = {'state': {'store': store}, 'preparation': prep}
+        bundle = {'state': {'store': store,
+                           'settings': SimpleNamespace(temporary_policy='admin-review')}, 'preparation': prep}
         calls = []
         def request(method, path, body, *, owner):
             calls.append((method, path, body, owner))
@@ -193,7 +195,9 @@ class RunnerTests(unittest.TestCase):
              patch.object(runner, 'request_client', return_value=request), \
              patch.object(research_bootstrap_controller, 'cleanup_original') as cleanup:
             with self.assertRaisesRegex(RuntimeError, 'lost acknowledgement'):
-                runner.preparation_phase({'state': {'store': store}}, object(), 'operator-attempt', Mock())
+                runner.preparation_phase({'state': {'store': store,
+                    'settings': SimpleNamespace(temporary_policy='admin-review')}},
+                    object(), 'operator-attempt', Mock())
         cleanup.assert_not_called()
         store.request_cancel.assert_not_called()
         self.assertFalse(any(path.endswith('/cancel') for path in calls))

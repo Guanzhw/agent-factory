@@ -405,7 +405,7 @@ def database_report(config):
     runtime_identity(config)
     url = read_database_url(config['databaseUrlFile'])
     settings = development_settings(Settings(db_url=url, workspace=Path(config['workspace']),
-        max_workers=1, temporary_policy='admin-review'))
+        max_workers=1, temporary_policy='member-self-service', material_review_mode='member-self-service'))
     engine = create_engine(url, pool_size=1, max_overflow=0, pool_pre_ping=True)
     try:
         return database_preflight(engine, settings)

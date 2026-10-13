@@ -188,7 +188,7 @@ def settings(configuration, backend, holder):
             lambda ctx: EnvironmentLimits(timeout_seconds=30), demo_only=True),
         AdapterRegistration('knowledge', 'native-fixture-knowledge-v1', '1',
             lambda ctx: KnowledgeContext('Representative synthetic source.', {'evidenceKind': 'synthetic'}), demo_only=True)]
-    return Settings(db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
+    return Settings(material_review_mode="separate-admin", db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
         jwt_key=configuration['jwtKey'], max_workers=1, max_tool_calls=32, max_user_tasks=3,
         temporary_policy='admin-review', policy_revision=APP, material_policy_revision=APP,
         runtime_adapters=entries,

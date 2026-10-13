@@ -69,7 +69,7 @@ def research_application(*, db_url, workspace, upstream_files, candidate_files, 
         environment['environment-kernel'], bounds_profile=bounds_profile)
     pending = {}
     bootstrap = Store(db_url, development_settings(Settings(db_url=db_url, workspace=Path(workspace),
-        max_workers=1, temporary_policy='admin-review')))
+        max_workers=1, temporary_policy='member-self-service', material_review_mode='member-self-service')))
     try:
         evaluating = training is not None
         reference = 'evaluation' if evaluating else 'training'

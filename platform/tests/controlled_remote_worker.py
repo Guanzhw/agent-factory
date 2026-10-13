@@ -277,7 +277,7 @@ def main():
     if not workspace.is_relative_to(directory):
         raise ValueError("Fixture workspace must remain below its owned configuration directory")
     # Explicit historical accounting fixture; installed providers are controlled.
-    settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+    settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", fee_management_enabled=True, platform_paid_models_enabled=True,
         db_url=configuration["dbUrl"], demo=False, jwt_key=configuration["jwtKey"], workspace=workspace,
         port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24, temporary_policy="admin-review")
     settings.fixture_role = role

@@ -58,7 +58,7 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
                 'applicationRef': {k: self.application[k] for k in ('id', 'version', 'sha256')}, 'mode': 'probe'}
             return {'probe': self.profile}
         # Explicit accounting compatibility fixture; no model/process IO is installed.
-        settings = Settings(db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
+        settings = Settings(material_review_mode="separate-admin", db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
             fee_management_enabled=True, platform_paid_models_enabled=True,
             temporary_policy='admin-review', runtime_tool_contract='bounded-process-v1',
             policy_revision='managed-probe-fixture-plan-v1',

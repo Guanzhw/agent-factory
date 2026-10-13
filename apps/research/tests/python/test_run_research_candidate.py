@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -169,7 +170,8 @@ class CandidateRunnerTests(unittest.TestCase):
                  patch.object(research_bootstrap_controller, 'cleanup_original',
                     return_value={'cleanupConfirmed': True}) as cleanup:
                 with self.assertRaises(TimeoutError):
-                    runner.preparation_phase({'state': {'store': store}}, Mock(),
+                    runner.preparation_phase({'state': {'store': store,
+                        'settings': SimpleNamespace(temporary_policy='admin-review')}}, Mock(),
                         'candidate-attempt', progress, journal)
             cleanup.assert_called_once()
             self.assertEqual(journal.snapshot()['stages']['preparation']['progress']['taskId'], 'original-task')

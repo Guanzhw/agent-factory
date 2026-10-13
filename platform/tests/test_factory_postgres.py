@@ -23,7 +23,7 @@ class FactoryPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         cls.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         cls.workspace = tempfile.TemporaryDirectory()
-        cls.settings = Settings(db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
+        cls.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
         cls.app = create_app(cls.settings)
         cls.client = TestClient(cls.app).__enter__()
 

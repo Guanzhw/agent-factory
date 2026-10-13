@@ -36,7 +36,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         workspace = TemporaryDirectory(prefix="factory-oidc-synthetic-")
         self.addCleanup(workspace.cleanup)
-        settings = Settings(
+        settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", temporary_policy="admin-review",
             db_url=database.url, workspace=Path(workspace.name), demo=False,
             fee_management_enabled=True,
             jwt_key="synthetic-oidc-native-signing-key-at-least-32-bytes",

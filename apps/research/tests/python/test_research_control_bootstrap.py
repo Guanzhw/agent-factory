@@ -40,7 +40,8 @@ class BootstrapTests(unittest.TestCase):
         settings = factory.call_args.args[0]
         self.assertTrue(settings.demo)
         self.assertTrue(settings.db_url.endswith('?hostaddr=127.0.0.1&connect_timeout=5'))
-        self.assertEqual(settings.temporary_policy, 'admin-review')
+        self.assertEqual(settings.temporary_policy, 'member-self-service')
+        self.assertEqual(settings.material_review_mode, 'member-self-service')
         self.assertEqual((settings.max_workers, settings.max_user_tasks, settings.max_total_tasks), (1, 1, 1))
         self.assertEqual(settings.remote_targets, {})
         self.assertEqual(settings.research_evaluators, {})
