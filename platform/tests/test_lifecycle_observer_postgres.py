@@ -527,6 +527,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
     def test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection(self):
         from agent_factory.factory_api import status_of
         from agent_factory_research.orx_experiment_tools import LAUNCH_EFFECT_KEY
+        from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
         from agent_factory.store import canonical
         root = self.task("Controlled terminal ORX metadata fault", application="checksum")
         self.wait_native(root, {"completed"})
@@ -544,13 +545,15 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
                 self.store.sql("UPDATE af_effects SET status='DONE',result=CAST(:body AS JSONB) WHERE effect_key=:key",
                     body=canonical(result), key=run_id + ":" + LAUNCH_EFFECT_KEY)
                 self.store.sql("UPDATE af_tasks SET terminal=TRUE WHERE id=:id", id=root)
-                self.store.initialize()  # Pre-fix terminal capacity is re-held on upgrade.
+                self.store.initialize()
+                # Research installation re-holds pre-fix terminal capacity after core initialization.
+                ResearchRuntimeHooks.reconcile_capacity(self.store)
                 self.assertFalse(self.store.task(root)["terminal"])
                 self.assertFalse(self.observer._facts(task)["stopped"])
                 self.assertIn("unresolved", self.observer._reason(task, self.observer._binding(task)))
                 group = self.call(self.store.delegation.inspect_group, "alice", root)
                 self.assertFalse(group["allStopped"])
-                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), []), "unknown")
+                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), [], self.store), "unknown")
                 self.store.reserve_task(self.store.plan(task["plan_id"], "alice"), task["request_id"])
                 self.assertFalse(self.store.task(root)["terminal"])
         self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY,

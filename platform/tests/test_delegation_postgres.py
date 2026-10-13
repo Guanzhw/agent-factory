@@ -47,6 +47,8 @@ class DelegationPostgresTests(unittest.TestCase):
             cls.app = create_app(cls.settings)
         cls.state = cls.app.app.state.factory
         cls.store, cls.auth, cls.bridge = (cls.state[name] for name in ("store", "auth", "bridge"))
+        # Deployment copies settings; inject policy/quota changes into the running Store.
+        cls.settings = cls.store.settings
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
         cls.service = DelegationService(cls.settings, cls.store, cls.auth, cls.bridge)
