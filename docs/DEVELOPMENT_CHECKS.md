@@ -39,6 +39,20 @@ The five old `check_*_postgres.py` commands remain focused local entrypoints; CI
 
 ## Dependency boundaries
 
+Personal tool connection checks run in the daily Python/PostgreSQL groups. They
+exercise owner credentials, native call identities, original-effect recovery and
+both core/research static assembly without a live provider. The browser companion
+uses the built app and intercepts every API request with synthetic state:
+
+```sh
+npm run build
+python platform/tests/browser/personal_tools_smoke.py --output /tmp/personal-tool-browser
+```
+
+It requires an already installed Python Playwright and Chromium and has no install
+or network fallback. These browser checks verify binding/recovery UI and responsive
+layout; they do not execute a CLI/MCP tool or establish external-vendor compatibility.
+
 ```sh
 uv run python -m unittest discover -s platform/tests -p test_architecture_checker.py -v
 uv run python -m unittest discover -s platform/tests -p test_postgres_checks.py -v

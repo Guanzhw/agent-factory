@@ -11,6 +11,7 @@ import { openresearchApi } from '../../web/openresearchApi.js';
 import { applicationEnvironmentApi, type ApplicationEnvironment } from '../../web/applicationEnvironmentApi.js';
 import { personalSSHApi, type PersonalSSHServer } from '../../../../web/personalSSHApi.js';
 import { ownerModelApi, type OwnerModel } from '../../../../web/ownerModelApi.js';
+import { personalToolConnectionApi } from '../../../../web/personalToolConnectionApi.js';
 import type { User } from '../../../../web/models.js';
 vi.mock('../../web/openresearchApi.js', () => ({ openresearchApi: { capabilities: vi.fn(), projects: vi.fn(), project: vi.fn(), sessions: vi.fn(), managedProfiles: vi.fn() } }));
 vi.mock('../../web/personalAgentApi.js', async importOriginal => { const original = await importOriginal<typeof import('../../web/personalAgentApi.js')>(); return { ...original, personalAgentApi: { ...original.personalAgentApi, capabilities: vi.fn(), sessions: vi.fn(), prepare: vi.fn(), submit: vi.fn() } }; });
@@ -18,6 +19,7 @@ vi.mock('../../web/applicationEnvironmentApi.js', async importOriginal => { cons
 vi.mock('../../../../web/personalRemoteApi.js', async importOriginal => { const original = await importOriginal<typeof import('../../../../web/personalRemoteApi.js')>(); return { ...original, personalRemoteApi: { ...original.personalRemoteApi, list: vi.fn(), credentials: vi.fn() } }; });
 vi.mock('../../../../web/personalSSHApi.js', async importOriginal => { const original = await importOriginal<typeof import('../../../../web/personalSSHApi.js')>(); return { ...original, personalSSHApi: { ...original.personalSSHApi, capabilities: vi.fn(), list: vi.fn() } }; });
 vi.mock('../../../../web/ownerModelApi.js', async importOriginal => { const original = await importOriginal<typeof import('../../../../web/ownerModelApi.js')>(); return { ...original, ownerModelApi: { ...original.ownerModelApi, list: vi.fn() } }; });
+vi.mock('../../../../web/personalToolConnectionApi.js', async importOriginal => { const original = await importOriginal<typeof import('../../../../web/personalToolConnectionApi.js')>(); return { ...original, personalToolConnectionApi: { ...original.personalToolConnectionApi, descriptors: vi.fn(), list: vi.fn() } }; });
 vi.mock('../../../../web/ControlRecovery.js', () => ({ ControlRecovery: () => null, commandNotice: () => '' }));
 vi.mock('../../../../web/CompositionInbox.js', () => ({ CompositionInbox: () => createElement('p', null, '历史提案内容') }));
 vi.mock('../../../../web/ApplicationGovernance.js', () => ({ ApplicationGovernance: () => createElement('p', null, '应用管理内容') }));
@@ -49,6 +51,7 @@ beforeEach(() => {
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2 } as Awaited<ReturnType<typeof api.status>>);
   vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue([]); vi.mocked(api.executionTargets).mockResolvedValue([]);
   vi.mocked(api.session).mockResolvedValue(alice); vi.mocked(api.applications).mockResolvedValue([]); vi.mocked(api.userConnections).mockResolvedValue([]);
+  vi.mocked(personalToolConnectionApi.descriptors).mockResolvedValue([]); vi.mocked(personalToolConnectionApi.list).mockResolvedValue([]);
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([]); vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true }); vi.mocked(personalRemoteApi.list).mockResolvedValue([]);
   vi.mocked(openresearchApi.capabilities).mockResolvedValue({ contractVersion: 1, nativeProjectAttachment: true, upstreamProjectCreation: false, liveEndToEndVerified: false, workloads: [] }); vi.mocked(openresearchApi.projects).mockResolvedValue([]);
   vi.mocked(researchApi.autoresearch.presets).mockResolvedValue([]); vi.mocked(api.detail).mockRejectedValue(new Error('任务不存在或无权访问'));
