@@ -72,13 +72,15 @@ class PersonalTools:
     def _adapter(self, body):
         adapter = self.adapters.get(body['adapterId'])
         if adapter is None:
-            raise HTTPException(409, 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE')
+            raise HTTPException(409, {'code': 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE',
+                'message': 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE'})
         try:
             matches = digest(_descriptor(adapter)) == digest(body['descriptor'])
         except ValueError:
             matches = False
         if not matches:
-            raise HTTPException(409, 'PERSONAL_TOOL_ADAPTER_CHANGED')
+            raise HTTPException(409, {'code': 'PERSONAL_TOOL_ADAPTER_CHANGED',
+                'message': 'PERSONAL_TOOL_ADAPTER_CHANGED'})
         return adapter
 
     @staticmethod
@@ -95,10 +97,11 @@ class PersonalTools:
 
     def _current(self, owner, row):
         if row['state'] == 'REVOKED':
-            raise HTTPException(409, 'PERSONAL_TOOL_REVOKED')
+            raise HTTPException(409, {'code': 'PERSONAL_TOOL_REVOKED', 'message': 'PERSONAL_TOOL_REVOKED'})
         adapter = self._adapter(row['body'])
         if not self._authorized(owner, row['body']):
-            raise HTTPException(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE')
+            raise HTTPException(409, {'code': 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE',
+                'message': 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'})
         return adapter
 
     def _projection(self, conn, owner, reference):
@@ -108,9 +111,10 @@ class PersonalTools:
         try:
             self._current(owner, row)
         except HTTPException as error:
+            code = error.detail.get('code') if isinstance(error.detail, dict) else error.detail
             status = {'PERSONAL_TOOL_REVOKED': 'revoked',
                 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE': 'credential_unavailable',
-                'PERSONAL_TOOL_ADAPTER_CHANGED': 'adapter_changed'}.get(str(error.detail), 'unavailable')
+                'PERSONAL_TOOL_ADAPTER_CHANGED': 'adapter_changed'}.get(str(code), 'unavailable')
         descriptor = body['descriptor']
         actions = ['inspect'] + ([] if status == 'revoked' else ['revoke'])
         if status == 'configured' and self.connections._can_bind(owner):

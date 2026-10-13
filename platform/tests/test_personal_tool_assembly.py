@@ -196,3 +196,89 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
 
     def test_research_override_preserves_core_personal_tool_assembly(self):
         self.exercise(create_research_app, ResearchConnectionService)
+
+    def exercise_binding_error_envelopes(self, create_app):
+        configured = {}
+        intents = {}
+        credentials = {}
+        app, _ = self.app(create_app)
+        with TestClient(app) as client:
+            self.login(client)
+            for case in ('rotated', 'credential-revoked', 'tool-revoked', 'unavailable', 'changed'):
+                credential = self.request(client, 'POST', '/personal-credentials', {
+                    'providerId': self.adapter.descriptor.credential_provider_id,
+                    'destination': self.adapter.descriptor.credential_destination,
+                    'username': 'fixture-user', 'password': 'synthetic-envelope-secret',
+                    'requestId': 'credential-' + case}, expected=201)
+                credentials[case] = credential
+                intents[case] = {'adapterId': self.adapter.descriptor.adapter_id,
+                    'credentialRef': credential['credentialRef'],
+                    'credentialRevision': credential['credentialRevision'], 'requestId': 'configure-' + case}
+                configured[case] = self.request(client, 'POST', '/personal-tools', intents[case], expected=201)
+            credential = credentials['rotated']
+            rotated = self.request(client, 'POST', '/personal-credentials/' + credential['credentialRef'] + '/rotate', {
+                'credentialRevision': credential['credentialRevision'], 'username': 'fixture-user',
+                'password': 'synthetic-envelope-rotated', 'requestId': 'rotate-credential'})
+            self.assertNotEqual(rotated['credentialRevision'], credential['credentialRevision'])
+            credential = credentials['credential-revoked']
+            self.request(client, 'POST', '/personal-credentials/' + credential['credentialRef'] + '/revoke', {
+                'credentialRevision': credential['credentialRevision'], 'requestId': 'revoke-credential'})
+            self.request(client, 'POST', '/personal-tools/' + configured['tool-revoked']['registrationRef'] + '/revoke',
+                {'requestId': 'revoke-tool'})
+            for case, code, status in (
+                ('rotated', 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'credential_unavailable'),
+                ('credential-revoked', 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'credential_unavailable'),
+                ('tool-revoked', 'PERSONAL_TOOL_REVOKED', 'revoked'),
+            ):
+                with self.subTest(case=case):
+                    self.assert_binding_error(client, configured[case], intents[case], code, status)
+
+        # Operator configuration changes take effect through normal app restart;
+        # no service registry, database record or HTTP response is patched.
+        original_settings = self.settings
+        changed_adapter = InertAdapter()
+        changed_adapter.descriptor = replace(changed_adapter.descriptor, description='Changed static descriptor')
+        for case, adapters, code, status in (
+            ('unavailable', (), 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'unavailable'),
+            ('changed', (changed_adapter,), 'PERSONAL_TOOL_ADAPTER_CHANGED', 'adapter_changed'),
+        ):
+            with self.subTest(case=case):
+                self.settings = replace(original_settings, personal_tool_adapters=adapters,
+                    runtime_adapters=[] if adapters else original_settings.runtime_adapters)
+                restarted, _ = self.app(create_app)
+                with TestClient(restarted) as client:
+                    self.login(client)
+                    self.assert_binding_error(client, configured[case], intents[case], code, status)
+        self.assertEqual(self.adapter.calls, [])
+        self.assertEqual(changed_adapter.calls, [])
+
+    def assert_binding_error(self, client, original, intent, code, status):
+        registration = original['registrationRef']
+        request_id = 'bind-' + intent['requestId']
+        for _ in range(2):
+            denied = self.request(client, 'POST', '/user-connections', {
+                'registrationRef': registration, 'requestId': request_id}, expected=409)
+            self.assertEqual(denied, {'code': code, 'message': code})
+            self.request(client, 'GET', '/user-connections/requests/' + request_id, expected=404)
+            self.request(client, 'GET', '/personal-tools/requests/' + request_id, expected=404)
+        self.assertEqual(self.request(client, 'GET', '/user-connections'), [])
+        current = self.request(client, 'GET', '/personal-tools/' + registration)
+        self.assertEqual(current['status'], status)
+        self.assertFalse(current['available'])
+        self.assertEqual(current['allowedActions'], ['inspect'] if status == 'revoked' else ['inspect', 'revoke'])
+        for key in ('registrationRef', 'ownerId', 'adapterId', 'revision', 'descriptorRevision',
+                    'credentialRef', 'credentialRevision', 'createdAt'):
+            self.assertEqual(current[key], original[key])
+        retained = self.request(client, 'GET', '/personal-tools/requests/' + intent['requestId'])
+        self.assertEqual(retained, {'requestId': intent['requestId'], 'action': 'tool.configure', 'tool': current})
+        self.assertEqual(self.request(client, 'POST', '/personal-tools', intent, expected=201), current)
+        registrations = self.request(client, 'GET', '/user-connections/registrations')
+        projected = next(item for item in registrations if item['registrationRef'] == registration)
+        self.assertFalse(projected['available'])
+        self.assertEqual(projected['allowedActions'], ['inspect'])
+
+    def test_core_binding_rejections_keep_fixed_http_codes_and_original_configure_receipts(self):
+        self.exercise_binding_error_envelopes(create_core_app)
+
+    def test_research_binding_rejections_keep_fixed_http_codes_and_original_configure_receipts(self):
+        self.exercise_binding_error_envelopes(create_research_app)
