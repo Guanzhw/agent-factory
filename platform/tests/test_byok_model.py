@@ -14,6 +14,28 @@ from agent_factory.personal_remote_provider import SecretLease
 
 
 class ByokModelTests(unittest.TestCase):
+    def test_explicit_original_go_thinking_option_is_scoped_and_keeps_output_bound(self):
+        requests = []
+        def wire(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={'model':'longcat-2.5-preview-free', 'choices': [{'finish_reason':'stop','message':
+                {'role':'assistant', 'content':'synthetic final'}}]})
+        config = {'provider':'openai-compatible', 'model':'longcat-2.5-preview-free',
+            'baseURL':'https://opencode.ai/zen/go/v1'}
+        for mode in (None, 'disabled'):
+            values = config if mode is None else {**config, 'thinkingMode':mode}
+            model = OwnerChatModel(values, lambda: SecretLease('api-key','synthetic-key'),
+                transport_factory=lambda:httpx.MockTransport(wire))
+            asyncio.run(model.ainvoke([Message(role='user', content='synthetic')]))
+        self.assertNotIn('thinking', requests[0])
+        self.assertEqual(requests[1]['thinking'], {'type':'disabled'})
+        self.assertTrue(all(r['max_tokens']==4096 and r['stream'] is False for r in requests))
+        for change in ({'model':'different-model'}, {'baseURL':'https://other.example/v1'},
+                {'thinkingMode':'enabled'}, {'thinkingMode':False}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                OwnerChatModel({**config,'thinkingMode':'disabled',**change},
+                    lambda: self.fail('Unsupported options must not resolve a credential'))
+
     def test_official_go_base_url_without_general_path_expansion(self):
         self.assertEqual(base_url('https://opencode.ai/zen/go/v1'), 'https://opencode.ai/zen/go/v1')
         for url in ('https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1',

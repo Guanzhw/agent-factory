@@ -19,6 +19,20 @@ from agent_factory.platform_openresearch import _UnixHTTP
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    def test_native_go_thinking_option_comes_only_from_the_bound_owner_configuration(self):
+        self.handle.body.update(baseURL='https://opencode.ai/zen/go/v1',
+            model='longcat-2.5-preview-free', thinkingMode='disabled')
+        body = {'model':'owner-model','messages':[{'role':'user','content':'synthetic'}],
+            'thinking':{'type':'enabled'}, 'max_tokens':99999}
+        asyncio.run(self.broker.completion(body,'ses_syntheticnative123'))
+        sent=json.loads(self.calls[-1].content)
+        self.assertEqual(sent['thinking'],{'type':'disabled'})
+        self.assertEqual(sent['max_tokens'],4096)
+        self.assertEqual(self.broker.remaining,64)
+        self.handle.body.pop('thinkingMode')
+        asyncio.run(self.broker.completion(body,'ses_syntheticnative123'))
+        self.assertNotIn('thinking',json.loads(self.calls[-1].content))
+
     def test_native_accounting_reuses_a_lost_result_but_distinguishes_identical_legal_turns(self):
         body = {'model': 'owner-model', 'messages': [{'role': 'user', 'content': 'identical synthetic goal'}]}
         first = self.broker.native_completion(body, 'ses_syntheticnative123', 'msg_syntheticturn0001')

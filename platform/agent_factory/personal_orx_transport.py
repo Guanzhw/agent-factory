@@ -415,8 +415,13 @@ class PersonalOrxHandle:
         text = '\n'.join(e['text'] for e in users[0]['events'] if e.get('type') == 'text')
         if hashlib.sha256(text.encode()).hexdigest() != receipt.get('promptSha256'):
             return False
+        # A completed, acknowledged native turn can end with a failed tool or
+        # no readable answer. Release the turn guard without claiming success.
+        # Running tools and unresolved native prompts must still hold it.
         matches = [m for m in added if m['role'] == 'assistant' and m.get('parentId') == users[0]['id']
-                   and m['id'] == observation.get('activeLeafId') and m['terminalResult']]
+                   and m['id'] == observation.get('activeLeafId') and m.get('completed') is True
+                   and all(e.get('type') != 'tool' or e.get('status') in {'completed', 'error'}
+                       for e in m.get('events', []))]
         if len(matches) != 1:
             return False
         observation.update(correlationSource='inferred-transcript-delta', exactTurnVerified=False,

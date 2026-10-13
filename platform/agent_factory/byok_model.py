@@ -125,11 +125,24 @@ def function_call(call):
         'name': function['name'], 'arguments': function['arguments']}}
 
 
+def generation_options(configuration):
+    """One explicit model option; default wire and 4096-token bound unchanged."""
+    mode = configuration.get('thinkingMode')
+    if mode is None or mode == 'default':
+        return {}
+    if (mode != 'disabled' or configuration.get('baseURL') != GO_BASE
+            or configuration.get('model') != 'longcat-2.5-preview-free'):
+        raise ValueError('PERSONAL_MODEL_THINKING_MODE_UNSUPPORTED')
+    return {'thinking': {'type': 'disabled'}}
+
+
 class OwnerChatModel(Model):
     def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None, trusted_proxy=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Chat Completions', retries=0)
         self._base = base_url(configuration['baseURL'])
+        generation_options(configuration)
+        self._thinking_mode = configuration.get('thinkingMode')
         self._credential = credential
         self._transport_factory = transport_factory
         if transport_factory is not None and trusted_proxy is not None:
@@ -161,6 +174,8 @@ class OwnerChatModel(Model):
             if message.tool_calls: item['tool_calls'] = [function_call(call) for call in message.tool_calls]
             encoded.append(item)
         body = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
+        body.update(generation_options({'baseURL': self._base, 'model': self.id,
+            'thinkingMode': self._thinking_mode}))
         if tools:
             if any(tool.get('type') != 'function' or type(tool.get('function')) is not dict for tool in tools):
                 raise rejected('PERSONAL_MODEL_FUNCTION_TOOLS_ONLY')

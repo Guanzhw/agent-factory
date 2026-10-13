@@ -27,6 +27,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'username': 'api-key', 'password': 'synthetic-test-password'}, expected=201)
         model = self.request('POST', '/personal-models', {'provider': 'openai-compatible',
             'baseURL': 'https://opencode.ai/zen/go/v1', 'model': 'longcat-2.5-preview-free',
+            'thinkingMode': 'disabled',
             'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision'],
             'requestId': 'fixture-go-agent-model'}, expected=201)
         self.request('POST', '/personal-models/' + model['reference'] + '/default', {'requestId': 'fixture-go-agent-default'})
@@ -44,6 +45,8 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         for request in self.calls:
             self.assertEqual(str(request.url), 'https://opencode.ai/zen/go/v1/chat/completions')
             self.assertEqual(json.loads(request.content)['model'], 'longcat-2.5-preview-free')
+            self.assertEqual(json.loads(request.content)['thinking'], {'type':'disabled'})
+            self.assertEqual(json.loads(request.content)['max_tokens'], 4096)
             self.assertEqual(request.headers['x-opencode-session'], 'af-plan-' + task['plan_id'])
 
     def test_go_metadata_binds_exact_origin_without_invocation_and_rejects_wrong_custody(self):
@@ -60,6 +63,28 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('POST', '/personal-models', {**body, 'requestId': 'fixture-go-foreign'}, owner='bob', expected=403)
         self.request('POST', '/personal-models', {**body, 'baseURL': 'https://other.example.com/v1',
             'requestId': 'fixture-go-destination'}, expected=403)
+
+    def test_thinking_option_is_versioned_scoped_and_default_retry_compatible(self):
+        credential=self.request('POST','/personal-credentials',{'requestId':'thinking-fixture-key',
+            'providerId':PROVIDER_ID,'destination':'https://opencode.ai',
+            'username':'api-key','password':'synthetic-test-password'},expected=201)
+        values={'provider':'openai-compatible','baseURL':'https://opencode.ai/zen/go/v1',
+            'model':'longcat-2.5-preview-free','credentialRef':credential['credentialRef'],
+            'credentialRevision':credential['credentialRevision'],'requestId':'thinking-fixture-default'}
+        original=self.request('POST','/personal-models',values,expected=201)
+        self.assertNotIn('thinkingMode',original)
+        self.assertEqual(self.request('POST','/personal-models',values|{'thinkingMode':'default'},expected=201),original)
+        with self.store.personal_models.db.read() as conn:
+            old=self.store.personal_models.binding(conn,'alice',original['reference']).opaque_handle
+        changed=self.request('POST','/personal-models/'+original['reference']+'/configure',
+            values|{'requestId':'thinking-fixture-change','thinkingMode':'disabled'},expected=201)
+        self.assertEqual(changed['thinkingMode'],'disabled')
+        self.assertNotEqual(changed['revision'],original['revision'])
+        with self.assertRaises(HTTPException):old.check()
+        self.request('POST','/personal-models',values|{'requestId':'thinking-foreign','thinkingMode':'disabled'},owner='bob',expected=403)
+        self.request('POST','/personal-models',values|{'requestId':'thinking-wrong-model','thinkingMode':'disabled','model':'other'},expected=422)
+        self.request('POST','/personal-models',values|{'requestId':'thinking-wrong-base','thinkingMode':'disabled','baseURL':'https://other.example.com/v1'},expected=422)
+        self.assertEqual(self.calls,[])
 
     def setUp(self):
         self.database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()

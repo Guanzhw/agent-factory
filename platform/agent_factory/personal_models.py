@@ -6,6 +6,7 @@ owner, protocol, TLS destination and credential revision; stale plans fail close
 from __future__ import annotations
 
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -15,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from .applications import GovernedStorage
-from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel, base_url, model_id, model_origin
+from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel, base_url, generation_options, model_id, model_origin
 from .connections import TrustedConnectionBinding
 from .credential_vault import CredentialVaultError
 from .store import digest, now
@@ -101,6 +102,9 @@ class PersonalModels:
         try:
             values = {**values, 'baseURL': base_url(values['baseURL']), 'model': model_id(values['model'])}
             if values['provider'] not in {'openai', 'openai-compatible'}: raise ValueError()
+            generation_options(values)
+            if values.get('thinkingMode') in (None, 'default'):
+                values.pop('thinkingMode', None)
         except (KeyError, ValueError):
             raise HTTPException(422, 'PERSONAL_MODEL_CONFIGURATION_INVALID') from None
         if not self._authorize(owner, values): raise HTTPException(403, 'PERSONAL_MODEL_CREDENTIAL_UNAVAILABLE')
@@ -235,6 +239,7 @@ class ConfigureModel(BaseModel):
     model: str = Field(min_length=1, max_length=120)
     credentialRef: str = Field(min_length=1, max_length=200)
     credentialRevision: str = Field(min_length=1, max_length=200)
+    thinkingMode: Literal['default', 'disabled'] | None = None
     requestId: str = Field(min_length=8, max_length=100)
 
 
@@ -252,10 +257,10 @@ def personal_model_router(auth, service):
     def listing(request: Request): return service.list(owner(request))
     @router.post('', status_code=201)
     def configure(body: ConfigureModel, request: Request):
-        return service.configure(owner(request), body.model_dump(exclude={'requestId'}), body.requestId)
+        return service.configure(owner(request), body.model_dump(exclude={'requestId'}, exclude_none=True), body.requestId)
     @router.post('/{reference}/configure')
     def rotate(reference: str, body: ConfigureModel, request: Request):
-        return service.configure(owner(request), body.model_dump(exclude={'requestId'}), body.requestId, reference=reference)
+        return service.configure(owner(request), body.model_dump(exclude={'requestId'}, exclude_none=True), body.requestId, reference=reference)
     @router.post('/{reference}/default')
     def default(reference: str, body: ModelCommand, request: Request):
         return service.set_default(owner(request), reference, body.requestId)

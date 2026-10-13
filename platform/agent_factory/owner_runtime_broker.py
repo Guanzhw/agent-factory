@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
+from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, generation_options, model_origin
 from .personal_remote_provider import reject_credential_echo
 
 
@@ -179,6 +179,7 @@ class OwnerRuntimeBroker:
                 for call in message['tool_calls']: function_call(call)
             encoded.append(message)
         request = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
+        request.update(generation_options(self.handle.body))
         if body.get('tools'):
             if type(body['tools']) is not list or len(body['tools']) > 64 or any(type(tool) is not dict
                     or tool.get('type') != 'function' or type(tool.get('function')) is not dict for tool in body['tools']):
