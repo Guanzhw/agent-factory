@@ -26,7 +26,7 @@ node --test scripts/check_web_architecture.test.mjs
 node scripts/check_web_architecture.mjs --root /path/to/project --config /path/to/web-ownership.json
 ```
 
-The last command requires an agreed map; there is intentionally no passing default for this repository yet. A map uses import search directories and package names, for example this synthetic fixture (not a repository baseline):
+Both checker CLIs require an explicit map; there is intentionally no passing default. The agreed repository maps are `scripts/architecture-python.json` and `scripts/architecture-web.json`. They currently fail because A's split directories are absent; they are not passing baseline maps or migration exceptions. A Python map uses import search directories and package names, for example this synthetic fixture (not a repository baseline):
 
 ```json
 {
