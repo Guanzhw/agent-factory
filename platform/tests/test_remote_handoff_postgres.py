@@ -536,6 +536,58 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         finally:
             policy.replace_configuration(original, expected_revision=policy.current()["revision"])
 
+    def test_member_source_cannot_grant_receiver_approval_or_bypass_current_source_authority(self):
+        origin_policy = self.origin['store'].plan_policy
+        policy = self.remote['store'].plan_policy
+        def configuration(service):
+            return PlanPolicyConfig(**{key: value for key, value in service.current().items()
+                if key in PlanPolicyConfig.__dataclass_fields__})
+        origin_original, original = configuration(origin_policy), configuration(policy)
+        member = PlanPolicyConfig(name='member-self-service', revision='member-source-' + uuid4().hex)
+        strict = PlanPolicyConfig(name='admin-review', revision='member-source-review-' + uuid4().hex)
+        origin_policy.replace_configuration(member, expected_revision=origin_original.revision)
+        before_tickets = self.ticket_count(self.remote)
+        try:
+            policy.replace_configuration(strict, expected_revision=original.revision)
+            self.origin_settings.temporary_policy = 'member-self-service'
+            row = self.reserve()
+            source = row['body']['manifest']['plan']
+            self.assertEqual(source['policy'], 'member-self-service')
+            origin_status = origin_policy.status('alice', source)
+            self.assertTrue(origin_status['executionAllowed'], origin_status)
+            self.assertFalse(origin_status['reviewRequired'])
+            self.assertEqual(origin_status['approval']['source'], 'member-self-service')
+            pending = self.call(self.handoff.prepare, 'alice', row['task_id'])
+            self.assertTrue(pending['receiverReviewRequired'])
+            self.assertEqual(pending['state'], 'PREPARING')
+            self.assertIsNone(pending['remoteTaskId'])
+            self.assertIsNone(pending['remoteRunId'])
+            imported = self.remote['store'].plan(pending['remotePlanId'], 'bob')
+            self.assertEqual(imported['ownerId'], 'bob')
+            self.assertEqual(imported['remoteHandoff']['originTaskId'], row['task_id'])
+            status = policy.status('bob', imported)
+            self.assertTrue(status['reviewRequired'])
+            self.assertFalse(status['executionAllowed'])
+            for service, plan in ((origin_policy, source), (policy, imported)):
+                with service.store.engine.connect() as conn:
+                    reviews = conn.scalar(select(func.count()).select_from(service.reviews).where(
+                        service.reviews.c.plan_id == plan['id']))
+                self.assertEqual(reviews, 0)
+            self.assertEqual(self.ticket_count(self.remote), before_tickets)
+            self.assertEqual(self.ticket_count(self.origin), 0)
+            self.origin['store'].request_cancel(row['task_id'])
+            with self.assertRaises(HTTPException) as ended:
+                self.receiver.prepare('bob', self.body(row))
+            self.assertEqual(ended.exception.status_code, 409)
+            self.assertEqual(ended.exception.detail, 'Origin cancellation ended this immutable handoff')
+            self.assertEqual(self.ticket_count(self.remote), before_tickets)
+            retained = self.receiver._row(pending['id'], 'bob')
+            self.assertEqual(retained['state'], 'PREPARING')
+            self.assertIsNone(retained['body']['remoteTaskId'])
+        finally:
+            policy.replace_configuration(original, expected_revision=policy.current()['revision'])
+            origin_policy.replace_configuration(origin_original, expected_revision=origin_policy.current()['revision'])
+
     def test_12_immutable_material_changes_and_server_change_do_not_admit(self):
         row = self.reserve()
         manifest = copy.deepcopy(row["body"]["manifest"])

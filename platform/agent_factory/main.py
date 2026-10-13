@@ -66,7 +66,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                bindings_factory=None, seed_materials=(),
                demo_definitions=None, governance_config=None, policy_config=None,
                queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
-               plan_policy_type=None, shutdown_callback=None):
+               plan_policy_type=None, shutdown_callback=None, delegation_service_type=None,
+               connection_service_type=None):
     """Build the application-neutral Factory; deployment code selects trusted implementations.
 
     These are ordinary constructor arguments, never request-driven discovery or
@@ -121,7 +122,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         if getattr(provider, "provider_id", None) != provider_id:
             raise ValueError('Personal provider identity differs from trusted registration')
         personal_providers[provider_id] = provider
-    connections = ConnectionService(store, auth, settings.trusted_connections,
+    connections = (connection_service_type or ConnectionService)(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
     from .personal_models import PersonalModels, personal_model_router
@@ -173,7 +174,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     bridge = NativeBridge(settings, native_db, auth)
     bridge.configure_components(store.native_workflows.component_for_task)
     at('PREPARATION_APP_DELEGATION')
-    delegation = DelegationService(settings, store, auth, bridge)
+    delegation = (delegation_service_type or DelegationService)(settings, store, auth, bridge)
     delegation.initialize()
     store.delegation = delegation
     at('PREPARATION_APP_PLAN_POLICY')

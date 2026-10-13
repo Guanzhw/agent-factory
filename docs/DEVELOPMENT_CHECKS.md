@@ -54,6 +54,14 @@ This gate passed against the split core wheel. It cannot independently prove tha
 
 Both ownership maps pass after the split. Research preparation/training assembly requires an explicit `app_factory`; the deployment CLI supplies `agent_factory_server.main.create_app`. Reusable research code never imports the server. Browser mounting and component assembly remain two exact startup files, `web/main.tsx` and `web/composition.tsx`; ordinary core/app callers cannot use either as a boundary bypass.
 
+The full PostgreSQL run also exercises dynamic service wiring, which import maps
+cannot prove. Research delegation/cleanup live in application subclasses selected
+by static composition; the core has no research-table fallback. Regression cases
+cover original scientific placement receipts, member-source handoffs that retain
+receiver approval, and cancellation between effect reservation and storage
+preparation. Only positive never-dispatched and cleanup evidence can settle that
+cancellation; an ambiguous launch remains UNKNOWN.
+
 Ordinary model/ORX fixtures and Go diagnostics use member self-service while retaining owner, selected-model, revocation, UNKNOWN and stop-proof checks. Explicit historical approval tests remain compatibility coverage. Legacy Go preflight and failure recovery stay in the research adapter; shared model dispatch does not load a campaign. Deterministic acceptance uses local transports and synthetic credentials, and does not establish live model/remote compatibility or encode a permanent provider/model ban.
 
 ## Why this small scope

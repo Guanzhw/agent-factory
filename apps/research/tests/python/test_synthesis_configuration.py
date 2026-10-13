@@ -5,7 +5,8 @@ from typing import Any
 
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.material_governance import GovernanceConfig
-from agent_factory.plan_policy import PlanPolicyConfig, application_tool_catalog
+from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, application_tool_catalog
+from agent_factory_research.policy_compatibility import ResearchPlanPolicyService
 
 
 class SynthesisConfigurationTests(unittest.TestCase):
@@ -39,8 +40,23 @@ class SynthesisConfigurationTests(unittest.TestCase):
         for contract in ('legacy-v1', 'orx-evidence-v2'):
             disabled = SimpleNamespace(settings=SimpleNamespace(runtime_tool_contract=contract, source_synthesis_enabled=False))
             enabled = SimpleNamespace(settings=SimpleNamespace(runtime_tool_contract=contract, source_synthesis_enabled=True))
+            for store in (disabled, enabled):
+                store.plan_policy = ResearchPlanPolicyService.__new__(ResearchPlanPolicyService)
+                store.plan_policy.store = store
             self.assertEqual(application_tool_catalog(enabled),
                              {**application_tool_catalog(disabled), 'save_literature_synthesis': 'research:read'})
+
+    def test_core_catalog_does_not_read_research_settings(self):
+        from types import SimpleNamespace
+        class CoreSettings:
+            runtime_tool_contract = 'legacy-v1'
+            @property
+            def source_synthesis_enabled(self):
+                raise AssertionError('Core accessed a research application setting')
+        store = SimpleNamespace(settings=CoreSettings())
+        baseline = application_tool_catalog(store)
+        store.plan_policy = PlanPolicyService.__new__(PlanPolicyService)
+        self.assertEqual(application_tool_catalog(store), baseline)
 
     def test_settings_reject_production_missing_or_nonreview_policy_and_nonboolean(self):
         base: dict[str, Any] = {'db_url': 'sqlite://', 'demo': True, 'temporary_policy': 'admin-review',

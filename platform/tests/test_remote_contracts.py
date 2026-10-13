@@ -38,6 +38,9 @@ class _Connections:
 
 
 class _Store:
+    execution_bindings: ExecutionBindings
+    remote_bindings: RemoteBindingService
+
     def __init__(self, contract: str, materials: list[dict]):
         self.settings = SimpleNamespace(
             demo=False,
@@ -166,6 +169,28 @@ def _fixture():
 
 
 class RemoteContractsTests(unittest.TestCase):
+    def test_member_policy_manifest_is_supported_without_accepting_unknown_policy(self):
+        materials, plan, _ = _fixture()
+        store = _Store("registered-runtime-v1", materials)
+        registry = ExecutionBindings(store.settings, store, _Connections())
+        service = RemoteBindingService.__new__(RemoteBindingService)
+        service.store, service.bindings = store, registry
+        store.execution_bindings = registry
+        store.remote_bindings = service
+        for policy in ('member-self-service', 'unknown-policy', 'unset'):
+            with self.subTest(policy=policy):
+                candidate = {**plan, 'policy': policy}
+                candidate['fingerprint'] = digest({key: value for key, value in candidate.items()
+                    if key not in {'id', 'createdAt', 'fingerprint'}})
+                manifest = {'plan': candidate, 'sha256': digest(candidate)}
+                if policy == 'member-self-service':
+                    self.assertEqual(_manifest(manifest, store, 'alice', receiver=True), candidate)
+                else:
+                    with self.assertRaises(HTTPException) as denied:
+                        _manifest(manifest, store, 'alice', receiver=True)
+                    self.assertEqual(denied.exception.status_code, 409)
+                    self.assertIn('explicit supported policy', denied.exception.detail)
+
     def test_legacy_tool_contract_and_origin_fingerprint_are_stable(self):
         self.assertEqual(
             tools_for_contract("legacy-v1"),

@@ -12,6 +12,8 @@ from agent_factory_research.assembly import (install_research, research_bindings
     research_shutdown, abort_research_install)
 from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
 from agent_factory_research.config import ResearchSettings
+from agent_factory_research.connections_compatibility import ResearchConnectionService
+from agent_factory_research.delegation_compatibility import ResearchDelegationService
 from agent_factory_research.factory_compatibility import ResearchFactoryAPI
 from agent_factory_research.handoff_compatibility import ResearchHandoffClient, ResearchPreparedHandoffService
 from agent_factory_research.lifecycle_compatibility import ResearchLifecycleObserver
@@ -64,6 +66,8 @@ def create_app(settings=None, *, diagnostics=None):
         governance_config=governance, policy_config=policy, tool_catalog_factory=build_tools,
         lifespan_context=research_lifespan, shutdown_callback=research_shutdown,
         plan_policy_type=ResearchPlanPolicyService,
+        delegation_service_type=ResearchDelegationService,
+        connection_service_type=ResearchConnectionService,
         queue_max_attempts=1 if settings.development_live_validation or settings.runtime_tool_contract == 'autoresearch-session-v1' else 2)
     state = factory_state(app)
     try:

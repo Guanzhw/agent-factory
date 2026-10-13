@@ -8,6 +8,8 @@ Explicit seams: fixed synthetic ORX decisions; self-authored stdlib generated
 programs; synthetic uv.lock identity; fixture environment/device observations.
 Original preparation/process/checkpoint/evaluation, native delegation, handoff,
 receiver scope, evidence validators, approvals and usage/debit journals are real.
+Origin and receiver explicitly select the historical plan-review policy so the
+three original receiver-review assertions remain covered after the default change.
 No GPU, upstream training, live model, TLS or scientific acceptance is claimed.
 """
 from agent_factory_research.services import services_for
@@ -140,6 +142,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             baseline_root = root / 'baseline'; baseline_root.mkdir(mode=0o700)
             assembly = importlib.import_module('autoresearch_scientific_assembly')
             operator = importlib.import_module('autoresearch_operator_bindings')
+            bootstrap = importlib.import_module('bootstrap_autoresearch')
             bundle = local.generated_bundle()
             stack.enter_context(patch.object(research_local_driver, 'build_training_bundle', return_value=bundle))
             stack.enter_context(patch.object(assembly, 'build_training_bundle', return_value=bundle))
@@ -162,6 +165,8 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             receiver_config = operator_fixture.config('receiver'); receiver_config['workspace'] = str(receiver_root)
             receiver_config['publication'] = {'author': 'manager', 'reviewer': 'bob'}
             receiver_settings = operator.describe_settings(receiver_config, receiver_db.url)
+            receiver_settings.temporary_policy = 'admin-review'
+            receiver_settings.policy_revision = bootstrap.POLICY_REVISION
             # Controlled accounting compatibility; no real model/service calls.
             receiver_settings.fee_management_enabled = receiver_settings.platform_paid_models_enabled = True
             prep_settings = process_runtime_profile.process_settings(db_url=baseline_db.url, workspace=baseline_root,
@@ -241,6 +246,8 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 runtime_factory=runtime, context_reader=lambda: {}, candidate_validator=lambda _: {'controlledFixture':True},
                 experiment=experiment, external_session=True, review_owner='manager')
             origin_settings = operator.describe_settings(origin_config, origin_db.url)
+            origin_settings.temporary_policy = 'admin-review'
+            origin_settings.policy_revision = bootstrap.POLICY_REVISION
             origin_settings.fee_management_enabled = origin_settings.platform_paid_models_enabled = True
             origin_settings.autoresearch_presets = {project_id:preset}
             origin_settings.handoff_targets = {'receiver':handoff_target}

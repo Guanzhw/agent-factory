@@ -253,6 +253,38 @@
     },
     "currentFullPostgresAndCrossPlatformResults": "See the exact-head verification and checks on https://github.com/Guanzhw/agent-factory/pull/86; focused groups above are not a full-suite or live-compatibility claim.",
     "historicalResultsPreserved": true,
-    "mergedToMain": false
+    "mergedToMain": false,
+    "postFullRegressionRepairs": {
+      "sourceBase": "37053367f2a4d35a0d830fef5d05b27f54f3b83d",
+      "precedingFullPostgres": {
+        "testsRun": 2952,
+        "failures": 2,
+        "skipped": 63,
+        "requiredPassed": 200,
+        "requiredCases": 201,
+        "accepted": false
+      },
+      "repairs": [
+        "Scientific delegation, original request fingerprints, phase custody and cancellation are owned by the research subclass, selected through static composition.",
+        "The original ORX cleanup accessor moved unchanged to the research connection subclass; no core research-table read or broader secret resolution was introduced.",
+        "Application tool-catalog and SSH server-catalog contributions are explicit; immutable legacy policy fingerprints remain unchanged.",
+        "Member source policy is recognized in remote manifests without approving receiver execution or bypassing current source authority.",
+        "A persisted cancellation with per-invocation never-dispatched and cleanup proof settles the reserved effect; all ambiguous or already-dispatched counterexamples remain UNKNOWN."
+      ],
+      "targetChecks": {
+        "coreDelegationAndRemotePolicy": 54,
+        "scientificDelegationIncludingCompletePostgresFlow": 6,
+        "connectionCustodyAndCoreWheel": 30,
+        "applicationConnectionBoundary": 5,
+        "environmentAssembly": 8,
+        "adjacentEnvironmentCustody": 55,
+        "catalogPlanAndApplication": 47,
+        "storageCancellationNew": 6,
+        "storageCancellationExisting": 25,
+        "targetSkips": 0
+      },
+      "history": "The prior failed full run remains failed; focused repair results do not replace a new complete run.",
+      "finalFullPostgresAndExactHeadCI": "Results are maintained on PR86 after the final source commit."
+    }
   }
 }

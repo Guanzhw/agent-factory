@@ -10,6 +10,11 @@ from .services import services_for
 
 
 class ResearchPlanPolicyService(PlanPolicyService):
+    def extend_application_tool_catalog(self, catalog):
+        if self.store.settings.source_synthesis_enabled:
+            return {**catalog, 'save_literature_synthesis': 'research:read'}
+        return catalog
+
     def _plan_summary(self, plan):
         summary = super()._plan_summary(plan)
         if plan.get('application') == 'personal-orx-project-create-v1':

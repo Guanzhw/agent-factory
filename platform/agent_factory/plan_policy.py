@@ -85,8 +85,10 @@ def application_tool_catalog(store):
     settings = getattr(store, 'settings', None)
     policies = resolve_tool_policies(getattr(settings, 'tool_policies', ()), getattr(settings, 'runtime_adapters', ()))
     require_installed_policies(store, policies)
-    base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
-            **({"save_literature_synthesis": "research:read"} if getattr(getattr(store, "settings", None), "source_synthesis_enabled", False) else {})}
+    base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract))}
+    policy = getattr(store, 'plan_policy', None)
+    if policy is not None:
+        base = policy.extend_application_tool_catalog(base)
     return merged_tools(base, policies, reserved=reserved_tool_names())
 
 
@@ -218,6 +220,10 @@ def persisted_ancestor_guard(store: Any):
 
 
 class PlanPolicyService:
+    def extend_application_tool_catalog(self, catalog):
+        """Static deployment policy may contribute its installed application tools."""
+        return catalog
+
     def __init__(self, store: Any, auth: Any, config: PlanPolicyConfig | None = None, *,
                  clock: Callable[[], datetime] | None = None,
                  ancestor_guard: Callable[[str, dict, Any], list[dict]] | None = None):

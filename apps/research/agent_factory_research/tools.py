@@ -280,7 +280,13 @@ def build_tools(settings, store):
             store.event(run_context.run_id, 'experiment_completed', 'Synthetic evaluator completed; no real research success established', result)
             return json.dumps(result)
         except BaseException as error:
-            if outcome and outcome.get('cleanupComplete') and isinstance(error, (RunCancelledException, asyncio.CancelledError)):
+            # Storage/limit preparation may reject a persisted cancellation with
+            # its own error type. Only this invocation's no-dispatch proof can
+            # settle that case; a missing launch receipt must remain UNKNOWN.
+            never_dispatched_cancel = bool(outcome and outcome.get('neverDispatched')
+                and store.cancellation_requested(run_context.run_id))
+            if outcome and outcome.get('cleanupComplete') and (
+                    isinstance(error, (RunCancelledException, asyncio.CancelledError)) or never_dispatched_cancel):
                 known = outcome['result'] if outcome['ok'] else {'cancelled': True, 'cleanupComplete': True, 'runtimeId': 'local-python-bounded-v1'}
                 if not outcome['ok'] and outcome.get('neverDispatched'):
                     known['dispatchState'] = 'never-dispatched'

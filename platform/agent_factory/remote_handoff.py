@@ -259,7 +259,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(409, "Material reference closure is incomplete or changed")
     if set(caps) != {cap for item in materials for cap in item.get("permissions", [])}:
         raise HTTPException(422, "Material permissions do not match the immutable manifest")
-    if type(plan.get("syntheticFixture")) is not bool or plan.get("policy") not in {"bounded-synthetic", "admin-review", "read-only-auto"}:
+    if type(plan.get("syntheticFixture")) is not bool or plan.get("policy") not in {"member-self-service", "bounded-synthetic", "admin-review", "read-only-auto"}:
         raise HTTPException(409, "Remote plan requires an explicit supported policy and provenance flag")
     if plan.get("policy") == "bounded-synthetic" and (not store.settings.demo or plan["syntheticFixture"] is not True):
         raise HTTPException(409, "Synthetic policy cannot authorize a production remote plan")

@@ -38,6 +38,7 @@ def install_research(state):
     ResearchRuntimeHooks.reconcile_capacity(store)
     from agent_factory.application_environments import ApplicationEnvironments, environment_router
     environment_packages = {}
+    server_catalog = None
     personal_ssh = None
     ssh_config = settings.ssh_openresearch
     if settings.ssh_self_service is not None:
@@ -71,7 +72,9 @@ def install_research(state):
         if personal_ssh is not None: personal_ssh.package = ssh_package
         environment_packages['openresearch:ssh'] = ssh_package
         connections.personal.providers[ssh_package.provider_id] = ssh_package.provider
-    store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections, environment_packages)
+        server_catalog = ssh_package.servers
+    store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections,
+        environment_packages, server_catalog=server_catalog, self_service_servers=personal_ssh is not None)
     store.personal_ssh = personal_ssh
     from agent_factory_research.synthesis_sources import SynthesisSourceService
     research.synthesis_sources = SynthesisSourceService(store, auth)

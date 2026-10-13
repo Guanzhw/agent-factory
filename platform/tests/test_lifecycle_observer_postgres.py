@@ -563,7 +563,8 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
 
     def test_14_revoked_cleanup_checks_actual_persisted_launch_fingerprint(self):
         from types import SimpleNamespace
-        from agent_factory.connections import ConnectionService, TrustedConnectionBinding
+        from agent_factory.connections import TrustedConnectionBinding
+        from agent_factory_research.connections_compatibility import ResearchConnectionService
         from agent_factory_research.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
         from agent_factory.store import canonical, digest
         root = self.task("Controlled cleanup-binding admission", application="checksum")
@@ -574,7 +575,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         registry = {registration: TrustedConnectionBinding("alice", "orx", ADAPTER_ID,
             frozenset({"research:read", "compute:local"}), "cleanup-fixture-v1", available=True,
             opaque_handle=handle, handle_ref="inert-cleanup-handle")}
-        service = ConnectionService(self.store, self.auth, registry)
+        service = ResearchConnectionService(self.store, self.auth, registry)
         bound = service.bind("alice", registration, uuid4().hex)
         pin = {key: bound[key] for key in ("ref", "version", "fingerprint", "revision", "capabilities", "taskId")}
         request = {"ownerId": "alice", "taskId": root, "planId": task["plan_id"],
