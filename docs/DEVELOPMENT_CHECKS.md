@@ -101,14 +101,20 @@ synthetic state:
 
 ```sh
 npm run build
-python platform/tests/browser/personal_tools_smoke.py --output /tmp/personal-tool-browser
+python platform/tests/browser/personal_tools_smoke.py --desktop-only --output /tmp/personal-tool-browser
 ```
 
 It requires an already installed Python Playwright and Chromium and has no install
 or network fallback; they are not default core dependencies. It follows the real
 Resources → connections → personal-tools entry, covering saved-credential setup,
 configuration/binding lost-ack recovery, a revoked receipt and an owner change.
-Desktop/narrow viewports check horizontal overflow, page errors and unexpected
+It also checks ending a demonstrably unsent binding after descriptor withdrawal,
+and settling an explicit credential refusal while preserving the configured tool.
+The real core/research HTTP tests verify the same structured error codes; browser
+fixtures must preserve those actual envelopes. A missing recovery receipt remains
+unknown and cannot enable a replacement POST. `--scenario` selects a named flow;
+omitting `--desktop-only` retains the optional narrow-viewport cases.
+Viewports check horizontal overflow, page errors and unexpected
 console errors; deliberately aborted synthetic acknowledgements are recorded
 separately. Requests outside the static app and explicitly intercepted APIs,
 including WebSockets, are rejected. Browser access from Windows does not imply
