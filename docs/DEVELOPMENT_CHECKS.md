@@ -1,6 +1,29 @@
 # Development checks
 
-Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform apps/research deployment scripts`, `uv run pyright` and `uv run python scripts/check_python.py` for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
+Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform apps/research deployment scripts`, `uv run pyright` and the relevant tests for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
+
+## Daily checks and release verification
+
+| Mode | Trigger | Work performed |
+| --- | --- | --- |
+| `docs` | PR or `main` push changing only recognized documentation | Routing self-tests, whitespace check and the stable `CI summary` result |
+| `fast` | Other PRs and `main` pushes | Ubuntu frontend checks, Python static/boundary checks, explicit Python and PostgreSQL regressions, and independent core installation/startup |
+| `full` | Manual `workflow_dispatch` for a major release | Complete Python discovery on Linux and Windows, frontend checks on both, and complete PostgreSQL discovery with required acceptance |
+
+There is no schedule or feature-branch push trigger. To request full verification, open **Actions → Project checks → Run workflow**, select the release branch/ref, and run it. Fast success is daily feedback, not full release acceptance. Full runners and their required acceptance selectors remain unchanged.
+
+Run the daily selections locally with:
+
+```sh
+uv run python scripts/check_fast.py --suite python
+# Linux with disposable FACTORY_TEST_DATABASE_URL:
+uv run python scripts/check_fast.py --suite postgres
+uv run python scripts/check_core_install.py
+```
+
+[Explicit groups](../scripts/fast_test_groups.py) retain model selection and current owner/permission checks, real PostgreSQL/process UNKNOWN and lost-acknowledgement recovery, stop evidence, size-one-pool receipt reopening, member publication through HTTP and persistence, and small-tree tamper/deletion checks. Large inventories, multi-service accounting, scientific multi-database campaigns and the remaining regressions still run in full. Both lanes validate selectors against complete discovery, reject empty/missing or cross-lane duplicate selections, execute only selected IDs, and require every selected ID to succeed; skip or expected failure cannot satisfy them. Output reports selected/deferred counts and actual time. `--collect-only` validates selection without claiming execution. Newly discovered tests remain in full even before a fast group selects them.
+
+[Routing](../scripts/ci_scope.py) permits only named root Markdown documents, the PR template and `docs/**/*.md` to take the docs path. Code renamed into docs still requires fast checks; unknown paths, empty diffs and unavailable comparison metadata also use fast. The workflow does not use `paths-ignore`, so **CI summary** always reports the selected mode and checks the expected job results. Failed, cancelled, unexpectedly skipped or missing jobs fail the summary. If branch protection requires the old Windows matrix jobs, its owner should replace those required contexts with **CI summary** before relying on daily routing; this change does not edit protection settings.
 
 ## One PostgreSQL execution
 
@@ -12,9 +35,7 @@ uv run python scripts/check_postgres.py
 
 This uses the same discovery as the ordinary Python entrypoint, covering `platform/tests` and `apps/research/tests/python`. It rejects ambiguous module names, duplicate full test IDs and import errors in either tree, executes each discovered ID once and releases completed test instances. Fixture subprocesses receive the same core/app/deployment import roots. [Required selectors](../scripts/postgres_requirements.py) preserve the five former acceptance groups, add the department self-service classes and pin model/permission/UNKNOWN behavior anchors. Each selector must find tests in discovery; every required ID must actually succeed. A skipped test, skipped class/module, skipped subtest or expected failure cannot satisfy required acceptance. All ordinary failures/errors still fail the run. Other platform skips remain visible and allowed. Counts are diagnostic, never a fixed historical target.
 
-The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments.
-
-CI runs on pull requests, pushes to `main`, and explicit workflow dispatch. A feature-branch push with an open PR therefore starts one workflow, while merged code is still checked on `main`.
+The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments in manual full verification. Run `uv run python scripts/check_python.py` for complete local Python discovery.
 
 ## Dependency boundaries
 
@@ -46,7 +67,7 @@ The frontend checker uses the TypeScript parser and module resolver with one `ts
 
 ## Independent core lifecycle
 
-With disposable `FACTORY_TEST_DATABASE_URL`, run `uv run python scripts/check_core_install.py`. This builds `platform/pyproject.toml` from a temporary stage containing only the core package and its build metadata, installs the wheel and declared dependencies into a new venv, then runs from an empty directory with `python -I`. The runtime receives no provider credentials or checkout import paths. It checks actual Uvicorn lifespan readiness, PostgreSQL health, native worker startup, empty material/application catalogs, absence of research routes/tables, and clean shutdown. Acceptance requires disposable database cleanup too. The probe sends only local GET requests; it never submits a task or requests a model.
+With disposable `FACTORY_TEST_DATABASE_URL`, run `uv run python scripts/check_core_install.py`. This builds `platform/pyproject.toml` from a temporary stage containing only the core package and its build metadata, installs the wheel and declared dependencies into a new venv, then runs from an empty directory with `python -I`. The runtime receives no provider credentials or checkout import paths. It checks actual Uvicorn lifespan readiness, PostgreSQL health, native worker presence, empty material/application catalogs, absence of research routes/tables, and clean shutdown. Acceptance requires disposable database cleanup too. The probe sends only local GET requests; it never submits a task or requests a model.
 
 This gate passed against the split core wheel. It cannot independently prove that every generic-looking implementation belongs in core; pair it with ownership maps and code review.
 

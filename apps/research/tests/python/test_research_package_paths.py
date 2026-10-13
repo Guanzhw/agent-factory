@@ -75,6 +75,26 @@ class CompletePackagePathJourneyTests(unittest.TestCase):
         self.case.write(self.case.site / ORDINARY[0], b'changed after contract capture')
         self.assertEqual(observer(request)['status'], 'UNKNOWN')
 
+    def last_file_baseline(self):
+        path = self.case.site / 'zzz-tail-data.bin'
+        self.case.write(path, b'inert last package data')
+        built, observer, request = self.complete()
+        self.assertEqual(sorted(row['path'] for row in built['inventory']['siteFiles'])[-1], path.name)
+        self.assertEqual(sorted(str(item.relative_to(self.case.site))
+            for item in built['captureKwargs']['package_files'])[-1], path.name)
+        self.assertEqual(observer(request)['status'], 'VERIFIED')
+        return path, observer, request
+
+    def test_last_inventoried_file_tampering_is_unknown(self):
+        path, observer, request = self.last_file_baseline()
+        path.write_bytes(b'x' * path.stat().st_size)
+        self.assertEqual(observer(request)['status'], 'UNKNOWN')
+
+    def test_last_inventoried_file_removal_is_unknown(self):
+        path, observer, request = self.last_file_baseline()
+        path.unlink()
+        self.assertEqual(observer(request)['status'], 'UNKNOWN')
+
     def test_package_data_symlink_cannot_enter_inventory(self):
         path = self.case.site / ORDINARY[0]
         path.unlink(); path.symlink_to(self.case.root / 'managed/python')
