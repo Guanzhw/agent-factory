@@ -1,0 +1,45 @@
+# Development checks
+
+Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform scripts` and `uv run pyright` for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
+
+## One PostgreSQL execution
+
+With `FACTORY_TEST_DATABASE_URL` pointing to disposable PostgreSQL on Linux, run:
+
+```sh
+uv run python scripts/check_postgres.py
+```
+
+This discovers the suite once, retains one test instance per full unittest ID, and executes once. [Required selectors](../scripts/postgres_requirements.py) preserve the five former acceptance groups plus a few model/permission/UNKNOWN behavior anchors. Each selector must find tests in discovery; every required ID must actually succeed. A skipped test, skipped class/module, skipped subtest or expected failure cannot satisfy required acceptance. All ordinary failures/errors still fail the run. Other platform skips remain visible and allowed. Counts are diagnostic, never a fixed historical target.
+
+The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments.
+
+## Dependency checker preparation
+
+```sh
+uv run python -m unittest discover -s platform/tests -p test_architecture_checker.py -v
+uv run python -m unittest discover -s platform/tests -p test_postgres_checks.py -v
+uv run python scripts/check_architecture.py --root /path/to/project --config /path/to/ownership.json
+```
+
+The last command requires an agreed map; there is intentionally no passing default for this repository yet. A map uses import search directories and package names, for example this synthetic fixture (not a repository baseline):
+
+```json
+{
+  "source_roots": ["src"],
+  "core": ["core"],
+  "apps": {
+    "alpha": {"package": "apps.alpha", "public": ["apps.alpha.api"]},
+    "beta": {"package": "apps.beta", "public": ["apps.beta.api"]}
+  },
+  "composition_roots": ["src/launch.py"]
+}
+```
+
+The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports fail with a coverage diagnostic. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
+
+Repository wiring remains pending the actual app/core split. No migration allowlist has been added. The core-only smoke must use an isolated, non-editable installation with no app source available and complete startup/health/shutdown; it is not implemented in this preparation change.
+
+## Why this small scope
+
+This follows [OpenAI's executable-boundary guidance](https://openai.com/index/harness-engineering/), [AGENTS.md directory guidance](https://agents.md/), [a short architecture map](https://matklad.github.io/2021/02/06/ARCHITECTURE.md.html), [incremental work with real verification](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents), and [automated architecture assertions](https://martinfowler.com/articles/fitness-functions-data-products.html). It does not adopt their organizational machinery. Development provider/model preferences belong in a task or acceptance configuration, not a permanent ban on otherwise supported product capabilities.
