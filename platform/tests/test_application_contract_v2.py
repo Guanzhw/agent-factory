@@ -6,7 +6,7 @@ from uuid import uuid4
 from agent_factory.store import digest
 from fastapi import HTTPException
 from agent_factory.application_schema import ApplicationDefinitionV2, definition_model, time_budget
-from agent_factory.applications import demo_definitions
+from agent_factory_research.bootstrap_catalog import demo_definitions, all_demo_definitions
 from agent_factory.remote_handoff import _manifest, plan_manifest
 import test_applications_composition as fixtures
 
@@ -36,7 +36,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
         # Native model/tool execution is real; persistence/authority here is an
         # owned fixture, not evidence for PostgreSQL queue durability.
         from test_execution_bindings import MultiPlanStore
-        from agent_factory.execution_bindings import default_bindings
+        from agent_factory_research.synthetic_runtime import default_bindings
         from agent_factory.runtime import build_runtime
         plan = self.plan()
         runtime_store = MultiPlanStore()
@@ -64,7 +64,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
             self.assertNotIn('contractVersion', actual)
             self.assertEqual(actual['sha256'], hashes[actual['id']])
         original = self.composition.create_plan('alice', 'Checksum historical compatibility', 'literature', 'checksum')
-        self.applications.seed_demo()
+        self.applications.seed_demo(all_demo_definitions)
         self.assertEqual(self.store.plan(original['id'], 'alice'), original)
         self.assertNotIn('contractVersion', original)
         self.assertIn('experimentSeconds', original['budget'])

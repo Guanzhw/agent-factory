@@ -11,7 +11,7 @@ import unittest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 
-from agent_factory.personal_agent_transport import PERSONAL_PROVIDER_ID
+from agent_factory_research.personal_agent_transport import PERSONAL_PROVIDER_ID
 from agent_factory.store import digest
 import test_personal_agent_sessions as opencode_fixture
 import test_personal_orx_transport as orx_fixture

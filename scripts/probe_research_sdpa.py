@@ -121,7 +121,7 @@ def run_probe():
               'factoryExecutionVerified': False, 'scientificConclusionVerified': False, 'totalGpuMemoryBounded': False, 'externalTimeoutSeconds': 60, 'cases': []}
     try:
         import torch  # pyright: ignore[reportMissingImports] -- optional target-only dependency
-        from agent_factory import research_torch_runtime as adapter_module
+        from agent_factory_research import research_torch_runtime as adapter_module
         report['torchVersion'] = safe_version(torch.__version__)
         report['torchCudaVersion'] = safe_version(torch.version.cuda)
         if report['torchVersion'].split('+')[0] != '2.9.1' or report['torchCudaVersion'] != '12.8':

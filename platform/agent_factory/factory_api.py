@@ -10,8 +10,7 @@ from .delegation import application_group_status
 from .remote_handoff import FactoryPublicRoute
 from .store import effect_unresolved, canonical
 from .billing_mode import ledger_for_plan
-from .runtime_hooks import (execution_classification, project_runtime_evidence,
-    project_runtime_requirement, project_runtime_recovery, runtime_policy_projection)
+from .runtime_hooks import execution_classification
 
 
 class Body(BaseModel):
@@ -86,7 +85,7 @@ def native_requirements(snapshot):
     return run.get("requirements") or []
 
 
-def status_of(task, snapshot, effects, events):
+def status_of(task, snapshot, effects, events, store=None):
     if task["admission"] == "rejected":
         return "failed"
     if task["admission"] in {"unknown", "reserved"} and not task.get("run_id"):
@@ -94,7 +93,7 @@ def status_of(task, snapshot, effects, events):
     queue = snapshot.get("queue") or snapshot.get("job") or {}
     run = snapshot.get("run", snapshot)
     raw = str(queue.get("status") or run.get("status") or "queued").lower()
-    if any(effect_unresolved(effect) for effect in effects) and raw not in {"running", "runstatus.running"}:
+    if any(effect_unresolved(effect, store) for effect in effects) and raw not in {"running", "runstatus.running"}:
         return "unknown"
     if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
         return "canceling"
@@ -116,11 +115,13 @@ def status_of(task, snapshot, effects, events):
 
 
 class FactoryAPI:
+    command_type = ControlCommands
+
     def __init__(self, settings, store, auth, bridge):
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
         self.remote = getattr(store, "remote_execution", None)
-        self.commands = ControlCommands(self)
+        self.commands = self.command_type(self)
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
@@ -189,15 +190,8 @@ class FactoryAPI:
         task = self.store.task(task["id"], task["owner_id"])
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
-        status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events)
-        from .inference_wait import CONTROL_NAME, read as read_wait
-        inference_wait = read_wait(self.store, task["id"])
-        inference_requirement = next((r for r in native_requirements(snapshot)
-            if (r.get("tool_execution") or {}).get("tool_name") == CONTROL_NAME
-            and (r.get("tool_execution") or {}).get("external_execution_required") is True), None)
-        waiting_inference = bool(inference_wait and inference_wait["state"] == "WAITING" and inference_requirement
-                and not task["cancel_requested"] and not self.store.has_failures(task["id"])
-                and (snapshot.get("queue") or {}).get("status") == "paused")
+        status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events, self.store)
+        control_wait, waiting_inference = self._waiting_control(task, snapshot)
         if waiting_inference:
             status = "waiting_approval"
         group = None
@@ -233,7 +227,7 @@ class FactoryAPI:
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
                 "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60, "allowExperiment": runtime_policy_projection(plan)["allowExperiment"]}, "published": False, "createdAt": plan["createdAt"]}
+            "runtimePolicy": {"timeoutSeconds": 60}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -253,20 +247,10 @@ class FactoryAPI:
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)
-            if (tool.get("tool_name") == CONTROL_NAME and tool.get("external_execution_required")
-                    and inference_wait and tool.get("tool_call_id") == inference_wait["controlId"]):
-                scope = ("推理服务暂时不可用。已有实验仍按原批准边界运行；本次仅恢复同一推理 run，"
-                    "不会重新启动实验、增加预算或延长截止时间。截止：" + inference_wait["deadline"])
-                job.update(approvalDetail={"id": requirement["id"], "version": version, "scope": scope,
-                    "toolName": CONTROL_NAME, "arguments": {}}, approval={"scope": scope})
-                if status == "waiting_approval":
-                    actions.append("approve")
-            elif tool.get('tool_name') == 'workflow_wait' and tool.get('external_execution_required'):
+            if tool.get('tool_name') == 'workflow_wait' and tool.get('external_execution_required'):
                 scope = '等待原工作流阶段或人工决定；请使用工作流面板核对与继续。'
                 job.update(approvalDetail={'id': requirement['id'], 'version': version, 'scope': scope,
                     'toolName': 'workflow_wait', 'arguments': tool.get('tool_args', {})}, approval={'scope': scope})
-            elif await project_runtime_requirement(self.store, task, requirement, version, status, job, actions):
-                pass
             elif tool.get("external_execution_required") and tool.get("tool_name") in getattr(self.store, "external_execution_handlers", {}) and tool.get("result") is None:
                 scope = "Continue this exact approved external execution within its existing budget and original custody."
                 job.update(approvalDetail={"id": requirement["id"], "version": version, "scope": scope,
@@ -283,7 +267,7 @@ class FactoryAPI:
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
-        await project_runtime_recovery(self.commands, task, snapshot, native_requirements(snapshot), job, actions)
+        evidence, evaluation = await self._project_detail(task, plan, snapshot, events, job, control_wait)
         if delegation_scope and delegation_scope.get("executionUnavailable"):
             job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
         try:
@@ -292,15 +276,20 @@ class FactoryAPI:
             if error.status_code != 403:
                 raise
             job["allowedActions"] = ["inspect"]
-        evidence, evaluation = project_runtime_evidence(self.settings, self.store, task, plan, events, job)
         ledger = ledger_for_plan(self.store, plan)
         usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
-        return {**evidence, "inferenceWait": inference_wait, "usageLedger": usage, "job": job,
+        return {**evidence, "usageLedger": usage, "job": job,
                 "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
                     "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
                     "planFingerprint": plan["fingerprint"], "effects": effects,
                     "syntheticFixture": execution_classification(plan)["syntheticFixture"]}}
+
+    def _waiting_control(self, task, snapshot):
+        return None, False
+
+    async def _project_detail(self, task, plan, snapshot, events, job, control_wait):
+        return {}, None
 
     def routes(self):
         router = self.router

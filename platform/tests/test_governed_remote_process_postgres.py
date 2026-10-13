@@ -27,7 +27,7 @@ from pg_fixture import IsolatedPostgres
 from controlled_remote_worker import (MANAGER, MODEL_RECEIVER, MODEL_SOURCE, ORIGIN_OWNER, OTHER_OWNER,
     RECEIVER_OWNER, REVIEWER, TARGET_REF, token)
 from agent_factory.store import digest
-from agent_factory.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
+from agent_factory_research.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
 
 PROJECT = Path(__file__).resolve().parents[2]
 

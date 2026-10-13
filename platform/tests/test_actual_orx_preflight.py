@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 from uuid import uuid4
 
-from agent_factory.openresearch import BinaryPin, OpenResearchAdapter, OpenResearchError
+from agent_factory_research.openresearch import BinaryPin, OpenResearchAdapter, OpenResearchError
 
 
 @unittest.skipUnless(os.getenv("FACTORY_ORX_BINARY") and os.getenv("FACTORY_ORX_SHA256"),

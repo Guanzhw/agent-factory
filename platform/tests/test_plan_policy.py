@@ -28,9 +28,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, JSON, MetaData, String, Table, create_engine, select
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
-from agent_factory.demo_model import DemoModel
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory_server.main import create_app
 from agent_factory.plan_policy import (
     PlanPolicyConfig, PlanPolicyService, persisted_ancestor_guard, plan_policy_router,
 )

@@ -18,18 +18,19 @@ import threading
 import time
 from uuid import uuid4
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "platform"))
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
+    for part in ('platform', 'apps/research', 'deployment')]
 os.environ["AGNO_TELEMETRY"] = "false"
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 import uvicorn
 
-from agent_factory.local_orx_profile import (APPLICATION_ID, CONNECTION_NAME, PROFILE_REVISION,
+from agent_factory_research.local_orx_profile import (APPLICATION_ID, CONNECTION_NAME, PROFILE_REVISION,
     REGISTRATION_REF, local_profile_settings, publish_local_orx_application)
-from agent_factory.main import create_app
-from agent_factory.orx_experiment_tools import READ_CAPABILITY, RUN_CAPABILITY, reclaim_orx_experiment
-from agent_factory.orx_local import TaskLocalORXProvider
+from agent_factory_server.main import create_app
+from agent_factory_research.orx_experiment_tools import READ_CAPABILITY, RUN_CAPABILITY, reclaim_orx_experiment
+from agent_factory_research.orx_local import TaskLocalORXProvider
 
 
 def main():

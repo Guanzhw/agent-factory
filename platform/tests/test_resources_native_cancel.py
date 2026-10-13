@@ -22,7 +22,7 @@ from fastapi import HTTPException
 import httpx
 
 from agent_factory.auth import AuthService
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.main import NativeIngress
 from agent_factory.resources import NativeAgnoHTTP, RemoteTarget
 

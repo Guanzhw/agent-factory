@@ -21,11 +21,11 @@ from pg_fixture import IsolatedPostgres
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.delegation import DelegationService, application_group_status
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.runtime import build_runtime
-from agent_factory.tools import DATASET_HASH
+from agent_factory_research.tools import DATASET_HASH
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")
@@ -468,7 +468,7 @@ class DelegationPostgresTests(unittest.TestCase):
                         elif scenario == "policy-unset":
                             self.settings.temporary_policy = "unset"
                     return original(ctx, name)
-                with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied native experiment attempted compute")) as start_process:
+                with mock.patch("agent_factory_research.tools.subprocess.Popen", side_effect=AssertionError("Denied native experiment attempted compute")) as start_process:
                     try:
                         with mock.patch.object(self.store, "authorize_tool", side_effect=change_at_protected_boundary):
                             self.call(self.bridge.continue_run, task["run_id"], task["id"], "alice", requirements)

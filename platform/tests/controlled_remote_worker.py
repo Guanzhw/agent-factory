@@ -25,13 +25,13 @@ from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration, KnowledgeContext
-from agent_factory.main import create_app
-from agent_factory.openresearch import BinaryPin, REVISION, VERSION
-from agent_factory.orx_tools import ORX_ADAPTER_ID
+from agent_factory_server.main import create_app
+from agent_factory_research.openresearch import BinaryPin, REVISION, VERSION
+from agent_factory_research.orx_tools import ORX_ADAPTER_ID
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin

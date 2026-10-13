@@ -2,22 +2,9 @@
 from fastapi import HTTPException
 
 
-SEEDS = [
-    ("research-skill", "skill", "Evidence-led investigation", "Define a question, compare evidence, record provenance and uncertainty.", []),
-    ("research-prompt", "prompt", "Auto-Research", "Investigate the user's bounded question. Label synthetic fixtures. Report evaluator and evidence provenance, never claim a real scientific result.", []),
-    ("synthetic-knowledge", "knowledge", "Synthetic research corpus", "Two invented candidates; baseline=10 and candidate=8. Lower is better. This is a fixture, not literature.", []),
-    ("literature-tool", "tool", "Literature fixture adapter", "literature_search", ["research:read"]),
-    ("experiment-tool", "tool", "Bounded experiment", "run_experiment", ["experiment:synthetic"]),
-    ("question-tool", "tool", "Clarify research scope", "ask_scope", ["question:ask"]),
-    ("checksum-tool", "tool", "Checksum", "checksum", ["checksum:read"]),
-    ("demo-model", "model", "Deterministic native tool model", "No network model calls. Agno owns the tool loop; deterministic model responses only.", []),
-    ("local-environment", "environment", "Bounded local fixture", "Single-server synthetic tool environment; no arbitrary code, network, credentials or installation.", []),
-]
-
-
-def seed_catalog(store):
+def seed_catalog(store, seeds=()):
     existing = {item["id"] for item in store.materials()}
-    for mid, kind, name, content, permissions in SEEDS:
+    for mid, kind, name, content, permissions in seeds:
         if mid not in existing:
             store.add_material({"id": mid, "kind": kind, "name": name, "description": content, "content": content,
                 "license": "MIT", "origin": "factory synthetic fixture", "dependencies": [], "compatibility": ["agno:3.1.0", "mode:demo"],

@@ -20,7 +20,6 @@ class Settings:
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
     browser_oidc: "BrowserOIDCConfig | None" = None
-    source_synthesis_enabled: bool = False
     development_mock_login: bool = False
     development_public_origin: str | None = None
     max_workers: int = 2
@@ -33,6 +32,7 @@ class Settings:
     experiment_timeout_seconds: int = 8
     experiment_output_bytes: int = 65536
     workspace: Path = field(default_factory=lambda: Path(".local"))
+    web_directory: Path = field(default_factory=lambda: Path("dist").resolve())
     storage_task_reserve_bytes: int = 64 * 1024 * 1024
     storage_low_water_bytes: int = 1024 * 1024 * 1024
     storage_monitor_paths: tuple[Path, ...] = ()
@@ -49,13 +49,7 @@ class Settings:
     host: str = "127.0.0.1"
     remote_targets: dict = field(default_factory=dict)
     # Operator-only evaluator manifest digests mapped to existing fixed targets.
-    research_evaluators: dict = field(default_factory=dict)
     # Trusted operator presets; never populated from request JSON.
-    autoresearch_presets: dict = field(default_factory=dict)
-    personal_agent_commands_enabled: bool = False
-    managed_orx_profiles_factory: Callable | None = field(default=None, repr=False)
-    autoresearch_children_factory: Callable | None = field(default=None, repr=False)
-    remote_scientific_factory: Callable | None = field(default=None, repr=False)
     handoff_targets: dict = field(default_factory=dict)
     handoff_origins: dict = field(default_factory=dict)
     remote_binding_mappings: dict = field(default_factory=dict)
@@ -87,10 +81,7 @@ class Settings:
     owner_model_proxy_environment_id: str | None = field(default=None, repr=False)
     # Operator-installed immutable artifacts; no runtime paths/commands in HTTP.
     # None leaves preparation unavailable. Owners only configure their own model.
-    platform_openresearch: object | None = field(default=None, repr=False)
     # Trusted owned-server registrations + existing agent bindings; never HTTP keys.
-    ssh_openresearch: object | None = field(default=None, repr=False)
-    ssh_self_service: object | None = field(default=None, repr=False)
     usage_pricing: tuple = field(default_factory=tuple)
     usage_policy: "UsagePolicy | None" = None
 
@@ -105,23 +96,10 @@ class Settings:
             raise ValueError('Billing enablement requires explicit booleans')
         if self.platform_paid_models_enabled and not self.fee_management_enabled:
             raise ValueError('Managed paid profiles require actual hard budget management')
-        if type(self.personal_agent_commands_enabled) is not bool:
-            raise ValueError('Personal command enablement must be an explicit boolean')
-        if self.personal_agent_commands_enabled:
-            from .personal_command_profile import registrations, tool_policy, pricing
-            entries = registrations()
-            if any(a.adapter_id in {e.adapter_id for e in entries} for a in self.runtime_adapters):
-                raise ValueError('Personal command adapters cannot be replaced')
-            self.runtime_adapters = [*self.runtime_adapters, *entries]
-            self.tool_policies = (*self.tool_policies, tool_policy())
-            self.usage_pricing = (*self.usage_pricing, pricing())
         from .tool_policy_registry import validate_tool_policies
         self.tool_policies = validate_tool_policies(self.tool_policies, self.runtime_adapters)
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")
-        if type(self.source_synthesis_enabled) is not bool or (self.source_synthesis_enabled
-                and (self.demo is not True or self.temporary_policy != "admin-review")):
-            raise ValueError("Controlled source synthesis requires explicit demo mode and independent plan review")
         if type(self.development_mock_login) is not bool:
             raise ValueError("Development mock login requires explicit boolean configuration")
         if self.development_mock_login:
@@ -197,7 +175,6 @@ class Settings:
                    plan_review_ttl_seconds=int(os.getenv("FACTORY_PLAN_REVIEW_TTL_SECONDS", "3600")),
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "separate-admin"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-governance-v1"),
-                   source_synthesis_enabled=os.getenv("FACTORY_SOURCE_SYNTHESIS_ENABLED", "false") == "true",
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
                    development_profile=os.getenv("FACTORY_DEVELOPMENT_PROFILE", "disabled"),
                    storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),

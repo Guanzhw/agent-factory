@@ -16,10 +16,10 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.usage_ledger import UsagePolicy
 from go_http_fixture import GoHTTPFixture
 from pg_fixture import IsolatedPostgres

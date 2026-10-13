@@ -15,11 +15,11 @@ from uuid import uuid4
 from agno.exceptions import ModelProviderError
 from fastapi.testclient import TestClient
 from pg_fixture import IsolatedPostgres
-from agent_factory.main import create_app
-from agent_factory.local_orx_profile import local_profile_settings, publish_local_orx_application, REGISTRATION_REF
-from agent_factory.orx_local import TaskLocalORXProvider
-from agent_factory.orx_experiment_tools import LocalORXWorkflowModel, MODEL_ADAPTER_ID, TOOL_NAMES
-from agent_factory.inference_wait import CONTROL_NAME
+from agent_factory_server.main import create_app
+from agent_factory_research.local_orx_profile import local_profile_settings, publish_local_orx_application, REGISTRATION_REF
+from agent_factory_research.orx_local import TaskLocalORXProvider
+from agent_factory_research.orx_experiment_tools import LocalORXWorkflowModel, MODEL_ADAPTER_ID, TOOL_NAMES
+from agent_factory_research.inference_wait import CONTROL_NAME
 
 
 @unittest.skipUnless(os.getenv('FACTORY_ORX_LINUX_CONTAINER') == '1' and os.getenv('FACTORY_TEST_DATABASE_URL'),
@@ -243,7 +243,7 @@ class ActualInferenceStopTests(InferenceWaitFixture):
         self.assertTrue(any(e['type']=='protected_denied' and e['data'].get('code')=='USAGE_BUDGET_EXCEEDED' for e in stopped['events']))
 
     def test_source_drift_stops_original_tree_without_fabricating_success(self):
-        from agent_factory.orx_experiment_tools import original_experiment_binding
+        from agent_factory_research.orx_experiment_tools import original_experiment_binding
         d=self.launch();original=d['orxExperiment']['orxRunId']
         binding=original_experiment_binding(self.settings,self.store,self.task)[3]
         source=binding.adapter.scope/'toy-repository'/'candidate.py'

@@ -27,11 +27,13 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 from agent_factory.applications import ApplicationService, application_router
 from agent_factory.auth import AuthService
 from agent_factory.catalog import create_plan, seed_catalog
+from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
 from agent_factory.composition import CompositionService, composition_router
-from agent_factory.config import Settings
-from agent_factory.demo_model import DemoModel
-from agent_factory.execution_bindings import AdapterRegistration, default_bindings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory.execution_bindings import AdapterRegistration
+from agent_factory_research.synthetic_runtime import default_bindings
+from agent_factory_server.main import create_app
 from agent_factory.material_governance import MaterialGovernance
 from agent_factory.store import digest, now
 from pg_fixture import IsolatedPostgres
@@ -119,10 +121,10 @@ class ApplicationCompositionFixture(unittest.TestCase):
         self.auth.authorization.unassign("bob", "factory-user")
         self.auth.authorization.assign("bob", "factory-manager")
         self.store = PortableCompositionStore(self.db, self.settings)
-        seed_catalog(self.store)
-        self.store.material_governance = MaterialGovernance(self.store, self.auth)
+        seed_catalog(self.store, SEEDS)
+        self.store.material_governance = MaterialGovernance(self.store, self.auth, seed_materials=SEEDS)
         self.applications = ApplicationService(self.store, self.auth)
-        self.applications.seed_demo()
+        self.applications.seed_demo(all_demo_definitions)
         self.store.applications = self.applications
         self.bindings = default_bindings(self.settings, self.store, None)
         self.composition = CompositionService(self.store, self.auth, self.applications, self.bindings, None)
@@ -280,7 +282,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
         self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], application)
         restarted = ApplicationService(self.store, self.auth)
-        restarted.seed_demo()
+        restarted.seed_demo(all_demo_definitions)
         with self.assertRaises(HTTPException):
             restarted.require_current(pin(application))
 

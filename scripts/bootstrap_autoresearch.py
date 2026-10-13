@@ -7,12 +7,12 @@ calls, baseline discovery, subordinate execution, or provider activation occur.
 from dataclasses import replace
 from pathlib import Path
 
-from agent_factory.autoresearch import ResearchPreset
-from agent_factory.autoresearch_profile import (RUNTIME_ID, application_definition,
+from agent_factory_research.autoresearch import ResearchPreset
+from agent_factory_research.autoresearch_profile import (RUNTIME_ID, application_definition,
     material_drafts, pricing_registration, registrations)
-from agent_factory import autoresearch_scientific_child as children
+from agent_factory_research import autoresearch_scientific_child as children
 from agent_factory.applications import Budget
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.store import digest
 from agent_factory.usage_ledger import UsagePolicy
 

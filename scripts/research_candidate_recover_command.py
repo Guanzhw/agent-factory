@@ -11,8 +11,8 @@ def recover(config, inputs, journal, *, database_url_file=None, database_url=Non
     from research_candidate_reopen import reconstruct_research_target, reconstruct_preparation_target
     from research_candidate_recovery import recover_original
     from research_candidate_native_stop import cancel_native_original
-    from agent_factory.config import Settings
-    from agent_factory.research_bootstrap_policy import development_settings
+    from agent_factory_research.config import ResearchSettings as Settings
+    from agent_factory_research.research_bootstrap_policy import development_settings
 
     require(not journal.fresh and journal.snapshot()['identity'] == inputs['identity'])
     original = {**inputs['baselineConfig'], 'workspace': config['workspace'], 'requestId': config['requestId']}

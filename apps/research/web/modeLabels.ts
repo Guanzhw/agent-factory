@@ -1,0 +1,2 @@
+export const composerModeLabels: Readonly<Record<string, string>> = { literature: '文献与证据', experiment: '实验探索', success: '真实 ORX toy 成功评估', evaluator_failure: '真实 ORX 评估器失败验收', cancellable: '真实 ORX 运行中取消验收' };
+export const taskModeLabels: Readonly<Record<string, string>> = { literature: '文献与证据', experiment: '实验探索', success: 'ORX toy 成功评估', evaluator_failure: 'ORX 评估器失败', cancellable: 'ORX 运行中取消' };

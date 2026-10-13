@@ -110,7 +110,7 @@ class LifecycleEvidenceTests(unittest.TestCase):
             'data': {'errorType': 'CancelledError', 'error': 'never-export-this', 'payload': {'secret': 'never-export-this'}}}]
         store.native_db.get_job.return_value = {'id': 'synthetic-run', 'status': 'cancelled',
             'last_error': 'Run exceeded timeout_seconds=60 never-export-this', 'payload': {'token': 'never-export-this'}}
-        with patch('agent_factory.inference_wait.read', return_value={'state': 'WAITING', 'deadline': 'synthetic-time',
+        with patch('agent_factory_research.inference_wait.read', return_value={'state': 'WAITING', 'deadline': 'synthetic-time',
                 'body': 'never-export-this', 'executionOwner': {'token': 'never-export-this'}}):
             result = lifecycle_evidence(store)
         self.assertNotIn('never-export-this', json.dumps(result))
@@ -125,7 +125,7 @@ class LifecycleEvidenceTests(unittest.TestCase):
         store.sql.side_effect = [[{'id': 'synthetic-task', 'run_id': 'synthetic-run'}], []]
         store.events.return_value = []
         store.native_db.get_job.side_effect = ValueError('never-export-this')
-        with patch('agent_factory.inference_wait.read', side_effect=RuntimeError('never-export-this')):
+        with patch('agent_factory_research.inference_wait.read', side_effect=RuntimeError('never-export-this')):
             result = lifecycle_evidence(store)
         self.assertNotIn('never-export-this', json.dumps(result))
         self.assertEqual(result['tasks'][0]['nativeQueue'], {'errorType': 'ValueError'})

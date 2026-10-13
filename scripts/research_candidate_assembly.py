@@ -8,21 +8,21 @@ from dataclasses import replace
 import math
 from pathlib import Path
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.gpu_custody import GpuBinding
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
-from agent_factory.research_bootstrap_assembly import _Reservation, _Evaluation
-from agent_factory.research_bootstrap_policy import development_settings
-from agent_factory.research_checkpoint_store import ResearchCheckpointStore
-from agent_factory.research_environment_observer import ResearchEnvironmentObserver
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_local_driver import build_local_driver, derive_local_identities
-from agent_factory.research_local_provider import ResearchLocalProvider
-from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
-from agent_factory.research_runtime_profile import research_settings, registrations
-from agent_factory.research_staging import RootIdentity
-from agent_factory.research_training_adapter import build_training_bundle
+from agent_factory_research.research_bootstrap_assembly import _Reservation, _Evaluation
+from agent_factory_research.research_bootstrap_policy import development_settings
+from agent_factory_research.research_checkpoint_store import ResearchCheckpointStore
+from agent_factory_research.research_environment_observer import ResearchEnvironmentObserver
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_local_driver import build_local_driver, derive_local_identities
+from agent_factory_research.research_local_provider import ResearchLocalProvider
+from agent_factory_research.research_manifest import manifest_fingerprint, validate_manifest
+from agent_factory_research.research_runtime_profile import research_settings, registrations
+from agent_factory_research.research_staging import RootIdentity
+from agent_factory_research.research_training_adapter import build_training_bundle
 from agent_factory.resources import ComputePool, RemoteTarget
 from agent_factory.store import Store, digest
 
@@ -44,6 +44,7 @@ def research_application(*, db_url, workspace, upstream_files, candidate_files, 
     training) authority and provider fingerprints. Keep their provider stores
     alive until the complete controller has stopped and returned custody.
     """
+    from agent_factory_research.services import services_for
     _require(type(launch_spec) is UvResearchProcessSpec and type(limits) is ResearchProcessLimits
              and type(gpu_binding) is GpuBinding and callable(device_observer)
              and (training is None) == (training_store is None))
@@ -111,11 +112,11 @@ def research_application(*, db_url, workspace, upstream_files, candidate_files, 
         app = create_app(settings)
         state = app.app.state.factory
         checkpoints = ResearchCheckpointStore(state['store'], state['auth'],
-            state['store'].research_runtime.resources, state['store'].storage)
+            services_for(state['store']).research_runtime.resources, state['store'].storage)
         pending.update(state=state, checkpoints=checkpoints)
         if evaluating:
-            state['research_evaluation'] = state['store'].research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
-                state['store'].research_runtime.resources, {digest(manifest['evaluator']): reference},
+            state['research_evaluation'] = services_for(state['store']).research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
+                services_for(state['store']).research_runtime.resources, {digest(manifest['evaluator']): reference},
                 checkpoint_reader=checkpoints.identity)
         return {'app': app, 'state': state, 'checkpoints': checkpoints, 'target': target,
                 'settings': settings, 'providerStore': bootstrap, 'pending': pending,

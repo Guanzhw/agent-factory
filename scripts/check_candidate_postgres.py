@@ -11,8 +11,9 @@ def main():
         print('CANDIDATE_POSTGRES_REQUIRED: Linux and disposable PostgreSQL required', file=sys.stderr)
         return 1
     root = Path(__file__).resolve().parents[1]
-    sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
-    suite = unittest.TestSuite(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern=pattern)
+    sys.path[:0] = [str(root / path) for path in
+        ('platform', 'apps/research', 'deployment', 'platform/tests', 'apps/research/tests/python')]
+    suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(pattern.removesuffix('.py'))
         for pattern in ('test_research_candidate_postgres.py', 'test_research_candidate_baseline_postgres.py',
                         'test_research_candidate_command_postgres.py', 'test_research_candidate_execute_postgres.py',
                         'test_candidate_database_auth_postgres.py'))

@@ -21,12 +21,12 @@ from uuid import uuid4
 from agno.models.message import Message
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
 from agent_factory.go_diagnostics import safe_diagnostic
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.opencode_go import GoDevelopmentModel
 from agent_factory.usage_ledger import UsagePolicy
 

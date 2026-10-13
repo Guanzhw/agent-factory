@@ -30,10 +30,10 @@ from agent_factory.connections import ConnectionService
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault, credential_vault_router
 from agent_factory.personal_remote_provider import RemoteConnectionError, origin
 from agent_factory.personal_ssh import PersonalSSHServers, SSHAgents, SSHEnrollmentConfig, personal_ssh_router
-from agent_factory.platform_openresearch import PlatformOpenResearchConfig
-from agent_factory.runtime_packages.openresearch_v1 import ssh_prerequisites
+from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
+from agent_factory_research.runtime_packages.openresearch_v1 import ssh_prerequisites
 from agent_factory.ssh_credentials import PROVIDER_ID, SSHCredentialPolicy, endpoint, ssh_destination
-from agent_factory.ssh_openresearch import SSHServer
+from agent_factory_research.ssh_openresearch import BASE, SSHServer
 from test_personal_remote_connections import Auth
 from pg_fixture import IsolatedPostgres
 
@@ -62,7 +62,8 @@ class PersonalSSHTests(unittest.TestCase):
             clock=lambda: datetime(2026, 10, 11, tzinfo=timezone.utc))
         runtime = cast(PlatformOpenResearchConfig, SimpleNamespace(max_active_seconds=60))
         self.service = PersonalSSHServers(self.auth, self.connections, self.vault,
-            SSHEnrollmentConfig(runtime, lambda ip, port: ip == '127.0.0.1' and port == 2222))
+            SSHEnrollmentConfig(runtime, lambda ip, port: ip == '127.0.0.1' and port == 2222),
+            probe_source=(BASE / 'ssh_prerequisites.py').read_text())
         self.addCleanup(self.service.close)
         self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard))
         self.service.agents.acquire = self.acquire

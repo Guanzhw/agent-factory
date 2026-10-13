@@ -13,7 +13,7 @@ from agno.run.agent import RunOutput
 
 from agent_factory.execution_bindings import BindingContext, ExecutionBindings
 from agent_factory.model_dispatch import DelegatingModel
-from agent_factory.openresearch import OpenResearchAdapter, OpenResearchError
+from agent_factory_research.openresearch import OpenResearchAdapter, OpenResearchError
 from agent_factory.usage_ledger import native_response_usage
 
 
@@ -350,19 +350,21 @@ class AsyncAuthorityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["inspect"])
 
     async def test_cancelled_pause_preparation_never_publishes_or_mutates_native_output(self):
+        from agent_factory_research.model_compatibility import ResearchDelegatingModel
+
         for streaming in (False, True):
             gate = Gate(self)
             response = RunOutput(run_id="synthetic-run", session_id="synthetic-task", user_id="synthetic-owner")
             before = response.to_dict()
             messages = []
-            model = DelegatingModel(cast(Any, SimpleNamespace(store=SimpleNamespace())))
+            model = ResearchDelegatingModel(cast(Any, SimpleNamespace(store=SimpleNamespace())))
 
             def prepare(*args):
                 gate()
                 return {"controlId": "synthetic-control"}
 
-            with patch("agent_factory.inference_wait.prepare_pause", side_effect=prepare), \
-                    patch("agent_factory.inference_wait.publish_pause") as publish:
+            with patch("agent_factory_research.inference_wait.prepare_pause", side_effect=prepare), \
+                    patch("agent_factory_research.inference_wait.publish_pause") as publish:
                 task = asyncio.create_task(model._apause((), {"run_response": response, "messages": messages},
                     ModelProviderError("synthetic", status_code=503), streaming=streaming))
                 try:

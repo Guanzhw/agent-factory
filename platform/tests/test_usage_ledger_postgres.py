@@ -24,10 +24,10 @@ from agno.run.agent import RunOutput
 from fastapi import HTTPException
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.delegation import DelegationService
-from agent_factory.demo_model import DemoModel
-from agent_factory.execution_bindings import default_bindings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory_research.synthetic_runtime import default_bindings
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.runtime import build_runtime
 from agent_factory.store import Store, canonical, digest, now

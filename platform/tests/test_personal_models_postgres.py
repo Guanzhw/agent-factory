@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 import httpx
 
 from agent_factory.byok_model import ADAPTER_ID, PROVIDER_ID
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.personal_remote_provider import origin
-from agent_factory.personal_research import publish_application
+from agent_factory_research.personal_research import publish_application
 from pg_fixture import IsolatedPostgres
 
 

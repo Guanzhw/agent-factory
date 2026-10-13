@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 import re
-from typing import Any
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -26,7 +26,7 @@ MATERIAL_KINDS = {"skill", "tool", "prompt", "knowledge", "model", "environment"
 
 
 # Compatibility exports preserve existing application profile imports.
-from .application_schema import (ApplicationDefinition, ApplicationDefinitionV2, ModeDefinition,
+from .application_schema import (ApplicationDefinition as ApplicationDefinition, ApplicationDefinitionV2 as ApplicationDefinitionV2, ModeDefinition as ModeDefinition,
     ModeDefinitionV2, LegacyBudget as Budget, LegacyTaskConfig as TaskConfig,  # noqa: F401
     MaterialChoice as MaterialChoice, ConnectionRequirement as ConnectionRequirement,
     definition_model, budget_limits, task_config)
@@ -618,7 +618,7 @@ class ApplicationService:
     def withdraw(self, actor, identifier, version, request_id, reason=""):
         return self._deactivate(actor, identifier, version, request_id, reason, "withdrawn")
 
-    def seed_demo(self):
+    def seed_demo(self, definitions: Iterable[dict] | Callable[[dict[str, dict]], Iterable[dict]] = ()):
         """Trusted startup only; two explicit configs over proved immutable seeds."""
         if not self.store.settings.demo:
             raise ValueError("Demo application seed approval is forbidden in production")
@@ -627,7 +627,7 @@ class ApplicationService:
         # Read historical seed bodies, including withdrawn versions. Bootstrap
         # proof above validates origin/hash/audit and never restores activation.
         seeds = {item["id"]: item for item in self.store.materials() if item["version"] == 1 and item.get("origin") == "factory synthetic fixture"}
-        definitions = [*demo_definitions(seeds), *demo_v2_definitions(seeds)]
+        definitions = definitions(seeds) if callable(definitions) else definitions
         with self.db.write() as conn:
             for definition in definitions:
                 identifier = definition["id"]
@@ -645,29 +645,8 @@ class ApplicationService:
         return {"seeded": [definition["id"] for definition in definitions], "approvalMode": "verified-demo-application-bootstrap", "productionAllowed": False}
 
 
-def demo_definitions(seeds):
-    """Configuration fixtures are the only place application IDs choose defaults."""
-    def mode(ids, tools, caps, *, ask=0):
-        return ModeDefinition.model_validate({"materialRefs": [ApplicationService.pin(seeds[mid]) for mid in ids],
-            "capabilities": caps, "toolOrder": tools, "config": {"askScopeBelowLength": ask}})
-    common = ["demo-model", "local-environment"]
-    research = [*common, "research-skill", "research-prompt", "synthetic-knowledge", "literature-tool", "question-tool"]
-    literature = mode(research, ["literature_search", "ask_scope"], ["research:read", "question:ask"], ask=12)
-    experiment = mode([*research, "experiment-tool"], ["literature_search", "ask_scope", "run_experiment"],
-                      ["research:read", "question:ask", "experiment:synthetic"], ask=12)
-    checksum = mode([*common, "checksum-tool"], ["checksum"], ["checksum:read"])
-    return [ApplicationDefinition(id="research", name="Auto-Research", defaultForDiscovery=True,
-                discoveryKeywords=["research", "investigate", "literature", "研究", "调研"], modes={"literature": literature, "experiment": experiment}).model_dump(exclude_none=True),
-            ApplicationDefinition(id="checksum", name="Checksum", discoveryKeywords=["checksum", "sha256", "校验"],
-                modes={"literature": checksum, "experiment": checksum}).model_dump(exclude_none=True)]
 
 
-def demo_v2_definitions(seeds):
-    """Additive neutral fixture; historical checksum v1 remains untouched."""
-    return [ApplicationDefinitionV2(contractVersion=2, id="checksum-neutral", name="Checksum (neutral contract)",
-        defaultMode="execute", modes={"execute": ModeDefinitionV2(
-            materialRefs=[PinnedRef.model_validate(ApplicationService.pin(seeds[mid])) for mid in ("demo-model", "local-environment", "checksum-tool")],
-            capabilities=["checksum:read"], toolOrder=["checksum"])}).model_dump(exclude_none=True)]
 
 
 class ApplicationCommand(BaseModel):

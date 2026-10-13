@@ -19,12 +19,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import TrustedConnectionBinding
-from agent_factory.demo_model import DemoModel
-from agent_factory.execution_bindings import default_bindings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory_research.synthetic_runtime import default_bindings
 from agent_factory.usage_ledger import PricingRevision, UsageLedger
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.remote_bindings import RemoteBindingService, TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import TrustedOrigin, plan_manifest
 from agent_factory.store import digest, now
@@ -70,7 +70,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         self.creations = []
         def local_model(context):
             self.creations.append(context.connection)
-            from agent_factory.demo_model import DemoModel
+            from agent_factory_research.demo_model import DemoModel
             return DemoModel(id="receiver-proof-fixture-model")
         self.bindings.register("model", "receiver-fixture-model", "receiver-adapter-v2", local_model,
             connection_kind="model", required_capabilities=("checksum:read",))

@@ -13,7 +13,7 @@ from inference_tree_worker import RecoveryRecorder, install_recovery_timing
 
 class RecoveryTimingTests(unittest.TestCase):
     def setUp(self):
-        from agent_factory import inference_wait
+        from agent_factory_research import inference_wait
         from agent_factory.control_commands import ControlCommands
         for method in ('prepare_pause', 'publish_pause', 'observe', 'validate_requirement'):
             self.enterContext(patch.object(inference_wait, method, getattr(inference_wait, method)))
@@ -58,7 +58,7 @@ class RecoveryTimingTests(unittest.TestCase):
     def test_pause_and_command_stages_preserve_calls_and_failures(self):
         from contextlib import ExitStack
         from unittest.mock import AsyncMock, Mock
-        from agent_factory import inference_wait
+        from agent_factory_research import inference_wait
         from agent_factory.control_commands import ControlCommands
         from agent_factory.delegation import DelegationService
         with ExitStack() as stack:

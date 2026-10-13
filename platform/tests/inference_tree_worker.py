@@ -19,10 +19,10 @@ from sqlalchemy.engine import make_url
 import jwt
 import uvicorn
 
-from agent_factory.main import create_app
-from agent_factory.local_orx_profile import local_profile_settings
-from agent_factory.orx_local import TaskLocalORXProvider
-from agent_factory.orx_experiment_tools import LocalORXWorkflowModel, MODEL_ADAPTER_ID, TOOL_NAMES
+from agent_factory_server.main import create_app
+from agent_factory_research.local_orx_profile import local_profile_settings
+from agent_factory_research.orx_local import TaskLocalORXProvider
+from agent_factory_research.orx_experiment_tools import LocalORXWorkflowModel, MODEL_ADAPTER_ID, TOOL_NAMES
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
@@ -208,7 +208,7 @@ def install_recovery_timing(path):
     from agent_factory.control_commands import ControlCommands
     from agent_factory.delegation import DelegationService
     recorder = RecoveryRecorder(path)
-    from agent_factory import inference_wait
+    from agent_factory_research import inference_wait
     def timed_sync(original, stage):
         def wrapped(*args, **kwargs):
             with recorder.measure(stage):
@@ -268,9 +268,9 @@ def install_recovery_timing(path):
 
 
 def install_timing(path):
-    from agent_factory.orx_local import TaskLocalORXAdapter
+    from agent_factory_research.orx_local import TaskLocalORXAdapter
     from agent_factory.lifecycle_observer import FactoryLifecycleObserver
-    from agent_factory.orx_linux import TaskLinuxContainer
+    from agent_factory_research.orx_linux import TaskLinuxContainer
     from agent_factory.model_dispatch import DelegatingModel
     recorder = TimingRecorder(path)
     install_recovery_timing(path.with_suffix('.recovery.json'))

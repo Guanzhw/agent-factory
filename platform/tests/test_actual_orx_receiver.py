@@ -18,10 +18,10 @@ import httpx
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.main import create_app
-from agent_factory.local_orx_profile import local_profile_settings, publish_local_orx_application, REGISTRATION_REF
-from agent_factory.orx_experiment_tools import TOOL_NAMES, reclaim_orx_experiment
-from agent_factory.orx_local import TaskLocalORXProvider
+from agent_factory_server.main import create_app
+from agent_factory_research.local_orx_profile import local_profile_settings, publish_local_orx_application, REGISTRATION_REF
+from agent_factory_research.orx_experiment_tools import TOOL_NAMES, reclaim_orx_experiment
+from agent_factory_research.orx_local import TaskLocalORXProvider
 from agent_factory.remote_handoff import HandoffTarget, TrustedHandoffClient, TrustedOrigin, PreparedHandoffService
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping, RemoteBindingService
 

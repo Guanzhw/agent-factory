@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 from agent_factory.go_diagnostics import safe_diagnostic
-from agent_factory.public_code_knowledge import validate_snapshot
+from agent_factory_research.public_code_knowledge import validate_snapshot
 from run_go_project_workflow import MODELS, require, run
 
 

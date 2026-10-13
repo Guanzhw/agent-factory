@@ -9,9 +9,9 @@ import time
 import unittest
 from uuid import uuid4
 
-from agent_factory.orx_pins import approved_pin
-from agent_factory.orx_retrieval import TaskLinuxRetrievalProvider
-from agent_factory.orx_linux import PYTHON_BINARY
+from agent_factory_research.orx_pins import approved_pin
+from agent_factory_research.orx_retrieval import TaskLinuxRetrievalProvider
+from agent_factory_research.orx_linux import PYTHON_BINARY
 
 
 @unittest.skipUnless(os.getenv('FACTORY_ORX_LINUX_CONTAINER') == '1' and os.getenv('FACTORY_ORX_BINARY'),

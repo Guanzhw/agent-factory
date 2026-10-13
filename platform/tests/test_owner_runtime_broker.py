@@ -15,7 +15,7 @@ import httpx
 
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_remote_provider import SecretLease
-from agent_factory.platform_openresearch import _UnixHTTP
+from agent_factory_research.platform_openresearch import _UnixHTTP
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):

@@ -19,11 +19,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
-from agent_factory.tools import build_tools
+from agent_factory_research.tools import build_tools
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -526,7 +526,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
 
     def test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection(self):
         from agent_factory.factory_api import status_of
-        from agent_factory.orx_experiment_tools import LAUNCH_EFFECT_KEY
+        from agent_factory_research.orx_experiment_tools import LAUNCH_EFFECT_KEY
         from agent_factory.store import canonical
         root = self.task("Controlled terminal ORX metadata fault", application="checksum")
         self.wait_native(root, {"completed"})
@@ -561,7 +561,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
     def test_14_revoked_cleanup_checks_actual_persisted_launch_fingerprint(self):
         from types import SimpleNamespace
         from agent_factory.connections import ConnectionService, TrustedConnectionBinding
-        from agent_factory.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
+        from agent_factory_research.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
         from agent_factory.store import canonical, digest
         root = self.task("Controlled cleanup-binding admission", application="checksum")
         self.wait_native(root, {"completed"})

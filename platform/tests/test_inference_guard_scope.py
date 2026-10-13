@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 import unittest
 
-from agent_factory.inference_wait import TOOL_NAMES, current
+from agent_factory_research.inference_wait import TOOL_NAMES, current
 from agent_factory.store import Store
 
 

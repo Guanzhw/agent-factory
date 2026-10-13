@@ -15,8 +15,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from pg_fixture import IsolatedPostgres
 
 

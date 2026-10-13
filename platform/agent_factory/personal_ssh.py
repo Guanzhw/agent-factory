@@ -17,7 +17,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 import threading
 import time
-from typing import Callable
+from typing import Callable, Protocol
 
 from cryptography.hazmat.primitives import serialization
 from fastapi import APIRouter, HTTPException, Request
@@ -26,8 +26,7 @@ from sqlalchemy import select
 
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID, endpoint
-from .ssh_openresearch import BASE, SSHAgentLease, SSHServer, SSHOpenResearchPackage
-from .platform_openresearch import PlatformOpenResearchConfig
+from .ssh_identity import SSHAgentLease, SSHServer
 
 CODES = frozenset({'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
@@ -35,9 +34,20 @@ CODES = frozenset({'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTH
     'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
 
 
+class SSHRuntimeLimits(Protocol):
+    @property
+    def max_active_seconds(self) -> int: ...
+
+
+class _SSHProbeTransport(Protocol):
+    root: Path
+
+    def _ssh(self, server, lease, local, command, forward=None) -> subprocess.Popen: ...
+
+
 @dataclass(frozen=True)
 class SSHEnrollmentConfig:
-    runtime: PlatformOpenResearchConfig
+    runtime: SSHRuntimeLimits
     address_policy: Callable
     max_agents: int = 16
 
@@ -173,15 +183,15 @@ class PersonalSSHServers:
     @staticmethod
     def static_unavailable(**scope):
         raise RemoteConnectionError('SSH_STATIC_CREDENTIAL_UNAVAILABLE')
-    def __init__(self, auth, connections, vault, config):
+    def __init__(self, auth, connections, vault, config, *, probe_source: str):
         if (not isinstance(config, SSHEnrollmentConfig) or not callable(config.address_policy)
                 or PROVIDER_ID not in vault.capabilities()['providerIds']):
             raise ValueError('Self-service SSH requires global runtime, network policy and SSH vault policy')
         self.auth, self.connections, self.vault, self.config = auth, connections, vault, config
         self.agents = SSHAgents(vault, max_agents=config.max_agents, seconds=config.runtime.max_active_seconds + 30)
-        self.package: SSHOpenResearchPackage | None = None
+        self.package: _SSHProbeTransport | None = None
         self.provider = SSHServerProvider(self)
-        self.probe_source = (BASE / 'ssh_prerequisites.py').read_text()
+        self.probe_source = probe_source
         self.provider.policy_revision = 'owner-ssh-v1-' + hashlib.sha256(self.probe_source.encode()).hexdigest()[:20]
         if PROVIDER_ID in connections.personal.providers: raise ValueError('Duplicate SSH server provider')
         connections.personal.providers[PROVIDER_ID] = self.provider

@@ -15,7 +15,7 @@ import time
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 
 QUESTION = "Development example: describe these public source records and the limits of their short abstract excerpts."
 
@@ -33,16 +33,16 @@ def run(args):
     evidence = {"phase": args.phase, "ownerId": "alice", "status": "stopped",
                 "scientificProviderCalled": False, "scientificEndToEndAccepted": False}
     if args.phase == "retrieval":
-        from agent_factory.pubmed_profile import (pubmed_settings, publish_pubmed_application,
+        from agent_factory_research.pubmed_profile import (pubmed_settings, publish_pubmed_application,
             PubMedProvider, REGISTRATION_REF, CONNECTION_NAME, CAPABILITY)
         settings = pubmed_settings(db_url=args.database_url, workspace=root / "factory", provider=PubMedProvider("alice"))
         def publish(state):
             return publish_pubmed_application(state, author="manager", reviewer="bob")
         mode = "bibliography"
     else:
-        from agent_factory.literature_synthesis_profile import (synthesis_settings, publish_synthesis_application,
+        from agent_factory_research.literature_synthesis_profile import (synthesis_settings, publish_synthesis_application,
             REGISTRATION_REF, CONNECTION_NAME)
-        from agent_factory.literature_synthesis import SCIENTIFIC_CAPABILITY as CAPABILITY
+        from agent_factory_research.literature_synthesis import SCIENTIFIC_CAPABILITY as CAPABILITY
         require(args.source_evidence is not None)
         with Path(args.source_evidence).open("rb") as stream:
             raw = stream.read(131073)

@@ -24,6 +24,34 @@ explains original-operation custody and native continuation. Agno owns workflow
 progress; Factory supplies governance and thin receipts. Real ConvertD remains a
 user-implemented local application, not a bundled or live-validated backend.
 
+## Source and deployment boundaries
+
+The Factory core and the research application have separate source ownership:
+
+| Path | Owns |
+| --- | --- |
+| `platform/agent_factory/` | Shared identity, credentials, resources, material/application contracts, task admission, native execution, events and artifacts |
+| `apps/research/agent_factory_research/` | Research services, settings, materials, executor adapters and `runtime_packages/openresearch_v1/` |
+| `apps/research/web/` and `apps/research/tests/` | Research pages/API state and application regressions (`python/`, `web/`, `browser/`) |
+| `deployment/agent_factory_server/main.py` | Explicit Python assembly of the core and research application |
+| `web/composition.tsx` | Explicit frontend assembly; shared shell and generic UI remain in `web/` |
+
+OpenResearch and the existing AutoResearch execution paths belong to one research
+application. They retain their native executors and existing session/project
+journeys. The deployment installs its reviewed materials and adapters explicitly;
+creating the core alone does not seed research materials or install research
+routes. There is no dynamic application discovery. An application that only
+combines existing tools still needs only a reviewed declaration and materials,
+without a core code change.
+
+The root [`pyproject.toml`](pyproject.toml) builds the complete
+`department-agent-factory` deployment wheel and retains the `agent-factory`
+command. [`platform/pyproject.toml`](platform/pyproject.toml) builds the standalone
+`department-agent-factory-core` distribution, containing only `agent_factory`.
+These are alternative distribution choices, not packages to overlay in one
+installation. See the [development guide](docs/APPLICATION_DEVELOPMENT.md#源码归属与静态装配)
+for assembly and source-checkout commands.
+
 ## Start locally
 
 Requires Node 24+, Python 3.12+, uv and existing PostgreSQL binaries. Tested locally on Windows with Python 3.14.3 and PostgreSQL 17.11. Dependency versions and CI action/image revisions are pinned.
@@ -41,7 +69,7 @@ npm start
 
 Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or material administrator. The demo script initializes only `.local/postgres`, binds both services to loopback and stops its owned services on Ctrl+C. Its trust authentication belongs only to the disposable local cluster. Do not expose the demo to a network. Logs, database, runtime files and credentials are ignored by Git.
 
-For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured`. The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate clean database and native managed users/roles; it provisions no identities. Execution is checked per plan against exact approved applications, materials, installed adapters, owner connection pins and the configured approval policy. Missing items block that plan; there is no automatic demo-model fallback. Real provider SDK attempt/retry enforcement, production browser identity entry, reviewed mutable research workloads and production OS acceptance remain implementation/integration work; credentials alone do not complete them. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
+For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate clean database and native managed users/roles; it provisions no identities. Execution is checked per plan against exact approved applications, materials, installed adapters, owner connection pins and the configured approval policy. Missing items block that plan; there is no automatic demo-model fallback. Real provider SDK attempt/retry enforcement, production browser identity entry, reviewed mutable research workloads and production OS acceptance remain implementation/integration work; credentials alone do not complete them. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
 
 ## Implemented boundary
 
@@ -64,15 +92,14 @@ Experiment metrics are computed by an actual bounded synthetic subprocess with e
 
 ```powershell
 npm run check
-uv run ruff check platform scripts
-uv run pyright
-uv run python -m unittest discover -s platform/tests -v
+npm audit
+npm run check:python
 # Disposable test DB only: enables actual native queue/API/PostgreSQL cases.
 $env:FACTORY_TEST_DATABASE_URL = 'postgresql+psycopg://test-user@127.0.0.1:5432/disposable_test_db'
-uv run python -m unittest discover -s platform/tests -v
+uv run python scripts/check_python.py
 ```
 
-Without a test database, PostgreSQL cases explicitly skip. The opt-in loopback test identity needs CREATEDB on a disposable server: each test class creates and removes only its own randomly named database; supplied database tables are never cleared. CI runs frontend and Python checks on Windows/Linux and a separate pinned PostgreSQL integration job. All tests use synthetic input and make no paid provider calls.
+`npm run check` includes shared and research frontend lint, type checks, tests and the composed build. `npm run check:python` runs Ruff and Pyright across core, application and deployment code, then `scripts/check_python.py` discovers both `platform/tests` and `apps/research/tests/python` with shared fixtures available. Either suite failing makes the command fail. Without a test database, PostgreSQL cases explicitly skip. The opt-in loopback test identity needs CREATEDB on a disposable server: each test class creates and removes only its own randomly named database; supplied database tables are never cleared. CI runs frontend and Python checks on Windows/Linux and a separate pinned PostgreSQL integration job. All tests use synthetic input and make no paid provider calls.
 
 The opt-in actual ORX application and its reviewed evaluator are described in [ORX_LOCAL_EXPERIMENTS.md](docs/ORX_LOCAL_EXPERIMENTS.md). Its deterministic baseline/candidate MSE values are 16 and 0 on seven original examples. This verifies real local CLI execution and evidence delivery; it does not certify live model science. [TOKEN_LEDGER.md](docs/TOKEN_LEDGER.md) describes immutable model/price approval and transactional reservations for every provider attempt, including retries, streaming, child tasks and remote allocation. Defaults install only explicit no-provider local contracts; unpriced models fail closed.
 

@@ -16,9 +16,9 @@ import unittest
 from typing import Any
 from uuid import uuid4
 
-from agent_factory.research_bootstrap_controller import ResearchBootstrapController
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_runtime_profile import publish_research_application
+from agent_factory_research.research_bootstrap_controller import ResearchBootstrapController
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_runtime_profile import publish_research_application
 from agent_factory.store import Store, digest
 from agent_factory.storage_governance import StorageGovernance
 from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]

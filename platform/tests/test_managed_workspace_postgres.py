@@ -12,11 +12,11 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
-from agent_factory.managed_orx_attachment import ManagedORXSessionProvider
-from agent_factory.managed_orx_profile import MODEL_ADAPTER, PROVIDER, exact_input_schema, model_registration, request_guard
-from agent_factory.orx_research_broker import MODEL
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
+from agent_factory_research.managed_orx_attachment import ManagedORXSessionProvider
+from agent_factory_research.managed_orx_profile import MODEL_ADAPTER, PROVIDER, exact_input_schema, model_registration, request_guard
+from agent_factory_research.orx_research_broker import MODEL
 from agent_factory.process_runtime_profile import registrations, TOOL_ID, ENVIRONMENT_ID, TOOL_NAME
 from agent_factory.resources import RemoteTarget, ComputePool
 from agent_factory.store import digest

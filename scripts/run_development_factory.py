@@ -9,16 +9,17 @@ from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "platform"))
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
+    for part in ('platform', 'apps/research', 'deployment')]
 
 from sqlalchemy.engine import make_url
 import uvicorn
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.development_identity import validate_development_origin
 from agent_factory.development_tls import temporary_development_tls
-from agent_factory.main import create_app
-from agent_factory.development_workflows import controlled_workflow_settings, initialize_controlled_fixtures
+from agent_factory_server.main import create_app
+from agent_factory_research.development_workflows import controlled_workflow_settings, initialize_controlled_fixtures
 
 
 class _Arguments(argparse.ArgumentParser):

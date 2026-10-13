@@ -324,7 +324,7 @@ async def recover_original(state, runtime, owner, task_id, budget_seconds):
     """
     _require(type(owner) is str and owner and type(task_id) is str and task_id
              and _number(budget_seconds) and 0 < budget_seconds <= 5)
-    from agent_factory.research_bootstrap_controller import cleanup_original
+    from agent_factory_research.research_bootstrap_controller import cleanup_original
     loop = asyncio.get_running_loop()
 
     def call_async(function):

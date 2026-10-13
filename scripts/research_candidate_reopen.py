@@ -12,14 +12,14 @@ from typing import Any, cast
 
 from agent_factory.gpu_custody import GpuBinding
 from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
-from agent_factory.research_bootstrap_assembly import _Reservation, _Evaluation
-from agent_factory.research_checkpoint_store import ResearchCheckpointStore
-from agent_factory.research_device_observer import NvidiaSmiObserver
-from agent_factory.research_environment_observer import ResearchEnvironmentObserver
-from agent_factory.research_local_driver import ScientificRuntimePin, build_local_driver, derive_local_identities
-from agent_factory.research_local_provider import ResearchLocalProvider
-from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
-from agent_factory.research_staging import FilePin, InputPin, RootIdentity
+from agent_factory_research.research_bootstrap_assembly import _Reservation, _Evaluation
+from agent_factory_research.research_checkpoint_store import ResearchCheckpointStore
+from agent_factory_research.research_device_observer import NvidiaSmiObserver
+from agent_factory_research.research_environment_observer import ResearchEnvironmentObserver
+from agent_factory_research.research_local_driver import ScientificRuntimePin, build_local_driver, derive_local_identities
+from agent_factory_research.research_local_provider import ResearchLocalProvider
+from agent_factory_research.research_manifest import manifest_fingerprint, validate_manifest
+from agent_factory_research.research_staging import FilePin, InputPin, RootIdentity
 from agent_factory.resources import ComputePool, RemoteTarget
 
 _FIELDS = {'schema', 'stage', 'capturedInputs', 'environmentPins', 'launchSpec', 'programIdentity',
@@ -137,8 +137,8 @@ def make_preparation_snapshot(*, program_root, program_identity, custody_root, e
 def reconstruct_preparation_target(state, snapshot, *, owner='alice'):
     """Reopen preparation's original provider without executing its reserve hook."""
     from agent_factory.process_enforcement import ProcessLimits, ProcessSpec
-    from agent_factory.research_preparation_driver import PreparationDriver
-    from agent_factory.research_preparation_provider import PreparationProvider
+    from agent_factory_research.research_preparation_driver import PreparationDriver
+    from agent_factory_research.research_preparation_provider import PreparationProvider
     _require(type(snapshot) is dict and set(snapshot) - {'preflightSeconds'} == {'schema', 'stage', 'programRoot', 'programIdentity',
         'custodyRoot', 'executable', 'executableSha256', 'tokenizerHex', 'preparationManifestSha256'}
         and snapshot['schema'] == 1 and snapshot['stage'] == 'preparation')

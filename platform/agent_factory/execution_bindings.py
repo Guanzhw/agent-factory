@@ -28,15 +28,7 @@ from .store import digest
 KINDS = frozenset({"model", "tool", "knowledge", "environment"})
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 _SECRET = re.compile(r"^(?:api[_-]?key|password|secret|access[_-]?token|refresh[_-]?token|authorization|cookie|credentials|private[_-]?key)$", re.I)
-LEGACY_DEMO = {
-    "demo-model": ("model", "local-synthetic-model-v1"),
-    "synthetic-knowledge": ("knowledge", "local-synthetic-knowledge-v1"),
-    "local-environment": ("environment", "local-bounded-environment-v1"),
-    "literature-tool": ("tool", "native-literature-v1"),
-    "question-tool": ("tool", "native-ask-scope-v1"),
-    "experiment-tool": ("tool", "native-experiment-v1"),
-    "checksum-tool": ("tool", "native-checksum-v1"),
-}
+
 
 
 @dataclass(frozen=True)
@@ -93,8 +85,10 @@ class AdapterRegistration:
 
 
 class ExecutionBindings:
-    def __init__(self, settings: Any, store: Any, connections: Any = None):
+    def __init__(self, settings: Any, store: Any, connections: Any = None, *, legacy_materials=(), legacy_bindings=None):
         self.settings, self.store, self.connections = settings, store, connections
+        self.legacy_materials = tuple(legacy_materials)
+        self.legacy_bindings = dict(legacy_bindings or {})
         self._adapters: dict[tuple[str, str, str], AdapterRegistration] = {}
         self._models: weakref.WeakValueDictionary[int, Model] = weakref.WeakValueDictionary()
         self._lock = threading.RLock()
@@ -184,13 +178,12 @@ class ExecutionBindings:
         kind = material["kind"]
         binding = material.get("runtimeBinding")
         if binding is None:
-            legacy = LEGACY_DEMO.get(material["id"])
+            legacy = self.legacy_bindings.get(material["id"])
             if not self.settings.demo or legacy is None or legacy[0] != kind:
                 raise HTTPException(409, "BINDING_SPEC_REQUIRED: material has no explicit trusted runtime binding")
             # This exact inert seed content is the published legacy demo adapter,
             # never a substitute for an unavailable newly selected provider.
-            from .catalog import SEEDS
-            seed = next((row for row in SEEDS if row[0] == material["id"]), None)
+            seed = next((row for row in self.legacy_materials if row[0] == material["id"]), None)
             if seed is None or material.get("content") != seed[3]:
                 raise HTTPException(409, "BINDING_SPEC_REQUIRED: changed material needs its own runtime binding")
             binding = {"adapterId": legacy[1], "revision": "1", "config": {}}
@@ -371,12 +364,6 @@ class ExecutionBindings:
             self._connection(owner, self._entry(kind, spec), spec, context, resolve=False)
         from .billing_mode import require_available
         require_available(self.settings, plan, manifest=manifest)
-        from .synthesis_runtime import validate_plan_source
-        validate_plan_source(self.store, plan)
-        from .comparison_workflow import validate_plan as validate_comparison_plan
-        validate_comparison_plan(self.store, plan)
-        from .go_development import preflight_plan
-        preflight_plan(self.settings, plan, self.connections, context)
         return manifest
 
     def inspect(self, plan: Mapping[str, Any], context: Any = None) -> dict[str, Any]:
@@ -508,38 +495,6 @@ class ExecutionBindings:
         return value
 
 
-def default_bindings(settings: Any, store: Any, connections: Any = None) -> ExecutionBindings:
-    from .demo_model import DemoModel
-    from .tools import build_tools
-    registry = ExecutionBindings(settings, store, connections)
-    def empty(config):
-        if config:
-            raise ValueError("Adapter accepts no material configuration")
-    registry.register("model", "local-synthetic-model-v1", "1", lambda context: DemoModel(), demo_only=True, validator=empty)
-    for adapter, name, permission, demo_only in (
-        ("native-literature-v1", "literature_search", "research:read", True),
-        ("native-ask-scope-v1", "ask_scope", "question:ask", False),
-        ("native-experiment-v1", "run_experiment", "experiment:synthetic", True),
-        ("native-checksum-v1", "checksum", "checksum:read", False)):
-        registry.register("tool", adapter, "1", lambda context, selected=name: build_tools(context.settings, context.store)[selected],
-            tool_name=name, permissions=(permission,), demo_only=demo_only, validator=empty)
-    def knowledge(context):
-        ref = context.spec["materialRef"]
-        material = next(item for item in context.plan["materials"] if all(item[key] == ref[key] for key in ref))
-        return KnowledgeContext(material["content"], {"evidenceKind": "synthetic", "source": "approved-material-content"})
-    registry.register("knowledge", "local-synthetic-knowledge-v1", "1", knowledge, demo_only=True, validator=empty)
-    keys = {"runtimeId", "timeoutSeconds", "outputBytes", "memoryBytes", "processLimit", "cpuPercent"}
-    def environment(context):
-        config = context.spec["config"]
-        if set(config) - keys:
-            raise ValueError("Unknown bounded environment configuration")
-        return EnvironmentLimits(runtime_id=config.get("runtimeId", "local-python-bounded-v1"),
-            timeout_seconds=config.get("timeoutSeconds", context.settings.experiment_timeout_seconds),
-            output_bytes=config.get("outputBytes", context.settings.experiment_output_bytes),
-            memory_bytes=config.get("memoryBytes", 256 * 1024 * 1024), process_limit=config.get("processLimit", 4), cpu_percent=config.get("cpuPercent", 10))
-    def validate_environment(config):
-        if set(config) - keys:
-            raise ValueError("Unknown bounded environment configuration")
-        environment(BindingContext(settings, store, {}, None, {"config": config}))
-    registry.register("environment", "local-bounded-environment-v1", "1", environment, validator=validate_environment)
-    return registry
+def default_bindings(settings: Any, store: Any, connections: Any = None, *, legacy_materials=(), legacy_bindings=None) -> ExecutionBindings:
+    """An empty trusted registry. Applications install their reviewed factories."""
+    return ExecutionBindings(settings, store, connections, legacy_materials=legacy_materials, legacy_bindings=legacy_bindings)

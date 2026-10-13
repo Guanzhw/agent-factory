@@ -1,9 +1,7 @@
 import { ApplicationInputs } from './ApplicationInputs.js';
 import { applicationInputValues, inputValuesError, sameApplicationInputs, type ApplicationInputValues } from './applicationInputState.js';
-import type { ComparisonSeed } from './ComparisonPanel.js';
 import { sameSourceSnapshot } from './sourcePlanState.js';
 import { useEffect, useRef, useState } from 'react';
-import type { SynthesisSnapshot } from './synthesisJourneyState.js';
 import { api, ApiError } from './api.js';
 import { useCommandKeys } from './commandKeys.js';
 import { PlanReviewGate } from './PlanReviews.js';
@@ -15,7 +13,7 @@ import { kindNames, materialKey, type AssemblyCandidate, type AssemblyProposal, 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const message = (e: unknown) => e instanceof Error ? e.message : '装配状态无法确认。';
 const refKey = (ref: MaterialReference) => `${materialKey(ref)}:${ref.sha256}`;
-const modeName = (value: string) => ({ literature: '文献与证据', experiment: '实验探索', success: '真实 ORX toy 成功评估', evaluator_failure: '真实 ORX 评估器失败验收', cancellable: '真实 ORX 运行中取消验收' } as Record<string, string>)[value] ?? value;
+
 const budgetNames: Record<string, string> = { toolCalls: '工具调用', maxDepth: '最大委派深度', maxChildren: '累计子任务', experimentSeconds: '实验秒数', operationSeconds: '单次操作时限（秒）', outputBytes: '产物字节' };
 
 function adapterNames(bindings: Record<string, unknown> | null): string[] {
@@ -53,19 +51,28 @@ export function ComposerProposalScope({ candidate }: { candidate: AssemblyCandid
   </>;
 }
 
-export function ApplicationComposer({ user, busy, act, materials, targets, onCreated, sourceSeed, onSchedule, comparisonSeed }: { comparisonSeed?: ComparisonSeed; onSchedule?: (plan: Plan) => void; sourceSeed?: SynthesisSnapshot; user: User; busy: string; act: Act; materials: FactoryMaterial[]; targets: ExecutionTarget[]; onCreated: (id: string) => void }) {
+/** Optional application-owned input for the ordinary declarative composer. */
+export interface ComposerSeed {
+  key: string; applicationId?: string; applicationRef?: MaterialReference; mode?: string;
+  goal?: string; sourceSnapshotRef?: CompositionInput['sourceSnapshotRef'];
+}
+export interface ApplicationComposerProps {
+  modeLabels?: Readonly<Record<string, string>>; seed?: ComposerSeed; onSchedule?: (plan: Plan) => void; user: User; busy: string;
+  act: Act; materials: FactoryMaterial[]; targets: ExecutionTarget[]; onCreated: (id: string) => void;
+}
+export function ApplicationComposer({ user, busy, act, materials, targets, onCreated, seed, onSchedule, modeLabels = {} }: ApplicationComposerProps) {
   const [applications, setApplications] = useState<FactoryApplication[]>([]);
   const [connections, setConnections] = useState<UserConnection[]>([]);
-  const [applicationId, setApplicationId] = useState(comparisonSeed?.applicationRef.id ?? (sourceSeed ? 'source-grounded-synthesis-fixture-v1' : ''));
-  const [mode, setMode] = useState(comparisonSeed?.mode ?? '');
-  const [comparisonRef, setComparisonRef] = useState(comparisonSeed?.applicationRef);
-  const [goal, setGoal] = useState(comparisonSeed?.goal ?? sourceSeed?.question ?? '');
-  const [sourceRef, setSourceRef] = useState<CompositionInput['sourceSnapshotRef']>(sourceSeed ? { id: sourceSeed.id, fingerprint: sourceSeed.fingerprint } : undefined);
+  const [applicationId, setApplicationId] = useState(seed?.applicationRef?.id ?? seed?.applicationId ?? '');
+  const [mode, setMode] = useState(seed?.mode ?? '');
+  const [pinnedApplication, setPinnedApplication] = useState(seed?.applicationRef);
+  const [goal, setGoal] = useState(seed?.goal ?? '');
+  const [sourceRef, setSourceRef] = useState<CompositionInput['sourceSnapshotRef']>(seed?.sourceSnapshotRef);
   const [inputValues, setInputValues] = useState<ApplicationInputValues>({});
   const [choices, setChoices] = useState<Record<string, MaterialReference>>({});
   const [connectionRefs, setConnectionRefs] = useState<Record<string, string>>({});
   const pointerKey = `factory-proposal-v1:${encodeURIComponent(user.id)}`;
-  const [storedProposal, setStoredProposal] = useState(() => { if (sourceSeed || comparisonSeed) return undefined; try { const id = window.sessionStorage.getItem(pointerKey); return id && /^[a-f0-9-]{36}$/.test(id) ? id : undefined; } catch { return undefined; } });
+  const [storedProposal, setStoredProposal] = useState(() => { if (seed) return undefined; try { const id = window.sessionStorage.getItem(pointerKey); return id && /^[a-f0-9-]{36}$/.test(id) ? id : undefined; } catch { return undefined; } });
   const [proposal, setProposal] = useState<AssemblyProposal>();
   function rememberProposal(value?: AssemblyProposal) { setStoredProposal(value?.id); try { if (value) window.sessionStorage.setItem(pointerKey, value.id); else window.sessionStorage.removeItem(pointerKey); } catch { /* Persist only an opaque owner-scoped pointer when storage is available. */ } }
   const [plan, setPlan] = useState<Plan>();
@@ -76,8 +83,8 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const [refresh, setRefresh] = useState(0);
   const uncertainRevision = useRef<{ id?: string; input: CompositionInput; requestId: string } | undefined>(undefined);
   const keys = useCommandKeys(user.id);
-  const application = applications.find(item => item.id === applicationId && (!comparisonRef || refKey(item) === refKey(comparisonRef)));
-  const comparisonStale = !!comparisonRef && !application;
+  const application = applications.find(item => item.id === applicationId && (!pinnedApplication || refKey(item) === refKey(pinnedApplication)));
+  const applicationStale = !!pinnedApplication && !application;
   const selectedMode = application?.modes[mode || application.defaultMode];
   const inputError = selectedMode?.inputSchema ? inputValuesError(selectedMode.inputSchema, inputValues) : '';
   const accepted = !!plan || proposal?.state === 'accepted';
@@ -107,7 +114,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       const value = recovered.proposal;
       rememberProposal(value); uncertainRevision.current = undefined;
       setProposal(value); setPlan(recovered.plan ?? undefined); setExecutionAllowed(false);
-      setComparisonRef(undefined); setGoal(value.candidate.normalizedGoal); setSourceRef(value.input.sourceSnapshotRef); setApplicationId(value.candidate.application); setMode(value.candidate.mode);
+      setPinnedApplication(undefined); setGoal(value.candidate.normalizedGoal); setSourceRef(value.input.sourceSnapshotRef); setApplicationId(value.candidate.application); setMode(value.candidate.mode);
       setChoices(value.input.materialChoices ?? {}); setConnectionRefs(value.input.connectionRefs ?? {}); setInputValues(value.input.inputValues ?? {});
       setRefresh(n => n + 1);
     });
@@ -120,7 +127,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     return { goal: goal.trim(), ...(sourceRef ? { sourceSnapshotRef: sourceRef } : {}), ...(application ? { application: application.id, applicationRef: { id: application.id, version: application.version, sha256: application.sha256 }, mode: mode || application.defaultMode } : {}), materialChoices: choices, connectionRefs, ...(selectedMode?.inputSchema ? { inputValues: applicationInputValues(selectedMode.inputSchema, inputValues) } : {}) };
   }
   async function createOrRevise() {
-    if (!ready || (!applications.length && !uncertainRevision.current) || comparisonStale || inputError || !goal.trim() || accepted || proposal && !uncertainRevision.current && (!pending || !proposal.allowedActions.includes('revise'))) return;
+    if (!ready || (!applications.length && !uncertainRevision.current) || applicationStale || inputError || !goal.trim() || accepted || proposal && !uncertainRevision.current && (!pending || !proposal.allowedActions.includes('revise'))) return;
     const values = uncertainRevision.current?.input ?? input(); const parentId = uncertainRevision.current?.id ?? proposal?.id;
     await act(parentId ? 'revise-proposal' : 'propose', async () => {
       const key = await keys(parentId ? 'revise-proposal' : 'propose', { ...values, ...(parentId ? { parentId } : {}) });
@@ -159,7 +166,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
     await act('instantiate', async () => { const key = await keys('instantiate', { planId: plan.id, executionTargetRef: target || null }); try { const job = await api.instantiate(plan.id, key.requestId, target || undefined); onCreated(job.id); } catch (e) { setRefresh(n => n + 1); throw e; } });
   }
-  function startAgain() { if (busy || uncertainRevision.current) return; setComparisonRef(undefined); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
+  function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(undefined); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
   const candidate = proposal?.candidate;
   const usageVerified = plan?.usageBudget === undefined || !!usageCommitment(plan.usageBudget);
   const bound = plan?.bindingManifest?.connections;
@@ -177,22 +184,22 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       {error && <div role="alert" className="error-message">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>重新核对装配</button></div>}
       {!ready && !error && <p className="quiet" role="status">正在读取可用应用与资源连接…</p>}
       {ready && applications.length === 0 && !proposal && <p className="state-note" role="status">当前没有可用的已批准应用。请让管理员先发布应用，再新建任务。<button type="button" className="text-button" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>重新读取应用</button></p>}
-      {comparisonRef && <p className="state-note">此方案固定已选比较应用版本。合成开发数据仅用于验证工作流；数据、评估器和候选范围由已发布材料固定。{comparisonStale && ' 当前应用版本不可用，请返回比较目录重新核对。'}</p>}
-      {sourceRef && <div className="state-note source-plan-note"><p>已固定来源快照。问题须与快照一致；请选择已批准的受控综合应用和自己的模型连接。</p><details className="technical-detail"><summary>来源快照凭据</summary><span>快照 {sourceRef.id}</span><span>指纹 {sourceRef.fingerprint}</span></details><p>下一步仍需生成提案、固定方案并完成独立审查。来源变化会阻止执行；受控产物不是科学结论。</p></div>}
+      {pinnedApplication && <p className="state-note">此方案固定已选应用版本与任务输入。{applicationStale && ' 当前应用版本不可用，请返回应用重新核对。'}</p>}
+      {sourceRef && <div className="state-note source-plan-note"><p>已固定来源快照。任务输入须与快照一致；请选择已批准的应用和自己的连接。</p><details className="technical-detail"><summary>来源快照凭据</summary><span>快照 {sourceRef.id}</span><span>指纹 {sourceRef.fingerprint}</span></details><p>下一步仍需生成提案、固定方案并完成独立审查。来源变化会阻止执行。</p></div>}
       {uncertainRevision.current && <p className="policy-note">原装配请求未确认，输入已锁定。重试保持同一请求；刷新后请从提案历史核对原记录。</p>}
       <form onSubmit={event => { event.preventDefault(); void createOrRevise(); }}>
         <label htmlFor="application-selector">1. 选择应用</label>
-        <select id="application-selector" value={applicationId} disabled={!!comparisonRef || !!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据任务自动匹配已批准应用</option>{applications.map(item => <option key={refKey(item)} value={item.id}>{item.name} · v{item.version}</option>)}</select>
+        <select id="application-selector" value={applicationId} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据任务自动匹配已批准应用</option>{applications.map(item => <option key={refKey(item)} value={item.id}>{item.name} · v{item.version}</option>)}</select>
         {application && <p className="quiet">{application.description}</p>}
         <label htmlFor="research-topic">2. 描述任务</label>
-        <textarea id="research-topic" rows={4} value={goal} disabled={!!comparisonRef || !!sourceRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="例如：比较两种方法的公开证据，列出差异、来源和待验证的问题。" required maxLength={2000}/>
-        {application && <label>任务方式<select aria-label="应用执行方式" value={mode || application.defaultMode} disabled={!!comparisonRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => { setMode(event.target.value); setChoices({}); setConnectionRefs({}); setInputValues({}); }}>{Object.keys(application.modes).map(value => <option key={value} value={value}>{modeName(value)}</option>)}</select></label>}
+        <textarea id="research-topic" rows={4} value={goal} disabled={!!pinnedApplication || !!sourceRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="例如：比较两种方法的公开证据，列出差异、来源和待验证的问题。" required maxLength={2000}/>
+        {application && <label>任务方式<select aria-label="应用执行方式" value={mode || application.defaultMode} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => { setMode(event.target.value); setChoices({}); setConnectionRefs({}); setInputValues({}); }}>{Object.keys(application.modes).map(value => <option key={value} value={value}>{(modeLabels[value] ?? value)}</option>)}</select></label>}
         {selectedMode?.inputSchema && <ApplicationInputs schema={selectedMode.inputSchema} values={inputValues} onChange={setInputValues} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready}/>}
         {selectedMode?.connectionRequirements.map(requirement => <label key={requirement.name}>资源连接 · {requirement.name}{requirement.required ? '（必需）' : '（可选）'}<select aria-label={`资源连接 ${requirement.name}`} value={connectionRefs[requirement.name] ?? ''} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} onChange={event => setConnectionRefs(current => { const next = { ...current }; if (event.target.value) next[requirement.name] = event.target.value; else delete next[requirement.name]; return next; })}><option value="">未选择连接</option>{connections.filter(item => item.available && !item.taskId && item.kind === requirement.kind && requirement.requiredCapabilities.every(capability => item.capabilities.includes(capability))).map(item => <option key={item.ref} value={item.ref}>{item.registrationRef} · {item.ref.slice(0, 8)}</option>)}</select><small className="quiet">只可选自己的可用连接；配置可用不等于真实提供商已验证。{requirement.requiredCapabilities.length > 0 && `需要能力：${requirement.requiredCapabilities.join('、')}。`}</small></label>)}
         {selectedMode && Object.keys(selectedMode.materialChoices).length > 0 && <details className="technical-detail composer-advanced"><summary>高级选项：调整已批准材料</summary><p className="quiet">默认使用应用的已批准材料；需要时可在允许范围内调整。</p>{Object.entries(selectedMode.materialChoices).map(([slot, choice]) => <label key={slot}>{kindNames[choice.kind]}选择 · {slot}<select aria-label={`材料选择 ${slot}`} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} value={refKey(choices[slot] ?? choice.defaultRef)} onChange={event => { const ref = choice.allowedRefs.find(item => refKey(item) === event.target.value); if (ref) setChoices(current => ({ ...current, [slot]: ref })); }}>{choice.allowedRefs.map(ref => <option key={refKey(ref)} value={refKey(ref)}>{materials.find(item => refKey(item) === refKey(ref))?.name ?? ref.id} · v{ref.version}</option>)}</select></label>)}</details>}
-        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">下一步只预览任务范围、所需权限和预算，不会开始执行。</p><button className="primary wide" type="submit" disabled={comparisonStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
+        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">下一步只预览任务范围、所需权限和预算，不会开始执行。</p><button className="primary wide" type="submit" disabled={applicationStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
       </form>
-      {candidate && <div className="preflight"><div className="section-heading"><h3>3. 核对任务方案</h3><span className={`badge ${candidate.status === 'ready' ? 'status-ready' : 'status-blocked'}`}>{candidate.status === 'ready' ? '预检通过' : '预检存在缺项'}</span></div><p className="normalized-goal">{candidate.normalizedGoal}</p><p className="quiet">应用 {applications.find(item => item.id === candidate.application)?.name ?? candidate.application} · v{candidate.applicationRef.version} · {modeName(candidate.mode)} · {({ pending: '等待你的决定', revised: '已被新提案修订', rejected: '已拒绝', accepted: '已固定为方案' })[proposal!.state]}</p>
+      {candidate && <div className="preflight"><div className="section-heading"><h3>3. 核对任务方案</h3><span className={`badge ${candidate.status === 'ready' ? 'status-ready' : 'status-blocked'}`}>{candidate.status === 'ready' ? '预检通过' : '预检存在缺项'}</span></div><p className="normalized-goal">{candidate.normalizedGoal}</p><p className="quiet">应用 {applications.find(item => item.id === candidate.application)?.name ?? candidate.application} · v{candidate.applicationRef.version} · {(modeLabels[candidate.mode] ?? candidate.mode)} · {({ pending: '等待你的决定', revised: '已被新提案修订', rejected: '已拒绝', accepted: '已固定为方案' })[proposal!.state]}</p>
         <ComposerProposalScope candidate={candidate}/>
         <details className="technical-detail"><summary>准确版本与绑定凭据</summary><span>提案 {proposal!.id}</span><span>指纹 {proposal!.fingerprint}</span><span>应用 {refKey(candidate.applicationRef)}</span><span>选择依据 {proposal!.selection.method} · {proposal!.selection.matchedKeywords.join('、') || '明确选择'}</span><pre>{JSON.stringify({ materialRefs: candidate.materialRefs, executionBindings: candidate.executionBindings, bindingManifest: candidate.bindingManifest }, null, 2)}</pre></details>
         {!accepted && pending && dirty && <p className="policy-note">修改还未保存。请先更新任务方案，再确认新的范围。</p>}

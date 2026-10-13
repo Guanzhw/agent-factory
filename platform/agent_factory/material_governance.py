@@ -19,7 +19,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
 
-from .catalog import SEEDS
 from .plan_policy import ToolContract, tools_for_contract, reserved_tool_names
 from .tool_policy_registry import (ResolvedToolPolicy, normalize_resolved_tool_policies, merged_tools,
     policy_body, require_installed_policies, require_material_policy)
@@ -178,7 +177,8 @@ class GovernanceConfig:
 
 
 class MaterialGovernance:
-    def __init__(self, store: Any, auth: Any, config: GovernanceConfig | None = None):
+    def __init__(self, store: Any, auth: Any, config: GovernanceConfig | None = None, *, seed_materials=()):
+        self.seed_materials = tuple(seed_materials)
         self.store, self.auth = store, auth
         self.metadata = MetaData()
         self.materials = Table("af_materials", MetaData(), autoload_with=store.engine)
@@ -341,7 +341,7 @@ class MaterialGovernance:
             raise HTTPException(422, "Runtime bindings are limited to tool, model, knowledge and environment materials")
         if not set(value["permissions"]) <= set(known_tools.values()):
             raise HTTPException(422, "Material requests authority outside registered capabilities")
-        reserved = next((seed for seed in SEEDS if seed[0] == value.get("id")), None)
+        reserved = next((seed for seed in self.seed_materials if seed[0] == value.get("id")), None)
         if reserved and reserved[1] != value["kind"]:
             raise HTTPException(422, "Reserved material kind cannot change")
         if value["kind"] == "tool":
@@ -654,7 +654,7 @@ class MaterialGovernance:
             raise ValueError("Demo bootstrap publication is forbidden in production")
         adopted = []
         with self._write() as conn:
-            for mid, kind, name, content, permissions in SEEDS:
+            for mid, kind, name, content, permissions in self.seed_materials:
                 material = self._material(conn, mid, 1)
                 body = material["body"]
                 if not material["published"] or body.get("kind") != kind or body.get("name") != name or body.get("content") != content or body.get("permissions") != permissions or body.get("origin") != "factory synthetic fixture" or body.get("license") != "MIT" or body.get("dependencies") != []:

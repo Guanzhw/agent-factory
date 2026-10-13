@@ -8,6 +8,56 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 真实 ConvertD 的业务代码、后端和材料由用户在本地实现。本指南和仓库中的合成示例
 证明的是接线方式，不能替代真实业务、模型、GPU 或目标机器验收。
 
+## 源码归属与静态装配
+
+仓库中的 Research 是一个应用：OpenResearch 原生会话/项目入口与现有 AutoResearch
+执行路径属于同一应用的内部模块，不要求用户安装或嵌套两个应用。业务模块保留原生
+OpenResearch/OpenCode 执行器，底座继续使用 Agno/AgentOS 的执行、队列和持久化机制。
+
+| 目录或入口 | 职责 |
+| --- | --- |
+| [`platform/agent_factory/`](../platform/agent_factory/) | 公共身份、凭据、资源、素材/应用契约、任务准入、原生执行、事件与产物 |
+| [`apps/research/agent_factory_research/`](../apps/research/agent_factory_research/) | 研究业务服务、`ResearchSettings`、材料声明、执行适配和 `runtime_packages/openresearch_v1/` |
+| [`apps/research/web/`](../apps/research/web/) | 研究页面、导航项、业务 API 与状态投影 |
+| [`apps/research/tests/`](../apps/research/tests/) | 应用的 `python/`、`web/` 与浏览器合成回归 |
+| [`deployment/agent_factory_server/main.py`](../deployment/agent_factory_server/main.py) | 显式选择底座构造参数、研究材料/适配器及应用装配函数 |
+| [`web/composition.tsx`](../web/composition.tsx) | 显式向公共壳传入页面、导航和业务展示组件 |
+
+Python 装配调用公共底座的 `create_app`，再由应用的
+[`assembly.py`](../apps/research/agent_factory_research/assembly.py) 安装业务服务与路由。
+`ResearchSettings` 承载研究专用配置；应用服务集合由研究包内部维护，不能作为普通
+应用访问底座的公共 SDK。公共壳消费传入的导航/组件，业务页面使用应用自己的 API 模块。
+这些是静态部署接线，不是动态发现、插件安装协议或新的生命周期引擎。
+
+`agent_factory.main.create_app` 是不预装研究材料/路由的底座入口；完整研究部署使用
+`agent_factory_server.main.create_app`。需要组合现有能力的新应用，仍可仅发布声明与
+素材；只有新增业务代码、页面或可信执行能力时，才在应用目录实现并在部署入口显式装配，
+不向公共底座增加某个应用的业务分支。应用函数与客户端优先使用下文的 Application
+Interface；可信部署工厂的内部接线上下文不等同于稳定公共应用接口。
+
+根 [`pyproject.toml`](../pyproject.toml) 生成包含底座、研究包和部署入口的兼容部署 wheel，
+`agent-factory` 命令指向该入口。独立底座构建由
+[`platform/pyproject.toml`](../platform/pyproject.toml) 提供，仅包含 `agent_factory`：
+
+```bash
+uv build platform --out-dir /tmp/agent-factory-core-dist
+uv build --out-dir /tmp/agent-factory-deployment-dist
+```
+
+两种 distribution 是不同安装选择，不要在同一环境叠装两个都提供 `agent_factory` 的包。
+安装独立底座后，由部署方提供已审能力与应用装配；研究部署保留原有 HTTP 路由和数据契约，
+源码迁移不授权重写旧计划、运行 pin 或请求身份。
+
+仓库根目录执行 `uv sync --frozen` 后，可用 `uv run python -m agent_factory_server`
+启动完整部署；数据库和鉴权配置沿用现有要求。直接从源码运行且未安装项目时，三个
+Python 源码根必须同时可见：
+
+```bash
+# POSIX shells; PowerShell/Windows uses ';' between the same three paths.
+export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment"
+python -m agent_factory_server
+```
+
 ## 公共契约与兼容边界
 
 应用依赖已版本化的声明、精确引用和受治理请求，不依赖内部存储布局。
@@ -291,15 +341,31 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 ```bash
 uv sync --frozen
 npm ci --ignore-scripts
+# Shared test fixtures are importable from both owned test trees.
+export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment:$PWD/platform/tests:$PWD/apps/research/tests/python"
 uv run python -m unittest discover -s platform/tests -p 'test_application_inputs.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_application_contract_v2.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_tool_policy_registry.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_native_workflows.py' -v
-uv run ruff check platform scripts
+uv run ruff check platform apps/research deployment scripts
 uv run pyright
 npm run check
 npm audit
 ```
+
+完整 Python 回归需要分别发现公共底座与应用测试；只运行原 `platform/tests` 不再覆盖研究业务。
+保留上面的测试 `PYTHONPATH` 后可分别运行：
+
+```bash
+uv run python -m unittest discover -s platform/tests -v
+uv run python -m unittest discover -s apps/research/tests/python -v
+```
+
+也可直接运行 `npm run check:python`：它执行全部 Python lint/type 检查，并通过
+`scripts/check_python.py` 自动设置源码/fixture 路径、运行两次 discovery；任一测试集失败都会返回失败。
+
+`npm run check` 已覆盖 `web/`、`apps/research/web/` 以及两处前端测试目录，并构建静态装配后的页面。
+浏览器合成回归位于 `apps/research/tests/browser/`；其结果与真实数据库、执行器及模型验收分别记录。
 
 真实队列/恢复测试使用管理员提供的**可销毁测试服务器**，设置
 `FACTORY_TEST_DATABASE_URL`，身份需有 CREATEDB；fixture 创建并清理自己随机命名的数据库。

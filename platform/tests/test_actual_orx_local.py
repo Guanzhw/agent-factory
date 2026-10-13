@@ -15,8 +15,8 @@ from unittest import mock
 from uuid import uuid4
 
 from agent_factory.execution_bindings import EnvironmentLimits
-from agent_factory.openresearch import BinaryPin, OpenResearchError, REVISION, VERSION
-from agent_factory.orx_local import SOURCE_ARCHIVE_SHA256, TaskLocalORXProvider, TOY_FILES
+from agent_factory_research.openresearch import BinaryPin, OpenResearchError, REVISION, VERSION
+from agent_factory_research.orx_local import SOURCE_ARCHIVE_SHA256, TaskLocalORXProvider, TOY_FILES
 
 
 @unittest.skipUnless(os.name == "nt" and os.getenv("FACTORY_ORX_BINARY")
@@ -215,7 +215,7 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OpenResearchError):
             self.adapter(environment=EnvironmentLimits(process_limit=4))
         adapter = self.adapter()
-        with mock.patch("agent_factory.orx_local.SOURCE_ARCHIVE_SHA256", "0" * 64):
+        with mock.patch("agent_factory_research.orx_local.SOURCE_ARCHIVE_SHA256", "0" * 64):
             with self.assertRaises(OpenResearchError) as denied:
                 await adapter.ensure_experiment()
         self.assertEqual(denied.exception.code, "SOURCE_CHANGED")
@@ -230,14 +230,15 @@ class ActualLocalORXTests(unittest.IsolatedAsyncioTestCase):
             "git": str(self.provider.git_binary), "python": str(self.provider.python_binary),
             "scope": str(self.scope), "taskId": self.task_id, "ownerId": self.owner,
             "binarySha256": self.pin.sha256, "marker": str(marker),
-            "platform": str(Path(__file__).resolve().parents[1]), "processLimit": self.process_limit,
+            "platform": str(Path(__file__).resolve().parents[1]),
+            "research": str(Path(__file__).resolve().parents[2] / "apps/research"), "processLimit": self.process_limit,
         }
         worker.write_text("\n".join([
             "import sys,os,json,asyncio", "from pathlib import Path",
             "p=" + repr(parameters),
-            "sys.path.insert(0,p['platform'])",
-            "from agent_factory.orx_local import TaskLocalORXProvider",
-            "from agent_factory.openresearch import BinaryPin,REVISION,VERSION",
+            "sys.path[:0]=[p['platform'],p['research']]",
+            "from agent_factory_research.orx_local import TaskLocalORXProvider",
+            "from agent_factory_research.openresearch import BinaryPin,REVISION,VERSION",
             "async def main():",
             " provider=TaskLocalORXProvider(binary=Path(p['binary']),source_archive=Path(p['sourceArchive']),git_binary=Path(p['git']),python_binary=Path(p['python']))",
             " adapter=provider.create_experiment_adapter(owner_id=p['ownerId'],task_id=p['taskId'],scope=Path(p['scope']),authorize=lambda _:True,pin=BinaryPin(REVISION,VERSION,p['binarySha256']),max_output_bytes=65536,command_timeout=10,environment={'timeoutSeconds':30,'outputBytes':65536,'memoryBytes':536870912,'maxProcesses':p['processLimit'],'cpuPercent':25},scenario='long_running')",

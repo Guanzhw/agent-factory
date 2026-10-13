@@ -25,8 +25,8 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory.remote_handoff import (
     HandoffCancellationRequested, HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
@@ -342,7 +342,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                             state["auth"].authorization.unassign(owner, "factory-user")
                         return original(ctx, name)
                     try:
-                        with mock.patch("agent_factory.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
+                        with mock.patch("agent_factory_research.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
                             with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
                                 self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
                                 self.wait_native(receipt, {"completed", "failed"})

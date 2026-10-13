@@ -27,6 +27,35 @@ shared code, arbitrary environments, remote placement or increased budgets.
 Managed/shared work retains its configured policy. The immutable plan is an
 internal admission record; ordinary applications need not implement a plan UI.
 
+## Source ownership and deployment assembly
+
+The interface implementation remains in `platform/agent_factory/`. Research
+business services, configuration, materials and executor adapters live in
+`apps/research/agent_factory_research/`; its pages and API state live in
+`apps/research/web/`, with application tests under `apps/research/tests/`.
+OpenResearch and the existing AutoResearch paths are internal parts of one
+research application, with their native execution and continuation contracts.
+
+The Python deployment entry is
+[`agent_factory_server.main`](../deployment/agent_factory_server/main.py); it
+explicitly supplies reviewed registrations and calls the research assembly.
+[`web/composition.tsx`](../web/composition.tsx) supplies application pages and
+navigation to the shared frontend shell. This is static assembly, without
+runtime package discovery. The core `agent_factory.main.create_app` does not
+install research routes or seed its materials by default. Purely declarative
+applications can still combine approved existing tools without changing core
+source or adding a Python application package.
+
+The standalone core distribution is defined in
+[`platform/pyproject.toml`](../platform/pyproject.toml). The root distribution
+includes the core, research application and deployment entry for the existing
+research deployment. Application-specific settings and service objects belong
+to their application package. Assembly functions and constructor wiring are
+operator implementation details; they do not expand the public interface v1
+contract or make `Store` a public application API. See the
+[development guide](APPLICATION_DEVELOPMENT.md#源码归属与静态装配) for build,
+startup and separate core/application test discovery commands.
+
 ## Application code
 
 The public Python types are in `agent_factory.application_interface`.

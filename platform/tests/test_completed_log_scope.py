@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_factory.openresearch import OpenResearchError
-from agent_factory.orx_local import TaskLocalORXAdapter
+from agent_factory_research.openresearch import OpenResearchError
+from agent_factory_research.orx_local import TaskLocalORXAdapter
 
 
 @unittest.skipUnless(os.name == "posix", "Requires POSIX directory descriptors")
@@ -48,7 +48,7 @@ class CompletedLogScopeTests(unittest.TestCase):
                             replaced = True
                         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-                    with patch("agent_factory.orx_local.os.open", side_effect=racing_open):
+                    with patch("agent_factory_research.orx_local.os.open", side_effect=racing_open):
                         if before_leaf:
                             result = TaskLocalORXAdapter.read_completed_logs(adapter)
                             self.assertEqual(result.stdout, "original")
@@ -73,7 +73,7 @@ class CompletedLogScopeTests(unittest.TestCase):
                     replaced = True
                 return real_open(path, flags, mode, dir_fd=dir_fd)
 
-            with patch("agent_factory.orx_local.os.open", side_effect=racing_open):
+            with patch("agent_factory_research.orx_local.os.open", side_effect=racing_open):
                 with self.assertRaises(OpenResearchError) as raised:
                     TaskLocalORXAdapter.read_completed_logs(adapter)
             self.assertTrue(replaced)

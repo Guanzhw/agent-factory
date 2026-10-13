@@ -17,7 +17,7 @@ from uuid import uuid4
 import httpx
 from agno.models.message import Message
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, REGISTRATION_REF, GoDevelopmentHandle,
     application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS

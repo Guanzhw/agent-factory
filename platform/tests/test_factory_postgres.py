@@ -13,8 +13,8 @@ import unittest
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated PostgreSQL")

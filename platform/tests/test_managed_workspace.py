@@ -8,10 +8,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
-from agent_factory.managed_orx_attachment import ManagedORXSessionProvider
-from agent_factory.openresearch_workspace import OpenResearchWorkspace, WorkspaceManagedPrepare
+from agent_factory_research.managed_orx_attachment import ManagedORXSessionProvider
+from agent_factory_research.openresearch_workspace import OpenResearchWorkspace, WorkspaceManagedPrepare
 from agent_factory.store import digest
-from agent_factory.managed_orx_profile import exact_input_schema
+from agent_factory_research.managed_orx_profile import exact_input_schema
 
 
 class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):

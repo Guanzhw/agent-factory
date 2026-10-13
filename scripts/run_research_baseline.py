@@ -1,7 +1,7 @@
 """Task-local preparation -> baseline -> independent evaluation, existing native APIs.
 
 Run inside the pinned research venv with PYTHONDONTWRITEBYTECODE=1. Factory must
-be installed as the actual site-packages/agent_factory source package. Configuration,
+be installed as actual agent_factory and agent_factory_research packages. Configuration,
 progress, interpreter contracts and receipts contain private paths: KEEP LOCAL.
 No dependency install, database provisioning, remote endpoint or model payment.
 Existing workspace means inspect-only; never reset or automatically replay a stage.
@@ -345,7 +345,7 @@ def preparation_phase(bundle, client, request_id, progress):
                 pass
         if validated_original:
             assert task_id is not None
-            from agent_factory.research_bootstrap_controller import cleanup_original
+            from agent_factory_research.research_bootstrap_controller import cleanup_original
             assert client.portal is not None
             cleanup = cleanup_original(state, 'alice', task_id, runtime=store.process_runtime,
                                        call_async=client.portal.call)
@@ -370,7 +370,7 @@ def launch_environment(config, program, cache):
 
 
 def environment_pins(config, evidence, inventory):
-    from agent_factory.research_staging import RootIdentity, FilePin, InputPin
+    from agent_factory_research.research_staging import RootIdentity, FilePin, InputPin
     # The observer binds uv.lock to the ORIGINAL project root and inode. Never
     # copy it into a different evidence root to satisfy private-file checks.
     project = Path(config['projectRoot'])
@@ -384,19 +384,21 @@ def environment_pins(config, evidence, inventory):
 
 def runtime_identity(config):
     import agent_factory
+    import agent_factory_research
     require(sys.dont_write_bytecode and Path(sys.prefix) == Path(config['venvRoot'])
             and Path(sys.executable).resolve() == Path(config['interpreterTarget']))
     site = Path(config['venvRoot']) / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
-    require(Path(agent_factory.__file__).parent == site / 'agent_factory')
+    require(Path(agent_factory.__file__).parent == site / 'agent_factory'
+            and Path(agent_factory_research.__file__).parent == site / 'agent_factory_research')
 
 
 def database_report(config):
     """Existing authorized DB, read-only transaction; no Store or app construction."""
     from bootstrap_research_control import read_database_url
     from sqlalchemy import create_engine
-    from agent_factory.config import Settings
-    from agent_factory.research_bootstrap_policy import development_settings
-    from agent_factory.research_bootstrap_database_preflight import database_preflight
+    from agent_factory_research.config import ResearchSettings as Settings
+    from agent_factory_research.research_bootstrap_policy import development_settings
+    from agent_factory_research.research_bootstrap_database_preflight import database_preflight
     runtime_identity(config)
     url = read_database_url(config['databaseUrlFile'])
     settings = development_settings(Settings(db_url=url, workspace=Path(config['workspace']),
@@ -411,7 +413,7 @@ def database_report(config):
 def assemble_only(config, workspace, progress):
     """One original application construction, without entering any lifespan."""
     from bootstrap_research_control import read_database_url
-    from agent_factory.research_bootstrap_assembly import prepare_application
+    from agent_factory_research.research_bootstrap_assembly import prepare_application
     progress.at('EXECUTION_IDENTITY')
     runtime_identity(config)
     progress.at('DATABASE_CONFIG')
@@ -464,16 +466,16 @@ def execute(config, workspace, progress):
     progress.at('EXECUTION_IMPORTS')
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
-    from agent_factory.research_bootstrap_assembly import prepare_application, research_application
-    from agent_factory.research_bootstrap_inventory import build_inventory
-    from agent_factory.research_bootstrap_inputs import capture_bootstrap_inputs
-    from agent_factory.research_interpreter import capture_interpreter_contract
-    from agent_factory.research_profile import SOURCE_SHA256, verify_upstream_source
+    from agent_factory_research.research_bootstrap_assembly import prepare_application, research_application
+    from agent_factory_research.research_bootstrap_inventory import build_inventory
+    from agent_factory_research.research_bootstrap_inputs import capture_bootstrap_inputs
+    from agent_factory.interpreter_identity import capture_interpreter_contract
+    from agent_factory_research.research_profile import SOURCE_SHA256, verify_upstream_source
     from agent_factory.gpu_custody import GpuBinding
-    from agent_factory.research_device_observer import NvidiaSmiObserver
+    from agent_factory_research.research_device_observer import NvidiaSmiObserver
     from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
-    from agent_factory.research_runtime_profile import publish_research_application
-    from agent_factory.research_bootstrap_controller import ResearchBootstrapController
+    from agent_factory_research.research_runtime_profile import publish_research_application
+    from agent_factory_research.research_bootstrap_controller import ResearchBootstrapController
     progress.at('EXECUTION_IDENTITY')
     runtime_identity(config)
     progress.at('DATABASE_CONFIG')
@@ -563,6 +565,7 @@ def execute(config, workspace, progress):
                     assert client.portal is not None
                     portal = client.portal
                     def imported(owner, task, lease):
+                        from agent_factory_research.services import services_for
                         if stage == 'training':
                             artifact = bundle['checkpoints'].import_completed(owner, lease['id'])
                             _, checked = bundle['checkpoints'].identity(task['id'], artifact['id'], limits.file_size_bytes)
@@ -571,7 +574,7 @@ def execute(config, workspace, progress):
                                 ('nativeRunId', 'nativeRunId'), ('planId', 'planId'), ('leaseId', 'id'), ('providerJobId', 'providerJobId'))},
                                 'planFingerprint': plan['fingerprint'], 'variantSha256': lease['executionGuard']['variantSha256'],
                                 'checkpoint': {'artifactId': artifact['id'], **checked}}
-                        return portal.call(bundle['state']['store'].research_evaluation.verify,
+                        return portal.call(services_for(bundle['state']['store']).research_evaluation.verify,
                             owner, bundle['pending']['evaluationContract'])
                     progress.at(stage.upper() + '_RUN')
                     result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(
@@ -606,7 +609,7 @@ def execute(config, workspace, progress):
 
 def preparation_preflight(raw_config):
     """Read-only local checks. Never opens the DSN or constructs an application."""
-    from agent_factory.research_config_preflight import config_preflight
+    from agent_factory_research.research_config_preflight import config_preflight
     parsed = config_preflight(raw_config)
     checks = list(parsed['checks'])
     config = parsed['config'] or {}
@@ -629,7 +632,7 @@ def preparation_preflight(raw_config):
         else:
             add('TOKENIZER_FILE', 'PASS', 'VALID')
             try:
-                from agent_factory.research_preparation_preflight import tokenizer_preflight
+                from agent_factory_research.research_preparation_preflight import tokenizer_preflight
                 checks.extend(tokenizer_preflight(raw)['checks'])
             except Exception as error:
                 add('TOKENIZER_VALIDATOR', 'BLOCKED', exception_code(error))
@@ -646,12 +649,12 @@ def preparation_preflight(raw_config):
         add('PREPARATION_PROCESS_SPEC', 'NOT_CHECKED', 'DEPENDENCY_BLOCKED')
     check('PLATFORM', lambda: require(sys.platform == 'linux'))
     try:
-        from agent_factory.research_preparation_driver import _FILES
-        import agent_factory
+        from agent_factory_research.research_preparation_driver import _FILES
+        import agent_factory_research
     except Exception as error:
         add('RUNTIME_SOURCE_CLOSURE', 'BLOCKED', exception_code(error))
     else:
-        package = Path(agent_factory.__file__).parent
+        package = Path(agent_factory_research.__file__).parent
         for name in _FILES:
             # Fixed source names only. Bounded, nonblocking, nofollow file read.
             check('SOURCE_' + name.replace('.py', '').upper(),

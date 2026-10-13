@@ -25,12 +25,12 @@ _ERROR = 'RESEARCH_UV_CONTRACT_CAPTURE_FAILED'
 def capture_interpreter_contract(**value):
     # Import only inside main's protected call path: a missing local install
     # must not print a traceback containing operator paths.
-    from agent_factory.research_interpreter import capture_interpreter_contract as capture
+    from agent_factory.interpreter_identity import capture_interpreter_contract as capture
     return capture(**value)
 
 
 def contract_limit(profile=None):
-    from agent_factory.research_interpreter import inventory_bounds
+    from agent_factory.interpreter_identity import inventory_bounds
     return inventory_bounds(profile)[4]
 
 def _require(value):

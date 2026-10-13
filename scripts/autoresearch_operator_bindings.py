@@ -9,8 +9,8 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
-from agent_factory.research_manifest import validate_manifest
-from agent_factory.research_local_driver import ScientificRuntimePin
+from agent_factory_research.research_manifest import validate_manifest
+from agent_factory_research.research_local_driver import ScientificRuntimePin
 
 ERROR = 'AUTORESEARCH_OPERATOR_PROJECT_INVALID'
 COMMON = {'id', 'name', 'ownerId', 'defaultGoal', 'manifest', 'microbatch', 'limits',
@@ -79,8 +79,8 @@ def project_descriptor(config):
         identifier(project['applicationRef']['id']); sha(project['applicationRef']['sha256'])
         require(type(project['applicationRef']['version']) is int and project['applicationRef']['version'] > 0)
     if config['role'] == 'controller':
-        from agent_factory.research_staging import FilePin
-        from agent_factory.research_local_driver import _RUNTIME_FILES
+        from agent_factory_research.research_staging import FilePin
+        from agent_factory_research.research_local_driver import _RUNTIME_FILES
         require(type(project['runtimeFilePins']) is list and len(project['runtimeFilePins']) == len(_RUNTIME_FILES))
         for row in project['runtimeFilePins']:
             fields(row, {'basename', 'sha256', 'size_bytes'})
@@ -131,7 +131,7 @@ def _receiver_parent_catalogue_registrations():
     registered scientific phase IDs. Every parent factory rejects construction.
     """
     from dataclasses import replace
-    from agent_factory.autoresearch_profile import registrations
+    from agent_factory_research.autoresearch_profile import registrations
     def deny_parent(_context):
         raise ValueError('AUTORESEARCH_RECEIVER_PARENT_EXECUTION_DENIED')
     return [replace(entry, factory=deny_parent) for entry in registrations(external_session=True)]
@@ -140,8 +140,8 @@ def _receiver_parent_catalogue_registrations():
 def describe_settings(config, database_url):
     """Settings only: constructors here perform no file/DB/provider operations."""
     from dataclasses import replace
-    from agent_factory.autoresearch import ResearchPreset
-    from agent_factory import remote_scientific_profile
+    from agent_factory_research.autoresearch import ResearchPreset
+    from agent_factory_research import remote_scientific_profile
     from bootstrap_autoresearch import settings as base_settings
     project = project_descriptor(config)
     preset = ResearchPreset(id=project['id'], name=project['name'], owner_id=project['ownerId'],
@@ -150,13 +150,13 @@ def describe_settings(config, database_url):
         application_ref=project['applicationRef'] or {}, review_owner=config['publication']['reviewer'])
     settings = base_settings(db_url=database_url, workspace=Path(config['workspace']), preset=preset)
     if config['role'] == 'controller':
-        from agent_factory.autoresearch_profile import registrations, pricing_registration
+        from agent_factory_research.autoresearch_profile import registrations, pricing_registration
         settings = replace(settings,
             runtime_adapters=registrations(external_session=True) + remote_scientific_profile.registrations(project['id']),
             usage_pricing=(pricing_registration(output_tokens=project['limits']['modelOutputTokens']),
                 *remote_scientific_profile.pricing_registrations()))
     if config['role'] == 'receiver':
-        from agent_factory.autoresearch_profile import pricing_registration
+        from agent_factory_research.autoresearch_profile import pricing_registration
         settings = replace(settings, autoresearch_presets={},
             runtime_adapters=_receiver_parent_catalogue_registrations() + remote_scientific_profile.registrations(project['id']),
             usage_pricing=(pricing_registration(
@@ -165,7 +165,7 @@ def describe_settings(config, database_url):
 
 
 def _upstream(project):
-    from agent_factory.research_profile import SOURCE_SHA256, verify_upstream_source
+    from agent_factory_research.research_profile import SOURCE_SHA256, verify_upstream_source
     from run_research_baseline import read_private
     values = {name: read_private(Path(project['upstreamRoot']) / name, 8 * 1024**2, private=False)
         for name in SOURCE_SHA256}
@@ -174,8 +174,8 @@ def _upstream(project):
 
 
 def _variant(project, candidate):
-    from agent_factory.research_local_driver import derive_declared_local_identities
-    from agent_factory.research_staging import FilePin
+    from agent_factory_research.research_local_driver import derive_declared_local_identities
+    from agent_factory_research.research_staging import FilePin
     files = _upstream(project)
     derived = derive_declared_local_identities(files, {**files, 'train.py': candidate['trainPy'].encode()},
         runtime_file_pins=tuple(FilePin(**row) for row in project['runtimeFilePins']),
@@ -190,10 +190,10 @@ def _variant(project, candidate):
 
 def _controller(config, settings, resolve):
     from dataclasses import replace
-    from agent_factory.autoresearch_remote_children import AutoResearchRemoteChildren
-    from agent_factory.autoresearch_runtime import AutoResearchRuntime
+    from agent_factory_research.autoresearch_remote_children import AutoResearchRemoteChildren
+    from agent_factory_research.autoresearch_runtime import AutoResearchRuntime
     from agent_factory.remote_handoff import HandoffTarget
-    from agent_factory.remote_scientific_origin import RemoteScientificOrigin
+    from agent_factory_research.remote_scientific_origin import RemoteScientificOrigin
     from agent_factory.store import digest
     from autoresearch_scientific_preset import OperatorScientificConfig, make_preset
     from orx_research_runtime import Runtime, RuntimeConfig, BinaryPin, private_directory
@@ -260,9 +260,10 @@ def _state(app):
 
 def prepare_publication(app, publication):
     """Use actual distinct-manager governance; never approve a task here."""
-    from agent_factory import remote_scientific_profile as profile
+    from agent_factory_research.services import services_for
+    from agent_factory_research import remote_scientific_profile as profile
     from agent_factory.store import digest
-    from agent_factory.autoresearch_profile import material_drafts, application_definition
+    from agent_factory_research.autoresearch_profile import material_drafts, application_definition
     state = _state(app); config = app.operator_config; project = project_descriptor(config)
     author, reviewer = publication['author'], publication['reviewer']
     require(author != reviewer)
@@ -305,27 +306,27 @@ def prepare_publication(app, publication):
         preset = next(iter(state['settings'].autoresearch_presets.values()))
         approved = replace(preset, application_ref=ref)
         state['settings'].autoresearch_presets[approved.id] = approved
-        state['store'].autoresearch.presets[approved.id] = approved
+        services_for(state['store']).autoresearch.presets[approved.id] = approved
     return {'applicationRef': ref, 'applicationSnapshot': deepcopy(row)}
 
 
 def _receiver(config, settings, resolve, stack):
     from dataclasses import replace
     from sqlalchemy import create_engine
-    from agent_factory.config import Settings
+    from agent_factory_research.config import ResearchSettings as Settings
     from agent_factory.gpu_custody import GpuBinding
     from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
     from agent_factory.process_runtime_profile import process_settings
     from agent_factory.remote_authority import OriginAuthorityTransport
     from agent_factory.remote_handoff import TrustedOrigin
-    from agent_factory.remote_scientific_receiver import RemoteScientificProject, RemoteScientificReceiver
-    from agent_factory.research_bootstrap_policy import development_settings
-    from agent_factory.research_bootstrap_database_preflight import database_preflight
-    from agent_factory.research_checkpoint_store import ResearchCheckpointStore
-    from agent_factory.research_device_observer import NvidiaSmiObserver
-    from agent_factory.research_manifest import manifest_fingerprint
-    from agent_factory.research_preparation_store import ResearchPreparationStore
-    from agent_factory.research_staging import FilePin, InputPin, RootIdentity
+    from agent_factory_research.remote_scientific_receiver import RemoteScientificProject, RemoteScientificReceiver
+    from agent_factory_research.research_bootstrap_policy import development_settings
+    from agent_factory_research.research_bootstrap_database_preflight import database_preflight
+    from agent_factory_research.research_checkpoint_store import ResearchCheckpointStore
+    from agent_factory_research.research_device_observer import NvidiaSmiObserver
+    from agent_factory_research.research_manifest import manifest_fingerprint
+    from agent_factory_research.research_preparation_store import ResearchPreparationStore
+    from agent_factory_research.research_staging import FilePin, InputPin, RootIdentity
     from autoresearch_baseline_context import BaselineServiceFactory
     from autoresearch_retained_baseline import RetainedBaselineReader
     from autoresearch_scientific_assembly import ScientificPhaseAssembler, ScientificStage
@@ -435,7 +436,7 @@ class OperatorApplication:
 
 def construct_application(config, settings, resolve):
     from contextlib import ExitStack
-    from agent_factory.main import create_app
+    from agent_factory_server.main import create_app
     stack = ExitStack()
     try:
         configured = _controller(config, settings, resolve) if config['role'] == 'controller' else _receiver(config, settings, resolve, stack)

@@ -18,10 +18,11 @@ from uuid import uuid4
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'platform'))
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
+    for part in ('platform', 'apps/research', 'deployment')]
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_remote_provider import SecretLease
-from agent_factory.runtime_packages.openresearch_v1.entry import environment
+from agent_factory_research.runtime_packages.openresearch_v1.entry import environment
 
 PIN = '77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa'
 
@@ -39,7 +40,7 @@ def main():
     if not args.image.startswith('sha256:') or len(args.image) != 71:
         raise ValueError('NATIVE_IMAGE_PIN_REQUIRED')
     root = Path(__file__).resolve().parents[1]
-    package = root / 'platform/agent_factory/runtime_packages/openresearch_v1'
+    package = root / 'apps/research/agent_factory_research/runtime_packages/openresearch_v1'
     results = []
     for outcome in ((args.case,) if args.case else ('disconnect', 'provider_502', 'downstream_response_lost', 'normal_two_turns')):
         with TemporaryDirectory(prefix='af-native-retry-') as folder:

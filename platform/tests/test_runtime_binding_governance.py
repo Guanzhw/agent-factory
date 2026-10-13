@@ -15,8 +15,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.material_governance import (
     GovernanceConfig, LICENSES, MaterialGovernance, RuntimeBinding, normalize_runtime_binding,
 )
@@ -50,7 +50,7 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
         old_body = {key: value for key, value in asdict(legacy).items() if key != "tool_contract"}
         with self.store.engine.begin() as connection:
             connection.execute(self.service.configs.update().values(body=old_body))
-        restarted = MaterialGovernance(self.store, self.fixture.auth)
+        restarted = MaterialGovernance(self.store, self.fixture.auth, seed_materials=governance_fixture.SEEDS)
         self.assertEqual(restarted.current()["fingerprint"], expected)
         self.store.seed()
         before = [self.store.raw({"id": seed[0], "version": 1})["body"] for seed in governance_fixture.SEEDS]

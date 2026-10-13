@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 
-from agent_factory.inference_wait import CONTROL_NAME, validate_requirement
+from agent_factory_research.inference_wait import CONTROL_NAME, validate_requirement
 
 
 class InferenceControlValidationTests(unittest.TestCase):
@@ -15,8 +15,8 @@ class InferenceControlValidationTests(unittest.TestCase):
         tool = {'tool_name': CONTROL_NAME, 'tool_call_id': wait['controlId'],
                 'tool_args': {}, 'external_execution_required': True}
         for error in (PermissionError('private diagnostic'), RunCancelledException('private diagnostic')):
-            with self.subTest(error=type(error).__name__), patch('agent_factory.inference_wait.read', return_value=wait), \
-                    patch('agent_factory.inference_wait.observe', side_effect=error):
+            with self.subTest(error=type(error).__name__), patch('agent_factory_research.inference_wait.read', return_value=wait), \
+                    patch('agent_factory_research.inference_wait.observe', side_effect=error):
                 with self.assertRaises(HTTPException) as caught:
                     validate_requirement(Mock(), task, tool)
                 self.assertEqual(caught.exception.status_code, 409)
@@ -29,8 +29,8 @@ class InferenceControlValidationTests(unittest.TestCase):
         tool = {'tool_name': CONTROL_NAME, 'tool_call_id': wait['controlId'],
                 'tool_args': {}, 'external_execution_required': True}
         denial = HTTPException(429, 'USAGE_BUDGET_EXCEEDED')
-        with patch('agent_factory.inference_wait.read', return_value=wait), \
-                patch('agent_factory.inference_wait.observe', side_effect=denial):
+        with patch('agent_factory_research.inference_wait.read', return_value=wait), \
+                patch('agent_factory_research.inference_wait.observe', side_effect=denial):
             with self.assertRaises(HTTPException) as caught:
                 validate_requirement(Mock(), task, tool)
         self.assertIs(caught.exception, denial)

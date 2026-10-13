@@ -11,7 +11,8 @@ def main():
         print('WORKFLOW_POSTGRES_REQUIRED', file=sys.stderr)
         return 1
     root = Path(__file__).resolve().parents[1]
-    sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
+    sys.path[:0] = [str(root / path) for path in
+        ('platform', 'apps/research', 'deployment', 'platform/tests', 'apps/research/tests/python')]
     suite = unittest.TestSuite(unittest.defaultTestLoader.discover(str(root / 'platform/tests'), pattern=pattern)
         for pattern in ('test_native_workflow_reuse_postgres.py', 'test_native_workflow_factory_postgres.py', 'test_workflow_custody_postgres.py'))
     expected = suite.countTestCases()

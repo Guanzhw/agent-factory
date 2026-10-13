@@ -54,17 +54,12 @@ class DelegatingModel(Model):
         def current():
             local_current()
             latest = store.resolve_run(context)
-            from .go_development import is_go_plan
-            if is_go_plan(latest) and store.has_failures(context.session_id):
-                raise InputCheckError("GO_TASK_STOPPED: prior development failure denies replay")
+            self._check_selected_plan(latest, context)
             store.require_plan_execution(context.user_id, latest, run_context=context)
             self.bindings.recheck(latest, context)
 
         current()
-        from .inference_wait import read as read_wait, observe as check_wait
-        waiting = read_wait(store, task["id"]) if callable(getattr(store, "sql", None)) else None
-        if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
-            check_wait(store, task, waiting)
+        self._check_task_wait(task)
         binding = self.bindings.resolve(plan, context)["model"]
         if not isinstance(binding, BindingContext):
             raise InputCheckError("Trusted model binding is required")
@@ -78,7 +73,8 @@ class DelegatingModel(Model):
         # Only this fresh per-response adapter is wrapped. Shared Agent/model
         # state is unchanged, and every provider retry/tool-loop call rechecks.
         self._guard_provider_calls(model, current, local_current=local_current,
-            ledger=ledger_for_plan(store, plan), plan=plan, context=context)
+            ledger=ledger_for_plan(store, plan), plan=plan, context=context,
+            on_recovered=lambda: self._model_recovered(context))
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -94,7 +90,7 @@ class DelegatingModel(Model):
         return self._complete_selection(prepared)
 
     @staticmethod
-    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None):
+    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, on_recovered=None):
         invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
 
         def reserve(args, kwargs, *, streaming=False):
@@ -107,8 +103,8 @@ class DelegatingModel(Model):
                 ledger.finish_attempt(identity, ledger.evidence_for(plan, value))
 
         def recovered():
-            if ledger is not None and context is not None:
-                ledger.store.sql("UPDATE af_inference_waits SET state='RECOVERED' WHERE task_id=:task AND state='RESUMING'", task=context.session_id)
+            if on_recovered is not None:
+                on_recovered()
 
         def guarded(*args, **kwargs):
             identity = reserve(args, kwargs)
@@ -255,61 +251,22 @@ class DelegatingModel(Model):
             yield result
 
     async def _apause(self, arguments, kwargs, error, *, streaming=False):
-        from .inference_wait import prepare_pause, publish_pause
-        response = kwargs.get("run_response")
-        if response is None and len(arguments) > (6 if streaming else 5):
-            response = arguments[6 if streaming else 5]
-        messages = kwargs.get("messages", arguments[0] if arguments else None)
-        if not isinstance(response, RunOutput) or not isinstance(messages, list):
-            return None
-        if await asyncio.to_thread(self._stop_development_replay, response):
-            return None
-        body = await asyncio.to_thread(prepare_pause, self.bindings.store, response, error)
-        return None if body is None else publish_pause(self.bindings.store, response, messages, body, streaming=streaming)
+        return None
 
     def _pause(self, arguments, kwargs, error, *, streaming=False):
-        from .inference_wait import pause
-        response = kwargs.get("run_response")
-        if response is None and len(arguments) > (6 if streaming else 5):
-            response = arguments[6 if streaming else 5]
-        messages = kwargs.get("messages", arguments[0] if arguments else None)
-        if not isinstance(response, RunOutput) or not isinstance(messages, list):
-            return None
-        if self._stop_development_replay(response):
-            return None
-        return pause(self.bindings.store, response, messages, error, streaming=streaming)
-
-    def _stop_development_replay(self, response):
-        """Persist final provider failure before the native queue can retry.
-
-        Model-level 503 retries have already spent their explicit attempt budget.
-        Queue restarts must not turn quota/unknown usage or an exhausted budget
-        into a fresh model retry allowance. Existing protected failures provide
-        the durable stop; no queue implementation or shared retry policy changes.
-        """
-        if response.model_provider != "opencode-go-development":
-            return False
-        from .go_development import is_go_plan
-        store = self.bindings.store
-        task = store.task(response.session_id, response.user_id)
-        if task["run_id"] != response.run_id:
-            raise InputCheckError("Native failure identity differs from task binding")
-        plan = store.plan(task["plan_id"], response.user_id)
-        if not is_go_plan(plan):
-            return False
-        if not store.has_failures(task["id"]):
-            store.event(task["id"], "protected_denied", "Development provider failure stops task replay",
-                        {"code": "GO_TASK_STOPPED", "createsExecution": False})
-        return True
+        return None
 
     def _recovered(self, arguments, kwargs, *, streaming=False):
-        if not callable(getattr(self.bindings.store, "sql", None)):
-            return
-        response = kwargs.get("run_response")
-        if response is None and len(arguments) > (6 if streaming else 5):
-            response = arguments[6 if streaming else 5]
-        if isinstance(response, RunOutput):
-            self.bindings.store.sql("UPDATE af_inference_waits SET state='RECOVERED' WHERE task_id=:task AND state='RESUMING'", task=response.session_id)
+        """Optional adapter acknowledgement after the native response completes."""
+
+    def _check_selected_plan(self, plan, context):
+        """Application checks are installed by explicit trusted assembly."""
+
+    def _check_task_wait(self, task):
+        """The core does not invent a recovery policy for provider failures."""
+
+    def _model_recovered(self, context):
+        """Optional existing-wait acknowledgement; never dispatches work."""
 
     def invoke(self, *args, **kwargs):
         raise InputCheckError("Use native response dispatch with its trusted run identity")

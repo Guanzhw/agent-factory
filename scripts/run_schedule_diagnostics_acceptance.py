@@ -37,10 +37,11 @@ class _Arguments(argparse.ArgumentParser):
 def run(database_url, output, evidence):
     # Import project/test acceptance helpers from Git, never a scratch directory.
     root = Path(__file__).resolve().parents[1]
-    sys.path[:0] = [str(root / 'platform'), str(root / 'platform' / 'tests')]
+    sys.path[:0] = [str(root / path) for path in
+        ('platform', 'apps/research', 'deployment', 'platform/tests', 'apps/research/tests/python')]
     from playwright.sync_api import sync_playwright
-    from agent_factory.config import Settings
-    from agent_factory.main import create_app
+    from agent_factory_research.config import ResearchSettings as Settings
+    from agent_factory_server.main import create_app
     from agent_factory.development_tls import temporary_development_tls
     from pg_fixture import IsolatedPostgres
     from accept_browser_auth import listener, serve

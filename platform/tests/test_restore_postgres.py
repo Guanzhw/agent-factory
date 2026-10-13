@@ -23,8 +23,8 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import EXECUTOR_ID
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
 
