@@ -7,6 +7,7 @@ import unittest
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from agent_factory_server.main import create_app
 from agent_factory_research.research_bootstrap_assembly import prepare_application, REVISION
 from agent_factory.process_runtime_profile import publish_process_application, TOOL_NAME
 import test_research_preparation_postgres as fixture
@@ -39,7 +40,7 @@ class BootstrapAssemblyPostgresTests(unittest.TestCase):
         custody = self.root / 'custody'; custody.mkdir(mode=0o700)
         info = program.stat()
         executable = Path(sys.executable).resolve()
-        bundle = prepare_application(db_url=self.database.url, workspace=self.root,
+        bundle = prepare_application(app_factory=create_app, db_url=self.database.url, workspace=self.root,
             program_root=program, program_identity={'device': info.st_dev, 'inode': info.st_ino},
             custody_root=custody, executable=str(executable),
             executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),

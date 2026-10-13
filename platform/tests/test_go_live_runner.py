@@ -7,6 +7,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
+from sqlalchemy import select
+
+from agent_factory.go_development import APPLICATION_ID, MODEL_ADAPTER_IDS
+from pg_fixture import IsolatedPostgres
+
 _RUNNER = Path(__file__).resolve().parents[2] / 'scripts' / 'run_go_live_validation.py'
 spec = importlib.util.spec_from_file_location('go_validation_runner', _RUNNER)
 assert spec is not None and spec.loader is not None
@@ -86,6 +92,57 @@ class GoLiveRunnerTests(unittest.TestCase):
                 campaign.inspect.assert_called_with(include_diagnostics=False)
                 self.assertNotIn('private', json.dumps(result))
                 self.assertEqual(json.loads((Path(directory) / 'evidence.json').read_text()), result)
+
+    @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
+    def test_member_publication_reaches_first_smoke_without_review_or_privilege_escalation(self):
+        class StopBeforeDispatch(Exception):
+            pass
+
+        states = []
+        original_create = runner.create_app
+
+        def capture_application(settings):
+            application = original_create(settings)
+            states.append(application.app.state.factory)
+            return application
+
+        with tempfile.TemporaryDirectory() as directory, \
+                IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \
+                patch.object(runner, "create_app", side_effect=capture_application), \
+                patch.object(runner, "credential", side_effect=AssertionError("No provider credential needed")) as credential, \
+                patch.object(runner, "GoDevelopmentModel", side_effect=StopBeforeDispatch) as model:
+            result = runner.run(self.arguments(directory, database_url=database.url))
+            self.assertEqual(result["status"], "stopped")
+            self.assertEqual(result["stoppedPhase"], runner.MODELS[0] + ":smoke")
+            self.assertEqual(result["diagnostic"]["errorType"], "StopBeforeDispatch")
+            self.assertEqual(model.call_count, 1)
+            self.assertEqual(model.call_args.kwargs["model_id"], runner.MODELS[0])
+            credential.assert_not_called()
+            state = states[0]
+            governance, applications, auth = state["material_governance"], state["applications"], state["auth"]
+            self.assertTrue(governance.member_publication())
+            for owner in ("alice", "bob"):
+                auth.require(owner, "run")
+                with self.assertRaises(HTTPException) as denied:
+                    auth.require(owner, "agent_os:admin")
+                self.assertEqual(denied.exception.status_code, 403)
+            store = state["store"]
+            # The runner has already disposed its engines; reopen only for local
+            # publication evidence and release that connection before DB cleanup.
+            try:
+                with store.engine.connect() as connection:
+                    self.assertEqual(list(connection.execute(select(governance.reviews))), [])
+                    self.assertEqual(list(connection.execute(select(applications.reviews))), [])
+                    materials = list(connection.execute(select(governance.versions).where(
+                        governance.versions.c.material_id.in_(["go-development-" + name for name in MODEL_ADAPTER_IDS]))).mappings())
+                    self.assertEqual(len(materials), len(MODEL_ADAPTER_IDS))
+                    self.assertTrue(all(row["author_id"] == "alice" and row["state"] == "published" for row in materials))
+                    application = connection.execute(select(applications.states).where(
+                        applications.states.c.id == APPLICATION_ID)).mappings().one()
+                    self.assertEqual((application["author_id"], application["state"]), ("alice", "published"))
+            finally:
+                store.engine.dispose()
+                store.native_db.db_engine.dispose()
 
     def test_started_journal_failure_prevents_factory_setup(self):
         with tempfile.TemporaryDirectory() as directory:

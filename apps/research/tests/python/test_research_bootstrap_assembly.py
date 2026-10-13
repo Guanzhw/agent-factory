@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 import sys
+import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
@@ -63,7 +64,7 @@ class BootstrapAssemblyTests(unittest.TestCase):
 
         self.addCleanup(patch.stopall)
         patch.object(assembly, 'Store', side_effect=store).start()
-        patch.object(assembly, 'create_app', side_effect=create_app).start()
+        self.app_factory = Mock(side_effect=create_app)
         self.prior = RemoteTarget('Controlled preparation stand-in', 'compute', frozenset({'alice'}),
             provider=cast(Any, SimpleNamespace()), synthetic_fixture=True)
         self.contract = self.interpreter.capture()
@@ -84,7 +85,7 @@ class BootstrapAssemblyTests(unittest.TestCase):
             str(program), tuple(sorted(environment.items())),
             (program.stat().st_dev, program.stat().st_ino), self.contract)
         prior_targets = previous['settings'].remote_targets if previous else {'preparation': self.prior}
-        return assembly.research_application(db_url='postgresql+psycopg://invalid/no-network',
+        return assembly.research_application(app_factory=self.app_factory, db_url='postgresql+psycopg://invalid/no-network',
             workspace=fixture.root / 'workspace', upstream_files={}, captured_inputs=self.captured,
             environment_pins=tuple(fixture.environment), launch_spec=spec,
             program_identity=driver_fixture.identity(program), cache_root=cache,
@@ -101,6 +102,7 @@ class BootstrapAssemblyTests(unittest.TestCase):
         train_record = evaluation_fixture.example_contract()['training']
         train_record['variantSha256'] = self.manifest['baselineSourceManifestSha256']
         evaluation = self.application(previous=training, training=train_record, training_store=training['checkpoints'])
+        self.assertEqual(self.app_factory.call_count, 2)
         for item in (training, evaluation):
             self.assertEqual(item['settings'].runtime_tool_contract, 'research-bootstrap-v1')
             self.assertEqual(item['settings'].policy_revision, assembly.REVISION)
@@ -176,6 +178,25 @@ class BootstrapAssemblyTests(unittest.TestCase):
         self.assertEqual(legacy.policy_revision, 'task-research-bootstrap-v1')
         self.assertEqual(legacy.material_policy_revision, 'task-research-bootstrap-v1')
         self.assertEqual(legacy.temporary_policy, 'admin-review')
+
+
+class BootstrapImportBoundaryTests(unittest.TestCase):
+    def test_application_assembly_imports_without_the_deployment_package(self):
+        root = Path(__file__).resolve().parents[4]
+        code = """
+import importlib.abc, sys
+class NoDeployment(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith('agent_factory_server'):
+            raise AssertionError('Application imported deployment: ' + fullname)
+sys.meta_path.insert(0, NoDeployment())
+sys.path[:0] = sys.argv[1:]
+from agent_factory_research import research_bootstrap_assembly
+assert not any(name.startswith('agent_factory_server') for name in sys.modules)
+"""
+        result = subprocess.run([sys.executable, '-I', '-c', code, str(root / 'platform'), str(root / 'apps/research')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':

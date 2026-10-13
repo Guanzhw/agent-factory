@@ -14,6 +14,8 @@ from agent_factory.execution_bindings import ExecutionBindings
 from agent_factory.go_legacy import APPLICATION_ID, MODEL_ADAPTER_IDS, is_go_plan
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.store import digest
+from agent_factory_research.model_compatibility import ResearchDelegatingModel
+from agent_factory_research.synthetic_runtime import ResearchExecutionBindings
 
 
 HEAVY_MODULES = {"go_development", "go_live", "go_project_campaign", "opencode_go"}
@@ -29,13 +31,13 @@ ORIGINAL_IMPORT = builtins.__import__
 
 
 class GoLegacyBoundaryTests(unittest.TestCase):
-    def fixture(self, adapter="owner-chat-completions-v1"):
+    def fixture(self, adapter="owner-chat-completions-v1", *, bindings_type=ResearchExecutionBindings):
         settings = SimpleNamespace(demo=False, fee_management_enabled=True, platform_paid_models_enabled=True)
         task = {"id": "synthetic-session", "owner_id": "alice", "run_id": "synthetic-run",
                 "plan_id": "synthetic-plan", "request_id": "synthetic-request", "cancel_requested": False}
         store = SimpleNamespace(task=Mock(return_value=task), cancellation_requested=Mock(return_value=False),
             require_plan_execution=Mock(), has_failures=Mock(return_value=False), event=Mock())
-        bindings = ExecutionBindings(settings, store)
+        bindings = bindings_type(settings, store)
         materials = []
         for kind, identifier in (("model", adapter), ("environment", "synthetic-environment-v1")):
             bindings.register(kind, identifier, "1", Mock(side_effect=AssertionError("No model construction")))
@@ -56,6 +58,7 @@ class GoLegacyBoundaryTests(unittest.TestCase):
             "from agent_factory import go_legacy, billing_mode, model_dispatch, execution_bindings",
             "blocked = " + repr(HEAVY_MODULES),
             "assert not [name for name in sys.modules if name.startswith('agent_factory.') and name.rsplit('.', 1)[-1] in blocked]",
+            "assert not [name for name in sys.modules if name == 'agent_factory_research' or name.startswith('agent_factory_research.')]",
         ])
         result = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -64,9 +67,25 @@ class GoLegacyBoundaryTests(unittest.TestCase):
         with patch("builtins.__import__", side_effect=forbid_campaign_imports):
             bindings, plan, response = self.fixture()
             self.assertEqual(bindings.recheck(plan), plan["executionBindings"])
+            selected = ResearchDelegatingModel(bindings)._prepare_selection((), {"run_response": response})
+            self.assertEqual(selected[-1].spec["adapterId"], "owner-chat-completions-v1")
+            self.assertFalse(ResearchDelegatingModel(bindings)._stop_development_replay(response))
+        bindings.store.has_failures.assert_not_called()
+        bindings.store.require_plan_execution.assert_called_once()
+
+    def test_core_ordinary_recheck_and_dispatch_do_not_import_research(self):
+        def forbid_research_and_campaigns(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "agent_factory_research" or name.startswith("agent_factory_research.") or name.rsplit(".", 1)[-1] in {
+                "inference_wait", "synthesis_runtime", "comparison_workflow",
+            }:
+                raise AssertionError("Core model path imported a research application")
+            return forbid_campaign_imports(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=forbid_research_and_campaigns):
+            bindings, plan, response = self.fixture(bindings_type=ExecutionBindings)
+            self.assertEqual(bindings.recheck(plan), plan["executionBindings"])
             selected = DelegatingModel(bindings)._prepare_selection((), {"run_response": response})
             self.assertEqual(selected[-1].spec["adapterId"], "owner-chat-completions-v1")
-            self.assertFalse(DelegatingModel(bindings)._stop_development_replay(response))
         bindings.store.has_failures.assert_not_called()
         bindings.store.require_plan_execution.assert_called_once()
 
@@ -87,7 +106,7 @@ class GoLegacyBoundaryTests(unittest.TestCase):
     def test_legacy_failure_still_denies_replay_without_campaign_dependency(self):
         bindings, plan, response = self.fixture(MODEL_ADAPTER_IDS["deepseek-flash"])
         response.model_provider = "opencode-go-development"
-        dispatcher = DelegatingModel(bindings)
+        dispatcher = ResearchDelegatingModel(bindings)
         with patch("builtins.__import__", side_effect=forbid_campaign_imports):
             self.assertTrue(dispatcher._stop_development_replay(response))
             bindings.store.event.assert_called_once()

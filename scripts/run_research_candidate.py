@@ -185,6 +185,7 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
     from agent_factory_research.research_bootstrap_assembly import prepare_application
+    from agent_factory_server.main import create_app
     from research_candidate_assembly import research_application
     from research_candidate_baseline import authorize_baseline
     from research_candidate_reopen import make_snapshot, make_preparation_snapshot
@@ -244,7 +245,7 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
             program_root=program, program_identity=identity(program), custody_root=prep_custody,
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=prep_manifest)))
-        prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
+        prep = retain(prepare_application(app_factory=create_app, db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
             program_identity=identity(program), custody_root=prep_custody,
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=prep_manifest))

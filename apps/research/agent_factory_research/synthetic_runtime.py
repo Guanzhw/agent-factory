@@ -1,6 +1,7 @@
 """Explicit synthetic research factories; never installed by the bare core."""
 from typing import Any
 from agent_factory.execution_bindings import BindingContext, EnvironmentLimits, ExecutionBindings, KnowledgeContext
+from agent_factory.go_legacy import is_go_plan
 from agent_factory.usage_ledger import PricingRevision
 from .bootstrap_catalog import SEEDS, LEGACY_DEMO
 
@@ -9,10 +10,11 @@ class ResearchExecutionBindings(ExecutionBindings):
         manifest = super().recheck(plan, context)
         from .synthesis_runtime import validate_plan_source
         from .comparison_workflow import validate_plan
-        from agent_factory.go_development import preflight_plan
         validate_plan_source(self.store, plan)
         validate_plan(self.store, plan)
-        preflight_plan(self.settings, plan, self.connections, context)
+        if is_go_plan(plan):
+            from agent_factory.go_development import preflight_plan
+            preflight_plan(self.settings, plan, self.connections, context)
         return manifest
 
 

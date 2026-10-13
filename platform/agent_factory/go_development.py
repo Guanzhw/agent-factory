@@ -201,20 +201,26 @@ def material_drafts(*, luna_output_revision="1") -> list[dict[str, Any]]:
         for model, adapter in MODEL_ADAPTER_IDS.items()]
 
 
-def publish_go_development_models(state: dict[str, Any], *, author: str, reviewer: str, luna_output_revision="1") -> list[dict[str, Any]]:
-    """Explicit operator publication through existing distinct-admin governance."""
-    if author == reviewer:
-        raise ValueError("A distinct model publication reviewer is required")
-    state["auth"].require(author, "components:write")
-    state["auth"].require(reviewer, "agent_os:admin")
+def publish_go_development_models(state: dict[str, Any], *, author: str, reviewer: str | None = None,
+                                  luna_output_revision="1") -> list[dict[str, Any]]:
+    """Publish exact model materials under the configured publication policy."""
     governance = state["material_governance"]
+    member_publication = governance.member_publication()
+    if not member_publication and (reviewer is None or author == reviewer):
+        raise ValueError("A distinct model publication reviewer is required")
+    state["auth"].require(author, "run" if member_publication else "components:write")
+    if not member_publication:
+        state["auth"].require(reviewer, "agent_os:admin")
     result = []
     for definition in material_drafts(luna_output_revision=luna_output_revision):
         identifier = definition["id"]
         publication_revision = PROFILE_REVISION if luna_output_revision == "1" else PROFILE_REVISION + ":output-2"
         material = governance.create_draft(author, definition, publication_revision + ":draft:" + identifier)
-        review = governance.request_publication(author, identifier, material["version"], publication_revision + ":review:" + identifier)
-        governance.decide_publication(reviewer, review["id"], True, publication_revision + ":approve:" + identifier)
+        if member_publication:
+            governance.publish(author, identifier, material["version"], publication_revision + ":publish:" + identifier)
+        else:
+            review = governance.request_publication(author, identifier, material["version"], publication_revision + ":review:" + identifier)
+            governance.decide_publication(reviewer, review["id"], True, publication_revision + ":approve:" + identifier)
         result.append(next(row for row in state["store"].materials(published_only=True)
                            if row["id"] == identifier and row["version"] == material["version"]))
     return result

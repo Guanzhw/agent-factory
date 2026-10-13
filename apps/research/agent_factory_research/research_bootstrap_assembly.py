@@ -13,7 +13,6 @@ from pathlib import Path
 
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.gpu_custody import GpuBinding
-from agent_factory_server.main import create_app
 from agent_factory.process_enforcement import ProcessLimits, ProcessSpec, ResearchProcessLimits, UvResearchProcessSpec
 from agent_factory.process_runtime_profile import process_settings
 from .research_checkpoint_store import ResearchCheckpointStore
@@ -39,10 +38,14 @@ def _require(value):
         raise ValueError('RESEARCH_BOOTSTRAP_ASSEMBLY_INVALID')
 
 
-def prepare_application(*, db_url, workspace, program_root, program_identity,
+def prepare_application(*, app_factory, db_url, workspace, program_root, program_identity,
                         custody_root, executable, executable_sha256, tokenizer_json,
                         preparation_manifest_sha256, owner='alice', diagnostics=None):
-    """Construct the original bounded preparation target; execute nothing."""
+    """Construct the bounded preparation target using the caller's static app factory.
+
+    The deployment chooses the installed application graph; construction executes
+    no process or model and never loads a deployment module from this app.
+    """
     workspace, program_root = Path(workspace), Path(program_root)
     pending = {}
     def at(stage):
@@ -72,7 +75,7 @@ def prepare_application(*, db_url, workspace, program_root, program_identity,
         settings = development_settings(process_settings(db_url=db_url, workspace=workspace,
             target_ref='preparation', remote_targets={'preparation': target}, owner=owner))
         at('PREPARATION_CREATE_APP')
-        app = create_app(settings, diagnostics=diagnostics) if diagnostics is not None else create_app(settings)
+        app = app_factory(settings, diagnostics=diagnostics) if diagnostics is not None else app_factory(settings)
         state = app.app.state.factory
         store = state['store']
         at('PREPARATION_STORE')
@@ -127,7 +130,7 @@ class _Evaluation:
         return {'checkpoint': checkpoint, 'evaluationContract': contract}
 
 
-def research_application(*, db_url, workspace, upstream_files, captured_inputs,
+def research_application(*, app_factory, db_url, workspace, upstream_files, captured_inputs,
         environment_pins, launch_spec, program_identity, cache_root, cache_identity,
         custody_root, limits, gpu_binding, device_observer, preparation,
         preparation_task_id, preparation_artifact_id, prior_targets, prior_adapters,
@@ -135,7 +138,8 @@ def research_application(*, db_url, workspace, upstream_files, captured_inputs,
         bounds_profile=None):
     """Wire a training or independent evaluator stage from captured original inputs.
 
-    prior registrations retain the exact preparation (and, for evaluation,
+    The deployment supplies app_factory explicitly. Prior registrations retain
+    the exact preparation (and, for evaluation,
     training) authority and provider fingerprints. Keep their provider stores
     alive until the complete controller has stopped and returned custody.
     """
@@ -194,7 +198,7 @@ def research_application(*, db_url, workspace, upstream_files, captured_inputs,
         settings = development_settings(replace(settings,
             runtime_adapters=[*prior_adapters, *settings.runtime_adapters],
             usage_pricing=(*prior_pricing, *settings.usage_pricing)))
-        app = create_app(settings)
+        app = app_factory(settings)
         state = app.app.state.factory
         checkpoints = ResearchCheckpointStore(state['store'], state['auth'],
             services_for(state['store']).research_runtime.resources, state['store'].storage)

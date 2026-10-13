@@ -47,10 +47,11 @@ class PreparationCliPreflightTests(unittest.TestCase):
             patches.enter_context(patch.object(sys, 'path', [str(fixture.SCRIPTS), *sys.path]))
             bootstrap = importlib.import_module('bootstrap_research_control')
             from agent_factory import store
+            from agent_factory_server import main as deployment
             from agent_factory_research import research_bootstrap_assembly, research_device_observer
             forbidden = []
             for module, name in ((bootstrap, 'read_database_url'), (bootstrap, '_workspace'),
-                (research_bootstrap_assembly, 'Store'), (research_bootstrap_assembly, 'create_app'),
+                (research_bootstrap_assembly, 'Store'), (deployment, 'create_app'),
                 (research_bootstrap_assembly, 'prepare_application'), (store, 'Store'), (store, 'create_engine'),
                 (research_device_observer, 'NvidiaSmiObserver')):
                 forbidden.append(patches.enter_context(patch.object(module, name,

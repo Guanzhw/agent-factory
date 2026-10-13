@@ -49,10 +49,10 @@ class PreparationConstructionTests(unittest.TestCase):
                 bootstrap, store = Mock(), Mock()
                 state = {'store': store, 'auth': Mock()}
                 app = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(factory=state)))
+                application_constructor = Mock(return_value=app)
                 with patch.object(assembly, 'Store', return_value=bootstrap) as store_constructor, \
-                     patch.object(assembly, 'create_app', return_value=app) as application_constructor, \
                      patch('subprocess.Popen', side_effect=AssertionError('Construction must not launch')):
-                    arguments: dict[str, Any] = dict(db_url='postgresql+psycopg://synthetic-unused/unused', workspace=workspace,
+                    arguments: dict[str, Any] = dict(app_factory=application_constructor, db_url='postgresql+psycopg://synthetic-unused/unused', workspace=workspace,
                         program_root=program, program_identity={'device': info.st_dev, 'inode': info.st_ino},
                         custody_root=custody, executable='/synthetic/not-executed-python', executable_sha256='a' * 64,
                         tokenizer_json=synthetic_tokenizer(total), preparation_manifest_sha256='b' * 64)
@@ -85,11 +85,11 @@ class PreparationConstructionTests(unittest.TestCase):
         diagnostics = runner.Diagnostics()
         bootstrap = Mock()
         bootstrap.engine.dispose.side_effect = RuntimeError('synthetic private cleanup detail')
+        create = Mock()
         with patch.object(assembly, 'Store', return_value=bootstrap), \
-             patch.object(assembly, 'PreparationDriver', side_effect=ValueError('synthetic private driver detail')), \
-             patch.object(assembly, 'create_app') as create:
+             patch.object(assembly, 'PreparationDriver', side_effect=ValueError('synthetic private driver detail')):
             try:
-                assembly.prepare_application(db_url='postgresql+psycopg://synthetic-unused/unused',
+                assembly.prepare_application(app_factory=create, db_url='postgresql+psycopg://synthetic-unused/unused',
                     workspace=Path('/synthetic'), program_root=Path('/synthetic/program'), program_identity={},
                     custody_root=Path('/synthetic/custody'), executable='/synthetic/python',
                     executable_sha256='a' * 64, tokenizer_json=b'{}', preparation_manifest_sha256='b' * 64,

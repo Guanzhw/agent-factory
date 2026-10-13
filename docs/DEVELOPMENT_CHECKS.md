@@ -50,15 +50,11 @@ With disposable `FACTORY_TEST_DATABASE_URL`, run `uv run python scripts/check_co
 
 This gate passed against the split core wheel. It cannot independently prove that every generic-looking implementation belongs in core; pair it with ownership maps and code review.
 
-## Pending integration findings
+## Static assembly and compatibility
 
-The Python ownership gate currently reports one violation, which is not exempted. The frontend map passes with the browser mount and component assembly declared as two exact startup files:
+Both ownership maps pass after the split. Research preparation/training assembly requires an explicit `app_factory`; the deployment CLI supplies `agent_factory_server.main.create_app`. Reusable research code never imports the server. Browser mounting and component assembly remain two exact startup files, `web/main.tsx` and `web/composition.tsx`; ordinary core/app callers cannot use either as a boundary bypass.
 
-| Import chain | Required correction |
-| --- | --- |
-| `agent_factory_research.research_bootstrap_assembly -> agent_factory_server.main` | Keep deployment assembly out of reusable app code; pass the dependency or move deployment orchestration to its owner |
-
-Remove these resolved findings when the repairs land. Ordinary model/ORX fixtures now use member self-service while retaining owner, selected-model, revocation, UNKNOWN and stop-proof checks. Explicit historical approval tests remain compatibility coverage. Deterministic acceptance uses local transports and synthetic credentials, and does not establish live model/remote compatibility or encode a permanent provider/model ban.
+Ordinary model/ORX fixtures and Go diagnostics use member self-service while retaining owner, selected-model, revocation, UNKNOWN and stop-proof checks. Explicit historical approval tests remain compatibility coverage. Legacy Go preflight and failure recovery stay in the research adapter; shared model dispatch does not load a campaign. Deterministic acceptance uses local transports and synthetic credentials, and does not establish live model/remote compatibility or encode a permanent provider/model ban.
 
 ## Why this small scope
 

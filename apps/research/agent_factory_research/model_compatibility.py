@@ -7,7 +7,7 @@ from agent_factory.model_dispatch import DelegatingModel
 
 class ResearchDelegatingModel(DelegatingModel):
     def _check_selected_plan(self, plan, context):
-        from agent_factory.go_development import is_go_plan
+        from agent_factory.go_legacy import is_go_plan
         if is_go_plan(plan) and self.bindings.store.has_failures(context.session_id):
             raise InputCheckError("GO_TASK_STOPPED: prior development failure denies replay")
 
@@ -57,7 +57,7 @@ class ResearchDelegatingModel(DelegatingModel):
         """
         if response.model_provider != "opencode-go-development":
             return False
-        from agent_factory.go_development import is_go_plan
+        from agent_factory.go_legacy import is_go_plan
         store = self.bindings.store
         task = store.task(response.session_id, response.user_id)
         if task["run_id"] != response.run_id:

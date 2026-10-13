@@ -178,7 +178,7 @@ TypeScript and production build); `npm audit` reported zero vulnerabilities.
 Repository Ruff and Pyright passed. The selected Python suites passed 140 tests:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:apps/research:deployment:platform/tests:apps/research/tests/python .venv/bin/python -m unittest -v \
   test_model_command_recovery test_model_endpoint_policy test_model_protocol \
   test_model_protocol_execution test_byok_model test_owner_runtime_broker \
   test_trusted_model_proxy test_go_legacy_boundary test_billing_mode \
@@ -195,7 +195,7 @@ to that disposable service:
 ```sh
 AGNO_TELEMETRY=false .venv/bin/python scripts/check_owner_byok_postgres.py
 AGNO_TELEMETRY=false .venv/bin/python scripts/check_boundaries_postgres.py
-AGNO_TELEMETRY=false PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v \
+AGNO_TELEMETRY=false PYTHONPATH=platform:apps/research:deployment:platform/tests:apps/research/tests/python .venv/bin/python -m unittest -v \
   test_model_command_recovery_postgres
 ```
 

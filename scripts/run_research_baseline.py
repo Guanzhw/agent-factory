@@ -417,6 +417,7 @@ def assemble_only(config, workspace, progress):
     """One original application construction, without entering any lifespan."""
     from bootstrap_research_control import read_database_url
     from agent_factory_research.research_bootstrap_assembly import prepare_application
+    from agent_factory_server.main import create_app
     progress.at('EXECUTION_IDENTITY')
     runtime_identity(config)
     progress.at('DATABASE_CONFIG')
@@ -428,7 +429,7 @@ def assemble_only(config, workspace, progress):
     program.mkdir(mode=0o700); custody.mkdir(mode=0o700)
     bundle = None
     try:
-        bundle = prepare_application(db_url=db, workspace=workspace, program_root=program,
+        bundle = prepare_application(app_factory=create_app, db_url=db, workspace=workspace, program_root=program,
             program_identity=identity(program), custody_root=custody,
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=hashlib.sha256(canonical(
@@ -470,6 +471,7 @@ def execute(config, workspace, progress):
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
     from agent_factory_research.research_bootstrap_assembly import prepare_application, research_application
+    from agent_factory_server.main import create_app
     from agent_factory_research.research_bootstrap_inventory import build_inventory
     from agent_factory_research.research_bootstrap_inputs import capture_bootstrap_inputs
     from agent_factory.interpreter_identity import capture_interpreter_contract
@@ -506,7 +508,7 @@ def execute(config, workspace, progress):
     try:
         progress.at('PREPARATION_ASSEMBLY')
         program = directory('preparation-program')
-        prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
+        prep = retain(prepare_application(app_factory=create_app, db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
             program_identity=identity(program), custody_root=directory('preparation-custody'),
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=hashlib.sha256(canonical(
@@ -549,7 +551,7 @@ def execute(config, workspace, progress):
                 ('-B', str(program / entry), '--config', str(program / 'run-config.json')), working_directory=str(program),
                 working_directory_identity=(identity(program)['device'], identity(program)['inode']), environment=tuple(sorted(env.items())),
                 interpreter_contract=contract)
-            bundle = retain(research_application(db_url=db, workspace=workspace, upstream_files=upstream,
+            bundle = retain(research_application(app_factory=create_app, db_url=db, workspace=workspace, upstream_files=upstream,
                 captured_inputs=captured, environment_pins=pins, launch_spec=spec, program_identity=identity(program),
                 cache_root=cache, cache_identity=identity(cache), custody_root=custody, limits=limits, gpu_binding=gpu,
                 device_observer=device, preparation=prep['preparation'], preparation_task_id=prep_task,
