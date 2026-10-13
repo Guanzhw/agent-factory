@@ -27,6 +27,7 @@ FAST_PYTHON_TESTS = {
         'test_billing_mode.BillingModeTests',
     ),
     'personal_tool_connections': (
+        'test_personal_tool_adapter_integration',
         'test_personal_tool_contract',
         'test_personal_cli',
         'test_personal_cli_process',
