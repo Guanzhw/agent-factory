@@ -24,6 +24,8 @@ class ToolDescriptor:
     capabilities: tuple[str, ...]
     timeout_seconds: float = 30.0
     max_output_bytes: int = 65536
+    permission: str = "tool:invoke"
+    read_only: bool = False
 
 
 @dataclass(frozen=True)
