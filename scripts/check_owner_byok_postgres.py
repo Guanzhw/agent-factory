@@ -22,11 +22,13 @@ def main():
         'test_owner_runtime_broker.OwnerRuntimeBrokerTests',
         'test_platform_openresearch_runtime.PlatformOpenResearchRuntimeTests',
         'test_platform_openresearch_custody.PlatformOpenResearchCustodyTests',
+        'test_native_research_artifacts.NativeArtifactWireTests',
+        'test_native_research_artifacts.NativePlatformFileReaderTests',
         'test_ssh_openresearch.SSHOpenResearchTests',
         'test_personal_ssh.PersonalSSHPostgresTests',
         'test_personal_ssh.SSHPrerequisiteTests',
         'test_remote_bindings_postgres.RemoteBindingPostgresTests.test_effective_nonlocal_receiver_mapping_obeys_default_off_before_factory'])
-    expected = 101
+    expected = 109
     if suite.countTestCases() != expected:
         print('OWNER_BYOK_POSTGRES_CASE_COUNT', file=sys.stderr)
         return 1

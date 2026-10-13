@@ -57,6 +57,12 @@ class ContinueResearch(BaseModel):
     expectedFingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
+class CaptureArtifacts(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    commandRequestId: str = Field(min_length=8, max_length=100, pattern=r'^[a-zA-Z0-9_.:-]+$')
+    expectedFingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
 def deny_direct_admission(owner, intent):
     raise HTTPException(403, 'PERSONAL_NATIVE_COMMAND_REQUIRED')
 
@@ -67,6 +73,8 @@ class PersonalCommandAPI:
         self.store, self.auth, self.factory = store, auth, factory
         self.sessions = PersonalAgentSessions(store.connections, admission=deny_direct_admission,
             observed=lambda owner, request_id: reconcile_command(store, self.sessions, owner, request_id))
+        from .native_research_artifacts import NativeResearchArtifacts
+        self.artifacts = NativeResearchArtifacts(self.sessions)
         from .personal_orx_projects import PersonalOrxProjects
         self.projects = PersonalOrxProjects(store.connections, admission=deny_direct_admission)
         from .personal_orx_lease import PersonalOrxLease
@@ -278,6 +286,9 @@ class PersonalCommandAPI:
         @self.router.get('/sessions/{session_id}')
         def session(session_id: str, request: Request, refresh: bool = False):
             return self.sessions.inspect(owner(request), session_id, refresh=refresh)
+        @self.router.post('/tasks/{task_id}/artifacts')
+        def capture_artifacts(task_id: str, body: CaptureArtifacts, request: Request):
+            return self.artifacts.capture(owner(request), task_id, body.commandRequestId, body.expectedFingerprint)
         @self.router.get('/requests/{request_id}')
         def recover(request_id: str, request: Request):
             result = self.sessions.request_result(owner(request), request_id)
