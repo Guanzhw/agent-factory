@@ -1,7 +1,7 @@
 """Small daily regression selections; full discovery retains every other case.
 
-Python selections need neither PostgreSQL nor host-specific process/SSH tools.
-The PostgreSQL lane runs on Linux and includes the small POSIX inventory cases.
+Python selections need neither PostgreSQL nor external process/SSH tools; their
+personal CLI fixtures require POSIX. Both fast lanes run on Linux.
 All model responses and credentials are synthetic; no live provider is called.
 """
 
@@ -25,6 +25,16 @@ FAST_PYTHON_TESTS = {
     'department_defaults': (
         'test_department_plan_policy.DepartmentPlanPolicyTests',
         'test_billing_mode.BillingModeTests',
+    ),
+    'personal_tool_connections': (
+        'test_personal_tool_adapter_integration',
+        'test_personal_tool_contract',
+        'test_personal_cli',
+        'test_personal_cli_process',
+        'test_personal_mcp',
+        'test_personal_tools',
+        'test_personal_tool_execution',
+        'test_personal_tool_assembly.PersonalToolSettingsTests',
     ),
     'original_receipt_and_stop': (
         'test_process_receipt_validation.ProcessReceiptValidation',
@@ -56,6 +66,9 @@ FAST_POSTGRES_TESTS = {
         'test_department_admission_postgres.DepartmentAdmissionPostgresTests.test_member_runs_multiple_applications_and_workflow_without_admin_decision',
         'test_department_publication.DepartmentPublicationPostgresTests.test_public_deactivation_requires_admin_and_keeps_history',
         'test_department_publication.DepartmentPublicationPostgresTests.test_http_member_publish_and_admin_only_delete_surface',
+        'test_personal_tool_assembly.PersonalToolAssemblyPostgresTests',
+        'test_personal_tool_native_postgres.PersonalToolNativePostgresTests',
+        'test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests',
     ),
     # Tiny inert trees, including mutation checks; no installed ML tree or scale campaign.
     'research_inventory_posix': (

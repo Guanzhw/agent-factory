@@ -171,6 +171,16 @@ restart are distinct from resubmitting research.
 
 ## Compatibility and deprecation
 
+Personal CLI/MCP tools use the existing application declaration and named `tool`
+connections. A material pins `runtimeBinding.adapterId`, `revision` and
+`config.connectionName`; the mode's `connectionRequirements` names that connection
+and its required capabilities. No CLI command, MCP endpoint or credential is accepted
+as application input. The operator installs a static `PersonalToolAdapter`; members
+configure it through `/api/factory/personal-tools` and bind through the existing
+`/user-connections` API. See [personal tool lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
+for these connection-management routes and recovery semantics. Operator-only
+`ToolInvocation` and `SecretLease` are not an application SDK or model input.
+
 Only the types/methods and routes documented here form application interface
 v1. The repository package version does not make every Python module a stable
 SDK. Existing application definition v1/v2 and their pins remain separately

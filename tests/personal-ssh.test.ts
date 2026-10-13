@@ -12,6 +12,7 @@ import { personalSSHApi, type PersonalSSHServer, type SSHIdentityInput } from '.
 import { personalAgentApi } from '../apps/research/web/personalAgentApi.js';
 import { applicationEnvironmentApi } from '../apps/research/web/applicationEnvironmentApi.js';
 import { ownerModelApi } from '../web/ownerModelApi.js';
+import { personalToolConnectionApi } from '../web/personalToolConnectionApi.js';
 
 const pin = 'a'.repeat(64); const destination = `ssh://fixture@127.0.0.1:2222?hostkey=${pin}`;
 const publicKey = 'ssh-ed25519 ' + 'A'.repeat(68);
@@ -28,6 +29,8 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear(); onResearch.mockReset();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
+  vi.spyOn(personalToolConnectionApi, 'descriptors').mockResolvedValue([]);
+  vi.spyOn(personalToolConnectionApi, 'list').mockResolvedValue([]);
   vi.spyOn(personalSSHApi, 'capabilities').mockResolvedValue({ enabled: true });
   vi.spyOn(personalSSHApi, 'list').mockResolvedValue([]);
   vi.spyOn(personalSSHApi, 'identity').mockResolvedValue(identity);

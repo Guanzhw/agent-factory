@@ -60,6 +60,8 @@ class Settings:
     personal_connection_providers: dict = field(default_factory=dict)
     credential_vault_factory: Callable | None = field(default=None, repr=False)
     personal_connection_provider_factories: dict = field(default_factory=dict, repr=False)
+    # Shared schemas/installed adapters only. Authentication is resolved per owner.
+    personal_tool_adapters: tuple = field(default_factory=tuple, repr=False)
     runtime_adapters: list = field(default_factory=list)
     tool_policies: tuple = field(default_factory=tuple)
     # Trusted workflow definitions/runtime implementations; never request-loaded.
@@ -96,7 +98,35 @@ class Settings:
             raise ValueError('Billing enablement requires explicit booleans')
         if self.platform_paid_models_enabled and not self.fee_management_enabled:
             raise ValueError('Managed paid profiles require actual hard budget management')
-        from .tool_policy_registry import validate_tool_policies
+        from .tool_policy_registry import ToolPolicyRegistration, normalize_tool_policies, validate_tool_policies
+        if self.personal_tool_adapters:
+            from .personal_tool_execution import personal_tool_registration
+            if type(self.personal_tool_adapters) is not tuple or len(self.personal_tool_adapters) > 64:
+                raise ValueError('Personal tools require a bounded static tuple')
+            registrations = [personal_tool_registration(adapter) for adapter in self.personal_tool_adapters]
+            keys = [(entry.adapter_id, entry.revision) for entry in registrations]
+            if len(set(keys)) != len(keys):
+                raise ValueError('Personal tool adapter registrations must be unique')
+            # A settings dataclass may be copied into the selected deployment's
+            # settings type. Reuse only these exact generated registrations.
+            installed = {(entry.adapter_id, entry.revision): entry for entry in self.runtime_adapters}
+            for registration in registrations:
+                key = (registration.adapter_id, registration.revision)
+                previous = installed.get(key)
+                if previous is not None and getattr(previous.factory, '_personal_tool_adapter', None) is not getattr(registration.factory, '_personal_tool_adapter', None):
+                    raise ValueError('Personal tool adapter conflicts with another registration')
+            self.runtime_adapters = [*self.runtime_adapters, *[entry for entry in registrations
+                if (entry.adapter_id, entry.revision) not in installed]]
+            policies = {(entry.adapter_id, entry.adapter_revision): entry for entry in normalize_tool_policies(self.tool_policies)}
+            for adapter in self.personal_tool_adapters:
+                descriptor = adapter.descriptor
+                policy = ToolPolicyRegistration(descriptor.adapter_id, descriptor.revision,
+                    descriptor.revision, descriptor.read_only)
+                key = (descriptor.adapter_id, descriptor.revision)
+                if key in policies and policies[key] != policy:
+                    raise ValueError('Personal tool policy conflicts with its static descriptor')
+                policies[key] = policy
+            self.tool_policies = tuple(policies.values())
         self.tool_policies = validate_tool_policies(self.tool_policies, self.runtime_adapters)
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")

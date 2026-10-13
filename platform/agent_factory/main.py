@@ -125,6 +125,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     connections = (connection_service_type or ConnectionService)(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
+    from .personal_tools import PersonalTools, personal_tool_router
+    store.personal_tools = PersonalTools(connections, credential_vault, settings.personal_tool_adapters)
+    connections.personal_tools = store.personal_tools
     from .personal_models import PersonalModels, personal_model_router
     store.personal_models = PersonalModels(store, auth, connections, credential_vault,
         transport_factory=settings.owner_model_transport_factory,
@@ -206,6 +209,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             scientific_custody=getattr(handoff_client, "authorize_scientific_custody", None)))
     base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
+    base.include_router(personal_tool_router(auth, store.personal_tools))
     from .personal_connections import personal_connection_router
     base.include_router(personal_connection_router(auth, connections.personal))
     if credential_vault is not None:

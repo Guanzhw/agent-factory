@@ -1,5 +1,13 @@
 # Current delivery and review index
 
+## Personal CLI / MCP connections — PR #88 implementation
+
+[Personal CLI / MCP connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
+is being implemented on the merged #86 baseline `main@3ef542ba`: static shared tools,
+private owner connections and on-demand calls reuse existing Factory contracts.
+Verification uses synthetic authentication with a real local CLI process and MCP test
+server; no external vendor compatibility or real model call is claimed.
+
 ## Latest accepted local milestone — 2026-10-07
 
 See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for the owner-verified real result at
