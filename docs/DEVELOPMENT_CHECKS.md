@@ -37,12 +37,67 @@ This uses the same discovery as the ordinary Python entrypoint, covering `platfo
 
 The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments in manual full verification. Run `uv run python scripts/check_python.py` for complete local Python discovery.
 
-## Dependency boundaries
+## Personal CLI and MCP verification
 
-Personal tool connection checks run in the daily Python/PostgreSQL groups. They
-exercise owner credentials, native call identities, original-effect recovery and
-both core/research static assembly without a live provider. The browser companion
-uses the built app and intercepts every API request with synthetic state:
+The [connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md) and
+[implementation contract](PERSONAL_TOOL_IMPLEMENTATION_CONTRACT.md) describe the
+implemented boundaries. Dependencies are locked, including official `mcp==2.3.0`;
+the MCP adapter uses `ClientSession` and Streamable HTTP, without FastMCP or a
+second agent framework. Normal endpoints require HTTPS. Local MCP fixtures use
+an explicit numeric-loopback HTTP option and synthetic authentication.
+
+The daily selections in [fast_test_groups.py](../scripts/fast_test_groups.py)
+include personal tool connection regressions. For focused adapter/assembly checks
+on Linux, without PostgreSQL or live providers:
+
+```sh
+PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
+  test_personal_cli test_personal_cli_process test_personal_mcp \
+  test_personal_tools test_personal_tool_execution test_personal_tool_adapter_integration \
+  test_personal_tool_assembly.PersonalToolSettingsTests -v
+```
+
+CLI tests launch real local synthetic processes. Each successful invocation uses
+an absent-credential probe, an identity/source probe and the business command;
+tests distinguish business dispatch from local stop and retained-directory state.
+Execution requires POSIX process groups and is verified on Linux; a Windows skip
+does not establish Windows CLI support. Debug event loops are intentionally
+rejected by the adapter, not silently reconfigured. MCP tests run a local protocol
+server and cover stateful/stateless sessions, exact schema/authentication,
+revocation, response/log leak rejection, no call replay and bounded session DELETE
+authorization/streaming waits. Transport closure does not prove remote stop.
+The adapter integration module also runs both local transports through native
+`FunctionCall.aexecute()` and the shared wrapper, with an in-memory effect fixture
+that verifies DONE receipt replay sends no new process or protocol call.
+
+With an authorized disposable **loopback** `FACTORY_TEST_DATABASE_URL`, run:
+
+```sh
+PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
+  test_personal_tool_assembly.PersonalToolAssemblyPostgresTests \
+  test_personal_tool_native_postgres.PersonalToolNativePostgresTests -v
+```
+
+These classes create and remove their own random databases. Assembly checks run
+both independent core and research composition, including authenticated routes,
+owner isolation, exact connection pins and retained handles after revocation.
+Native tests publish and invoke a declared application through real PostgreSQL,
+Agno and the encrypted owner vault, using a deterministic model and inert tool
+fixture. They check repeated owner tool calls without new approval, receipt reuse
+after reopening services, denial of the next native call after revocation, and
+Agno `StopAgentRun` preventing a new model turn after an UNKNOWN effect. They do
+not claim that native stop recalls calls already concurrent in the same batch,
+or that queue termination proves the original effect stopped.
+
+The failure/custody case records `{outcome: "failed", stopped: false}` without
+completing the UNKNOWN effect, and checks that its occupied capacity still rejects
+another submission with HTTP 429 before and after restart. `stopped=True` is
+required to settle a failed effect. Current MCP failure paths do not supply that
+positive evidence, so the wrapper conservatively retains custody; do not report
+those failures as confirmed cleanup.
+
+The browser companion uses the built app and intercepts every API request with
+synthetic state:
 
 ```sh
 npm run build
@@ -50,8 +105,21 @@ python platform/tests/browser/personal_tools_smoke.py --output /tmp/personal-too
 ```
 
 It requires an already installed Python Playwright and Chromium and has no install
-or network fallback. These browser checks verify binding/recovery UI and responsive
-layout; they do not execute a CLI/MCP tool or establish external-vendor compatibility.
+or network fallback; they are not default core dependencies. It follows the real
+Resources → connections → personal-tools entry, covering saved-credential setup,
+configuration/binding lost-ack recovery, a revoked receipt and an owner change.
+Desktop/narrow viewports check horizontal overflow, page errors and unexpected
+console errors; deliberately aborted synthetic acknowledgements are recorded
+separately. Requests outside the static app and explicitly intercepted APIs,
+including WebSockets, are rejected. Browser access from Windows does not imply
+Windows CLI execution support.
+
+Test counts are diagnostic, not fixed acceptance targets. Record actual results
+in the PR and distinguish local process/protocol, native PostgreSQL and browser
+evidence. None of these fixtures calls a real model, runs AutoResearch or verifies
+an external vendor's CLI/MCP authentication, OAuth refresh or remote stop semantics.
+
+## Dependency boundaries
 
 ```sh
 uv run python -m unittest discover -s platform/tests -p test_architecture_checker.py -v

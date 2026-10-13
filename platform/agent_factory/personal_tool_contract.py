@@ -111,6 +111,9 @@ class ToolInvocationError(RuntimeError):
 
     UNKNOWN is required after ambiguous dispatch. A cancelled result requires
     positive stop evidence; closing an MCP client alone does not prove stop.
+    ``failed`` describes a known business failure independently of cleanup.
+    Set ``stopped=True`` only with positive evidence that invocation-owned work
+    is settled; failed/unstopped receipts retain custody and stop the native run.
     """
     def __init__(self, code: str, *, outcome: Literal["failed", "cancelled", "unknown"] = "unknown",
                  stopped: bool = False):
