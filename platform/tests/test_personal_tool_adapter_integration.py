@@ -113,3 +113,34 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(handle.resolutions, resolutions)
             self.assert_done(store, original, lease)
         self.assertTrue(server.closed)
+
+    async def test_mcp_initialize_401_is_stopped_failure_and_replays_without_network(self):
+        schema = {'type': 'object', 'properties': {'value': {'type': 'string'}}, 'required': ['value']}
+        descriptor = ToolDescriptor('integration-mcp', 'v1', 'fixture_query', 'Synthetic MCP echo',
+            schema, 'mcp', 'synthetic-vault', 'synthetic-mcp-server', ('tool:query',),
+            permission='fixture:query', timeout_seconds=5)
+        async with MCPProtocolServer() as server:
+            adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo', allow_loopback_http=True)
+            lease = SecretLease('synthetic-mcp', 'synthetic-rejected-mcp-token')
+            call, store, handle = native_call(adapter, lease, {'value': 'must-not-dispatch'})
+            try:
+                result = await call.aexecute()
+            finally:
+                self.assertEqual(server.calls, [])
+                self.assertGreater(len(server.requests), 0)
+                self.assertTrue(all(request.owner is None for request in server.requests))
+                effect = store.effects['run-alice', 'personal-tool:original-native-call']
+                self.assertEqual(effect['status'], 'DONE')
+                self.assertEqual(effect['result'], {'outcome': 'failed', 'stopped': True})
+                self.assertNotIn(lease.password, json.dumps(effect))
+            self.assertEqual((result.status, result.error), ('failure', 'PERSONAL_TOOL_FAILED'))
+            requests, resolutions = len(server.requests), handle.resolutions
+            self.assertGreater(resolutions, 0)
+            replay = FunctionCall(function=call.function, call_id=call.call_id, arguments=dict(call.arguments))
+            result = await replay.aexecute()
+            self.assertEqual((result.status, result.error), ('failure', 'PERSONAL_TOOL_FAILED'))
+            self.assertEqual(server.calls, [])
+            self.assertEqual(len(server.requests), requests)
+            self.assertEqual(handle.resolutions, resolutions)
+            self.assertEqual(effect['result'], {'outcome': 'failed', 'stopped': True})
+        self.assertTrue(server.closed)

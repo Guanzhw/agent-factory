@@ -75,7 +75,8 @@ With an authorized disposable **loopback** `FACTORY_TEST_DATABASE_URL`, run:
 ```sh
 PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
   test_personal_tool_assembly.PersonalToolAssemblyPostgresTests \
-  test_personal_tool_native_postgres.PersonalToolNativePostgresTests -v
+  test_personal_tool_native_postgres.PersonalToolNativePostgresTests \
+  test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests -v
 ```
 
 These classes create and remove their own random databases. Assembly checks run
@@ -92,9 +93,14 @@ or that queue termination proves the original effect stopped.
 The failure/custody case records `{outcome: "failed", stopped: false}` without
 completing the UNKNOWN effect, and checks that its occupied capacity still rejects
 another submission with HTTP 429 before and after restart. `stopped=True` is
-required to settle a failed effect. Current MCP failure paths do not supply that
-positive evidence, so the wrapper conservatively retains custody; do not report
-those failures as confirmed cleanup.
+required to settle a failed effect. MCP capacity tests use the local protocol server
+to distinguish failures before business dispatch from unresolved local cleanup.
+An invocation that has not dispatched `tools/call` releases capacity after its local
+tasks, authorization callbacks, SDK contexts and transport finish. Session DELETE is
+best effort; an idle remote session does not establish a running business call.
+Incomplete local cleanup retains custody, and closing a transport after dispatch
+does not prove that the remote business operation stopped. Receipt replay and
+capacity checks run both before and after reopening the services.
 
 The browser companion uses the built app and intercepts every API request with
 synthetic state:

@@ -68,6 +68,7 @@ FAST_POSTGRES_TESTS = {
         'test_department_publication.DepartmentPublicationPostgresTests.test_http_member_publish_and_admin_only_delete_surface',
         'test_personal_tool_assembly.PersonalToolAssemblyPostgresTests',
         'test_personal_tool_native_postgres.PersonalToolNativePostgresTests',
+        'test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests',
     ),
     # Tiny inert trees, including mutation checks; no installed ML tree or scale campaign.
     'research_inventory_posix': (
