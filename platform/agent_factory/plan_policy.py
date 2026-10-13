@@ -1,6 +1,6 @@
 """Persisted plan approval, separate from native HITL and execution ownership.
 
-Operator configuration defaults to admin review. This module grants no native
+Department members submit new plans themselves. This module grants no native
 roles, selects no paid model and cannot approve a native tool confirmation.
 Register its router and call require_execution/require_tool at admission and
 protected boundaries; merely constructing the service does not enforce policy.
@@ -24,7 +24,7 @@ from .store import digest
 from .tool_policy_registry import (ResolvedToolPolicy, normalize_resolved_tool_policies, merged_tools,
     policy_body, require_installed_policies, require_plan_policies, resolve_tool_policies)
 
-PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
+PolicyName = Literal["member-self-service", "unset", "admin-review", "read-only-auto", "bounded-synthetic"]
 LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
                "checksum": "checksum:read", "run_experiment": "experiment:synthetic"}
 REGISTERED_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
@@ -92,8 +92,8 @@ def application_tool_catalog(store):
 
 @dataclass(frozen=True)
 class PlanPolicyConfig:
-    name: PolicyName = "admin-review"
-    revision: str = "plan-policy-v1"
+    name: PolicyName = "member-self-service"
+    revision: str = "department-member-v1"
     review_ttl_seconds: int = 3600
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
@@ -105,9 +105,9 @@ class PlanPolicyConfig:
         merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
-        if self.tool_contract != "legacy-v1" and self.revision == "plan-policy-v1":
+        if self.tool_contract != "legacy-v1" and self.revision in {"plan-policy-v1", "department-member-v1"}:
             raise ValueError("Registered runtime tools require a distinct plan policy revision")
-        if self.name not in {"unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
+        if self.name not in {"member-self-service", "unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
             raise ValueError("Unsupported plan approval policy")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
             raise ValueError("Policy revision must be a bounded identifier")
@@ -255,7 +255,16 @@ class PlanPolicyService:
             if current is None:
                 conn.execute(self.state.insert().values(id="current", revision=initial.revision))
             elif current != initial.revision:
-                raise ValueError("Configured policy differs from persisted current revision; reconcile operator configuration")
+                previous = self._current(conn)
+                # A product-rule upgrade may only remove the human review layer.
+                # Runtime/tool authority must match; immutable old records remain.
+                def execution_contract(value):
+                    return {key: item for key, item in policy_body(value).items()
+                        if key not in {"name", "revision", "review_ttl_seconds"}}
+                if (initial.name != "member-self-service" or previous.name in {"unset", "member-self-service"}
+                        or execution_contract(previous) != execution_contract(initial)):
+                    raise ValueError("Configured policy differs from persisted current revision; reconcile operator configuration")
+                conn.execute(self.state.update().where(self.state.c.id == "current").values(revision=initial.revision))
 
     def _lock(self, conn):
         if self.store.engine.dialect.name == "postgresql":
@@ -445,6 +454,8 @@ class PlanPolicyService:
         with self.store.engine.begin() as conn:
             self._lock(conn)
             config = self._current(conn)
+            if config.name == "member-self-service":
+                raise HTTPException(410, "PLAN_REVIEWS_READ_ONLY: generate a new plan and submit it directly")
             self._scope(plan, config)
             if config.name in {"unset", "bounded-synthetic"}:
                 raise HTTPException(409, "This policy does not accept administrator plan reviews")
@@ -494,6 +505,8 @@ class PlanPolicyService:
             raise HTTPException(400, "A typed approval decision is required")
         with self.store.engine.begin() as conn:
             self._lock(conn)
+            if self._current(conn).name == "member-self-service":
+                raise HTTPException(410, "PLAN_REVIEWS_READ_ONLY: historical decisions cannot be changed")
             row = conn.execute(select(self.reviews).where(self.reviews.c.id == review_id)).mappings().first()
             if row is None:
                 raise HTTPException(404, "Plan review not found")
@@ -614,9 +627,16 @@ class PlanPolicyService:
             self._scope(review_plan, config)
             if config.name == "unset":
                 raise HTTPException(409, "POLICY_UNSET: plan execution has no selected approval policy")
-            submissions = getattr(self.store, 'owner_submissions', None)
-            if submissions is not None and submissions.approved(conn, owner, review_plan):
-                approval = {"source": "owner-submission", "reviewId": None}
+            if config.name == "member-self-service":
+                # Old denied/pending/approved plans are never silently converted.
+                # New plans persist this product rule in their immutable body.
+                if review_plan.get("policy") != "member-self-service":
+                    raise HTTPException(409, "LEGACY_PLAN_READ_ONLY: generate a new plan before submitting")
+                history = conn.execute(select(self.reviews.c.id).where(
+                    self.reviews.c.owner_id == owner, self.reviews.c.plan_id == review_plan["id"]).limit(1)).first()
+                if history is not None:
+                    raise HTTPException(409, "LEGACY_PLAN_READ_ONLY: historical reviews cannot authorize a new submission")
+                approval = {"source": "member-self-service", "reviewId": None}
             elif config.name == "bounded-synthetic":
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")

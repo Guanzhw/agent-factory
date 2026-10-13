@@ -32,7 +32,7 @@ from agent_factory.config import Settings
 from agent_factory.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration, default_bindings
 from agent_factory.main import create_app
-from agent_factory.material_governance import MaterialGovernance
+from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
 from agent_factory.store import digest, now
 from pg_fixture import IsolatedPostgres
 
@@ -112,7 +112,7 @@ class ApplicationCompositionFixture(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "owned-composition.sqlite"))
         self.addCleanup(self.db.db_engine.dispose)
-        self.settings = Settings(db_url="sqlite://", workspace=Path(self.directory.name))
+        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url="sqlite://", workspace=Path(self.directory.name))
         self.auth = AuthService(self.settings, self.db)
         self.auth.initialize_demo()
         # Explicitly owned test subjects/roles; no production grants are touched.
@@ -120,7 +120,8 @@ class ApplicationCompositionFixture(unittest.TestCase):
         self.auth.authorization.assign("bob", "factory-manager")
         self.store = PortableCompositionStore(self.db, self.settings)
         seed_catalog(self.store)
-        self.store.material_governance = MaterialGovernance(self.store, self.auth)
+        self.store.material_governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(
+            review_mode="separate-admin", revision="material-governance-v1"))
         self.applications = ApplicationService(self.store, self.auth)
         self.applications.seed_demo()
         self.store.applications = self.applications
@@ -367,7 +368,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.addCleanup(self.database.__exit__, None, None, None)
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1, max_user_tasks=2)
+        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1, max_user_tasks=2)
         self.start()
         self.addCleanup(self.stop)
         self.auth.authorization.unassign("bob", "factory-user")
@@ -473,7 +474,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
 
     def test_seed_application_references_are_stable_across_independent_postgres_databases(self):
         with IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as other_database, TemporaryDirectory() as directory:
-            other_settings = Settings(db_url=other_database.url, workspace=Path(directory), max_workers=1,
+            other_settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=other_database.url, workspace=Path(directory), max_workers=1,
                                       max_tool_calls=3, experiment_timeout_seconds=5)
             other_app = create_app(other_settings)
             other_state = other_app.app.state.factory
@@ -532,7 +533,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
             registrations = [AdapterRegistration("environment", "owned-environment-v1", "1", forbidden_factory),
                              AdapterRegistration("tool", "owned-checksum-v1", "1", forbidden_factory, tool_name="checksum", permissions=("checksum:read",)),
                              AdapterRegistration("knowledge", "owned-knowledge-v1", "1", forbidden_factory)]
-            settings = Settings(db_url=database.url, demo=False, jwt_key=self.settings.jwt_key,
+            settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=database.url, demo=False, jwt_key=self.settings.jwt_key,
                                 workspace=Path(directory), runtime_adapters=registrations, max_workers=1)
             app = create_app(settings)
             state = app.app.state.factory

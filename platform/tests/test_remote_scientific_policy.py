@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 from agno.db.sqlite import SqliteDb
 from fastapi import HTTPException
-from agent_factory.plan_policy import PlanPolicyService
+from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService
 from agent_factory.store import Store
 from test_plan_policy import MetadataFixture
 
@@ -22,6 +22,7 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         self.store = MetadataFixture(self.db, self.settings)
         self.auth = Mock()
         self.policy = PlanPolicyService(self.store, self.auth,
+            PlanPolicyConfig(name='admin-review', revision='plan-policy-v1'),
             clock=lambda: datetime(2026, 10, 7, tzinfo=timezone.utc))
         self.parent_plan = self.store.add()
         self.child_plan = self.store.add(delegation={'parentTaskId': 'parent', 'rootTaskId': 'parent', 'depth': 1})

@@ -132,15 +132,8 @@ class FactoryAPI:
             raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
         if plan["status"] != "ready":
             raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
-        submissions = getattr(self.store, 'owner_submissions', None)
-        if submissions is not None and not body.executionTargetRef:
-            submissions.approve_personal(owner, plan)
         self.store.require_plan_execution(owner, plan)
         if body.executionTargetRef:
-            authorization = self.store.plan_policy.require_execution(owner, plan)
-            if authorization.get('source') == 'owner-submission':
-                raise HTTPException(403, 'OWNER_SUBMISSION_REMOTE_PLACEMENT_DENIED')
-
             if self.remote is None:
                 raise HTTPException(503, "Trusted remote execution is unavailable")
         return plan
@@ -174,7 +167,10 @@ class FactoryAPI:
 
     def user(self, request, action="run"):
         user = self.auth.user(request)
-        self.auth.require(user["id"], "components:write" if action == "write" else action)
+        if action == "write":
+            self.store.material_governance._require_write(user["id"])
+        else:
+            self.auth.require(user["id"], action)
         return user
 
     def scoped_task(self, identifier, owner):
@@ -339,11 +335,13 @@ class FactoryAPI:
 
         @router.get("/materials")
         def materials(request: Request):
-            user = self.user(request, "read")
+            user = self.user(request)
             service = self.store.material_governance
-            values = self.store.materials(published_only=user["role"] != "manager")
             if service is None:
                 raise HTTPException(503, "Material governance is unavailable")
+            # Inspection keeps another owner's drafts private while allowing a
+            # member to resume their own draft after refreshing the catalog.
+            values = self.store.materials(published_only=user["role"] != "manager" and not service.member_publication())
             projected = []
             for material in values:
                 try:
@@ -371,7 +369,9 @@ class FactoryAPI:
         @router.post("/materials/{material_id}/{version}/publish", status_code=202)
         def material_publish(material_id: str, version: int, body: PublicationRequest, request: Request):
             user = self.user(request, "write")
-            # Compatibility route requests review; it cannot bypass distinct admin.
+            if self.store.material_governance.member_publication():
+                return self.store.material_governance.publish(user["id"], material_id, version, body.requestId)
+            # Preserve explicitly selected historical fixture contracts.
             return self.store.material_governance.request_publication(user["id"], material_id, version, body.requestId)
 
         @router.get("/connections")

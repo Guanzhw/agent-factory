@@ -29,36 +29,9 @@ export function checkedAuthorization(value: PlanAuthorization): PlanAuthorizatio
       || value.ownerSubmissionSupported === true && (value.reviewRequired || value.reviewRequestSupported !== false)) throw new Error('当前方案授权无法核对。');
   return value;
 }
-export function recoverPlanReviews(values: unknown, ownerId: string, plan: Pick<Plan, 'id' | 'fingerprint'>, authorization: PlanAuthorization) {
-  checkedAuthorization(authorization);
-  if (!Array.isArray(values) || values.length > 100) throw new Error('审查列表无法核对。');
-  const reviews = values.map(checkedReview);
-  if (reviews.some(item => item.ownerId !== ownerId) || new Set(reviews.map(item => item.id)).size !== reviews.length) throw new Error('审查列表归属或标识不一致。');
-  const matching = reviews.filter(item => item.planId === plan.id);
-  if (matching.some(item => item.planFingerprint !== plan.fingerprint || !item.planIntegrityMatches)
-      || new Set(matching.map(item => item.planDigest)).size > 1) throw new Error('审查与当前不可变方案不一致。');
-  const current = matching.filter(item => item.currentPolicy && item.policyRevision === authorization.policy.revision && item.policyDigest === authorization.policy.fingerprint);
-  if (matching.some(item => item.currentPolicy && !current.includes(item))) throw new Error('审查与当前策略指纹不一致。');
-  const pending = current.filter(item => item.decision === 'pending' && !item.expired);
-  const latest = (items: CheckedPlanReview[]) => [...items].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id))[0];
-  const review = latest(pending) ?? latest(current.filter(item => item.approvalEffective)) ?? latest(current) ?? latest(matching);
-  // A bounded list cannot prove absence of an older pending request.
-  const canRequest = !pending.length && !current.some(item => item.approvalEffective) && values.length < 100 && !authorization.executionAllowed && authorization.reviewRequired;
-  return { review, pending: pending.length > 0, canRequest, truncated: values.length === 100 };
-}
-
-/** One explicit request; an uncertain reply is reconciled by GET, never another POST. */
-export async function requestReviewOnce(request: () => Promise<unknown>, list: () => Promise<unknown>, check: (value: unknown) => CheckedPlanReview, requestId: string) {
-  try { const result = check(await request()); if (result.requestId !== requestId) throw new Error('审查请求标识不一致。'); return result; }
-  catch (error) {
-    try {
-      const values = await list();
-      if (Array.isArray(values)) {
-        const raw = values.find(item => record(item) && item.requestId === requestId);
-        const found = raw === undefined ? undefined : check(raw);
-        if (found) return found;
-      }
-    } catch { /* Preserve the uncertain original request. */ }
-    throw error;
-  }
+/** Authorization must refer to this owner and this exact immutable plan, never a name exemption. */
+export function checkedPlanAuthorization(value: PlanAuthorization, ownerId: string, plan: Pick<Plan, 'id' | 'fingerprint'>): PlanAuthorization {
+  const state = checkedAuthorization(value);
+  if (state.ownerId !== ownerId || state.planId !== plan.id || state.planFingerprint !== plan.fingerprint) throw new Error('当前身份或方案范围无法核对。');
+  return state;
 }

@@ -19,7 +19,7 @@ from sqlalchemy import event, text
 from agent_factory.config import Settings
 from agent_factory.main import create_app
 from agent_factory.personal_command_profile import publish_application, PROJECT_APPLICATION_ID
-from agent_factory.personal_orx_projects import PersonalOrxProjects
+from agent_factory.personal_orx_projects import PersonalOrxProjects, project_review_summary
 from agent_factory.personal_command_api import deny_direct_admission
 from agent_factory.personal_orx_transport import PERSONAL_ORX_PROVIDER_ID
 from pg_fixture import IsolatedPostgres
@@ -34,10 +34,16 @@ class OrxProjectPostgresTests(unittest.TestCase):
         fixture.setUp()
         try:
             with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
-                app = create_app(Settings(db_url=database.url, workspace=Path(folder), max_workers=1,
+                settings = Settings(db_url=database.url, workspace=Path(folder), max_workers=1,
                     personal_agent_commands_enabled=True, temporary_policy='admin-review',
                     policy_revision='project-create-ci-v1', material_policy_revision='project-create-ci-v1',
-                    personal_connection_providers={PERSONAL_ORX_PROVIDER_ID: fixture.fx.provider}))
+                    personal_connection_providers={PERSONAL_ORX_PROVIDER_ID: fixture.fx.provider})
+                settings.temporary_policy = 'member-self-service'
+                settings.policy_revision = 'project-create-department-v1'
+                # Keep publication bootstrap explicit while task admission uses
+                # the same department rule as every other application.
+                settings.material_review_mode = 'separate-admin'
+                app = create_app(settings)
                 self.app = app
                 state = app.app.state.factory; self.store, self.auth = state['store'], state['auth']
                 self.auth.directory.upsert('project-reviewer', name='Synthetic project reviewer')
@@ -81,38 +87,44 @@ class OrxProjectPostgresTests(unittest.TestCase):
             'requestId': key, 'connectionRef': self.bound['ref'], 'project': values})
         self.assertEqual(result['plan']['status'], 'ready', result['plan'])
         self.assertFalse(result['authorization']['reviewRequired'])
+        self.assertFalse(result['authorization']['reviewRequestSupported'])
+        self.assertTrue(result['authorization']['executionAllowed'])
+        self.assertEqual(result['authorization']['approval']['source'], 'member-self-service')
         self.assertTrue(result['authorization']['ownerSubmissionSupported'])
         self.assertEqual(self.wire.creation_posts, 0)
+        self.assert_project_disclosure(result['plan'])
         return key, result
 
-    def review(self, plan):
-        review = self.request('POST', '/plan-reviews', {'planId': plan['id'], 'requestId': uuid4().hex}, expected=201)
+    def assert_project_disclosure(self, plan):
         original = self.store.plan(plan['id'], 'alice')
-        project = review['planSummary'].get('projectCreation')
-        if original.get('application') == PROJECT_APPLICATION_ID: self.assertIsNotNone(project)
-        if project is not None:
-            bundle = json.loads(original['inputValues']['text'])
-            self.assertEqual(project['project']['name'], bundle['request']['name'])
-            self.assertEqual(project['project']['path'], bundle['request']['path'])
-            self.assertEqual(project['project']['source'], 'clone')
-            self.assertEqual(project['project']['cloneUrl'], bundle['request']['cloneUrl'])
-            self.assertEqual(project['effects'], bundle['disclosure'])
-            self.assertEqual(project['previewHash'], bundle['previewHash'])
-            self.assertNotIn('usageBudget', original)
-            self.assertIsNone(review['planSummary']['usageBudget'])
-            self.assertEqual(project['billing']['remoteCostStatus'], 'unknown')
-            self.assertEqual(project['billing']['controllerLedgerScope'], 'local-controller-only')
-            self.assertFalse(project['billing']['remoteCostIncludedInUsageBudget'])
-            self.assertNotIn('synthetic-test-password', json.dumps(review))
-            self.assertNotIn('credentialRef', json.dumps(project))
-            inspected = self.request('GET', '/plan-reviews/' + review['id'], owner='manager')
-            listed = self.request('GET', '/plan-reviews?allOwners=true', owner='manager')
-            self.assertEqual(inspected['planSummary']['projectCreation'], project)
-            self.assertEqual(next(r for r in listed if r['id'] == review['id'])['planSummary']['projectCreation'], project)
-            self.request('GET', '/plan-reviews/' + review['id'], owner='bob', expected=404)
-        saved = self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
-            {'approved': True, 'requestId': uuid4().hex}, owner='manager')
-        if project is not None: self.assertEqual(saved['planSummary']['projectCreation'], project)
+        self.assertEqual(original['application'], PROJECT_APPLICATION_ID)
+        project = project_review_summary(original)
+        self.assertIsNotNone(project)
+        bundle = json.loads(original['inputValues']['text'])
+        receipt = self.request('GET', '/personal-agent/project-commands/' + project['requestId'])
+        self.assertEqual(receipt['preview'], bundle)
+        self.assertEqual(project['project']['name'], bundle['request']['name'])
+        self.assertEqual(project['project']['path'], bundle['request']['path'])
+        self.assertEqual(project['project']['source'], 'clone')
+        self.assertEqual(project['project']['cloneUrl'], bundle['request']['cloneUrl'])
+        self.assertEqual(project['effects'], receipt['preview']['disclosure'])
+        self.assertEqual(project['previewHash'], receipt['preview']['previewHash'])
+        self.assertTrue(project['ownerConsentSeparate'])
+        self.assertNotIn('usageBudget', original)
+        self.assertEqual(project['billing']['remoteCostStatus'], 'unknown')
+        self.assertEqual(project['billing']['controllerLedgerScope'], 'local-controller-only')
+        self.assertFalse(project['billing']['remoteCostIncludedInUsageBudget'])
+        self.assertNotIn('synthetic-test-password', json.dumps(receipt) + json.dumps(project))
+        self.assertNotIn('credentialRef', json.dumps(project))
+        self.request('GET', '/personal-agent/project-commands/' + project['requestId'], owner='bob', expected=404)
+        authorization = self.request('GET', '/plans/' + original['id'] + '/authorization')
+        self.assertFalse(authorization['reviewRequired'])
+        self.assertFalse(authorization['reviewRequestSupported'])
+        self.assertTrue(authorization['executionAllowed'])
+        self.assertEqual(authorization['approval']['source'], 'member-self-service')
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_reviews')[0]['n'], 0)
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
+        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_owner_submissions')[0]['n'], 0)
 
     def approve(self, key, result):
         return self.request('POST', '/personal-agent/project-commands/' + key + '/decision',
@@ -193,12 +205,12 @@ class OrxProjectPostgresTests(unittest.TestCase):
                 actual = self.store.task(native_task['id'], 'alice')
                 self.assertIsNotNone(self.store.native_db.get_job(actual['run_id'], strict=True))
                 self.assertIsNone(self.store.usage_ledger)
-            # A separate cancelled request never dispatches, despite plan review.
+            # A cancelled owner consent never dispatches, despite self-service admission.
             cancelled_key = 'project-' + uuid4().hex
             cancelled = self.request('POST', '/personal-agent/project-commands/prepare', {
                 'requestId': cancelled_key, 'connectionRef': self.bound['ref'],
                 'project': {**fixture.values, 'path': '/synthetic/cancelled'}})
-            self.review(cancelled['plan'])
+            self.assert_project_disclosure(cancelled['plan'])
             self.request('POST', '/personal-agent/project-commands/' + cancelled_key + '/decision',
                 {'previewHash': cancelled['receipt']['preview']['previewHash'], 'approved': False})
             self.request('POST', '/personal-agent/commands/start', {'planId': cancelled['plan']['id']}, expected=409)
@@ -211,7 +223,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
     def test_cancellation_cannot_overwrite_dispatch_claim_after_reading_approved(self):
         with self.fixture() as fixture:
             key, prepared = self.prepare(fixture.values)
-            self.review(prepared['plan']); self.approve(key, prepared)
+            self.approve(key, prepared)
             entered, release = threading.Event(), threading.Event()
             post_dns, release_dns = threading.Event(), threading.Event()
             addresses = []
@@ -293,7 +305,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
             expired_key = 'expire-' + uuid4().hex
             expired = self.request('POST', '/personal-agent/project-commands/prepare', {
                 **body, 'requestId': expired_key, 'project': {**fixture.values, 'path': '/synthetic/expired'}})
-            self.review(expired['plan']); self.approve(expired_key, expired)
+            self.assert_project_disclosure(expired['plan']); self.approve(expired_key, expired)
             at = self.store.connections._at()
             self.store.connections.clock = lambda: at + timedelta(minutes=16)
             self.request('POST', '/personal-agent/commands/start', {'planId': expired['plan']['id']}, expected=409)
@@ -305,12 +317,12 @@ class OrxProjectPostgresTests(unittest.TestCase):
             revoked_key = 'revoke-' + uuid4().hex
             revoked = self.request('POST', '/personal-agent/project-commands/prepare', {
                 **body, 'requestId': revoked_key, 'project': {**fixture.values, 'path': '/synthetic/revoked'}})
-            self.review(revoked['plan']); self.approve(revoked_key, revoked)
+            self.assert_project_disclosure(revoked['plan']); self.approve(revoked_key, revoked)
             self.auth.authorization.unassign('alice', 'factory-user')
             self.request('POST', '/personal-agent/commands/start', {'planId': revoked['plan']['id']}, expected=403)
             self.assertEqual(self.wire.creation_posts, 1)
 
-    def test_independent_workers_serialize_first_owner_approval_and_original_effect(self):
+    def test_independent_workers_serialize_task_reservation_and_original_effect(self):
         with self.fixture() as fixture:
             key, prepared = self.prepare(fixture.values)
             self.approve(key, prepared)  # Exact creation consent; no plan/admin approval.
@@ -321,38 +333,33 @@ class OrxProjectPostgresTests(unittest.TestCase):
             try:
                 with TestClient(second_app) as second_client:
                     self.assertIsNot(self.store.engine, second_store.engine)
-                    self.assertIsNot(self.store.owner_submissions, second_store.owner_submissions)
                     self.assertIsNot(self.app.app.state.queue_worker, second_app.app.state.queue_worker)
-                    scope_barrier = threading.Barrier(2, timeout=15)
-                    first_read, release_read = threading.Event(), threading.Event()
+                    reservation_barrier = threading.Barrier(2, timeout=15)
+                    first_lock, release_lock = threading.Event(), threading.Event()
                     first_pid = []
-                    read_mutex = threading.Lock()
-                    scopes = []
+                    lock_mutex = threading.Lock()
+                    reservations = []
                     # Both independent services finish preflight before either
-                    # reads approval. No API/worker or process-local lock is shared.
-                    for service in (self.store.owner_submissions, second_store.owner_submissions):
-                        original_scope = service._scope
-                        scopes.append((service, original_scope))
-                        once = [False]
-                        def synchronized_scope(owner, plan, *, original=original_scope, once=once, **kwargs):
-                            result = original(owner, plan, **kwargs)
-                            if plan['id'] == plan_id and not once[0]:
-                                once[0] = True
-                                scope_barrier.wait()
-                            return result
-                        service._scope = synchronized_scope
+                    # reserves the task. Admission/effect durability belongs to
+                    # PostgreSQL, without a separate owner approval or local lock.
+                    for store in (self.store, second_store):
+                        original_reserve = store.reserve_task
+                        reservations.append((store, original_reserve))
+                        def synchronized_reserve(plan, request_id, *, original=original_reserve):
+                            if plan['id'] == plan_id: reservation_barrier.wait()
+                            return original(plan, request_id)
+                        store.reserve_task = synchronized_reserve
 
-                    def hold_first_approval_read(conn, cursor, statement, parameters, context, executemany):
-                        if (not statement.startswith('SELECT af_owner_submissions.')
-                                or plan_id not in parameters.values()): return
-                        with read_mutex:
+                    def hold_first_admission_lock(conn, cursor, statement, parameters, context, executemany):
+                        if statement != "SELECT pg_advisory_xact_lock(hashtext('af_admission'))": return
+                        with lock_mutex:
                             if first_pid: return
                             first_pid.append(conn.connection.driver_connection.info.backend_pid)
-                            first_read.set()
-                        self.assertTrue(release_read.wait(20), 'Original approval read was not released')
+                            first_lock.set()
+                        self.assertTrue(release_lock.wait(20), 'Original task reservation was not released')
 
                     for engine in (self.store.engine, second_store.engine):
-                        event.listen(engine, 'after_cursor_execute', hold_first_approval_read)
+                        event.listen(engine, 'after_cursor_execute', hold_first_admission_lock)
                     try:
                         headers = {'Authorization': 'Bearer ' + self.auth._issue_native_token('alice')}
                         path = '/api/factory/personal-agent/project-commands/' + key + '/submit'
@@ -361,7 +368,7 @@ class OrxProjectPostgresTests(unittest.TestCase):
                             pending = [pool.submit(client.post, path, json=body, headers=headers)
                                 for client in (self.client, second_client)]
                             try:
-                                self.assertTrue(first_read.wait(15), 'Neither independent service reached approval')
+                                self.assertTrue(first_lock.wait(15), 'Neither independent service reached task reservation')
                                 deadline = time.monotonic() + 10
                                 blocked = []
                                 while time.monotonic() < deadline:
@@ -373,10 +380,10 @@ class OrxProjectPostgresTests(unittest.TestCase):
                                             AND NOT waiting.granted AND waiting.pid<>held.pid''', pid=first_pid[0])
                                     if blocked: break
                                     time.sleep(.01)
-                                self.assertTrue(blocked, 'The other service must wait in PostgreSQL before its approval read')
+                                self.assertTrue(blocked, 'The other service must wait in PostgreSQL before reserving its task')
                                 self.assertTrue(all(not future.done() for future in pending))
                             finally:
-                                release_read.set()
+                                release_lock.set()
                             responses = [future.result(timeout=30) for future in pending]
                         for response in responses:
                             self.assertEqual(response.status_code, 202, response.text)
@@ -384,23 +391,24 @@ class OrxProjectPostgresTests(unittest.TestCase):
                         self.assertEqual(tasks[0]['id'], tasks[1]['id'])
                         self.until(tasks[0], 'completed')
                         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_owner_submissions WHERE plan_id=:id',
-                            id=plan_id)[0]['n'], 1)
+                            id=plan_id)[0]['n'], 0)
                         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_tasks WHERE plan_id=:id',
                             id=plan_id)[0]['n'], 1)
                         effects = self.store.sql("SELECT status FROM af_effects WHERE task_id=:id AND effect_key LIKE :suffix",
                             id=tasks[0]['id'], suffix='%:personal-agent-command-v1')
                         self.assertEqual([row['status'] for row in effects], ['DONE'])
                         self.assertEqual(self.wire.creation_posts, 1)
+                        self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_reviews')[0]['n'], 0)
                         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
                         recovered = second_client.get('/api/factory/personal-agent/commands/requests/' + key, headers=headers)
                         self.assertEqual(recovered.status_code, 200, recovered.text)
                         self.assertEqual(recovered.json()['job']['id'], tasks[0]['id'])
                         self.assertEqual(recovered.json()['receipt']['factoryIdentity']['taskId'], tasks[0]['id'])
                     finally:
-                        release_read.set()
+                        release_lock.set()
                         for engine in (self.store.engine, second_store.engine):
-                            event.remove(engine, 'after_cursor_execute', hold_first_approval_read)
-                        for service, original_scope in scopes: service._scope = original_scope
+                            event.remove(engine, 'after_cursor_execute', hold_first_admission_lock)
+                        for store, original_reserve in reservations: store.reserve_task = original_reserve
             finally:
                 second_store.engine.dispose()
                 second_store.native_db.db_engine.dispose()
