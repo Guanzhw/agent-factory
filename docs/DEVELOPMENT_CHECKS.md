@@ -40,6 +40,18 @@ The checker parses Python imports, relative imports, package initializers and li
 
 Repository wiring remains pending the actual app/core split. No migration allowlist has been added. The core-only smoke must use an isolated, non-editable installation with no app source available and complete startup/health/shutdown; it is not implemented in this preparation change.
 
+Known baseline coupling at `615a23f` (migration work, never passing exceptions):
+
+| Existing dependency/responsibility | Required destination |
+| --- | --- |
+| `agent_factory.main` imports `orx_tools`, `orx_literature_tools`, `orx_experiment_tools` and initializes their schema/tools | Research installer called by the exact deployment composition file |
+| `agent_factory.main` imports `autoresearch`, `openresearch_workspace`, `research_runtime` and installs their routers/services | Research application assembly and services |
+| `agent_factory.config.Settings` contains research evaluators, presets, profile factories and OpenResearch packages | Research settings |
+| `agent_factory.store.Store` carries research session, child, runtime and evaluation services | Research services; core retains only narrow execution lifecycle hooks |
+| `web/App.tsx` imports and renders concrete research screens | Research frontend selected in `web/composition.tsx` through static component slots |
+
+The directory contract is maintained only in [ARCHITECTURE.md](../ARCHITECTURE.md). This table is a migration status list, not a second ownership map; remove resolved rows when integrating the split. Deterministic acceptance uses local transports and synthetic credentials. It must not send real model requests or encode a permanent provider/model ban.
+
 ## Why this small scope
 
 This follows [OpenAI's executable-boundary guidance](https://openai.com/index/harness-engineering/), [AGENTS.md directory guidance](https://agents.md/), [a short architecture map](https://matklad.github.io/2021/02/06/ARCHITECTURE.md.html), [incremental work with real verification](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents), and [automated architecture assertions](https://martinfowler.com/articles/fitness-functions-data-products.html). It does not adopt their organizational machinery. Development provider/model preferences belong in a task or acceptance configuration, not a permanent ban on otherwise supported product capabilities.
