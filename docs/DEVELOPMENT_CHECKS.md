@@ -36,7 +36,7 @@ The last command requires an agreed map; there is intentionally no passing defau
 }
 ```
 
-The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports fail with a coverage diagnostic. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
+The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports in owned modules or their reachable helpers fail with a coverage diagnostic; unrelated tests do not acquire this restriction. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
 
 Repository wiring remains pending the actual app/core split. No migration allowlist has been added. The core-only smoke must use an isolated, non-editable installation with no app source available and complete startup/health/shutdown; it is not implemented in this preparation change.
 

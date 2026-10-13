@@ -127,6 +127,15 @@ class ArchitectureCheckerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot replace the core"):
             check(self.root, invalid)
 
+    def test_dynamic_coverage_is_limited_to_owned_code_and_reachable_helpers(self):
+        dynamic = "import importlib\nimportlib.import_module(module_name)"
+        self.write({"unrelated_test.py": dynamic})
+        self.assertEqual(check(self.root, self.config)[3], [])
+        self.write({"shared/helper.py": "import unrelated_test"})
+        self.assertIn("unrelated_test.py", check(self.root, self.config)[3][0])
+        self.write({"shared/helper.py": "VALUE = 1", "apps/alpha/unused_private.py": dynamic})
+        self.assertIn("unused_private.py", check(self.root, self.config)[3][0])
+
 
 if __name__ == "__main__":
     unittest.main()
