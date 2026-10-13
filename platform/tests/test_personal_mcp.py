@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -672,6 +673,19 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_slow_delete_cannot_extend_cancellation_teardown_indefinitely(self):
         closed = asyncio.Event()
+        cancelling, delayed_callback = threading.Event(), threading.Event()
+        invocation = Authority().invocation()
+        resolve = invocation.resolve_credential
+
+        def teardown_credential():
+            if cancelling.is_set():
+                delayed_callback.set()
+                # Include a bounded worker callback delay, then exercise the
+                # streaming-body deadline rather than expiring before DELETE.
+                time.sleep(0.15)
+            return resolve()
+
+        invocation = replace(invocation, resolve_credential=teardown_credential)
 
         class ObservedTransport(httpx2.AsyncHTTPTransport):
             async def aclose(self):
@@ -685,11 +699,12 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             server.delete_drip_interval = 0.01
             adapter = MCPToolAdapter(
                 descriptor('wait'), url=server.url, allow_loopback_http=True,
-                teardown_timeout_seconds=0.1, http_transport_factory=ObservedTransport,
+                teardown_timeout_seconds=0.5, http_transport_factory=ObservedTransport,
             )
-            pending = asyncio.create_task(adapter.invoke(Authority().invocation()))
+            pending = asyncio.create_task(adapter.invoke(invocation))
             await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
             started = asyncio.get_running_loop().time()
+            cancelling.set()
             pending.cancel()
             try:
                 await asyncio.wait_for(server.delete_started.wait(), 2)
@@ -704,12 +719,12 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLess(asyncio.get_running_loop().time() - started, 2)
                 self.assertTrue(server.delete_started.is_set())
                 self.assertGreaterEqual(server.delete_chunks, 2)
+                self.assertTrue(delayed_callback.is_set())
                 self.assertTrue(closed.is_set())
                 self.assertEqual(server.calls, [('wait', 'alice')])
             finally:
                 server.delete_release.set()
-                if not pending.done():
-                    await asyncio.gather(pending, return_exceptions=True)
+                await asyncio.gather(pending, return_exceptions=True)
 
     async def test_delete_credential_resolution_is_bounded_even_when_callback_blocks(self):
         blocked, release, finished = threading.Event(), threading.Event(), threading.Event()
