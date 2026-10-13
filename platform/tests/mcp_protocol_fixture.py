@@ -52,6 +52,7 @@ class MCPProtocolServer:
         self.delete_release.set()
         self.delete_drip_interval: float | None = None
         self.delete_chunks = 0
+        self.delete_status: int | None = None
         self.tool_schemas: dict[str, dict] = {}
         self.response_headers: dict[str, str] = {}
         self.url = ''
@@ -142,6 +143,10 @@ class MCPProtocolServer:
             scope.setdefault('state', {})['fixture_owner'] = owner
             if scope['method'] == 'DELETE':
                 self.delete_started.set()
+                if self.delete_status is not None:
+                    await send({'type': 'http.response.start', 'status': self.delete_status, 'headers': []})
+                    await send({'type': 'http.response.body', 'body': b''})
+                    return
                 if self.delete_drip_interval is not None:
                     await send({'type': 'http.response.start', 'status': 200,
                                 'headers': [(b'content-type', b'application/json')]})

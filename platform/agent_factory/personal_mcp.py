@@ -14,6 +14,7 @@ import ipaddress
 import json
 import logging
 import math
+import threading
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
@@ -96,13 +97,42 @@ class _InvocationState:
     lease: SecretLease | None = field(default=None, repr=False)
     dispatched: bool = False
     authorization_rejected: bool = False
+    transport_started: bool = False
+    transport_closed: bool = False
+    sdk_closed: bool = False
+    initialized: bool = False
+    initialization_refused: bool = False
+    session_ids: set[str] = field(default_factory=set, repr=False)
+    deleted_sessions: set[str] = field(default_factory=set, repr=False)
+    callbacks_finished: list[threading.Event] = field(default_factory=list, repr=False)
 
     def error(self, code: str) -> ToolInvocationError:
         return ToolInvocationError(code, outcome='unknown' if self.dispatched else 'failed')
 
+    async def checked_callback(self, callback):
+        finished = threading.Event()
+        self.callbacks_finished.append(finished)
+
+        def call():
+            try:
+                return callback()
+            finally:
+                finished.set()
+
+        # Cancelling to_thread's await does not stop the synchronous callback.
+        return await asyncio.to_thread(call)
+
+    def stopped_before_dispatch(self) -> bool:
+        # Called only after the invocation's operation and monitor have joined.
+        # An interrupted initialization can hide a remote session allocation.
+        return (not self.dispatched and all(event.is_set() for event in self.callbacks_finished)
+                and (not self.transport_started or (self.transport_closed and self.sdk_closed
+                    and (self.initialized or self.initialization_refused)
+                    and self.session_ids <= self.deleted_sessions)))
+
     async def check(self) -> None:
         try:
-            await asyncio.to_thread(self.invocation.check_authorized)
+            await self.checked_callback(self.invocation.check_authorized)
         except Exception:
             self.authorization_rejected = True
             raise self.error('MCP_AUTHORIZATION_REJECTED') from None
@@ -110,7 +140,7 @@ class _InvocationState:
     async def credential(self) -> SecretLease:
         await self.check()
         try:
-            lease = await asyncio.to_thread(self.invocation.resolve_credential)
+            lease = await self.checked_callback(self.invocation.resolve_credential)
             if not isinstance(lease, SecretLease) or (self.lease is not None and lease != self.lease):
                 raise ValueError()
         except Exception:
@@ -149,9 +179,10 @@ class _OwnerAuth(httpx2.Auth):
 
 class _BoundedStream(httpx2.AsyncByteStream):
     def __init__(self, stream: httpx2.AsyncByteStream, limit: int, state: _InvocationState,
-                 deadline: float | None = None):
+                 deadline: float | None = None, on_eof: Callable[[], None] | None = None):
         self._stream, self._limit, self._state = stream, limit, state
         self._deadline = deadline
+        self._on_eof = on_eof
 
     async def __aiter__(self):
         size = 0
@@ -161,6 +192,8 @@ class _BoundedStream(httpx2.AsyncByteStream):
                 async with asyncio.timeout_at(self._deadline):
                     chunk = await anext(iterator)
             except StopAsyncIteration:
+                if self._on_eof is not None:
+                    self._on_eof()
                 return
             size += len(chunk)
             if size > self._limit:
@@ -174,22 +207,44 @@ class _BoundedStream(httpx2.AsyncByteStream):
 class _BoundedTransport(httpx2.AsyncBaseTransport):
     def __init__(self, transport: httpx2.AsyncBaseTransport, limit: int, state: _InvocationState):
         self._transport, self._limit, self._state = transport, limit, state
+        state.transport_started = True
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         request.headers['accept-encoding'] = 'identity'
         deadline = request.extensions.pop(_CLOSE_DEADLINE, None)
         async with asyncio.timeout_at(deadline):
             response = await self._transport.handle_async_request(request)
+        if session_id := response.headers.get('mcp-session-id'):
+            self._state.session_ids.add(session_id)
+
+        def received():
+            if (response.status_code in {401, 403} and not self._state.initialized
+                    and not self._state.session_ids):
+                self._state.initialization_refused = True
+            if request.method == 'DELETE' and response.status_code in {200, 204}:
+                if session_id := request.headers.get('mcp-session-id'):
+                    self._state.deleted_sessions.add(session_id)
+
         if response.headers.get('content-encoding', 'identity').lower() != 'identity':
             await response.aclose()
             raise self._state.error('MCP_ENCODING_REJECTED')
         if not isinstance(response.stream, httpx2.AsyncByteStream):
             raise self._state.error('MCP_TRANSPORT_ERROR')
-        response.stream = _BoundedStream(response.stream, self._limit, self._state, deadline)
+        if response.is_stream_consumed:
+            received()
+        response.stream = _BoundedStream(response.stream, self._limit, self._state, deadline, received)
+        if response.status_code in {401, 403} and not self._state.initialized:
+            # The SDK skips non-JSON error bodies. Drain this bounded refusal
+            # to distinguish a complete preflight rejection from a lost reply.
+            try:
+                await response.aread()
+            finally:
+                await response.aclose()
         return response
 
     async def aclose(self) -> None:
         await self._transport.aclose()
+        self._state.transport_closed = True
 
 
 class _PrivateErrors(ObjectReceiveStream[SessionMessage | Exception]):
@@ -271,6 +326,7 @@ class MCPToolAdapter:
         marker = _private_wire.set(True)
         operation: asyncio.Task | None = None
         monitor: asyncio.Task | None = None
+        failure: ToolInvocationError | None = None
         try:
             # Copy caller-owned data once; neither discovery nor schema checking
             # grants the server permission to add arguments to this invocation.
@@ -298,16 +354,22 @@ class MCPToolAdapter:
                 raise state.error('MCP_AUTHORIZATION_REJECTED')
             return output
         except asyncio.CancelledError:
-            raise state.error('MCP_CANCELLED') from None
-        except ToolInvocationError:
+            failure = state.error('MCP_CANCELLED')
+            raise failure from None
+        except ToolInvocationError as error:
+            failure = error
             raise
         except Exception as error:
             known = _known_error(error)
             if known is not None:
-                raise known from None
-            if state.authorization_rejected:
-                raise state.error('MCP_AUTHORIZATION_REJECTED') from None
-            raise ToolInvocationError('MCP_TRANSPORT_ERROR', outcome='unknown') from None
+                failure = known
+            elif state.authorization_rejected:
+                failure = state.error('MCP_AUTHORIZATION_REJECTED')
+            elif state.initialization_refused:
+                failure = state.error('MCP_TRANSPORT_ERROR')
+            else:
+                failure = ToolInvocationError('MCP_TRANSPORT_ERROR', outcome='unknown')
+            raise failure from None
         finally:
             # The operation enters AND exits the SDK's AnyIO contexts in its
             # own task. Waiting for it closes HTTP/session resources on all exits.
@@ -316,9 +378,23 @@ class MCPToolAdapter:
                 for task in (operation, monitor):
                     if task is not None and not task.done():
                         task.cancel()
-                cleanup = asyncio.gather(
-                    *(task for task in (operation, monitor) if task is not None), return_exceptions=True,
-                )
+
+                async def settle():
+                    await asyncio.gather(
+                        *(task for task in (operation, monitor) if task is not None), return_exceptions=True,
+                    )
+                    if not state.dispatched and failure is not None and failure.outcome == 'failed':
+                        # A cancelled monitor can leave an ordinary short DB
+                        # check finishing in its worker thread. Allow bounded
+                        # settlement; an actually blocked callback still holds.
+                        deadline = asyncio.get_running_loop().time() + self._teardown_timeout_seconds
+                        while not all(event.is_set() for event in state.callbacks_finished):
+                            remaining = deadline - asyncio.get_running_loop().time()
+                            if remaining <= 0:
+                                break
+                            await asyncio.sleep(min(0.01, remaining))
+
+                cleanup = asyncio.create_task(settle())
                 # A second caller cancellation must not interrupt the SDK's
                 # in-task __aexit__ while its session DELETE is in progress.
                 while not cleanup.done():
@@ -330,7 +406,11 @@ class MCPToolAdapter:
                 state.lease = None
                 _private_wire.reset(marker)
             if cancelled_during_close:
-                raise state.error('MCP_CANCELLED') from None
+                failure = state.error('MCP_CANCELLED')
+            if failure is not None and failure.outcome == 'failed':
+                failure.stopped = state.stopped_before_dispatch()
+            if cancelled_during_close and failure is not None:
+                raise failure from None
 
     async def _watch_authorization(self, state: _InvocationState) -> None:
         while True:
@@ -342,6 +422,8 @@ class MCPToolAdapter:
             retries=0, trust_env=False,
         )
         transport = _BoundedTransport(raw_transport, max(1048576, self.descriptor.max_output_bytes * 2), state)
+        body_error: BaseException | None = None
+        output: dict[str, Any] = {}
         async with httpx2.AsyncClient(
             auth=_OwnerAuth(state, self._endpoint, self._teardown_timeout_seconds), transport=transport,
             timeout=self.descriptor.timeout_seconds, trust_env=False,
@@ -354,31 +436,45 @@ class MCPToolAdapter:
                 async with ClientSession(
                     _PrivateErrors(read_stream), write_stream, read_timeout_seconds=self.descriptor.timeout_seconds,
                 ) as session:
-                    await session.initialize()
-                    await self._verify_tool(session, state)
-                    await state.credential()
-                    state.dispatched = True
-                    result = await session.call_tool(
-                        self._remote_tool_name, arguments,
-                        read_timeout_seconds=self.descriptor.timeout_seconds,
-                        allow_input_required=True,
-                    )
-                    await state.check()
-                    if not isinstance(result, types.CallToolResult):
-                        raise state.error('MCP_INPUT_REQUIRED')
-                    if result.is_error:
-                        raise ToolInvocationError('MCP_REMOTE_ERROR', outcome='failed')
-                    output = {'content': [item.model_dump(mode='json', by_alias=True, exclude_none=True)
-                                          for item in result.content]}
-                    if result.structured_content is not None:
-                        output['structuredContent'] = result.structured_content
                     try:
-                        reject_credential_echo(output, state.lease)
-                    except Exception:
-                        raise state.error('MCP_CREDENTIAL_ECHO_REJECTED') from None
-                    if len(json.dumps(output, ensure_ascii=False, allow_nan=False).encode()) > self.descriptor.max_output_bytes:
-                        raise state.error('MCP_OUTPUT_LIMIT')
-                    return output
+                        output = await self._call(session, state, arguments)
+                    except BaseException as error:
+                        # Preserve the body failure separately: transport close
+                        # alone cannot prove the SDK's contexts exited cleanly.
+                        body_error = error
+        state.sdk_closed = True
+        if body_error is not None:
+            raise body_error
+        return output
+
+    async def _call(self, session: ClientSession, state: _InvocationState,
+                    arguments: dict[str, Any]) -> dict[str, Any]:
+        await session.initialize()
+        state.initialized = True
+        await self._verify_tool(session, state)
+        await state.credential()
+        state.dispatched = True
+        result = await session.call_tool(
+            self._remote_tool_name, arguments,
+            read_timeout_seconds=self.descriptor.timeout_seconds,
+            allow_input_required=True,
+        )
+        await state.check()
+        if not isinstance(result, types.CallToolResult):
+            raise state.error('MCP_INPUT_REQUIRED')
+        if result.is_error:
+            raise ToolInvocationError('MCP_REMOTE_ERROR', outcome='failed')
+        output = {'content': [item.model_dump(mode='json', by_alias=True, exclude_none=True)
+                              for item in result.content]}
+        if result.structured_content is not None:
+            output['structuredContent'] = result.structured_content
+        try:
+            reject_credential_echo(output, state.lease)
+        except Exception:
+            raise state.error('MCP_CREDENTIAL_ECHO_REJECTED') from None
+        if len(json.dumps(output, ensure_ascii=False, allow_nan=False).encode()) > self.descriptor.max_output_bytes:
+            raise state.error('MCP_OUTPUT_LIMIT')
+        return output
 
     async def _verify_tool(self, session: ClientSession, state: _InvocationState) -> None:
         cursor: str | None = None

@@ -71,10 +71,10 @@ class Authority:
 
 
 class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
-    def assert_error(self, error, code, *, outcome='unknown'):
+    def assert_error(self, error, code, *, outcome='unknown', stopped=False):
         self.assertIsInstance(error, ToolInvocationError)
         self.assertEqual((error.code, str(error), error.outcome, error.stopped),
-                         (code, code, outcome, False))
+                         (code, code, outcome, stopped))
         self.assertNotIn(ALICE_TOKEN, repr(error))
         self.assertNotIn(BOB_TOKEN, repr(error))
 
@@ -153,7 +153,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     )
                     with self.assertRaises(ToolInvocationError) as failure:
                         await adapter.invoke(invocation)
-                    self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed')
+                    self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed', stopped=True)
             self.assertEqual(server.requests, [])
             self.assertEqual(server.calls, [])
 
@@ -171,7 +171,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             previous_requests = len(server.requests)
             with self.assertRaises(ToolInvocationError) as later:
                 await adapter.invoke(authority.invocation())
-            self.assert_error(later.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed')
+            self.assert_error(later.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed', stopped=True)
             self.assertEqual(len(server.requests), previous_requests)
 
     async def test_rotation_invalidates_inflight_revision_and_next_call_uses_new_token(self):
@@ -271,7 +271,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             for arguments in ({}, {'value': 12}):
                 with self.subTest(arguments=arguments), self.assertRaises(ToolInvocationError) as failure:
                     await adapter.invoke(authority.invocation(arguments))
-                self.assert_error(failure.exception, 'MCP_ARGUMENTS_INVALID', outcome='failed')
+                self.assert_error(failure.exception, 'MCP_ARGUMENTS_INVALID', outcome='failed', stopped=True)
             self.assertEqual(authority.resolutions, 0)
             self.assertEqual(server.requests, [])
 
@@ -286,7 +286,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(ToolInvocationError) as failure:
                         await MCPToolAdapter(descriptor(tool, input_schema=schema), url=server.url, allow_loopback_http=True).invoke(
                             Authority().invocation())
-                    self.assert_error(failure.exception, code, outcome='failed')
+                    self.assert_error(failure.exception, code, outcome='failed', stopped=True)
             self.assertEqual(server.calls, [])
 
     async def test_schema_annotations_and_caller_mutation_do_not_change_frozen_contract(self):
@@ -339,10 +339,92 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             authority = Authority(token='synthetic-wrong-token')
             with self.assertRaises(ToolInvocationError) as failure:
                 await MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True).invoke(authority.invocation())
-            self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR')
+            self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR', outcome='failed', stopped=True)
             self.assertEqual(len(server.requests), 1)
             self.assertIsNone(server.requests[0].owner)
             self.assertEqual(server.calls, [])
+
+    async def test_incomplete_authentication_refusal_does_not_prove_stop(self):
+        closed = asyncio.Event()
+
+        class BrokenRefusal(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'incomplete refusal'
+                raise httpx2.ReadError('synthetic response acknowledgement lost')
+
+        class Transport(httpx2.MockTransport):
+            async def aclose(self):
+                await super().aclose()
+                closed.set()
+
+        adapter = MCPToolAdapter(descriptor(), url='https://synthetic-mcp.invalid/mcp',
+            http_transport_factory=lambda: Transport(lambda request: httpx2.Response(
+                401, request=request, stream=BrokenRefusal())))
+        with self.assertRaises(ToolInvocationError) as failure:
+            await adapter.invoke(Authority().invocation())
+        self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR')
+        self.assertTrue(closed.is_set(), 'Socket close alone does not prove a complete initialization refusal')
+
+    async def test_cancelled_predispatch_credential_thread_does_not_prove_stop(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        invocation = Authority().invocation()
+
+        def credential():
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise ValueError('Synthetic callback release timeout')
+                return SecretLease('synthetic-mcp', ALICE_TOKEN)
+            finally:
+                finished.set()
+
+        async with MCPProtocolServer() as server:
+            adapter = MCPToolAdapter(descriptor(), url=server.url, allow_loopback_http=True,
+                                     teardown_timeout_seconds=0.05)
+            pending = asyncio.create_task(adapter.invoke(replace(invocation, resolve_credential=credential)))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                pending.cancel()
+                done, _ = await asyncio.wait({pending}, timeout=2)
+                self.assertIn(pending, done)
+                with self.assertRaises(ToolInvocationError) as failure:
+                    await pending
+                self.assert_error(failure.exception, 'MCP_CANCELLED', outcome='failed')
+                self.assertFalse(finished.is_set())
+                self.assertEqual(server.requests, [])
+            finally:
+                release.set()
+                self.assertTrue(await asyncio.to_thread(finished.wait, 2))
+                await asyncio.gather(pending, return_exceptions=True)
+
+    async def test_transport_close_failure_keeps_predispatch_schema_failure_unsettled(self):
+        class CloseFailure(httpx2.AsyncHTTPTransport):
+            async def aclose(self):
+                await super().aclose()
+                raise RuntimeError('Synthetic transport close acknowledgement lost')
+
+        async with MCPProtocolServer(stateless=False) as server:
+            schema = {'type': 'object', 'properties': {'undeclared': {'type': 'string'}}}
+            adapter = MCPToolAdapter(descriptor(input_schema=schema), url=server.url, allow_loopback_http=True,
+                                     http_transport_factory=CloseFailure)
+            with self.assertRaises(ToolInvocationError) as failure:
+                await adapter.invoke(Authority().invocation())
+            self.assert_error(failure.exception, 'MCP_TRANSPORT_ERROR')
+            self.assertEqual(server.calls, [])
+            self.assertTrue(any(request.method == 'DELETE' for request in server.requests))
+
+    async def test_pending_or_refused_delete_is_not_predispatch_stop_proof(self):
+        async with MCPProtocolServer(stateless=False) as server:
+            schema = {'type': 'object', 'properties': {'undeclared': {'type': 'string'}}}
+            adapter = MCPToolAdapter(descriptor(input_schema=schema), url=server.url, allow_loopback_http=True)
+            for status in (202, 405):
+                with self.subTest(delete_status=status):
+                    server.delete_status = status
+                    with self.assertRaises(ToolInvocationError) as failure:
+                        await adapter.invoke(Authority().invocation())
+                    self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
+            self.assertEqual(server.calls, [])
+            self.assertEqual(sum(request.method == 'DELETE' for request in server.requests), 2)
 
     async def test_schema_property_names_and_literal_const_values_are_not_annotations(self):
         async with MCPProtocolServer() as server:
@@ -361,7 +443,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(ToolInvocationError) as failure:
                         await MCPToolAdapter(descriptor(input_schema=declared), url=server.url, allow_loopback_http=True).invoke(
                             Authority().invocation())
-                    self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
+                    self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed', stopped=True)
             self.assertEqual(server.calls, [])
 
     async def test_schema_boolean_and_numeric_literals_remain_distinct(self):
@@ -386,7 +468,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaises(ToolInvocationError) as failure:
                             await MCPToolAdapter(descriptor(input_schema=declared), url=server.url, allow_loopback_http=True).invoke(
                                 Authority().invocation())
-                        self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed')
+                        self.assert_error(failure.exception, 'MCP_SCHEMA_CHANGED', outcome='failed', stopped=True)
                         self.assertEqual(server.calls, [])
 
     async def test_stateful_delete_credential_rejection_cannot_return_success(self):
@@ -683,6 +765,62 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.gather(pending, return_exceptions=True)
                 if blocked.is_set():
                     self.assertTrue(await asyncio.to_thread(finished.wait, 2))
+
+
+    async def test_monitor_failure_cannot_mask_sdk_cleanup_failure_before_dispatch(self):
+        from mcp import ClientSession
+
+        reject_next_check = threading.Event()
+        monitor_rejected = threading.Event()
+        sdk_close_failed = asyncio.Event()
+        transport_closed = asyncio.Event()
+        invocation = Authority().invocation()
+
+        def check():
+            invocation.check_authorized()
+            if reject_next_check.is_set():
+                reject_next_check.clear()
+                monitor_rejected.set()
+                raise ValueError('Synthetic transient authorization rejection')
+
+        class PausedDiscovery(MCPToolAdapter):
+            async def _verify_tool(self, session, state):
+                await super()._verify_tool(session, state)
+                # With discovery complete, only the authorization monitor can
+                # consume this rejection before cancelling the operation.
+                reject_next_check.set()
+                await asyncio.Event().wait()
+
+        class ObservedTransport(httpx2.AsyncHTTPTransport):
+            async def aclose(self):
+                await super().aclose()
+                transport_closed.set()
+
+        original_exit = ClientSession.__aexit__
+
+        async def unconfirmed_exit(session, *arguments):
+            try:
+                await original_exit(session, *arguments)
+            finally:
+                sdk_close_failed.set()
+                raise RuntimeError('Synthetic SDK cleanup acknowledgement lost')
+
+        async with MCPProtocolServer(stateless=False) as server:
+            adapter = PausedDiscovery(
+                descriptor(), url=server.url, allow_loopback_http=True,
+                authorization_interval=0.02, http_transport_factory=ObservedTransport,
+            )
+            with patch.object(ClientSession, '__aexit__', unconfirmed_exit):
+                with self.assertRaises(ToolInvocationError) as failure:
+                    await adapter.invoke(replace(invocation, check_authorized=check))
+            self.assertTrue(monitor_rejected.is_set())
+            self.assertTrue(sdk_close_failed.is_set())
+            self.assertTrue(transport_closed.is_set())
+            self.assertEqual(sum(request.method == 'DELETE' for request in server.requests), 1)
+            self.assertEqual(server.calls, [])
+            # Successful DELETE and socket close cannot hide the failed SDK
+            # cleanup acknowledgement behind the monitor's earlier failure.
+            self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed')
 
 
 if __name__ == '__main__':
