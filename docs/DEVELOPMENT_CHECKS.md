@@ -42,7 +42,7 @@ Both checker CLIs require an explicit map; there is intentionally no passing def
 
 The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports in owned modules or their reachable helpers fail with a coverage diagnostic; unrelated tests do not acquire this restriction. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
 
-The frontend checker uses the TypeScript parser and module resolver with one `tsconfig` (default `tsconfig.json`). Its map uses project-relative paths: `core` and `source_roots` are directories; each app has `path` and exact `public` files; `composition_roots` are exact files. Import/export, type dependencies, literal dynamic imports, `require`, path aliases and re-exports form edges. Unresolved imports and local source outside the indexed roots report coverage gaps in protected/reachable code. It does not expand third-party internals, custom loader aliases, `eval` or bundler-generated dependencies. Both checkers have legal, direct, indirect and composition-bypass fixtures. A composition root may wire application internals; it cannot exempt its callers or similarly named siblings.
+The frontend checker uses the TypeScript parser and module resolver with one `tsconfig` (default `tsconfig.json`). Its map uses project-relative paths: `core` and `source_roots` are directories; each app has `path` and exact `public` files; `composition_roots` are exact files. Import/export, type dependencies, literal dynamic imports, `require`, path aliases and re-exports form edges. Unresolved imports and local source outside the indexed roots report coverage gaps in protected/reachable code. It does not expand third-party internals, custom loader aliases, `eval` or bundler-generated dependencies. Both checkers have legal, direct, indirect and composition-bypass fixtures. Exact startup entries may call other exact composition files, as the browser mount calls component assembly. Ordinary core/app callers and similarly named siblings remain protected; startup ownership never extends to them.
 
 ## Independent core lifecycle
 
@@ -52,12 +52,11 @@ This gate passed against the split core wheel. It cannot independently prove tha
 
 ## Pending integration findings
 
-The actual ownership gates currently report two violations; neither is exempted:
+The Python ownership gate currently reports one violation, which is not exempted. The frontend map passes with the browser mount and component assembly declared as two exact startup files:
 
 | Import chain | Required correction |
 | --- | --- |
 | `agent_factory_research.research_bootstrap_assembly -> agent_factory_server.main` | Keep deployment assembly out of reusable app code; pass the dependency or move deployment orchestration to its owner |
-| `web/main.tsx -> web/composition.tsx` | Make browser startup part of the exact composition entry, so reusable frontend code does not import deployment wiring |
 
 Remove these resolved findings when the repairs land. Ordinary model/ORX fixtures now use member self-service while retaining owner, selected-model, revocation, UNKNOWN and stop-proof checks. Explicit historical approval tests remain compatibility coverage. Deterministic acceptance uses local transports and synthetic credentials, and does not establish live model/remote compatibility or encode a permanent provider/model ban.
 

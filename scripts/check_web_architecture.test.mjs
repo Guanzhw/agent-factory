@@ -20,7 +20,7 @@ function fixture(t) {
   const config = { source_roots: ['src'], core: ['src/web'], apps: {
     alpha: { path: 'src/apps/alpha', public: ['src/apps/alpha/api.ts'] },
     beta: { path: 'src/apps/beta', public: ['src/apps/beta/api.ts'] },
-  }, composition_roots: ['src/web/composition.tsx'] };
+  }, composition_roots: ['src/web/composition.tsx', 'src/web/main.tsx'] };
   write({
     'tsconfig.json': JSON.stringify({ compilerOptions: { module: 'NodeNext', moduleResolution: 'NodeNext', jsx: 'react-jsx',
       baseUrl: '.', paths: { '@alpha/*': ['src/apps/alpha/*'] } }, include: ['src/**/*'] }),
@@ -31,6 +31,7 @@ function fixture(t) {
     'src/apps/beta/api.ts': "export { value } from './private.js';",
     'src/apps/beta/private.ts': 'export const value = 2;',
     'src/web/composition.tsx': "export { value } from '../apps/alpha/api.js';",
+    'src/web/main.tsx': "import './composition.js';",
   });
   return { root, config, write, check: () => checkArchitecture(root, config) };
 }
@@ -43,6 +44,23 @@ test('legal shared helpers, exact public APIs, and exact composition', t => {
   const result = f.check();
   assert.equal(result.accepted, true);
   assert.deepEqual(result.gaps, []);
+});
+
+test('bootstrap can load composition but core and apps cannot import bootstrap through helpers', t => {
+  const f = fixture(t);
+  const legal = f.check();
+  assert.equal(legal.accepted, true);
+  assert.ok(legal.graph.get('src/web/main.tsx').some(edge => edge.target === 'src/web/composition.tsx'));
+  f.write({ 'src/shared/helper.ts': "import '../web/main.js'; export const value = 1;" });
+  const core = f.check();
+  assert.equal(core.accepted, false);
+  assert.ok(chains(core).includes('src/web/runtime.ts -> src/shared/helper.ts -> src/web/main.tsx'));
+  assert.deepEqual(core.gaps, []);
+  f.write({ 'src/apps/alpha/api.ts': "export { value } from '../../shared/helper.js';" });
+  const app = f.check();
+  assert.equal(app.accepted, false);
+  assert.ok(chains(app).includes('src/apps/alpha/api.ts -> src/shared/helper.ts -> src/web/main.tsx'));
+  assert.deepEqual(app.gaps, []);
 });
 
 test('direct app dependency resolves a tsconfig alias and CLI explains the import', t => {
@@ -88,10 +106,12 @@ test('cross-app private imports fail directly and through shared code; public pe
 test('composition can wire app implementations but never exempts callers or sibling files', t => {
   const f = fixture(t);
   f.write({ 'src/web/runtime.ts': "export * from './composition.js';",
-    'src/web/composition-extra.tsx': "export * from '../apps/alpha/api.js';" });
+    'src/web/composition-extra.tsx': "export * from '../apps/alpha/api.js';",
+    'src/web/main-extra.tsx': "export * from '../apps/alpha/api.js';" });
   const result = f.check();
   assert.ok(chains(result).includes('src/web/runtime.ts -> src/web/composition.tsx'));
   assert.ok(chains(result).includes('src/web/composition-extra.tsx -> src/apps/alpha/api.ts'));
+  assert.ok(chains(result).includes('src/web/main-extra.tsx -> src/apps/alpha/api.ts'));
   f.write({ 'src/web/composition.tsx': "export * from '../apps/beta/private.js';" });
   assert.ok(!chains(f.check()).includes('src/web/composition.tsx -> src/apps/beta/private.ts'));
   f.config.composition_roots = ['src/web'];
