@@ -134,12 +134,12 @@ async def probe(timeout, summary):
                 summary["healthOK"] = True
                 summary["phase"] = "application_absence"
                 if getattr(native.state, "queue_worker", None) is None:
-                    raise SmokeFailure("Native queue worker was not started")
+                    raise SmokeFailure("Native queue worker is missing")
                 await asyncio.to_thread(empty_catalog, native, port)
                 snapshots["running"] = await asyncio.to_thread(tables)
                 if not {"af_tasks", "af_materials"} <= set(snapshots["running"]):
                     raise SmokeFailure("Core tables were not initialized")
-                summary.update(nativeWorkerReady=True, materialsEmpty=True, applicationsEmpty=True, researchRouteAbsent=True)
+                summary.update(nativeWorkerPresent=True, materialsEmpty=True, applicationsEmpty=True, researchRouteAbsent=True)
         finally:
             if summary.get("researchRouteAbsent"):
                 summary["phase"] = "shutdown"
