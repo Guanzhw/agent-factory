@@ -12,6 +12,8 @@ import { modelEndpoint, readModelSetup, setupMetadata, type ModelSetup } from '.
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'credential-revision', providerId: 'byok-chat-v1', destination: 'https://api.openai.com', status: 'active' };
 const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
 const storage = 'factory-model-setup:alice'; const secret = 'synthetic-test-key-only';
+const goCredential = { ...credential, destination: 'https://opencode.ai' };
+const thinkingRow: OwnerModel = { ...row, provider: 'openai-compatible', baseURL: 'https://opencode.ai/zen/go/v1', model: 'longcat-2.5-preview-free', thinkingMode: 'disabled' };
 it('accepts the official Go Chat Completions base without accepting arbitrary provider prefixes', () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
   expect(modelEndpoint(baseURL)).toBe(baseURL);
@@ -114,6 +116,61 @@ it('settles a failed read with a retry action and exposes no secret field when c
 it('rejects foreign, unexpected secret-bearing, and malformed model receipts', () => {
   for (const value of [{ ...row, ownerId: 'bob' }, { ...row, password: secret }, { ...row, available: false }, { ...row, baseURL: 'javascript:alert(1)' }]) expect(() => ownerModel(value, 'alice')).toThrow();
   expect(ownerModel(row, 'alice')).toBe(row);
+});
+it('accepts the actual persisted thinking field and rejects invalid values, scope and unknown fields', () => {
+  expect(ownerModel(thinkingRow, 'alice')).toBe(thinkingRow);
+  for (const thinkingMode of ['enabled', 'default', null, false, {}, 0]) expect(() => ownerModel({ ...thinkingRow, thinkingMode }, 'alice')).toThrow();
+  for (const value of [{ ...thinkingRow, password: secret }, { ...thinkingRow, otherOption: 'disabled' }, { ...thinkingRow, model: 'other-model' }, { ...thinkingRow, baseURL: row.baseURL }]) expect(() => ownerModel(value, 'alice')).toThrow();
+});
+it('reads actual JSON thinking metadata on the settings page and validates default/revoke receipts', async () => {
+  vi.mocked(ownerModelApi.list).mockRestore(); vi.mocked(ownerModelApi.default).mockRestore();
+  let current = thinkingRow;
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith('/auth/session')) return new Response(JSON.stringify({ authenticated: true, csrfToken: 'synthetic-csrf-fixture-only' }));
+    if (path.endsWith('/default')) current = { ...thinkingRow, isDefault: true };
+    if (path.endsWith('/revoke')) current = { ...thinkingRow, status: 'revoked', available: false, isDefault: false };
+    if (options?.method === 'POST') expect(options.headers).toMatchObject({ 'X-Factory-Expected-Owner': 'alice' });
+    return new Response(JSON.stringify(path.endsWith('/personal-models') ? [current] : current));
+  }));
+  await mount(); expect(host.textContent).toContain(thinkingRow.model); expect(host.textContent).not.toContain('暂时无法读取模型设置');
+  await act(async () => { button('设为默认').click(); await new Promise(resolve => setTimeout(resolve, 20)); }); expect(host.textContent).toContain('默认模型已更新');
+  await act(async () => button('撤销模型').click()); await act(async () => { button('确认撤销').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(host.textContent).toContain('模型已撤销，不能用于新任务');
+  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+});
+it('retains scoped thinking metadata through password rotation, lost configure acknowledgement and refresh', async () => {
+  const original = { ...thinkingRow, isDefault: true };
+  const updated = { ...original, credentialRevision: 'rotated-r2', revision: 'model-r2' };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([goCredential]);
+  const rotate = vi.spyOn(ownerModelApi, 'rotateCredential').mockResolvedValue({ ...goCredential, credentialRevision: 'rotated-r2' });
+  vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0)).mockResolvedValue(updated);
+  vi.mocked(ownerModelApi.default).mockResolvedValue(updated);
+  await mount(); await act(async () => button('更新密钥').click()); await fill('API 密钥', secret);
+  await act(async () => button('保存新密钥').click());
+  const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1]; expect(request.thinkingMode).toBe('disabled');
+  expect(localStorage.getItem(storage)).toContain('"thinkingMode":"disabled"'); expect(localStorage.getItem(storage)).not.toContain(secret);
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  await act(async () => button('核对并继续原保存').click());
+  expect(ownerModelApi.configure).toHaveBeenNthCalledWith(2, 'alice', request, original.reference);
+  expect(rotate).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('密钥已更新。旧任务绑定会按服务端规则重新检查。');
+});
+it('keeps thinking disabled on credential rebind and refuses a receipt that silently loses it', async () => {
+  const original = { ...thinkingRow, isDefault: true, available: false, status: 'credential_unavailable' as const };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([{ ...goCredential, credentialRevision: 'rotated-r2' }]);
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...thinkingRow, isDefault: true, credentialRevision: 'rotated-r2', thinkingMode: undefined });
+  await mount(); await act(async () => button('绑定更新后的凭据').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ thinkingMode: 'disabled' }), original.reference);
+  expect(ownerModelApi.default).not.toHaveBeenCalled(); expect(host.textContent).toContain('设置尚未确认');
+  expect(localStorage.getItem(storage)).toContain('"thinkingMode":"disabled"'); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+});
+it('persists thinking as bounded metadata and rejects malformed storage values', () => {
+  const setup: ModelSetup = { owner: 'alice', provider: thinkingRow.provider, baseURL: thinkingRow.baseURL, model: thinkingRow.model, thinkingMode: 'disabled', credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'model', chooseDefault: true, credential: goCredential };
+  expect(readModelSetup(JSON.stringify(setupMetadata(setup)), 'alice')).toEqual(setup);
+  for (const thinkingMode of ['default', 'enabled', null, false, {}]) expect(readModelSetup(JSON.stringify({ ...setup, thinkingMode }), 'alice')).toBeNull();
+  expect(readModelSetup(JSON.stringify({ ...setup, baseURL: row.baseURL }), 'alice')).toBeNull();
 });
 it('persists only owner-scoped safe setup metadata and rejects unsupported destinations before custody', () => {
   const setup: ModelSetup = { owner: 'alice', provider: 'openai', baseURL: row.baseURL, model: row.model, credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'credential', chooseDefault: true };

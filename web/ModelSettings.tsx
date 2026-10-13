@@ -57,16 +57,17 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     if (s.stage === 'model') {
       await verifyOwner();
       const configured = await ownerModelApi.configure(ownerId, { provider: s.provider, baseURL: s.baseURL, model: s.model,
-        credentialRef: s.credential!.credentialRef, credentialRevision: s.credential!.credentialRevision, requestId: s.modelRequest }, s.reference);
+        credentialRef: s.credential!.credentialRef, credentialRevision: s.credential!.credentialRevision, requestId: s.modelRequest,
+        ...(s.thinkingMode ? { thinkingMode: s.thinkingMode } : {}) }, s.reference);
       if (!alive.current) return;
-      if (configured.provider !== s.provider || configured.baseURL !== s.baseURL || configured.model !== s.model || configured.credentialRef !== s.credential!.credentialRef || configured.credentialRevision !== s.credential!.credentialRevision || !configured.available) throw new Error('模型保存回执无法核对。');
+      if (configured.provider !== s.provider || configured.baseURL !== s.baseURL || configured.model !== s.model || configured.thinkingMode !== s.thinkingMode || configured.credentialRef !== s.credential!.credentialRef || configured.credentialRevision !== s.credential!.credentialRevision || !configured.available) throw new Error('模型保存回执无法核对。');
       s = retain({ ...s, reference: configured.reference, stage: 'default' });
     }
     if (s.chooseDefault) {
       await verifyOwner();
       const selected = await ownerModelApi.default(ownerId, s.reference!, s.defaultRequest);
       if (!alive.current) return;
-      if (selected.reference !== s.reference || !selected.isDefault || !selected.available) throw new Error('默认模型尚未确认；请核对原设置。');
+      if (selected.reference !== s.reference || selected.thinkingMode !== s.thinkingMode || !selected.isDefault || !selected.available) throw new Error('默认模型尚未确认；请核对原设置。');
     }
     if (!alive.current) return;
     finished(); setNotice(s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
@@ -87,6 +88,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     void run(async () => {
       await verifyOwner();
       const s = retain({ owner: ownerId, provider, baseURL, model: selectedModel,
+        ...(editing?.thinkingMode ? { thinkingMode: editing.thinkingMode } : {}),
         credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
         stage: !editing && credentialSource === 'saved' ? 'model' : 'credential', chooseDefault: editing ? editing.isDefault : true,
         ...(!editing && credentialSource === 'saved' ? { credential: selectedCredential! } : {}),
@@ -125,6 +127,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     void run(async () => {
       await verifyOwner();
       await continueSetup(retain({ owner: ownerId, provider: record.provider, baseURL: record.baseURL, model: record.model,
+        ...(record.thinkingMode ? { thinkingMode: record.thinkingMode } : {}),
         credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
         stage: 'model', chooseDefault: record.isDefault, reference: record.reference, credential,
         rotating: { credentialRef: record.credentialRef, credentialRevision: record.credentialRevision } }));

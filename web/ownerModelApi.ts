@@ -5,12 +5,14 @@ export interface OwnerModel {
   reference: string; revision: string; connectionRef: string; ownerId: string;
   provider: 'openai' | 'openai-compatible'; baseURL: string; model: string;
   credentialRef: string; credentialRevision: string; updatedAt: string;
+  thinkingMode?: 'disabled';
   status: 'configured' | 'credential_unavailable' | 'revoked'; available: boolean; isDefault: boolean;
 }
 export interface ModelCapabilities { enabled: boolean; providers: string[]; liveCompatibilityVerified: boolean }
 export interface ModelConfiguration {
   provider: OwnerModel['provider']; baseURL: string; model: string;
   credentialRef: string; credentialRevision: string; requestId: string;
+  thinkingMode?: 'default' | 'disabled';
 }
 export class ModelRequestError extends Error {
   constructor(public readonly status: number, public readonly code?: string) {
@@ -25,11 +27,12 @@ async function safe<T>(path: string, method = 'GET', body?: unknown, signal?: Ab
 }
 export function ownerModel(value: unknown, owner: string): OwnerModel {
   const m = value as OwnerModel;
-  const fields = new Set(['reference', 'revision', 'connectionRef', 'ownerId', 'provider', 'baseURL', 'model', 'credentialRef', 'credentialRevision', 'updatedAt', 'status', 'available', 'isDefault', 'hardExternalBudgetEnforced']);
+  const fields = new Set(['reference', 'revision', 'connectionRef', 'ownerId', 'provider', 'baseURL', 'model', 'credentialRef', 'credentialRevision', 'updatedAt', 'thinkingMode', 'status', 'available', 'isDefault', 'hardExternalBudgetEnforced']);
   if (!m || typeof m !== 'object' || Array.isArray(m) || Object.keys(m).some(key => !fields.has(key))
       || m.ownerId !== owner || !['openai', 'openai-compatible'].includes(m.provider)
       || !['reference', 'revision', 'connectionRef', 'credentialRef', 'credentialRevision'].every(key => typeof m[key as keyof OwnerModel] === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(String(m[key as keyof OwnerModel])))
       || typeof m.baseURL !== 'string' || typeof m.model !== 'string' || !m.model || m.model.length > 120
+      || !validThinkingMetadata(m)
       || !['configured', 'credential_unavailable', 'revoked'].includes(m.status)
       || typeof m.isDefault !== 'boolean' || typeof m.available !== 'boolean' || m.available !== (m.status === 'configured')) {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
@@ -38,6 +41,12 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     if (modelEndpoint(m.baseURL) !== m.baseURL) throw new Error();
   } catch { throw new ModelRequestError(200, 'INVALID_RESPONSE'); }
   return m;
+}
+/** Default is omitted by the backend; the sole persisted option is scoped. */
+export function validThinkingMetadata(value: { baseURL: string; model: string; thinkingMode?: unknown }): boolean {
+  return !Object.prototype.hasOwnProperty.call(value, 'thinkingMode')
+    || value.thinkingMode === 'disabled' && value.baseURL === 'https://opencode.ai/zen/go/v1'
+      && value.model === 'longcat-2.5-preview-free';
 }
 const ref = encodeURIComponent;
 export const ownerModelApi = {

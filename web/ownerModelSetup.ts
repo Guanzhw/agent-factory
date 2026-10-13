@@ -1,10 +1,11 @@
-import type { OwnerModel } from './ownerModelApi.js';
+import { validThinkingMetadata, type OwnerModel } from './ownerModelApi.js';
 import type { PersonalCredential } from './personalRemoteApi.js';
 import { modelEndpoint } from './modelEndpoint.js';
 export { modelEndpoint } from './modelEndpoint.js';
 
 export interface ModelSetup {
   owner: string; provider: OwnerModel['provider']; baseURL: string; model: string;
+  thinkingMode?: OwnerModel['thinkingMode'];
   credentialRequest: string; modelRequest: string; defaultRequest: string;
   stage: 'credential' | 'model' | 'default'; reference?: string;
   credential?: PersonalCredential; rotating?: { credentialRef: string; credentialRevision: string };
@@ -18,9 +19,11 @@ export function setupCredential(value: PersonalCredential, setup: ModelSetup): P
 }
 /** This is deliberately a whitelist: no key, secret value or secret hash is stored. */
 export function setupMetadata(setup: ModelSetup): ModelSetup {
+  if (!validThinkingMetadata(setup)) throw new Error('Invalid thinking metadata');
   return { owner: setup.owner, provider: setup.provider, baseURL: setup.baseURL, model: setup.model,
     credentialRequest: setup.credentialRequest, modelRequest: setup.modelRequest, defaultRequest: setup.defaultRequest,
     stage: setup.stage, chooseDefault: setup.chooseDefault, ...(setup.reference ? { reference: setup.reference } : {}),
+    ...(setup.thinkingMode ? { thinkingMode: setup.thinkingMode } : {}),
     ...(setup.credential ? { credential: setupCredential(setup.credential, setup) } : {}),
     ...(setup.rotating ? { rotating: { credentialRef: setup.rotating.credentialRef, credentialRevision: setup.rotating.credentialRevision } } : {}) };
 }
