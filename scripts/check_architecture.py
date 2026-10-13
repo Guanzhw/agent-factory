@@ -221,7 +221,7 @@ def check(root: Path, config: dict):
                     reason = "Reusable core/apps cannot depend on the composition root; inject the required port instead"
                 elif is_core and target_app is not None:
                     reason = "Core reaches application code; move this behavior to its app/adapter and inject a core port"
-                elif target_app is not None and (is_composition or target_app != source_app):
+                elif not is_composition and target_app is not None and target_app != source_app:
                     if target in apps[target_app].get("public", []):
                         # Only cross-app callers stop here. Core has already
                         # failed above; API modules are also checked as origins.
@@ -250,7 +250,8 @@ def main(argv=None):
         print(" -> ".join(violation.chain), file=sys.stderr)
         for source, target in zip(violation.chain, violation.chain[1:]):
             edge = next(edge for edge in graph[source] if edge.target == target)
-            print(f"  {modules[source].path.relative_to(args.root.resolve())}:{edge.line} -> {target}", file=sys.stderr)
+            path = modules[source].path.relative_to(args.root.resolve()).as_posix()
+            print(f"  {path}:{edge.line} -> {target}", file=sys.stderr)
         print(f"  Fix: {violation.reason}", file=sys.stderr)
     for gap in gaps:
         print(f"Coverage gap: {gap}", file=sys.stderr)
