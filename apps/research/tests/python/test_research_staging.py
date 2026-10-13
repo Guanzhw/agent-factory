@@ -61,9 +61,14 @@ class StagingFilesystemTests(unittest.TestCase):
         return stage_own_bundle(self.root, self.files, guard, descriptor=descriptor or self.descriptor)
 
     def test_sealed_roundtrip_all_inputs_rehashed(self):
-        calls = []
-        result = self.stage(guard=lambda: calls.append(True))
-        self.assertEqual(len(calls), 7)
+        guarded_contents = []
+        def guard():
+            contents = frozenset(path.name for path in self.root.iterdir())
+            self.assertNotIn(SEAL, contents)
+            guarded_contents.append(contents)
+        result = self.stage(guard=guard)
+        self.assertEqual(guarded_contents[0], frozenset())
+        self.assertIn(PROGRAM_FILES, guarded_contents)
         self.assertFalse(result['executionVerified'])
         self.assertEqual(result, verify_staged_program(self.root, self.descriptor))
         self.assertEqual((self.root / SEAL).read_bytes(), descriptor_bytes(self.descriptor))
@@ -83,15 +88,16 @@ class StagingFilesystemTests(unittest.TestCase):
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_no_adoption_of_partial_stage_after_authority_loss(self):
-        count = 0
+        partial = {}
         def guard():
-            nonlocal count
-            count += 1
-            if count == 3:
+            partial.update({path.name: path.read_bytes() for path in self.root.iterdir()})
+            if partial:
                 raise ValueError('synthetic authority ended')
         with self.assertRaises(ValueError):
             self.stage(guard=guard)
-        self.assertEqual(len(list(self.root.iterdir())), 2)
+        self.assertTrue(partial)
+        self.assertLess(set(partial), PROGRAM_FILES)
+        self.assertEqual({path.name: path.read_bytes() for path in self.root.iterdir()}, partial)
         self.assertFalse((self.root / SEAL).exists())
         with self.assertRaises(ValueError):
             self.stage()

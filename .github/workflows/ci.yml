@@ -7,10 +7,27 @@ on:
 permissions:
   contents: read
 jobs:
+  scope:
+    name: Select CI mode
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      os: ${{ steps.select.outputs.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Check mode selection and summary behavior
+        run: python -m unittest discover -s tests/ci -p test_ci_scope.py -v
+      - name: Select docs, daily fast, or manually requested full checks
+        id: select
+        run: python scripts/ci_scope.py
   frontend:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.scope.outputs.os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -23,9 +40,11 @@ jobs:
       - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
       - run: npm run check
   python:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.scope.outputs.os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -39,8 +58,15 @@ jobs:
       - run: uv run ruff check platform apps/research deployment scripts
       - run: uv run pyright
       - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json
-      - run: uv run python scripts/check_python.py
+      - name: Fast selected Python regressions
+        if: needs.scope.outputs.mode == 'fast'
+        run: uv run python scripts/check_fast.py --suite python
+      - name: Full Python compatibility discovery
+        if: needs.scope.outputs.mode == 'full'
+        run: uv run python scripts/check_python.py
   postgres:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -72,7 +98,11 @@ jobs:
       - run: uv sync --frozen
       - name: Install and start the independent core without application source
         run: uv run python scripts/check_core_install.py
-      - name: PostgreSQL suite once, including required acceptance (bounded diagnostic log)
+      - name: Fast required PostgreSQL, process custody and small-tree regressions
+        if: needs.scope.outputs.mode == 'fast'
+        run: uv run python scripts/check_fast.py --suite postgres
+      - name: Full PostgreSQL discovery and required acceptance (manual release check)
+        if: needs.scope.outputs.mode == 'full'
         shell: bash
         run: |
           set +e
@@ -94,3 +124,14 @@ jobs:
           wait "$progress_pid" 2>/dev/null || true
           tail -n 400 "$RUNNER_TEMP/postgres-tests.log"
           exit "$test_status"
+  summary:
+    name: CI summary
+    if: always()
+    needs: [scope, frontend, python, postgres]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Report the selected scope without equating fast and full acceptance
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python scripts/ci_scope.py --summary
