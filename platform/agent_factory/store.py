@@ -31,7 +31,7 @@ def now():
 
 
 # Compatibility exports: custody/evidence semantics belong to trusted adapters.
-from .runtime_hooks import effect_unresolved, runtime_custody_held, reconcile_runtime_capacity
+from .runtime_hooks import effect_unresolved, runtime_custody_held
 
 
 class Store:
@@ -54,13 +54,9 @@ class Store:
         self.execution_bindings: Any = None
         self.applications: Any = None
         self.composition: Any = None
-        self.synthesis_sources: Any = None
-        self.comparisons: Any = None
         self.lifecycle_observer: Any = None
         self.event_replay: Any = None
         self.handoff_client: Any = None
-        self.remote_scientific: Any = None
-        self.remote_scientific_receiver: Any = None
         self.handoff_receiver: Any = None
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
@@ -71,12 +67,11 @@ class Store:
         self.workflow: Any = None
         self.workflow_control: Any = None
         self.native_workflows: Any = None
+        self.runtime_effect_held: Any = None
+        self.runtime_cancel_owned: Any = None
+        self.runtime_ended_reason: Any = None
+        self.runtime_mark_cancel_requested: Any = None
         self.external_execution_handlers: dict[str, Any] = {}
-        self.autoresearch: Any = None
-        self.autoresearch_session_control: Any = None
-        self.autoresearch_children: Any = None
-        self.research_runtime: Any = None
-        self.research_evaluation: Any = None
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}
         self._connection: ContextVar[Any] = ContextVar("factory_metadata_connection", default=None)
@@ -167,7 +162,6 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_storage_objects (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,task_id TEXT NOT NULL REFERENCES af_tasks(id),root_id TEXT NOT NULL,evidence BOOLEAN NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL,identity JSONB NOT NULL DEFAULT '{}'::jsonb)",
             "CREATE TABLE IF NOT EXISTS af_retention_plans (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,object_id TEXT NOT NULL REFERENCES af_storage_objects(id),request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,body JSONB NOT NULL,UNIQUE(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
-            "CREATE TABLE IF NOT EXISTS af_inference_waits (task_id TEXT PRIMARY KEY REFERENCES af_tasks(id), body JSONB NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_resources (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL)",
@@ -178,7 +172,6 @@ class Store:
         ]
         for statement in statements:
             self.sql(statement)
-        reconcile_runtime_capacity(self)
         mode = "demo" if self.settings.demo else "production"
         self.sql("INSERT INTO af_bootstrap VALUES('mode',:mode) ON CONFLICT DO NOTHING", mode=mode)
         if self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")[0]["mode"] != mode:
@@ -277,7 +270,7 @@ class Store:
                         continue
                     candidate = current
                     native = self.native_db.get_job(candidate["run_id"]) or {}
-                    uncertain = any(effect_unresolved(effect) for effect in conn.execute(
+                    uncertain = any(effect_unresolved(effect, self) for effect in conn.execute(
                         text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
                         {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
@@ -444,7 +437,7 @@ class Store:
 
     def _observed_locked(self, task, status, terminal):
         if terminal and (runtime_custody_held(self, task["id"])
-                         or any(effect_unresolved(effect) for effect in self.effects(task["id"]))):
+                         or any(effect_unresolved(effect, self) for effect in self.effects(task["id"]))):
             terminal = False
         if terminal and self.storage is not None:
             self.storage.release(task["id"])
@@ -458,7 +451,8 @@ class Store:
     def request_cancel(self, task_id):
         with self.transaction():
             self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
-            self.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:id AND state IN ('WAITING','RESUMING')", id=task_id)
+            if self.runtime_mark_cancel_requested is not None:
+                self.runtime_mark_cancel_requested(task_id)
             self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):
@@ -477,7 +471,7 @@ class Store:
 
     def effect_complete(self, run_id, key, result):
         status = "CANCELLED" if isinstance(result, dict) and result.get("cancelled") else "DONE"
-        if effect_unresolved({"effect_key": run_id + ":" + key, "status": status, "result": result}):
+        if effect_unresolved({"effect_key": run_id + ":" + key, "status": status, "result": result}, self):
             raise ValueError("Terminal effect requires positive adapter stop evidence")
         self.sql("UPDATE af_effects SET status=:status,result=CAST(:result AS JSONB) WHERE effect_key=:key", key=run_id + ":" + key, status=status, result=canonical(result))
 

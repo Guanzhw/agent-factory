@@ -199,6 +199,7 @@ class PersistentResourceService:
     def __init__(self, store: Any, auth: Any, targets: Mapping[str, RemoteTarget]):
         self.store, self.auth = store, auth
         self.targets = dict(targets)
+        self.execution_runtimes: dict[str, Any] = {}
         if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", ref) for ref in self.targets):
             raise ValueError("Configured connection references must be bounded identifiers")
         pools = {}
@@ -306,9 +307,8 @@ class PersistentResourceService:
         from .process_runtime import EFFECT
         if effect == EFFECT:
             return self.store.process_runtime
-        from .research_runtime import EFFECT as RESEARCH_EFFECT
-        if effect == RESEARCH_EFFECT and getattr(self.store, "research_runtime", None) is not None:
-            return self.store.research_runtime
+        if effect in self.execution_runtimes:
+            return self.execution_runtimes[effect]
         raise HTTPException(409, "PROCESS_EXECUTION_EFFECT_UNSUPPORTED")
 
     def _admit_effect(self, owner, lease):

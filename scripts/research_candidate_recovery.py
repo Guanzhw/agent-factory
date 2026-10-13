@@ -27,7 +27,7 @@ ERROR = 'RESEARCH_CANDIDATE_CUSTODY_UNCONFIRMED'
 IDENTITY = frozenset({'configSha256', 'candidateSha256', 'baselineManifestSha256'})
 PROGRESS_IDS = ('requestId', 'taskId', 'planId', 'nativeRunId', 'leaseId', 'providerJobId', 'artifactId')
 STAGES = ('preparation', 'training', 'evaluation')
-PHASES = frozenset({'STARTED', 'PLAN_APPROVED', 'TASK_ACCEPTED', 'NATIVE_PAUSED',
+PHASES = frozenset({'STARTED', 'PLAN_READY', 'PLAN_APPROVED', 'TASK_ACCEPTED', 'NATIVE_PAUSED',
     'PROCESS_SUBMITTED', 'PRELAUNCH_REJECTED', 'PROCESS_RECLAIMED', 'EVIDENCE_IMPORTED',
     'COMPLETED', 'STOPPED', 'ACCEPTED', 'IMPORTED'})
 MAXIMUM = 32768
@@ -324,7 +324,7 @@ async def recover_original(state, runtime, owner, task_id, budget_seconds):
     """
     _require(type(owner) is str and owner and type(task_id) is str and task_id
              and _number(budget_seconds) and 0 < budget_seconds <= 5)
-    from agent_factory.research_bootstrap_controller import cleanup_original
+    from agent_factory_research.research_bootstrap_controller import cleanup_original
     loop = asyncio.get_running_loop()
 
     def call_async(function):

@@ -27,7 +27,7 @@ from pg_fixture import IsolatedPostgres
 from controlled_remote_worker import (MANAGER, MODEL_RECEIVER, MODEL_SOURCE, ORIGIN_OWNER, OTHER_OWNER,
     RECEIVER_OWNER, REVIEWER, TARGET_REF, token)
 from agent_factory.store import digest
-from agent_factory.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
+from agent_factory_research.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
 
 PROJECT = Path(__file__).resolve().parents[2]
 
@@ -51,7 +51,8 @@ class OwnedServer:
         if self.process is not None and self.process.poll() is None:
             raise RuntimeError("Owned fixture server is already running")
         environment = {**os.environ, "FACTORY_REMOTE_PROCESS_CONFIG": str(self.path),
-                       "PYTHONPATH": os.pathsep.join([str(PROJECT / "platform"), str(PROJECT / "platform/tests"), sysconfig.get_path("purelib")]),
+                       "PYTHONPATH": os.pathsep.join([str(PROJECT / path) for path in
+                           ("platform", "platform/tests", "apps/research", "deployment")] + [sysconfig.get_path("purelib")]),
                        "AGNO_TELEMETRY": "false"}
         if self.log is not None:
             self.log.close()

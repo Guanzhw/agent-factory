@@ -14,15 +14,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec, open_working_directory
-from agent_factory.research_bootstrap_assembly import _Reservation, _Evaluation, REVISION as BOOTSTRAP_REVISION
-from agent_factory.research_environment_observer import ResearchEnvironmentObserver
-from agent_factory.research_local_driver import ScientificRuntimePin, _LocalDriver, build_local_driver, derive_local_identities
-from agent_factory.research_local_provider import ResearchLocalProvider
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
-from agent_factory.research_preparation_provider import PreparationProvider
-from agent_factory.research_staging import RootIdentity
-from agent_factory.research_training_adapter import build_training_bundle
+from agent_factory_research.research_bootstrap_assembly import _Reservation, _Evaluation, REVISION as BOOTSTRAP_REVISION
+from agent_factory_research.research_environment_observer import ResearchEnvironmentObserver
+from agent_factory_research.research_local_driver import ScientificRuntimePin, _LocalDriver, build_local_driver, derive_local_identities
+from agent_factory_research.research_local_provider import ResearchLocalProvider
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_manifest import manifest_fingerprint, validate_manifest
+from agent_factory_research.research_preparation_provider import PreparationProvider
+from agent_factory_research.research_staging import RootIdentity
+from agent_factory_research.research_training_adapter import build_training_bundle
 from agent_factory.resources import ComputePool, RemoteTarget, PersistentResourceService
 from agent_factory.store import canonical, digest
 from research_candidate_reopen import make_snapshot
@@ -277,13 +277,14 @@ class ScientificPhaseAssembler:
         return self.prep_target
 
     def _register(self, phase, candidate, prior, pin, target):
+        from agent_factory_research.services import services_for
         if phase == 'preparation' and getattr(self, 'preparation_store', self.store) is not self.store:
             # Verification binding only. Never expose the legacy provider as an
             # allocatable target in the independent candidate control plane.
             require(target is self.phase_target(phase, pin))
             return target
         resources = self.store.process_runtime.resources
-        require(self.store.research_runtime.resources is resources)
+        require(services_for(self.store).research_runtime.resources is resources)
         for registry in (resources.targets, self.state['settings'].remote_targets):
             previous = registry.get(pin['targetRef'])
             require(previous is None or previous is target)
@@ -440,12 +441,13 @@ class ScientificPhaseAssembler:
         return self._register(phase, candidate, prior, pin, target)
 
     def evaluation_service(self, pin):
+        from agent_factory_research.services import services_for
         require(type(pin) is dict and set(pin) == {'targetRef', 'comparisonManifest',
             'comparisonManifestSha256', 'variantSha256'})
         record = self.evaluation_registrations.get(pin['targetRef'])
         require(record is not None and record['pin'] == pin)
         assert record is not None
-        resources = self.store.research_runtime.resources
+        resources = services_for(self.store).research_runtime.resources
         require(resources is self.store.process_runtime.resources)
         target = record['target']
         require(resources.targets.get(pin['targetRef']) is target

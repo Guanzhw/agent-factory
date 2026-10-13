@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
@@ -195,7 +195,7 @@ class OwnedFactory:
         test.addCleanup(self.database.__exit__, None, None, None)
         self.directory = TemporaryDirectory()
         test.addCleanup(self.directory.cleanup)
-        self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
+        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
         self.client: Any = None
         test.addCleanup(self.stop)
         self.start()

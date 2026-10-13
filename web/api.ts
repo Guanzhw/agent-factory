@@ -1,7 +1,6 @@
 import { sameSourceSnapshot, sourceSnapshotReference } from './sourcePlanState.js';
 import { applicationInputSchema, applicationInputValues, sameApplicationInputs } from './applicationInputState.js';
 import { workflowCommand as validateWorkflowCommand, type WorkflowCommand } from './workflowState.js';
-import type { SynthesisCreate } from './synthesisJourneyState.js';
 import { authEpoch, assertAuthEpoch, browserCsrf, BrowserAuthError, expireBrowserSession } from './browserAuth.js';
 import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
 import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
@@ -307,13 +306,6 @@ export const api = {
     commandStatus: (taskId: string, commandId: string, signal?: AbortSignal) => request<unknown>(`/workflows/${segment(taskId)}/commands/${segment(commandId)}`, 'GET', undefined, signal),
     command: (taskId: string, command: WorkflowCommand) => request<unknown>(`/workflows/${segment(taskId)}/commands`, 'POST', validateWorkflowCommand(command)),
   },
-  autoresearch: {
-    presets: (signal?: AbortSignal) => request<unknown>('/autoresearch/presets', 'GET', undefined, signal),
-    start: (input: { presetId: string; goal?: string; requestId: string }, signal?: AbortSignal) => request<unknown>('/autoresearch/runs', 'POST', input, signal),
-    get: (id: string, signal?: AbortSignal) => request<unknown>(`/autoresearch/runs/${segment(id)}`, 'GET', undefined, signal),
-    recover: (id: string, signal?: AbortSignal) => request<unknown>(`/autoresearch/requests/${segment(id)}`, 'GET', undefined, signal),
-    cancel: (id: string, input: { requestId: string }, signal?: AbortSignal) => request<unknown>(`/autoresearch/runs/${segment(id)}/cancel`, 'POST', input, signal),
-  },
   scheduleDiagnostics: {
     list: (after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/diagnostic-schedules${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
     page: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/diagnostics${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
@@ -328,14 +320,6 @@ export const api = {
     update: (id: string, input: { cron: string; timezone: string; requestId: string; expectedDefinitionFingerprint: string }) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}`, 'PATCH', input),
     setEnabled: (id: string, input: { enabled: boolean; requestId: string; expectedDefinitionFingerprint: string }) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/enabled`, 'POST', input),
     occurrences: (id: string, after?: string, signal?: AbortSignal) => request<unknown>(`/schedule-management/${encodeURIComponent(id)}/occurrences${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
-  },
-  comparisons: { catalog: (signal?: AbortSignal) => request<unknown>('/comparisons/catalog', 'GET', undefined, signal) },
-  synthesis: {
-    preview: (taskId: string, signal?: AbortSignal) => request<unknown>(`/synthesis/sources/${segment(taskId)}`, 'GET', undefined, signal),
-    list: (taskId: string, after?: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots?${new URLSearchParams({ sourceTaskId: taskId, limit: '20', ...(after ? { after } : {}) })}`, 'GET', undefined, signal),
-    inspect: (id: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots/${segment(id)}`, 'GET', undefined, signal),
-    current: (id: string, signal?: AbortSignal) => request<unknown>(`/synthesis/snapshots/${segment(id)}/current`, 'GET', undefined, signal),
-    create: (input: SynthesisCreate) => request<unknown>('/synthesis/snapshots', 'POST', input),
   },
   storage: async (owner: string, signal?: AbortSignal) => storageSummary(await request<StorageSummary>('/storage', 'GET', undefined, signal), owner),
   retentionPlan: async (owner: string, objectId: string, requestId: string) => retentionReceipt(await request<RetentionReceipt>('/storage/retention/plans', 'POST', { objectId, requestId }), owner),
@@ -365,7 +349,6 @@ export const api = {
   connections: userConnections,
   createMaterial: (draft: MaterialDraft & { requestId: string }) => request<FactoryMaterial>('/materials', 'POST', draft),
   publish: (material: FactoryMaterial, requestId: string) => request<MaterialReview>(`/materials/${segment(material.id)}/${material.version}/publish`, 'POST', { requestId }),
-  plan: (topic: string, mode: 'literature' | 'experiment', requestId: string) => request<Plan>('/plans', 'POST', { topic, mode, requestId }),
   instantiate, resumeRemote,
   governanceDraft: (definition: Record<string, unknown>, requestId: string) => request<FactoryMaterial>('/material-governance/drafts', 'POST', { definition, requestId }),
   importMaterials: (definitions: Record<string, unknown>[], requestId: string) => request<{ materials: FactoryMaterial[]; outcomeSource: string; executesCode: boolean }>('/material-governance/imports', 'POST', { definitions, requestId }),

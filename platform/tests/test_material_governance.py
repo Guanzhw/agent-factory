@@ -26,10 +26,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, create_engine, select
 
 from agent_factory.auth import AuthService
-from agent_factory.catalog import SEEDS
-from agent_factory.config import Settings
-from agent_factory.demo_model import DemoModel
-from agent_factory.main import create_app
+from agent_factory_research.bootstrap_catalog import SEEDS
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory_server.main import create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance, material_governance_router
 from agent_factory.store import digest, now
 from pg_fixture import IsolatedPostgres
@@ -88,7 +88,8 @@ class MaterialGovernanceTests(unittest.TestCase):
         self.auth.directory.upsert("fixture-editor", name="Owned editor fixture")
         self.auth.authorization.assign("fixture-editor", "fixture-editor-role")
         self.store = PortableMetadata(self.db, self.settings)
-        self.service = MaterialGovernance(self.store, self.auth)
+        self.service = MaterialGovernance(self.store, self.auth, GovernanceConfig(
+            review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
 
     def tearDown(self):
         self.db.db_engine.dispose()
@@ -103,7 +104,7 @@ class MaterialGovernanceTests(unittest.TestCase):
         decision = self.service.decide_publication("bob", review["id"], True, str(uuid4()))
         return material, decision
 
-    def test_default_requires_separate_current_native_admin_and_exact_digest(self):
+    def test_legacy_requires_separate_current_native_admin_and_exact_digest(self):
         material = self.draft()
         original = self.store.raw(material)["body"]
         review = self.service.request_publication("manager", material["id"], 1, "review-first")
@@ -266,7 +267,7 @@ class MaterialGovernanceTests(unittest.TestCase):
         self.service.withdraw("bob", material["id"], 1, "withdraw-key")
         self.assertEqual(decision, self.service.decide_publication("bob", review["id"], True, "decision-key"))
         self.assertEqual(self.service.inspect_version("bob", material["id"], 1)["governance"]["state"], "withdrawn")
-        restarted = MaterialGovernance(self.store, self.auth)
+        restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
         self.assertEqual(restarted.create_draft("manager", definition(id="semantic-material"), "draft-key"), material)
         with self.assertRaises(HTTPException):
             restarted.require_materials_current({"materialRefs": [ref(material)]})
@@ -275,15 +276,15 @@ class MaterialGovernanceTests(unittest.TestCase):
         material = self.draft()
         review = self.service.request_publication("manager", material["id"], 1, "previous-policy-review")
         with self.assertRaises(ValueError):
-            self.service.replace_configuration(GovernanceConfig(review_mode="demo-self-review"), expected_revision="material-governance-v1")
-        config = GovernanceConfig(revision="governance-v2")
+            self.service.replace_configuration(GovernanceConfig(review_mode="demo-self-review", revision="material-governance-v1"), expected_revision="material-governance-v1")
+        config = GovernanceConfig(review_mode="separate-admin", revision="governance-v2")
         self.service.replace_configuration(config, expected_revision="material-governance-v1")
         with self.assertRaises(HTTPException):
             self.service.decide_publication("bob", review["id"], True, "stale-decision")
         self.assertFalse(self.service.inspect_review("manager", review["id"])["currentPolicy"])
         with self.assertRaises(ValueError):
-            MaterialGovernance(self.store, self.auth)
-        self.assertEqual(MaterialGovernance(self.store, self.auth, config).current()["revision"], "governance-v2")
+            MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+        self.assertEqual(MaterialGovernance(self.store, self.auth, config, seed_materials=SEEDS).current()["revision"], "governance-v2")
 
     def test_explicit_demo_compatibility_never_authorizes_production(self):
         material = self.draft()
@@ -294,7 +295,7 @@ class MaterialGovernanceTests(unittest.TestCase):
         result = self.service.publish_demo_compatibility("manager", material["id"], 1, "demo-publish")
         self.assertTrue(result["demoCompatibility"])
         self.assertEqual(result["authorId"], result["reviewerId"])
-        self.service.replace_configuration(GovernanceConfig(revision="strict-again"), expected_revision="explicit-demo")
+        self.service.replace_configuration(GovernanceConfig(review_mode="separate-admin", revision="strict-again"), expected_revision="explicit-demo")
         with self.assertRaises(HTTPException):
             self.service.require_materials_current({"materialRefs": [ref(material)]})
         self.settings.demo = False
@@ -317,7 +318,7 @@ class MaterialGovernanceTests(unittest.TestCase):
                 body={"version": 1, "sha256": checksum["sha256"]}, created_at=now()))
         self.assertEqual(len(self.service.adopt_demo_bootstrap()["adopted"]), 9)
         self.service.withdraw("bob", "checksum-tool", 1, "seed-withdraw")
-        self.assertEqual(MaterialGovernance(self.store, self.auth).adopt_demo_bootstrap()["adopted"], [])
+        self.assertEqual(MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS).adopt_demo_bootstrap()["adopted"], [])
         with self.assertRaises(HTTPException):
             self.service.require_materials_current({"materialRefs": [ref(checksum)]})
 
@@ -361,12 +362,13 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
     def setUp(self):
         self.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         self.directory = TemporaryDirectory()
-        self.app = create_app(Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1))
+        self.app = create_app(Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
+            material_review_mode="separate-admin", material_policy_revision="material-governance-v1"))
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.auth.authorization.unassign("bob", "factory-user")
         self.auth.authorization.assign("bob", "factory-manager")
-        self.service = self.state.get("material_governance") or MaterialGovernance(self.store, self.auth)
+        self.service = self.state.get("material_governance") or MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
         self.service.adopt_demo_bootstrap()
         if not self.state.get("material_governance"):
             self.app.app.include_router(material_governance_router(self.auth, self.service))
@@ -465,7 +467,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
                 decisions = list(pool.map(lambda _: self.service.decide_publication("bob", reviews[0]["id"], True, "same-decision"), range(2)))
             self.assertEqual(decisions[0], decisions[1])
             current = self.service.current()
-            restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode=current["review_mode"], revision=current["revision"]))
+            restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode=current["review_mode"], revision=current["revision"]), seed_materials=SEEDS)
             self.assertEqual(restarted.create_draft("manager", definition(id="concurrent-governance"), "same-draft"), material)
             self.assertTrue(restarted.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
         finally:

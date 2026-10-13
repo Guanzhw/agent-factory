@@ -147,11 +147,11 @@ provisioned by this milestone.
 
 ## Verification
 
-`platform/tests/test_actual_orx_local.py` is opt-in and invokes the actual pinned
+`apps/research/tests/python/test_actual_orx_local.py` is opt-in and invokes the actual pinned
 Windows binary. Configure `FACTORY_ORX_BINARY`, `FACTORY_ORX_SHA256`,
 `FACTORY_ORX_SOURCE_ARCHIVE`, and `FACTORY_ORX_GIT_BINARY` to operator-approved
 absolute paths; Python uses the current interpreter's real base executable.
-Run `python -m unittest discover -s platform/tests -p test_actual_orx_local.py -v`
+Run `python -m unittest discover -s apps/research/tests/python -p test_actual_orx_local.py -v`
 with `PYTHONPATH=platform` from the project environment.
 
 The actual acceptance suite covers prompt error return, successful metrics and

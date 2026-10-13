@@ -9,17 +9,18 @@ from agno.run import RunContext
 from agno.tools import tool
 from agno.tools.function import Function
 
-from .demo_model import CONTEXT_MARKER
 from .execution_bindings import default_bindings
 from .model_dispatch import DelegatingModel
-from .tools import build_tools
 
 
-def build_runtime(settings, store, native_db):
-    catalog = build_tools(settings, store)
+CONTEXT_MARKER = "FACTORY_SYNTHETIC_CONTEXT="  # Persisted controller envelope compatibility.
+
+
+def build_runtime(settings, store, native_db, *, model_dispatch_type=None, catalog=None):
+    catalog = dict(catalog or {})
     bindings = getattr(store, 'execution_bindings', None) or default_bindings(settings, store)
     store.execution_bindings = bindings
-    model = DelegatingModel(bindings)
+    model = (model_dispatch_type or DelegatingModel)(bindings)
 
     def shared_budget(run_context: RunContext, fc):
         service = getattr(store, "delegation", None)

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from .connections import TrustedConnectionBinding
 from .execution_bindings import AdapterRegistration, BindingContext
+from .go_legacy import APPLICATION_ID, MODEL_ADAPTER_IDS, is_go_plan
 from .opencode_go import GoDevelopmentModel, GoLoopbackTransport
 from .go_live import GoLiveCampaign, GoLiveGateError
 from .go_project_campaign import GoProjectCampaign
@@ -23,14 +24,8 @@ PROFILE_REVISION = "go-development-v1"
 PROVIDER_ADAPTER_ID = "go-development-provider-v1"
 CONNECTION_NAME = "goDevelopment"
 REGISTRATION_REF = "go-development-model"
-APPLICATION_ID = "go-development-checksum"
 CAPABILITY = "model:development"
 SCOPE = "coding-development"
-MODEL_ADAPTER_IDS = {
-    "deepseek-flash": "go-development-deepseek-flash-v1",
-    "deepseek-v4-flash": "go-development-deepseek-v4-flash-v1",
-    "gpt-6-luna": "go-development-gpt-6-luna-v1",
-}
 PROTOCOLS = {"deepseek-flash": "chat/completions", "deepseek-v4-flash": "chat/completions", "gpt-6-luna": "responses"}
 
 
@@ -114,11 +109,6 @@ def _scope(plan: Any, *, model_id: str) -> None:
             or plan.get("delegation") or plan.get("mode") != model_id or plan.get("tools") != ["checksum"]
             or plan.get("capabilities") != ["checksum:read"]):
         raise HTTPException(409, "GO_DEVELOPMENT_SCOPE: only the explicitly approved checksum coding application is allowed")
-
-
-def is_go_plan(plan: Any) -> bool:
-    spec = (plan.get("executionBindings") or {}).get("model") or {}
-    return plan.get("application") == APPLICATION_ID or spec.get("adapterId") in MODEL_ADAPTER_IDS.values()
 
 
 def preflight_plan(settings: Any, plan: Any, connections: Any, context: Any = None) -> dict[str, str] | None:
@@ -211,20 +201,26 @@ def material_drafts(*, luna_output_revision="1") -> list[dict[str, Any]]:
         for model, adapter in MODEL_ADAPTER_IDS.items()]
 
 
-def publish_go_development_models(state: dict[str, Any], *, author: str, reviewer: str, luna_output_revision="1") -> list[dict[str, Any]]:
-    """Explicit operator publication through existing distinct-admin governance."""
-    if author == reviewer:
-        raise ValueError("A distinct model publication reviewer is required")
-    state["auth"].require(author, "components:write")
-    state["auth"].require(reviewer, "agent_os:admin")
+def publish_go_development_models(state: dict[str, Any], *, author: str, reviewer: str | None = None,
+                                  luna_output_revision="1") -> list[dict[str, Any]]:
+    """Publish exact model materials under the configured publication policy."""
     governance = state["material_governance"]
+    member_publication = governance.member_publication()
+    if not member_publication and (reviewer is None or author == reviewer):
+        raise ValueError("A distinct model publication reviewer is required")
+    state["auth"].require(author, "run" if member_publication else "components:write")
+    if not member_publication:
+        state["auth"].require(reviewer, "agent_os:admin")
     result = []
     for definition in material_drafts(luna_output_revision=luna_output_revision):
         identifier = definition["id"]
         publication_revision = PROFILE_REVISION if luna_output_revision == "1" else PROFILE_REVISION + ":output-2"
         material = governance.create_draft(author, definition, publication_revision + ":draft:" + identifier)
-        review = governance.request_publication(author, identifier, material["version"], publication_revision + ":review:" + identifier)
-        governance.decide_publication(reviewer, review["id"], True, publication_revision + ":approve:" + identifier)
+        if member_publication:
+            governance.publish(author, identifier, material["version"], publication_revision + ":publish:" + identifier)
+        else:
+            review = governance.request_publication(author, identifier, material["version"], publication_revision + ":review:" + identifier)
+            governance.decide_publication(reviewer, review["id"], True, publication_revision + ":approve:" + identifier)
         result.append(next(row for row in state["store"].materials(published_only=True)
                            if row["id"] == identifier and row["version"] == material["version"]))
     return result

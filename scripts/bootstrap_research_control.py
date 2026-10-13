@@ -140,17 +140,18 @@ def main(argv=None, *, build_application=None, serve=None):
         _require(1024 <= args.port <= 65535)
         url = read_database_url(args.database_url_file)
         workspace = _workspace(args.workspace, create=False)
-        from agent_factory.config import Settings
+        from agent_factory_research.config import ResearchSettings as Settings
         settings = Settings(db_url=url, workspace=workspace, demo=True, max_workers=1,
                             max_user_tasks=1, max_total_tasks=1, max_queued=1,
-                            temporary_policy='admin-review', host='127.0.0.1', port=args.port)
-        from agent_factory.research_bootstrap_policy import development_settings
+                            temporary_policy='member-self-service', material_review_mode='member-self-service',
+                            host='127.0.0.1', port=args.port)
+        from agent_factory_research.research_bootstrap_policy import development_settings
         settings = development_settings(settings)
         if args.check_config:
             print('RESEARCH_CONTROL_CONFIG_VALID_NOT_CONNECTED')
             return 0
         if build_application is None:
-            from agent_factory.main import create_app
+            from agent_factory_server.main import create_app
             build_application = create_app
         if serve is None:
             from uvicorn import run

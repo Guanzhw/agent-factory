@@ -14,9 +14,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.usage_ledger import PricingRevision
 from pg_fixture import IsolatedPostgres
@@ -36,7 +36,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         workspace = TemporaryDirectory(prefix="factory-oidc-synthetic-")
         self.addCleanup(workspace.cleanup)
-        settings = Settings(
+        settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", temporary_policy="admin-review",
             db_url=database.url, workspace=Path(workspace.name), demo=False,
             fee_management_enabled=True,
             jwt_key="synthetic-oidc-native-signing-key-at-least-32-bytes",

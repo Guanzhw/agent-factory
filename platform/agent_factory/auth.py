@@ -110,7 +110,7 @@ class AuthService:
         role = None
         if roles:
             try:
-                self.require(user_id, "components:write")
+                self.require(user_id, "agent_os:admin")
             except HTTPException as error:
                 if error.status_code != 403:
                     raise

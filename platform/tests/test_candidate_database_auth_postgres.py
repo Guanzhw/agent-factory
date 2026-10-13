@@ -16,9 +16,9 @@ import unittest
 from typing import Any
 from uuid import uuid4
 
-from agent_factory.research_bootstrap_controller import ResearchBootstrapController
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_runtime_profile import publish_research_application
+from agent_factory_research.research_bootstrap_controller import ResearchBootstrapController
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_runtime_profile import publish_research_application
 from agent_factory.store import Store, digest
 from agent_factory.storage_governance import StorageGovernance
 from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
@@ -53,7 +53,7 @@ class CandidateDatabaseAuthPostgresTests(unittest.TestCase):
         def request(method, path, body, *, owner):
             return self.request(method, path.removeprefix('/api/factory'), body, owner=owner)
         return ResearchBootstrapController(self.state, request, self.portal.call).run(
-            owner='alice', reviewer='manager', application_ref={k: self.application[k] for k in ('id', 'version', 'sha256')},
+            owner='alice', application_ref={k: self.application[k] for k in ('id', 'version', 'sha256')},
             goal='Synthetic native evidence for ephemeral database routing', request_id=str(uuid4()),
             after_reclaimed=imported, timeout_seconds=45, on_progress=progress)
 

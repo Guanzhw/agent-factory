@@ -52,8 +52,8 @@ def config_from_bytes(raw):
 
 
 def load_inputs(config):
-    from agent_factory.research_manifest import validate_manifest, manifest_fingerprint
-    from agent_factory.research_assessment import assess_observations
+    from agent_factory_research.research_manifest import validate_manifest, manifest_fingerprint
+    from agent_factory_research.research_assessment import assess_observations
     raw = {key: read_private(config[key]) for key in
         ('baselineConfigFile', 'baselineEvaluationReceiptFile', 'baselineRunConfigFile')}
     original = baseline.config_from_bytes(raw['baselineConfigFile'])
@@ -87,8 +87,10 @@ def preparation_phase(bundle, client, request_id, progress, journal):
     from agent_factory.process_runtime_profile import publish_process_application
     state, store = bundle['state'], bundle['state']['store']
     progress.at('PREPARATION_PUBLICATION')
-    reviewer = ensure_task_development_reviewer(state)
-    app = publish_process_application(state, target_ref='preparation', author='manager', reviewer=reviewer)
+    member_submission = state['settings'].temporary_policy == 'member-self-service'
+    reviewer = None if member_submission else ensure_task_development_reviewer(state)
+    app = publish_process_application(state, target_ref='preparation',
+        author='alice' if member_submission else 'manager', reviewer=reviewer)
     original_request = request_client(bundle, client)
     deadline, task_id, plan_id = time.monotonic() + 60, None, None
     def request(*args, **kwargs):
@@ -104,10 +106,11 @@ def preparation_phase(bundle, client, request_id, progress, journal):
         progress.at('PREPARATION_PLAN')
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {}, 'accept')
         plan_id = plan['id']
-        progress.at('PREPARATION_REVIEW')
-        review = post('/plan-reviews', {'planId': plan['id']}, 'review')
-        progress.at('PREPARATION_APPROVAL')
-        post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
+        if not member_submission:
+            progress.at('PREPARATION_REVIEW')
+            review = post('/plan-reviews', {'planId': plan['id']}, 'review')
+            progress.at('PREPARATION_APPROVAL')
+            post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
         try:
             progress.at('PREPARATION_SUBMIT')
             task = post('/instances', {'planId': plan['id']}, 'instance')
@@ -156,7 +159,7 @@ def preparation_phase(bundle, client, request_id, progress, journal):
                 pass
         if validated_original:
             assert task_id is not None
-            from agent_factory.research_bootstrap_controller import cleanup_original
+            from agent_factory_research.research_bootstrap_controller import cleanup_original
             assert client.portal is not None
             cleanup = cleanup_original(state, 'alice', task_id, runtime=store.process_runtime,
                                        call_async=client.portal.call)
@@ -181,22 +184,23 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
     progress.at('EXECUTION_IMPORTS')
     from fastapi.testclient import TestClient
     from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
-    from agent_factory.research_bootstrap_assembly import prepare_application
+    from agent_factory_research.research_bootstrap_assembly import prepare_application
+    from agent_factory_server.main import create_app
     from research_candidate_assembly import research_application
     from research_candidate_baseline import authorize_baseline
     from research_candidate_reopen import make_snapshot, make_preparation_snapshot
-    from agent_factory.research_local_driver import derive_local_identities
-    from agent_factory.research_manifest import manifest_fingerprint
-    from agent_factory.research_assessment import assess_observations
-    from agent_factory.research_bootstrap_inventory import build_inventory
-    from agent_factory.research_bootstrap_inputs import capture_bootstrap_inputs
-    from agent_factory.research_interpreter import capture_interpreter_contract
-    from agent_factory.research_profile import SOURCE_SHA256, verify_upstream_source
+    from agent_factory_research.research_local_driver import derive_local_identities
+    from agent_factory_research.research_manifest import manifest_fingerprint
+    from agent_factory_research.research_assessment import assess_observations
+    from agent_factory_research.research_bootstrap_inventory import build_inventory
+    from agent_factory_research.research_bootstrap_inputs import capture_bootstrap_inputs
+    from agent_factory.interpreter_identity import capture_interpreter_contract
+    from agent_factory_research.research_profile import SOURCE_SHA256, verify_upstream_source
     from agent_factory.gpu_custody import GpuBinding
-    from agent_factory.research_device_observer import NvidiaSmiObserver
+    from agent_factory_research.research_device_observer import NvidiaSmiObserver
     from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
-    from agent_factory.research_runtime_profile import publish_research_application
-    from agent_factory.research_bootstrap_controller import ResearchBootstrapController
+    from agent_factory_research.research_runtime_profile import publish_research_application
+    from agent_factory_research.research_bootstrap_controller import ResearchBootstrapController
     progress.at('EXECUTION_IDENTITY')
     runtime_identity(config)
     # Authenticate the retained original via its real providers and evaluator
@@ -241,7 +245,7 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
             program_root=program, program_identity=identity(program), custody_root=prep_custody,
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=prep_manifest)))
-        prep = retain(prepare_application(db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
+        prep = retain(prepare_application(app_factory=create_app, db_url=db, workspace=workspace, program_root=program, diagnostics=progress,
             program_identity=identity(program), custody_root=prep_custody,
             executable=config['interpreterTarget'], executable_sha256=config['interpreterSha256'],
             tokenizer_json=tokenizer, preparation_manifest_sha256=prep_manifest))
@@ -304,13 +308,16 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
             with TestClient(bundle['app']) as client:
                 try:
                     progress.at(stage.upper() + '_PUBLICATION')
-                    reviewer = ensure_task_development_reviewer(bundle['state'])
+                    member_submission = bundle['state']['settings'].temporary_policy == 'member-self-service'
+                    reviewer = None if member_submission else ensure_task_development_reviewer(bundle['state'])
                     app = publish_research_application(bundle['state'], target_ref=stage,
-                        comparison_manifest=captured['comparisonManifest'], author='manager', reviewer=reviewer,
+                        comparison_manifest=captured['comparisonManifest'],
+                        author='alice' if member_submission else 'manager', reviewer=reviewer,
                         variant_sha256=variant, adapter_suffix='-candidate-' + stage)
                     assert client.portal is not None
                     portal = client.portal
                     def imported(owner, task, lease):
+                        from agent_factory_research.services import services_for
                         if stage == 'training':
                             artifact = bundle['checkpoints'].import_completed(owner, lease['id'])
                             _, checked = bundle['checkpoints'].identity(task['id'], artifact['id'], limits.file_size_bytes)
@@ -319,7 +326,7 @@ def execute(candidate_config, workspace, progress, journal, *, database_url_file
                                 ('nativeRunId', 'nativeRunId'), ('planId', 'planId'), ('leaseId', 'id'), ('providerJobId', 'providerJobId'))},
                                 'planFingerprint': plan['fingerprint'], 'variantSha256': lease['executionGuard']['variantSha256'],
                                 'checkpoint': {'artifactId': artifact['id'], **checked}}
-                        return portal.call(bundle['state']['store'].research_evaluation.verify,
+                        return portal.call(services_for(bundle['state']['store']).research_evaluation.verify,
                             owner, bundle['pending']['evaluationContract'])
                     progress.at(stage.upper() + '_RUN')
                     result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(

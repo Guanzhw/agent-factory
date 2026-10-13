@@ -19,10 +19,10 @@ from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.run.base import RunStatus
 from agent_factory.runtime import build_runtime
-from agent_factory.catalog import SEEDS
+from agent_factory_research.bootstrap_catalog import SEEDS
 from agent_factory.store import digest
-from agent_factory.execution_bindings import default_bindings
-from agent_factory.tools import _WindowsJob
+from agent_factory_research.synthetic_runtime import default_bindings
+from agent_factory_research.tools import _WindowsJob
 
 
 def process_running(pid):
@@ -312,7 +312,7 @@ class FullStoreRuntimeContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_actual_store_running_cancel_settles_cancelled_effect(self):
         from agno.db.postgres import PostgresDb
         from agent_factory.auth import AuthService
-        from agent_factory.config import Settings
+        from agent_factory_research.config import ResearchSettings as Settings
         from agent_factory.store import Store
         directory = tempfile.TemporaryDirectory()
         from pg_fixture import IsolatedPostgres

@@ -17,7 +17,7 @@ from uuid import uuid4
 import httpx
 from agno.models.message import Message
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, REGISTRATION_REF, GoDevelopmentHandle,
     application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
@@ -90,7 +90,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
         handle = GoDevelopmentHandle(mode="subscription", credential=self.credential,
             live_campaign=self.campaign, wire_stream=True, native_retries=0)
         self.assertIsNone(handle.async_transport)
-        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+        self.settings = Settings(material_review_mode="separate-admin", fee_management_enabled=True, platform_paid_models_enabled=True,
             db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
             development_profile="opencode-go", development_live_validation=True, max_workers=1, max_tool_calls=1,
             temporary_policy="read-only-auto", policy_revision="go-live-mock-policy-v1",

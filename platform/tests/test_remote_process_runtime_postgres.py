@@ -45,7 +45,8 @@ class ProcessRuntimeServer(OwnedServer):
         # Deliberately do not inherit credentials or proxy environment variables.
         environment = {"PATH": os.defpath, "LANG": "C.UTF-8", "AGNO_TELEMETRY": "false",
             "FACTORY_REMOTE_PROCESS_CONFIG": str(self.path),
-            "PYTHONPATH": os.pathsep.join([str(PROJECT / "platform"), str(PROJECT / "platform/tests"), sysconfig.get_path("purelib")])}
+            "PYTHONPATH": os.pathsep.join([str(PROJECT / path) for path in
+                ("platform", "platform/tests", "apps/research", "deployment")] + [sysconfig.get_path("purelib")])}
         self.process = subprocess.Popen([getattr(sys, "_base_executable", sys.executable),
             "-m", "controlled_remote_process_worker"], cwd=PROJECT, env=environment,
             stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT)

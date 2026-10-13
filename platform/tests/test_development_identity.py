@@ -235,7 +235,8 @@ class DevelopmentLauncherTests(unittest.TestCase):
              patch("sys.stdout", new_callable=io.StringIO) as output:
             result = self.launcher.main(["--public-origin", ORIGIN, "--workspace", directory])
         self.assertEqual(result, 0)
-        self.assertEqual(settings.call_args.kwargs["temporary_policy"], "admin-review")
+        self.assertEqual(settings.call_args.kwargs["temporary_policy"], "member-self-service")
+        self.assertEqual(settings.call_args.kwargs["material_review_mode"], "member-self-service")
         self.assertIs(settings.call_args.kwargs["development_mock_login"], True)
         self.assertIs(settings.call_args.kwargs["demo"], True)
         self.assertEqual(settings.call_args.kwargs["max_workers"], 1)

@@ -25,13 +25,13 @@ from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration, KnowledgeContext
-from agent_factory.main import create_app
-from agent_factory.openresearch import BinaryPin, REVISION, VERSION
-from agent_factory.orx_tools import ORX_ADAPTER_ID
+from agent_factory_server.main import create_app
+from agent_factory_research.openresearch import BinaryPin, REVISION, VERSION
+from agent_factory_research.orx_tools import ORX_ADAPTER_ID
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
@@ -277,7 +277,7 @@ def main():
     if not workspace.is_relative_to(directory):
         raise ValueError("Fixture workspace must remain below its owned configuration directory")
     # Explicit historical accounting fixture; installed providers are controlled.
-    settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+    settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", fee_management_enabled=True, platform_paid_models_enabled=True,
         db_url=configuration["dbUrl"], demo=False, jwt_key=configuration["jwtKey"], workspace=workspace,
         port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24, temporary_policy="admin-review")
     settings.fixture_role = role

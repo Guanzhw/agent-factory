@@ -79,8 +79,10 @@ explicit remote harness/model selection.
 The approval shortcut covers owner-created `remote-*` registrations only.
 Operator/shared registrations stay under their existing plan review/policy;
 the server does not assign an administrator role or submit administrator
-decisions on behalf of the user. Shared publication is still independently
-reviewed once. Identity, connection revision, organization scope limits, exact
+decisions on behalf of the user. Shared publication follows the configured
+material/application policy: members publish their declarations directly in
+default `member-self-service` mode; independent review applies only to an
+explicitly selected historical review policy. Identity, connection revision, organization scope limits, exact
 plan/effect hashes, request fingerprints, capacity and cancellation guards remain.
 
 The facade is **not one transaction covering remote side effects**. Plan admission,
@@ -116,7 +118,9 @@ Factory hard external money limit**.
   "providerId": "byok-chat-v1",
   "providers": ["openai", "openai-compatible"],
   "protocol": "chat-completions-text-functions-v1",
+  "protocols": ["chat-completions", "responses"],
   "baseURLPath": "/v1",
+  "additionalBaseURLs": ["https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go/v1"],
   "credentialInput": "/api/factory/personal-credentials",
   "credentialUsername": "api-key",
   "platformBillingEnabled": false,
@@ -134,13 +138,28 @@ provider destination policies. The standard `origin` policy accepts normalized
 HTTPS origins; the adapter additionally resolves and pins only public addresses
 for every inference request. No configuration request probes a provider.
 
+The ordinary `agent-factory` / `python -m agent_factory_server` entrypoint uses
+`ResearchSettings.from_env()`: it registers the model API and adapter, but does
+not install a vault or load a settings-factory module. A trusted Python deployment
+passes `ResearchSettings(..., credential_vault_factory=...)` to
+`agent_factory_server.main.create_app`. The vault factory receives the SQL engine and
+may return `agent_factory.credential_vault.EncryptedCredentialVault` with an
+operator-supplied 32-byte master key and
+`{"byok-chat-v1": agent_factory.personal_remote_provider.origin}` destination
+policy. Keep the deployment's existing identity settings. Reading model settings
+requires the owner's `read` capability; saving credentials/models and choosing
+the default require `run`. No published application or model material is needed
+just to enable this settings page.
+
 `GET /api/factory/personal-research/capabilities` reports
 `applicationAvailable`, `applicationId:"personal-research-v1"`, `nativeQueue:true`,
-and the model setup path. Shared template/code installation is an administrator
-responsibility, performed once; it is not an owner-task approval. The trusted
-`personal_research.publish_application(state, author=..., reviewer=...)` installer
-uses existing independent material and application publication. Its minimal
-bundled literature tools are **synthetic fixtures**, as their evidence states.
+and the model setup path. Installing executable adapters is trusted deployment
+configuration. Publishing template declarations follows the active governance
+policy: `personal_research.publish_application(state, author=...)` lets an
+authenticated member with `run` publish in default `member-self-service` mode.
+Only an explicitly selected historical review policy needs a distinct authorized
+`reviewer`. Its minimal bundled literature tools are **synthetic fixtures**, as
+their evidence states.
 It requires the approved research skill/prompt/literature/question/environment
 materials; it does not install arbitrary code or silently publish materials.
 Production deployments can publish their approved read-only research materials
@@ -155,6 +174,18 @@ If a production database retains that synthetic template, capabilities report
 409 code before a model/provider call. `applicationAvailable` alone indicates
 publication metadata, not actual research support. No synthetic template is
 silently selected as an ORX fallback.
+
+For a generic task in the current UI, open **Developer assembly**, select a
+published application whose model material binds `owner-chat-completions-v1@1`,
+and select the saved owner's model connection for that application's declared
+model requirement. Generate the proposal, confirm the plan, then start the task.
+All selected materials must be published; executable bindings must resolve to
+installed adapters.
+The composer sends explicit `connectionRefs`; setting a default does not replace
+an arbitrary application's model. The optional `/personal-research` API below
+selects the default only for its supported published template. Native ORX instead
+requires its own existing project/service binding or an explicitly installed
+[platform runtime package](platform-openresearch-environments.md).
 
 ## Step 1: save a model and choose the default
 
@@ -185,22 +216,32 @@ The response contains `reference`, `revision`, `connectionRef`, `ownerId`,
 `provider`, `baseURL`, `model`, credential refs, `updatedAt`, `status`, `available`,
 `isDefault`, and `hardExternalBudgetEnforced:false`. Only authenticated-owner
 metadata is listed by `GET /api/factory/personal-models`. Repeating a matching
-requestId returns current metadata for the original configuration; changed
+requestId returns the original recorded result; changed
 intent returns an idempotency conflict. **API keys belong only to the vault
 endpoint**, never to this metadata endpoint. Invalid input responses are redacted.
+
+`GET /personal-models/requests/{requestId}` returns the original owner-scoped
+`{ownerId,requestId,action,result,completedAt}` receipt without requiring the old
+credential to remain available. It does not submit anything. Read the model list
+separately for current status/default: another tab may have changed either since
+the original operation. A missing receipt does not prove that an uncertain
+request was never sent. See [protocol and recovery boundaries](MODEL_PROTOCOLS.md).
 
 3. `POST /api/factory/personal-models/{reference}/default` with `{requestId}`:
    choose that current owner configuration as the default. Model metadata states
    `configured`, `credential_unavailable`, or `revoked`. `configured` proves
    local custody/scope, not remote provider compatibility or account balance.
 
-Supported protocol is only non-streaming text and function tools over
-`POST https://host/v1/chat/completions`. HTTPS/443, DNS hostname, exact `/v1` base
-path, no URL credentials/query/fragment, public DNS/IP checks, pinned address,
+Supported protocols are non-streaming text and function tools over
+`POST https://host/v1/chat/completions` or `POST https://host/v1/responses`.
+Set optional `protocol:"responses"` explicitly; omission and explicit
+`"chat-completions"` retain the legacy CC contract and idempotency fingerprint.
+HTTPS/443, DNS hostname, exact `/v1` base path (plus the two exact Go prefixes
+above), no URL credentials/query/fragment, public DNS/IP checks, pinned address,
 original TLS hostname, no redirect, no environment proxy/key lookup, no SDK
 retry, bounded body/response sizes, and an async deadline are enforced. Responses
 may omit usage; any reported usage is native model metrics, not an authoritative
-Factory bill. Responses containing the exact credential are rejected. Responses,
+Factory bill. Responses containing the exact credential are rejected.
 Anthropic, multimodal, arbitrary base paths, and arbitrary API compatibility are
 not claimed. Native streaming surfaces emit the bounded complete response;
 provider SSE streaming is not implemented.
@@ -257,8 +298,9 @@ Start action. `executionAllowed` becomes true after the exact owner submission;
 project side effects still require the existing exact owner consent.
 Owner submissions bind the exact plan digest; current identity/material/resource
 permissions, cancellation, revocation, task depth/capacity and native tool guards
-still run. Administrators continue managing shared resources, organization
-policy, platform-paid profiles and trusted/shared-definition publication.
+still run. Administrators retain shared/public resource withdrawal and deletion;
+executable/provider installation remains trusted deployment configuration.
+Members can publish their declarations under the default governance policy.
 Read-only BYOK research and existing owner personal commands qualify; arbitrary
 code/writes/shared connections/remote Factory placement do not gain approval.
 ORX project creation retains its existing immutable preview/owner consent and

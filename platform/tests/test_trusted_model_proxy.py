@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
@@ -23,6 +24,7 @@ from agent_factory.byok_model import OwnerChatModel, PinnedChatTransport
 from agent_factory.config import Settings
 from agent_factory.application_environments import ApplicationEnvironments
 from agent_factory.environment_bindings import EnvironmentModelHandle
+from agent_factory.model_endpoint_policy import GO_CURRENT_BASE
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_models import OwnerModelHandle, PersonalModels
 from agent_factory.personal_remote_provider import PinnedHTTPSProbe, RemoteConnectionError, SecretLease
@@ -31,6 +33,9 @@ from trusted_proxy_test_streams import HOST, MemoryBackend, MemoryStream, PROXY
 
 IP = '93.184.216.34'
 SECRET = 'synthetic-owner-secret'
+GENERIC_BASE = 'https://models.example.com/v1'
+PROXY_BASES = (GENERIC_BASE, GO_CURRENT_BASE, GO_BASE)
+PROTOCOL_PATHS = {'chat-completions': '/chat/completions', 'responses': '/responses'}
 
 
 def guarded_connect(original):
@@ -77,17 +82,33 @@ def grant(**changes):
 
 
 class GatewayBackend(MemoryBackend):
-    def __init__(self, configuration, *, denied=False, bad_certificate=False, disconnect=False):
+    def __init__(self, configuration, *, denied=False, bad_certificate=False, disconnect=False,
+            target_host=HOST, protocol='chat-completions'):
         super().__init__(configuration.ssl_context, denied=denied, bad_certificate=bad_certificate,
             https=configuration.proxy_url.startswith('https:'))
         self.disconnect = disconnect
+        self.target_host = target_host
         self.target_response = json.dumps({'choices': [{'finish_reason': 'stop',
             'message': {'role': 'assistant', 'content': 'synthetic gateway completion'}}]}).encode()
+        if protocol == 'responses':
+            self.target_response = json.dumps({'status': 'completed', 'output': [{
+                'type': 'message', 'role': 'assistant', 'status': 'completed',
+                'content': [{'type': 'output_text', 'text': 'synthetic gateway completion'}]}]}).encode()
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
         self.connections.append({'host': host, 'port': port})
         backend = self
         class Stream(MemoryStream):
+            async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+                backend.tls.append({'server_hostname': server_hostname,
+                    'verify_required': ssl_context.verify_mode == ssl.CERT_REQUIRED,
+                    'check_hostname': ssl_context.check_hostname,
+                    'context_identity_preserved': ssl_context is backend.context})
+                expected = PROXY if backend.https and len(backend.tls) == 1 else backend.target_host
+                if server_hostname != expected or backend.bad_certificate:
+                    raise ssl.SSLCertVerificationError(1, 'SYNTHETIC_CERTIFICATE_REJECTED')
+                return self
+
             async def read(self, max_bytes, timeout=None):
                 if backend.disconnect and len(self.incoming) == 1:
                     raise httpcore.ReadError(SECRET + ' fixture-proxy-secret ' + PROXY)
@@ -99,6 +120,202 @@ class GatewayBackend(MemoryBackend):
 
 
 class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_grant_does_not_authorize_new_protocol_or_prefix(self):
+        configuration = grant()
+        self.assertIs(configuration.select('alice', body(), 'fixture-environment'), configuration)
+        self.assertIs(configuration.select('alice', {**body(), 'protocol': 'chat-completions'},
+            'fixture-environment'), configuration)
+        for changes in ({'protocol': 'responses'}, {'protocol': None}, {'protocol': 'unknown'},
+                {'baseURL': GO_CURRENT_BASE}, {'baseURL': GENERIC_BASE}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(
+                    ValueError, '^TRUSTED_MODEL_PROXY_SCOPE_CHANGED$'):
+                configuration.select('alice', {**body(), **changes}, 'fixture-environment')
+
+    async def test_explicit_routes_use_real_codec_and_exact_gateway_wire(self):
+        for base in PROXY_BASES:
+            for protocol, suffix in PROTOCOL_PATHS.items():
+                for proxy_scheme in ('http', 'https'):
+                    with self.subTest(base=base, protocol=protocol, proxy_scheme=proxy_scheme):
+                        host = urlsplit(base).hostname
+                        configuration = grant(base_url=base, protocol=protocol,
+                            proxy_url=f'{proxy_scheme}://{PROXY}:8080')
+                        backend = GatewayBackend(configuration, target_host=host, protocol=protocol)
+                        resolved, checks = [], []
+                        def credential():
+                            resolved.append('exact-owner-vault-callback')
+                            return SecretLease('api-key', SECRET)
+                        model = OwnerChatModel({**body(), 'baseURL': base, 'protocol': protocol},
+                            credential, trusted_proxy=configuration,
+                            recheck=lambda: checks.append('current-owner'), session_id='fixture-proxy-session')
+                        with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses', return_value=[IP]), \
+                                patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                            answer = await model.ainvoke([Message(role='user', content='synthetic route fixture')])
+                        self.assertEqual(answer.content, 'synthetic gateway completion')
+                        self.assertEqual(resolved, ['exact-owner-vault-callback'])
+                        self.assertTrue(checks)
+                        self.assertEqual(backend.connections, [{'host': PROXY, 'port': 8080}])
+                        wire = b''.join(backend.writes)
+                        self.assertEqual(wire.count(b'CONNECT '), 1)
+                        self.assertIn(f'CONNECT {IP}:443 HTTP/1.1\r\n'.encode(), wire)
+                        self.assertEqual(wire.count(b'POST '), 1)
+                        post = wire.split(b'POST ', 1)[1]
+                        self.assertTrue(post.startswith(f'{urlsplit(base).path}{suffix} HTTP/1.1\r\n'.encode()))
+                        headers, payload = post.split(b'\r\n\r\n', 1)
+                        self.assertIn(f'host: {host}\r\n'.encode(), headers.lower() + b'\r\n')
+                        self.assertIn(('authorization: Bearer ' + SECRET).encode(), headers)
+                        if base == GENERIC_BASE:
+                            self.assertNotIn(b'x-opencode-session:', headers.lower())
+                        else:
+                            self.assertIn(b'x-opencode-session: fixture-proxy-session', headers.lower())
+                        sent = json.loads(payload)
+                        self.assertEqual(sent['model'], 'fixture-model')
+                        self.assertIs(sent['stream'], False)
+                        if protocol == 'responses':
+                            self.assertIs(sent['store'], False)
+                            self.assertEqual(sent['input'], [{'role': 'user', 'content': 'synthetic route fixture'}])
+                            self.assertNotIn('messages', sent)
+                        else:
+                            self.assertEqual(sent['messages'], [{'role': 'user', 'content': 'synthetic route fixture'}])
+                            self.assertNotIn('input', sent)
+                        self.assertEqual([tls['server_hostname'] for tls in backend.tls],
+                            ([PROXY] if proxy_scheme == 'https' else []) + [host])
+                        self.assertTrue(all(tls['verify_required'] and tls['check_hostname']
+                            and tls['context_identity_preserved'] for tls in backend.tls))
+                        self.assertGreater(backend.closed, 0)
+
+    async def test_explicit_grants_bind_scope_and_reject_invalid_configuration(self):
+        for base in PROXY_BASES:
+            for protocol in PROTOCOL_PATHS:
+                with self.subTest(base=base, protocol=protocol):
+                    configuration = grant(base_url=base + '/', protocol=protocol)
+                    self.assertEqual(configuration.base_url, base)
+                    values = {**body(), 'baseURL': base, 'protocol': protocol}
+                    self.assertIs(configuration.select('alice', values, 'fixture-environment'), configuration)
+                    self.assertIsNone(configuration.select('bob', {**values, 'ownerId': 'bob'}, 'fixture-environment'))
+                    self.assertIsNone(configuration.select('alice', {**values, 'reference': 'other'}, 'fixture-environment'))
+                    changes = [{field: 'changed'} for field in
+                        ('ownerId', 'revision', 'credentialRef', 'credentialRevision', 'model', 'baseURL')]
+                    changes += [{'protocol': value} for value in (None, 'unknown', [],
+                        'responses' if protocol == 'chat-completions' else 'chat-completions')]
+                    for change in changes:
+                        with self.subTest(change=change), self.assertRaisesRegex(
+                                ValueError, '^TRUSTED_MODEL_PROXY_SCOPE_CHANGED$'):
+                            configuration.select('alice', {**values, **change}, 'fixture-environment')
+                    if protocol == 'responses':
+                        with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_SCOPE_CHANGED$'):
+                            configuration.select('alice', {k: v for k, v in values.items() if k != 'protocol'},
+                                'fixture-environment')
+                    with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_ENVIRONMENT_DENIED$'):
+                        configuration.select('alice', values, 'other-environment')
+                    for other_base, other_protocol in [
+                            *((other, protocol) for other in PROXY_BASES if other != base),
+                            (base, 'responses' if protocol == 'chat-completions' else 'chat-completions')]:
+                        with self.subTest(other_base=other_base, other_protocol=other_protocol), \
+                                self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_REQUEST_DENIED$'):
+                            PinnedChatTransport('https://' + urlsplit(other_base).netloc,
+                                base_path=urlsplit(other_base).path, protocol=other_protocol, trusted_proxy=configuration)
+        bad_bases = (None, 'http://models.example.com/v1', 'https://user:secret@models.example.com/v1',
+            'https://models.example.com:8443/v1', 'https://localhost/v1', 'https://127.0.0.1/v1',
+            'https://models.example.com/v2', 'https://models.example.com/zen/go/v1',
+            GENERIC_BASE + '?key=secret', GENERIC_BASE + '#fragment', GENERIC_BASE + '//',
+            GO_CURRENT_BASE + '/responses', 'https://opencode.ai/other/v1')
+        for changes in [*({'base_url': base} for base in bad_bases),
+                *({'protocol': protocol} for protocol in (None, '', 'Responses', 'unknown', []))]:
+            with self.subTest(changes=changes), self.assertRaisesRegex(
+                    ValueError, '^TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID$'):
+                grant(**changes)
+
+    async def test_explicit_wire_rejects_method_url_host_and_second_dispatch(self):
+        for protocol, suffix in PROTOCOL_PATHS.items():
+            with self.subTest(protocol=protocol):
+                configuration = grant(base_url=GENERIC_BASE, protocol=protocol)
+                backend = GatewayBackend(configuration, target_host='models.example.com', protocol=protocol)
+                target = f'https://{IP}/v1{suffix}'
+                with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                    transport = configuration.transport(IP, 'models.example.com')
+                async with httpx.AsyncClient(transport=transport, trust_env=False, follow_redirects=False) as client:
+                    for method, url, host in (('GET', target, 'models.example.com'),
+                            ('POST', target + '?changed=1', 'models.example.com'),
+                            ('POST', target + '/', 'models.example.com'),
+                            ('POST', target.replace(IP, '93.184.216.35'), 'models.example.com'),
+                            ('POST', target.replace(suffix, '/responses' if protocol == 'chat-completions' else '/chat/completions'), 'models.example.com'),
+                            ('POST', target, 'opencode.ai'), ('POST', target, 'models.example.com:443')):
+                        with self.subTest(method=method, url=url, host=host), self.assertRaisesRegex(
+                                ValueError, '^TRUSTED_MODEL_PROXY_REQUEST_DENIED$'):
+                            await client.request(method, url, headers={'host': host},
+                                json={'model': 'fixture-model', 'stream': False})
+                    self.assertEqual(backend.connections, [])
+                    response = await client.post(target, headers={'host': 'models.example.com'},
+                        json={'model': 'fixture-model', 'stream': False},
+                        extensions={'sni_hostname': 'attacker.invalid', 'trace': lambda *args: self.fail('trace override used')})
+                    self.assertEqual(response.status_code, 200)
+                    with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_REQUEST_DENIED$'):
+                        await client.post(target, headers={'host': 'models.example.com'},
+                            json={'model': 'fixture-model', 'stream': False})
+                self.assertEqual(backend.connections, [{'host': PROXY, 'port': 8080}])
+                self.assertEqual([tls['server_hostname'] for tls in backend.tls], ['models.example.com'])
+                self.assertEqual(b''.join(backend.writes).count(b'POST '), 1)
+
+    async def test_generic_target_rejects_private_ip_hostname_and_tls_substitution(self):
+        configuration = grant(base_url=GENERIC_BASE, protocol='responses', proxy_url=f'https://{PROXY}:8080')
+        backend = GatewayBackend(configuration, target_host='models.example.com', protocol='responses')
+        with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+            for address, host in [*((address, 'models.example.com') for address in
+                    ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '2606:4700:78::90:0:140')),
+                    (IP, 'opencode.ai'), (IP, 'models.example.com.attacker.invalid')]:
+                with self.subTest(address=address, host=host), self.assertRaisesRegex(
+                        ValueError, '^TRUSTED_MODEL_PROXY_TARGET_DENIED$'):
+                    configuration.transport(address, host)
+            transport = configuration.transport(IP, 'models.example.com')
+        bound = transport.pool._network_backend
+        try:
+            for host, port in (('attacker.invalid', 8080), (PROXY, 443)):
+                with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_CONNECTION_DENIED$'):
+                    await bound.connect_tcp(host, port)
+            stream = await bound.connect_tcp(PROXY, 8080)
+            other_context = ssl.create_default_context(cafile=certifi.where())
+            with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_TLS_CHANGED$'):
+                await stream.start_tls(other_context, server_hostname=PROXY)
+            with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_TLS_BINDING_DENIED$'):
+                await stream.start_tls(configuration.ssl_context, server_hostname='attacker.invalid')
+            self.assertEqual(backend.tls, [])
+            await stream.start_tls(configuration.ssl_context, server_hostname=PROXY)
+            for name in ('attacker.invalid', 'models.example.com', '93.184.216.35'):
+                with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_TLS_BINDING_DENIED$'):
+                    await stream.start_tls(configuration.ssl_context, server_hostname=name)
+            await stream.start_tls(configuration.ssl_context, server_hostname=IP)
+            with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_TLS_BINDING_DENIED$'):
+                await stream.start_tls(configuration.ssl_context, server_hostname=IP)
+            with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_CONNECTION_DENIED$'):
+                await bound.connect_tcp(PROXY, 8080)
+            await stream.aclose()
+        finally:
+            await transport.aclose()
+        self.assertEqual([tls['server_hostname'] for tls in backend.tls], [PROXY, 'models.example.com'])
+        self.assertEqual(len(backend.connections), 1)
+
+    async def test_explicit_grant_tls_mutation_stops_before_wire(self):
+        for mutation in ('hostname', 'ca'):
+            with self.subTest(mutation=mutation):
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                configuration = grant(base_url=GENERIC_BASE, protocol='responses', ssl_context=context)
+                backend = GatewayBackend(configuration, target_host='models.example.com', protocol='responses')
+                with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                    transport = configuration.transport(IP, 'models.example.com')
+                if mutation == 'hostname':
+                    context.check_hostname = False
+                else:
+                    context.load_verify_locations(cafile=certifi.where())
+                try:
+                    code = 'TLS_REQUIRED' if mutation == 'hostname' else 'TLS_CHANGED'
+                    with self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_' + code + '$'):
+                        await transport.handle_async_request(httpx.Request('POST', f'https://{IP}/v1/responses',
+                            headers={'host': 'models.example.com'}, json={'model': 'fixture-model', 'stream': False}))
+                finally:
+                    await transport.aclose()
+                self.assertEqual(backend.connections, [])
+                self.assertEqual(backend.writes, [])
+
     async def asyncSetUp(self):
         self.guards = [patch('socket.socket.connect',new=guarded_connect(socket.socket.connect)),
             patch('socket.socket.connect_ex',new=guarded_connect(socket.socket.connect_ex)),

@@ -8,8 +8,8 @@ import argparse
 import importlib
 import re
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 
 
 def configured(module_name):

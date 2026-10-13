@@ -169,7 +169,9 @@ PYTHONDONTWRITEBYTECODE=1 SETUPTOOLS_USE_DISTUTILS=local \
 脚本的 `--config` 是唯一 CLI 输入，不存在自动安装、`--retry`、`--stage` 或 `--resume` 开关。
 不要通过 checkout `PYTHONPATH`、抽取 coding-agent 凭据或新登录流程修补包准入失败。
 本调用在进程内启动原生控制应用；不需要另起公网监听器。
-受控开发身份与独立 reviewer **代码身份**用于既有发布/审批接口，不是独立人类审查或生产 IdP 证明。
+当前成员自助策略由 author 发布并直接提交任务，不创建 reviewer 或提升其他用户权限。
+只有显式选择历史审批策略时，才使用独立 reviewer **代码身份**调用旧发布/审批接口；
+该合成身份不是独立人类审查或生产 IdP 证明。
 
 ## canonical 入口失败诊断
 
@@ -208,7 +210,7 @@ runner 在退出 lifespan 和处理清理前保存它最早观察到的失败。
 
 | 阶段 | 实际操作与成功条件 | 必须保留的关联 |
 | --- | --- | --- |
-| 1. Token-byte 准备 | 原 proposal → immutable plan → review → native task；generic bounded process 从安全 tokenizer JSON 导出 `token_bytes` I32。原进程 COMPLETED/exit0、正停止证明和 RECLAIMED 后才 import。 | 真正的 task/nativeRun/plan/lease/providerJob、独立 preparation manifest、tokenizer hash、原 artifact/reference。没有手写执行 ID。 |
+| 1. Token-byte 准备 | 原 proposal → immutable plan → native task；仅显式历史审批策略在 plan 后经过 review。generic bounded process 从安全 tokenizer JSON 导出 `token_bytes` I32。原进程 COMPLETED/exit0、正停止证明和 RECLAIMED 后才 import。 | 真正的 task/nativeRun/plan/lease/providerJob、独立 preparation manifest、tokenizer hash、原 artifact/reference。没有手写执行 ID。 |
 | 2. 本地 baseline | 完整环境与输入 capture 后发布研究应用；原 native run 暂停，controller 仅对该暂停调用一次 `research_runtime.submit`。训练由固定 SDPA 本地适配运行，原租约正停止并释放设备后导入 checkpoint，再继续原 native run。 | 本地派生源码 pin、准备 artifact binding、数据/sample-set、环境/lock、设备、原 checkpoint producer binding。 |
 | 3. 独立评价 | 创建独立 evaluator task/nativeRun/plan/lease/job，固定评价代码从阶段 2 的原 checkpoint artifact 读取，并核验原输入与评价 contract。完成后继续该 evaluator 原 native run。 | 与训练不同的执行身份、同一 checkpoint hash、固定 evaluator/source/input pins、有限结果与 stop/device release 证明。 |
 

@@ -173,19 +173,8 @@ class UsagePolicy:
 
 
 def default_zero_prices():
-    from .demo_model import DemoModel
-    values = [PricingRevision("local-synthetic-model-v1", "1", "local-synthetic", "factory-synthetic-v1",
-        "zero-local-v1", local_model_type=DemoModel)]
-    try:
-        from .orx_experiment_tools import LocalORXWorkflowModel
-    except ImportError:
-        return tuple(values)
-    values.append(PricingRevision("local-orx-workflow-model-v1", "1", "local-deterministic",
-        "factory-local-orx-workflow-v1", "zero-local-v1", local_model_type=LocalORXWorkflowModel))
-    from .orx_literature_tools import LiteratureEvidenceModel, MODEL_ID
-    values.append(PricingRevision(MODEL_ID, "1", "local-deterministic",
-        "factory-literature-evidence-v1", "zero-local-v1", local_model_type=LiteratureEvidenceModel))
-    return tuple(values)
+    """No provider or synthetic model is implicitly free in the bare core."""
+    return ()
 
 
 class UsageLedger:

@@ -5,6 +5,7 @@ import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -52,6 +53,41 @@ class ApplicationEnvironmentTests(unittest.TestCase):
         self.service = ApplicationEnvironments(SimpleNamespace(engine=self.engine,
             settings=SimpleNamespace(workspace=Path(self.folder.name))), auth, models, connections,
             {'openresearch': package})
+
+    def test_server_catalog_is_explicit_application_independent_and_owner_scoped(self):
+        servers = [{'reference': 'analysis-server', 'name': 'Analysis', 'defaultDirectory': '/private/alice/work'}]
+        for self_service in (False, True):
+            with self.subTest(self_service=self_service):
+                self.revoked = False
+                catalog = Mock(side_effect=lambda owner: servers if owner == 'alice' else [])
+                service = ApplicationEnvironments(self.service.store, self.service.auth,
+                    self.service.models, self.service.connections, {'analytics:ssh': self.package},
+                    server_catalog=catalog, self_service_servers=self_service)
+                self.assertEqual(service.capabilities('alice'), {
+                    'locations': ['ssh'], 'applications': ['analytics'],
+                    'modelSetup': '/api/factory/personal-models', 'preparationSubmitsResearch': False,
+                    'selfServiceSSH': self_service, 'platformBillingEnabled': False,
+                    'hardExternalBudgetEnforced': False})
+                catalog.assert_not_called()
+                self.assertEqual(service.servers('alice'), servers)
+                self.assertEqual(service.servers('bob'), [])
+                self.assertEqual([call.args for call in catalog.call_args_list], [('alice',), ('bob',)])
+                catalog.reset_mock(); self.revoked = True
+                for read in (service.servers, service.capabilities):
+                    with self.assertRaises(HTTPException) as denied: read('alice')
+                    self.assertEqual(denied.exception.status_code, 403)
+                catalog.assert_not_called()
+
+    def test_server_catalog_defaults_do_not_infer_capabilities_from_package_metadata(self):
+        package = SimpleNamespace(servers=Mock(return_value=[{'reference': 'unselected-server'}]),
+            personal_servers=object())
+        for application in ('analytics', 'openresearch'):
+            with self.subTest(application=application):
+                service = ApplicationEnvironments(self.service.store, self.service.auth,
+                    self.service.models, self.service.connections, {application + ':ssh': package})
+                self.assertIs(service.capabilities('alice')['selfServiceSSH'], False)
+                self.assertEqual(service.servers('alice'), [])
+        package.servers.assert_not_called()
 
     def test_prepare_reuse_replay_and_owner_scope_never_submits_work(self):
         first = self.service.prepare('alice', 'openresearch', 'request-first')
@@ -118,8 +154,12 @@ class ApplicationEnvironmentTests(unittest.TestCase):
         ssh.version = 'ssh-package-1'; ssh.selection = selection
         ssh.servers = lambda owner: [{'reference': 'owned-server'}] if owner == 'alice' else []
         self.service.packages['openresearch:ssh'] = ssh
+        self.service = ApplicationEnvironments(self.service.store, self.service.auth,
+            self.service.models, self.service.connections, self.service.packages, server_catalog=ssh.servers)
         self.assertEqual(self.service.capabilities('alice')['locations'], ['platform', 'ssh'])
         self.assertEqual(self.service.capabilities('alice')['applications'], ['openresearch'])
+        self.assertIs(self.service.capabilities('alice')['selfServiceSSH'], False)
+        self.assertEqual(self.service.servers('alice'), [{'reference': 'owned-server'}])
         self.assertEqual(self.service.servers('bob'), [])
         platform = self.service.prepare('alice', 'openresearch', 'platform-original')
         first = self.service.prepare('alice', 'openresearch', 'ssh-first', location='ssh',

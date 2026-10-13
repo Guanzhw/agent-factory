@@ -21,12 +21,12 @@ from uuid import uuid4
 from agno.models.message import Message
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
 from agent_factory.go_diagnostics import safe_diagnostic
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.opencode_go import GoDevelopmentModel
 from agent_factory.usage_ledger import UsagePolicy
 
@@ -107,23 +107,17 @@ def run(args):
                 client.cookies.clear()
                 post("/api/factory/demo/login", {"persona": owner}, 200)
 
-            auth = state["auth"]
-            auth.authorization.unassign("bob", "factory-user")
-            auth.authorization.assign("bob", "factory-manager")
-            models = publish_go_development_models(state, author="manager", reviewer="bob")
+            models = publish_go_development_models(state, author="alice")
             seeds = store.materials(published_only=True)
             definition = application_definition(models,
                 next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum"),
                 next(row for row in seeds if row["id"] == "local-environment"))
             for mode in definition["modes"].values():
                 mode["budget"]["toolCalls"] = 1
-            login("bob")
+            login("alice")
             app = post("/api/factory/applications/drafts", {"definition": definition, "requestId": str(uuid4())}, 201)
-            review = post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/review",
-                {"requestId": str(uuid4())}, 201)
-            login("manager")
-            post(f"/api/factory/applications/reviews/{review['id']}/decision",
-                 {"approved": True, "requestId": str(uuid4())}, 200)
+            post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/publish",
+                 {"requestId": str(uuid4())}, 200)
             app_ref = {key: app[key] for key in ("id", "version", "sha256")}
             connection = state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()), capabilities=[CAPABILITY])
             login("alice")

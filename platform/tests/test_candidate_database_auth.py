@@ -120,8 +120,8 @@ class CandidateDatabaseAuthTests(unittest.TestCase):
         self.assertEqual(opened.call_args.args[0].db_url, resolved)
 
     def test_direct_execute_resolves_once_and_reuses_url_for_anchor_auth_and_preparation(self):
-        from agent_factory import research_bootstrap_assembly, research_local_driver, research_profile
-        from agent_factory import research_device_observer
+        from agent_factory_research import research_bootstrap_assembly, research_local_driver, research_profile
+        from agent_factory_research import research_device_observer
         authority = importlib.import_module('research_candidate_baseline')
         inputs = runner.load_inputs(self.config)
         workspace = Path(self.config['workspace']); workspace.mkdir(mode=0o700)

@@ -17,7 +17,6 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from agno.agent import Agent
-from agno.exceptions import RunCancelledException
 from agno.db.base import SessionType
 from fastapi import HTTPException
 
@@ -174,7 +173,6 @@ class FactoryLifecycleObserver:
         # Readers classify cleanup from both the flag and its failure provenance.
         # Publish them together so authority loss cannot look like user cancel.
         with self.store.transaction():
-            self.store.sql("UPDATE af_inference_waits SET state='STOPPING' WHERE task_id=:task AND state IN ('WAITING','RESUMING')", task=task["id"])
             changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
                                      id=task["id"], owner=task["owner_id"])
             if changed:
@@ -210,7 +208,7 @@ class FactoryLifecycleObserver:
             ticket = self._binding(task)
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
-        effects_unknown = any(effect_unresolved(effect) for effect in self.store.effects(task["id"]))
+        effects_unknown = any(effect_unresolved(effect, self.store) for effect in self.store.effects(task["id"]))
         effects_unknown = effects_unknown or runtime_custody_held(self.store, task['id'])
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
@@ -219,44 +217,16 @@ class FactoryLifecycleObserver:
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
                 "failed": self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed")}
 
+    async def _observe_application_waits(self, root):
+        """Application observers may inspect existing work before core cleanup."""
+
     async def observe_root(self, identifier: str) -> dict:
         root = self.store.task(identifier)
         service = self.store.delegation
         if service is None:
             raise ValueError("Trusted lifecycle cleanup requires persisted delegation bindings")
         errors = []
-        from .inference_wait import read as read_wait, observe as observe_wait, reconcile_recovered_children
-        for current_task in self._group(root)[0]:
-            waiting = read_wait(self.store, current_task["id"])
-            if waiting and waiting["state"] == "RECOVERED":
-                try:
-                    await asyncio.to_thread(reconcile_recovered_children, self.store, current_task, waiting)
-                except RunCancelledException:
-                    pass  # Preserve ordinary child/origin cancellation semantics.
-                except Exception as error:
-                    latest = read_wait(self.store, current_task["id"])
-                    if latest and latest["state"] == "RECOVERED" and latest["controlId"] == waiting["controlId"]:
-                        self.store.event(current_task["id"], "protected_denied", "Original child recovery reconciliation denied",
-                            {"boundary": "inference-child-reconciliation", "errorType": type(error).__name__})
-            if waiting and waiting["state"] in {"WAITING", "RESUMING"}:
-                try:
-                    await asyncio.to_thread(observe_wait, self.store, current_task, waiting)
-                except Exception as error:
-                    if isinstance(error, RunCancelledException):
-                        continue
-                    latest = read_wait(self.store, current_task["id"])
-                    if not latest or latest["state"] not in {"WAITING", "RESUMING"} or latest["controlId"] != waiting["controlId"]:
-                        continue
-                    with self.store.transaction():
-                        changed = self.store.sql("""UPDATE af_inference_waits SET state='STOPPING'
-                            WHERE task_id=:task AND body->>'controlId'=:control AND state IN ('WAITING','RESUMING') RETURNING task_id""",
-                            task=current_task["id"], control=waiting["controlId"])
-                        if changed:
-                            self.store.event(current_task["id"], "protected_denied", "Bounded inference wait requires original-work cleanup",
-                                {"boundary": "inference-wait", "errorType": type(error).__name__,
-                                 "code": (str(error.detail).split(":", 1)[0] if isinstance(error, HTTPException)
-                                          and isinstance(error.detail, str) and error.detail.startswith(("INFERENCE_WAIT_", "USAGE_BUDGET_", "ORIGIN_AUTHORITY_"))
-                                          else getattr(error, "code", None))})
+        await self._observe_application_waits(root)
         requested, phase_errors = await asyncio.to_thread(self._request_cleanup, root)
         errors.extend(phase_errors)
         for task in requested.values():

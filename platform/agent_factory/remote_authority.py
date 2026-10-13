@@ -146,7 +146,9 @@ class BoundedAuthorityRoute(APIRoute):
         return bounded
 
 
-def origin_authority_router(auth: Any, handoff_client: Any) -> APIRouter:
+def origin_authority_router(auth: Any, handoff_client: Any, *,
+                            scientific_call: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+                            scientific_custody: Callable[[dict[str, Any]], dict[str, Any]] | None = None) -> APIRouter:
     """Install only for operator-configured origin handoff targets.
 
 Native middleware authenticates the receiver actor. Its current read grant and
@@ -197,7 +199,7 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
         return AuthorityReply(**body.model_dump(), outcome=outcome, authority=scope)
 
     @router.post(SCIENTIFIC_CUSTODY_PATH, response_model=ScientificCustodyReply)
-    def scientific_custody(body: AuthorityScientificCustody, request: Request, response: Response):
+    def read_scientific_custody(body: AuthorityScientificCustody, request: Request, response: Response):
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Pragma"] = "no-cache"
         actor = auth.user(request)["id"]
@@ -207,11 +209,10 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
                 or target.identity_map.get(body.originOwner) != actor or body.receiverIdentity != actor
                 or target.configuration_revision != body.targetRevision or target.fingerprint != body.targetFingerprint):
             raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody target differs")
-        service = getattr(handoff_client.store, "remote_scientific", None)
-        if service is None:
+        if scientific_custody is None:
             raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: custody service unavailable")
         try:
-            proof = service.authorize_completed_custody(body.model_dump())
+            proof = scientific_custody(body.model_dump())
             current = handoff_client.targets.get(body.targetRef)
             if current is None or current.fingerprint != body.targetFingerprint or current.identity_map.get(body.originOwner) != actor:
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody target changed")
@@ -234,14 +235,13 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
                         request, response)
         if mandate.outcome != "authorized":
             raise HTTPException(403, "ORIGIN_AUTHORITY_DENIED: cancelled mandate cannot debit a tool call")
-        service = getattr(handoff_client.store, "remote_scientific", None)
-        if service is None:
+        if scientific_call is None:
             raise HTTPException(503, "ORIGIN_SCIENTIFIC_UNAVAILABLE: scientific debit service is unavailable")
         # The service atomically rechecks persisted scientific scope/current
         # source authority and binds callId to one debit. An unknown HTTP reply
         # is never permission to execute or create a replacement call identity.
         try:
-            proof = service.consume_remote_tool(body.model_dump())
+            proof = scientific_call(body.model_dump())
         except HTTPException:
             raise
         except Exception as error:

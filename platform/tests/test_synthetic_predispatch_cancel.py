@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
-from agent_factory import tools
+from agent_factory_research import tools
 from test_runtime_contract import ContractStore  # pyright: ignore[reportMissingImports]
 
 

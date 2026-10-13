@@ -1,6 +1,6 @@
 # Public application interface v1
 
-This interface gives reviewed applications a small Factory boundary. It does
+This interface gives published applications a small Factory boundary. It does
 not replace Agno, AgentOS, OpenResearch, or an executor's native continuation.
 It is independent of the existing application definition contracts v1 and v2;
 definitions and historical immutable plans keep their original hashes.
@@ -21,11 +21,44 @@ evidence. Repeated cleanup signals are not new application submissions.
 Unknown acknowledgement stays unknown: read the original request or operation.
 Never resend an original goal to infer whether it previously ran.
 
-Ordinary eligible owner tasks use the existing `OwnerSubmissions` checks in
-Factory admission. A published application is not permission to auto-approve
-shared code, arbitrary environments, remote placement or increased budgets.
-Managed/shared work retains its configured policy. The immutable plan is an
-internal admission record; ordinary applications need not implement a plan UI.
+Normal department entrypoints use `member-self-service`. Members publish
+material/application versions directly, and new tasks do not require ordinary
+plan approval. Factory admission still checks the current owner, permissions,
+exact bindings and budgets. Native hazardous-tool and exact project-creation
+consent remain; publishing a declaration cannot install code or grant new remote
+access. Public deletion, withdrawal and archival require an administrator.
+The immutable plan is an internal admission record; ordinary applications need
+not implement a plan approval UI. Historical owner-submission records carry no
+new execution authority. See [department collaboration and migration](department-minimal-integration.md).
+
+## Source ownership and deployment assembly
+
+The interface implementation remains in `platform/agent_factory/`. Research
+business services, configuration, materials and executor adapters live in
+`apps/research/agent_factory_research/`; its pages and API state live in
+`apps/research/web/`, with application tests under `apps/research/tests/`.
+OpenResearch and the existing AutoResearch paths are internal parts of one
+research application, with their native execution and continuation contracts.
+
+The Python deployment entry is
+[`agent_factory_server.main`](../deployment/agent_factory_server/main.py); it
+explicitly supplies trusted registrations and calls the research assembly.
+[`web/composition.tsx`](../web/composition.tsx) supplies application pages and
+navigation to the shared frontend shell. This is static assembly, without
+runtime package discovery. The core `agent_factory.main.create_app` does not
+install research routes or seed its materials by default. Purely declarative
+applications can still combine published existing tools without changing core
+source or adding a Python application package.
+
+The standalone core distribution is defined in
+[`platform/pyproject.toml`](../platform/pyproject.toml). The root distribution
+includes the core, research application and deployment entry for the existing
+research deployment. Application-specific settings and service objects belong
+to their application package. Assembly functions and constructor wiring are
+operator implementation details; they do not expand the public interface v1
+contract or make `Store` a public application API. See the
+[development guide](APPLICATION_DEVELOPMENT.md#源码归属与静态装配) for build,
+startup and separate core/application test discovery commands.
 
 ## Application code
 
@@ -102,21 +135,24 @@ After a lost start response, use `application.request(original_request_id)`.
 absence of a concurrent original request. Neither response permits automatic
 replay. The caller must retain the original request and its uncertain outcome.
 
-Start and original-request reads expose the original `planId`. A definitive
-existing `PLAN_REVIEW_REQUIRED`, `PLAN_REVIEW_DENIED` or `PLAN_REVIEW_EXPIRED`
-response also includes that ID and a `handoff` to the existing authorization,
-review-request and instance endpoints. No new review is created automatically.
-For work covered by the operator's existing managed policy, inspect
-`handoff.authorizationURL`; if that policy supports a review, explicitly request
-it at `handoff.reviewRequestURL` with the returned `planId` and a separately
-persisted review request ID. A distinct authorized reviewer makes the existing
-decision. After approval, explicitly use the existing instance endpoint with
-`handoff.instantiateBody`, which keeps the original plan and namespaced start
-request. Admission still rechecks current policy and reserves at most one
-original task. Ordinary eligible owner tasks retain their existing approval-free
-path. A handoff is a route reference, not permission or evidence of absent work;
-unknown acknowledgements still require original-request reads and never justify
-automatic resubmission.
+Start and original-request reads expose the original `planId`. New member-mode
+plans persist `policy=member-self-service` and follow normal admission without a
+plan review request. Historical plans and review receipts remain readable, but
+cannot authorize new execution under this mode: admission returns
+`LEGACY_PLAN_READ_ONLY`, and historical review mutation endpoints return 410.
+Create a new plan explicitly for a new task; never rewrite the old plan or reuse
+its review or original request ID as a new attempt. Unknown original outcomes
+still require reconciliation and do not authorize another submission.
+
+Explicit legacy regression configurations retain the existing
+`PLAN_REVIEW_REQUIRED`, `PLAN_REVIEW_DENIED` and `PLAN_REVIEW_EXPIRED` responses
+and their `handoff` to authorization, review-request and instance endpoints.
+Only in that configured legacy path may a separately persisted review request
+and an authorized review decision lead to `handoff.instantiateBody` for the
+original plan and namespaced start request. These fields preserve historical
+compatibility; they are not the normal member workflow. A handoff is a route
+reference, not permission or evidence of absent work. Admission still rechecks
+current policy and reserves at most one original task.
 
 Start and recovery share the same 8–80 character request ID grammar, including
 leading dots/underscores and embedded dots. Recovery rejects path separators,

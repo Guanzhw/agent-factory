@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { publicationApi } from './publicationApi.js';
 import { api } from './api.js';
 import { kindNames, materialKey } from './models.js';
-import type { FactoryMaterial, MaterialDraft, MaterialGovernancePolicy, MaterialReview, User } from './models.js';
+import type { FactoryMaterial, MaterialDraft, MaterialReview, User } from './models.js';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 type Provenance = { kind: 'original' | 'upstream'; source?: string | null; revision?: string | null; notice: string };
@@ -12,7 +13,7 @@ const tools: Record<string, string> = { literature_search: 'research:read', ask_
 const stateNames: Record<string, string> = { draft: '草稿', published: '已发布', withdrawn: '已撤回', archived: '已归档' };
 const decisionNames: Record<string, string> = { pending: '等待审核', approved: '已同意', denied: '已拒绝' };
 const describe = (error: unknown) => error instanceof Error ? error.message : '素材治理状态无法确认，请刷新后重试。';
-const freshDraft = (): Draft => ({ name: '', kind: 'skill', description: '', content: '', dependencies: [], permissions: [], license: 'MIT', provenance: { kind: 'original', notice: 'Original manager-authored material.' }, compatibility: ['agno:3.1.0'], inputSchema: {}, outputSchema: {} });
+const freshDraft = (): Draft => ({ name: '', kind: 'skill', description: '', content: '', dependencies: [], permissions: [], license: 'MIT', provenance: { kind: 'original', notice: 'Original member-authored material.' }, compatibility: ['agno:3.1.0'], inputSchema: {}, outputSchema: {} });
 const stateOf = (material: FactoryMaterial) => material.governance?.state ?? (material.archived ? 'archived' : material.published ? 'published' : 'draft');
 const active = (material: FactoryMaterial) => stateOf(material) === 'published' && material.published;
 
@@ -27,7 +28,7 @@ function isReview(value: unknown): value is MaterialReview {
   return typeof review.id === 'string' && typeof review.authorId === 'string' && typeof review.requestedBy === 'string' &&
     typeof review.materialId === 'string' && Number.isInteger(review.version) && Number(review.version) > 0 &&
     typeof review.createdAt === 'string' && typeof review.policyRevision === 'string' && hash(review.sha256) && hash(review.immutableDigest) &&
-    typeof review.currentPolicy === 'boolean' && typeof review.demoCompatibility === 'boolean' && review.taskApprovalSeparate === true &&
+    typeof review.currentPolicy === 'boolean' && typeof review.demoCompatibility === 'boolean' && typeof review.taskApprovalSeparate === 'boolean' &&
     ['pending', 'approved', 'denied'].includes(String(review.decision)) && ['draft', 'published', 'withdrawn', 'archived'].includes(String(review.state)) &&
     typeof material.id === 'string' && Number.isInteger(material.version) && typeof material.name === 'string' &&
     typeof material.kind === 'string' && Object.hasOwn(kindNames, material.kind) && typeof material.content === 'string' &&
@@ -85,9 +86,13 @@ function MaterialContent({ material }: { material: FactoryMaterial }) {
 
 export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }: { user: User; materials: FactoryMaterial[]; busy: string; act: Act; onNotice: (message: string) => void }) {
   const [filter, setFilter] = useState('all');
-  const [policy, setPolicy] = useState<MaterialGovernancePolicy>();
   const [reviews, setReviews] = useState<MaterialReview[]>([]);
-  const [allAuthors, setAllAuthors] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const isAdmin = user.role === 'manager';
+  const ownDraft = (material: FactoryMaterial) => stateOf(material) === 'draft' && !material.published && material.governance?.authorId === user.id;
+  const canArchive = (material: FactoryMaterial) => stateOf(material) !== 'archived' && (isAdmin || ownDraft(material));
+  const canChangeStatus = (material: FactoryMaterial, action: StatusIntent['action']) => action === 'archive' ? canArchive(material) : isAdmin && stateOf(material) === 'published';
+  const currentOwner = useRef(user.id); currentOwner.current = user.id;
   const [authorityCurrent, setAuthorityCurrent] = useState(false);
   const [pollError, setPollError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -100,40 +105,45 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   const [importText, setImportText] = useState('');
   const [selectedReview, setSelectedReview] = useState('');
   const [statusIntent, setStatusIntent] = useState<StatusIntent>();
+  const currentIntentMaterial = statusIntent && materials.find(material => materialKey(material) === materialKey(statusIntent.material) && material.sha256 === statusIntent.material.sha256);
   const commands = useCommands(user.id);
   const disabled = !!busy || !authorityCurrent;
-  const visible = materials.filter(material => filter === 'all' || material.kind === filter);
+  const visible = materials.filter(material => (isAdmin || stateOf(material) !== 'draft' || material.governance?.authorId === user.id) && (filter === 'all' || material.kind === filter));
   const dependencies = materials.filter(material => active(material) && material.id !== draft.id);
   const unavailable = draft.dependencies.filter(ref => !dependencies.some(material => materialKey(material) === materialKey(ref) && material.sha256 === ref.sha256));
 
   useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    setAuthorityCurrent(false);
-    async function poll() {
+    setAuthorityCurrent(false); setReviews([]); setHistoryLoaded(false);
+    async function check() {
       try {
         const currentUser = await api.session(controller.signal);
-        if (currentUser.id !== user.id || currentUser.role !== 'manager') throw new Error('当前身份已改变或失去素材管理权限，请重新登录。');
-        const [nextPolicy, nextReviews] = await Promise.all([api.materialPolicy(controller.signal), api.materialReviews(allAuthors, controller.signal)]);
-        if (nextPolicy.review_mode !== 'separate-admin' && nextPolicy.review_mode !== 'demo-self-review') throw new Error('素材发布策略无法识别，请等待管理员核对。');
-        if (typeof nextPolicy.revision !== 'string' || typeof nextPolicy.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(nextPolicy.fingerprint) ||
-          nextPolicy.taskApprovalSeparate !== true || nextPolicy.importExecutesCode !== false || nextPolicy.demoCompatibility !== (nextPolicy.review_mode === 'demo-self-review') ||
-          !Array.isArray(nextReviews) || nextReviews.length > 100 || !nextReviews.every(isReview)) throw new Error('素材审核响应不完整，暂时无法确认写操作权限。');
-        if (!controller.signal.aborted) { setPolicy(nextPolicy); setReviews(nextReviews); setPollError(''); setAuthorityCurrent(true); }
-      } catch (error) {
-        if (!controller.signal.aborted) { setPollError(describe(error)); setAuthorityCurrent(false); }
-      }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
+        if (currentUser.id !== user.id) throw new Error('当前身份已改变，请重新登录。');
+        if (!controller.signal.aborted) { setPollError(''); setAuthorityCurrent(true); }
+      } catch (error) { if (!controller.signal.aborted) { setPollError(describe(error)); setAuthorityCurrent(false); } }
     }
-    void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [user.id, allAuthors, refresh]);
+    void check(); return () => controller.abort();
+  }, [user.id, refresh]);
+
+  async function verifyActor(adminOnly = false) {
+    const currentUser = await api.session();
+    if (currentUser.id !== user.id || adminOnly && currentUser.role !== 'manager') throw new Error('当前身份或操作权限无法核对。');
+  }
+  async function readHistory() {
+    await act('material-publication-history', async () => {
+      await verifyActor();
+      const records = await api.materialReviews(isAdmin);
+      if (!Array.isArray(records) || records.length > 100 || !records.every(isReview) || !isAdmin && records.some(item => item.authorId !== user.id)) throw new Error('历史发布记录无法核对。');
+      if (currentOwner.current !== user.id) return;
+      setReviews(records); setHistoryLoaded(true);
+    });
+  }
 
   function edit(material?: FactoryMaterial) {
     const next: Draft = material ? {
       id: material.id, name: material.name, kind: material.kind, description: material.description, content: material.content,
       dependencies: material.dependencies, permissions: material.permissions, license: material.license || 'MIT',
-      provenance: material.provenance ?? { kind: 'original', notice: 'Original manager-authored material.' },
+      provenance: material.provenance ?? { kind: 'original', notice: 'Original member-authored material.' },
       compatibility: material.compatibility, inputSchema: material.inputSchema, outputSchema: material.outputSchema,
     } : freshDraft();
     setDraft(next); setPermissionText(next.permissions.join('\n')); setInputSchema(JSON.stringify(next.inputSchema, null, 2));
@@ -149,17 +159,19 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   }
   async function saveDraft() {
     await act('governance-draft', async () => {
+      await verifyActor();
       const definition: Record<string, unknown> = { ...draft, name: draft.name.trim(), description: draft.description.trim(),
         permissions: draft.kind === 'tool' ? [tools[draft.content]] : [...new Set(permissionText.split('\n').map(value => value.trim()).filter(Boolean))],
         inputSchema: objectSchema(inputSchema, '输入结构'), outputSchema: objectSchema(outputSchema, '输出结构') };
       const command = await commands.key('draft', definition);
       const saved = await api.governanceDraft(definition, command.requestId);
       command.acknowledged(); setEditing(false); setRefresh(value => value + 1);
-      onNotice(`草稿已保存：${saved.name} v${saved.version}，还需单独申请发布。`);
+      onNotice(`草稿已保存：${saved.name} v${saved.version}，确认内容后即可发布。`);
     });
   }
   async function importDefinitions() {
     await act('governance-import', async () => {
+      await verifyActor();
       let value: unknown;
       try { value = JSON.parse(importText); } catch { throw new Error('导入内容必须是有效 JSON 数组。'); }
       if (!Array.isArray(value) || value.length < 1 || value.length > 30 || value.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('导入需要 1 至 30 个结构化定义对象。');
@@ -168,31 +180,24 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
       const command = await commands.key('import', definitions);
       const saved = await api.importMaterials(definitions, command.requestId);
       command.acknowledged(); setImportText(''); setImporting(false); setRefresh(number => number + 1);
-      onNotice(`已登记 ${saved.materials.length} 个版本草稿；请分别申请发布。`);
+      onNotice(`已登记 ${saved.materials.length} 个版本草稿；确认内容后即可发布。`);
     });
   }
-  async function requestPublication(material: FactoryMaterial) {
-    await act('request-material-publication', async () => {
-      const previous = reviews.find(review => review.materialId === material.id && review.version === material.version);
-      const operation = `publication:${materialKey(material)}:${policy?.revision}:${previous?.id ?? 'initial'}`;
-      const command = await commands.key(operation, { materialId: material.id, version: material.version, sha256: material.sha256 });
-      const saved = await api.requestMaterialPublication(material.id, material.version, command.requestId);
-      setSelectedReview(saved.id); setRefresh(number => number + 1);
-      onNotice(`已提交 ${material.name} v${material.version} 的精确版本发布申请。`);
-    });
-  }
-  async function decide(review: MaterialReview, approved: boolean) {
-    await act('decide-material-publication', async () => {
-      const command = await commands.key(`decision:${review.id}`, { approved, sha256: review.sha256, policyRevision: review.policyRevision });
-      await api.decideMaterialReview(review.id, approved, command.requestId);
-      setRefresh(number => number + 1);
-      onNotice(`${review.material.name} v${review.version} 的发布申请已${approved ? '同意' : '拒绝'}。`);
+  async function publish(material: FactoryMaterial) {
+    await act('publish-material', async () => {
+      await verifyActor();
+      const command = await commands.key(`publish:${materialKey(material)}`, { sha256: material.sha256 });
+      const saved = await publicationApi.publishMaterial(user.id, material.id, material.version, command.requestId);
+      if (saved.id !== material.id || saved.version !== material.version || saved.sha256 !== material.sha256 || !saved.published || stateOf(saved) !== 'published') throw new Error('发布回执与所选材料版本不一致。');
+      command.acknowledged(); setRefresh(number => number + 1);
+      onNotice(`${material.name} v${material.version} 已发布；已有任务继续保留原固定版本。`);
     });
   }
   async function changeStatus() {
-    if (!statusIntent) return;
-    const intent = statusIntent;
+    if (!statusIntent || !currentIntentMaterial || !canChangeStatus(currentIntentMaterial, statusIntent.action)) return;
+    const intent = { ...statusIntent, material: currentIntentMaterial };
     await act(`material-${intent.action}`, async () => {
+      await verifyActor(intent.action !== 'archive' || !ownDraft(intent.material));
       const reason = intent.reason.trim();
       if (!reason) throw new Error('请填写撤回或归档原因。');
       const command = await commands.key(`${intent.action}:${materialKey(intent.material)}`, { sha256: intent.material.sha256, reason });
@@ -204,8 +209,9 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   }
 
   return <section className="materials-page">
-    <div className="page-heading"><div><h1>构建材料管理</h1><p>维护固定版本的材料，先保存草稿，再申请独立发布审核。</p></div><div className="button-row"><button className="secondary" disabled={disabled} onClick={() => { setImporting(true); setEditing(false); }}>导入定义</button><button className="primary" disabled={disabled} onClick={() => edit()}>新建材料</button></div></div>
-    <div className="state-note" role="status">{policy ? policy.demoCompatibility ? '当前明确启用了演示自审兼容模式。' : '当前要求由作者以外的管理员审核发布。' : '正在读取素材发布策略。'} 素材发布与任务执行审批分别记录。</div>
+    <div className="page-heading"><div><h1>构建材料管理</h1><p>成员可创建、修订和发布部门共享材料。</p></div><div className="button-row"><button className="secondary" disabled={disabled} onClick={() => { setImporting(true); setEditing(false); }}>导入定义</button><button className="primary" disabled={disabled} onClick={() => edit()}>新建材料</button></div></div>
+    <div className="state-note" role="status">编辑会保存为新版本。已有任务与个人绑定保留原固定版本；新版本不会替换他人的连接。自己的私人草稿可归档；公共版本的撤回和归档由管理员操作，历史保留。</div>
+
     {pollError && <div className="error-message" role="alert"><span>{pollError} 写操作暂时暂停。</span><button className="text-button" disabled={!!busy} onClick={() => setRefresh(value => value + 1)}>重新核对</button></div>}
     {editing && <section className="material-editor" aria-label="材料版本草稿"><div className="section-heading"><h2>{draft.id ? '编辑下一版本草稿' : '新建版本草稿'}</h2><button className="text-button" disabled={!!busy} onClick={() => setEditing(false)}>关闭编辑</button></div><form onSubmit={event => { event.preventDefault(); if (!disabled) void saveDraft(); }}>
       <div className="editor-grid"><label>名称<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required maxLength={120} disabled={disabled}/></label><label>类型<select value={draft.kind} onChange={event => chooseKind(event.target.value as Draft['kind'])} disabled={disabled || !!draft.id}>{Object.entries(kindNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div>
@@ -220,22 +226,17 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
       <details className="technical-detail"><summary>输入、输出与固定版本</summary><span>{draft.id ? `材料系列 ${draft.id}` : '保存时创建新的材料系列'} · 兼容性 {draft.compatibility.join('、')}</span><label>输入结构 JSON<textarea rows={3} value={inputSchema} maxLength={16000} disabled={disabled} onChange={event => setInputSchema(event.target.value)}/></label><label>输出结构 JSON<textarea rows={3} value={outputSchema} maxLength={16000} disabled={disabled} onChange={event => setOutputSchema(event.target.value)}/></label></details>
       <button className="primary" disabled={disabled}>保存版本草稿</button><p className="quiet">提交结果不明确时，保留内容并重试；相同内容会使用原请求标识核对。</p>
     </form></section>}
-    {importing && <section className="material-editor" aria-label="导入结构化材料"><div className="section-heading"><h2>导入定义草稿</h2><button className="text-button" disabled={!!busy} onClick={() => setImporting(false)}>关闭导入</button></div><form onSubmit={event => { event.preventDefault(); if (!disabled) void importDefinitions(); }}><label>JSON 定义数组<textarea rows={12} value={importText} maxLength={262144} required disabled={disabled} onChange={event => setImportText(event.target.value)} placeholder={'[{"kind":"prompt","name":"研究提示词","content":"记录来源、方法与局限。","license":"MIT","provenance":{"kind":"original","notice":"Original manager-authored material."}}]'}/></label><p className="quiet">每次 1 至 30 个定义。须明确许可证和来源；上游引用须保留版权声明及固定修订。导入只保存定义，工具需绑定已注册工具。</p><button className="primary" disabled={disabled}>登记导入草稿</button></form></section>}
+    {importing && <section className="material-editor" aria-label="导入结构化材料"><div className="section-heading"><h2>导入定义草稿</h2><button className="text-button" disabled={!!busy} onClick={() => setImporting(false)}>关闭导入</button></div><form onSubmit={event => { event.preventDefault(); if (!disabled) void importDefinitions(); }}><label>JSON 定义数组<textarea rows={12} value={importText} maxLength={262144} required disabled={disabled} onChange={event => setImportText(event.target.value)} placeholder={'[{"kind":"prompt","name":"研究提示词","content":"记录来源、方法与局限。","license":"MIT","provenance":{"kind":"original","notice":"Original member-authored material."}}]'}/></label><p className="quiet">每次 1 至 30 个定义。须明确许可证和来源；上游引用须保留版权声明及固定修订。导入只保存定义，工具需绑定已注册工具。</p><button className="primary" disabled={disabled}>登记导入草稿</button></form></section>}
     <div className="catalog-tabs" role="group" aria-label="材料类型"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部</button>{Object.entries(kindNames).map(([id, name]) => <button key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{name}</button>)}</div>
     <div className="material-catalog">{visible.length ? visible.map(material => {
       const state = stateOf(material);
-      const pending = reviews.some(review => review.materialId === material.id && review.version === material.version && review.decision === 'pending' && review.currentPolicy && review.state !== 'withdrawn' && review.state !== 'archived');
-      return <article className="material-row" key={materialKey(material)}><div className="material-kind">{kindNames[material.kind]}</div><div className="material-info"><div className="material-title"><h3>{material.name}</h3><span className="version">v{material.version}</span><span className={`badge ${state === 'published' ? 'status-published' : 'status-draft'}`}>{stateNames[state] ?? '状态待核对'}</span></div><p>{material.description}</p><div className="material-meta"><span>作者 {material.governance?.authorId ?? '原始记录'}</span><span>许可证 {material.license}</span><span>依赖 {material.dependencies.length} 项</span></div>{material.governance?.reason && <p>状态原因：{material.governance.reason}</p>}<details className="technical-detail"><summary>查看完整版本内容</summary><MaterialContent material={material}/></details></div><div className="material-actions"><button className="secondary" disabled={disabled} onClick={() => edit(material)}>新版本</button>{state === 'draft' && <button className="primary" disabled={disabled || pending} onClick={() => void requestPublication(material)}>{pending ? '等待发布审核' : '申请发布此版本'}</button>}{state === 'published' && <button className="secondary danger" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'withdraw', reason: '' })}>撤回此版本</button>}{state !== 'archived' && <button className="text-button" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'archive', reason: '' })}>归档此版本</button>}</div></article>;
+      return <article className="material-row" key={materialKey(material)}><div className="material-kind">{kindNames[material.kind]}</div><div className="material-info"><div className="material-title"><h3>{material.name}</h3><span className="version">v{material.version}</span><span className={`badge ${state === 'published' ? 'status-published' : 'status-draft'}`}>{stateNames[state] ?? '状态待核对'}</span></div><p>{material.description}</p><div className="material-meta"><span>作者 {material.governance?.authorId ?? '原始记录'}</span><span>许可证 {material.license}</span><span>依赖 {material.dependencies.length} 项</span></div>{material.governance?.reason && <p>状态原因：{material.governance.reason}</p>}<details className="technical-detail"><summary>查看完整版本内容</summary><MaterialContent material={material}/></details></div><div className="material-actions"><button className="secondary" disabled={disabled} onClick={() => edit(material)}>新版本</button>{state === 'draft' && material.governance?.authorId === user.id && <button className="primary" disabled={disabled} onClick={() => void publish(material)}>发布此版本</button>}{isAdmin && state === 'published' && <button className="secondary danger" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'withdraw', reason: '' })}>撤回此版本</button>}{canArchive(material) && <button className="text-button" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'archive', reason: '' })}>归档此版本</button>}</div></article>;
     }) : <p className="list-empty">此分类暂无可见材料。</p>}</div>
-    {statusIntent && <section className="material-editor" aria-label="确认材料状态变更" style={{ marginTop: 24 }}><h2>{statusIntent.action === 'archive' ? '归档' : '撤回'} {statusIntent.material.name} v{statusIntent.material.version}</h2><p>此版本将无法用于后续执行。版本内容、摘要和历史证据继续保留。</p><form onSubmit={event => { event.preventDefault(); if (!disabled) void changeStatus(); }}><label>原因<textarea value={statusIntent.reason} rows={3} required maxLength={2000} disabled={disabled} onChange={event => setStatusIntent({ ...statusIntent, reason: event.target.value })}/></label><div className="button-row"><button className="secondary danger" disabled={disabled}>确认{statusIntent.action === 'archive' ? '归档' : '撤回'}此版本</button><button type="button" className="secondary" disabled={!!busy} onClick={() => setStatusIntent(undefined)}>取消</button></div><details className="technical-detail"><summary>查看固定版本摘要</summary><span>{materialKey(statusIntent.material)}</span><span>{statusIntent.material.sha256}</span></details></form></section>}
-    <section aria-label="材料发布审核" style={{ marginTop: 30 }}><div className="section-heading"><h2>材料发布审核</h2><button className="secondary" disabled={!!busy} onClick={() => setRefresh(value => value + 1)}>刷新审核</button></div><label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={allAuthors} disabled={!!busy} onChange={event => { setAuthorityCurrent(false); setAllAuthors(event.target.checked); }}/>查看全部作者的申请（需当前管理员权限）</label><p className="quiet">先核对完整固定版本，再提交发布决定。发布审核不会代替任何任务审批。</p>{reviews.length ? reviews.map(review => {
-      const consistent = review.material.id === review.materialId && review.material.version === review.version && review.material.sha256 === review.sha256;
-      const compatible = policy?.demoCompatibility === true && review.demoCompatibility === true && policy.review_mode === 'demo-self-review';
-      const self = review.authorId === user.id;
-      const current = review.currentPolicy && review.policyRevision === policy?.revision;
-      const actionable = review.decision === 'pending' && current && consistent && review.state !== 'withdrawn' && review.state !== 'archived';
+    {statusIntent && currentIntentMaterial && canChangeStatus(currentIntentMaterial, statusIntent.action) && <section className="material-editor" aria-label="确认材料状态变更" style={{ marginTop: 24 }}><h2>{statusIntent.action === 'archive' ? '归档' : '撤回'} {statusIntent.material.name} v{statusIntent.material.version}</h2><p>此版本将无法用于后续执行。版本内容、摘要和历史证据继续保留。</p><form onSubmit={event => { event.preventDefault(); if (!disabled) void changeStatus(); }}><label>原因<textarea value={statusIntent.reason} rows={3} required maxLength={2000} disabled={disabled} onChange={event => setStatusIntent({ ...statusIntent, reason: event.target.value })}/></label><div className="button-row"><button className="secondary danger" disabled={disabled}>确认{statusIntent.action === 'archive' ? '归档' : '撤回'}此版本</button><button type="button" className="secondary" disabled={!!busy} onClick={() => setStatusIntent(undefined)}>取消</button></div><details className="technical-detail"><summary>查看固定版本摘要</summary><span>{materialKey(statusIntent.material)}</span><span>{statusIntent.material.sha256}</span></details></form></section>}
+    <details className="technical-detail" style={{ marginTop: 30 }}><summary>历史发布审查（只读）</summary><p>原申请和决定保留，不会自动发布任何版本。</p><button className="secondary" disabled={disabled} onClick={() => void readHistory()}>读取历史记录</button>{reviews.map(review => {
       const inspect = selectedReview === review.id;
-      return <article className="material-row review-row" key={review.id}><div className="material-info"><div className="material-title"><h3>{review.material.name}</h3><span className="version">v{review.version}</span><span className="badge">{decisionNames[review.decision]}</span></div><p>作者 {review.authorId} · 请求人 {review.requestedBy}{!current ? ' · 发布策略已改变' : ''}{review.state === 'withdrawn' || review.state === 'archived' ? ` · ${stateNames[review.state]}` : ''}</p>{self && !compatible && <p className="quiet">此版本由你创作，需要另一位当前管理员审核。</p>}{!consistent && <div className="error-message" role="alert">审核内容与精确版本摘要不一致，暂时无法提交决定。</div>}<button className="text-button" aria-expanded={inspect} onClick={() => setSelectedReview(inspect ? '' : review.id)}>{inspect ? '收起版本内容' : '查看并审核完整版本'}</button>{inspect && <div><MaterialContent material={review.material}/><details className="technical-detail"><summary>发布审核记录</summary><span>审核编号 {review.id}</span><span>策略版本 {review.policyRevision}</span><span>不可变记录摘要 {review.immutableDigest}</span><span>申请时间 {new Date(review.createdAt).toLocaleString('zh-CN')}</span><span>审核人 {review.reviewerId ?? '尚未审核'}</span>{review.decidedAt && <span>决定时间 {new Date(review.decidedAt).toLocaleString('zh-CN')}</span>}</details></div>}</div><div className="material-actions">{inspect && review.decision === 'pending' && <><button className="primary" disabled={disabled || !actionable || self && !compatible} onClick={() => void decide(review, true)}>同意发布此版本</button><button className="secondary danger" disabled={disabled || !actionable || self && !compatible} onClick={() => void decide(review, false)}>拒绝发布</button></>}</div></article>;
-    }) : <p className="list-empty">暂无可见的材料发布申请。</p>}</section>
+      return <article className="material-row review-row" key={review.id}><div className="material-info"><div className="material-title"><h3>{review.material.name}</h3><span className="version">v{review.version}</span><span className="badge">{decisionNames[review.decision]}</span></div><p>作者 {review.authorId} · 请求人 {review.requestedBy}</p><button className="text-button" aria-expanded={inspect} onClick={() => setSelectedReview(inspect ? '' : review.id)}>{inspect ? '收起版本内容' : '查看历史版本内容'}</button>{inspect && <div><MaterialContent material={review.material}/><details className="technical-detail"><summary>历史发布记录</summary><span>审核编号 {review.id}</span><span>原策略版本 {review.policyRevision}</span><span>不可变记录摘要 {review.immutableDigest}</span><span>申请时间 {new Date(review.createdAt).toLocaleString('zh-CN')}</span><span>审核人 {review.reviewerId ?? '无历史决定'}</span>{review.decidedAt && <span>决定时间 {new Date(review.decidedAt).toLocaleString('zh-CN')}</span>}</details></div>}</div></article>;
+    })}{historyLoaded && !reviews.length && <p className="list-empty">暂无可见的历史发布记录。</p>}</details>
+
   </section>;
 }

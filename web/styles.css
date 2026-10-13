@@ -25,7 +25,6 @@
 
 .artifact-download{display:flex;align-items:center;gap:12px}.artifact-download>div{min-width:0}.artifact-download button{margin-left:auto;flex-shrink:0}.artifact-integrity{font-size:11px;color:#3e7161;margin:10px 0 0}.artifact-list .error-message{margin:10px 0 0}.ledger-scopes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ledger-scope{padding:12px;background:#f6f8fb;border:1px solid var(--line);border-radius:5px;min-width:0}.ledger-scope>strong{font-size:12px}.ledger-scope dl{margin:10px 0 0;font-size:11px}.ledger-scope dt{color:var(--muted)}.ledger-scope dd{margin:2px 0 9px;overflow-wrap:anywhere}.ledger-note{font-size:11px;margin:12px 0}.ledger-attempts{list-style:none;padding:0;margin:0}.ledger-attempts li{border:1px solid var(--line);padding:12px;border-radius:5px;margin:8px 0}.ledger-attempts strong{display:block;font-size:12px}.ledger-attempts span,.ledger-attempts p{font-size:11px;overflow-wrap:anywhere}.ledger-attempts p{margin:8px 0 0}.usage-ledger .state-note{margin:0 0 12px}@media(max-width:620px){.ledger-scopes{grid-template-columns:minmax(0,1fr)}.artifact-download{flex-wrap:wrap}.artifact-download>div{flex:1}.artifact-download button{margin-left:0}}
 
-.orx-experiment>.quiet{font-size:11px}.orx-experiment .state-note{margin:0 0 12px}.orx-experiment .execution-metrics{display:flex;flex-wrap:wrap;margin:16px 0}.orx-stop-proof{color:#3e7161;background:#e7f1ed;border:1px solid #d2e7dd;border-radius:5px;padding:10px 12px;font-size:12px}.orx-experiment .section-heading{align-items:flex-start}.orx-experiment .badge{white-space:normal;text-align:right}@media(max-width:620px){.orx-experiment .section-heading{flex-wrap:wrap}}
 
 .reviewed-configuration{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:0}.plan-usage-commitment{border:1px solid var(--line);border-radius:5px;padding:12px;margin:12px 0}.plan-usage-commitment h3{font-size:13px}.review-row .plan-usage-commitment pre{font-size:11px}
 
@@ -47,8 +46,6 @@
 .storage-list details { font-size: .8rem; }
 @media(max-width: 720px) { .storage-list li { flex-direction: column; } .storage-card { padding: 16px; } }
 
-.literature-evidence { min-width: 0; overflow-wrap: anywhere; }
-.literature-evidence blockquote { margin-inline: 16px; }
 
 .application-template-editor, .application-template-editor fieldset, .material-picker { min-width: 0; }
 .application-template-editor fieldset, .material-picker { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border, #dce2e6); border-radius: 12px; }
@@ -62,13 +59,9 @@
 @media (max-width: 600px) { .material-picker-filters { grid-template-columns: minmax(0, 1fr); } .application-template-editor fieldset, .material-picker { padding: .65rem; } }
 .material-editor > .quiet { overflow-wrap: anywhere; }
 
-.synthesis-journey, .source-plan-note, .synthesis-report { min-width: 0; overflow-wrap: anywhere; }
+.source-plan-note { min-width: 0; overflow-wrap: anywhere; }
 .source-plan-note { display: block; }
 .source-plan-note span { display: block; font-size: 12px; }
-.synthesis-journey > section, .synthesis-journey fieldset { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
-.synthesis-journey label { overflow-wrap: anywhere; }
-.synthesis-journey input[type=checkbox] { margin-right: 8px; }
-.synthesis-journey .primary, .synthesis-journey .secondary { white-space: normal; }
 
 .schedules-panel { min-width: 0; overflow-wrap: anywhere; }
 .schedules-panel fieldset { min-width: 0; margin-block: 1rem; }
@@ -77,12 +70,6 @@
 .schedules-panel input { max-width: 100%; }
 .schedules-panel .material-row { grid-template-columns: minmax(0, 1fr); }
 
-.autoresearch .composer { max-width: 900px; }
-.autoresearch .composer dl { display: flex; flex-wrap: wrap; gap: 16px 28px; margin: 24px 0; }
-.autoresearch .composer dt { color: var(--muted); font-size: 12px; }
-.autoresearch .composer dd { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
-.autoresearch-progress { padding: 24px; margin-bottom: 18px; min-height: auto; }
-.autoresearch-progress li { margin-bottom: 8px; }
 
 /* Task-first hierarchy: use the existing palette and components. */
 .nav-group-label { color: #b8cadd; font-size: 11px; padding: 12px 12px 0; }
@@ -103,39 +90,26 @@
 
 .composer-steps [aria-current="step"] { color: var(--blue); font-weight: 650; }
 
-/* Application-owned OpenResearch workspace. */
-.workspace-crumbs, .or-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.workspace-crumbs { color: var(--muted, #66716c); margin-bottom: 20px; font-size: 13px; }
-.or-catalog-grid, .or-project-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.or-catalog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
 .or-catalog-card { padding: 32px; border: 1px solid #dfe5df; border-radius: 16px; background: #fff; min-height: 240px; }
 .or-catalog-card h2 { margin: 16px 0; font-size: 27px; }
 .or-catalog-card p { line-height: 1.8; }
 .or-development-card { background: #f5f7f4; }
-.or-project-card { width: 100%; display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 12px; padding: 22px; margin: 12px 0; background: #fff; border: 1px solid #dfe5df; border-radius: 12px; }
-.or-project-card:hover { border-color: #68836e; background: #f7faf6; }
-.or-project-card strong { font-size: 18px; }
-.or-native-row, .or-session-row { border-top: 1px solid #dfe5df; padding: 20px 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
-.or-native-row small { display: block; overflow-wrap: anywhere; }
-.openresearch-workspace .material-editor { margin: 20px 0; }
-.openresearch-workspace label { display: grid; gap: 8px; margin: 16px 0; }
-.openresearch-workspace .state-note { overflow-wrap: anywhere; }
-.openresearch-workspace textarea { min-height: 110px; }
-@media (max-width: 900px) { .or-catalog-grid, .or-project-layout { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .or-catalog-grid { grid-template-columns: 1fr; } }
 
 /* Shared controls retain the existing palette while making touch and consent usable. */
 .secondary-navigation { display: none; gap: 7px; }
 .secondary-navigation.expanded { display: grid; }
 .resource-guidance { color: var(--muted); font-size: 13px; margin: 24px 0; }
 .sidebar nav .mobile-nav-toggle { display: flex; }
-.openresearch-workspace, .personal-session-workspace, .connections-page { min-width: 0; }
-.openresearch-workspace button:not([class]), .personal-session-workspace button:not([class]), .personal-session-dialog button:not([class]), .connections-page button:not([class]) {
+.connections-page { min-width: 0; }
+.connections-page button:not([class]) {
   background: #fff; color: #395575; border: 1px solid #bdcad8; border-radius: 5px; padding: 9px 15px; font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal;
 }
-.openresearch-workspace > section { padding: 22px; background: #fff; border: 1px solid var(--line); border-radius: 8px; margin: 20px 0; }
-.openresearch-workspace label:has(> input[type=checkbox]), .personal-session-workspace label:has(> input[type=checkbox]), .personal-session-dialog label:has(> input[type=checkbox]), .connections-page label:has(> input[type=checkbox]) {
+.connections-page label:has(> input[type=checkbox]) {
   display: flex; align-items: flex-start; gap: 10px; line-height: 1.7; cursor: pointer;
 }
-.openresearch-workspace input[type=checkbox], .personal-session-workspace input[type=checkbox], .personal-session-dialog input[type=checkbox], .connections-page input[type=checkbox] {
+.connections-page input[type=checkbox] {
   width: 18px; height: 18px; flex: 0 0 18px; margin: 2px 0 0; accent-color: var(--blue);
 }
 .task-secondary-detail { border-top: 1px solid var(--line); padding: 16px 0; }
@@ -163,16 +137,8 @@
   .sidebar nav button, .logout, .workspace button, .workspace summary { min-height: 44px; }
   .workspace summary { padding-block: 10px; }
   .workspace .text-button { white-space: normal; }
-  .openresearch-workspace > section { padding: 16px; }
-  .openresearch-workspace .page-heading { flex-wrap: wrap; }
-  .personal-session-dialog button { min-height: 44px; }
 }
-.project-create-form,.project-disclosure{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:14px 0}.project-create-form summary,.project-disclosure summary{cursor:pointer;font-size:14px;font-weight:600;padding:6px 0}.project-create-form[open] summary,.project-disclosure[open] summary{margin-bottom:16px}.project-request{overflow-wrap:anywhere}.project-request button{display:block;margin-top:8px}.project-created{background:#f1f7f5;border:1px solid #c3dbd0;border-radius:6px;padding:18px;margin:16px 0}.project-created p,.personal-command-summary dd{overflow-wrap:anywhere}
 
-.or-setup-details { margin-top: 24px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 16px 22px; }
-.or-setup-details summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
-.personal-session-workspace > section { margin: 16px 0; }
-.native-result-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
 
 .model-settings button:not([class]) { background: #fff; color: #395575; border: 1px solid #bdcad8; border-radius: 5px; padding: 9px 15px; font-size: 13px; font-weight: 600; min-height: 44px; }
 

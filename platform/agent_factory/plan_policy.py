@@ -1,6 +1,6 @@
 """Persisted plan approval, separate from native HITL and execution ownership.
 
-Operator configuration defaults to admin review. This module grants no native
+Department members submit new plans themselves. This module grants no native
 roles, selects no paid model and cannot approve a native tool confirmation.
 Register its router and call require_execution/require_tool at admission and
 protected boundaries; merely constructing the service does not enforce policy.
@@ -24,7 +24,7 @@ from .store import digest
 from .tool_policy_registry import (ResolvedToolPolicy, normalize_resolved_tool_policies, merged_tools,
     policy_body, require_installed_policies, require_plan_policies, resolve_tool_policies)
 
-PolicyName = Literal["unset", "admin-review", "read-only-auto", "bounded-synthetic"]
+PolicyName = Literal["member-self-service", "unset", "admin-review", "read-only-auto", "bounded-synthetic"]
 LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
                "checksum": "checksum:read", "run_experiment": "experiment:synthetic"}
 REGISTERED_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
@@ -85,15 +85,17 @@ def application_tool_catalog(store):
     settings = getattr(store, 'settings', None)
     policies = resolve_tool_policies(getattr(settings, 'tool_policies', ()), getattr(settings, 'runtime_adapters', ()))
     require_installed_policies(store, policies)
-    base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract)),
-            **({"save_literature_synthesis": "research:read"} if getattr(getattr(store, "settings", None), "source_synthesis_enabled", False) else {})}
+    base = {**KNOWN_TOOLS, **tools_for_contract(cast(ToolContract, contract))}
+    policy = getattr(store, 'plan_policy', None)
+    if policy is not None:
+        base = policy.extend_application_tool_catalog(base)
     return merged_tools(base, policies, reserved=reserved_tool_names())
 
 
 @dataclass(frozen=True)
 class PlanPolicyConfig:
-    name: PolicyName = "admin-review"
-    revision: str = "plan-policy-v1"
+    name: PolicyName = "member-self-service"
+    revision: str = "department-member-v1"
     review_ttl_seconds: int = 3600
     tool_contract: ToolContract = "legacy-v1"
     source_synthesis_enabled: bool = False
@@ -105,9 +107,9 @@ class PlanPolicyConfig:
         merged_tools({}, self.tool_policies, reserved=reserved_tool_names())
         if type(self.source_synthesis_enabled) is not bool:
             raise ValueError("Source synthesis requires an explicit boolean contract")
-        if self.tool_contract != "legacy-v1" and self.revision == "plan-policy-v1":
+        if self.tool_contract != "legacy-v1" and self.revision in {"plan-policy-v1", "department-member-v1"}:
             raise ValueError("Registered runtime tools require a distinct plan policy revision")
-        if self.name not in {"unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
+        if self.name not in {"member-self-service", "unset", "admin-review", "read-only-auto", "bounded-synthetic"}:
             raise ValueError("Unsupported plan approval policy")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
             raise ValueError("Policy revision must be a bounded identifier")
@@ -218,6 +220,10 @@ def persisted_ancestor_guard(store: Any):
 
 
 class PlanPolicyService:
+    def extend_application_tool_catalog(self, catalog):
+        """Static deployment policy may contribute its installed application tools."""
+        return catalog
+
     def __init__(self, store: Any, auth: Any, config: PlanPolicyConfig | None = None, *,
                  clock: Callable[[], datetime] | None = None,
                  ancestor_guard: Callable[[str, dict, Any], list[dict]] | None = None):
@@ -255,7 +261,16 @@ class PlanPolicyService:
             if current is None:
                 conn.execute(self.state.insert().values(id="current", revision=initial.revision))
             elif current != initial.revision:
-                raise ValueError("Configured policy differs from persisted current revision; reconcile operator configuration")
+                previous = self._current(conn)
+                # A product-rule upgrade may only remove the human review layer.
+                # Runtime/tool authority must match; immutable old records remain.
+                def execution_contract(value):
+                    return {key: item for key, item in policy_body(value).items()
+                        if key not in {"name", "revision", "review_ttl_seconds"}}
+                if (initial.name != "member-self-service" or previous.name in {"unset", "member-self-service"}
+                        or execution_contract(previous) != execution_contract(initial)):
+                    raise ValueError("Configured policy differs from persisted current revision; reconcile operator configuration")
+                conn.execute(self.state.update().where(self.state.c.id == "current").values(revision=initial.revision))
 
     def _lock(self, conn):
         if self.store.engine.dialect.name == "postgresql":
@@ -397,6 +412,9 @@ class PlanPolicyService:
                 return False
             raise
 
+    def _plan_summary(self, plan):
+        return {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs", "config", "usageBudget")}
+
     def _project(self, conn, row):
         config = self._current(conn)
         decision = conn.execute(select(self.decisions).where(self.decisions.c.review_id == row["id"])).mappings().first()
@@ -414,12 +432,7 @@ class PlanPolicyService:
             plan = self._plan(row["owner_id"], row["plan_id"], connection=conn)
             integrity = digest(plan) == row["plan_hash"] and plan["fingerprint"] == row["plan_fingerprint"]
             if integrity:
-                project_creation = None
-                if plan.get('application') == 'personal-orx-project-create-v1':
-                    from .personal_orx_projects import project_review_summary
-                    project_creation = project_review_summary(plan)
-                summary = {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs", "config", "usageBudget")}
-                if project_creation is not None: summary['projectCreation'] = project_creation
+                summary = self._plan_summary(plan)
         except Exception:
             # A persisted review remains inspectable for diagnosis; a corrupt or
             # unavailable plan cannot become an effective execution approval.
@@ -445,6 +458,8 @@ class PlanPolicyService:
         with self.store.engine.begin() as conn:
             self._lock(conn)
             config = self._current(conn)
+            if config.name == "member-self-service":
+                raise HTTPException(410, "PLAN_REVIEWS_READ_ONLY: generate a new plan and submit it directly")
             self._scope(plan, config)
             if config.name in {"unset", "bounded-synthetic"}:
                 raise HTTPException(409, "This policy does not accept administrator plan reviews")
@@ -494,6 +509,8 @@ class PlanPolicyService:
             raise HTTPException(400, "A typed approval decision is required")
         with self.store.engine.begin() as conn:
             self._lock(conn)
+            if self._current(conn).name == "member-self-service":
+                raise HTTPException(410, "PLAN_REVIEWS_READ_ONLY: historical decisions cannot be changed")
             row = conn.execute(select(self.reviews).where(self.reviews.c.id == review_id)).mappings().first()
             if row is None:
                 raise HTTPException(404, "Plan review not found")
@@ -528,33 +545,11 @@ class PlanPolicyService:
         connection = context.get() if context is not None else None
         return nullcontext(cast(Connection, connection)) if connection is not None else self.store.engine.connect()
 
-    def require_execution(self, owner: str, plan: str | Mapping, *, run_context: Any = None, scientific_child_id: str | None = None) -> dict:
-        return self._require_authorization(owner, plan, run_context=run_context,
-                                           scientific_child_id=scientific_child_id)
-
-    def require_scientific_custody(self, owner: str, plan: str | Mapping, *, scientific_child_id: str) -> dict:
-        """Read one completed training child's custody under its current parent.
-
-        This deliberately returns no execution approval. Native admission and
-        tool entrypoints continue through require_execution, which rejects the
-        completed child.
-        """
-        checked = self._require_authorization(owner, plan, scientific_child_id=scientific_child_id,
-                                              scientific_custody=True)
-        current = self._plan(owner, plan)
-        bindings = getattr(self.store, 'execution_bindings', None)
-        if bindings is not None:
-            bindings.recheck(current)
-        governance = getattr(self.store, 'material_governance', None)
-        if governance is not None:
-            governance.require_materials_current(current)
-        for guard in tuple(self.store.execution_guards.values()):
-            guard(owner, current, None, None)
-        return {'custodyReadable': True, 'ownerId': owner, 'planId': current['id'],
-                'planDigest': checked['planDigest']}
+    def require_execution(self, owner: str, plan: str | Mapping, *, run_context: Any = None) -> dict:
+        return self._require_authorization(owner, plan, run_context=run_context)
 
     def _require_authorization(self, owner: str, plan: str | Mapping, *, run_context: Any = None,
-                               scientific_child_id: str | None = None, scientific_custody: bool = False) -> dict:
+                               ancestor_resolver: Callable[[dict], list[dict]] | None = None) -> dict:
         self.auth.require(owner, "run")
         configuration_guard = getattr(self.store, "require_current_policy", None)
         if configuration_guard is not None:
@@ -565,29 +560,12 @@ class PlanPolicyService:
         with self._execution_connection() as scope_connection:
             scope_config = self._current(scope_connection)
         self._scope(current_plan, scope_config)
-        if scientific_child_id is not None and not current_plan.get('delegation'):
-            raise HTTPException(409, 'Scientific placement requires a delegated source plan')
+        resolved_ancestors = ancestor_resolver(current_plan) if ancestor_resolver is not None else None
         review_plan = current_plan
         inherited = False
         if current_plan.get("delegation"):
-            if scientific_child_id is not None:
-                service = getattr(self.store, 'remote_scientific', None)
-                child = self.store.task(scientific_child_id, owner)
-                if (service is None or run_context is not None or child.get('run_id') or child['plan_id'] != current_plan['id']
-                        or child['cancel_requested'] or bool(child['terminal']) != scientific_custody
-                        or self.store.has_failures(child['id'])):
-                    raise HTTPException(409, 'Scientific placement requires its original metadata child')
-                if scientific_custody and current_plan.get('mode') != 'remote-scientific-training':
-                    raise HTTPException(409, 'Scientific custody is limited to completed original training')
-                row = service._row(owner, scientific_child_id)
-                service.validate_source(current_plan, row['body']['envelope'])
-                parent = self.store.task(row['parent_id'], owner)
-                link = self.store.delegation._link(scientific_child_id)
-                if (not link or link['parent_id'] != parent['id'] or link['root_id'] != parent['id']
-                        or type(link['depth']) is not int or link['depth'] != 1 or link['owner_id'] != owner
-                        or link['child_id'] != child['id'] or link['plan_id'] != current_plan['id']):
-                    raise HTTPException(409, 'Scientific placement ancestry changed')
-                _, ancestors = self.store.delegation._mandate(owner, parent)
+            if resolved_ancestors is not None:
+                ancestors = resolved_ancestors
             else:
                 if self.ancestor_guard is None or run_context is None:
                     raise HTTPException(409, "DELEGATION_POLICY_UNBOUND: current persisted ancestor proof required")
@@ -614,9 +592,16 @@ class PlanPolicyService:
             self._scope(review_plan, config)
             if config.name == "unset":
                 raise HTTPException(409, "POLICY_UNSET: plan execution has no selected approval policy")
-            submissions = getattr(self.store, 'owner_submissions', None)
-            if submissions is not None and submissions.approved(conn, owner, review_plan):
-                approval = {"source": "owner-submission", "reviewId": None}
+            if config.name == "member-self-service":
+                # Old denied/pending/approved plans are never silently converted.
+                # New plans persist this product rule in their immutable body.
+                if review_plan.get("policy") != "member-self-service":
+                    raise HTTPException(409, "LEGACY_PLAN_READ_ONLY: generate a new plan before submitting")
+                history = conn.execute(select(self.reviews.c.id).where(
+                    self.reviews.c.owner_id == owner, self.reviews.c.plan_id == review_plan["id"]).limit(1)).first()
+                if history is not None:
+                    raise HTTPException(409, "LEGACY_PLAN_READ_ONLY: historical reviews cannot authorize a new submission")
+                approval = {"source": "member-self-service", "reviewId": None}
             elif config.name == "bounded-synthetic":
                 if not current_plan.get("syntheticFixture") or current_plan.get("policy") != "bounded-synthetic":
                     raise HTTPException(409, "Synthetic policy cannot authorize a live plan")

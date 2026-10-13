@@ -16,10 +16,10 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.usage_ledger import UsagePolicy
 from go_http_fixture import GoHTTPFixture
 from pg_fixture import IsolatedPostgres
@@ -38,7 +38,7 @@ class GoProductPostgresTests(unittest.TestCase):
     def start(self, *, retries=0):
         handle = GoDevelopmentHandle(mode="fixture", async_transport=self.peer.transport,
                                      wire_stream=True, native_retries=retries)
-        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
+        self.settings = Settings(material_review_mode="separate-admin", fee_management_enabled=True, platform_paid_models_enabled=True,
             db_url=self.database.url, workspace=Path(self.workspace.name),
             development_profile="opencode-go", max_workers=1, max_tool_calls=3,
             temporary_policy="read-only-auto", policy_revision="go-test-policy-v1",

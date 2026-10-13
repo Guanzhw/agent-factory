@@ -19,11 +19,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_diagnostics import safe_diagnostic
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.usage_ledger import UsagePolicy
 
 MODELS = ("deepseek-flash", "gpt-6-luna")
@@ -77,8 +77,8 @@ def execute_product(campaign, args, *, research_snapshot=None):
     luna_revision = getattr(args, "luna_output_revision", "1")
     require(luna_revision in {"1", "2"})
     if research_snapshot is not None:
-        from agent_factory.public_code_knowledge import knowledge_registration, validate_snapshot
-        from agent_factory.public_coding_research import CHECKSUM_TEXT
+        from agent_factory_research.public_code_knowledge import knowledge_registration, validate_snapshot
+        from agent_factory_research.public_coding_research import CHECKSUM_TEXT
         validate_snapshot(research_snapshot)
         runtime_adapters = [knowledge_registration(research_snapshot)]
         code = CHECKSUM_TEXT
@@ -115,32 +115,26 @@ def execute_product(campaign, args, *, research_snapshot=None):
             client.cookies.clear()
             post("/api/factory/demo/login", {"persona": owner}, 200)
 
-        auth = state["auth"]
-        auth.authorization.unassign("bob", "factory-user")
-        auth.authorization.assign("bob", "factory-manager")
-        models = publish_go_development_models(state, author="manager", reviewer="bob", luna_output_revision=luna_revision)
+        models = publish_go_development_models(state, author="alice", luna_output_revision=luna_revision)
         seeds = store.materials(published_only=True)
         definition = application_definition(models,
             next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum"),
             next(row for row in seeds if row["id"] == "local-environment"))
         if research_snapshot is not None:
-            from agent_factory.public_coding_research import add_reviewed_sources
-            definition = add_reviewed_sources(state, definition, research_snapshot, author="manager", reviewer="bob")
+            from agent_factory_research.public_coding_research import add_reviewed_sources
+            definition = add_reviewed_sources(state, definition, research_snapshot, author="alice")
         for mode in definition["modes"].values():
             mode["budget"]["toolCalls"] = 1
-        login("bob")
+        login("alice")
         app = post("/api/factory/applications/drafts", {"definition": definition, "requestId": str(uuid4())}, 201)
-        review = post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/review",
-            {"requestId": str(uuid4())}, 201)
-        login("manager")
-        post(f"/api/factory/applications/reviews/{review['id']}/decision",
-             {"approved": True, "requestId": str(uuid4())}, 200)
+        post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/publish",
+             {"requestId": str(uuid4())}, 200)
         app_ref = {key: app[key] for key in ("id", "version", "sha256")}
         connection = state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()), capabilities=[CAPABILITY])
         login("alice")
         goal = 'Coding development: call checksum exactly once with text "' + code + '". Then report the returned SHA-256. Use no other tools.'
         if research_snapshot is not None:
-            from agent_factory.public_coding_research import QUESTION
+            from agent_factory_research.public_coding_research import QUESTION
             goal += " Answer from approved sources: " + QUESTION
         proposal = post("/api/factory/compositions/proposals", {
             "goal": goal,
@@ -206,7 +200,7 @@ def execute_product(campaign, args, *, research_snapshot=None):
 
 def run(args, *, research_snapshot=None):
     if research_snapshot is not None:
-        from agent_factory.public_code_knowledge import validate_snapshot
+        from agent_factory_research.public_code_knowledge import validate_snapshot
         validate_snapshot(research_snapshot)
     require(args.model in MODELS)
     root = Path(args.evidence_directory).absolute()

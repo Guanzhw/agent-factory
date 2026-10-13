@@ -8,6 +8,79 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 真实 ConvertD 的业务代码、后端和材料由用户在本地实现。本指南和仓库中的合成示例
 证明的是接线方式，不能替代真实业务、模型、GPU 或目标机器验收。
 
+## 源码归属与静态装配
+
+仓库中的 Research 是一个应用：OpenResearch 原生会话/项目入口与现有 AutoResearch
+执行路径属于同一应用的内部模块，不要求用户安装或嵌套两个应用。业务模块保留原生
+OpenResearch/OpenCode 执行器，底座继续使用 Agno/AgentOS 的执行、队列和持久化机制。
+
+| 目录或入口 | 职责 |
+| --- | --- |
+| [`platform/agent_factory/`](../platform/agent_factory/) | 公共身份、凭据、资源、素材/应用契约、任务准入、原生执行、事件与产物 |
+| [`apps/research/agent_factory_research/`](../apps/research/agent_factory_research/) | 研究业务服务、`ResearchSettings`、材料声明、执行适配和 `runtime_packages/openresearch_v1/` |
+| [`apps/research/web/`](../apps/research/web/) | 研究页面、导航项、业务 API 与状态投影 |
+| [`apps/research/tests/`](../apps/research/tests/) | 应用的 `python/`、`web/` 与浏览器合成回归 |
+| [`deployment/agent_factory_server/main.py`](../deployment/agent_factory_server/main.py) | 显式选择底座构造参数、研究材料/适配器及应用装配函数 |
+| [`web/composition.tsx`](../web/composition.tsx) | 显式向公共壳传入页面、导航和业务展示组件 |
+
+Python 装配调用公共底座的 `create_app`，再由应用的
+[`assembly.py`](../apps/research/agent_factory_research/assembly.py) 安装业务服务与路由。
+`ResearchSettings` 承载研究专用配置；应用服务集合由研究包内部维护，不能作为普通
+应用访问底座的公共 SDK。公共壳消费传入的导航/组件，业务页面使用应用自己的 API 模块。
+这些是静态部署接线，不是动态发现、插件安装协议或新的生命周期引擎。
+
+研究专用的科学子任务放置、回执/停止事实与原实验连接回收由应用的兼容子类实现；
+部署入口显式选择委派和连接服务类型。底座的普通委派仍负责原请求身份、共享预算与
+原生任务生命周期。应用的策略子类扩展工具目录，SSH 服务器目录也由应用显式传入；
+公共服务不按研究应用 ID 查找业务服务或读取研究表。旧策略指纹与 wire 字段保持兼容。
+
+`agent_factory.main.create_app` 是不预装研究材料/路由的底座入口；完整研究部署使用
+`agent_factory_server.main.create_app`。需要组合现有能力的新应用，仍可仅发布声明与
+素材；只有新增业务代码、页面或可信执行能力时，才在应用目录实现并在部署入口显式装配，
+不向公共底座增加某个应用的业务分支。应用函数与客户端优先使用下文的 Application
+Interface；可信部署工厂的内部接线上下文不等同于稳定公共应用接口。
+
+根 [`pyproject.toml`](../pyproject.toml) 生成包含底座、研究包和部署入口的兼容部署 wheel，
+`agent-factory` 命令指向该入口。独立底座构建由
+[`platform/pyproject.toml`](../platform/pyproject.toml) 提供，仅包含 `agent_factory`：
+
+```bash
+uv build platform --out-dir /tmp/agent-factory-core-dist
+uv build --out-dir /tmp/agent-factory-deployment-dist
+```
+
+两种 distribution 是不同安装选择，不要在同一环境叠装两个都提供 `agent_factory` 的包。
+安装独立底座后，由部署方提供已审能力与应用装配；研究部署保留原有 HTTP 路由和数据契约，
+源码迁移不授权重写旧计划、运行 pin 或请求身份。
+
+仓库根目录执行 `uv sync --frozen` 后，可用 `uv run python -m agent_factory_server`
+启动完整部署；数据库和鉴权配置沿用现有要求。直接从源码运行且未安装项目时，三个
+Python 源码根必须同时可见：
+
+```bash
+# POSIX shells; PowerShell/Windows uses ';' between the same three paths.
+export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment"
+python -m agent_factory_server
+```
+
+## 部门成员的默认流程
+
+普通启动入口的 `Settings.from_env()` / `ResearchSettings.from_env()` 默认使用
+`temporary_policy=member-self-service`、`policy_revision=department-member-v1`，以及
+`material_review_mode=member-self-service`、`material_policy_revision=material-department-v1`。
+成员自行创建、配置和发布材料/应用的新版本，并直接提交新任务；普通任务不经过 plan 审批。
+公开资源的删除、撤回与归档仍由管理员执行，私人凭据和数据保持原 owner 范围。
+
+危险工具操作、精确项目创建意图和原生 Workflow 的确认/输入仍走各自原生契约。
+成员发布声明不会安装任意代码、提供新远端授权或放宽执行能力。可信能力仍由部署入口显式注册。
+
+历史计划和 review 可读取，不能用于授权新的执行；新模式返回 `LEGACY_PLAN_READ_ONLY`
+时必须显式创建新计划，不能改写旧计划或复用旧审批。历史 review 写接口在新模式下返回 410。
+未知应答仍需查询原请求/操作，不能把模式切换当作重发依据。代码中显式构造的
+`Settings(demo=True)` 可保留 `bounded-synthetic` 等历史合成 fixture 策略；需要
+`separate-admin` 的回归也须显式配置，它们不是普通启动入口的默认流程。
+迁移条件和保留边界见 [部门协作说明](department-minimal-integration.md)。
+
 ## 公共契约与兼容边界
 
 应用依赖已版本化的声明、精确引用和受治理请求，不依赖内部存储布局。
@@ -45,7 +118,7 @@ v2 不回退到 v1 的时间上限。执行仍会重检权限、素材状态和�
 [`test_application_contract_v2.py`](../platform/tests/test_application_contract_v2.py)。
 
 改变输入解释、预算、能力或 runtime 行为时，使用新的契约或实现 revision，发布新引用，
-重新组合计划并完成所需审批；不要重算旧计划摘要或用旧审批静默扩大权限。
+重新组合计划并重新检查权限与所需原生确认；不要重算旧计划摘要或用旧审批静默扩大权限。
 兼容的声明更新发布新应用/素材版本；破坏既有字段或请求语义的升级需先实现明确的新契约
 并保留旧解析路径，不能仅给请求添加未支持的版本号。当前仅支持缺省 v1 和显式整数 `2`。
 新增字段也需核对已有 strict schema，不能假设旧解析器会接受它。
@@ -59,9 +132,9 @@ v2 已有本机原生合成执行证据；当前通用 `remote_handoff` 对不�
 
 ## 选择最小路径
 
-| 需求 | 开发内容 | 部署管理员接线 |
+| 需求 | 开发内容 | 注册或发布路径 |
 | --- | --- | --- |
-| 已有能力的新组合 | 应用 mode、素材选择、输入声明与预算 | 审查并发布素材和应用，核对现有适配器及用户连接 |
+| 已有能力的新组合 | 应用 mode、素材选择、输入声明与预算 | 成员直接发布素材和应用，核对现有适配器及用户连接 |
 | 一个新工具或模型 | 可信工厂函数、参数/结果契约、受控测试 | `Settings.runtime_adapters`、工具 policy 或模型 pricing、连接绑定 |
 | 多步骤、分支、人工审查 | 原生 `Workflow` / `Step` / `Router`，稳定注册身份 | `Settings.native_workflows`，应用 mode 的精确 `nativeComponent` pin |
 | 异步外部操作 | 原操作的 start/lookup/inspect/cancel 与明确停止证据 | `Settings.workflow_runtimes`，原生外部 wait 的工具及权限 |
@@ -118,7 +191,7 @@ def registration(reviewed_implementation_sha256: str):
 省略和显式 null；不要用默认 dump 给不可变输入补值。应用声明必须与原生组件的输入
 模型匹配。测试还应覆盖 `false` 不能当数字、额外字段、边界长度、输入篡改和跨应用复用。
 
-上例只定义组件，不会启动服务。`implementation_sha256` 必须是管理员针对已审代码和
+上例只定义组件，不会启动服务。`implementation_sha256` 必须是部署方针对已审代码和
 配置清单生成并保留的真实 64 位小写十六进制摘要，不能复制测试中的占位摘要。
 Agno `to_dict()` 的函数名不是源码 pin。注册后不要替换 executor、selector、evaluator、
 Agent 或 model；进程内身份检查不等同于代码沙箱。
@@ -178,7 +251,7 @@ Agent hooks、fallback model、额外 parser/model 等执行路径不被此边�
 operation。命令 ID 和原 payload 持久保留；未知应答先读取原 receipt。原生命令完成与
 外部实际停止分开展示。详见 [工作流治理说明](GOVERNED_WORKFLOW_AGENTS.md)。
 
-### 4. 给管理员提供可审查包
+### 4. 提供可检查的部署与发布包
 
 交付已审代码/config 清单及摘要、输入 schema、六类素材草案、工具能力和最小预算、
 外部操作停止/恢复契约、合成测试及尚未验证的真实依赖。应用不要依赖 demo persona、
@@ -188,17 +261,19 @@ operation。命令 ID 和原 payload 持久保留；未知应答先读取原 rec
 [`test_native_workflow_factory_postgres.py`](../platform/tests/test_native_workflow_factory_postgres.py)：
 `build_workflow` 定义组件，`settings` 安装工厂和 policy，`publish` 发布素材及应用，
 `serve` 安装应用并绑定其状态；测试通过实际 Factory API 创建任务，验证原 run 暂停/恢复、
-未知应答 lookup 与取消 custody。SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
+未知应答 lookup 与取消 custody。该 fixture 的 `admin-review` 与发布审批步骤属于历史契约
+回归，不代表普通成员流程；运行该路径需显式配置历史策略。SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
 
 [`test_native_workflow_reuse_postgres.py`](../platform/tests/test_native_workflow_reuse_postgres.py)
 补充原生 enum Agent→Router、Condition、Parallel 和持久化 HITL 的机制示例；直接的 Agno
 机制测试不等于通过 Factory 注册和发布边界。新应用以完整 Factory 接线为验收入口。
 
-## 部署管理员：注册、发布和准入
+## 部署接线与成员发布
 
 ### 1. 安装可信能力
 
-在 `create_app(Settings(...))` 前安装所需的同进程注册，HTTP 不提供安装代码接口：
+部署方在 `create_app(settings)` 前安装所需的同进程注册；普通配置从 `Settings.from_env()`
+或研究部署的 `ResearchSettings.from_env()` 读取，HTTP 不提供安装代码接口：
 
 - `runtime_adapters`：上述模型、工具、知识和环境工厂。
 - `tool_policies`：每个新增工具对应四字段
@@ -206,7 +281,7 @@ operation。命令 ID 和原 payload 持久保留；未知应答先读取原 rec
   工具名和唯一 capability 从精确 AdapterRegistration 推导，不重复手写第二份身份。
   `read_only` 要匹配实际行为；不能靠声明消除外部副作用。
 - `native_workflows`：上述四参数 NativeWorkflowRegistration；函数步骤名称必须精确列入
-  `tool_names`，并具有被批准的对应工具素材/policy。
+  `tool_names`，并具有已发布的对应工具素材及已注册 policy。
 - `workflow_runtimes`：若有外部操作，以 `(adapter_id, revision, configFingerprint)` 为 key
   安装原 runtime 对象。这个配置与素材 `runtime_adapters` 的环境工厂不同。
 - `trusted_connections`：只安装用户/任务范围明确的可信连接；素材及请求只引用 opaque ref。
@@ -223,21 +298,25 @@ policy revision，不要沿用旧审批哈希静默扩大能力。
 
 按 [素材治理](MATERIAL_GOVERNANCE.md) 创建六类素材：skill、tool、prompt、knowledge、
 model、environment。每项包含来源/许可证、兼容版本、依赖、权限及需要时的 runtimeBinding。
-通过 `MaterialGovernance.create_draft → request_publication → decide_publication`，
-由不同的当前管理员审查。保留返回的 `{id, version, sha256}` 精确引用。
+成员通过 `MaterialGovernance.create_draft → publish` 直接发布自己创建的版本；调用
+`publish(actor, material_id, version, request_id)` 时保留原 request ID 和意图。
+对应 HTTP 为 `POST /api/factory/material-governance/versions/{id}/{version}/publish`，
+请求体为 `{requestId}`，并携带 `X-Factory-Expected-Owner` 校验头。
+保留返回的 `{id, version, sha256}` 精确引用。
+修改公共定义会生成新版本，不重写旧版本；公开撤回、归档或删除仍需管理员。
 
 新应用使用以下 v2 最小结构；既有 v1 定义按上面的保留格式继续支持。
-`approved_refs` 是完成审查后的实际六类引用，
+`published_refs` 是已发布的实际六类引用，
 `native_pin` 来自 `state['store'].native_workflows.pin('department-summary-v1')`：
 
 ```python
-def application_definition(approved_refs, native_pin, input_schema):
+def application_definition(published_refs, native_pin, input_schema):
     return {
         'contractVersion': 2,
         'id': 'department-summary', 'name': 'Department summary',
-        'description': 'Reviewed bounded application', 'defaultMode': 'summary',
+        'description': 'Published bounded application', 'defaultMode': 'summary',
         'modes': {'summary': {
-            'materialRefs': approved_refs,
+            'materialRefs': published_refs,
             'nativeComponent': native_pin,
             'inputSchema': input_schema,
             'toolOrder': ['summarize'],
@@ -260,29 +339,34 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 可用 `application_schema.definition_model(body).model_validate(body)` 校验声明格式；这不替代素材发布、
 组件身份、权限、连接和生产准入检查，也不会执行该应用。
 
-再通过 `ApplicationService.create_draft → request_publication → decide_publication` 发布应用。
-完整具体 payload 和不同审查者接线见上述 fixture 的 `publish`，不要把测试账户用于生产。
-素材/应用发布审批与某个用户任务的 plan 审批是独立步骤。
+再通过 `ApplicationService.create_draft → publish` 发布应用，调用
+`publish(actor, application_id, version, request_id)`；对应 HTTP 为
+`POST /api/factory/applications/{id}/versions/{version}/publish`，请求体同样为 `{requestId}`，
+并携带 `X-Factory-Expected-Owner` 校验头。成员自助发布示例见
+[`test_department_publication.py`](../platform/tests/test_department_publication.py)。
+上文原生 Workflow fixture 中的 `request_publication/decide_publication` 只用于显式历史策略回归，
+不应复制到新的普通成员流程，也不要把测试账户用于生产。
 
 ### 3. 让用户组合并运行
 
 用户在组合界面选择应用和 mode、填写输入、绑定允许的连接。API 对应
 `POST /api/factory/compositions/proposals`，字段包含 `goal/application/mode/inputValues/requestId`，
 以及可选的精确 applicationRef、允许的 materialChoices 和 connectionRefs。查看并修订 proposal，
-接受后获得不可变 plan；缺少适配器、连接、审批或权限时处理具体 preflight 阻碍。
+接受后获得不可变 plan；缺少适配器、连接或权限时处理具体 preflight 阻碍。
 
 需要直接固定应用时，`POST /api/factory/plans` 使用 `topic/application/mode/inputValues/requestId`；
 随后 `POST /api/factory/instances` 使用 `planId/requestId`。不要把 proposal 的 `goal` 字段照搬
-到 plans 请求。生产准入仍受配置的 plan 审批策略约束；同一 requestId 改变意图会冲突。
+到 plans 请求。普通成员新计划使用 `member-self-service` 直接准入，不需要另建审批请求；
+执行前仍检查当前权限、精确绑定及预算。同一 requestId 改变意图会冲突。
 
 权限、素材发布状态、精确连接 pin 与原生身份在执行时重新检查。工具和模型调用使用
 共享预算，子任务不能另开预算；外部 wait 完成也按原 native tool call ID 计账。扩大预算或
-更换材料需新计划和必要审批，不能修改进行中的不可变 plan。
+更换材料需显式创建新计划，并完成该操作要求的原生确认，不能修改进行中的不可变 plan。
 
 部署生产实例需独立数据库、受管身份与角色、私密服务配置及实际 runtime 资源边界。
 默认 demo 登录仅适合 loopback。远端执行还需单独的受信映射和当前源授权，不能把应用
 输入中的地址当受信执行目标。参见 [部署决策](PRODUCTION_DECISIONS.md)、
-[计划审批](PLAN_POLICY.md) 和 [远端绑定](REMOTE_BINDINGS.md)。
+[部门协作与历史计划迁移](department-minimal-integration.md) 和 [远端绑定](REMOTE_BINDINGS.md)。
 
 ## 可执行检查与验收记录
 
@@ -291,15 +375,37 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 ```bash
 uv sync --frozen
 npm ci --ignore-scripts
+# Shared test fixtures are importable from both owned test trees.
+export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment:$PWD/platform/tests:$PWD/apps/research/tests/python"
 uv run python -m unittest discover -s platform/tests -p 'test_application_inputs.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_application_contract_v2.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_tool_policy_registry.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_native_workflows.py' -v
-uv run ruff check platform scripts
+uv run ruff check platform apps/research deployment scripts
 uv run pyright
 npm run check
 npm audit
 ```
+
+完整 Python 回归需要分别发现公共底座与应用测试；只运行原 `platform/tests` 不再覆盖研究业务。
+纯研究被测对象（包括 ORX 本地日志、研究等待恢复、个人原生会话重绑定）归入应用测试。
+`platform/tests` 仍包含公共机制的装配测试和明确的跨服务集成测试，例如
+`test_actual_orx_receiver.py`、`test_actual_inference_tree.py`；其中使用应用 fixture 的测试
+需要完整部署依赖，不能把整个目录当作无应用依赖的测试集。
+独立底座边界由 `test_core_package_distribution.py` 的隔离 wheel 验证，以及
+`test_core_runtime_boundaries.py` 禁止导入应用包的公共模块/Store 测试收集与执行验证负责。
+保留上面的测试 `PYTHONPATH` 后可分别运行：
+
+```bash
+uv run python -m unittest discover -s platform/tests -v
+uv run python -m unittest discover -s apps/research/tests/python -v
+```
+
+也可直接运行 `npm run check:python`：它执行全部 Python lint/type 检查，并通过
+`scripts/check_python.py` 自动设置源码/fixture 路径、运行两次 discovery；任一测试集失败都会返回失败。
+
+`npm run check` 已覆盖 `web/`、`apps/research/web/` 以及两处前端测试目录，并构建静态装配后的页面。
+浏览器合成回归位于 `apps/research/tests/browser/`；其结果与真实数据库、执行器及模型验收分别记录。
 
 真实队列/恢复测试使用管理员提供的**可销毁测试服务器**，设置
 `FACTORY_TEST_DATABASE_URL`，身份需有 CREATEDB；fixture 创建并清理自己随机命名的数据库。

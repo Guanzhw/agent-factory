@@ -12,13 +12,15 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from .applications import GovernedStorage
-from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel, base_url, generation_options, model_id, model_origin
+from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel
 from .connections import TrustedConnectionBinding
 from .credential_vault import CredentialVaultError
+from .model_endpoint_policy import ADDITIONAL_BASE_URLS, base_url, generation_options, model_id, model_origin
+from .model_protocol import protocol_name
 from .store import digest, now
 
 
@@ -63,7 +65,7 @@ class PersonalModels:
         enabled = self.vault is not None and PROVIDER_ID in self.vault.capabilities()['providerIds']
         return {'enabled': enabled, 'providerId': PROVIDER_ID, 'providers': ['openai', 'openai-compatible'],
             'protocol': 'chat-completions-text-functions-v1', 'baseURLPath': '/v1',
-            'additionalBaseURLs': ['https://opencode.ai/zen/go/v1'],
+            'protocols': ['chat-completions', 'responses'], 'additionalBaseURLs': list(ADDITIONAL_BASE_URLS),
             'credentialInput': '/api/factory/personal-credentials', 'credentialUsername': 'api-key',
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False,
             'liveCompatibilityVerified': False}
@@ -96,12 +98,28 @@ class PersonalModels:
             refs = conn.execute(select(self.models.c.reference).where(self.models.c.owner_id == owner).limit(100)).scalars()
             return [self._public(conn, owner, ref) for ref in refs]
 
+    def recover(self, owner, request_id):
+        """Read the original command receipt, independently of current model state."""
+        self.auth.require(owner, 'read')
+        with self.db.read() as conn:
+            command = conn.execute(select(self.commands.c.action, self.commands.c.result,
+                self.commands.c.created_at).where(self.commands.c.actor_id == owner,
+                self.commands.c.request_id == request_id)).mappings().first()
+            # A missing receipt is not proof that an in-flight command did not execute.
+            if command is None: raise HTTPException(404, 'PERSONAL_MODEL_REQUEST_NOT_FOUND')
+            return {'ownerId': owner, 'requestId': request_id, 'action': command['action'],
+                'result': command['result'], 'completedAt': command['created_at']}
+
     def configure(self, owner, values, request_id, *, reference=None):
         self.auth.require(owner, 'run')
         if not self.capabilities(owner)['enabled']: raise HTTPException(409, 'PERSONAL_MODEL_VAULT_UNAVAILABLE')
         try:
             values = {**values, 'baseURL': base_url(values['baseURL']), 'model': model_id(values['model'])}
             if values['provider'] not in {'openai', 'openai-compatible'}: raise ValueError()
+            if 'protocol' in values and values['protocol'] is None: raise ValueError()
+            if protocol_name(values) == 'chat-completions':
+                # Preserve the fingerprint of legacy commands which omitted protocol.
+                values.pop('protocol', None)
             generation_options(values)
             if values.get('thinkingMode') in (None, 'default'):
                 values.pop('thinkingMode', None)
@@ -111,7 +129,7 @@ class PersonalModels:
         fingerprint = digest({'action': 'configure', 'reference': reference, 'configuration': values})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
-            if old is not None: return self._public(conn, owner, old['reference'])
+            if old is not None: return old
             if reference is not None:
                 if self._row(conn, owner, reference)['state'] == 'REVOKED': raise HTTPException(409, 'PERSONAL_MODEL_REVOKED')
             else: reference = 'owner-model-' + uuid4().hex
@@ -137,7 +155,7 @@ class PersonalModels:
         fingerprint = digest({'action': 'default', 'reference': reference})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
-            if old is not None: return self._public(conn, owner, reference)
+            if old is not None: return old
             self.binding(conn, owner, reference)
             if conn.execute(select(self.defaults).where(self.defaults.c.owner_id == owner)).first():
                 conn.execute(self.defaults.update().where(self.defaults.c.owner_id == owner).values(reference=reference))
@@ -150,7 +168,7 @@ class PersonalModels:
         with self.db.write() as conn:
             self._row(conn, owner, reference)
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
-            if old is not None: return self._public(conn, owner, reference)
+            if old is not None: return old
             conn.execute(self.models.update().where(self.models.c.reference == reference,
                 self.models.c.owner_id == owner).values(state='REVOKED'))
             conn.execute(self.defaults.delete().where(self.defaults.c.owner_id == owner,
@@ -239,8 +257,15 @@ class ConfigureModel(BaseModel):
     model: str = Field(min_length=1, max_length=120)
     credentialRef: str = Field(min_length=1, max_length=200)
     credentialRevision: str = Field(min_length=1, max_length=200)
+    protocol: Literal['chat-completions', 'responses'] | None = None
     thinkingMode: Literal['default', 'disabled'] | None = None
     requestId: str = Field(min_length=8, max_length=100)
+
+    @field_validator('protocol', mode='before')
+    @classmethod
+    def explicit_protocol(cls, value):
+        if value is None: raise ValueError('An explicit protocol cannot be null')
+        return value
 
 
 class ModelCommand(BaseModel):
@@ -255,6 +280,8 @@ def personal_model_router(auth, service):
     def capabilities(request: Request): return service.capabilities(owner(request))
     @router.get('')
     def listing(request: Request): return service.list(owner(request))
+    @router.get('/requests/{request_id}')
+    def recovery(request_id: str, request: Request): return service.recover(owner(request), request_id)
     @router.post('', status_code=201)
     def configure(body: ConfigureModel, request: Request):
         return service.configure(owner(request), body.model_dump(exclude={'requestId'}, exclude_none=True), body.requestId)

@@ -10,9 +10,9 @@ import json
 from pathlib import Path
 
 from agent_factory.gpu_custody import validate_gpu_evidence
-from agent_factory.research_evaluation import validate_evaluation_contract
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_manifest import manifest_fingerprint
+from agent_factory_research.research_evaluation import validate_evaluation_contract
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_manifest import manifest_fingerprint
 
 
 def _require(value):
@@ -35,7 +35,7 @@ No inventory, directory, receipt, contract or identity is created here.
     """
     from run_research_baseline import read_private, unique, identity
     from audit_released_research_custody import journal_read
-    from agent_factory.research_profile import SOURCE_SHA256, verify_upstream_source
+    from agent_factory_research.research_profile import SOURCE_SHA256, verify_upstream_source
 
     def read(path):
         return json.loads(read_private(path, 16 * 1024**2), object_pairs_hook=unique,
@@ -107,11 +107,11 @@ seeds identities, publishes material, opens a lifespan or dispatches a process.
     from bootstrap_research_control import read_database_url
     from research_candidate_state import open_state
     from research_candidate_reopen import reconstruct_research_target
-    from agent_factory.config import Settings
-    from agent_factory.research_bootstrap_policy import development_settings
-    from agent_factory.research_runtime_profile import research_settings, registrations
+    from agent_factory_research.config import ResearchSettings as Settings
+    from agent_factory_research.research_bootstrap_policy import development_settings
+    from agent_factory_research.research_runtime_profile import research_settings, registrations
     from agent_factory.process_runtime_profile import process_settings
-    from agent_factory.research_checkpoint_store import ResearchCheckpointStore
+    from agent_factory_research.research_checkpoint_store import ResearchCheckpointStore
     from agent_factory.store import digest
 
     original = inputs['baselineConfig']

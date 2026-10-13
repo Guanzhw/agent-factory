@@ -4,6 +4,7 @@ Only operator-installed packages may prepare compute. A package implements
 prepare/check/stop/connection_configuration and owns its declared runtime wire;
 the core persists owner/model/package pins before crossing the effect boundary.
 """
+from collections.abc import Callable
 from contextlib import contextmanager
 import os
 try:
@@ -23,9 +24,11 @@ from .store import digest, now
 
 
 class ApplicationEnvironments:
-    def __init__(self, store, auth, models, connections, packages):
+    def __init__(self, store, auth, models, connections, packages, *,
+            server_catalog: Callable[[str], list[dict]] | None = None, self_service_servers: bool = False):
         self.store, self.auth, self.models, self.connections = store, auth, models, connections
         self.packages = dict(packages)
+        self.server_catalog, self.self_service_servers = server_catalog, self_service_servers
         self.db = GovernedStorage(store, 'application-environments-v1')
         self.root = Path(store.settings.workspace).resolve() / 'application-environments'
         self.root.mkdir(mode=0o700, exist_ok=True)
@@ -52,13 +55,12 @@ class ApplicationEnvironments:
         return {'locations': sorted({key.split(':', 1)[1] if ':' in key else 'platform' for key in self.packages}),
             'applications': sorted({key.split(':', 1)[0] for key in self.packages}),
             'modelSetup': '/api/factory/personal-models', 'preparationSubmitsResearch': False,
-            'selfServiceSSH': getattr(self.packages.get('openresearch:ssh'), 'personal_servers', None) is not None,
+            'selfServiceSSH': self.self_service_servers,
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False}
 
     def servers(self, owner):
         self.auth.require(owner, 'read')
-        package = self.packages.get('openresearch:ssh')
-        return package.servers(owner) if package is not None else []
+        return self.server_catalog(owner) if self.server_catalog is not None else []
 
     def list(self, owner):
         self.auth.require(owner, 'read')

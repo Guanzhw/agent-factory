@@ -22,10 +22,10 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
-from agent_factory import tools as factory_tools
+from agent_factory_research import tools as factory_tools
 
 
 class ControlledDispatchLoss(httpx.AsyncBaseTransport):

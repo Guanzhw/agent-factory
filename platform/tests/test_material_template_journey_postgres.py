@@ -11,8 +11,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from agent_factory.applications import ApplicationDefinition
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from pg_fixture import IsolatedPostgres
 
 
@@ -23,7 +23,7 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         workspace = tempfile.TemporaryDirectory(prefix='material-template-journey-')
         self.addCleanup(workspace.cleanup)
-        self.app = create_app(Settings(db_url=database.url, workspace=Path(workspace.name),
+        self.app = create_app(Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=database.url, workspace=Path(workspace.name),
             max_workers=1, temporary_policy='admin-review'))
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']

@@ -16,13 +16,13 @@ import httpx
 
 from pg_fixture import IsolatedPostgres
 from inference_tree_worker import build, ORIGIN, TARGET, RecoveryRecorder
-from agent_factory.local_orx_profile import publish_local_orx_application, REGISTRATION_REF
-from agent_factory.inference_wait import CONTROL_NAME
+from agent_factory_research.local_orx_profile import publish_local_orx_application, REGISTRATION_REF
+from agent_factory_research.inference_wait import CONTROL_NAME
 
 
 def lifecycle_evidence(store):
     """Public synthetic fixture facts only; never configs, payloads or error text."""
-    from agent_factory.inference_wait import read as read_wait
+    from agent_factory_research.inference_wait import read as read_wait
     def select(value, fields):
         return {key: value[key] for key in fields if key in value and isinstance(value[key], (str, int, float, bool, type(None)))}
     tasks = store.sql('SELECT id,owner_id,plan_id,run_id,admission,terminal,cancel_requested FROM af_tasks ORDER BY id')
@@ -505,7 +505,7 @@ class ActualReceiverSafetyTests(TreeFixture):
         self.assertTrue(any(s['settledTokens']>s['tokenLimit'] for s in state['scopes']))
 
     def test_receiver_source_drift_stops_tree_and_keeps_unknown_holds(self):
-        from agent_factory.orx_experiment_tools import original_experiment_binding
+        from agent_factory_research.orx_experiment_tools import original_experiment_binding
         task,paused=self.launch_root();store=self.receiver.state['store']
         binding=original_experiment_binding(self.receiver.state['settings'],store,task)[3]
         source=binding.adapter.scope/'toy-repository'/'candidate.py'

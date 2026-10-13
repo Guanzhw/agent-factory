@@ -28,8 +28,8 @@ from sqlalchemy import create_engine, text
 
 from pg_fixture import IsolatedPostgres
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_server.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
 
 
@@ -53,7 +53,7 @@ class SchedulingProcessRecoveryTests(unittest.TestCase):
             cls.port = available.getsockname()[1]
         cls.base = f"http://127.0.0.1:{cls.port}"
         cls.env = {name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "LANG", "LC_ALL") if name in os.environ}
-        cls.env.update(PYTHONPATH=os.pathsep.join((str(cls.root / "platform"), str(cls.root / "platform/tests"))),
+        cls.env.update(PYTHONPATH=os.pathsep.join(str(cls.root / part) for part in ("platform", "apps/research", "deployment", "platform/tests", "apps/research/tests/python")),
                        PYTHONIOENCODING="utf-8", FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE="demo",
                        FACTORY_JWT_KEY=secrets.token_urlsafe(48), FACTORY_PORT=str(cls.port),
                        FACTORY_WORKSPACE=cls.directory.name, FACTORY_RECOVERY_FIXTURE_DIRECTORY=cls.directory.name,

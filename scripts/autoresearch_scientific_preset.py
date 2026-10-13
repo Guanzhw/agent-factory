@@ -12,12 +12,12 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any, Awaitable, Callable, cast
 
-from agent_factory.autoresearch import ResearchPreset
-from agent_factory.research_assessment import assess_observations
-from agent_factory.research_manifest import manifest_fingerprint, validate_manifest
-from agent_factory.research_profile import verify_upstream_source
-from agent_factory.research_training_adapter import build_training_bundle
-from agent_factory.autoresearch_candidate_patch import build_candidate, parameter_context
+from agent_factory_research.autoresearch import ResearchPreset
+from agent_factory_research.research_assessment import assess_observations
+from agent_factory_research.research_manifest import manifest_fingerprint, validate_manifest
+from agent_factory_research.research_profile import verify_upstream_source
+from agent_factory_research.research_training_adapter import build_training_bundle
+from agent_factory_research.autoresearch_candidate_patch import build_candidate, parameter_context
 
 ERROR = 'AUTORESEARCH_SCIENTIFIC_PRESET_INVALID'
 
@@ -113,7 +113,8 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         require(candidate_validator(candidate['trainPy']) == candidate['validated'])
         await baseline()  # Original baseline still has readable, verified custody.
         def parent_guard():
-            preset = ctx.store.autoresearch.current(ctx)
+            from agent_factory_research.services import services_for
+            preset = services_for(ctx.store).autoresearch.current(ctx)
             require(preset.id == config.id and preset.owner_id == config.owner_id)
         parent_guard()
         result = await subordinate_executor(ctx, deepcopy(candidate), call_id, parent_guard=parent_guard)

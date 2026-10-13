@@ -25,12 +25,12 @@ import httpx
 from pydantic import ValidationError
 import uvicorn
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import TrustedConnectionBinding
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.usage_ledger import PricingRevision
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.remote_authority import AuthorityCheck, AuthorityReply, OriginAuthorityTransport, PATH
 from agent_factory.remote_handoff import HandoffCancellationRequested, HandoffTarget, TrustedOrigin
 from pg_fixture import IsolatedPostgres
@@ -201,6 +201,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
                                      "factory-synthetic-v1", "owned-authority-zero-v1", local_model_type=DemoModel),))
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
+        self.settings = self.state["settings"]
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.addCleanup(self.store.engine.dispose)
@@ -387,16 +388,15 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
 
     def test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider(self):
         # A private inert handle exists only in operator fixture configuration;
-        # reviewed material/proposal/HTTP contain its redacted owner pin only.
+        # published material/proposal/HTTP contain its redacted owner pin only.
         self.auth.directory.upsert("owned-publication-reviewer", name="Owned synthetic administrator fixture")
         self.auth.authorization.assign("owned-publication-reviewer", "factory-manager")
         governance = self.state["material_governance"]
-        model = governance.create_draft("manager", {"kind": "model", "name": "Owned connection-selected model",
+        model = governance.create_draft("alice", {"kind": "model", "name": "Owned connection-selected model",
             "content": "No provider construction during authority preflight.", "license": "MIT",
             "provenance": {"kind": "original", "notice": "Original synthetic fixture."},
             "runtimeBinding": {"adapterId": "owned-authority-model-v1", "revision": "1", "config": {"connectionName": "source-model"}}}, "owned-model-draft")
-        review = governance.request_publication("manager", model["id"], 1, "owned-model-review")
-        governance.decide_publication("owned-publication-reviewer", review["id"], True, "owned-model-approve")
+        governance.publish("alice", model["id"], 1, "owned-model-publish")
         applications = self.state["applications"]
         original = applications.require_current(self.plan["applicationRef"])
         definition = {key: value for key, value in original.items() if key not in {"schema", "version", "createdAt", "sha256", "origin"}}
@@ -405,9 +405,8 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         for mode in definition["modes"].values():
             mode["materialRefs"] = [{key: model[key] for key in ("id", "version", "sha256")} if ref["id"] == "demo-model" else ref for ref in mode["materialRefs"]]
             mode["connectionRequirements"] = [{"name": "source-model", "kind": "model", "requiredCapabilities": []}]
-        application = applications.create_draft("manager", definition, "owned-connected-app")
-        review = applications.request_publication("manager", application["id"], 1, "owned-connected-review")
-        applications.decide_publication("owned-publication-reviewer", review["id"], True, "owned-connected-approve")
+        application = applications.create_draft("alice", definition, "owned-connected-app")
+        applications.publish("alice", application["id"], 1, "owned-connected-publish")
         connection = self.state["connections"].bind("alice", "owned-source-model", "owned-model-binding")
         # A custom registered model is not proven synthetic merely because the
         # server is a demo. Exercise this authority fixture through an explicit

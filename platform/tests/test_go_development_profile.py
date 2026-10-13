@@ -4,7 +4,7 @@ import copy
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import httpx
 from fastapi import HTTPException
@@ -165,8 +165,45 @@ class GoDevelopmentProfileTests(unittest.TestCase):
             self.assertEqual(mode.capabilities, ["checksum:read"])
         self.assertNotIn("api_key", json.dumps(definition))
         state = {"auth": Mock(), "material_governance": Mock()}
+        state["material_governance"].member_publication.return_value = False
         with self.assertRaises(ValueError): publish_go_development_models(state, author="alice", reviewer="alice")
         state["material_governance"].create_draft.assert_not_called()
+
+    def test_member_publishes_exact_model_versions_without_review_or_dispatch(self):
+        for revision in ("1", "2"):
+            with self.subTest(revision=revision):
+                materials = [{**draft, "version": 3, "sha256": "a" * 64, "published": True}
+                    for draft in material_drafts(luna_output_revision=revision)]
+                governance = Mock()
+                governance.member_publication.return_value = True
+                governance.create_draft.side_effect = materials
+                store = Mock()
+                store.materials.return_value = materials
+                state = {"auth": Mock(), "material_governance": governance, "store": store}
+                with patch("agent_factory.go_development.GoDevelopmentModel") as model:
+                    result = publish_go_development_models(state, author="alice", luna_output_revision=revision)
+                self.assertEqual(result, materials)
+                state["auth"].require.assert_called_once_with("alice", "run")
+                key = "go-development-v1" + (":output-2" if revision == "2" else "")
+                self.assertEqual(governance.publish.call_args_list, [
+                    call("alice", material["id"], 3, key + ":publish:" + material["id"]) for material in materials])
+                self.assertEqual([row.args[:2] for row in governance.create_draft.call_args_list],
+                    [("alice", draft) for draft in material_drafts(luna_output_revision=revision)])
+                governance.request_publication.assert_not_called()
+                governance.decide_publication.assert_not_called()
+                model.assert_not_called()
+
+    def test_revoked_member_cannot_create_or_publish_model_materials(self):
+        governance = Mock()
+        governance.member_publication.return_value = True
+        state = {"auth": Mock(), "material_governance": governance}
+        state["auth"].require.side_effect = HTTPException(403, "Permission revoked")
+        with self.assertRaises(HTTPException) as denied:
+            publish_go_development_models(state, author="alice")
+        self.assertEqual(denied.exception.status_code, 403)
+        governance.create_draft.assert_not_called()
+        governance.publish.assert_not_called()
+        governance.request_publication.assert_not_called()
 
     def test_real_binding_registry_rejects_override_and_production_selection(self):
         context = self.fixture()

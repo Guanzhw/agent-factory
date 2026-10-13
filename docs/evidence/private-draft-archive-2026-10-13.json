@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "date": "2026-10-13",
+  "reviewedBaseCommit": "d472d8ec7870498b3327cee1e41f6a9e253f2962",
+  "scope": "PR 85 P2 follow-up: allow authors to archive their own never-published private application and material drafts",
+  "validatedCode": "The implementation and tests committed alongside this evidence",
+  "execution": "Synthetic users and definitions, isolated loopback PostgreSQL and native authorization; no real model calls",
+  "liveModelRequests": false,
+  "deploymentPerformed": false,
+  "externalAccountOrProxyGrantsChanged": false,
+  "checks": [
+    {
+      "name": "npm run check",
+      "status": "PASS",
+      "testFiles": 52,
+      "testsPassed": 534,
+      "includes": ["eslint", "typescript", "vitest", "vite build"]
+    },
+    {
+      "name": "Department publication and existing application/material service regressions without PostgreSQL",
+      "status": "PASS",
+      "testsDiscovered": 50,
+      "testsPassed": 40,
+      "testsSkipped": 10,
+      "skipMeaning": "Existing PostgreSQL fixtures require an explicitly selected isolated database"
+    },
+    {
+      "name": "test_department_publication with isolated PostgreSQL",
+      "status": "PASS",
+      "testsPassed": 25,
+      "testsSkipped": 0
+    },
+    {
+      "name": "Additional PostgreSQL HTTP own-private-archive and owner-visibility test",
+      "status": "PASS",
+      "testsPassed": 1,
+      "testsSkipped": 0
+    },
+    {
+      "name": "ruff on changed Python files; pyright; git diff --check",
+      "status": "PASS"
+    },
+    {
+      "name": "npm audit",
+      "status": "PASS",
+      "knownVulnerabilities": 0
+    }
+  ],
+  "behaviorEvidence": [
+    "Members archive their own never-published application and material drafts through service and HTTP entrypoints",
+    "Other members cannot archive, withdraw or read the private version before or after archival",
+    "Archived private drafts retain immutable bodies and remain visible to the author",
+    "Same-intent retries remain idempotent; conflicting requests and revoked identities are rejected",
+    "A published version remains administrator-managed even after archival",
+    "Archiving a private revision leaves the previous published version and its exact pins usable",
+    "Member UI offers archive only on the current author's private draft and rechecks session identity before submission"
+  ],
+  "review": "Independent read-only security review found no issues in the private-draft permission and idempotency changes",
+  "limitations": [
+    "The prior full Python suite was not rerun for this small follow-up; relevant service and PostgreSQL coverage is listed above",
+    "A-owned integration requirements in docs/department-minimal-integration.md remain separate"
+  ]
+}

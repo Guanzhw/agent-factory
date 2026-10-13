@@ -9,16 +9,17 @@ from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "platform"))
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
+    for part in ('platform', 'apps/research', 'deployment')]
 
 from sqlalchemy.engine import make_url
 import uvicorn
 
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.development_identity import validate_development_origin
 from agent_factory.development_tls import temporary_development_tls
-from agent_factory.main import create_app
-from agent_factory.development_workflows import controlled_workflow_settings, initialize_controlled_fixtures
+from agent_factory_server.main import create_app
+from agent_factory_research.development_workflows import controlled_workflow_settings, initialize_controlled_fixtures
 
 
 class _Arguments(argparse.ArgumentParser):
@@ -56,7 +57,8 @@ def main(argv=None):
         bind_host = "127.0.0.1" if parsed.hostname == "localhost" else parsed.hostname
         settings = Settings(db_url=database_url, workspace=workspace, demo=True,
             development_mock_login=True, development_public_origin=origin,
-            temporary_policy="admin-review", max_workers=1, host=bind_host, port=parsed.port)
+            temporary_policy="member-self-service", material_review_mode="member-self-service",
+            max_workers=1, host=bind_host, port=parsed.port)
         with ExitStack() as lifecycle:
             if args.profile == "controlled-workflows":
                 settings = lifecycle.enter_context(controlled_workflow_settings(settings))

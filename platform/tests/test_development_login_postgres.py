@@ -13,7 +13,6 @@ from tempfile import TemporaryDirectory
 import unittest
 from uuid import uuid4
 from typing import cast
-from unittest.mock import patch
 
 from starlette.types import ASGIApp
 
@@ -44,8 +43,8 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         static_root = Path(directory.name) / "web-fixture"
         (static_root / "dist").mkdir(parents=True)
         (static_root / "dist" / "index.html").write_text("<!doctype html><title>Synthetic development login fixture</title>", encoding="utf-8")
-        with patch("agent_factory.main.__file__", str(static_root / "platform" / "agent_factory" / "main.py")):
-            self.app = create_app(settings)
+        settings.web_directory = static_root / "dist"
+        self.app = create_app(settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.engine.dispose)

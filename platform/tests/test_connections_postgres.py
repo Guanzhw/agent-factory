@@ -22,9 +22,9 @@ from sqlalchemy import create_engine
 
 from agent_factory.auth import EXECUTOR_ID
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding, connection_router
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.store import Store
 from pg_fixture import IsolatedPostgres
 

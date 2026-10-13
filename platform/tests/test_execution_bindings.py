@@ -19,8 +19,9 @@ from agno.run import RunContext
 from agno.run.base import RunStatus
 from fastapi import HTTPException
 
-from agent_factory.demo_model import DemoModel
-from agent_factory.execution_bindings import KnowledgeContext, default_bindings
+from agent_factory_research.demo_model import DemoModel
+from agent_factory.execution_bindings import KnowledgeContext
+from agent_factory_research.synthetic_runtime import default_bindings
 from agent_factory.runtime import build_runtime
 from agent_factory.store import digest
 from test_runtime_contract import ContractStore, attach_fixture_bindings

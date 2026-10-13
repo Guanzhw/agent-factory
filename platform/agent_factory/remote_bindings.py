@@ -12,14 +12,14 @@ import copy
 from contextlib import contextmanager
 from dataclasses import dataclass
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select, text
 
 from .connections import KINDS as CONNECTION_KINDS
-from .execution_bindings import KINDS, LEGACY_DEMO
+from .execution_bindings import KINDS
 from .material_governance import MaterialGovernance, PinnedRef, normalize_runtime_binding
 from .store import digest
 
@@ -122,9 +122,14 @@ class TrustedRemoteBindingMapping:
 
 
 class RemoteBindingService:
-    def __init__(self, store, auth, bindings, connections, mappings=None):
+    def __init__(self, store, auth, bindings, connections, mappings=None, *,
+                 delegated_root_validator: Callable[[Any, Mapping[str, Any], Mapping[str, Any]], None] | None = None):
         self.store, self.auth, self.bindings, self.connections = store, auth, bindings, connections
         self.mappings = mappings if mappings is not None else {}
+        # A trusted application can admit its own persisted child as a receiver
+        # root. Core still checks every identity, immutable source field and
+        # budget below; application tables and placement semantics stay outside.
+        self.delegated_root_validator = delegated_root_validator
         metadata = MetaData()
         self.versions = Table("af_remote_binding_mapping_versions", metadata,
             Column("reference", String, primary_key=True), Column("revision", String, primary_key=True),
@@ -208,9 +213,8 @@ class RemoteBindingService:
                 visited.add(key)
                 raw_binding = material.get("runtimeBinding")
                 if raw_binding is None:
-                    from .catalog import SEEDS
-                    legacy = LEGACY_DEMO.get(material["id"])
-                    seed = next((item for item in SEEDS if item[0] == material["id"]), None)
+                    legacy = self.bindings.legacy_bindings.get(material["id"])
+                    seed = next((item for item in self.bindings.legacy_materials if item[0] == material["id"]), None)
                     if not self.store.settings.demo or legacy is None or legacy[0] != kind or seed is None or material.get("content") != seed[3]:
                         raise ValueError("Missing explicit source runtime binding")
                     raw_binding = {"adapterId": legacy[1], "revision": "1", "config": {}}
@@ -319,24 +323,11 @@ class RemoteBindingService:
             raise HTTPException(409, "REMOTE_BINDING_IDENTITY: root origin manifest binding differs")
         ignored = {"id", "ownerId", "createdAt", "fingerprint"}
         if proof['sourcePlan'].get('delegation'):
-            receiver = getattr(self.store, 'remote_scientific_receiver', None)
-            if receiver is None:
-                raise HTTPException(409, 'Scientific receiver service is unavailable')
-            phase = conn.execute(text('SELECT body FROM af_remote_scientific_phases WHERE receipt_id=:id AND owner_id=:owner'),
-                {'id': handoff['receiptId'], 'owner': root['ownerId']}).mappings().first()
-            body = phase['body'] if phase else None
-            if (body is None or digest(body['binding']) != body['bindingSha256']
-                    or body['binding']['receiptId'] != handoff['receiptId']
-                    or body['binding']['ownerId'] != root['ownerId']):
-                raise HTTPException(409, 'Scientific receiver binding is unavailable')
-            envelope = {'schema': 1, 'projectId': body['binding']['projectId'],
-                'scope': body['binding']['scope'], 'candidate': body['candidate']}
-            from .remote_scientific_origin import validate_source
-            if receiver is None or envelope is None:
-                raise HTTPException(409, 'Remote child has no scientific placement authority')
-            validate_source(proof['sourcePlan'], envelope)
+            if self.delegated_root_validator is None:
+                raise HTTPException(409, 'REMOTE_BINDING_DELEGATION: trusted receiver root validation is unavailable')
+            self.delegated_root_validator(conn, copy.deepcopy(root), copy.deepcopy(proof['sourcePlan']))
             if root.get('delegation') is not None or root.get('budget') != {**proof['sourcePlan']['budget'], 'depth': 0}:
-                raise HTTPException(409, 'Receiver scientific phase must remain a local root')
+                raise HTTPException(409, 'REMOTE_BINDING_DELEGATION: imported child must remain a local root')
             ignored |= {'delegation', 'budget'}
         if (set(root) - set(proof["sourcePlan"]) - {"remoteHandoff", "taskId", "runId"}
                 or any(root.get(key) != value for key, value in proof["sourcePlan"].items() if key not in ignored)):

@@ -55,7 +55,7 @@ class ObserverResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             heartbeat.set()
 
         pulse_task = asyncio.create_task(pulse())
-        with patch('agent_factory.inference_wait.read', return_value=None):
+        with patch('agent_factory_research.inference_wait.read', return_value=None):
             first = await observer.observe_root(task['id'])
             second = await observer.observe_root(task['id'])
         await pulse_task
@@ -87,7 +87,7 @@ class ObserverResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 finished.set()
 
         observer._reason = fresh_authority
-        with patch('agent_factory.inference_wait.read', return_value=None):
+        with patch('agent_factory_research.inference_wait.read', return_value=None):
             pending = asyncio.create_task(observer.observe_root(task['id']))
             try:
                 self.assertTrue(await asyncio.to_thread(entered.wait, 1))

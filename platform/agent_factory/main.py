@@ -1,6 +1,5 @@
 import os
-from contextlib import asynccontextmanager
-from pathlib import Path
+from contextlib import asynccontextmanager, nullcontext
 from typing import Literal, cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
@@ -18,10 +17,6 @@ from .catalog import seed_catalog
 from .config import Settings
 from .connections import ConnectionService, connection_router
 from .execution_bindings import default_bindings
-from .orx_tools import register_orx_adapter
-from .orx_literature_tools import register_literature_adapters, LiteratureEvidenceModel, MODEL_ID as LITERATURE_MODEL_ID
-from .orx_experiment_tools import (LocalORXWorkflowModel, initialize_orx_experiments,
-                                   register_orx_experiment_adapters, MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION)
 from .applications import ApplicationService, application_router
 from .composition import CompositionService, composition_router
 from .delegation import DelegationService
@@ -65,7 +60,19 @@ class NativeIngress:
         await self.app(scope, receive, send)
 
 
-def create_app(settings=None, *, diagnostics=None):
+def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
+               storage_governance_type=None, lifecycle_observer_type=None,
+               model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
+               bindings_factory=None, seed_materials=(),
+               demo_definitions=None, governance_config=None, policy_config=None,
+               queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
+               plan_policy_type=None, shutdown_callback=None, delegation_service_type=None,
+               connection_service_type=None):
+    """Build the application-neutral Factory; deployment code selects trusted implementations.
+
+    These are ordinary constructor arguments, never request-driven discovery or
+    application manifest code. The core works with no research package installed.
+    """
     # Trusted operator diagnostics only; fixed stage strings, no configuration.
     def at(stage):
         if diagnostics is not None:
@@ -77,8 +84,6 @@ def create_app(settings=None, *, diagnostics=None):
     native_db = PostgresDb(db_url=settings.db_url, id="factory-native-postgres")
     at('PREPARATION_APP_STORE')
     store = Store(settings.db_url, settings)
-    at('PREPARATION_APP_ORX_SCHEMA')
-    initialize_orx_experiments(store)
     store.native_db = native_db
     at('PREPARATION_APP_AUTH')
     auth = AuthService(settings, native_db)
@@ -88,16 +93,16 @@ def create_app(settings=None, *, diagnostics=None):
     from .storage_governance import StorageGovernance
     from .storage_api import storage_router
     at('PREPARATION_APP_STORAGE')
-    store.storage = StorageGovernance(store, auth)
+    store.storage = (storage_governance_type or StorageGovernance)(store, auth)
     at('PREPARATION_APP_EVENT_REPLAY')
     replay = EventReplay(store, auth, signing_key=auth._key)
     store.event_replay = replay
     at('PREPARATION_APP_CATALOG')
     if settings.demo:
-        seed_catalog(store)
+        seed_catalog(store, seed_materials)
     at('PREPARATION_APP_GOVERNANCE')
-    governance = MaterialGovernance(store, auth, GovernanceConfig(
-        review_mode=cast(Literal["separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)))
+    governance = MaterialGovernance(store, auth, governance_config or GovernanceConfig(
+        review_mode=cast(Literal["member-self-service", "separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), seed_materials=seed_materials)
     at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
@@ -117,7 +122,7 @@ def create_app(settings=None, *, diagnostics=None):
         if getattr(provider, "provider_id", None) != provider_id:
             raise ValueError('Personal provider identity differs from trusted registration')
         personal_providers[provider_id] = provider
-    connections = ConnectionService(store, auth, settings.trusted_connections,
+    connections = (connection_service_type or ConnectionService)(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
     from .personal_models import PersonalModels, personal_model_router
@@ -126,81 +131,17 @@ def create_app(settings=None, *, diagnostics=None):
         trusted_model_proxy=settings.owner_model_trusted_proxy,
         proxy_environment_id=settings.owner_model_proxy_environment_id)
     connections.owner_models = store.personal_models
-    from .application_environments import ApplicationEnvironments, environment_router
-    environment_packages = {}
-    personal_ssh = None
-    ssh_config = settings.ssh_openresearch
-    if settings.ssh_self_service is not None:
-        from .personal_ssh import PersonalSSHServers, SSHEnrollmentConfig
-        from .ssh_openresearch import SSHOpenResearchConfig
-        if credential_vault is None or not isinstance(settings.ssh_self_service, SSHEnrollmentConfig):
-            raise ValueError('Self-service SSH requires explicit global policy and encrypted vault')
-        personal_ssh = PersonalSSHServers(auth, connections, credential_vault, settings.ssh_self_service)
-        if ssh_config is None:
-            ssh_config = SSHOpenResearchConfig(settings.ssh_self_service.runtime, (), personal_ssh.static_unavailable)
-        elif not isinstance(ssh_config, SSHOpenResearchConfig) or ssh_config.runtime != settings.ssh_self_service.runtime:
-            raise ValueError('Self-service and registered SSH packages must have identical runtime pins')
-    if settings.platform_openresearch is not None:
-        from .platform_openresearch import PlatformOpenResearchConfig, PlatformOpenResearchPackage
-        if not settings.personal_agent_commands_enabled or not isinstance(settings.platform_openresearch, PlatformOpenResearchConfig):
-            raise ValueError('Platform OpenResearch requires the native personal-command channel and trusted package config')
-        package = PlatformOpenResearchPackage(settings.platform_openresearch,
-            settings.workspace.resolve() / 'platform-openresearch')
-        environment_packages['openresearch'] = package
-        connections.personal.providers[package.provider_id] = package.provider
-    if ssh_config is not None:
-        from .ssh_openresearch import SSHOpenResearchConfig, SSHOpenResearchPackage
-        if not settings.personal_agent_commands_enabled or not isinstance(ssh_config, SSHOpenResearchConfig):
-            raise ValueError('SSH OpenResearch requires trusted server bindings and the native personal-command channel')
-        ssh_package = SSHOpenResearchPackage(ssh_config, settings.workspace.resolve() / 'ssh-openresearch')
-        ssh_package.personal_servers = personal_ssh
-        if personal_ssh is not None: personal_ssh.package = ssh_package
-        environment_packages['openresearch:ssh'] = ssh_package
-        connections.personal.providers[ssh_package.provider_id] = ssh_package.provider
-    store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections, environment_packages)
-    store.personal_ssh = personal_ssh
-    from .synthesis_sources import SynthesisSourceService
-    at('PREPARATION_APP_SYNTHESIS_SOURCES')
-    store.synthesis_sources = SynthesisSourceService(store, auth)
     at('PREPARATION_APP_BINDINGS')
-    bindings = default_bindings(settings, store, connections)
+    bindings = (bindings_factory or default_bindings)(settings, store, connections)
     store.personal_models.register(bindings)
-    register_orx_adapter(bindings)
-    register_literature_adapters(bindings)
-    bindings.register("model", LITERATURE_MODEL_ID, "1", lambda context: LiteratureEvidenceModel())
-    register_orx_experiment_adapters(bindings)
-    bindings.register("model", MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION, lambda context: LocalORXWorkflowModel())
     at('PREPARATION_APP_RUNTIME_ADAPTERS')
     for entry in settings.runtime_adapters:
         bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
             demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
-    if settings.development_profile == "opencode-go":
-        from .go_development import model_registrations
-        for entry in model_registrations():
-            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-                connection_kind=entry.connection_kind, required_capabilities=entry.required_capabilities,
-                permissions=entry.permissions, demo_only=entry.demo_only, validator=entry.validator,
-                connection_adapter_ref=entry.connection_adapter_ref)
-    if settings.source_synthesis_enabled:
-        from .synthesis_runtime import registrations as synthesis_registrations
-        for entry in synthesis_registrations():
-            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-                tool_name=entry.tool_name, connection_kind=entry.connection_kind,
-                required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-                demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
     store.execution_bindings = bindings
     prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
-    if settings.development_profile == "opencode-go":
-        from .go_development import MODEL_ADAPTER_IDS
-        from .go_usage import pricing_registrations
-        for price in pricing_registrations(MODEL_ADAPTER_IDS):
-            prices[(price.adapter_id, price.adapter_revision)] = price
-    if settings.source_synthesis_enabled:
-        from .synthesis_runtime import pricing_registration
-        price = pricing_registration()
-        prices[(price.adapter_id, price.adapter_revision)] = price
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
     at('PREPARATION_APP_USAGE_LEDGER')
@@ -214,7 +155,7 @@ def create_app(settings=None, *, diagnostics=None):
     at('PREPARATION_APP_APPLICATIONS')
     applications = ApplicationService(store, auth)
     if settings.demo:
-        applications.seed_demo()
+        applications.seed_demo(demo_definitions or ())
     store.applications = applications
     at('PREPARATION_APP_COMPOSITION')
     composition = CompositionService(store, auth, applications, bindings, connections)
@@ -224,7 +165,8 @@ def create_app(settings=None, *, diagnostics=None):
     store.register_execution_guard("application-governance",
         lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
     at('PREPARATION_APP_NATIVE_GRAPH')
-    executor, registry = build_runtime(settings, store, native_db)
+    executor, registry = build_runtime(settings, store, native_db, model_dispatch_type=model_dispatch_type,
+        catalog=tool_catalog_factory(settings, store) if tool_catalog_factory else None)
     at('PREPARATION_APP_BRIDGE')
     from .native_workflows import NativeWorkflows
     store.native_workflows = NativeWorkflows(store, auth, native_db, settings.native_workflows)
@@ -232,20 +174,20 @@ def create_app(settings=None, *, diagnostics=None):
     bridge = NativeBridge(settings, native_db, auth)
     bridge.configure_components(store.native_workflows.component_for_task)
     at('PREPARATION_APP_DELEGATION')
-    delegation = DelegationService(settings, store, auth, bridge)
+    delegation = (delegation_service_type or DelegationService)(settings, store, auth, bridge)
     delegation.initialize()
     store.delegation = delegation
     at('PREPARATION_APP_PLAN_POLICY')
-    policy = PlanPolicyService(store, auth, PlanPolicyConfig(
+    policy = (plan_policy_type or PlanPolicyService)(store, auth, policy_config or PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
+        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
     at('PREPARATION_APP_HANDOFF')
-    handoff_client = TrustedHandoffClient(store, auth, settings.handoff_targets)
+    handoff_client = (handoff_client_type or TrustedHandoffClient)(store, auth, settings.handoff_targets)
     handoff_client.install_guard()
     store.handoff_client = handoff_client
     store.remote_execution = RemoteExecution(store, handoff_client)
-    receiver = PreparedHandoffService(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
+    receiver = (handoff_receiver_type or PreparedHandoffService)(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
     store.handoff_receiver = receiver
     if receiver:
         receiver.install_guard()
@@ -259,13 +201,13 @@ def create_app(settings=None, *, diagnostics=None):
     if receiver:
         base.include_router(receiver.router)
     if settings.handoff_targets:
-        base.include_router(origin_authority_router(auth, handoff_client))
+        base.include_router(origin_authority_router(auth, handoff_client,
+            scientific_call=getattr(handoff_client, "consume_scientific_tool", None),
+            scientific_custody=getattr(handoff_client, "authorize_scientific_custody", None)))
     base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
     from .personal_connections import personal_connection_router
     base.include_router(personal_connection_router(auth, connections.personal))
-    from .personal_ssh import personal_ssh_router
-    base.include_router(personal_ssh_router(auth, personal_ssh))
     if credential_vault is not None:
         from .credential_vault import credential_vault_router
         base.include_router(credential_vault_router(auth, credential_vault))
@@ -277,89 +219,23 @@ def create_app(settings=None, *, diagnostics=None):
                 headers={'Cache-Control': 'private, no-store'})
     base.include_router(application_router(auth, applications))
     base.include_router(composition_router(auth, composition))
-    from .synthesis_api import synthesis_router
-    base.include_router(synthesis_router(auth, store.synthesis_sources, settings))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
     base.include_router(schedule_management_router(auth, schedule_management))
-    factory_api = FactoryAPI(settings, store, auth, bridge)
+    factory_api = (factory_api_type or FactoryAPI)(settings, store, auth, bridge)
     base.include_router(factory_api.router)
     base.include_router(personal_model_router(auth, store.personal_models))
-    base.include_router(environment_router(auth, store.application_environments))
-    from .personal_research import personal_research_router
-    base.include_router(personal_research_router(auth, store, factory_api))
-    if settings.personal_agent_commands_enabled:
-        from .personal_command_api import PersonalCommandAPI
-        personal_commands = PersonalCommandAPI(store, auth, factory_api)
-        base.include_router(personal_commands.router)
     from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
     # Durable custody remains readable even after operator registrations end.
     store.workflow = OperationCustody(store, auth, runtimes=settings.workflow_runtimes)
     store.workflow_control = WorkflowControl(store.workflow, factory_api)
     base.include_router(workflow_router(auth, store.workflow_control))
-    from .autoresearch import AutoResearchService, autoresearch_router
-    store.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
-    base.include_router(autoresearch_router(auth, store.autoresearch))
-    from .openresearch_workspace import OpenResearchWorkspace, openresearch_workspace_router
-    openresearch_workspace = OpenResearchWorkspace(store, auth, store.autoresearch, factory=factory_api)
-    base.include_router(openresearch_workspace_router(auth, openresearch_workspace))
-    from .autoresearch_session_control import AutoResearchSessionControl
-    async def complete_research_session(task, requirement):
-        from .control_commands import ControlCommand
-        from .factory_api import requirement_version
-        await factory_api.commands.submit(task['owner_id'], task['id'], ControlCommand(
-            commandId='ar-session:' + task['run_id'], action='approve', approved=True,
-            requirementId=requirement['id'], version=requirement_version(requirement)))
-    store.autoresearch_session_control = AutoResearchSessionControl(store, auth, complete=complete_research_session)
     at('PREPARATION_APP_RESOURCES')
     resources = PersistentResourceService(store, auth, settings.remote_targets)
     from .process_runtime import ProcessRuntimeService
     at('PREPARATION_APP_PROCESS_RUNTIME')
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
-    if settings.managed_orx_profiles_factory is not None:
-        import copy
-        profiles = settings.managed_orx_profiles_factory(store, auth, resources)
-        if type(profiles) is not dict or any(type(k) is not str or type(v) is not dict for k, v in profiles.items()):
-            raise ValueError('OPENRESEARCH_MANAGED_PROFILES_INVALID')
-        required = {'ownerId', 'targetRef', 'applicationRef', 'mode', 'nativeProfileId',
-            'connectionPin', 'contractSha256', 'sessionId'}
-        if any(not required.issubset(value) for value in profiles.values()):
-            raise ValueError('OPENRESEARCH_MANAGED_PROFILE_PIN_REQUIRED')
-        # A trusted installer may add an existing-store provider only after
-        # process service construction; reapply the normal target/pool checks.
-        resources.targets = PersistentResourceService(store, auth, resources.targets).targets
-        openresearch_workspace.managed_profiles = copy.deepcopy(profiles)
-        from .managed_orx_profile import install_completion_handler
-        install_completion_handler(store)
-    from .research_runtime import ResearchProcessRuntimeService
-    at('PREPARATION_APP_RESEARCH_RUNTIME')
-    store.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
-    if settings.research_evaluators:
-        from .research_evaluation_service import ResearchEvaluationService
-        store.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
-    if settings.remote_scientific_factory is not None:
-        from .remote_scientific_origin import RemoteScientificOrigin
-        from .remote_scientific_receiver import RemoteScientificReceiver
-        scientific = settings.remote_scientific_factory(store, auth, resources, handoff_client,
-            receiver, factory_api.commands)
-        if type(scientific) is RemoteScientificOrigin:
-            store.remote_scientific = scientific
-        elif type(scientific) is RemoteScientificReceiver:
-            store.remote_scientific_receiver = scientific
-        else:
-            raise ValueError('REMOTE_SCIENTIFIC_SERVICE_INVALID')
-    if settings.autoresearch_children_factory is not None:
-        from .autoresearch_children import AutoResearchChildren
-        children = settings.autoresearch_children_factory(store, auth, store.autoresearch, resources)
-        from .autoresearch_remote_children import AutoResearchRemoteChildren
-        if type(children) not in (AutoResearchChildren, AutoResearchRemoteChildren):
-            raise ValueError('AUTORESEARCH_CHILD_SERVICE_INVALID')
-        store.autoresearch_children = children
-    from .comparison_workflow import ComparisonService, comparison_router
-    at('PREPARATION_APP_COMPARISONS')
-    store.comparisons = ComparisonService(store, auth)
-    base.include_router(comparison_router(auth, store.comparisons))
     resource_maintenance = ResourceMaintenance(resources)
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))
@@ -386,7 +262,7 @@ def create_app(settings=None, *, diagnostics=None):
         store.sql("SELECT 1")
         return {"ok": True, "runtime": "Agno 3.1.0", "liveResearchVerified": False}
 
-    web = Path(__file__).resolve().parents[2] / "dist"
+    web = settings.web_directory
     if (web / "assets").is_dir():
         base.mount("/assets", StaticFiles(directory=web / "assets"), name="assets")
 
@@ -405,7 +281,7 @@ def create_app(settings=None, *, diagnostics=None):
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
                          max_queue_depth=settings.max_queued,
-                         max_attempts=1 if settings.development_live_validation or settings.runtime_tool_contract == "autoresearch-session-v1" else 2, retry_delay_seconds=0,
+                         max_attempts=queue_max_attempts, retry_delay_seconds=0,
                          lock_grace_seconds=6, stop_timeout_seconds=2, poll_interval=settings.queue_poll,
                          timeout_seconds=settings.native_timeout_seconds), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
@@ -414,7 +290,7 @@ def create_app(settings=None, *, diagnostics=None):
     bridge.attach(native)
     # Start after the native DB/worker lifespans; stop before their drain.
     at('PREPARATION_APP_OBSERVER')
-    observer = FactoryLifecycleObserver(store, auth, native_db,
+    observer = (lifecycle_observer_type or FactoryLifecycleObserver)(store, auth, native_db,
                                         lambda: getattr(native.state, "queue_worker", None))
     store.lifecycle_observer = observer
     native_lifespan = native.router.lifespan_context
@@ -424,22 +300,21 @@ def create_app(settings=None, *, diagnostics=None):
         try:
             async with native_lifespan(app) as state:
                 async with observer.lifespan(app):
-                    try:
+                    async with lifespan_context(app) if lifespan_context else nullcontext():
                         yield state or {}
-                    finally:
-                        if store.remote_scientific_receiver is not None:
-                            await store.remote_scientific_receiver.close()
-                        await store.autoresearch_session_control.close()
-                        store.application_environments.close()
-                        if personal_ssh is not None: personal_ssh.close()
         finally:
             # Observer and native worker finish before their shared lock pool.
-            store.dispose_root_locks()
+            try:
+                store.dispose_root_locks()
+            finally:
+                if shutdown_callback is not None:
+                    shutdown_callback(native.state.factory)
 
     native.router.lifespan_context = observed_lifespan
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "synthesis_sources": store.synthesis_sources, "remote_bindings": remote_bindings}
-    native.state.factory.update(credential_vault=credential_vault, openresearch_workspace=openresearch_workspace, resources=resources, resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
-        research_runtime=store.research_runtime, research_evaluation=store.research_evaluation)
+    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
+    native.state.factory.update(credential_vault=credential_vault, resources=resources,
+        resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
+        factory_api=factory_api, http_app=native)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:

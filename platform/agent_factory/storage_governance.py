@@ -279,31 +279,17 @@ class StorageGovernance:
         holds = self.store.sql("SELECT task_id,bytes,state FROM af_disk_holds WHERE owner_id=:owner ORDER BY created_at DESC LIMIT 100", owner=owner)
         total = self.store.sql("SELECT COALESCE(SUM(bytes),0) AS n FROM af_disk_holds WHERE state='HELD'")[0]["n"]
         plans = self.store.sql("SELECT * FROM af_retention_plans WHERE owner_id=:owner ORDER BY body->>'createdAt' DESC LIMIT 100", owner=owner)
-        protected = []
-        containers = []
-        # Existing ORX evidence is measured, never adopted for cleanup. The
-        # path is derived from authenticated owner and actual persisted task.
-        experiments = self.store.sql("SELECT task_id FROM af_orx_task_experiments WHERE owner_id=:owner ORDER BY task_id LIMIT 10", owner=owner)
-        for experiment in experiments:
-            task_id = experiment["task_id"]
-            path = Path(self.settings.workspace).resolve() / "orx-tasks" / hashlib.sha256(owner.encode()).hexdigest()[:24] / task_id
-            item = {"taskId": task_id, "kind": "orx-evidence", "retentionProtected": True, "complete": False}
-            try:
-                observed = self.scan(path)
-                item.update(logicalBytes=observed["logicalBytes"], allocatedBytes=observed["allocatedBytes"], complete=True)
-            except (OSError, HTTPException):
-                pass
-            protected.append(item)
-            if self.settings.runtime_tool_contract in {"local-orx-v1", "orx-evidence-v2"}:
-                from .storage_runtime import observe_container
-                containers.append(observe_container(Path(self.settings.workspace), owner, task_id))
+        protected, containers = self._protected_runtime_storage(owner)
         return {"ownerId": owner, "unconfirmedHoldTaskIds": reconciliation_errors, "plans": [self.public(plan) for plan in plans], "protectedDirectories": protected, "protectedContainers": containers,
-            "observationLimits": {"objects": 100, "plans": 100, "orxDirectories": 10, "holdReconciliations": 20},
+            "observationLimits": {"objects": 100, "plans": 100, "holdReconciliations": 20},
             "retentionSupported": os.name == "posix", "filesystems": self.filesystems(), "reservedBytes": total, "lowWaterBytes": self.settings.storage_low_water_bytes,
             "taskReserveBytes": self.settings.storage_task_reserve_bytes, "ownerHolds": holds, "objects": objects,
             "databaseArtifacts": dict(artifact), "purgeEnabled": self.settings.storage_allow_purge,
             "quarantineGraceSeconds": self.settings.storage_retention_grace_seconds,
             "scope": "Managed task scratch and database artifact bytes; filesystem usage also includes unattributed host/Docker data. No host-wide cleanup."}
+
+    def _protected_runtime_storage(self, owner):
+        return [], []
 
     async def _eligible(self, owner, row):
         task = self.store.task(row["task_id"], owner)

@@ -26,10 +26,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, create_engine, select, text
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
-from agent_factory.demo_model import DemoModel
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_research.demo_model import DemoModel
 from agent_factory.event_replay import EventReplay, event_replay_router
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.store import canonical, digest
 from pg_fixture import IsolatedPostgres
 

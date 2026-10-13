@@ -115,11 +115,19 @@ class ResearchProcessSpec(ProcessSpec):
 
 
 def interpreter_module():
+    # Source guardians also load these files as top-level modules. Sealed
+    # payloads retain their historical filename in either loading mode.
     try:
-        from . import research_interpreter
+        from . import interpreter_identity
     except ImportError:
-        import research_interpreter  # pyright: ignore[reportMissingImports]
-    return research_interpreter
+        try:
+            import interpreter_identity  # pyright: ignore[reportMissingImports]
+        except ImportError:
+            try:
+                from . import research_interpreter as interpreter_identity  # pyright: ignore[reportAttributeAccessIssue]
+            except ImportError:
+                import research_interpreter as interpreter_identity  # pyright: ignore[reportMissingImports]
+    return interpreter_identity
 
 
 @dataclass(frozen=True)

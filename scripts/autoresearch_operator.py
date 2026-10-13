@@ -17,8 +17,8 @@ from typing import Any, Callable, cast
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 
-from agent_factory.config import Settings
-from agent_factory.research_bootstrap_database_preflight import database_preflight
+from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory_research.research_bootstrap_database_preflight import database_preflight
 
 ERROR = 'AUTORESEARCH_OPERATOR_INVALID'
 MAX_CONFIG = 2 * 1024**2

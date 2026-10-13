@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from agent_factory.application_environments import PrepareEnvironment, RebindEnvironment
-from agent_factory.runtime_packages.openresearch_v1 import ssh_install
+from agent_factory_research.runtime_packages.openresearch_v1 import ssh_install
 import test_application_environments as fixtures
 
 

@@ -1,12 +1,33 @@
 name: Project checks
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  scope:
+    name: Select CI mode
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      os: ${{ steps.select.outputs.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Check mode selection and summary behavior
+        run: python -m unittest discover -s tests/ci -p test_ci_scope.py -v
+      - name: Select docs, daily fast, or manually requested full checks
+        id: select
+        run: python scripts/ci_scope.py
   frontend:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.scope.outputs.os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -15,11 +36,15 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: node --test scripts/check_web_architecture.test.mjs
+      - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
       - run: npm run check
   python:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.scope.outputs.os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -30,10 +55,18 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run ruff check platform scripts
+      - run: uv run ruff check platform apps/research deployment scripts
       - run: uv run pyright
-      - run: uv run python -m unittest discover -s platform/tests -v
+      - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json
+      - name: Fast selected Python regressions
+        if: needs.scope.outputs.mode == 'fast'
+        run: uv run python scripts/check_fast.py --suite python
+      - name: Full Python compatibility discovery
+        if: needs.scope.outputs.mode == 'full'
+        run: uv run python scripts/check_python.py
   postgres:
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -63,21 +96,17 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - name: Required owner BYOK and default-off billing (no skips)
-        run: uv run python scripts/check_owner_byok_postgres.py
-      - name: Required platform/application boundaries (no skips)
-        run: uv run python scripts/check_boundaries_postgres.py
-      - name: Required candidate PostgreSQL acceptance (no skips)
-        run: uv run python scripts/check_candidate_postgres.py
-      - name: Required AutoResearch native fixtures (no skips)
-        run: uv run python scripts/check_autoresearch_postgres.py
-      - name: Required synthetic workflow native mechanisms (no skips)
-        run: uv run python scripts/check_workflow_postgres.py
-      - name: PostgreSQL suite (bounded diagnostic log)
+      - name: Install and start the independent core without application source
+        run: uv run python scripts/check_core_install.py
+      - name: Fast required PostgreSQL, process custody and small-tree regressions
+        if: needs.scope.outputs.mode == 'fast'
+        run: uv run python scripts/check_fast.py --suite postgres
+      - name: Full PostgreSQL discovery and required acceptance (manual release check)
+        if: needs.scope.outputs.mode == 'full'
         shell: bash
         run: |
           set +e
-          uv run python -m unittest discover -s platform/tests -v > "$RUNNER_TEMP/postgres-tests.log" 2>&1 &
+          uv run python scripts/check_postgres.py > "$RUNNER_TEMP/postgres-tests.log" 2>&1 &
           test_pid=$!
           (
             while kill -0 "$test_pid" 2>/dev/null; do
@@ -95,3 +124,14 @@ jobs:
           wait "$progress_pid" 2>/dev/null || true
           tail -n 400 "$RUNNER_TEMP/postgres-tests.log"
           exit "$test_status"
+  summary:
+    name: CI summary
+    if: always()
+    needs: [scope, frontend, python, postgres]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Report the selected scope without equating fast and full acceptance
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python scripts/ci_scope.py --summary

@@ -1,0 +1,9 @@
+{
+  "tsconfig": "tsconfig.json",
+  "source_roots": ["web", "shared", "apps/research/web"],
+  "core": ["web", "shared"],
+  "apps": {
+    "research": {"path": "apps/research/web", "public": []}
+  },
+  "composition_roots": ["web/composition.tsx", "web/main.tsx"]
+}

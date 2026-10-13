@@ -13,9 +13,9 @@ from pathlib import Path
 import re
 from typing import Callable
 
-from agent_factory.research_evaluation import validate_evaluation_contract
-from agent_factory.research_evaluation_service import ResearchEvaluationService
-from agent_factory.research_manifest import manifest_fingerprint
+from agent_factory_research.research_evaluation import validate_evaluation_contract
+from agent_factory_research.research_evaluation_service import ResearchEvaluationService
+from agent_factory_research.research_manifest import manifest_fingerprint
 from research_candidate_baseline import build_baseline_snapshots, verify_retained_baseline
 from run_research_baseline import config_from_bytes, read_private, unique
 

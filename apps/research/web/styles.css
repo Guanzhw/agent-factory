@@ -1,0 +1,49 @@
+.orx-experiment>.quiet{font-size:11px}.orx-experiment .state-note{margin:0 0 12px}.orx-experiment .execution-metrics{display:flex;flex-wrap:wrap;margin:16px 0}.orx-stop-proof{color:#3e7161;background:#e7f1ed;border:1px solid #d2e7dd;border-radius:5px;padding:10px 12px;font-size:12px}.orx-experiment .section-heading{align-items:flex-start}.orx-experiment .badge{white-space:normal;text-align:right}@media(max-width:620px){.orx-experiment .section-heading{flex-wrap:wrap}}
+.literature-evidence { min-width: 0; overflow-wrap: anywhere; }
+.literature-evidence blockquote { margin-inline: 16px; }
+.synthesis-journey, .synthesis-report { min-width: 0; overflow-wrap: anywhere; }
+.synthesis-journey > section, .synthesis-journey fieldset { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.synthesis-journey label { overflow-wrap: anywhere; }
+.synthesis-journey input[type=checkbox] { margin-right: 8px; }
+.synthesis-journey .primary, .synthesis-journey .secondary { white-space: normal; }
+.autoresearch .composer { max-width: 900px; }
+.autoresearch .composer dl { display: flex; flex-wrap: wrap; gap: 16px 28px; margin: 24px 0; }
+.autoresearch .composer dt { color: var(--muted); font-size: 12px; }
+.autoresearch .composer dd { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
+.autoresearch-progress { padding: 24px; margin-bottom: 18px; min-height: auto; }
+.autoresearch-progress li { margin-bottom: 8px; }
+/* Application-owned OpenResearch workspace. */
+.workspace-crumbs, .or-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.workspace-crumbs { color: var(--muted, #66716c); margin-bottom: 20px; font-size: 13px; }
+.or-project-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.or-project-card { width: 100%; display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 12px; padding: 22px; margin: 12px 0; background: #fff; border: 1px solid #dfe5df; border-radius: 12px; }
+.or-project-card:hover { border-color: #68836e; background: #f7faf6; }
+.or-project-card strong { font-size: 18px; }
+.or-native-row, .or-session-row { border-top: 1px solid #dfe5df; padding: 20px 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.or-native-row small { display: block; overflow-wrap: anywhere; }
+.openresearch-workspace .material-editor { margin: 20px 0; }
+.openresearch-workspace label { display: grid; gap: 8px; margin: 16px 0; }
+.openresearch-workspace .state-note { overflow-wrap: anywhere; }
+.openresearch-workspace textarea { min-height: 110px; }
+@media (max-width: 900px) { .or-project-layout { grid-template-columns: 1fr; } }
+.openresearch-workspace, .personal-session-workspace { min-width: 0; }
+.openresearch-workspace button:not([class]), .personal-session-workspace button:not([class]), .personal-session-dialog button:not([class]) {
+  background: #fff; color: #395575; border: 1px solid #bdcad8; border-radius: 5px; padding: 9px 15px; font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal;
+}
+.openresearch-workspace > section { padding: 22px; background: #fff; border: 1px solid var(--line); border-radius: 8px; margin: 20px 0; }
+.openresearch-workspace label:has(> input[type=checkbox]), .personal-session-workspace label:has(> input[type=checkbox]), .personal-session-dialog label:has(> input[type=checkbox]) {
+  display: flex; align-items: flex-start; gap: 10px; line-height: 1.7; cursor: pointer;
+}
+.openresearch-workspace input[type=checkbox], .personal-session-workspace input[type=checkbox], .personal-session-dialog input[type=checkbox] {
+  width: 18px; height: 18px; flex: 0 0 18px; margin: 2px 0 0; accent-color: var(--blue);
+}
+@media (max-width: 760px) {
+  .openresearch-workspace > section { padding: 16px; }
+  .openresearch-workspace .page-heading { flex-wrap: wrap; }
+  .personal-session-dialog button { min-height: 44px; }
+}
+.project-create-form,.project-disclosure{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:14px 0}.project-create-form summary,.project-disclosure summary{cursor:pointer;font-size:14px;font-weight:600;padding:6px 0}.project-create-form[open] summary,.project-disclosure[open] summary{margin-bottom:16px}.project-request{overflow-wrap:anywhere}.project-request button{display:block;margin-top:8px}.project-created{background:#f1f7f5;border:1px solid #c3dbd0;border-radius:6px;padding:18px;margin:16px 0}.project-created p,.personal-command-summary dd{overflow-wrap:anywhere}
+.or-setup-details { margin-top: 24px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 16px 22px; }
+.or-setup-details summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
+.personal-session-workspace > section { margin: 16px 0; }
+.native-result-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }

@@ -20,6 +20,10 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         store = Mock()
         store.process_runtime = None
         store.workflow = None
+        store.runtime_effect_held = None
+        store.runtime_ended_reason = None
+        store.runtime_cancel_owned = None
+        store.runtime_mark_cancel_requested = None
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []
@@ -146,6 +150,10 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
                               ('unresolved', 'native-ended-unresolved-experiment')):
             with self.subTest(fault=fault):
                 observer, store, task, failure, _ = self.fixture()
+                if fault == 'unresolved':
+                    from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
+                    store.runtime_effect_held = ResearchRuntimeHooks.effect_held
+                    store.runtime_ended_reason = lambda current: ResearchRuntimeHooks.ended_reason(store, current)
                 observer._binding.side_effect = [{'status': 'running'}, {'status': 'completed'}]
                 def deny(*args, **kwargs):
                     if fault == 'failure': failure['present'] = True

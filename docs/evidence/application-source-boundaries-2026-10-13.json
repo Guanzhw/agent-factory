@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-13",
+  "baselineCommit": "615a23f06039dcfa9e55b93c6913c691b3693bc3",
+  "departmentIntegrationCommit": "f14556ff4c250b981949da683feb80501d9c28bf",
+  "boundaries": {
+    "core": "platform/agent_factory",
+    "application": "apps/research/agent_factory_research",
+    "applicationFrontend": "apps/research/web",
+    "applicationTests": "apps/research/tests",
+    "pythonComposition": "deployment/agent_factory_server/main.py",
+    "frontendComposition": "web/composition.tsx",
+    "standaloneCoreDistribution": "platform/pyproject.toml",
+    "discovery": "scripts/check_python.py"
+  },
+  "validation": [
+    {
+      "name": "core portable unittest discovery",
+      "collected": 1460,
+      "skipped": 412,
+      "result": "passed"
+    },
+    {
+      "name": "research portable unittest discovery",
+      "collected": 1363,
+      "skipped": 107,
+      "result": "passed"
+    },
+    {
+      "name": "npm run check after department private-draft fix",
+      "files": 54,
+      "tests": 572,
+      "result": "passed"
+    },
+    {
+      "name": "Chromium synthetic desktop/narrow/browser navigation and prepared/unknown receipts",
+      "scenarios": 7,
+      "result": "passed",
+      "externalRequests": 0,
+      "liveModelCalls": 0
+    },
+    {
+      "name": "latest department PostgreSQL tests and standalone core distribution",
+      "tests": 32,
+      "result": "passed"
+    },
+    {
+      "name": "actual TCP PostgreSQL Agno HTTP receipt/restart/artifact tests",
+      "tests": 5,
+      "result": "passed"
+    },
+    {
+      "name": "assembly defaults/failed-install cleanup/real restart and lifecycle graph",
+      "tests": 4,
+      "result": "passed"
+    },
+    {
+      "name": "legacy material and native workflow PostgreSQL tests",
+      "tests": 6,
+      "result": "passed"
+    },
+    {
+      "name": "ruff platform apps/research deployment scripts",
+      "result": "passed"
+    },
+    {
+      "name": "pyright production core/application/deployment",
+      "files": 215,
+      "errors": 0,
+      "result": "passed"
+    },
+    {
+      "name": "npm audit",
+      "vulnerabilities": 0,
+      "result": "passed"
+    }
+  ],
+  "standaloneCoreProof": {
+    "wheelBuilt": true,
+    "applicationPackagesAbsent": true,
+    "allCoreModulesImported": true,
+    "realAgentOSLifespan": true,
+    "researchTablesCreated": false,
+    "materials": [],
+    "applications": [],
+    "researchRouteStatus": 404
+  },
+  "preserved": [
+    "native OpenResearch/OpenCode executors and runtime package licenses",
+    "original HTTP and persisted project/request identifiers",
+    "unknown acknowledgement never replayed",
+    "historical scientific runtime namespace and supplied source pins",
+    "explicit legacy policy fixtures and native hazardous-operation consent"
+  ],
+  "testOwnershipFollowup": {
+    "baseCommit": "e517330beb38de1b9da1a2c508df24ce6f9149c1",
+    "movedUnchangedExceptWorkerSourceRoots": [
+      "test_actual_orx_local.py",
+      "test_actual_orx_preflight.py",
+      "test_actual_retrieval_boundary.py",
+      "test_inference_control_validation.py",
+      "test_managed_workspace.py",
+      "test_completed_log_scope.py",
+      "test_personal_session_rebind.py"
+    ],
+    "destination": "apps/research/tests/python",
+    "mixedGuardTests": {
+      "originalMethods": 6,
+      "originalAssertionsPreserved": true,
+      "retainedCoreMethods": 1,
+      "movedApplicationMethods": 5,
+      "newCoreMechanismTests": 2,
+      "applicationFile": "test_inference_application_guard_scope.py"
+    },
+    "standaloneCoreCollection": {
+      "isolatedPythonFlags": [
+        "-I",
+        "-S"
+      ],
+      "applicationPackagesAbsent": [
+        "agent_factory_research",
+        "agent_factory_server"
+      ],
+      "module": "test_inference_guard_scope",
+      "passed": 3,
+      "skipped": 0
+    },
+    "targetRegression": {
+      "collected": 66,
+      "passed": 42,
+      "skipped": 24,
+      "skipReason": "Existing opt-in native ORX and PostgreSQL acceptance requirements; no live invocation"
+    },
+    "fullDiscovery": {
+      "platform/tests": 1420,
+      "apps/research/tests/python": 1415,
+      "importErrors": 0,
+      "previousTotal": 2832,
+      "currentTotal": 2835,
+      "addedTests": 3
+    },
+    "crossServiceFilesKept": [
+      "platform/tests/test_actual_orx_receiver.py",
+      "platform/tests/test_actual_inference_tree.py"
+    ],
+    "boundaryNote": "The production core and core wheel are independent. platform/tests also retains explicit application fixtures and cross-service integration; the entire directory is not an application-free test suite.",
+    "ciOwnerHandoff": {
+      "owner": "C",
+      "entry": "scripts/check_python.py",
+      "requiredDiscoveryRoots": [
+        "platform/tests",
+        "apps/research/tests/python"
+      ],
+      "ruffRoots": [
+        "platform",
+        "apps/research",
+        "deployment",
+        "scripts"
+      ],
+      "preserve": [
+        "PostgreSQL log wrapper",
+        "required no-skip suites",
+        "historical source manifests"
+      ]
+    },
+    "ruff": "passed",
+    "diffCheck": "passed",
+    "modelProviderBranchIncluded": false
+  },
+  "priorPendingIntegration": [
+    "C owns CI: expand ruff paths and replace platform-only discovery in .github/workflows/ci.yml with scripts/check_python.py",
+    "B model/provider head e1ac87d is not included pending parent review",
+    "Real external model, SSH, OpenResearch/OpenCode live integration remains parent-scheduled; no such calls were made"
+  ],
+  "pendingIntegration": [
+    "Real external model, SSH and complete live ORX acceptance remains parent-scheduled; none was requested in this integration."
+  ],
+  "integrationFollowup": {
+    "mergeInputs": {
+      "A": "86cea692309aa09fd37019c05a22f0ec0477b11a",
+      "B": "61859f2198bf19c51f1a7499f11b249cd4f3b071",
+      "C": "38452896af930ae35ed81fe8017fa79da4ed2863",
+      "D": "f14556ff4c250b981949da683feb80501d9c28bf"
+    },
+    "implementationHead": "5ecdffee4128aba780f717760935d94e6996f83d",
+    "repairs": [
+      "Research assembly receives its deployment factory explicitly; no app-to-server import remains.",
+      "Browser main and composition are exact startup files; reusable callers still cannot bypass boundaries.",
+      "Go diagnostics use normal member publication without privilege escalation.",
+      "Candidate journal accepts PLAN_READY and retains historical PLAN_APPROVED.",
+      "Nested application/material reads reuse the existing metadata connection, including a one-slot pool.",
+      "Moved fixtures retain owner, custody, policy withdrawal, UNKNOWN and original-receipt assertions.",
+      "Lint uses portable file globs; the first-run fixture waits for real async completion and denies unmocked fetch.",
+      "Windows packaging fixtures canonicalize temporary paths and distinguish distribution inspection from POSIX execution custody; real unsupported-host rejection and all payload assertions remain."
+    ],
+    "checks": {
+      "ordinaryPython": {
+        "testsRun": 2952,
+        "skipped": 540,
+        "passed": true,
+        "sourceHead": "5ecdffee4128aba780f717760935d94e6996f83d"
+      },
+      "frontend": {
+        "tests": 599,
+        "files": 55,
+        "lint": true,
+        "types": true,
+        "build": true
+      },
+      "browserSynthetic": {
+        "scenarios": 7,
+        "externalRequests": 0,
+        "pageErrors": 0
+      },
+      "boundaries": {
+        "pythonModules": 674,
+        "webModules": 100,
+        "violations": 0,
+        "coverageGaps": 0
+      },
+      "standaloneCore": {
+        "wheelInstalled": true,
+        "actualPostgresLifespan": true,
+        "appPackagesAbsent": true,
+        "researchTablesAbsent": true,
+        "healthOK": true,
+        "cleanShutdown": true
+      },
+      "nativeOffline": {
+        "opencodeCases": 8,
+        "actualSdkCases": 3,
+        "passed": true,
+        "realModelCalls": 0,
+        "binarySha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+        "imageId": "sha256:09fac22af2fd4a25594a5b259f918e1a2b77cb15b00b21db260487f1cfcf8503",
+        "testedHead": "81fb7176d426367aca07e2483e8913f1e7e881a8"
+      },
+      "focusedRegressionsWithPostgresEnabled": {
+        "researchAndPublication": 104,
+        "policyAndStorage": 74,
+        "goDiagnosticAndCoding": 25,
+        "candidateAndBootstrapUniqueCases": 13,
+        "remoteRuntimeUsageAndGovernance": 28,
+        "skipped": 0
+      },
+      "portablePackaging": {
+        "nativePosixTests": 8,
+        "simulatedNonPosixTests": 8,
+        "skipped": 0,
+        "productionGuardsUnchanged": true,
+        "realWindowsCI": "pending"
+      }
+    },
+    "currentFullPostgresAndCrossPlatformResults": "See the exact-head verification and checks on https://github.com/Guanzhw/agent-factory/pull/86; focused groups above are not a full-suite or live-compatibility claim.",
+    "historicalResultsPreserved": true,
+    "mergedToMain": false,
+    "postFullRegressionRepairs": {
+      "sourceBase": "37053367f2a4d35a0d830fef5d05b27f54f3b83d",
+      "precedingFullPostgres": {
+        "testsRun": 2952,
+        "failures": 2,
+        "skipped": 63,
+        "requiredPassed": 200,
+        "requiredCases": 201,
+        "accepted": false
+      },
+      "repairs": [
+        "Scientific delegation, original request fingerprints, phase custody and cancellation are owned by the research subclass, selected through static composition.",
+        "The original ORX cleanup accessor moved unchanged to the research connection subclass; no core research-table read or broader secret resolution was introduced.",
+        "Application tool-catalog and SSH server-catalog contributions are explicit; immutable legacy policy fingerprints remain unchanged.",
+        "Member source policy is recognized in remote manifests without approving receiver execution or bypassing current source authority.",
+        "A persisted cancellation with per-invocation never-dispatched and cleanup proof settles the reserved effect; all ambiguous or already-dispatched counterexamples remain UNKNOWN."
+      ],
+      "targetChecks": {
+        "coreDelegationAndRemotePolicy": 54,
+        "scientificDelegationIncludingCompletePostgresFlow": 6,
+        "connectionCustodyAndCoreWheel": 30,
+        "applicationConnectionBoundary": 5,
+        "environmentAssembly": 8,
+        "adjacentEnvironmentCustody": 55,
+        "catalogPlanAndApplication": 47,
+        "storageCancellationNew": 6,
+        "storageCancellationExisting": 25,
+        "targetSkips": 0
+      },
+      "history": "The prior failed full run remains failed; focused repair results do not replace a new complete run.",
+      "finalFullPostgresAndExactHeadCI": "Results are maintained on PR86 after the final source commit."
+    }
+  }
+}

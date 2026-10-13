@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 import httpx
 
 from agent_factory.byok_model import ADAPTER_ID, PROVIDER_ID
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.personal_remote_provider import origin
-from agent_factory.personal_research import publish_application
+from agent_factory_research.personal_research import publish_application
 from pg_fixture import IsolatedPostgres
 
 
@@ -102,7 +102,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
                     'type': 'function', 'function': {'name': 'literature_search', 'arguments': '{"query":"synthetic research"}'}}]}, 'tool_calls'
             return httpx.Response(200, json={'choices': [{'finish_reason': reason, 'message': message}]})
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.folder.name), max_workers=1,
-            temporary_policy='admin-review',
+            temporary_policy='member-self-service',
             fee_management_enabled=self._testMethodName == 'test_legacy_enabled_host_byok_job_reads_without_commitment',
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b's' * 32, {PROVIDER_ID: origin}),
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
@@ -155,7 +155,8 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         plan = self.store.plan(task['plan_id'], 'alice')
         self.assertEqual(plan['executionBindings']['model']['adapterId'], ADAPTER_ID)
         self.assertNotIn('usageBudget', plan)
-        self.assertEqual(self.store.plan_policy.require_execution('alice', plan)['source'], 'owner-submission')
+        self.assertEqual(plan['policy'], 'member-self-service')
+        self.assertEqual(self.store.plan_policy.require_execution('alice', plan)['source'], 'member-self-service')
         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
         replay = self.request('POST', '/personal-research', {'topic': 'Synthetic research', 'requestId': 'research-submit'}, expected=202)
         self.assertEqual(replay['planId'], result['planId'])
@@ -275,6 +276,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             self.assertTrue(all(secret not in request.content.decode() for request in self.calls))
 
     def test_legacy_enabled_host_byok_job_reads_without_commitment(self):
+        # Legacy refers to the enabled billing ledger, not the plan admission policy.
         # Exercise actual startup accounting configuration, native admission and
         # public reads; a composition-only check cannot catch detail's inspect.
         self.assertIsNotNone(self.store.usage_ledger)
@@ -285,6 +287,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'topic': 'Synthetic legacy-host read fixture', 'requestId': 'legacy-byok-read'}, expected=202)
         task = self.store.task_for_request('legacy-byok-read', 'alice')
         plan = self.store.plan(task['plan_id'], 'alice')
+        self.assertEqual(plan['policy'], 'member-self-service')
         self.assertNotIn('usageBudget', plan)
         progress = self.request('GET', '/jobs/' + task['id'])
         self.assertIsNone(progress['usageLedger'])

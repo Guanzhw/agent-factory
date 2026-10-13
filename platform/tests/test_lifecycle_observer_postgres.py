@@ -19,11 +19,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
-from agent_factory.main import create_app
+from agent_factory_server.main import create_app
 from agent_factory.plan_policy import PlanPolicyConfig
-from agent_factory.tools import build_tools
+from agent_factory_research.tools import build_tools
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -526,7 +526,8 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
 
     def test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection(self):
         from agent_factory.factory_api import status_of
-        from agent_factory.orx_experiment_tools import LAUNCH_EFFECT_KEY
+        from agent_factory_research.orx_experiment_tools import LAUNCH_EFFECT_KEY
+        from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
         from agent_factory.store import canonical
         root = self.task("Controlled terminal ORX metadata fault", application="checksum")
         self.wait_native(root, {"completed"})
@@ -544,13 +545,15 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
                 self.store.sql("UPDATE af_effects SET status='DONE',result=CAST(:body AS JSONB) WHERE effect_key=:key",
                     body=canonical(result), key=run_id + ":" + LAUNCH_EFFECT_KEY)
                 self.store.sql("UPDATE af_tasks SET terminal=TRUE WHERE id=:id", id=root)
-                self.store.initialize()  # Pre-fix terminal capacity is re-held on upgrade.
+                self.store.initialize()
+                # Research installation re-holds pre-fix terminal capacity after core initialization.
+                ResearchRuntimeHooks.reconcile_capacity(self.store)
                 self.assertFalse(self.store.task(root)["terminal"])
                 self.assertFalse(self.observer._facts(task)["stopped"])
                 self.assertIn("unresolved", self.observer._reason(task, self.observer._binding(task)))
                 group = self.call(self.store.delegation.inspect_group, "alice", root)
                 self.assertFalse(group["allStopped"])
-                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), []), "unknown")
+                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), [], self.store), "unknown")
                 self.store.reserve_task(self.store.plan(task["plan_id"], "alice"), task["request_id"])
                 self.assertFalse(self.store.task(root)["terminal"])
         self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY,
@@ -560,8 +563,9 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
 
     def test_14_revoked_cleanup_checks_actual_persisted_launch_fingerprint(self):
         from types import SimpleNamespace
-        from agent_factory.connections import ConnectionService, TrustedConnectionBinding
-        from agent_factory.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
+        from agent_factory.connections import TrustedConnectionBinding
+        from agent_factory_research.connections_compatibility import ResearchConnectionService
+        from agent_factory_research.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
         from agent_factory.store import canonical, digest
         root = self.task("Controlled cleanup-binding admission", application="checksum")
         self.wait_native(root, {"completed"})
@@ -571,7 +575,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         registry = {registration: TrustedConnectionBinding("alice", "orx", ADAPTER_ID,
             frozenset({"research:read", "compute:local"}), "cleanup-fixture-v1", available=True,
             opaque_handle=handle, handle_ref="inert-cleanup-handle")}
-        service = ConnectionService(self.store, self.auth, registry)
+        service = ResearchConnectionService(self.store, self.auth, registry)
         bound = service.bind("alice", registration, uuid4().hex)
         pin = {key: bound[key] for key in ("ref", "version", "fingerprint", "revision", "capabilities", "taskId")}
         request = {"ownerId": "alice", "taskId": root, "planId": task["plan_id"],

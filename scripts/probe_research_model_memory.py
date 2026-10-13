@@ -118,8 +118,11 @@ def read_files(root, names):
 
 
 def local_sources():
-    root = Path(__file__).absolute().parent.parent / 'platform' / 'agent_factory'
-    sources = read_files(root, [name + '.py' for name in LOCAL_SHA256])
+    root = Path(__file__).absolute().parent.parent
+    # Keep the reviewed detached bundle's bytes and namespace unchanged.
+    sources = read_files(root / 'platform/agent_factory', ['__init__.py'])
+    sources.update(read_files(root / 'apps/research/agent_factory_research',
+        [name + '.py' for name in LOCAL_SHA256 if name != '__init__']))
     require(all(hashlib.sha256(sources[name + '.py']).hexdigest() == expected for name, expected in LOCAL_SHA256.items()))
     return sources
 

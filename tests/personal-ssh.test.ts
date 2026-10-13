@@ -9,8 +9,8 @@ import { ConnectionsPanel } from '../web/ConnectionsPanel.js';
 import { credentialDestination, credentialReceipt, SSH_CREDENTIAL_PROVIDER } from '../web/credentialManagement.js';
 import { personalRemoteApi, RemoteRequestError } from '../web/personalRemoteApi.js';
 import { personalSSHApi, type PersonalSSHServer, type SSHIdentityInput } from '../web/personalSSHApi.js';
-import { personalAgentApi } from '../web/personalAgentApi.js';
-import { applicationEnvironmentApi } from '../web/applicationEnvironmentApi.js';
+import { personalAgentApi } from '../apps/research/web/personalAgentApi.js';
+import { applicationEnvironmentApi } from '../apps/research/web/applicationEnvironmentApi.js';
 import { ownerModelApi } from '../web/ownerModelApi.js';
 
 const pin = 'a'.repeat(64); const destination = `ssh://fixture@127.0.0.1:2222?hostkey=${pin}`;
