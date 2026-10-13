@@ -1,5 +1,7 @@
 import type { OwnerModel } from './ownerModelApi.js';
 import type { PersonalCredential } from './personalRemoteApi.js';
+import { modelEndpoint } from './modelEndpoint.js';
+export { modelEndpoint } from './modelEndpoint.js';
 
 export interface ModelSetup {
   owner: string; provider: OwnerModel['provider']; baseURL: string; model: string;
@@ -7,12 +9,6 @@ export interface ModelSetup {
   stage: 'credential' | 'model' | 'default'; reference?: string;
   credential?: PersonalCredential; rotating?: { credentialRef: string; credentialRevision: string };
   chooseDefault: boolean;
-}
-export function modelEndpoint(input: string): string {
-  const url = new URL(input.trim());
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port
-      || url.pathname !== '/v1' || !url.hostname.includes('.') || url.hostname.endsWith('.localhost') || /^[\d.]+$/.test(url.hostname) || url.hostname.includes(':')) throw new Error('请输入 HTTPS 模型端点，路径为 /v1。');
-  return `${url.origin}/v1`;
 }
 export function setupCredential(value: PersonalCredential, setup: ModelSetup): PersonalCredential {
   if (!value || value.status !== 'active' || value.providerId !== 'byok-chat-v1'

@@ -337,4 +337,4 @@ class OpenResearchSupervisor:
     def connection_configuration(self, body):
         return {'origin': 'https://' + body['id'] + '.platform.invalid', 'credentialRef': body['id'],
             'credentialRevision': body['modelRevision'], 'authMode': 'bearer', 'projectId': body['projectId'],
-            'sessionDefaults': {'harness': 'opencode', 'model': 'factory/owner-model'}}
+            'sessionDefaults': {'harness': 'opencode', 'model': 'opencode-factory/owner-model'}}

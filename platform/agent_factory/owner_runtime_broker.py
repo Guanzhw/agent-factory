@@ -5,12 +5,15 @@ tool loop. Only a short-lived local capability enters that container; each model
 call resolves the original owner/vault revision outside it, without fallback.
 """
 import asyncio
+from copy import deepcopy
+import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
 import secrets
+import re
 import socketserver
 import stat
 from socketserver import ThreadingMixIn
@@ -18,16 +21,52 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
-from .byok_model import MAX_BYTES, PinnedChatTransport, function_call
+from .byok_model import GO_BASE, MAX_BYTES, PinnedChatTransport, base_url, chat_headers, function_call, model_origin
 from .personal_remote_provider import reject_credential_echo
 
 
 # The inert base keeps host imports possible where AF_UNIX is unsupported.
 # start() rejects those hosts before constructing any listener.
 UnixServerBase: Any = getattr(socketserver, 'UnixStreamServer', object)
+
+
+class OwnerModelCallError(ValueError):
+    """Sanitized, non-retryable native outcome; never carries provider text."""
+    def __init__(self, dispatched, *, diagnostic_id=None):
+        self.code = 'OWNER_MODEL_CALL_UNCONFIRMED' if dispatched else 'OWNER_MODEL_REQUEST_REJECTED'
+        # OpenCode also scans response text for 5xx numerals. An alphabetic ID
+        # cannot accidentally turn a terminal rejection into a retryable error.
+        self.diagnostic_id = diagnostic_id or 'diag_' + ''.join(chr(97 + int(c, 16)) for c in secrets.token_hex(16))
+        super().__init__(self.code)
+
+    def response(self):
+        message = ('模型调用可能已发出，结果尚未确认；请保留原请求核对。' if self.code == 'OWNER_MODEL_CALL_UNCONFIRMED'
+                   else '模型请求在发送前被拒绝；请核对配置与权限。')
+        return {'error': {'message': message + ' 诊断编号：' + self.diagnostic_id,
+            'type': 'owner_model_boundary', 'code': self.code}, 'diagnosticId': self.diagnostic_id}
+
+
+class _SyntheticDispatchTransport(httpx.AsyncBaseTransport):
+    """Track the existing injected test transport at its dispatch boundary."""
+    def __init__(self, transport, on_dispatch):
+        self.transport, self.on_dispatch = transport, on_dispatch
+    async def handle_async_request(self, request):
+        self.on_dispatch()
+        return await self.transport.handle_async_request(request)
+    async def aclose(self):
+        await self.transport.aclose()
+
+
+class _NativeCall:
+    def __init__(self):
+        self.done = threading.Event()
+        self.value: Any = None
+        # Do not retain exception tracebacks/contexts, which can hold a lease.
+        self.error: tuple[str, str] | None = None
 
 
 class _Server(ThreadingMixIn, UnixServerBase):
@@ -59,6 +98,7 @@ class OwnerRuntimeBroker:
         self.capability = secrets.token_urlsafe(32)
         self.deadline, self.remaining = time.monotonic() + ttl, max_calls
         self.lock = threading.Lock(); self.gate = threading.BoundedSemaphore(4)
+        self.native_calls: dict[tuple[str, str, str], _NativeCall] = {}
         self.server = None; self.thread = None
 
     def __repr__(self): return 'OwnerRuntimeBroker(capability=<redacted>)'
@@ -66,7 +106,62 @@ class OwnerRuntimeBroker:
     def authorized(self, token):
         return type(token) is str and hmac.compare_digest(token, self.capability) and time.monotonic() < self.deadline
 
-    async def completion(self, body):
+    def native_completion(self, body, session_id, request_id):
+        # Pinned native user-message IDs distinguish legal turns even when their
+        # text is identical. The payload digest only distinguishes tool-loop
+        # calls within that turn; it is never a cross-turn deduplication key.
+        if (type(session_id) is not str or not re.fullmatch(r'ses_[A-Za-z0-9]{8,120}', session_id)
+                or type(request_id) is not str or not re.fullmatch(r'msg_[A-Za-z0-9]{8,120}', request_id)):
+            raise OwnerModelCallError(False)
+        fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        key = (session_id, request_id, fingerprint)
+        with self.lock:
+            record = self.native_calls.get(key)
+            fresh = record is None
+            if fresh:
+                if self.remaining <= 0: raise OwnerModelCallError(False)
+                self.remaining -= 1
+                record = _NativeCall()
+                # At most max_calls records. No eviction can turn an old retry
+                # into a new provider call during this broker's short lifetime.
+                self.native_calls[key] = record
+        assert record is not None
+        if fresh:
+            try:
+                record.value = asyncio.run(self.completion(body, session_id))
+            except OwnerModelCallError as error:
+                record.error = (error.code, error.diagnostic_id)
+            except (Exception, asyncio.CancelledError):
+                error = OwnerModelCallError(True)
+                record.error = (error.code, error.diagnostic_id)
+            finally:
+                # Record before writing any local response. A lost downstream
+                # reply may be read again, but can never dispatch again.
+                record.done.set()
+        elif not record.done.wait(timeout=120):
+            raise OwnerModelCallError(True)
+        if record.error is not None:
+            code, diagnostic_id = record.error
+            raise OwnerModelCallError(code == 'OWNER_MODEL_CALL_UNCONFIRMED', diagnostic_id=diagnostic_id)
+        if record.value is None: raise OwnerModelCallError(True)
+        try:
+            self.handle.check()
+            reject_credential_echo(record.value, self.handle.credential())
+        except Exception:
+            raise OwnerModelCallError(False) from None
+        return deepcopy(record.value)
+
+    async def completion(self, body, session_id=None):
+        dispatched = False
+        def on_dispatch():
+            nonlocal dispatched
+            dispatched = True
+        try:
+            return await self._completion(body, session_id, on_dispatch)
+        except Exception:
+            raise OwnerModelCallError(dispatched) from None
+
+    async def _completion(self, body, session_id, on_dispatch):
         if type(body) is not dict or body.get('model') != 'owner-model': raise ValueError('MODEL_REQUEST_REJECTED')
         messages = body.get('messages')
         if type(messages) is not list or not 1 <= len(messages) <= 200: raise ValueError('MODEL_REQUEST_REJECTED')
@@ -93,13 +188,16 @@ class OwnerRuntimeBroker:
         self.handle.check()
         lease = self.handle.credential()
         transport_factory = self.handle.service.transport_factory
-        base = self.handle.body['baseURL']
-        transport = transport_factory() if transport_factory else PinnedChatTransport(base[:-3], before_send=self.handle.check)
+        base = base_url(self.handle.body['baseURL'])
+        headers = chat_headers(base, lease, session_id)
+        if session_id == self.capability: raise ValueError('MODEL_SESSION_REJECTED')
+        transport = (_SyntheticDispatchTransport(transport_factory(), on_dispatch) if transport_factory else PinnedChatTransport(
+            model_origin(base), base_path=urlsplit(base).path, before_send=self.handle.check, on_dispatch=on_dispatch))
         async with asyncio.timeout(120), httpx.AsyncClient(transport=transport, trust_env=False,
                 follow_redirects=False, timeout=120) as client:
             self.handle.check()
             async with client.stream('POST', base + '/chat/completions', json=request,
-                    headers={'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}) as response:
+                    headers=headers) as response:
                 if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
                     raise ValueError('MODEL_REQUEST_FAILED')
                 chunks, size = [], 0
@@ -139,20 +237,27 @@ class OwnerRuntimeBroker:
                     return self.reply(400, {'error': 'MODEL_REQUEST_REJECTED'})
                 token = self.headers.get('Authorization', '').removeprefix('Bearer ')
                 if not broker.authorized(token): return self.reply(401, {'error': 'MODEL_CAPABILITY_EXPIRED'})
+                # Pinned OpenCode's custom factory provider sends session-id;
+                # its built-in Go provider sends session. Preserve the native
+                # conversation, never substitute the secret broker capability.
+                session_id = self.headers.get('x-opencode-session')
+                native_session_id = self.headers.get('x-opencode-session-id')
+                if (broker.handle.body['baseURL'] == GO_BASE and session_id and native_session_id
+                        and session_id != native_session_id):
+                    return self.reply(400, {'error': 'MODEL_SESSION_REJECTED'})
+                session_id = session_id or native_session_id
                 if not broker.gate.acquire(blocking=False): return self.reply(429, {'error': 'MODEL_BUSY'})
                 try:
-                    with broker.lock:
-                        if broker.remaining <= 0: return self.reply(429, {'error': 'MODEL_CALL_LIMIT'})
-                        broker.remaining -= 1
-                    body = json.loads(raw)
-                    value = asyncio.run(broker.completion(body))
+                    try: body = json.loads(raw)
+                    except ValueError: return self.reply(400, OwnerModelCallError(False).response())
+                    value = broker.native_completion(body, session_id, self.headers.get('x-opencode-request'))
                     if body.get('stream') is True:
                         choice = value['choices'][0]; message = choice['message']
                         delta = {'role': 'assistant', 'content': message.get('content')}
                         if message.get('tool_calls'):
                             delta['tool_calls'] = [dict(index=i, **call) for i, call in enumerate(message['tool_calls'])]
                         chunk = {'id': value.get('id', 'chatcmpl-owner'), 'object': 'chat.completion.chunk',
-                            'created': value.get('created', int(time.time())), 'model': 'factory/owner-model',
+                            'created': value.get('created', int(time.time())), 'model': 'opencode-factory/owner-model',
                             'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]}
                         terminal = {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': choice.get('finish_reason', 'stop')}],
                             **({'usage': value['usage']} if 'usage' in value else {})}
@@ -160,7 +265,15 @@ class OwnerRuntimeBroker:
                         self.send_response(200); self.send_header('Content-Type', 'text/event-stream')
                         self.send_header('Content-Length', str(len(payload))); self.end_headers(); self.wfile.write(payload)
                     else: self.reply(200, value)
-                except Exception: self.reply(502, {'error': 'OWNER_MODEL_CALL_UNCONFIRMED'})
+                except OwnerModelCallError as error:
+                    # The pinned native harness retries every 5xx, independently
+                    # of SDK retries=0. A possible paid dispatch must end here.
+                    # 409 is also SDK-retryable; use 422 for an unconfirmed
+                    # dispatch, with no retryable status/text in its payload.
+                    self.reply(422 if error.code == 'OWNER_MODEL_CALL_UNCONFIRMED' else 400, error.response())
+                except OSError:
+                    # The recorded outcome survives a lost local socket reply.
+                    pass
                 finally: broker.gate.release()
             def reply(self, status, value):
                 payload = json.dumps(value).encode()

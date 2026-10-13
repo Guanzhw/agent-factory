@@ -81,7 +81,7 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
     if (pending || !ready || !capability?.enabled || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : !selectedCredential)) return;
     let baseURL: string;
     try { baseURL = modelEndpoint(endpoint); }
-    catch { setError('请输入 HTTPS 模型端点，路径为 /v1。'); return; }
+    catch { setError('请输入 HTTPS /v1 端点，或官方 Go 端点 https://opencode.ai/zen/go/v1。'); return; }
     const selectedModel = model.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(selectedModel) || selectedModel === key.trim()) { setError('请核对模型名称；密钥只能填入 API 密钥字段。'); return; }
     void run(async () => {
@@ -155,6 +155,6 @@ export function ModelSettings({ ownerId, onResearch, onCredentials }: { ownerId:
       {!editing && credentialSource === 'saved' ? <><label>已保存的模型凭据<select aria-label="已保存的模型凭据" value={selectedCredential ? savedReference : ''} onChange={e => setSavedReference(e.target.value)}><option value="">选择匹配此模型端点的凭据</option>{matchingCredentials.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.destination} · {c.credentialRef}</option>)}</select></label><p className="quiet">只绑定当前用户的已保存凭据引用，不重新保存密钥。保存时仍由服务端核对归属、授权、目标和版本。{!matchingCredentials.length && '当前没有匹配的有效凭据；可更改端点、重新读取设置或直接输入新密钥。'}</p></> : <label>API 密钥<input aria-label="API 密钥" type="password" autoComplete="new-password" required maxLength={4096} value={key} onChange={e => setKey(e.target.value)} placeholder={editing ? '输入新的密钥' : '输入自己的 API 密钥'}/></label>}</fieldset>
       <div className="button-row"><button className="primary" disabled={busy || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : !selectedCredential)}>{busy ? '正在保存…' : editing ? '保存新密钥' : credentialSource === 'saved' ? '保存模型并设为默认' : '保存并设为默认'}</button>{editing && <button type="button" disabled={busy} onClick={() => { setEditing(undefined); setKey(''); setModel(''); }}>取消更新</button>}</div>
     </form>}
-    <details className="technical-detail"><summary>兼容性与设置说明</summary><p>支持 HTTPS /v1 的文本与工具调用 Chat Completions。保存配置不会发送模型请求，也不证明远端模型兼容。</p><p>此默认模型用于平台 OpenResearch 环境及 Agno 原生任务。已有远端 OpenResearch 服务继续使用其自身配置。</p><p>撤销模型不删除历史记录；密钥轮换后旧任务绑定需重新核对。</p></details>
+    <details className="technical-detail"><summary>兼容性与设置说明</summary><p>支持 HTTPS /v1，以及官方 Go https://opencode.ai/zen/go/v1 的文本与工具调用 Chat Completions；Responses 或 Messages 模型尚不支持。保存配置不会发送模型请求，也不证明远端模型兼容。</p><p>此默认模型用于平台 OpenResearch 环境及 Agno 原生任务。已有远端 OpenResearch 服务继续使用其自身配置。</p><p>撤销模型不删除历史记录；密钥轮换后旧任务绑定需重新核对。</p></details>
   </section>;
 }
