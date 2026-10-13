@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: node --test scripts/check_web_architecture.test.mjs
+      - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
       - run: npm run check
   python:
     strategy:
@@ -35,9 +36,10 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run ruff check platform scripts
+      - run: uv run ruff check platform apps/research deployment scripts
       - run: uv run pyright
-      - run: uv run python -m unittest discover -s platform/tests -v
+      - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json
+      - run: uv run python scripts/check_python.py
   postgres:
     runs-on: ubuntu-latest
     services:
@@ -68,6 +70,8 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
+      - name: Install and start the independent core without application source
+        run: uv run python scripts/check_core_install.py
       - name: PostgreSQL suite once, including required acceptance (bounded diagnostic log)
         shell: bash
         run: |

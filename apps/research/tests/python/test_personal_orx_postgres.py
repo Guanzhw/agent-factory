@@ -33,7 +33,7 @@ class PersonalOrxPostgresTests(unittest.TestCase):
         fixture.setUp(); self.addCleanup(fixture.doCleanups)
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
             settings = Settings(db_url=database.url, workspace=Path(folder), max_workers=1,
-                personal_agent_commands_enabled=True, temporary_policy='admin-review',
+                personal_agent_commands_enabled=True, temporary_policy='member-self-service',
                 policy_revision='native-orx-personal-ci-v1', material_policy_revision='native-orx-personal-ci-v1',
                 personal_connection_providers={PERSONAL_ORX_PROVIDER_ID: fixture.provider})
             app = create_app(settings)
@@ -60,8 +60,10 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                     task = request('POST', '/personal-agent/commands/submit', body, expected=202)
                     prepared = request('GET', '/personal-agent/commands/requests/' + key)
                     plan = prepared['plan']; self.assertEqual(plan['status'], 'ready', plan)
+                    self.assertEqual(plan['policy'], 'member-self-service')
                     self.assertFalse(prepared['authorization']['reviewRequired'])
                     self.assertTrue(prepared['authorization']['ownerSubmissionSupported'])
+                    self.assertEqual(prepared['authorization']['approval']['source'], 'member-self-service')
                     self.assertEqual(task['planId'], plan['id'])
                     return key, task
                 def until(task, status):
@@ -79,8 +81,8 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 capabilities = request('GET', '/personal-agent/capabilities')
                 self.assertEqual(capabilities['modelConfiguration'], 'remote-configured-model')
                 self.assertFalse(capabilities['factoryBYOKForwarded'])
-                # A trusted/shared registration does not become an owner-owned
-                # registration simply because it grants this owner a handle.
+                # Shared grants use the same member admission rule. The current
+                # owner-scoped connection still controls access and revocation.
                 with store.connections._read() as conn:
                     shared = store.connections.personal.binding(conn, 'alice', remote['registrationRef'])
                 shared = replace(shared, opaque_handle=store.connections.resolve('alice', bound['ref'], 'orx'))
@@ -91,10 +93,16 @@ class PersonalOrxPostgresTests(unittest.TestCase):
                 shared_body = {'requestId': 'shared-orx-create', 'action': 'create',
                     'connectionRef': shared_bound['ref'], 'nativeProjectId': 'native-project'}
                 shared_plan = request('POST', '/personal-agent/commands/prepare', shared_body)
-                self.assertTrue(shared_plan['authorization']['reviewRequired'])
-                self.assertFalse(shared_plan['authorization']['ownerSubmissionSupported'])
+                self.assertFalse(shared_plan['authorization']['reviewRequired'])
+                self.assertTrue(shared_plan['authorization']['executionAllowed'])
+                self.assertTrue(shared_plan['authorization']['ownerSubmissionSupported'])
+                self.assertEqual(shared_plan['authorization']['approval']['source'], 'member-self-service')
                 shared_posts = len(fixture.posts())
-                request('POST', '/personal-agent/commands/submit', shared_body, expected=409)
+                request('POST', '/personal-agent/commands/submit', shared_body, owner='bob', expected=404)
+                store.connections.revoke('alice', shared_bound['ref'], 'revoke-shared-orx-fixture')
+                denied = request('POST', '/personal-agent/commands/submit', shared_body, expected=409)
+                self.assertEqual(denied['code'], 'CONNECTION_REVOKED')
+                self.assertEqual(store.tasks('alice'), [])
                 self.assertEqual(len(fixture.posts()), shared_posts)
                 count = len(fixture.posts())
                 attached = request('POST', '/personal-agent/sessions/attach', {

@@ -6,35 +6,18 @@ synthetic fixtures and platform skips; only required selectors reject skips.
 import argparse
 import json
 import os
-from pathlib import Path
 import sys
 import unittest
 
+from check_python import CollectionError, cases, configure_imports, discover_tests
 from postgres_requirements import REQUIRED_TESTS
 
 
-class CollectionError(ValueError):
-    pass
-
-
-def cases(suite):
-    """Keep discovery order and unittest's inherited method identities."""
-    for item in suite:
-        if isinstance(item, unittest.TestSuite):
-            yield from cases(item)
-        else:
-            yield item
-
-
-def collect(test_directory, requirements, *, loader=None):
+def collect(test_directories, requirements, *, loader=None):
     if not requirements:
         raise CollectionError('No required groups configured')
     loader = loader or unittest.TestLoader()
-    discovered = {}
-    for case in cases(loader.discover(str(test_directory))):
-        discovered.setdefault(case.id(), case)
-    if loader.errors:
-        raise CollectionError('\n'.join(loader.errors))
+    discovered = discover_tests(test_directories, loader=loader)
     required = {}
     for group, selectors in requirements.items():
         if not selectors:
@@ -92,11 +75,10 @@ def main(argv=None):
     if sys.platform != 'linux' and (not args.group or 'research_candidate_postgres' in args.group):
         print('POSTGRES_REQUIRED: full/candidate acceptance requires Linux', file=sys.stderr)
         return 1
-    root = Path(__file__).resolve().parents[1]
-    sys.path[:0] = [str(root / 'platform/tests'), str(root / 'platform')]
+    configure_imports()
     requirements = {group: REQUIRED_TESTS[group] for group in args.group} if args.group else REQUIRED_TESTS
     try:
-        discovered, required = collect(root / 'platform/tests', requirements)
+        discovered, required = collect(None, requirements)
     except CollectionError as error:
         print(f'POSTGRES_COLLECTION_FAILED: {error}', file=sys.stderr)
         return 1

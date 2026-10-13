@@ -61,6 +61,11 @@ REQUIRED_TESTS = {
         'test_native_workflow_factory_postgres',
         'test_workflow_custody_postgres',
     ),
+    'department_self_service': (
+        'test_department_admission_postgres.DepartmentAdmissionPostgresTests',
+        'test_department_publication.DepartmentPublicationPostgresTests',
+        'test_department_plan_policy.DepartmentPlanPolicyTests',
+    ),
     'execution_invariants': (
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_concurrent_native_runs_keep_models_knowledge_and_owner_context_separate',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_each_provider_turn_rechecks_current_authority_after_actual_native_tool',

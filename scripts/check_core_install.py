@@ -3,12 +3,12 @@
 Run: uv run python scripts/check_core_install.py --root /path/to/checkout
 Requires FACTORY_TEST_DATABASE_URL and the outer environment's PG dependencies.
 
-Pending A's packaging confirmation: root pyproject.toml builds only
-platform/agent_factory; README.md/LICENSE are its complete external build
-metadata; platform/tests/pg_fixture.py remains the disposable database helper.
+The standalone distribution is platform/pyproject.toml with platform/LICENSE
+and agent_factory sources beside it. platform/tests/pg_fixture.py provides the
+outer disposable database; none of its test code is installed into the venv.
 The copied stage deliberately has no apps, deployment, tests, lockfile or Git
 checkout. The fresh venv installs the wheel's declared dependencies, not an
-editable checkout. This driver does not imply that the pending split passes.
+editable checkout.
 Installation/lifecycle evidence must be paired with the real ownership gate:
 the old flat package can still contain application implementations internally.
 """
@@ -50,13 +50,13 @@ def run(root, timeout, summary):
         raise RuntimeError("uv is required to build and install the core wheel")
     with TemporaryDirectory(prefix="factory-core-install-") as directory:
         temporary = Path(directory)
-        build_env = {**os.environ, "UV_CACHE_DIR": str(temporary / "uv-cache")}
+        build_env = {**os.environ, "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", str(temporary / "uv-cache"))}
         stage, wheels, environment, runtime = (temporary / name for name in ("stage", "wheels", "venv", "runtime"))
         stage.mkdir(); wheels.mkdir(); runtime.mkdir()
         summary["phase"] = "stage"
-        for filename in ("pyproject.toml", "README.md", "LICENSE"):
-            shutil.copy2(root / filename, stage / filename)
-        shutil.copytree(root / "platform/agent_factory", stage / "platform/agent_factory",
+        for filename in ("pyproject.toml", "LICENSE"):
+            shutil.copy2(root / "platform" / filename, stage / filename)
+        shutil.copytree(root / "platform/agent_factory", stage / "agent_factory",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         probe = temporary / "core_smoke_probe.py"
         shutil.copy2(Path(__file__).with_name("core_smoke_probe.py"), probe)
@@ -65,6 +65,7 @@ def run(root, timeout, summary):
         artifacts = list(wheels.glob("*.whl"))
         if len(artifacts) != 1:
             raise RuntimeError("Expected exactly one core wheel")
+        summary["wheel"] = artifacts[0].name
         summary["phase"] = "install"
         command([uv, "venv", "--python", sys.executable, str(environment)], temporary, env=build_env)
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")

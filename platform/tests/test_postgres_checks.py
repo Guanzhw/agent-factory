@@ -19,6 +19,22 @@ with patch.object(sys, 'path', [str(SCRIPTS), *sys.path]):
 
 
 class PostgresCheckTests(unittest.TestCase):
+    def fixture_trees(self, *trees):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        restore_path = patch.object(sys, 'path', list(sys.path))
+        restore_path.start()
+        self.addCleanup(restore_path.stop)
+        directories = []
+        for index, files in enumerate(trees):
+            directory = Path(folder.name) / str(index)
+            directory.mkdir()
+            directories.append(directory)
+            for name, source in files.items():
+                (directory / (name + '.py')).write_text(textwrap.dedent(source))
+                self.addCleanup(sys.modules.pop, name, None)
+        return directories
+
     def fixture(self, source, groups=None, *, extra_files=None):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -67,6 +83,115 @@ class PostgresCheckTests(unittest.TestCase):
         self.assertEqual(result.testsRun, 1)
         self.assertEqual(result.successful_ids, {module + '.Child.test_inherited'})
         self.assertEqual(sys.modules[module].calls, ['Child'])
+
+    def test_two_trees_preserve_ids_requirements_and_cross_tree_fixture_imports(self):
+        suffix = uuid4().hex
+        core, app = 'test_core_' + suffix, 'test_app_' + suffix
+        core_fixture, app_fixture = 'core_fixture_' + suffix, 'app_fixture_' + suffix
+        directories = self.fixture_trees({
+            core_fixture: "VALUE = 'core'\n",
+            core: f'''
+                import unittest
+                from {app_fixture} import VALUE
+                class Case(unittest.TestCase):
+                    def test_cross_tree(self): self.assertEqual(VALUE, 'app')
+            ''',
+        }, {
+            app_fixture: "VALUE = 'app'\n",
+            app: f'''
+                import unittest
+                from {core_fixture} import VALUE
+                class Case(unittest.TestCase):
+                    def test_cross_tree(self): self.assertEqual(VALUE, 'core')
+            ''',
+        })
+        expected = {name + '.Case.test_cross_tree' for name in (core, app)}
+        ordinary = checks.discover_tests(directories)
+        discovered, required = checks.collect(directories, {'critical': (core + '.Case', app + '.Case')})
+        self.assertEqual(set(ordinary), expected)
+        self.assertEqual(set(discovered), expected)
+        self.assertEqual(required['critical'], expected)
+        result, summary = checks.run_checks(discovered, required, stream=io.StringIO())
+        self.assertTrue(summary['accepted'], result.errors)
+        self.assertEqual(result.successful_ids, expected)
+
+    def test_ordinary_entrypoint_keeps_all_import_roots_for_fixture_subprocesses(self):
+        discovery = sys.modules[checks.discover_tests.__module__]
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        suffix = uuid4().hex
+        imports = []
+        for index, relative in enumerate(discovery.SOURCES):
+            directory = root / relative
+            directory.mkdir(parents=True, exist_ok=True)
+            module = f'fixture_root_{index}_{suffix}'
+            (directory / (module + '.py')).write_text('VALUE = True\n')
+            imports.append(module)
+        command = '; '.join('import ' + name for name in imports)
+        trees = [root / 'platform/tests', root / 'apps/research/tests/python']
+        modules = []
+        for index, directory in enumerate(trees):
+            module = f'test_entrypoint_{index}_{suffix}'
+            modules.append(module)
+            self.addCleanup(sys.modules.pop, module, None)
+            (directory / (module + '.py')).write_text(textwrap.dedent(f'''
+                import subprocess
+                import sys
+                import unittest
+                calls = []
+                class Case(unittest.TestCase):
+                    def test_subprocess_imports(self):
+                        subprocess.run([sys.executable, '-c', {command!r}], check=True, capture_output=True)
+                        calls.append('ran')
+            '''))
+        with patch.object(discovery, 'ROOT', root), patch.object(discovery, 'TEST_DIRECTORIES', trees), \
+                patch.object(sys, 'path', list(sys.path)), patch.dict('os.environ', {'PYTHONPATH': ''}), \
+                patch('sys.stderr', io.StringIO()):
+            self.assertEqual(discovery.main(), 0)
+        for module in modules:
+            self.assertEqual(sys.modules[module].calls, ['ran'])
+
+    def test_loader_errors_from_both_trees_are_reported(self):
+        suffix = uuid4().hex
+        directories = self.fixture_trees(
+            {'test_core_' + suffix: "raise ImportError('missing core fixture')\n"},
+            {'test_app_' + suffix: "raise ImportError('missing app fixture')\n"},
+        )
+        with self.assertRaises(checks.CollectionError) as raised:
+            checks.discover_tests(directories)
+        self.assertIn('missing core fixture', str(raised.exception))
+        self.assertIn('missing app fixture', str(raised.exception))
+
+    def test_ambiguous_test_and_fixture_module_names_fail_before_import(self):
+        for prefix in ('test_duplicate_', 'shared_fixture_'):
+            with self.subTest(prefix=prefix):
+                module = prefix + uuid4().hex
+                directories = self.fixture_trees(
+                    {module: "raise AssertionError('must not be imported')\n"},
+                    {module: "raise AssertionError('must not be imported')\n"},
+                )
+                with self.assertRaisesRegex(checks.CollectionError, 'Ambiguous test/fixture module') as raised:
+                    checks.discover_tests(directories)
+                for directory in directories:
+                    self.assertIn(str(directory), str(raised.exception))
+                self.assertNotIn(module, sys.modules)
+
+    def test_duplicate_full_ids_are_rejected_instead_of_dropping_distinct_cases(self):
+        with self.assertRaisesRegex(checks.CollectionError, 'Duplicate test ID'):
+            self.fixture('''
+                class Case(unittest.TestCase):
+                    def id(self): return 'same.identity'
+                    def test_first(self): pass
+                    def test_second(self): pass
+            ''')
+
+    def test_missing_test_tree_cannot_silently_reduce_coverage(self):
+        directories = self.fixture_trees({})
+        with self.assertRaisesRegex(checks.CollectionError, 'does not exist'):
+            checks.discover_tests([*directories, directories[0] / 'missing'])
+        with self.assertRaisesRegex(checks.CollectionError, 'No test directories'):
+            checks.discover_tests([])
 
     def test_completed_case_can_be_collected_before_the_next_case_runs(self):
         _, discovered, required = self.fixture('''
