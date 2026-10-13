@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { PersonalCredentials } from './PersonalCredentials.js';
 import { PersonalSSHServers } from './PersonalSSHServers.js';
+import { PersonalToolConnections } from './PersonalToolConnections.js';
 import { api } from './api.js';
 import { processExecutionState, processLeasePage, processLeaseState, processLeaseView, type ProcessLease } from './processLeaseView.js';
 import { useCommandKeys } from './commandKeys.js';
@@ -105,6 +106,7 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
   return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onResearch && <button className="secondary" disabled={!!busy} onClick={onResearch}>返回 {applicationLabel}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
     <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onResearch={onPrepareResearch}/>
     <PersonalCredentials key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
+    <PersonalToolConnections ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
     {remoteServices?.(refresh, () => setRefresh(n => n + 1))}
     {error && <div role="alert" className="error-message">资源列表暂不可用。请刷新资源；原绑定保留，未自动重试绑定。<span>{error}</span></div>}
     <details><summary>高级：绑定已有可信登记</summary><p className="state-note">兼容管理员已配置的资源登记；不创建云资源。可用状态不代表真实提供商已验证。</p>

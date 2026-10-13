@@ -61,6 +61,7 @@ class Store:
         self.remote_execution: Any = None
         self.remote_bindings: Any = None
         self.personal_models: Any = None
+        self.personal_tools: Any = None
         self.owner_submissions: Any = None
         self.usage_ledger: Any = None
         self.process_runtime: Any = None

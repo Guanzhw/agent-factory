@@ -39,8 +39,9 @@ class ToolDescriptor:
                 or type(self.description) is not str or not 1 <= len(self.description) <= 2000
                 or type(self.credential_destination) is not str or not 1 <= len(self.credential_destination) <= 512
                 or any(ord(char) < 32 for char in self.credential_destination)
-                or type(self.capabilities) is not tuple or not 1 <= len(self.capabilities) <= 32
-                or any(type(value) is not str or not identifier.fullmatch(value) for value in self.capabilities)
+                or type(self.capabilities) is not tuple or not 1 <= len(self.capabilities) <= 30
+                or any(type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}', value)
+                    for value in self.capabilities)
                 or len(set(self.capabilities)) != len(self.capabilities)
                 or type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
                 or not 0.1 <= self.timeout_seconds <= 300

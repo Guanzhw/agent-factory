@@ -370,6 +370,45 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 
 ## 可执行检查与验收记录
 
+### 使用本人的 CLI / MCP 工具连接
+
+部署将明确安装的 adapter 实例放入 `Settings.personal_tool_adapters`，并在现有 vault
+注册该描述的 `credential_provider_id` 与准确 `credential_destination` 策略。工具描述
+还固定原生工具名、输入 schema、capabilities、单一 permission 及 read-only policy。
+Settings 自动装配现有 runtime adapter 与工具 policy；应用不导入 CLI/MCP 实现。
+
+例如，已安装的 `department.lookup` 适配器提供 `lookup_record`，需要
+`records:read` 能力及权限，则工具材料的关键字段为：
+
+```json
+{
+  "kind": "tool",
+  "content": "lookup_record",
+  "permissions": ["records:read"],
+  "runtimeBinding": {
+    "adapterId": "department.lookup",
+    "revision": "1",
+    "config": {"connectionName": "records"}
+  }
+}
+```
+
+这是材料内容片段；提交时仍须补齐原有材料身份、版本、许可与发布字段。应用 mode
+使用该材料引用，并声明：
+
+```json
+{
+  "connectionRequirements": [
+    {"name": "records", "kind": "tool", "requiredCapabilities": ["records:read"], "required": true}
+  ]
+}
+```
+
+成员在“我的工具连接”选择静态工具、保存或选择本人匹配凭据，页面完成登记与绑定；
+装配应用时选择该连接，后续按原 owner/revision pin 调用。应用定义、输入参数、提示词
+不含密码、token、命令行或服务器地址。配置并不证明外部账号认证成功；新供应商仍需
+明确其认证来源及输出/停止契约。详见[个人工具生命周期](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)。
+
 在仓库根目录准备已锁定依赖后，先运行不需要数据库的定向检查：
 
 ```bash

@@ -26,6 +26,11 @@ FAST_PYTHON_TESTS = {
         'test_department_plan_policy.DepartmentPlanPolicyTests',
         'test_billing_mode.BillingModeTests',
     ),
+    'personal_tool_connections': (
+        'test_personal_tools',
+        'test_personal_tool_execution',
+        'test_personal_tool_assembly.PersonalToolSettingsTests',
+    ),
     'original_receipt_and_stop': (
         'test_process_receipt_validation.ProcessReceiptValidation',
         'test_research_candidate_native_stop.NativeStopTests',
@@ -56,6 +61,7 @@ FAST_POSTGRES_TESTS = {
         'test_department_admission_postgres.DepartmentAdmissionPostgresTests.test_member_runs_multiple_applications_and_workflow_without_admin_decision',
         'test_department_publication.DepartmentPublicationPostgresTests.test_public_deactivation_requires_admin_and_keeps_history',
         'test_department_publication.DepartmentPublicationPostgresTests.test_http_member_publish_and_admin_only_delete_surface',
+        'test_personal_tool_assembly.PersonalToolAssemblyPostgresTests',
     ),
     # Tiny inert trees, including mutation checks; no installed ML tree or scale campaign.
     'research_inventory_posix': (

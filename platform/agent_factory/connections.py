@@ -99,6 +99,7 @@ class ConnectionService:
                  clock: Callable[[], datetime] | None = None, *, personal_providers=None):
         self.store, self.auth = store, auth
         self.owner_models: Any = None
+        self.personal_tools: Any = None
         # Operator configuration can be replaced by trusted in-process code.
         # Re-read this mapping at every preflight/resolve; never accept HTTP edits.
         self.trusted_bindings = trusted_bindings if trusted_bindings is not None else {}
@@ -206,6 +207,8 @@ class ConnectionService:
         self.handle_identities[key] = binding.opaque_handle
 
     def _trusted(self, registration_ref, owner, conn):
+        if registration_ref.startswith('owner-tool-') and self.personal_tools is not None:
+            return self.personal_tools.binding(conn, owner, registration_ref)
         if registration_ref.startswith('owner-model-') and getattr(self, 'owner_models', None) is not None:
             return self.owner_models.binding(conn, owner, registration_ref)
         if registration_ref.startswith("remote-"):
@@ -342,6 +345,13 @@ class ConnectionService:
             )} | {'status': status, 'available': available,
                 'allowedActions': ['inspect'] + (['bind'] if available and can_bind
                     and 'bind' in remote['allowedActions'] else [])})
+        if self.personal_tools is not None:
+            for item in self.personal_tools.list(owner):
+                available = item['available'] is True
+                values.append({key: item[key] for key in (
+                    'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
+                )} | {'status': 'available' if available else 'unavailable', 'available': available,
+                    'allowedActions': ['inspect'] + (['bind'] if available and can_bind else [])})
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):
@@ -489,7 +499,7 @@ class ConnectionService:
                 expected_version=expected_version, expected_adapter_ref=expected_adapter_ref,
                 required_capabilities=required_capabilities, task_id=task_id)
             handle = trusted.opaque_handle
-            if _row["registration_ref"].startswith("remote-"):
+            if _row["registration_ref"].startswith(("remote-", "owner-tool-")):
                 handle = handle.guarded(lambda operation_capabilities=(): self.preflight(owner, reference, expected_kind,
                     expected_revision=trusted.revision, expected_fingerprint=_row["fingerprint"],
                     expected_version=_row["version"], expected_adapter_ref=trusted.adapter_ref,
