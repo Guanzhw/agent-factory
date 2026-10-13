@@ -104,7 +104,7 @@ class CorePackageDistributionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = TemporaryDirectory(prefix='factory-core-distribution-')
         cls.addClassCleanup(cls.temporary.cleanup)
-        cls.root = Path(cls.temporary.name)
+        cls.root = Path(cls.temporary.name).resolve()
         result = subprocess.run([sys.executable, '-I', '-B', '-c',
             'import sys; from hatchling.build import build_wheel; print(build_wheel(sys.argv[1]))',
             str(cls.root)], cwd=ROOT / 'platform', capture_output=True, text=True, check=True)

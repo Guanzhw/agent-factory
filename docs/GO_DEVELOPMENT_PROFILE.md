@@ -6,6 +6,13 @@ The cumulative project policy supersedes artificial lifetime call gates while
 preserving all UNKNOWN history. Both models also passed actual native tool/receipt/artifact/ledger validation.
 The sections below retain the original fixture-stage scope and findings.
 
+Current publication policy: ordinary startup uses department member self-service.
+`publish_go_development_models` and the Go runners publish as the author without
+creating a reviewer or promoting another user. The separate-author/reviewer flow
+described in the historical stage below applies only to explicitly selected legacy
+review-policy fixtures. See [application development](APPLICATION_DEVELOPMENT.md)
+for the current publication and submission steps.
+
 ## Historical fixture-only stage (PR13)
 
 This stage connects the prior isolated adapter to the actual Factory material,
@@ -102,9 +109,9 @@ as implicit approval for scientific or production traffic.
 With the repository's pinned environment and a disposable PostgreSQL database:
 
 ```sh
-env -u OPENCODE_GO PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v test_opencode_go test_go_development_profile test_go_usage
+env -u OPENCODE_GO PYTHONPATH=platform:apps/research:deployment:platform/tests .venv/bin/python -m unittest -v test_opencode_go test_go_development_profile test_go_usage
 # FACTORY_TEST_DATABASE_URL must point to the disposable synthetic database.
-env -u OPENCODE_GO PYTHONPATH=platform:platform/tests .venv/bin/python -m unittest -v test_go_product_postgres
+env -u OPENCODE_GO PYTHONPATH=platform:apps/research:deployment:platform/tests .venv/bin/python -m unittest -v test_go_product_postgres
 ```
 
 The product tests publish/review real materials and an application, bind the

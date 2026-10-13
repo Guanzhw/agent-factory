@@ -1,14 +1,18 @@
 """Source relocation preserves the private, sealed scientific import namespace."""
+from contextlib import nullcontext
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import agent_factory
 import agent_factory_research
 from agent_factory_research.research_local_driver import _RUNTIME_FILES, _runtime_pins, _runtime_source
+from agent_factory_research.research_staging import FilePin
 
 
 class ScientificSourceOwnershipTests(unittest.TestCase):
@@ -22,12 +26,29 @@ class ScientificSourceOwnershipTests(unittest.TestCase):
             _runtime_source('../store.py')
 
     def test_source_pins_preserve_the_original_sealed_file_names(self):
-        pins = _runtime_pins()
-        self.assertEqual(tuple(pin.basename for pin in pins), _RUNTIME_FILES)
-        interpreter = next(pin for pin in pins if pin.basename == 'research_interpreter.py')
-        source = _runtime_source(interpreter.basename).read_bytes()
-        self.assertEqual(interpreter.sha256, hashlib.sha256(source).hexdigest())
-        self.assertEqual(interpreter.size_bytes, len(source))
+        def portable_source_pins(package, names):
+            # Real source bytes, but no claim of POSIX descriptor custody. The
+            # original function still assembles names across the owned packages.
+            result = []
+            for name in names:
+                source = (package / name).read_bytes()
+                result.append(FilePin(name, hashlib.sha256(source).hexdigest(), len(source)))
+            return tuple(result)
+
+        if os.name != 'posix':
+            with self.assertRaises(ValueError):
+                _runtime_pins()  # Unsupported host must not acquire real custody.
+        collectors = ('native', 'portable') if os.name == 'posix' else ('portable',)
+        for collector in collectors:
+            boundary = (patch('agent_factory_research.research_local_driver._package_runtime_pins',
+                side_effect=portable_source_pins) if collector == 'portable' else nullcontext())
+            with self.subTest(collector=collector), boundary:
+                pins = _runtime_pins()
+            self.assertEqual(tuple(pin.basename for pin in pins), _RUNTIME_FILES)
+            for pin in pins:
+                source = _runtime_source(pin.basename).read_bytes()
+                self.assertEqual(pin.sha256, hashlib.sha256(source).hexdigest())
+                self.assertEqual(pin.size_bytes, len(source))
 
     def test_scientific_dependency_closure_imports_in_original_private_namespace(self):
         # Import only the stdlib scientific wrapper; never initialize Torch,

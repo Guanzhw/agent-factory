@@ -190,7 +190,8 @@
       "Candidate journal accepts PLAN_READY and retains historical PLAN_APPROVED.",
       "Nested application/material reads reuse the existing metadata connection, including a one-slot pool.",
       "Moved fixtures retain owner, custody, policy withdrawal, UNKNOWN and original-receipt assertions.",
-      "Lint uses portable file globs; the first-run fixture waits for real async completion and denies unmocked fetch."
+      "Lint uses portable file globs; the first-run fixture waits for real async completion and denies unmocked fetch.",
+      "Windows packaging fixtures canonicalize temporary paths and distinguish distribution inspection from POSIX execution custody; real unsupported-host rejection and all payload assertions remain."
     ],
     "checks": {
       "ordinaryPython": {
@@ -225,14 +226,6 @@
         "healthOK": true,
         "cleanShutdown": true
       },
-      "focusedPostgres": {
-        "researchAndPublication": 104,
-        "policyAndStorage": 74,
-        "goDiagnosticAndCoding": 25,
-        "candidateAndBootstrapUniqueCases": 13,
-        "remoteRuntimeUsageAndGovernance": 28,
-        "skipped": 0
-      },
       "nativeOffline": {
         "opencodeCases": 8,
         "actualSdkCases": 3,
@@ -241,6 +234,21 @@
         "binarySha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
         "imageId": "sha256:09fac22af2fd4a25594a5b259f918e1a2b77cb15b00b21db260487f1cfcf8503",
         "testedHead": "81fb7176d426367aca07e2483e8913f1e7e881a8"
+      },
+      "focusedRegressionsWithPostgresEnabled": {
+        "researchAndPublication": 104,
+        "policyAndStorage": 74,
+        "goDiagnosticAndCoding": 25,
+        "candidateAndBootstrapUniqueCases": 13,
+        "remoteRuntimeUsageAndGovernance": 28,
+        "skipped": 0
+      },
+      "portablePackaging": {
+        "nativePosixTests": 8,
+        "simulatedNonPosixTests": 8,
+        "skipped": 0,
+        "productionGuardsUnchanged": true,
+        "realWindowsCI": "pending"
       }
     },
     "currentFullPostgresAndCrossPlatformResults": "See the exact-head verification and checks on https://github.com/Guanzhw/agent-factory/pull/86; focused groups above are not a full-suite or live-compatibility claim.",

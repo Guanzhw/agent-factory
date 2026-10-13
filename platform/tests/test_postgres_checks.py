@@ -174,7 +174,7 @@ class PostgresCheckTests(unittest.TestCase):
                 with self.assertRaisesRegex(checks.CollectionError, 'Ambiguous test/fixture module') as raised:
                     checks.discover_tests(directories)
                 for directory in directories:
-                    self.assertIn(str(directory), str(raised.exception))
+                    self.assertIn(str(directory.resolve()), str(raised.exception))
                 self.assertNotIn(module, sys.modules)
 
     def test_duplicate_full_ids_are_rejected_instead_of_dropping_distinct_cases(self):

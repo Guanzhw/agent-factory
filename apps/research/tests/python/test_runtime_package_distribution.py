@@ -3,7 +3,9 @@
 Build with the project's real backend and import only the installed payload in
 isolated Python. No native binary, Docker process, SSH connection or model runs.
 """
+from contextlib import nullcontext
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,6 +13,7 @@ import sys
 import tarfile
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
@@ -28,7 +31,9 @@ print(json.dumps({kind: builder(sys.argv[1]) for kind, builder in
 
 IMPORT_RUNTIME = '''
 import importlib, json, pathlib, sys
+from contextlib import ExitStack
 from types import SimpleNamespace
+from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 package = sys.argv[2]
 modules = {name: importlib.import_module(package + "." + name) for name in json.loads(sys.argv[3])}
@@ -36,7 +41,13 @@ entry = modules["entry"]
 config = SimpleNamespace(validate=lambda: None, cpus=1, memory_mb=1024, pids=64,
     session_root="/synthetic/session", orx=SimpleNamespace(path="/synthetic/orx"),
     opencode=SimpleNamespace(path="/synthetic/opencode"), image="sha256:" + "a" * 64)
-command = entry.build_command(config, "factory-orx-" + "b" * 32, "synthetic-capability-0123456789")
+# Packaging can be inspected on Windows; only the target execution host is
+# synthetic. This does not make Windows a supported custody/runtime host.
+with ExitStack() as host:
+    if sys.argv[4] == "synthetic-posix":
+        host.enter_context(patch.object(entry.os, "getuid", return_value=1001, create=True))
+        host.enter_context(patch.object(entry.os, "getgid", return_value=1002, create=True))
+    command = entry.build_command(config, "factory-orx-" + "b" * 32, "synthetic-capability-0123456789")
 print(json.dumps({"files": {name: str(pathlib.Path(module.__file__).resolve())
     for name, module in modules.items()}, "command": command,
     "packageVersion": modules["supervisor"].PACKAGE_VERSION,
@@ -50,7 +61,7 @@ class RuntimePackageDistributionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = TemporaryDirectory(prefix='factory-runtime-distribution-')
         cls.addClassCleanup(cls.temporary.cleanup)
-        cls.root = Path(cls.temporary.name)
+        cls.root = Path(cls.temporary.name).resolve()
         cls.source = {path.relative_to(ROOT / PACKAGE).as_posix(): path.read_bytes()
             for path in (ROOT / PACKAGE).rglob('*')
             if path.is_file() and '__pycache__' not in path.parts}
@@ -62,11 +73,16 @@ class RuntimePackageDistributionTests(unittest.TestCase):
         with zipfile.ZipFile(cls.wheel) as archive:
             archive.extractall(cls.site)
 
-    def runtime(self, site, name, modules=MODULES):
+    def runtime(self, site, name, modules=MODULES, *, host=None):
+        host = host or ("native" if os.name == "posix" else "synthetic-posix")
         result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', IMPORT_RUNTIME,
-            str(site), name, json.dumps(modules)], cwd=self.root,
-            capture_output=True, text=True, check=True)
-        return json.loads(result.stdout)
+            str(site), name, json.dumps(modules), host], cwd=self.root,
+            capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = json.loads(result.stdout)
+        user = "1001:1002" if host == "synthetic-posix" else f"{os.getuid()}:{os.getgid()}"
+        self.assertEqual(value["command"][value["command"].index("--user") + 1], user)
+        return value
 
     def assert_mounts(self, runtime, directory):
         command = runtime['command']
@@ -87,10 +103,15 @@ class RuntimePackageDistributionTests(unittest.TestCase):
             self.assertIn('openresearch_v1/notices/' + name, self.source)
 
     def test_installed_runtime_imports_without_factory_and_mounts_installed_scripts(self):
-        runtime = self.runtime(self.site, 'agent_factory_research.runtime_packages.openresearch_v1')
-        directory = self.site / WHEEL_PACKAGE / 'openresearch_v1'
-        self.assertEqual(runtime['files'], {name: str(directory / (name + '.py')) for name in MODULES})
-        self.assert_mounts(runtime, directory)
+        # Exercise the synthetic POSIX target on every test host; POSIX also
+        # retains the original real uid/gid command construction.
+        hosts = ('native', 'synthetic-posix') if os.name == 'posix' else ('synthetic-posix',)
+        for host in hosts:
+            with self.subTest(host=host):
+                runtime = self.runtime(self.site, 'agent_factory_research.runtime_packages.openresearch_v1', host=host)
+                directory = self.site / WHEEL_PACKAGE / 'openresearch_v1'
+                self.assertEqual(runtime['files'], {name: str(directory / (name + '.py')) for name in MODULES})
+                self.assert_mounts(runtime, directory)
 
     def test_source_distribution_rebuilds_the_same_runtime_payload(self):
         extracted = self.root / 'source-distribution'
@@ -120,14 +141,23 @@ class RuntimePackageDistributionTests(unittest.TestCase):
         from agent_factory_research.runtime_packages.openresearch_v1 import ssh_install
         from agent_factory_research.ssh_openresearch import SSHOpenResearchConfig, SSHOpenResearchPackage
         from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
-        from unittest.mock import patch
+        from agent_factory_research.runtime_packages.openresearch_v1.entry import private_directory
 
         binary = self.root / 'synthetic-binary'
         binary.write_bytes(b'SYNTHETIC-NOT-EXECUTED')
         config = PlatformOpenResearchConfig(str(binary), str(binary), 'sha256:' + 'a' * 64)
-        with patch.object(PlatformOpenResearchConfig, 'validate'):
-            package = SSHOpenResearchPackage(SSHOpenResearchConfig(config, (), lambda **_: None),
-                self.root / 'custody')
+        custody = self.root / 'custody'
+        custody.mkdir(mode=0o700)
+        if os.name != 'posix':
+            # The real host remains unsupported for POSIX directory custody.
+            with self.assertRaises((ValueError, AttributeError)):
+                private_directory(custody)
+        # On non-POSIX hosts this test inspects the distribution manifest only.
+        # Keep the real directory check on POSIX; never change runtime behavior.
+        host_check = (patch('agent_factory_research.ssh_openresearch.private_directory', return_value=custody)
+            if os.name != 'posix' else nullcontext())
+        with patch.object(PlatformOpenResearchConfig, 'validate'), host_check:
+            package = SSHOpenResearchPackage(SSHOpenResearchConfig(config, (), lambda **_: None), custody)
         self.assertEqual(set(package.files) | {'image.tar'}, ssh_install.FILES)
         target = self.root / 'remote' / 'factory_package'
         target.mkdir(parents=True)
