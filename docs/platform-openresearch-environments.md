@@ -38,22 +38,41 @@ AgentOS command queue remain the admission and observation paths.
   enters the application. The HTTPS-shaped connection locator is opaque platform
   metadata, not a URL resolved through the external remote TLS adapter.
 
-The operator wires an existing secure vault and the runtime artifacts through
-trusted `Settings`, for example:
+The operator wires an existing secure vault and the runtime artifacts when
+constructing `ResearchSettings`. Here `trusted_settings` contains the existing
+database, workspace, identity and `credential_vault_factory` constructor arguments;
+the two research settings shown explicitly are omitted from that mapping.
 
 ```python
-from agent_factory.platform_openresearch import PlatformOpenResearchConfig
+from agent_factory_research.config import ResearchSettings
+from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
+from agent_factory_server.main import create_app
 
-settings.platform_openresearch = PlatformOpenResearchConfig(
-    orx_path="/opt/factory/packages/orx-f336b121/orx",
-    opencode_path="/opt/factory/packages/opencode-1.18.35/opencode",
-    image="sha256:<reviewed-local-image-id>",
+settings = ResearchSettings(
+    **trusted_settings,
+    personal_agent_commands_enabled=True,
+    platform_openresearch=PlatformOpenResearchConfig(
+        orx_path="/opt/factory/packages/orx-f336b121/orx",
+        opencode_path="/opt/factory/packages/opencode-1.18.35/opencode",
+        image="sha256:<reviewed-local-image-id>",
+    ),
 )
-settings.personal_agent_commands_enabled = True
+app = create_app(settings)
 ```
 
-The native personal-command application must be published through existing
-application governance once by the operator. The runtime setting is Linux-only;
+The command flag must be set at construction: `ResearchSettings.__post_init__`
+installs its adapters and tool policy. Assigning the flag afterward does not
+install them. The ordinary environment-based CLI does not supply this runtime
+configuration or a vault. Serve the composed `app` through the existing trusted
+deployment entrypoint; saving a model does not install or prepare the package.
+
+The native personal-command application must be published once through existing
+application governance. With the default `member-self-service` policy, an
+authenticated member with `run` may publish its declarations using
+`agent_factory_research.personal_command_profile.publish_application(state, author=...)`;
+only an explicitly selected historical review policy requires a separate reviewer.
+Installing executable adapters and runtime artifacts remains trusted deployment
+configuration. The runtime setting is Linux-only;
 when absent, preparation advertises no platform location. Owners do not provide
 paths, installation scripts, image choices, shell commands or deployment keys.
 Cached executables must be regular non-linked files, immutable to other users,

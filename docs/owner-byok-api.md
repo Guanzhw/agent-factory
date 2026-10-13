@@ -79,8 +79,10 @@ explicit remote harness/model selection.
 The approval shortcut covers owner-created `remote-*` registrations only.
 Operator/shared registrations stay under their existing plan review/policy;
 the server does not assign an administrator role or submit administrator
-decisions on behalf of the user. Shared publication is still independently
-reviewed once. Identity, connection revision, organization scope limits, exact
+decisions on behalf of the user. Shared publication follows the configured
+material/application policy: members publish their declarations directly in
+default `member-self-service` mode; independent review applies only to an
+explicitly selected historical review policy. Identity, connection revision, organization scope limits, exact
 plan/effect hashes, request fingerprints, capacity and cancellation guards remain.
 
 The facade is **not one transaction covering remote side effects**. Plan admission,
@@ -136,13 +138,28 @@ provider destination policies. The standard `origin` policy accepts normalized
 HTTPS origins; the adapter additionally resolves and pins only public addresses
 for every inference request. No configuration request probes a provider.
 
+The ordinary `agent-factory` / `python -m agent_factory_server` entrypoint uses
+`ResearchSettings.from_env()`: it registers the model API and adapter, but does
+not install a vault or load a settings-factory module. A trusted Python deployment
+passes `ResearchSettings(..., credential_vault_factory=...)` to
+`agent_factory_server.main.create_app`. The vault factory receives the SQL engine and
+may return `agent_factory.credential_vault.EncryptedCredentialVault` with an
+operator-supplied 32-byte master key and
+`{"byok-chat-v1": agent_factory.personal_remote_provider.origin}` destination
+policy. Keep the deployment's existing identity settings. Reading model settings
+requires the owner's `read` capability; saving credentials/models and choosing
+the default require `run`. No published application or model material is needed
+just to enable this settings page.
+
 `GET /api/factory/personal-research/capabilities` reports
 `applicationAvailable`, `applicationId:"personal-research-v1"`, `nativeQueue:true`,
-and the model setup path. Shared template/code installation is an administrator
-responsibility, performed once; it is not an owner-task approval. The trusted
-`personal_research.publish_application(state, author=..., reviewer=...)` installer
-uses existing independent material and application publication. Its minimal
-bundled literature tools are **synthetic fixtures**, as their evidence states.
+and the model setup path. Installing executable adapters is trusted deployment
+configuration. Publishing template declarations follows the active governance
+policy: `personal_research.publish_application(state, author=...)` lets an
+authenticated member with `run` publish in default `member-self-service` mode.
+Only an explicitly selected historical review policy needs a distinct authorized
+`reviewer`. Its minimal bundled literature tools are **synthetic fixtures**, as
+their evidence states.
 It requires the approved research skill/prompt/literature/question/environment
 materials; it does not install arbitrary code or silently publish materials.
 Production deployments can publish their approved read-only research materials
@@ -157,6 +174,18 @@ If a production database retains that synthetic template, capabilities report
 409 code before a model/provider call. `applicationAvailable` alone indicates
 publication metadata, not actual research support. No synthetic template is
 silently selected as an ORX fallback.
+
+For a generic task in the current UI, open **Developer assembly**, select a
+published application whose model material binds `owner-chat-completions-v1@1`,
+and select the saved owner's model connection for that application's declared
+model requirement. Generate the proposal, confirm the plan, then start the task.
+All selected materials must be published; executable bindings must resolve to
+installed adapters.
+The composer sends explicit `connectionRefs`; setting a default does not replace
+an arbitrary application's model. The optional `/personal-research` API below
+selects the default only for its supported published template. Native ORX instead
+requires its own existing project/service binding or an explicitly installed
+[platform runtime package](platform-openresearch-environments.md).
 
 ## Step 1: save a model and choose the default
 
@@ -269,8 +298,9 @@ Start action. `executionAllowed` becomes true after the exact owner submission;
 project side effects still require the existing exact owner consent.
 Owner submissions bind the exact plan digest; current identity/material/resource
 permissions, cancellation, revocation, task depth/capacity and native tool guards
-still run. Administrators continue managing shared resources, organization
-policy, platform-paid profiles and trusted/shared-definition publication.
+still run. Administrators retain shared/public resource withdrawal and deletion;
+executable/provider installation remains trusted deployment configuration.
+Members can publish their declarations under the default governance policy.
 Read-only BYOK research and existing owner personal commands qualify; arbitrary
 code/writes/shared connections/remote Factory placement do not gain approval.
 ORX project creation retains its existing immutable preview/owner consent and
