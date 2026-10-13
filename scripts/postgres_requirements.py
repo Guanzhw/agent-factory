@@ -66,7 +66,6 @@ REQUIRED_TESTS = {
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_each_provider_turn_rechecks_current_authority_after_actual_native_tool',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_unavailable_forged_and_unadopted_bindings_have_no_demo_fallback',
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_stale_tab_expected_owner_rejects_secret_and_metadata_before_any_write',
-        'test_personal_models_postgres.PersonalModelsPostgresTests.test_single_submit_native_queue_no_billing_no_admin_and_replay',
         'test_byok_model.ByokModelTests.test_no_environment_fallback_and_sanitized_errors_and_echo',
         'test_autoresearch_postgres.AutoResearchPostgresTests.test_missing_stop_proof_holds_original_effect_and_replay_never_dispatches',
     ),

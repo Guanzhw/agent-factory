@@ -22,6 +22,8 @@ CI runs on pull requests, pushes to `main`, and explicit workflow dispatch. A fe
 uv run python -m unittest discover -s platform/tests -p test_architecture_checker.py -v
 uv run python -m unittest discover -s platform/tests -p test_postgres_checks.py -v
 uv run python scripts/check_architecture.py --root /path/to/project --config /path/to/ownership.json
+node --test scripts/check_web_architecture.test.mjs
+node scripts/check_web_architecture.mjs --root /path/to/project --config /path/to/web-ownership.json
 ```
 
 The last command requires an agreed map; there is intentionally no passing default for this repository yet. A map uses import search directories and package names, for example this synthetic fixture (not a repository baseline):
@@ -40,6 +42,8 @@ The last command requires an agreed map; there is intentionally no passing defau
 
 The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports in owned modules or their reachable helpers fail with a coverage diagnostic; unrelated tests do not acquire this restriction. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
 
+The frontend checker uses the TypeScript parser and module resolver with one `tsconfig` (default `tsconfig.json`). Its map uses project-relative paths: `core` and `source_roots` are directories; each app has `path` and exact `public` files; `composition_roots` are exact files. Import/export, type dependencies, literal dynamic imports, `require`, path aliases and re-exports form edges. Unresolved imports and local source outside the indexed roots report coverage gaps in protected/reachable code. It does not expand third-party internals, custom loader aliases, `eval` or bundler-generated dependencies. Both checkers have legal, direct, indirect and composition-bypass fixtures. A composition root may wire application internals; it cannot exempt its callers or similarly named siblings.
+
 Repository wiring remains pending the actual app/core split. No migration allowlist has been added. The core-only smoke must use an isolated, non-editable installation with no app source available and complete startup/health/shutdown; it is not implemented in this preparation change.
 
 Known baseline coupling at `615a23f` (migration work, never passing exceptions):
@@ -51,6 +55,7 @@ Known baseline coupling at `615a23f` (migration work, never passing exceptions):
 | `agent_factory.config.Settings` contains research evaluators, presets, profile factories and OpenResearch packages | Research settings |
 | `agent_factory.store.Store` carries research session, child, runtime and evaluation services | Research services; core retains only narrow execution lifecycle hooks |
 | `web/App.tsx` imports and renders concrete research screens | Research frontend selected in `web/composition.tsx` through static component slots |
+| Ordinary-flow fixtures in `ApplicationContextNativePostgresTests`, `ManagedWorkspacePostgresTests`, `PersonalOrxPostgresTests` and `PersonalModelsPostgresTests` still assert legacy review/owner-submission admission | Migrate normal fixtures to member self-service while retaining owner/model/UNKNOWN assertions; historical approvals are compatibility cases, not current product requirements |
 
 The directory contract is maintained only in [ARCHITECTURE.md](../ARCHITECTURE.md). This table is a migration status list, not a second ownership map; remove resolved rows when integrating the split. Deterministic acceptance uses local transports and synthetic credentials. It must not send real model requests or encode a permanent provider/model ban.
 

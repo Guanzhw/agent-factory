@@ -19,6 +19,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: node --test scripts/check_web_architecture.test.mjs
       - run: npm run check
   python:
     strategy:
