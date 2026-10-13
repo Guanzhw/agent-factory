@@ -646,17 +646,26 @@ class ApplicationService:
         return result
 
     def _deactivate(self, actor, identifier, version, request_id, reason, state):
-        self.auth.require(actor, "agent_os:admin")
+        self.auth.require(actor, "run")
         if not isinstance(reason, str) or len(reason) > 2000:
             raise HTTPException(422, "Bounded application status reason required")
         MaterialGovernance._safe_data(reason)
         with self.db.write() as conn:
-            body, _ = self._row(conn, identifier, version)
+            body, current = self._row(conn, identifier, version)
+            # An archived public version is still public history. The existing
+            # publication receipt distinguishes it from an archived private draft.
+            private_draft = (current["state"] in {"draft", "archived"} and not current["bootstrap"]
+                and current["review_id"] is None and conn.execute(select(self.commands.c.request_id).where(
+                    self.commands.c.action == "application.publish",
+                    self.commands.c.fingerprint == digest({"action": "publish", "ref": self.pin(body)})
+                ).limit(1)).first() is None)
+            permission = "run" if state == "archived" and private_draft and current["author_id"] == actor else "agent_os:admin"
+            self.auth.require(actor, permission)
             fingerprint = digest({"action": state, "ref": self.pin(body), "reason": reason})
             old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
             if old is not None:
                 return old
-            self.auth.require(actor, "agent_os:admin")
+            self.auth.require(actor, permission)
             conn.execute(self.states.update().where(self.states.c.id == identifier, self.states.c.version == version).values(state=state, reason=reason, updated_at=now()))
             return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application." + state,
                                   {"applicationRef": self.pin(body), "state": state, "reason": reason, "immutableBodyPreserved": True})
