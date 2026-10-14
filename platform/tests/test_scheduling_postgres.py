@@ -111,7 +111,8 @@ class SchedulingPostgresTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 404)
         with self.assertRaises(HTTPException) as error:
             self.service.create("alice", self.store.plan(schedule["payload"]["planId"])["id"], "denied", "0 0 1 1 *")
-        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(error.exception.detail, "Plan not found")
         self.auth.authorization.unassign("manager", "factory-manager")
         with self.assertRaises(HTTPException) as error:
             self.call(self.service.execute, Schedule.from_dict(schedule), self.db)
@@ -260,8 +261,12 @@ class SchedulingPostgresTests(unittest.TestCase):
         login("bob")
         self.assertEqual(self.client.get(path).status_code, 404)
         self.assertEqual(self.client.get(path + "/occurrences").status_code, 404)
-        self.assertEqual(self.client.post("/api/factory/schedules", json={**body, "name": "denied"}).status_code, 403)
-        self.assertEqual(self.client.post(path + "/trigger", json=request).status_code, 403)
+        denied = self.client.post("/api/factory/schedules", json={**body, "name": "denied"})
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(denied.json()["message"], "Plan not found")
+        denied = self.client.post(path + "/trigger", json=request)
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(denied.json()["message"], "Factory schedule not found")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ FAST_PYTHON_TESTS = {
     'department_defaults': (
         'test_department_plan_policy.DepartmentPlanPolicyTests',
         'test_billing_mode.BillingModeTests',
+        'test_schedule_permissions.ScheduleMemberPermissionTests',
     ),
     'personal_tool_connections': (
         'test_personal_tool_adapter_integration',
@@ -62,6 +63,7 @@ FAST_POSTGRES_TESTS = {
         'test_trusted_model_proxy_postgres.TrustedModelProxyPostgresTests.test_generic_protocols_complete_native_task_with_existing_owner_vault',
     ),
     'member_self_service': (
+        'test_scheduling_member_postgres.MemberSchedulingPostgresTests',
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_single_submit_native_queue_no_billing_no_admin_and_replay',
         'test_department_admission_postgres.DepartmentAdmissionPostgresTests.test_member_runs_multiple_applications_and_workflow_without_admin_decision',
         'test_department_publication.DepartmentPublicationPostgresTests.test_public_deactivation_requires_admin_and_keeps_history',
