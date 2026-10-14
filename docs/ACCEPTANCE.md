@@ -1,6 +1,6 @@
 # Acceptance ledger
 
-## Current scope — 2026-10-07
+## Current scope — 2026-10-14
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
@@ -26,7 +26,7 @@ including the separately reviewed historical checkpoint bridge.
 
 | Capability | Implemented / evidence | Remaining code or real acceptance |
 |---|---|---|
-| Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, separate review, immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
+| Native Factory / FR16 | Agno 3.1.0 + PostgreSQL; six material kinds, `member-self-service` for direct member publication and direct new-plan admission; explicit `separate-admin`/`admin-review` policies remain configurable; immutable application/plan/bindings, native queue, HITL, delegation, receipts, cancellation, owner artifacts and Chinese UI | Real production/scientific acceptance remains open; default AutoResearch uses synthetic materials and a deterministic model |
 | AT10 / Linux ORX | Real pinned toy process, positive stop evidence, local and receiver recovery including receiver-parent; original IDs, original 30-second business wait and one launch retained. Final stage evidence in PR12 | Not a general scientific evaluator or hostile-code sandbox. Windows and production/target-host reliability are not certified |
 | Go coding development | Exact deepseek-flash Chat and gpt-6-luna Responses; both live smokes and governed native Agno tool/receipt/artifact/Postgres ledger workflows passed. New nominal accounting metadata preserves prior hashes; cumulative history retained | Actual provider invoice remains UNKNOWN; coding subscription is not production/research selection. See [current evidence](LUNA_SCIENTIFIC_CONTRACTS.md) |
 | Usage / production provider | Immutable nonzero prices, per-attempt reservations/settlement, retry/stream/UNKNOWN holds and remote allocation; Go fixture supplies concrete guard/parser | Specific research provider adapter/SDK integration, exact usage/retry/input/pricing contract and governed application model selection remain code work, not merely credential setup |
@@ -36,7 +36,7 @@ including the separately reviewed historical checkpoint bridge.
 | Remote runtime / compute | Runtime attachment, governed receiver mapping/authority, receiver-owned children, actual controlled HTTP/process restart/receipt evidence | Shared weighted admission, task-owned workspace and cooperative process allocation, native identity binding, positive stop-only release and UNKNOWN holds are implemented. Required existing-receiver attachment is implemented. Aggregate cgroup integration has fake/offline validation only; this read-only cgroup environment provides no real enforcement acceptance. Machine/cloud provisioning is optional, outside the required baseline. Linux target runtime/delegation, external-host TLS/stop proof and target capacity remain unverified |
 | Storage / operations | Quarantine/restore/reclaim, finite twenty-user pressure, official online PostgreSQL snapshot and independent restore | Measured 4 CPU/16 GiB, not 32/64 or 54/192 target machines; production monitoring/RPO/RTO/PITR and sustained target load remain open |
 | Scheduling | Single active native poller, immutable occurrence admission and guarded restart | Upstream atomic lease-release gap prevents certification of concurrent scheduler replicas; no cluster claim |
-| Ordinary OpenResearch new project | Explicit creation scope; source/write/possible model-cost preview, owner consent plus existing review/native task, disabled GitHub sync and original project → session → research/result handoff; controlled fixture and required real-PG coverage | Live endpoint/model/tool-loop acceptance and browser visual acceptance remain unverified; UNKNOWN candidates never prove original creation. See [contract and live inputs](PERSONAL_OPENRESEARCH_PROJECT_CREATION.md) |
+| Ordinary OpenResearch new project | Explicit creation scope; source/write/possible model-cost preview, owner consent plus native task admission (and plan review only when configured), disabled GitHub sync and original project → session → research/result handoff; controlled fixture and required real-PG coverage | Live endpoint/model/tool-loop acceptance and browser visual acceptance remain unverified; UNKNOWN candidates never prove original creation. See [contract and live inputs](PERSONAL_OPENRESEARCH_PROJECT_CREATION.md) |
 | Personal SSH server enrollment | Opt-in deployment IP/port policy; existing encrypted owner vault, fixed host-key confirmation, dedicated Ed25519 identity, read-only dependency check, explicit enable and OpenResearch handoff. Required PostgreSQL gate includes owner isolation, revoked/rotated keys, policy withdrawal, unchanged configuration recovery and agent guard/mutex boundaries | External devices, production SSH permissions/keys, passphrase keys, cold image loading and long-running resource authority remain unverified. Verification keeps the existing 15-minute lease; changed environment pins require migration. No sudo/system provisioning or automatic task replay. See [server contract](ssh-openresearch-environments.md) |
 
 Current evidence: [AT10](AT10_TREE_ACCEPTANCE.md), [Go profile](GO_DEVELOPMENT_PROFILE.md),
@@ -149,9 +149,9 @@ new-head CI results.
 
 
 
-## Configurable plan-review stage
+## Explicit plan-review policy evidence
 
-See [PLAN_POLICY.md](PLAN_POLICY.md) for current native-authority checks, exact-plan review bindings, expiry/revision withdrawal, delegated approval inheritance and real owner/admin browser evidence. Production defaults conservatively to administrator review; selecting a policy does not configure a provider or bypass exact material/connection/adapter preflight.
+See [PLAN_POLICY.md](PLAN_POLICY.md) for native-authority checks, exact-plan review bindings, expiry/revision withdrawal, delegated approval inheritance and real owner/admin browser evidence. That browser evidence exercises explicitly selected `admin-review`; current direct new-plan admission defaults to `member-self-service`. Neither policy configures a provider or bypasses exact material/connection/adapter preflight.
 
 ## Remote placement and scheduler recovery stage
 
@@ -173,9 +173,9 @@ do not certify all factory/v0.3 requirements or live scientific acceptance.
 
 | Requirement | Acceptance criterion | Test evidence | Boundary |
 |---|---|---|---|
-| FR16 / AC16.1 | A new approved application selects an exact six-kind material closure and executes without a core application-ID branch | AT16.1: `test_new_six_kind_configuration_is_discovered_without_application_branches`; `test_new_approved_application_natural_language_to_actual_native_artifact_without_core_branch` in `test_applications_composition.py` | Deterministic approved-metadata discovery; no unrestricted model-designed application |
+| FR16 / AC16.1 | A new published application selects an exact six-kind material closure and executes without a core application-ID branch | AT16.1: `test_new_six_kind_configuration_is_discovered_without_application_branches`; `test_new_approved_application_natural_language_to_actual_native_artifact_without_core_branch` in `test_applications_composition.py` | Deterministic approved-metadata discovery; no unrestricted model-designed application |
 | FR16 / AC16.2 | Propose, revise, reject and accept retain immutable evidence; identical accept returns one plan/ticket | AT16.2: `test_semantic_keys_reject_changed_intent_and_accept_recovery_creates_one_plan`; `test_postgres_concurrent_identical_accept_single_native_ticket_and_restart_receipt` | Actual PostgreSQL/native admission, including a one-slot pool; lost-ACK/reload browser proof recorded separately |
-| FR16 / AC16.3 | Only a separate current administrator publishes a shared exact definition; withdrawal denies current execution without erasing history | AT16.3: `test_publication_binds_exact_version_and_requires_separate_current_native_admin`; `test_actual_factory_restart_withdrawn_seed_keeps_history_and_blocks_current_execution` | No model publication or new production role grants |
+| FR16 / AC16.3 | Under explicit `separate-admin` mode, a distinct current administrator reviews an exact definition; normal `member-self-service` lets an author publish their own exact version. Administrator withdrawal denies current execution without erasing history | AT16.3: `test_publication_binds_exact_version_and_requires_separate_current_native_admin`; `test_actual_factory_restart_withdrawn_seed_keeps_history_and_blocks_current_execution` | No model publication or new production role grants |
 | FR16 / AC16.4 | Exact bindings choose actual model/tool/knowledge/environment factories and recheck native identity/current authority | AT16.4: `test_concurrent_native_runs_keep_models_knowledge_and_owner_context_separate`; `test_registered_tool_material_changes_actual_native_function`; `test_selected_environment_limits_actual_fixed_process_and_retains_unknown_outcome` in `test_execution_bindings.py` | Controlled Models; fixed reviewed process, not hostile-code tenancy |
 | FR16 / AC16.5 | Owner connection handles never enter prompts/public metadata; revocation, expiry, rotation and changed pins deny use | AT16.5: `test_05_expiry_recheck_and_restart_preserve_owner_reference`; `test_06_changed_revision_scope_and_handle_identity_cannot_rebind_old_reference`; `test_08_task_scope_cannot_cross_owner_task_cancel_or_terminal` in `test_connections_postgres.py` | Trusted operator registrations only; no real provider credential configured |
 | FR16 / AC16.6 | Missing adapters identify only actual missing items and never invoke a fallback | AT16.6: `test_preflight_identifies_only_missing_binding_and_never_constructs_adapters`; `test_actual_production_configuration_missing_exact_model_registration_is_specific_and_never_executes` | Production-shaped generated fixture, not production access or a live provider test |
@@ -184,9 +184,9 @@ do not certify all factory/v0.3 requirements or live scientific acceptance.
 
 The React acceptance uses real loopback HTTP, generated native users/roles and
 PostgreSQL: model/environment revision, blocked connection preflight, repeated
-submission, lost persisted acknowledgements, owner revoke, independent review,
-malformed-response recovery and mobile fit. No external provider/model request or
-production grant occurs. Full-suite counts are in VERIFICATION.md.
+submission, lost persisted acknowledgements, owner revoke, explicit `separate-admin`
+review, malformed-response recovery and mobile fit. No external provider/model
+request or production grant occurs. Full-suite counts are in VERIFICATION.md.
 
 ## Governed remote bindings: FR / AC / AT
 
