@@ -5,9 +5,6 @@ import { AutoResearch } from './AutoResearch.js';
 import { ComparisonPanel } from './ComparisonPanel.js';
 import { researchApi } from './api.js';
 
-export function ResearchCatalog({ context }: { context: WorkspaceContext }) {
-  return <article className="or-catalog-card"><span className="quiet">研究应用</span><h2>OpenResearch</h2><p>关联原生项目、整理研究会话，沿原任务查看结果与证据。</p><p className="quiet">可用能力以工作区服务端检查为准。</p><button className="primary" onClick={() => context.navigate({ tab: 'openresearch' })}>进入 OpenResearch</button></article>;
-}
 export function ResearchDeveloperTools({ context }: { context: WorkspaceContext }) {
   return <details className="technical-detail"><summary>受控实验开发入口</summary><p>预设工作负载与原生 OpenResearch 项目彼此独立。</p><button className="secondary" onClick={() => context.navigate({ tab: 'autoresearch' })}>打开受控 Auto-Research 实验</button></details>;
 }

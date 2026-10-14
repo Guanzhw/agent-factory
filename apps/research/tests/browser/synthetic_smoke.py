@@ -184,7 +184,7 @@ def scenario(browser, base: str, output: Path, name: str, viewport: dict, verifi
     context.route("**/*", intercept)
     try:
         page.goto(base + "/", wait_until="networkidle")
-        expect(page.get_by_role("heading", name="选择你的工作区", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="应用目录", exact=True)).to_be_visible()
         page.get_by_role("button", name="进入 OpenResearch", exact=True).click()
         expect(page).to_have_url(base + "/?tab=openresearch")
         expect(page.get_by_role("heading", name="OpenResearch", exact=True)).to_be_visible()
