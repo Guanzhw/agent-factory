@@ -4,14 +4,18 @@ An operator can install the personal command capability with
 `Settings(personal_agent_commands_enabled=True)` and explicitly install the distinct
 `opencode-personal-session-v1` provider. Existing verification-only provider registrations
 are never upgraded. `publish_application(state, author=..., reviewer=...)` in
-`personal_command_profile` publishes the versioned materials/application through normal
-independent publication review. It does not create a remote connection, accept a secret,
-start a session, or authorize spending. Owner connections remain self-service.
+`personal_command_profile` follows the active governance policy. Under the normal
+`member-self-service` mode, an author publishes their own materials/application directly;
+an explicitly configured legacy or `separate-admin` policy may require an independent
+reviewer. It does not create a remote connection, accept a secret, start a session, or
+authorize spending. Owner connections remain self-service.
 
-Temporary-plan approval remains the configured Factory policy; it is a separate product
-policy decision, not a mandatory property of personal mode. The capability response
-reports current policy, and preparation reports exact-plan authorization. This tool is
-never classified as read-only, and no endpoint silently approves a plan.
+Temporary-plan admission follows the active Factory policy. Normal `Settings.from_env()`
+and `ResearchSettings.from_env()` entrypoints use `member-self-service`, so ordinary
+commands need no plan-review step. An explicitly configured legacy or `separate-admin`
+policy may require review; personal mode does not add an approval step. The capability
+response reports current policy, and preparation reports exact-plan authorization. This
+tool is never classified as read-only, and no endpoint silently approves a plan.
 
 ## API
 
