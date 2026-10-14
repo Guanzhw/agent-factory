@@ -1,9 +1,10 @@
 # Current delivery and review index
 
-## Personal CLI / MCP connections — PR #88 implementation
+## Personal CLI / MCP connections — merged PR #88
 
-[Personal CLI / MCP connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
-is being implemented on the merged #86 baseline `main@3ef542ba`: static shared tools,
+[The CLI / MCP lifecycle and member setup](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
+was implemented in [PR #88](https://github.com/Guanzhw/agent-factory/pull/88), based on
+`main@3ef542ba` and merged to `main@c4fd1fac` on 2026-10-13. Static shared tools,
 private owner connections and on-demand calls reuse existing Factory contracts.
 Verification uses synthetic authentication with a real local CLI process and MCP test
 server; no external vendor compatibility or real model call is claimed.
@@ -12,12 +13,12 @@ server; no external vendor compatibility or real model call is claimed.
 
 See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for the owner-verified real result at
 09:48 UTC, exact PR54 runner/sealed PR50 runtime, released custody and remaining
-original-plan priorities. The older current-scope wording below predates that
+original-plan priorities. The historical scope snapshot below predates that
 selected local baseline; production, department capacity and separate-host
 acceptance remain distinct. Personal-agent/24-hour work remains deferred in
 [PR51](https://github.com/Guanzhw/agent-factory/pull/51).
 
-## Current scope — 2026-10-04
+## Historical scope snapshot — 2026-10-04
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,

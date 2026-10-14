@@ -103,10 +103,14 @@ The callback path must be `/api/factory/auth/callback`. ID-token and RFC9068 acc
 token contracts remain separate. Config validity does not prove existing owners
 or current SQL permissions, real IdP registration, login or deployment TLS.
 
-Policy validation reuses `PlanPolicyConfig` and `GovernanceConfig`. Production
-choices are `admin-review` or `read-only-auto`, with `separate-admin` material
-review. Worker concurrency remains within the currently implemented 1–4 bound;
-this is not target-host capacity acceptance.
+Policy validation reuses `PlanPolicyConfig` and `GovernanceConfig`. A production
+declaration accepts `temporaryPolicy` values `member-self-service`, `admin-review`
+or `read-only-auto`, and `materialReviewMode` values `member-self-service` or
+`separate-admin`. These fields are validated independently: `admin-review` is a
+plan-admission policy, while `separate-admin` is a material-publication policy.
+Declaration validity does not install these settings into Factory or prove
+production acceptance. Worker concurrency remains within the currently
+implemented 1–4 bound; this is not target-host capacity acceptance.
 
 Both compute backends require `kind`, `configurationRevision`, `owners`, `pool`
 and `limits`. `pool` requires `poolId`, `cpu`, `memoryMb`, `diskMb`, `maxLeases`,

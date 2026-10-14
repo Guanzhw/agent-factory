@@ -45,6 +45,27 @@ acceptance below covers one exported database snapshot. PITR, power loss, RPO/RT
 backup encryption, offsite recovery and target-host throughput remain production
 acceptance work.
 
+## Existing single-host release replacement and rollback
+
+For the existing one-application-process/PostgreSQL topology, a release change is
+an operator-managed replacement, not an automated migration. Record the exact
+source revision and trusted configuration revision. For a planned update, stop
+the API/worker/poller cleanly and take the custom-format PostgreSQL backup
+(`pg_dump --no-owner --no-acl`) described above. Preserve JWT keys, policy
+revisions, provider/runtime configuration and executable provenance separately
+through the approved secret/configuration channel. Install pinned dependencies
+with `npm ci --ignore-scripts` and `uv sync --frozen`, then restart with
+`npm run start:configured` or `uv run python -m agent_factory_server` as documented
+in the [README](../README.md#start-locally).
+
+If rollback is needed, stop the new process, restore the paired pre-update dump
+with `pg_restore` into a distinct empty database, restore its matching source
+revision and trusted configuration, then point the application at that restored
+database. Do not apply an in-place reverse schema change or overwrite the live
+database. This documents the existing clean-stop dump/restore path; it does not
+establish cross-version production schema migration, target-host rollback
+acceptance, PITR, RPO/RTO or offsite recovery.
+
 ## Admission capacity acceptance
 
 Three actual native queue/PostgreSQL tests use twenty generated test identities.

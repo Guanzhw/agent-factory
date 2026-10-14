@@ -1,22 +1,26 @@
 # Governed assembly and trusted execution bindings
 
-This milestone replaces application-ID selection in the core with approved,
+This milestone replaces application-ID selection in the core with published,
 immutable application configurations and bounded material proposals. It extends
 the existing Agno3.1/PostgreSQL executor; it creates no second queue or agent loop.
 
-Managers define reusable application versions with named modes, exact material
-references, bounded allowed alternatives, tool order, connection requirements and
-budget ceilings. Shared publication requires a separate current administrator.
-Publication state is separate from immutable content; withdrawal ends current
-execution authority while preserving historical evidence.
+Authorized authors define reusable application versions with named modes, exact
+material references, bounded allowed alternatives, tool order, connection requirements
+and budget ceilings. Under the normal `member-self-service` policy, authors can publish
+their own versions directly; an explicitly configured `separate-admin` policy
+requires a distinct current administrator for publication review. Publication state
+is separate from immutable content; withdrawal ends current execution authority
+while preserving historical evidence.
 
-A user submits a goal. Deterministic discovery searches approved application
-metadata and selects approved defaults. The proposal records the exact application,
+A user submits a goal. Deterministic discovery searches published application
+metadata and selects published defaults. The proposal records the exact application,
 material closure, execution bindings, connection pins, capabilities, budgets and
 missing preflight items. The user can revise, reject or accept it. Revision creates
-another immutable proposal; acceptance creates a persisted task plan. Plan approval
-policy and native tool confirmation remain separate decisions. No model invents
-permissions, installs adapters or publishes shared definitions.
+another immutable proposal; acceptance creates a persisted task plan. Direct new
+plans under the normal `member-self-service` policy do not require a separate plan
+review; an explicitly selected review policy may require one. Plan review policy and
+native tool confirmation remain separate decisions. No model invents permissions,
+installs adapters or publishes shared definitions.
 
 Materials can carry inert `runtimeBinding` data: `adapterId`, `revision`, and a
 bounded `config`. Operator-installed factories implement those descriptors. The
@@ -85,7 +89,7 @@ silently adds proof or adopts a production plan. Receiver transport rejects
 unconfigured connection-bearing manifests. Explicit immutable receiver mappings
 and current origin HTTP authorization are implemented; see REMOTE_BINDINGS.md.
 
-FR16 discovery is deterministic bounded matching of approved names/keywords,
+FR16 discovery is deterministic bounded matching of published names/keywords,
 followed by permitted exact choices. Unrestricted model-based application design,
 provider provisioning, automated credential setup, ORX experiment integration and
 full scientific autonomy are not implemented. Concurrent user capacity remains

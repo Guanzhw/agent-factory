@@ -8,18 +8,22 @@ existing `ConnectionService`. Reconfiguration, reverification, revocation,
 credential rotation, provider-policy changes, expiry, owner/task mismatch and
 native grant removal invalidate stale bindings at resolution.
 
-This is a controlled verification foundation, **not completed end-user onboarding**.
-An opt-in encrypted SQL credential backend and authenticated credential-entry API
-are implemented; a secure credential entry UI, compute provisioning, remote
-execution bridge, and live endpoint compatibility remain unverified or absent.
-No real endpoint, credential, deployment or paid workload was used to validate it.
+This is a controlled verification foundation, **not complete end-user OpenCode
+connection onboarding or live acceptance**. The opt-in encrypted SQL credential
+backend, authenticated credential API and shared credential-entry UI are implemented;
+the UI can store credentials for `opencode-serve-v1` when that provider is enabled
+(see [personal credentials](PERSONAL_CREDENTIALS.md)). A dedicated end-to-end
+OpenCode configuration flow, compute provisioning, remote execution bridge and live
+endpoint compatibility remain absent or unverified. No real endpoint, credential,
+deployment or paid workload was used to validate it.
 The documented protocol and synthetic controlled fixtures are the current evidence.
 
 The connection kind is `environment`, provider `opencode-serve-v1`. It is not an
 OpenResearch server. Capabilities are `runtime:health`, `project:read` and
 `agent:read`; verification does not grant session execution, tool execution,
 filesystem access, model spending or permission changes. Existing governed
-Factory workload dispatch retains its approval and budget boundaries.
+Factory workload dispatch retains normal admission and budget checks; the standard
+`member-self-service` mode does not add an ordinary plan-review step.
 
 ## Operator installation versus owner configuration
 
