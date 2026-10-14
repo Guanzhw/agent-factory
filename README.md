@@ -86,6 +86,7 @@ See [department collaboration and migration](docs/department-minimal-integration
 - Six material kinds, immutable content versions/digests, member drafts and direct publication, administrator-only public archive/withdrawal, inert structured import, pinned transitive dependency preflight and bounded published-material discovery.
 - Published immutable application definitions, bounded goal-based discovery and proposal/revise/reject/accept, exact permitted material alternatives, and member publication of new shared versions.
 - Trusted registered model/tool/knowledge/environment factories selected by immutable material bindings; current owner connection references with bind/revoke, expiry, rotation and redacted metadata.
+- Personal CLI/MCP adapters are installed statically; members register them with matching owner credentials and bind connections for on-demand calls ([setup and lifecycle](docs/PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)).
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
 - Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicit demo identity with HttpOnly cookie.
 - Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation including bounded experiment process trees, persistent application events and artifact hashes.
