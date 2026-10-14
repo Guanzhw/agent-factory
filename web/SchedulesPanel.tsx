@@ -104,17 +104,17 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, disabled
     finally { guard.current.release(epoch); if (active()) setBusy(false); }
   }
   return <section aria-label="计划任务" className="schedules-panel" style={{ minWidth: 0, overflowWrap: 'anywhere' }}><h1>计划任务</h1>
-    <p>复用已批准的不可变方案；每次触发仍检查当前权限和预算。计划准入成功不代表研究任务完成。</p>
+    <p>复用本人已保存的不可变方案；每次触发仍检查当前权限和预算。计划准入成功不代表研究任务完成。</p>
     <p className="state-note">暂停只停止后续准入，不会取消已创建的任务。UNKNOWN 保留原执行记录，不能当作失败重新运行；请查看原任务核对。</p>
     <button type="button" className="secondary" disabled={disabled || busy} onClick={() => { setError(''); setAfter(undefined); setRefresh(n => n + 1); }}>刷新计划任务</button>
     {busy && <p role="status">正在核对计划记录…</p>}{error && <p role="alert" className="error-message">{error}</p>}
     {uncertain && <div className="policy-note"><p>原变更请求未确认：{pending.pointer.requestId}。刷新仅 GET 核对；重新打开页面后不保存或重建原输入。</p>{intent.current?.epoch === epoch && <button type="button" className="secondary" disabled={disabled || busy || !manages} onClick={() => void retryOriginal()}>显式重试原变更请求</button>}</div>}
     {state && <p className="quiet">单个调度轮询器；错过的时刻合并处理，不逐次补跑。允许任务重叠，但仍受当前预算准入限制（每用户 {state.metadata.policy.maxUserTasks}、总计 {state.metadata.policy.maxTotalTasks}）。IANA 时区和夏令时以服务端 Cron 计算为准，预览不是预约保证。</p>}
-    {state && !manages && <p className="policy-note">当前身份只能读取自己的计划与历史；管理需要当前管理员权限。</p>}
+    {state && !manages && <p className="policy-note">当前身份只能读取自己的计划与历史；管理本人计划需要当前任务运行权限。</p>}
     {state?.page.items.map(row => <article className="material-row" key={row.id}><div style={{ minWidth: 0 }}><h3>{row.name}</h3><p>{row.enabled ? '已启用' : '已暂停'} · {row.cron} · {row.timezone}</p><p>下次计算时刻：{row.nextRunAt ?? '尚未提供'}</p><button type="button" className="secondary" disabled={disabled || busy} onClick={() => void inspect(row.id)}>查看计划任务 {row.name}</button></div></article>)}
     {state?.page.items.length === 0 && <p>当前页没有计划任务。</p>}{state?.page.nextCursor && <button type="button" disabled={disabled || busy} onClick={() => setAfter(state.page.nextCursor!)}>读取下一页计划</button>}
     <p className="quiet">分页记录不是完整实时快照。</p>
-    {manages && (selected || seed) && <fieldset disabled={!writable}><legend>{selected ? '调整原计划执行时间' : '从已批准方案创建计划'}</legend>
+    {manages && (selected || seed) && <fieldset disabled={!writable}><legend>{selected ? '调整原计划执行时间' : '从本人已保存方案创建计划'}</legend>
       {selected ? <p>原方案 {selected.planId}。调整时间不会替换原方案。</p> : <p>{seed?.goal}。新计划保存为暂停状态；启用需另行明确操作。</p>}
       <label>计划任务名称<input aria-label="计划任务名称" value={name} maxLength={120} disabled={!!selected} onChange={event => setName(event.target.value)}/></label>
       <label>Cron 表达式<input aria-label="Cron表达式" value={cron} maxLength={100} onChange={event => { setCron(event.target.value); setPreview(undefined); }}/></label>
@@ -130,6 +130,6 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, disabled
       <details className="technical-detail"><summary>原计划与不可变方案凭据</summary><span>计划 {selected.id}</span><span>方案 {selected.planId}</span><span>方案指纹 {selected.planFingerprint}</span><span>定义指纹 {selected.definitionFingerprint}</span></details>
       {seed && <button type="button" className="text-button" disabled={!writable} onClick={() => { setChosen(undefined); setHistory(undefined); setPreview(undefined); setName(''); }}>使用已选方案新建计划</button>}
     </section>}
-    {manages && !selected && !seed && <p>请先在装配面板取得已批准的不可变方案，再选择创建计划任务。</p>}
+    {manages && !selected && !seed && <p>请先在装配面板确认并保存本人的不可变方案，再选择创建计划任务。</p>}
   </section>;
 }

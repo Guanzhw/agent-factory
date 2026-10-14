@@ -97,7 +97,7 @@ class SchedulingService:
                 connection.commit()
 
     def _require_write(self, owner: str) -> None:
-        self.auth.require(owner, "components:write")
+        # Personal schedules use the owner's current execution authority.
         self.auth.require(owner, "run")
 
     def _plan(self, plan_id: str, owner: str) -> dict[str, Any]:
