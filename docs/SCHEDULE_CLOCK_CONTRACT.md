@@ -2,8 +2,8 @@
 
 This milestone adds a read-only preview to the existing Agno 3.1.0 scheduler.
 It adds no timer, poller, queue, task admission path or catch-up executor. The
-existing ownership, immutable plan, administrator review and resource budgets
-remain authoritative; a preview does not reserve capacity or authorize a run.
+existing ownership, immutable plan, configured plan-review policy (when
+required) and resource budgets remain authoritative; a preview does not reserve capacity or authorize a run.
 
 ## API seam
 
