@@ -12,7 +12,7 @@ authorize spending. Owner connections remain self-service.
 
 Temporary-plan admission follows the active Factory policy. Normal `Settings.from_env()`
 and `ResearchSettings.from_env()` entrypoints use `member-self-service`, so ordinary
-commands need no plan-review step. An explicitly configured legacy or `separate-admin`
+commands need no plan-review step. An explicitly configured legacy or `admin-review`
 policy may require review; personal mode does not add an approval step. The capability
 response reports current policy, and preparation reports exact-plan authorization. This
 tool is never classified as read-only, and no endpoint silently approves a plan.
