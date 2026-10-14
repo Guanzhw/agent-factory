@@ -199,8 +199,8 @@ def _delegated_config(value):
 def _check_policy(value):
     _fields(value, {"temporaryPolicy", "materialReviewMode", "policyRevision", "materialPolicyRevision",
                     "runtimeToolContract", "maxWorkers", "planReviewTtlSeconds"})
-    _require(value["temporaryPolicy"] in {"admin-review", "read-only-auto"}
-             and value["materialReviewMode"] == "separate-admin")
+    _require(value["temporaryPolicy"] in {"member-self-service", "admin-review", "read-only-auto"}
+             and value["materialReviewMode"] in {"member-self-service", "separate-admin"})
     _integer(value["maxWorkers"], 1, 4)
     PlanPolicyConfig(name=value["temporaryPolicy"], revision=value["policyRevision"],
         review_ttl_seconds=value["planReviewTtlSeconds"], tool_contract=value["runtimeToolContract"])

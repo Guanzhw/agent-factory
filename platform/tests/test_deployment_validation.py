@@ -40,7 +40,7 @@ class DeploymentValidationTests(unittest.TestCase):
                 "expectedAgnoVersion": "3.1.0", "executorId": "factory-executor", "configurationRevision": "runtime-v1",
                 "ownerMapping": [{"originOwner": "alice", "receiverOwner": "receiver-alice"}]},
             "computeBackend": {"kind": "none"},
-            "policy": {"temporaryPolicy": "admin-review", "materialReviewMode": "separate-admin",
+            "policy": {"temporaryPolicy": "member-self-service", "materialReviewMode": "member-self-service",
                 "policyRevision": "reviewed-plan-v1", "materialPolicyRevision": "reviewed-material-v1",
                 "runtimeToolContract": "bounded-process-v1", "maxWorkers": 1, "planReviewTtlSeconds": 3600}}
 
@@ -117,17 +117,41 @@ class DeploymentValidationTests(unittest.TestCase):
         browser["redirectUri"] = "https://factory.example.test/wrong-callback"
         self.assertFalse(validate_manifest(data)["configurationValid"])
 
-    def test_runtime_pins_and_production_policy_are_exact(self):
+    def test_current_and_legacy_production_policy_choices_are_independent(self):
+        for temporary in ("member-self-service", "admin-review", "read-only-auto"):
+            for material in ("member-self-service", "separate-admin"):
+                with self.subTest(temporary=temporary, material=material):
+                    data = self.manifest()
+                    data["policy"].update(temporaryPolicy=temporary, materialReviewMode=material)
+                    report = validate_manifest(data)
+                    self.assertTrue(report["configurationValid"], report)
+                    self.assertIn("POLICY_CONFIG_VALID", [row["code"] for row in report["checks"]])
+                    self.assertFalse(report["productionAccepted"])
+
+    def test_runtime_pins_are_exact(self):
         for key, value in [("expectedAgnoVersion", "3.2.0"), ("httpsBaseUrl", "http://runtime.example.test"),
                            ("httpsBaseUrl", "https://user:password@runtime.example.test"), ("ownerMapping", [])]:
             data = self.manifest()
             data["runtimeAttachment"][key] = value
             self.assertFalse(validate_manifest(data)["configurationValid"])
-        for key, value in [("temporaryPolicy", "bounded-synthetic"), ("materialReviewMode", "demo-self-review"),
-                           ("maxWorkers", 5), ("planReviewTtlSeconds", True)]:
-            data = self.manifest()
-            data["policy"][key] = value
-            self.assertFalse(validate_manifest(data)["configurationValid"])
+
+    def test_production_policy_rejects_demo_unset_unknown_and_invalid_contracts(self):
+        for key, value in [
+            ("temporaryPolicy", "bounded-synthetic"), ("temporaryPolicy", "unset"),
+            ("temporaryPolicy", "unknown"), ("temporaryPolicy", None),
+            ("materialReviewMode", "demo-self-review"), ("materialReviewMode", "unknown"),
+            ("materialReviewMode", None), ("maxWorkers", 0), ("maxWorkers", 5), ("maxWorkers", True),
+            ("planReviewTtlSeconds", 59), ("planReviewTtlSeconds", 86401), ("planReviewTtlSeconds", True),
+            ("policyRevision", ""), ("materialPolicyRevision", "invalid revision"),
+            ("policyRevision", "department-member-v1"), ("materialPolicyRevision", "material-department-v1"),
+            ("runtimeToolContract", "unknown"),
+        ]:
+            with self.subTest(field=key, value=value):
+                data = self.manifest()
+                data["policy"][key] = value
+                report = validate_manifest(data)
+                self.assertFalse(report["configurationValid"])
+                self.assertIn("POLICY_CONFIG_INVALID", [row["code"] for row in report["checks"]])
 
     def test_backend_configuration_never_proves_enforcement(self):
         data = self.manifest()
