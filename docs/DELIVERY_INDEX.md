@@ -18,7 +18,7 @@ selected local baseline; production, department capacity and separate-host
 acceptance remain distinct. Personal-agent/24-hour work remains deferred in
 [PR51](https://github.com/Guanzhw/agent-factory/pull/51).
 
-## Current scope — 2026-10-04
+## Historical scope snapshot — 2026-10-04
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
