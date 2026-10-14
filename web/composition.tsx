@@ -3,6 +3,7 @@ import { useState } from 'react';
 import App, { Workspace as WorkspaceShell, type WorkspaceSessionProps, type WorkspaceContext } from './App.js';
 import { api } from './api.js';
 import { ApplicationComposer, type ComposerSeed } from './ApplicationComposer.js';
+import { ApplicationCatalog, type InstalledApplication } from './ApplicationCatalog.js';
 import { ResourceCenter } from './ResourceCenter.js';
 import { ModelSettings } from './ModelSettings.js';
 import { ConnectionsPanel } from './ConnectionsPanel.js';
@@ -13,12 +14,16 @@ import { MaterialGovernancePanel } from './MaterialGovernance.js';
 import { ApplicationGovernance } from './ApplicationGovernance.js';
 import { TaskWorkspace } from './TaskWorkspace.js';
 import { researchNavigation } from '../apps/research/web/navigation.js';
-import { ResearchCatalog, ResearchDeveloperTools, ResearchPages } from '../apps/research/web/ResearchPages.js';
+import { researchApplication } from '../apps/research/web/application.js';
+import { ResearchDeveloperTools, ResearchPages } from '../apps/research/web/ResearchPages.js';
 import { ResearchTaskDetail } from '../apps/research/web/ResearchTaskDetail.js';
 import { ResearchPlanReviews } from '../apps/research/web/ResearchPlanReviews.js';
 import { PersonalRemotes } from '../apps/research/web/PersonalRemotes.js';
 import { composerModeLabels, taskModeLabels } from '../apps/research/web/modeLabels.js';
 import { jobDisplayTitle } from '../apps/research/web/nativeCommandDisplay.js';
+
+// Register installed application entries here; catalog rendering stays in the platform.
+const installedApplications: readonly InstalledApplication[] = [researchApplication];
 
 export default function ComposedApp() { return <App workspace={Workspace}/>; }
 export function Workspace(props: WorkspaceSessionProps) {
@@ -31,7 +36,7 @@ function Pages({ context: original }: { context: WorkspaceContext }) {
   const { route, user, navigate, materials, targets, jobs, busy, act, notice, onTask } = context;
   const tab = route.tab;
   return <>
-    {tab === 'catalog' && <section><div className="page-heading"><div><p className="quiet">FACTORY / 应用目录</p><h1>选择你的工作区</h1><p>进入应用提出目标，在任务中查看执行与证据。开始前可在资源中接入自己的模型与服务器。</p></div></div><div className="or-catalog-grid"><ResearchCatalog context={context}/><article className="or-catalog-card"><span className="quiet">开始前的准备</span><h2>接入我的资源</h2><p>设置默认模型，选择平台环境或接入自己的服务器。已有项目与会话可以继续使用原连接。</p><button className="secondary" onClick={() => navigate({ tab: 'resources' })}>查看我的资源</button></article></div></section>}
+    {tab === 'catalog' && <ApplicationCatalog applications={installedApplications} onSelect={navigate}/>}
     {tab === 'resources' && <ResourceCenter onModels={() => navigate({ tab: 'models', modelReturn: 'resources' })} onConnections={() => navigate({ tab: 'connections' })} applicationLabel="OpenResearch" onResearch={() => navigate({ tab: 'openresearch' })}/>}
     {tab === 'models' && <ModelSettings key={`ModelSettings:${user.id}`} ownerId={user.id} onResearch={() => navigate({ tab: route.modelReturn ?? 'catalog' })} onCredentials={() => navigate({ tab: 'connections' })}/>}
     <ResearchPages context={context}/>
