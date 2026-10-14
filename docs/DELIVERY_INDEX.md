@@ -13,7 +13,7 @@ server; no external vendor compatibility or real model call is claimed.
 
 See [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) for the owner-verified real result at
 09:48 UTC, exact PR54 runner/sealed PR50 runtime, released custody and remaining
-original-plan priorities. The older current-scope wording below predates that
+original-plan priorities. The historical scope snapshot below predates that
 selected local baseline; production, department capacity and separate-host
 acceptance remain distinct. Personal-agent/24-hour work remains deferred in
 [PR51](https://github.com/Guanzhw/agent-factory/pull/51).
