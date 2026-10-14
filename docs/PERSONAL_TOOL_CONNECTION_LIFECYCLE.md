@@ -1,6 +1,6 @@
 # 个人连接驱动的 CLI / MCP 调用
 
-PR #88 基于已合入的 `main@3ef542ba` 实现本能力。工具、schema 和依赖由部署静态安装；
+本能力由 [PR #88](https://github.com/Guanzhw/agent-factory/pull/88) 实现，基于 `main@3ef542ba`，并于 2026-10-13 合入 `main@c4fd1fac`。工具、schema 和依赖由部署静态安装；
 应用声明工具及连接需求，成员保存本人凭据并绑定一次，后续调用沿原任务中的 owner 与
 连接版本自动解析。普通绑定与调用不新增管理员逐次审批。
 
