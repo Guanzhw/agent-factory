@@ -18,7 +18,7 @@ from agent_factory.credential_vault import CredentialVaultError, EncryptedCreden
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.personal_mcp import MCPToolAdapter
 from agent_factory.personal_remote_provider import SecretLease, origin
-from agent_factory.personal_tool_contract import ToolDescriptor
+from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocationError
 from mcp_protocol_fixture import MCPProtocolServer
 from pg_fixture import IsolatedPostgres
 import test_personal_tool_native_postgres as native_fixture
@@ -32,6 +32,62 @@ class EchoModel(native_fixture.InventoryModel):
         for call in result.tool_calls or []:
             arguments = json.loads(call['function']['arguments'])
             call['function']['arguments'] = json.dumps({'value': arguments['item']})
+        return result
+
+
+class ObservedMCPAdapter(MCPToolAdapter):
+    """Keep fixed failure/cleanup facts for capacity assertion diagnostics."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.observations = {}
+
+    def observation(self, invocation):
+        key = (invocation.run_context.run_id, invocation.call_id)
+        return self.observations.setdefault(key, {'runId': key[0], 'callId': key[1]})
+
+    async def invoke(self, invocation):
+        observation = self.observation(invocation)
+        started = time.monotonic()
+        try:
+            result = await super().invoke(invocation)
+            observation['outcome'] = 'completed'
+            return result
+        except ToolInvocationError as error:
+            observation.update(code=error.code, outcome=error.outcome, stopped=error.stopped)
+            raise
+        finally:
+            observation['elapsedSeconds'] = round(time.monotonic() - started, 3)
+
+    async def _run(self, state, arguments):
+        observation = self.observation(state.invocation)
+        observation['state'] = state
+        try:
+            return await super()._run(state, arguments)
+        finally:
+            if 'bodyEnded' in observation:
+                observation['closeSeconds'] = round(time.monotonic() - observation['bodyEnded'], 3)
+
+    async def _call(self, session, state, arguments):
+        observation = self.observation(state.invocation)
+        started = time.monotonic()
+        try:
+            return await super()._call(session, state, arguments)
+        finally:
+            observation['bodyEnded'] = time.monotonic()
+            observation['bodySeconds'] = round(time.monotonic() - started, 3)
+
+    def diagnostics(self):
+        result = []
+        for observation in self.observations.values():
+            item = {key: value for key, value in observation.items() if key not in {'state', 'bodyEnded'}}
+            state = observation.get('state')
+            if state is not None:
+                item.update(dispatched=state.dispatched, authorizationRejected=state.authorization_rejected,
+                            sdkClosed=state.sdk_closed, transportClosed=state.transport_closed,
+                            callbacksTotal=len(state.callbacks_finished),
+                            callbacksDone=sum(event.is_set() for event in state.callbacks_finished))
+            result.append(item)
         return result
 
 
@@ -87,9 +143,11 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
             # Timeout semantics have separate adapter tests; this checks capacity.
             read_only=True, timeout_seconds=20,
         )
-        self.adapter = MCPToolAdapter(descriptor, url=self.mcp.url, remote_tool_name='echo',
-                                      allow_loopback_http=True, teardown_timeout_seconds=1,
-                                      authorization_interval=0.25)
+        # Exercise the production close budget. Halving it here can turn a
+        # healthy vault/permission lookup into UNKNOWN under database load.
+        # Strict blocked-credential and streaming deadlines remain unit tests.
+        self.adapter = ObservedMCPAdapter(descriptor, url=self.mcp.url, remote_tool_name='echo',
+                                         allow_loopback_http=True, authorization_interval=0.25)
         self.settings = Settings(
             db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=1,
             temporary_policy='member-self-service', personal_tool_adapters=(self.adapter,),
@@ -117,13 +175,34 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         }
 
     def wait_terminal(self, task):
-        deadline = time.monotonic() + 5
+        started = time.monotonic()
+        deadline = started + 5
         while time.monotonic() < deadline:
             current = self.store.task(task['id'], 'alice')
             if current['terminal']:
                 return current
             time.sleep(0.03)
-        self.fail('Known pre-dispatch failure must release native task capacity')
+        # Read diagnostics only after the unchanged deadline; never tick the
+        # observer, reconcile effects or expose tool outputs/credentials here.
+        observer = self.state['lifecycle_observer']
+        native = self.store.native_db.get_job(task['run_id']) or {}
+        effects = []
+        for effect in self.store.effects(task['id']):
+            receipt = effect['result']
+            effects.append({'status': effect['status'], 'result': {
+                key: receipt[key] for key in ('outcome', 'stopped', 'cancelled') if key in receipt
+            } if isinstance(receipt, dict) else None})
+        diagnostics = {
+            'elapsedSeconds': round(time.monotonic() - started, 3),
+            'taskId': task['id'], 'runId': task['run_id'], 'requestId': task['request_id'],
+            'terminal': current['terminal'], 'nativeStatus': native.get('status'), 'effects': effects,
+            'adapter': self.adapter.diagnostics(), 'observerError': observer.last_error_type,
+            'observerStopped': observer._stop.is_set(),
+            'observerTaskDone': observer._task.done() if observer._task is not None else None,
+            'observerGroups': observer.last_result.get('groups', []),
+            'observerErrors': observer.last_result.get('errors', []),
+        }
+        self.fail('Native task capacity must be released: ' + json.dumps(diagnostics, sort_keys=True))
 
     def assert_original_receipt(self, body, task, effects, request_count):
         replay = self.request('POST', '/application-interface/v1/starts', body, expected=202)
