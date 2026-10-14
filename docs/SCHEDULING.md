@@ -24,16 +24,17 @@ lifespan must satisfy these constraints.
 
 | Service operation | Input and authority |
 | --- | --- |
-| `create(owner, plan_id, name, cron, timezone="UTC")` | Current managed `components:write` and executor `run`; own ready, top-level immutable plan |
+| `create(owner, plan_id, name, cron, timezone="UTC")` | Owner's current `run` permission; own ready, top-level immutable plan |
 | `list(owner)`, `get(owner, id)`, `occurrences(owner, id)` | Current executor `run`; owner partition |
-| `update(owner, id, cron, timezone="UTC")` | Current managed write/run; cannot change plan or owner |
-| `set_enabled(owner, id, enabled)` | Current managed write/run; enabling repeats plan/policy checks |
-| `await trigger(owner, id, request_id)` | Current managed write/run; scoped stable manual request key |
+| `update(owner, id, cron, timezone="UTC")` | Owner's current `run` permission; cannot change plan or owner |
+| `set_enabled(owner, id, enabled)` | Owner's current `run` permission; enabling repeats plan/policy checks |
+| `await trigger(owner, id, request_id)` | Owner's current `run` permission; scoped stable manual request key |
 | `await cancel_occurrence(owner, id, occurrence_id)` | Current executor run; exact owned occurrence/task, existing cancellation tree |
 
-The demo grants schedule-management permission to its manager persona. Runner
-personas cannot create schedules. This is an explicit restricted initial
-authority policy, not a grant inferred from model output. A schedule stores only
+An owner with current `run` permission can manage that owner's schedules; no
+separate `components:write` grant is required. Reads and writes remain owner-scoped,
+and the backend rechecks the plan and current policy when enabling or dispatching.
+UI role labels do not grant authority. A schedule stores only
 `planId` and `planHash`; callers cannot supply URLs, session state, owner IDs,
 versions, raw agent configuration or credentials. Plan material/version snapshots
 remain owned by the existing immutable plan store. Delegation-bound child plans
@@ -123,11 +124,13 @@ concurrent scheduler replicas require an upstream conditional-release API and
 additional acceptance. The full default 300-second grace was not awaited.
 
 The current application execution policy admits bounded synthetic demo plans.
-Production defaults to current administrator plan review and remains fail-closed
-until a live adapter, identity and model budget are configured and accepted. Schedule catalog quota, deletion/history
-retention policy and user self-service scheduling beyond the manager are separate
-unfinished product policies; active task quotas are enforced now. No worker
-capacity or multi-host scheduling claim is made.
+Normal environment entrypoints use `member-self-service` for direct plan admission;
+`admin-review` remains an explicit plan-policy choice. A schedule does not bypass
+plan preflight, current rights or budgets, and live adapter, identity and model
+budget acceptance remain separate. Owner self-service schedule management uses
+current `run` permission; catalog quota and deletion/history retention remain
+separate policy work. Active task quotas are enforced now. No worker-capacity or
+multi-host scheduling claim is made.
 
 Run the public integration contracts against an explicitly disposable database:
 
@@ -137,13 +140,15 @@ $env:PYTHONPATH = 'platform'
 uv run python -m unittest discover -s platform/tests -p test_scheduling_postgres.py -v
 ```
 
-## User-facing schedule management continuation (2026-10-04)
+## User-facing schedule management continuation (2026-10-14)
 
-The **计划任务** workspace now exposes owner-scoped list/detail, five-field cron
+The **计划任务** workspace exposes owner-scoped list/detail, five-field cron
 and IANA timezone preview, editing, pause/resume, occurrence history and links to
-original tasks. A manager enters from an already approved immutable plan in the
-existing composer; runner personas receive read-only controls. Backend permissions
-remain authoritative at every write and every dispatch. New editor-created
+original tasks. An owner with current `run` permission can create a schedule from
+their own ready immutable plan. If the plan policy requires review, that review
+must already be satisfied; schedule management itself does not require
+`components:write`. Backend permissions remain authoritative at every write and
+every dispatch. New editor-created
 schedules are persisted **paused**, with explicit separate enable. The editor has
 no manual-trigger or external-notification action. Test fixtures may explicitly
 use the existing owned trigger endpoint with far-future cron definitions.
@@ -212,7 +217,7 @@ milestone does not claim that every non-execution can be diagnosed from the UI.
 
 | Requirement | Current milestone | Remaining code / external validation |
 |---|---|---|
-| Create/edit/list/pause/resume/history | Manager own approved plan, initially paused create, immutable plan pin, CAS, finite owner projections and actual UI | Production operating policy and account onboarding |
+| Create/edit/list/pause/resume/history | Owner's own ready plan, initially paused create, immutable plan pin, CAS, finite owner projections and actual UI; writes use current owner `run` permission | Production operating policy and account onboarding |
 | Timezone/DST/missed runs | Five-field cron, IANA zone, UTC/local-offset preview; deterministic native clock comparisons; missed ticks coalesce | No catch-up/backfill feature; deployed clock/zone-data operations not certified |
 | Overlap/per-owner limits | Concurrent occurrences allowed within current owner/global active quotas, storage admission and per-plan execution/usage budgets | Per-schedule no-overlap, cumulative daily/monthly spend caps and catalog quota |
 | Identity/permission changes | Current authorization and plan/binding checks at each dispatch; pause/revoke race coverage | Production identity deployment and operator policy |
