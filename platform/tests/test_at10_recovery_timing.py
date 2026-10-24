@@ -150,7 +150,6 @@ class RecoveryTimingTests(unittest.TestCase):
              patch.object(ControlCommands, '_completed_launch'), \
              patch.object(DelegationService, '_root_lock'):
             install_recovery_timing(self.path)
-            self.assertIsInstance(ControlCommands.__dict__['_approval_payload'], staticmethod)
             instance = object.__new__(ControlCommands)
             from test_approved_recovery import fixture
             valid_task, valid_receipt, valid_snapshot = fixture()

@@ -158,3 +158,21 @@ test('cycles terminate; path ownership is bounded and invalid/empty maps fail', 
   f.config.core = [];
   assert.throws(() => f.check(), /nonempty/);
 });
+
+test('bundler glob discovery in composition or reachable code fails explicitly; text and comments are harmless', t => {
+  const f = fixture(t);
+  f.write({ 'src/web/composition.tsx': `// import.meta.glob('../apps/*/api.ts')
+const documentation = "import.meta.glob('../apps/*/api.ts')";
+export { value } from '../apps/alpha/api.js';` });
+  assert.equal(f.check().accepted, true);
+  for (const code of ["import.meta.glob('../apps/*/api.ts')", "import.meta['glob']('../apps/*/api.ts')", "const discover = import.meta.glob; discover(pattern)"]) {
+    f.write({ 'src/web/composition.tsx': code });
+    const result = f.check();
+    assert.equal(result.accepted, false, code);
+    assert.match(result.gaps[0].message, /Bundler glob discovery/);
+    assert.equal(result.gaps[0].module, 'src/web/composition.tsx');
+  }
+  f.write({ 'src/web/composition.tsx': "export { value } from '../apps/alpha/api.js';",
+    'src/shared/helper.ts': "export const value = import.meta.glob('./*.ts');" });
+  assert.equal(f.check().gaps[0].module, 'src/shared/helper.ts');
+});

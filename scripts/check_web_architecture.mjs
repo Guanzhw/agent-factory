@@ -1,7 +1,7 @@
 /** Static frontend boundaries from an explicit map; never executes project code.
  * Uses one selected tsconfig and syntax-level imports/re-exports/require calls.
- * Custom loader aliases, eval and bundler-generated dependencies are outside
- * this check; external package implementations and non-code assets are not walked.
+ * Custom loader aliases and eval are outside this check; bundler glob discovery
+ * is rejected as a coverage gap; external package implementations and non-code assets are not walked.
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
@@ -131,7 +131,12 @@ function dependencyGraph(root, modules, options) {
       return false;
     }
     function visit(node) {
-      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+          && ts.isMetaProperty(node.expression) && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+          && (ts.isPropertyAccessExpression(node) ? /^glob(?:Eager)?$/.test(node.name.text)
+            : node.argumentExpression && ts.isStringLiteral(node.argumentExpression) && /^glob(?:Eager)?$/.test(node.argumentExpression.text))) {
+        gap(node, 'Bundler glob discovery is not statically resolved; use explicit imports for application registration');
+      } else if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
         if (node.moduleSpecifier) add(node.moduleSpecifier, node);
       } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
         add(node.moduleReference.expression, node);

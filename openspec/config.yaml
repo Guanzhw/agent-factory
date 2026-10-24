@@ -8,7 +8,7 @@ context: |
   核心是 platform/agent_factory；科研应用是 apps/research/agent_factory_research；deployment 为显式装配入口。
   保留 Agno 3.1.0 原生执行生命周期、PostgreSQL 持久队列、资源所有权、凭据隔离、运行预算、取消和效果幂等。
   在真实输入和持久化边界完成校验，同进程内部复用既有契约；删除无消费者的审批与重复证明链。
-  当前变更从 origin/main 0fac6de 创建隔离分支；既有原始工作区与数据库必须保持原状。
+  各变更分别记录其基线提交；保留既有原始工作区、数据库和验证记录。
   验证必须区分静态检查、便携测试、真实 PostgreSQL、浏览器与外部服务；未取得的证据不记为通过。
 operations:
   apply:

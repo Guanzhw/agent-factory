@@ -19,7 +19,7 @@ from agent_factory.personal_mcp import discover_mcp_tools, mcp_url
 from agent_factory.personal_tools import ConfigureResourceRequest, DiscoverToolsRequest, PersonalTools
 from agent_factory.personal_tool_execution import personal_tool_registration
 from agent_factory.store import digest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
 from mcp_protocol_fixture import ALICE_TOKEN, MCPProtocolServer
 import test_personal_tools as fixtures
 from test_personal_tool_execution import Store
@@ -173,7 +173,14 @@ class MemberToolResources(unittest.TestCase):
 
 
 class MemberMCPResources(unittest.TestCase):
-    setUp = fixtures.PersonalToolTests.setUp
+    def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory(prefix='member-mcp-'))
+        # The monitor and invocation authorize concurrently. Give each checkout
+        # its own connection instead of sharing StaticPool's one DBAPI handle.
+        database = Path(directory) / 'tools.sqlite'
+        fixtures.PersonalToolTests.setUp(self, engine=create_engine(
+            'sqlite:///' + database.as_posix(), connect_args={'check_same_thread': False}))
+
     create_credential = fixtures.PersonalToolTests.create_credential
     native_call = MemberToolResources.native_call
     def test_team_member_invokes_real_mcp_with_owner_credential_and_withdrawal_stops_retained_function(self):
