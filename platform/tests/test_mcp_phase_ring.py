@@ -1,5 +1,7 @@
 """Deterministic phase-order calibration; no PostgreSQL, sockets or providers."""
 import asyncio
+from contextlib import asynccontextmanager
+import gc
 from concurrent.futures import ThreadPoolExecutor
 import contextvars
 from functools import partial
@@ -116,3 +118,46 @@ class MCPPhaseRingTests(unittest.IsolatedAsyncioTestCase):
         snapshot = ring.snapshot()
         self.assertEqual((snapshot['eventsSeen'], snapshot['eventsRetained']), (5, 2))
         self.assertEqual([e['sequence'] for e in snapshot['events']], [4, 5])
+
+    async def test_native_job_identity_uses_original_id_and_attempt(self):
+        ring = MCPPhaseRing()
+        identity = ring.native_identity({'id': 'original-run', 'status': 'running',
+                                         'attempt': 2, 'worker_id': 'original-worker'})
+        ring.record('native_observed', run_id=identity[0], status=identity[1],
+                    attempt=identity[2], worker_id=identity[3])
+        event = ring.snapshot()['events'][0]
+        self.assertEqual((event['runId'], event['attempt'], event['workerId']),
+                         ('original-run', 2, 'original-worker'))
+
+    async def test_lifecycle_wrappers_preserve_calls_and_remove_gc_callback(self):
+        from agno.os.job_queue import QueueWorker
+        from agno.run import concurrency
+        calls = []
+        @asynccontextmanager
+        async def original_slot(*args, **kwargs):
+            calls.append(('slot', args, kwargs))
+            yield
+        async def original_execute(worker, job):
+            calls.append(('execute', job['id']))
+            async with concurrency.background_run_slot(run_id=job['id']):
+                return 'not-logged'
+        ring = MCPPhaseRing()
+        before = tuple(gc.callbacks)
+        with patch.object(QueueWorker, '_execute_claimed', new=original_execute), \
+                patch.object(concurrency, 'background_run_slot', new=original_slot):
+            with ring.lifecycle_trace():
+                self.assertEqual(await QueueWorker._execute_claimed(
+                    SimpleNamespace(worker_id='worker'), {'id': 'run', 'attempt': 1}), 'not-logged')
+                # Invoke only the recorder: calibration never forces collection.
+                added = [c for c in gc.callbacks if c not in before]
+                self.assertEqual(len(added), 1)
+                added[0]('start', {'generation': 2})
+                added[0]('stop', {'generation': 2})
+            self.assertIs(QueueWorker._execute_claimed, original_execute)
+            self.assertIs(concurrency.background_run_slot, original_slot)
+        self.assertEqual(tuple(gc.callbacks), before)
+        phases = [e['phase'] for e in ring.snapshot()['events']]
+        self.assertEqual(phases, ['claim_execute_enter', 'slot_wait', 'slot_enter',
+                                'slot_scope_exit', 'claim_execute_exit', 'gc_start', 'gc_stop'])
+        self.assertEqual(calls, [('execute', 'run'), ('slot', (), {'run_id': 'run'})])
+        self.assertNotIn('not-logged', str(ring.snapshot()))

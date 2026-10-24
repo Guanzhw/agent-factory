@@ -134,3 +134,13 @@ c939d56 exactfast40114643214最终成功；frontend日志17:12完成，但job终
 原native20s超限未获失败现场，不能归因GC、池争用或DELETE，也不能称无害flaky。新诊断仅在第二task启用512event ring（含丢弃计数），记录回调schedule/thread-enter/exit/await-return、调用/SDK退出、已有native polls及每秒worker await-chain位置；不记录locals/SQL参数/凭据，不新增DB poll。原20s/5s与UNKNOWN/stop断言均保留，仅失败快照输出。新增校准用Event区分executor未开始、线程运行但awaiter取消、线程返回但await未恢复；5纯测试通过0.024s。首个校准默认executor导致runner收尾挂起，已改测试独立executor显式join；生产未改。
 
 root只运行一次原四项序列`mcp-second-task-phase-ring`，4通过（driver55.470s），未触发failure snapshot，因此没有新真实根因证据。期间轻量Pyright28.595s重叠，结果不作性能对照。没有第二次整套或重复目标追绿。原完整两轮失败/无整套加速结论和未解MCP限制继续成立。后续实际失败可提供有界阶段证据，而本次不能宣布根因已解决。
+
+### Expanded lifecycle diagnostic (2026-10-24 18:14 UTC)
+
+A test-only follow-up corrects Agno job identity fields (`id`, `attempt`), keeps the bounded ring active from first generation shutdown through second task capacity release, and records claimed execution, slot entry/exit, gen1/2 GC and worker-loop heartbeat. Production code and original 20s/5s limits are unchanged. Six pure calibrations pass (0.021s); an initial restricted-sandbox callback completion timeout is preserved separately and was not fixed by weakening the test.
+
+One original ordered four-case PG run passed: 4 tests/62.105s (67.713s driver). The two second-task traces retained all426/428 events without overflow: original job ids moved queued→running→completed, 68 callbacks each entered/exited/returned, both SDK scopes closed, claim/slot exited, and capacity wait completed. Stop-to-capacity trace durations were11.235s/11.768s. This successful trace proves the diagnostics correlate identities and completion; it does **not** explain or close the historical failures. No further full-suite retry was requested.
+
+Separate #102 work reproduced a two-tool native20s deadline failure on main with 4,298 first-call SQL statements; callback queue delay stayed below16ms. Stacking #103 reduced per-authorization SQL88→60 and credential203→147 and allowed its same-material five-task matrix to pass. This supports a real fresh-authority query-cost improvement, not a claim that the older intermittent #103 failure has the same cause. The old prefix failure that reached native completion with effect UNKNOWN remains a distinct unresolved cleanup-proof failure.
+
+Raw evidence: `/workspace/scratch/task-history-20261024/mcp-lifecycle-phase-diagnostic.{json,log}`; earlier failures remain in the existing evidence locations. No fixture/provider result is represented as live production acceptance.
