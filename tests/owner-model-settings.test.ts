@@ -33,9 +33,18 @@ it('uses a team model as default while preserving owner-only credential controls
 
 it('lets the resource owner change model visibility', async () => {
   vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
-  const share = vi.spyOn(ownerModelApi, 'sharing').mockResolvedValue({ ...row, visibility: 'team' });
-  await mount(); await act(async () => button('共享给团队').click());
+  const share = vi.spyOn(ownerModelApi, 'sharing');
+  const dispatched = new Promise<void>(resolve => {
+    share.mockImplementation(async () => { resolve(); return { ...row, visibility: 'team' }; });
+  });
+  await mount();
+  await act(async () => {
+    button('共享给团队').click();
+    await dispatched;
+  });
+  expect(share).toHaveBeenCalledTimes(1);
   expect(share).toHaveBeenCalledWith('alice', row.reference, 'team', expect.any(String));
+  expect(host.textContent).toContain('团队成员现在可使用此模型。');
 });
 
 it('configures an unauthenticated model without a placeholder key or credential write', async () => {
@@ -55,11 +64,18 @@ it('configures an unauthenticated model without a placeholder key or credential 
 
 it('recovers an unknown sharing request by its original receipt without another write', async () => {
   vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
-  const share = vi.spyOn(ownerModelApi, 'sharing').mockRejectedValue(new ModelRequestError(0));
+  const share = vi.spyOn(ownerModelApi, 'sharing');
+  const dispatched = new Promise<void>(resolve => {
+    share.mockImplementation(async () => { resolve(); throw new ModelRequestError(0); });
+  });
   vi.mocked(ownerModelApi.recover).mockImplementation(async (_owner, requestId) => ({ ownerId: 'alice', requestId,
     action: 'model.sharing', result: { ...row, visibility: 'team' }, completedAt: '2026-10-09T00:00:01Z' }));
-  await mount(); await act(async () => button('共享给团队').click());
-  await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+  await mount();
+  await act(async () => {
+    button('共享给团队').click();
+    await dispatched;
+  });
+  expect(share).toHaveBeenCalledTimes(1);
   expect(button('共享给团队').disabled).toBe(true);
   await act(async () => button('核对原共享请求').click());
   expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', share.mock.calls[0][3]);
