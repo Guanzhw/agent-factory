@@ -1,18 +1,20 @@
 # 测试清理与 CI 成本收敛
 
-状态：**实施中；最终完整 CI 与合入待完成**。任务和结果见 [OpenSpec](../../openspec/changes/simplify-behavior-tests-and-ci/tasks.md)。
-基线：PR95 合并提交 `246f06541b21915392a77555e24f3f617d34de9f`；实施前重新核对该提交的源码、依赖与 CI。
+状态：**已实施并完成代码验收与独立审查**。任务见 [OpenSpec](../../openspec/changes/simplify-behavior-tests-and-ci/tasks.md)，前后覆盖和耗时见 [验收记录](../../openspec/changes/simplify-behavior-tests-and-ci/verification.md)；合入状态见 [PR96](https://github.com/Guanzhw/agent-factory/pull/96)。
+测量基线：PR96 规划提交 `3e206920b8ea86598fca35d3cedcd80dfbdf160d`，父提交为 PR95 合并提交 `246f06541b21915392a77555e24f3f617d34de9f`。
 实施分支：PR96 的 `plan/test-ci-cleanup`。
 OpenSpec change：`simplify-behavior-tests-and-ci`；本次只调整测试和工具，产品行为契约保持不变。
 
-## 目标与顺序
+以下保留实施前的决策和源码位置，实际完成结果以验收记录为准。
+
+## 原目标与顺序
 
 优先删除无效、脆弱、绑定实现且缺少独立行为价值的断言，保留能发现真实产品回归的验证。
 先完成开发工具依赖升级和高置信度测试清理，再按实测结果消除重复执行、加入短小浏览器 smoke。
 采用一个 Draft PR、分阶段提交；仅在 happy-dom major 迁移出现独立兼容性问题时拆出依赖 PR。
 所有性能收益都需由同条件前后测量确认；测试数量下降本身不是目标。
 
-## 已有证据
+## PR95 历史证据
 
 - 当前重构的 Linux PostgreSQL 冻结快照：3201 项记录、3140 通过、61 显式跳过，零失败/错误，1937.326 秒，exit 0、accepted=true。
 - 七组 required 为 130/130、33/33、9/9、11/11、10/10、19/19、6/6；组间可重叠，不能相加作唯一用例数。
@@ -86,7 +88,7 @@ CI 使用锁定 Playwright 和匹配 Chromium，缺包/二进制/dist/零场景�
 
 ## 测量与完成标准
 
-- 同 SHA、依赖、机器类型及冷/暖缓存条件记录 before/after：selected/unique/executed/skip、发现时间、执行时间、job wall time 和 runner-minutes。
+- 为每次 before/after 记录具体 SHA、依赖、机器类型及冷/暖缓存条件，以及 selected/unique/executed/skip、发现时间、执行时间、job wall time 和原始 job 分钟；环境差异不能直接计作代码收益。
 - 分开记录依赖安装、镜像拉取、核心构建安装、测试发现/执行和浏览器 smoke；下载故障与测试失败分类。
 - 短 fast/smoke 可测 3 次，报告中位数和范围；完整套件按必要基线和最终 gate 运行，额外重跑由具体失败驱动。
 - 用实际数据提出后续预算，不预设“5 分钟”“减少 50%”或固定 3201/699 数量目标。
@@ -94,17 +96,17 @@ CI 使用锁定 Playwright 和匹配 Chromium，缺包/二进制/dist/零场景�
 
 ## 实施任务
 
-- [ ] 核对合并基线、依赖与既有修复，建立逐项删除/重写/保留映射，补充最小实施规范。
-- [ ] 更新 vite/vitest，再完成 happy-dom major 兼容性验证；分别保存生产和完整官方审计结果。
-- [ ] 修复未连接的 PubMed mock，删除重复源码边界检查，将 composer 改为 DOM 行为并去除固定总数与人工 hostile-object 矩阵。
-- [ ] 为锁身份断言补确定性并发行为，收敛 staticmethod 镜像断言；保留真实停机、身份、预算、所有权、凭据与 provenance 验证。
-- [ ] 运行定向回归与 checker 正反例，验证 class 顺序等实现变化不误报、真实配置/边界回归会被发现。
-- [ ] 采集执行 ID/skip/阶段时间及 registry/cache 数据，确认环境覆盖后消除 Linux full 重复执行。
-- [ ] 在 frontend build 后加入锁定 Chromium 短 smoke，验证必需依赖缺失失败与原请求无重发。
-- [ ] 完成 Linux 完整 PG required、独立核心安装、Node 24 Web/Windows 和 exact-head CI，发布前后测量与全部跳过/失败记录。
+- [x] 核对合并基线、依赖与既有修复，建立逐项删除/重写/保留映射，补充最小实施规范。
+- [x] 更新 vite/vitest，再完成 happy-dom major 兼容性验证；分别保存生产和完整官方审计结果。
+- [x] 修复未连接的 PubMed mock，删除重复源码边界检查，将 composer 改为 DOM 行为并去除固定总数与人工 hostile-object 矩阵。
+- [x] 为锁身份断言补确定性并发行为，收敛 staticmethod 镜像断言；保留真实停机、身份、预算、所有权、凭据与 provenance 验证。
+- [x] 运行定向回归与 checker 正反例，验证 class 顺序等实现变化不误报、真实配置/边界回归会被发现。
+- [x] 采集执行 ID/skip/阶段时间及 registry/cache 数据，确认环境覆盖后消除 Linux full 重复执行。
+- [x] 在 frontend build 后加入锁定 Chromium 短 smoke，验证必需依赖缺失失败与原请求无重发。
+- [x] 完成 Linux 完整 PG required、独立核心安装、Node 24 Web/Windows 和 exact-head CI，发布前后测量与全部跳过/失败记录。
 
-## 范围与待确认事项
+## 范围与确认结果
 
 本轮不改权限模型、历史审批/schema、预算/取消/UNKNOWN 恢复语义，不重写测试框架，不平行化共享数据库/进程夹具，不清理历史证据或数据库/vault。
 历史 `test_pr50_install_closure.py` 的 verifier/manifest 仍被 `install-pr50-handoff.sh:16-17` 消费，退休前需确认迁移入口维护承诺。
-待确认：`import.meta.glob` 的唯一规则覆盖、锁定浏览器依赖安装方式、GitHub required contexts、Windows symlink 夹具权限限制以及实际 CI 成本；取得对应证据前不宣称完成。
+`import.meta.glob` 的唯一规则已移入 AST checker；Playwright/Chromium 已锁定并在 CI 实跑；Windows symlink 核心安装夹具在最终 Windows CI 实际通过。GitHub 当前 main 未配置分支保护 required contexts，本次由完整运行、CI summary 和独立审查确认验收。阶段耗时、覆盖迁移及仍未运行的外部 opt-in 边界见验收记录。

@@ -2,7 +2,7 @@
 
 ## Context
 
-具体候选与源码依据沿用 PR96 计划。未清理提交的完整 CI 已启动：[run 40078129086](https://github.com/Guanzhw/agent-factory/actions/runs/40078129086)。测试实现和测量由不同代理负责；最终判断由主代理根据源码、回执和独立审查完成。
+具体候选与源码依据沿用 PR96 计划。未清理提交的完整 CI 为 [run 40078129086](https://github.com/Guanzhw/agent-factory/actions/runs/40078129086)，最终完整运行与对照见 [verification](verification.md)。测试实现和测量由不同代理负责；最终判断由主代理根据源码、回执和独立审查完成。
 
 ## Goals / Non-Goals
 
