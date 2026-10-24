@@ -21,6 +21,41 @@ from pg_fixture import IsolatedPostgres
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires independent disposable PostgreSQL')
 class PersonalModelsPostgresTests(unittest.TestCase):
+    def test_team_model_runs_native_task_as_requester_with_owner_custody_and_withdrawal(self):
+        credential, model = self.configured()
+        path = '/personal-models/' + model['reference']
+        self.assertEqual(self.request('GET', '/personal-models', owner='bob'), [])
+        self.request('POST', path + '/sharing', {'visibility': 'team', 'requestId': 'sharing-team-model'})
+        visible = self.request('GET', '/personal-models', owner='bob')[0]
+        self.assertEqual(visible['ownerId'], 'alice')
+        self.assertNotIn('credentialRef', visible)
+        self.assertNotIn('credentialRevision', visible)
+        self.request('POST', path + '/sharing', {'visibility': 'personal', 'requestId': 'foreign-sharing-model'}, owner='bob', expected=404)
+        selected = self.request('POST', path + '/default', {'requestId': 'sharing-bob-default'}, owner='bob')
+        self.assertNotEqual(selected['connectionRef'], model['connectionRef'])
+        self.request('POST', '/personal-research', {'topic': 'Synthetic shared model', 'requestId': 'shared-native-task'}, owner='bob', expected=202)
+        task = self.store.task_for_request('shared-native-task', 'bob')
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            native = self.store.native_db.get_job(task['run_id']) or {}
+            if native.get('status') in {'completed', 'failed'}: break
+            time.sleep(.05)
+        self.assertEqual(native.get('status'), 'completed', native)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0].headers['Authorization'], 'Bearer synthetic-test-password')
+        self.assertEqual(self.request('GET', '/personal-credentials', owner='bob'), [])
+        retained = self.store.connections.resolve('bob', selected['connectionRef'], 'model')
+        self.auth.directory.set_disabled('bob', True)
+        with self.assertRaises(HTTPException): retained.credential()
+        with self.assertRaises(HTTPException): self.store.connections.resolve('bob', selected['connectionRef'], 'model')
+        self.assertEqual(len(self.calls), 2)
+        self.auth.directory.set_disabled('bob', False)
+        self.request('POST', path + '/sharing', {'visibility': 'personal', 'requestId': 'withdraw-shared-model'})
+        self.request('POST', '/personal-research', {'topic': 'Withdrawn shared model', 'requestId': 'withdrawn-native-task'}, owner='bob', expected=404)
+        self.assertEqual(len(self.calls), 2)
+        with self.assertRaises(HTTPException): retained.credential()
+        with self.assertRaises(HTTPException): self.store.connections.resolve('bob', selected['connectionRef'], 'model')
+
     def test_go_configuration_runs_through_the_registered_agno_executor_with_stable_plan_headers(self):
         credential = self.request('POST', '/personal-credentials', {'requestId': 'fixture-go-agent-key',
             'providerId': PROVIDER_ID, 'destination': 'https://opencode.ai',
@@ -109,15 +144,15 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
+        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob')}
         self.addCleanup(self.store.engine.dispose); self.addCleanup(self.store.native_db.db_engine.dispose)
         self.auth.directory.upsert('fixture-reviewer', name='Synthetic template publisher')
-        self.auth.authorization.assign('fixture-reviewer', 'factory-manager')
-        publish_application(self.state, author='manager', reviewer='fixture-reviewer')
+        publish_application(self.state, author='manager')
         self.client = TestClient(self.app); self.client.__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
 
     def request(self, method, path, body=None, *, owner='alice', expected=200, expected_owner=None):
         response = self.client.request(method, '/api/factory' + path, json=body,
-            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner),
+            headers={'Authorization': 'Bearer ' + self.tokens[owner],
                 **({'X-Factory-Expected-Owner': expected_owner} if expected_owner is not None else {})})
         self.assertEqual(response.status_code, expected, response.text)
         self.assertNotIn('synthetic-test-password', response.text)
@@ -174,10 +209,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             state = production.app.state.factory
             production_store, production_auth = state['store'], state['auth']
             try:
-                production_auth.authorization.define_role('production-fixture-user', [
-                    'agents:factory-executor:read', 'agents:factory-executor:run', 'components:read'])
                 production_auth.directory.upsert('fixture-owner', name='Synthetic production owner')
-                production_auth.authorization.assign('fixture-owner', 'production-fixture-user')
                 headers = {'Authorization': 'Bearer ' + production_auth._issue_native_token('fixture-owner')}
                 with TestClient(production) as client:
                     response = client.get('/api/factory/personal-research/capabilities', headers=headers)
@@ -191,7 +223,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 409, response.text)
                     self.assertEqual(response.json()['code'], 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED')
                     with self.assertRaises(HTTPException) as unavailable:
-                        publish_application(state, author='fixture-owner', reviewer='other-fixture')
+                        publish_application(state, author='fixture-owner')
                     self.assertEqual(unavailable.exception.detail, 'PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY')
                     self.assertEqual(production_store.applications.list_active('fixture-owner'), [])
             finally:
@@ -352,7 +384,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'requestId': 'reuse-revoke', 'credentialRevision': rotated['credentialRevision']})
         self.request('POST', '/personal-models', body | {'credentialRevision': rotated['credentialRevision'],
             'requestId': 'revoked-existing'}, expected_owner='alice', expected=403)
-        self.auth.authorization.unassign('alice', 'factory-user')
+        self.auth.directory.set_disabled('alice', True)
         self.request('POST', '/personal-models', body | {'requestId': 'permission-ended'}, expected_owner='alice', expected=403)
         self.assertEqual(self.calls, [])
 
@@ -363,7 +395,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision'],
             'requestId': 'wrong-destination'}
         self.request('POST', '/personal-models', body, expected=403)
-        self.auth.authorization.unassign('alice', 'factory-user')
+        self.auth.directory.set_disabled('alice', True)
         self.request('POST', '/personal-research', {'topic': 'Permission revoked', 'requestId': 'revoked-grant'}, expected=403)
         self.assertEqual(self.calls, [])
 

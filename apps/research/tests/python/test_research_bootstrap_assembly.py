@@ -173,11 +173,10 @@ class BootstrapAssemblyTests(unittest.TestCase):
                 assembly.development_settings(replace(settings, **changes))
         self.assertEqual(assembly.development_settings(settings).runtime_tool_contract, 'research-bootstrap-v1')
         self.assertEqual(assembly.development_settings(settings).policy_revision, assembly.REVISION)
-        legacy = assembly.development_settings(replace(settings, temporary_policy='admin-review',
-            material_review_mode='separate-admin'))
-        self.assertEqual(legacy.policy_revision, 'task-research-bootstrap-v1')
-        self.assertEqual(legacy.material_policy_revision, 'task-research-bootstrap-v1')
-        self.assertEqual(legacy.temporary_policy, 'admin-review')
+        for mode in ('admin-review', 'read-only-auto', 'bounded-synthetic', 'unset'):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                replace(settings, temporary_policy=mode)
+
 
 
 class BootstrapImportBoundaryTests(unittest.TestCase):

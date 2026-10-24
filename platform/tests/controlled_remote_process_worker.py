@@ -41,7 +41,7 @@ from agent_factory.store import Store
 from agent_factory.resources import ComputePool, RemoteTarget
 from controlled_remote_worker import (  # pyright: ignore[reportMissingImports]
 ORIGIN_OWNER, RECEIVER_OWNER, OTHER_OWNER, MANAGER, REVIEWER,
-    ORIGIN_REF, TARGET_REF, pin, token)
+    ORIGIN_REF, TARGET_REF, pin, token, install_dispatch_hold)
 
 ORIGIN_PROCESS = "origin-process"
 RECEIVER_PROCESS = "receiver-process"
@@ -314,15 +314,9 @@ def custody_observations(store, custody):
 
 def _provision(state, owner):
     auth = state["auth"]
-    read = ["agents:factory-executor:read", "components:read", "registry:read", "sessions:read", "filesystem:read"]
-    auth.authorization.define_role("fixture-reader", read)
-    auth.authorization.define_role("fixture-user", [*read, "agents:factory-executor:run", "compute:local"])
-    auth.authorization.define_role("fixture-admin-role", ["agent_os:admin"])
     for subject in (ORIGIN_OWNER, RECEIVER_OWNER, OTHER_OWNER, MANAGER, REVIEWER):
         if auth.directory.get(subject) is None:
             auth.directory.upsert(subject, name=subject)
-            auth.authorization.assign(subject, "fixture-admin-role" if subject in {MANAGER, REVIEWER}
-                else "fixture-user" if subject in {owner, OTHER_OWNER} else "fixture-reader")
 
 
 def _source_specs(materials):
@@ -341,7 +335,7 @@ def _source_specs(materials):
 
 def _publish(state, source):
     if source is None:
-        application = publish_process_application(state, target_ref=ORIGIN_PROCESS, author=MANAGER, reviewer=REVIEWER)
+        application = publish_process_application(state, target_ref=ORIGIN_PROCESS, author=MANAGER)
     else:
         # Exact source materials retain IDs, versions and hashes. Receiver
         # grants fresh local publication approval; source approval is not copied.
@@ -351,12 +345,10 @@ def _publish(state, source):
             draft = governance.create_draft(MANAGER, definition, "process-fixture-import-" + material["id"])
             if pin(draft) != pin(material):
                 raise ValueError("Exact source process material changed on receiver")
-            review = governance.request_publication(MANAGER, draft["id"], draft["version"], "process-fixture-review-" + draft["id"])
-            governance.decide_publication(REVIEWER, review["id"], True, "process-fixture-approve-" + draft["id"])
+            governance.publish(MANAGER, draft["id"], draft["version"], "process-fixture-publish-" + draft["id"])
         applications = state["applications"]
         application = applications.import_snapshot(MANAGER, source["application"], "process-fixture-application-import")
-        review = applications.request_publication(MANAGER, application["id"], application["version"], "process-fixture-application-review")
-        applications.decide_publication(REVIEWER, review["id"], True, "process-fixture-application-approve")
+        applications.publish(MANAGER, application["id"], application["version"], "process-fixture-application-publish")
     materials = {row["id"]: row for row in state["store"].materials(published_only=True)
                  if row["id"] in {ref["id"] for ref in application["modes"]["controlled-fixture"]["materialRefs"]}}
     return application, materials
@@ -415,8 +407,7 @@ def main():
     probe_target = RemoteTarget("Controlled pool probe", "compute", frozenset({OTHER_OWNER}), provider=MustNotAllocate(),
         synthetic_fixture=True, max_cpu=1, max_memory_mb=128, max_disk_mb=1, max_seconds=5, capacity_pool=pool)
     settings = process_settings(db_url=configuration["dbUrl"], workspace=workspace, target_ref=target_ref,
-        remote_targets={target_ref: target, "capacity-probe": probe_target}, owner=owner,
-        temporary_policy="admin-review", material_review_mode="separate-admin")
+        remote_targets={target_ref: target, "capacity-probe": probe_target}, owner=owner)
     # This controlled worker exercises legacy zero-priced accounting only.
     settings.fee_management_enabled = settings.platform_paid_models_enabled = True
     settings.jwt_key, settings.port = configuration["jwtKey"], configuration["port"]
@@ -459,6 +450,7 @@ def main():
                                             "materials": configuration["sourceMaterials"]}
     snapshot, materials = _publish(state, source)
     controls = {"fault": None, "droppedAcknowledgements": 0}
+    if role == 'origin': install_dispatch_hold(state, controls)
     launch_exit = LaunchBoundaryExit(directory / (role + "-fault.json"))
     allocation_diagnostics = AllocationDiagnostics()
     original_allocate = provider.allocate_bound
@@ -621,8 +613,9 @@ def main():
             controls["fault"] = body.get("fault")
             controls["disconnectRecorded"] = False
         elif op in {"role-revoke", "role-restore"}:
-            state["auth"].authorization.unassign(owner, "fixture-user" if op == "role-revoke" else "fixture-reader")
-            state["auth"].authorization.assign(owner, "fixture-reader" if op == "role-revoke" else "fixture-user")
+            state['auth'].directory.set_disabled(owner, op == 'role-revoke')
+        elif op in {'dispatch-hold', 'dispatch-release'} and role == 'origin':
+            controls['holdDispatch'] = op == 'dispatch-hold'
         elif op in {"mapping-remove", "mapping-restore", "mapping-rotate"} and role == "receiver":
             live = state["store"].remote_bindings.mappings
             live.clear()

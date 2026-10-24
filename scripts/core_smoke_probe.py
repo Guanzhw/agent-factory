@@ -16,6 +16,7 @@ import secrets
 import socket
 import sys
 from tempfile import TemporaryDirectory
+from typing import Any
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -48,13 +49,8 @@ def health(port):
 
 def empty_catalog(native, port):
     auth = native.state.factory["auth"]
-    owner, role = "core-smoke-member", "core-smoke-member-role"
+    owner = "core-smoke-member"
     auth.directory.upsert(owner, name="Synthetic core smoke member")
-    # Match the existing distribution test's member capabilities. The catalog
-    # currently requires the member's run capability even for these GETs.
-    auth.authorization.define_role(role, ["agents:factory-executor:read", "agents:factory-executor:run", "components:read",
-        "registry:read", "sessions:read", "filesystem:read"])
-    auth.authorization.assign(owner, role)
     headers = {"Authorization": "Bearer " + auth._issue_native_token(owner)}
     for route in ("/api/factory/materials", "/api/factory/applications"):
         status, body = request(port, route, headers)
@@ -62,6 +58,17 @@ def empty_catalog(native, port):
             raise SmokeFailure(f"Expected empty catalog at {route}; received HTTP {status}")
     if request(port, "/api/factory/openresearch/capabilities", headers)[0] != 404:
         raise SmokeFailure("Standalone core exposed the research capability route")
+    for route in ("/api/factory/personal-credentials/capabilities",
+                  "/api/factory/personal-models/capabilities", "/api/factory/personal-remotes/providers",
+                  "/api/factory/personal-tools/descriptors", "/api/factory/personal-ssh/capabilities"):
+        if request(port, route, headers)[0] != 200:
+            raise SmokeFailure(f"Standalone member resource entrypoint unavailable: {route}")
+    if request(port, "/api/factory/accounts", headers)[0] != 403:
+        raise SmokeFailure("Ordinary member acquired account administration")
+    from agent_factory.auth import ACCOUNT_ADMIN_ROLE
+    auth.account_roles.assign(owner, ACCOUNT_ADMIN_ROLE)
+    if request(port, "/api/factory/accounts", headers)[0] != 200:
+        raise SmokeFailure("Account administrator entrypoint unavailable")
 
 
 async def probe(timeout, summary):
@@ -136,10 +143,14 @@ async def probe(timeout, summary):
                 if getattr(native.state, "queue_worker", None) is None:
                     raise SmokeFailure("Native queue worker is missing")
                 await asyncio.to_thread(empty_catalog, native, port)
+                if len((settings.runtime_directory / "credential-vault.key").read_bytes()) != 32:
+                    raise SmokeFailure("Persistent default vault key unavailable")
                 snapshots["running"] = await asyncio.to_thread(tables)
                 if not {"af_tasks", "af_materials"} <= set(snapshots["running"]):
                     raise SmokeFailure("Core tables were not initialized")
-                summary.update(nativeWorkerPresent=True, materialsEmpty=True, applicationsEmpty=True, researchRouteAbsent=True)
+                summary.update(nativeWorkerPresent=True, materialsEmpty=True, applicationsEmpty=True,
+                    researchRouteAbsent=True, memberResourcesAvailable=True, accountManagementAvailable=True,
+                    persistentVaultKeyPresent=True)
         finally:
             if summary.get("researchRouteAbsent"):
                 summary["phase"] = "shutdown"
@@ -162,7 +173,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=float, default=60)
     args = parser.parse_args(argv)
-    summary = {"accepted": False, "modelRunRequested": False}
+    summary: dict[str, Any] = {"accepted": False, "modelRunRequested": False}
     try:
         if args.timeout <= 0:
             raise ValueError("Timeout must be positive")

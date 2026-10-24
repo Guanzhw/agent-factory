@@ -118,7 +118,7 @@ class LiteratureEvidenceTests(unittest.TestCase):
         old = PlanPolicyConfig(tool_contract='local-orx-v1', revision='old-v1')
         new = PlanPolicyConfig(tool_contract='orx-evidence-v2', revision='new-v2')
         self.assertNotIn('orx_text', old.known_tools)
-        self.assertIn('orx_text', new.read_only_tools)
+        self.assertIn('orx_text', new.known_tools)
 
     def test_model_does_not_invent_sources_or_synthesis_on_empty_retrieval(self):
         model = LiteratureEvidenceModel()

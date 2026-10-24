@@ -146,23 +146,8 @@ class SSHOpenResearchPackage:
         return server, lease
 
     def _ssh(self, server, lease, local, command, forward=None):
-        # No ~/.ssh config, agent forwarding, password fallback, proxy commands,
-        # inherited forwards, DNS, multiplexed sessions or host-key learning.
-        identity = local / 'identity.pub'; identity.write_text(lease.public_key + '\n'); identity.chmod(0o600)
-        known = local / 'known_hosts'; known.write_text('factory-pinned ' + server.host_key + '\n'); known.chmod(0o600)
-        args = ['ssh', '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
-            '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}', '-o', 'GlobalKnownHostsFile=/dev/null',
-            '-o', 'IdentitiesOnly=yes', '-o', f'IdentityAgent={lease.socket}', '-i', str(identity),
-            '-o', 'BatchMode=yes', '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
-            '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-            '-o', 'PermitLocalCommand=no', '-o', 'ExitOnForwardFailure=yes', '-o', 'StreamLocalBindUnlink=no',
-            '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
-        if forward: args += ['-R', forward]
-        args += ['-p', str(server.port), server.username + '@' + server.address, command]
-        process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env={'PATH': '/usr/local/bin:/usr/bin:/bin'}, bufsize=-1)
-        assert process.stdin is not None and process.stdout is not None
-        return process
+        from agent_factory.ssh_identity import pinned_ssh
+        return pinned_ssh(server, lease, local, command, forward)
 
     def _image(self):
         archive = self.root / 'image.tar'

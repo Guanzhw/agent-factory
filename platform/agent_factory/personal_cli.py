@@ -27,6 +27,88 @@ from .personal_remote_provider import SecretLease, reject_credential_echo
 from .personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
 
 
+def cli_destination(value: str) -> str:
+    if not isinstance(value, str) or not Path(value).is_absolute() or '\0' in value:
+        raise ValueError('CLI_CONFIGURATION_INVALID')
+    return str(Path(value))
+
+
+class MemberCliAdapter:
+    """A member-configured command on the deployment host, invoked once per effect."""
+
+    def __init__(self, descriptor: ToolDescriptor, configuration: Mapping[str, Any]):
+        self.descriptor = descriptor
+        self.configuration = dict(configuration)
+        self._executable = cli_destination(configuration['executable'])
+        if not Path(self._executable).is_file() or not os.access(self._executable, os.X_OK):
+            raise ValueError('CLI_EXECUTABLE_UNAVAILABLE')
+        workdir = configuration.get('workingDirectory')
+        if workdir and (not Path(workdir).is_absolute() or not Path(workdir).is_dir()):
+            raise ValueError('CLI_WORKDIR_UNAVAILABLE')
+
+    async def invoke(self, invocation: ToolInvocation) -> Any:
+        root = Path(tempfile.mkdtemp(prefix='member-cli-'))
+        stopped, dispatched = True, False
+        try:
+            invocation.check_authorized()
+            if asyncio.get_running_loop().get_debug():
+                raise ToolInvocationError('CLI_DEBUG_LOGGING_UNSAFE', outcome='failed', stopped=True)
+            lease = invocation.resolve_credential()
+            env = PersonalCliAdapter._environment(root)
+            env.update(self.configuration.get('environment', {}))
+            credential_variable = self.configuration.get('credentialEnvironmentVariable')
+            if lease is not None and credential_variable:
+                env[credential_variable] = lease.password
+            argv = list(self.configuration.get('arguments', []))
+            for key, option in self.configuration.get('argumentOptions', {}).items():
+                if key in invocation.arguments:
+                    value = invocation.arguments[key]
+                    if isinstance(value, bool):
+                        if value:
+                            argv.append(option)
+                    else:
+                        argv.append(option + '=' + str(value))
+            stdin = json.dumps(dict(invocation.arguments)).encode() if self.configuration.get('stdinJson', True) else b''
+            try:
+                result = await run_cli_process(executable=self._executable, argv=argv, env=env,
+                    cwd=self.configuration.get('workingDirectory') or root, stdin=stdin,
+                    timeout_seconds=self.descriptor.timeout_seconds, max_output_bytes=self.descriptor.max_output_bytes,
+                    before_spawn=invocation.check_authorized, check_authorized=invocation.check_authorized)
+                stopped, dispatched = result.stopped, result.dispatched
+            except CLIProcessError as error:
+                stopped, dispatched = error.stopped, error.dispatched
+                raise
+            except BaseException:
+                stopped, dispatched = False, True
+                raise ToolInvocationError('CLI_PROCESS_STATE_UNCONFIRMED') from None
+            reject_credential_echo(result.stdout.decode(errors='replace'), lease)
+            reject_credential_echo(result.stderr.decode(errors='replace'), lease)
+            if result.returncode:
+                raise ToolInvocationError('CLI_COMMAND_FAILED', stopped=stopped)
+            value = (json.loads(result.stdout) if self.configuration.get('outputFormat', 'json') == 'json'
+                else {'text': result.stdout.decode(errors='replace')})
+            reject_credential_echo(value, lease)
+            invocation.check_authorized()
+            return value
+        except ToolInvocationError as error:
+            outcome: Literal['failed', 'cancelled', 'unknown'] = 'unknown' if dispatched else (
+                'cancelled' if error.outcome == 'cancelled' else 'failed')
+            raise ToolInvocationError(error.code, outcome=outcome,
+                stopped=stopped) from None
+        except Exception:
+            raise ToolInvocationError('CLI_INVOCATION_REJECTED', outcome='unknown' if dispatched else 'failed',
+                stopped=stopped) from None
+        finally:
+            if stopped:
+                try:
+                    shutil.rmtree(root)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    raise ToolInvocationError('CLI_CREDENTIAL_CLEANUP_FAILED',
+                        outcome='unknown' if dispatched else 'failed', stopped=True) from None
+
+
 def _json_credential(lease: SecretLease) -> bytes:
     return json.dumps({"username": lease.username, "password": lease.password}).encode()
 

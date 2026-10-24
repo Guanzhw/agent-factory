@@ -30,7 +30,6 @@ from pg_fixture import IsolatedPostgres
 from agent_factory.catalog import create_plan
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory_server.main import create_app
-from agent_factory.plan_policy import PlanPolicyConfig
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -291,17 +290,12 @@ class SchedulingLeaseRecoveryTests(unittest.TestCase):
         cls.addClassCleanup(cls.db.db_engine.dispose)
         cls.client = TestClient(cls.app).__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
-        # Native last-admin revocation safeguards remain enabled. This extra
-        # synthetic principal exists solely inside this generated test DB.
-        cls.backup_admin = "synthetic-recovery-admin-" + uuid4().hex
-        cls.auth.directory.upsert(cls.backup_admin, name="Synthetic recovery fixture operator")
-        cls.auth.authorization.assign(cls.backup_admin, "factory-manager")
 
     def setUp(self):
         self.ids = []
 
     def tearDown(self):
-        self.auth.authorization.assign("manager", "factory-manager")
+        self.auth.directory.set_disabled("manager", False)
         self.auth.directory.set_disabled("manager", False)
         for identifier in self.ids:
             self.service.set_enabled("manager", identifier, False)
@@ -363,23 +357,17 @@ class SchedulingLeaseRecoveryTests(unittest.TestCase):
         self.assertIsNone(self.db.get_schedule(first.id)["locked_by"])
         self.assertGreater(self.db.get_schedule(first.id)["next_run_at"], successor["next_run_at"])
 
-    def test_06_canceled_revoked_owner_and_current_policies_block_due_effects(self):
-        for reason in ("disabled-schedule", "disabled-owner", "revoked-owner-role", "policy-unset", "policy-review-required"):
+    def test_06_disabled_schedule_or_owner_blocks_due_effects(self):
+        for reason in ("disabled-schedule", "disabled-owner"):
             with self.subTest(reason=reason):
                 schedule = self.schedule()
                 self.due(schedule)
                 claim = self.db.claim_due_schedule("fixture-denied-" + reason)
                 self.assertIsNotNone(claim)
-                policy = self.store.plan_policy
-                original = policy.current()
                 if reason == "disabled-schedule":
                     self.service.set_enabled("manager", schedule["id"], False)
                 elif reason == "disabled-owner":
                     self.auth.directory.set_disabled("manager", True)
-                elif reason == "revoked-owner-role":
-                    self.auth.authorization.unassign("manager", "factory-manager")
-                else:
-                    policy.replace_configuration(PlanPolicyConfig(name="unset" if reason == "policy-unset" else "admin-review", revision="fixture-policy-" + uuid4().hex), expected_revision=original["revision"])
                 before = self.store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"]
                 try:
                     with self.assertRaises(HTTPException) as denied:
@@ -388,10 +376,7 @@ class SchedulingLeaseRecoveryTests(unittest.TestCase):
                     self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"], before)
                     self.assertEqual(self.store.sql("SELECT * FROM af_schedule_occurrences WHERE schedule_id=:id", id=schedule["id"]), [])
                 finally:
-                    self.auth.authorization.assign("manager", "factory-manager")
                     self.auth.directory.set_disabled("manager", False)
-                    if reason.startswith("policy-"):
-                        policy.replace_configuration(PlanPolicyConfig(name=original["name"], revision=original["revision"], review_ttl_seconds=original["review_ttl_seconds"]), expected_revision=policy.current()["revision"])
 
     def test_07_native_unconditional_release_race_is_visible_without_duplicate_admission(self):
         """Evidence of a pinned native limitation, not atomic lease ownership.

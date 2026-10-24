@@ -30,7 +30,7 @@ class ResearchConnectionTests(unittest.TestCase):
         self.ticket = {'id': 'run', 'session_id': 'task', 'user_id': 'alice',
                        'component_id': 'factory-executor', 'component_type': 'agent'}
         self.task = {'id': 'task', 'owner_id': 'alice', 'plan_id': 'plan', 'run_id': 'run'}
-        self.auth = SimpleNamespace(require=Mock())
+        self.auth = SimpleNamespace(require_member=Mock())
         self.store = SimpleNamespace(engine=self.engine, task=Mock(return_value=self.task),
             native_db=SimpleNamespace(get_job=Mock(return_value=self.ticket)), sql=Mock())
         self.service = ResearchConnectionService(self.store, self.auth, self.registry, clock=lambda: self.at)
@@ -59,9 +59,9 @@ class ResearchConnectionTests(unittest.TestCase):
         self.assertEqual(self.service.inspect('alice', self.pin['ref'])['status'], 'revoked')
         with self.assertRaisesRegex(HTTPException, 'CONNECTION_REVOKED'):
             self.service.resolve('alice', self.pin['ref'], 'orx')
-        self.auth.require.side_effect = HTTPException(403, 'synthetic revoked authority')
+        self.auth.require_member.side_effect = HTTPException(403, 'synthetic member disabled')
         self.assertIs(self.cleanup(), self.handle)
-        with self.assertRaisesRegex(HTTPException, 'synthetic revoked authority'):
+        with self.assertRaisesRegex(HTTPException, 'synthetic member disabled'):
             self.service.resolve('alice', self.pin['ref'], 'orx')
         self.handle.create_experiment_adapter.assert_not_called()
 

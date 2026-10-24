@@ -35,9 +35,11 @@ inherit that persisted root; the whole tree stays at the selected receiver.
 
 ## Admission, recovery and cleanup
 
-Prepare persists the immutable receiver plan and binding proof without execution.
-Receiver administrator review exposes that exact plan in PREPARING, with no task
-or ticket; after approval, idempotent prepare reserves its original task.
+Prepare persists the immutable receiver plan and binding proof without execution,
+then reserves the receiver task directly for an active member. If preparation is
+interrupted after persistence, `PREPARING` retains that original plan/proof while
+the receiver task remains unconfirmed. The UI shows an unknown preparation outcome and offers
+reconciliation, cancellation or an explicit continuation of the original request.
 Dispatch commits an UNKNOWN boundary before its single native submission attempt.
 The origin persists `dispatchAttempted` even when a later receipt says PREPARED.
 Lost delivery, lost reply and restart lead to owner-bound receipt/native-ticket
@@ -49,8 +51,8 @@ never began. Bare cancel acknowledgement does not establish cleanup.
 Root cancellation persists origin intent before any network lookup, then uses
 receiver native cancellation and existing experiment/descendant supervision.
 Remote answer/approval uses the actual native requirement ID and version. Reads
-remain available to a current read-only owner; execution actions require current
-run authority. Neither an expired approval nor cancellation intent erases prior
+remain available to the current owner; execution actions recheck membership,
+resources and task scope. Cancellation intent never erases prior
 evidence. Public descendants use `originTaskId~receiverChildId` and are validated
 against the exact receiver tree. Artifact downloads check metadata and actual
 bytes, size and SHA-256 before returning them to the owner.

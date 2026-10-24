@@ -147,7 +147,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         # healthy vault/permission lookup into UNKNOWN under database load.
         # Strict blocked-credential and streaming deadlines remain unit tests.
         self.adapter = ObservedMCPAdapter(descriptor, url=self.mcp.url, remote_tool_name='echo',
-                                         allow_loopback_http=True, authorization_interval=0.25)
+                                         authorization_interval=0.25)
         self.settings = Settings(
             db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=1,
             temporary_policy='member-self-service', personal_tool_adapters=(self.adapter,),

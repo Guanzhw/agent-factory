@@ -23,7 +23,7 @@ def install_research(state):
     store, auth, settings = state['store'], state['auth'], state['settings']
     bridge, factory_api = state['bridge'], state['factory_api']
     base, connections = state['http_app'], state['connections']
-    resources, credential_vault = state['resources'], state['credential_vault']
+    resources = state['resources']
     handoff_client, receiver = state['handoff_client'], state['handoff_receiver']
     research = services_for(store)
     from .orx_experiment_tools import initialize_orx_experiments
@@ -39,22 +39,13 @@ def install_research(state):
     from agent_factory.application_environments import ApplicationEnvironments, environment_router
     environment_packages = {}
     server_catalog = None
-    personal_ssh = None
+    personal_ssh = store.personal_ssh
     ssh_config = settings.ssh_openresearch
-    if settings.ssh_self_service is not None:
-        from agent_factory.personal_ssh import PersonalSSHServers, SSHEnrollmentConfig
+    if personal_ssh is not None:
         from agent_factory_research.ssh_openresearch import SSHOpenResearchConfig, BASE
-        from .platform_openresearch import PlatformOpenResearchConfig
-        if credential_vault is None or not isinstance(settings.ssh_self_service, SSHEnrollmentConfig):
-            raise ValueError('Self-service SSH requires explicit global policy and encrypted vault')
-        if not isinstance(settings.ssh_self_service.runtime, PlatformOpenResearchConfig):
-            raise ValueError("Self-service SSH research requires pinned OpenResearch runtime config")
-        personal_ssh = PersonalSSHServers(auth, connections, credential_vault, settings.ssh_self_service,
-            probe_source=(BASE / "ssh_prerequisites.py").read_text())
-        if ssh_config is None:
-            ssh_config = SSHOpenResearchConfig(settings.ssh_self_service.runtime, (), personal_ssh.static_unavailable)
-        elif not isinstance(ssh_config, SSHOpenResearchConfig) or ssh_config.runtime != settings.ssh_self_service.runtime:
-            raise ValueError('Self-service and registered SSH packages must have identical runtime pins')
+        personal_ssh.probe_source = (BASE / "ssh_prerequisites.py").read_text()
+        if ssh_config is None and settings.platform_openresearch is not None:
+            ssh_config = SSHOpenResearchConfig(settings.platform_openresearch, (), personal_ssh.static_unavailable)
     if settings.platform_openresearch is not None:
         from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig, PlatformOpenResearchPackage
         if not settings.personal_agent_commands_enabled or not isinstance(settings.platform_openresearch, PlatformOpenResearchConfig):
@@ -75,7 +66,6 @@ def install_research(state):
         server_catalog = ssh_package.servers
     store.application_environments = ApplicationEnvironments(store, auth, store.personal_models, connections,
         environment_packages, server_catalog=server_catalog, self_service_servers=personal_ssh is not None)
-    store.personal_ssh = personal_ssh
     from agent_factory_research.synthesis_sources import SynthesisSourceService
     research.synthesis_sources = SynthesisSourceService(store, auth)
     from agent_factory_research.autoresearch import AutoResearchService, autoresearch_router
@@ -137,8 +127,6 @@ def install_research(state):
     from agent_factory_research.comparison_workflow import ComparisonService, comparison_router
     research.comparisons = ComparisonService(store, auth)
     base.include_router(comparison_router(auth, research.comparisons))
-    from agent_factory.personal_ssh import personal_ssh_router
-    base.include_router(personal_ssh_router(auth, personal_ssh))
     base.include_router(environment_router(auth, store.application_environments))
     from .synthesis_api import synthesis_router
     base.include_router(synthesis_router(auth, research.synthesis_sources, settings))
@@ -167,8 +155,6 @@ async def research_lifespan(app):
             await research.autoresearch_session_control.close()
         if store.application_environments is not None:
             store.application_environments.close()
-        if store.personal_ssh is not None:
-            store.personal_ssh.close()
 
 
 

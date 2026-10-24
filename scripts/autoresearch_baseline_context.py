@@ -63,7 +63,7 @@ attestation; original retained rows are independently checked on every entry.
         manifest = captured['contract']['comparisonManifest']
         workspace = Path(original['workspace'])
         basic = development_settings(Settings(db_url=self._database_url, workspace=workspace,
-            max_workers=1, temporary_policy='admin-review'))
+            max_workers=1, temporary_policy='member-self-service'))
         # Must finish before even the stop-only provider-state composition.
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:

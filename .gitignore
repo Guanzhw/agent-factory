@@ -12,6 +12,7 @@ output/
 *.sqlite*
 *.tsbuildinfo
 .local/
+/work/
 .venv/
 .uv-cache/
 __pycache__/

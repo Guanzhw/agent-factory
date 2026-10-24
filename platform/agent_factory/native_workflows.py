@@ -193,7 +193,7 @@ class NativeWorkflows:
             return
         if selected != self.pin(selected.get('id')):
             raise HTTPException(409, 'NATIVE_WORKFLOW_CHANGED')
-        self.auth.require(owner, 'run', 'workflows', selected['id'])
+        self.auth.require_member(owner)
         from .input_schema import input_model
         schema = plan.get('inputSchema')
         configured_schema = self.registrations[selected['id']].component.input_schema

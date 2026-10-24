@@ -1,87 +1,52 @@
-# Department collaboration integration (base 615a23f)
+# Trusted-team integration
 
-User scope, 2026-10-13: a trusted department of a few dozen people. Members create,
-configure, publish and use public resources themselves. Only public deletion /
-withdrawal / archival needs an administrator; history and immutable versions stay.
-Personal secrets and data remain owner-scoped. No OS/network/provider grants change.
-Members may archive their own never-published private drafts. Archived drafts stay
-private and retain their bodies; archiving a private new version leaves published
-versions and existing pins unchanged. Previously public versions remain subject to
-administrator-only withdrawal / archival after their first deactivation.
+The current product serves a small trusted department. Active members create,
+configure, publish, revise, withdraw and archive their own applications and
+materials. Administrators manage accounts only. Public visibility permits use
+and copying; a copy receives a new identity owned by the copying member.
+Personal data and credentials remain owner-scoped.
 
-## Ownership
+## Current composition contract
 
-This branch owns auth.py, plan_policy.py, owner_submission.py, factory_api.py,
-applications.py, material_governance.py, personal_command_api.py; PlanReviews, ApplicationGovernance,
-MaterialGovernance and their focused tests. A owns main.py, store.py, config.py,
-App.tsx, navigation and shared API assembly. B owns personal_models/ModelSettings.
-C owns root instructions, architecture and CI. Shared files are not edited here.
-No .agents/skills files existed in the selected environment.
+1. Core `Settings` and research `ResearchSettings` use
+   `temporary_policy="member-self-service"` and
+   `material_review_mode="member-self-service"`. Their default revisions are
+   `department-member-v1` and `material-department-v1`. Retired execution/publication
+   modes are rejected, including in demo profiles. Plan-review TTL configuration
+   is removed. Services consume the supplied runtime configuration; historical
+   policy tables do not gate startup.
+2. Materials and applications use `service.publish(...)` directly as their author.
+   New versions retain immutable body/hash references. Withdrawal and archival
+   change availability without rewriting historical versions or completed evidence.
+   The author manages public and private versions; account administrators have no
+   resource-management override.
+3. Material/application navigation is available to members. PlanReviews is
+   owner-scoped historical inspection. Retired review-write APIs return HTTP 410.
+   New execution uses current membership, ownership, ready plans and available
+   resources; old review outcomes are not execution credentials.
+4. Tool validation uses the actual installed descriptors, including persisted
+   member-created CLI/MCP tools. New workers load missing member registrations
+   from stored resources. Tool names/capability metadata express application and
+   parent-task scope, not a separate operator authorization allowlist.
+5. `PersonalCommandAPI` retains its current connection-pin, session/project and
+   project-create-consent guard through Store execution guards. Members manage
+   their connections and choose personal/team sharing; shared use keeps the
+   credential owner's secrets private. TLS and SSH host identity still verify
+   the selected destination.
 
-## Required A integration
+## Persistence and recovery
 
-1. Settings and from_env: production new default temporary_policy=`member-self-service`,
-   policy_revision=`department-member-v1`; accept that policy name. Explicit legacy
-   policy names remain for historical regression fixtures, not a new product default.
-   material_review_mode=`member-self-service`, material_policy_revision=`material-department-v1`;
-   accept that mode. Existing demo bootstrap may retain explicit legacy modes; normal
-   department entrypoints should select self-service. main.py's GovernanceConfig
-   Literal cast must include `member-self-service`. Store continues writing the exact
-   settings.temporary_policy in new immutable plans (currently composition.py does so).
-2. Expose applications/materials navigation and panels to members. Admin label and
-   destructive controls must use the actual administrator capability, not component
-   author privileges. PlanReviews is historical read-only. Remove ordinary plan
-   approval wording/steps. Keep native hazardous-operation/project-creation consent.
-3. This branch supplies `web/publicationApi.ts` using the existing `factoryRequest`
-   export; no shared API edit is needed. Application POST
-   `/api/factory/applications/${id}/versions/${version}/publish` returns the exact
-   `FactoryApplication` body; material POST
-   `/api/factory/material-governance/versions/${id}/${version}/publish` returns
-   `FactoryMaterial`. Both use `{requestId}` and expected-owner headers.
-   Historical review projections preserve old API flags and add `readOnly`; no
-   shared review type or validator change is required.
-4. After A extracts app bootstraps, change normal application publication setup to
-   service.publish(...) (no request_publication/decide_publication pair). Explicit
-   historical fixtures using separate-admin can continue exercising old contracts.
-   personal_command_api now delegates permission recheck to Factory admission. Its
-   installed `personal-command` execution guard retains current connection expiry,
-   owner scope and exact project-create consent checks for every ingress, including
-   generic /instances. Keep this guard when extracting the application; these are
-   write-safety checks, not plan approval or app-ID/prefix exemptions.
-   The old owner-submission table is retained only as historical metadata.
-5. Product profile guards explicitly requiring admin-review / separate-admin must
-   be reviewed during extraction, especially development_workflows.py and profiles.
-   Keep operator-installed adapters/remote grants and native dangerous-tool guards;
-   only remove per-plan/per-version human-review predicates from normal entrypoints.
+Existing plans, reviews, tasks, effects and artifacts retain their original
+identities. Historical owner-submission rows remain readable data. Startup does
+not replay prior work or rewrite policy rows to manufacture execution approval.
 
-## Behavior and migration
+Per-owner/global active-task limits, tool/time/output budgets, cancellation and
+current resource state remain enforced. Original request IDs, effect receipts,
+UNKNOWN reconciliation and positive stop evidence keep their operational roles.
+Disable an account, withdraw a resource, pause a schedule or cancel an owned task
+through the corresponding current API rather than selecting an old policy mode.
 
-New self-service plans must persist `policy=member-self-service`. Legacy plans
-(including approved, denied, pending and UNKNOWN) fail new admission with
-`LEGACY_PLAN_READ_ONLY`; create a new plan explicitly. No task dispatch runs during
-migration, no history rows are rewritten, and original request IDs never become new
-attempts. Legacy review mutation APIs return 410 under the new mode; GET remains.
-
-Startup may migrate only the review name/revision while runtime tool contracts and
-registrations match exactly. An emergency unset policy or changed execution contract
-requires explicit reconciliation and is not automatically widened.
-
-Public edits create new immutable versions. Existing exact-version references stay
-unchanged; owner chooses a new version explicitly. Personal credentials are not public
-materials; native identity, current access, owner isolation, TLS/SSRF, tool contracts,
-request identity, effect idempotency, UNKNOWN reconciliation, and stop evidence remain.
-
-## Retained application boundaries for A
-
-- OwnerSubmissions has no research session/project imports or injected dependencies.
-  It no longer grants admission and needs no new application exception interface.
-- PlanPolicyService._project still calls project_review_summary only when rendering
-  an old project-create review. A may supply this history-only formatter from the
-  research application; it must not become an approval or dispatch hook.
-- PersonalCommandAPI installs `_require_command_current` through the existing Store
-  execution guard. This preserves private inputValues connection-pin freshness and
-  exact project-create consent for both personal and generic task admission.
-- ResourceService.execution_runtime still has its pre-existing research effect
-  binding. This branch makes no resource executor changes; A can replace that import
-  with its proposed explicit static research binding. No dynamic policy engine or
-  new resource approval interface is needed.
+The earlier branch handoff based on `615a23f` used administrator resource control
+and retained executable review modes. It is superseded by this contract. Frozen
+historical artifact verifiers continue checking their original release bytes;
+they do not define current settings or membership behavior.

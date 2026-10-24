@@ -222,7 +222,6 @@
     "applicationSnapshot": null
   },
   "publication": {
-    "author": "manager",
-    "reviewer": "reviewer"
+    "author": "manager"
   }
 }

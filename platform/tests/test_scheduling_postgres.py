@@ -39,15 +39,9 @@ class SchedulingPostgresTests(unittest.TestCase):
         cls.db = cls.store.native_db
         cls.client = TestClient(cls.app).__enter__()
         cls.service = cls.state["schedules"]
-        # Preserve the native last-admin safeguard while testing revocation.
-        cls.backup_admin = "synthetic-scheduler-admin-" + str(uuid4())
-        cls.auth.directory.upsert(cls.backup_admin, name="Synthetic scheduler test operator")
-        cls.auth.authorization.assign(cls.backup_admin, "factory-manager")
 
     @classmethod
     def tearDownClass(cls):
-        cls.auth.authorization.unassign(cls.backup_admin, "factory-manager")
-        cls.auth.directory.remove(cls.backup_admin)
         cls.client.__exit__(None, None, None)
         cls.store.engine.dispose()
         cls.db.db_engine.dispose()
@@ -60,7 +54,7 @@ class SchedulingPostgresTests(unittest.TestCase):
 
     def tearDown(self):
         self.service.bridge = self.original_bridge
-        self.auth.authorization.assign("manager", "factory-manager")
+        self.auth.directory.set_disabled("manager", False)
         self.auth.directory.set_disabled("manager", False)
         for identifier in self.schedule_ids:
             self.service.set_enabled("manager", identifier, False)
@@ -113,12 +107,10 @@ class SchedulingPostgresTests(unittest.TestCase):
             self.service.create("alice", self.store.plan(schedule["payload"]["planId"])["id"], "denied", "0 0 1 1 *")
         self.assertEqual(error.exception.status_code, 404)
         self.assertEqual(error.exception.detail, "Plan not found")
-        self.auth.authorization.unassign("manager", "factory-manager")
+        self.auth.directory.set_disabled("manager", True)
         with self.assertRaises(HTTPException) as error:
             self.call(self.service.execute, Schedule.from_dict(schedule), self.db)
         self.assertEqual(error.exception.status_code, 403)
-        self.auth.authorization.assign("manager", "factory-manager")
-        self.auth.directory.set_disabled("manager", True)
         with self.assertRaises(HTTPException) as error:
             self.call(self.service.trigger, "manager", schedule["id"], "disabled")
         self.assertEqual(error.exception.status_code, 403)
@@ -254,11 +246,17 @@ class SchedulingPostgresTests(unittest.TestCase):
         self.assertEqual(first.json()["task_id"], repeat.json()["task_id"])
         self.assertEqual(self.wait(first.json()["task_id"], {"completed", "failed"})["status"], "completed")
         self.assertEqual(self.client.get(path + "/occurrences").status_code, 200)
-        self.assertEqual(self.client.get("/schedules").status_code, 403)
-        self.assertEqual(self.client.post("/schedules", json=body).status_code, 403)
+        native_listing = self.client.get("/schedules")
+        self.assertEqual(native_listing.status_code, 200, native_listing.text)
+        self.assertTrue(all(item["user_id"] == "manager" for item in native_listing.json()["data"]))
+        self.assertEqual(self.client.post("/schedules", json=body).status_code, 422)
+        native_trigger = self.client.post("/schedules/" + schedule_id + "/trigger")
+        self.assertEqual(native_trigger.status_code, 503, native_trigger.text)
+        self.assertEqual(native_trigger.json()["message"], "Scheduler is not running")
         self.assertEqual(self.client.post(path + "/enabled", json={"enabled": False}).status_code, 200)
         self.assertEqual(self.client.post(path + "/trigger", json={"requestId": "disabled-trigger"}).status_code, 409)
         login("bob")
+        self.assertEqual(self.client.get("/schedules/" + schedule_id).status_code, 404)
         self.assertEqual(self.client.get(path).status_code, 404)
         self.assertEqual(self.client.get(path + "/occurrences").status_code, 404)
         denied = self.client.post("/api/factory/schedules", json={**body, "name": "denied"})

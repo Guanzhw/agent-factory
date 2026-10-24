@@ -11,6 +11,7 @@ import re
 from typing import Any, Literal
 from types import SimpleNamespace
 
+from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
@@ -92,7 +93,7 @@ class ControlCommands:
         raise HTTPException(409, "APPROVED_RECOVERY_UNAVAILABLE: no original-work recovery adapter is installed")
 
     async def approved_recovery(self, task, snapshot, *, approval_id=None, repair_id=None):
-        self.auth.require(task["owner_id"], "run")
+        self.auth.require_member(task["owner_id"])
         if task["cancel_requested"] or not task.get("run_id"):
             raise HTTPException(409, "APPROVED_RECOVERY_CANCELED: original task is unavailable")
         ticket = snapshot.get("queue") or {}
@@ -162,7 +163,10 @@ class ControlCommands:
             context = SimpleNamespace(session_id=task["id"], run_id=task.get("run_id"), user_id=task["owner_id"],
                 session_state={"factory_envelope": {"plan_ref": task["plan_id"], "task_id": task["id"],
                     "user_id": task["owner_id"], "request_id": task["request_id"]}})
-            self.store.require_plan_execution(task["owner_id"], self.store.plan(task["plan_id"], task["owner_id"]), run_context=context)
+            try:
+                self.store.require_plan_execution(task["owner_id"], self.store.plan(task["plan_id"], task["owner_id"]), run_context=context)
+            except RunCancelledException as error:
+                raise HTTPException(409, "Task is no longer waiting for this action") from error
         detail = await self.api.detail(task, child)
         expected = "waiting_input" if action == "answer" else "waiting_approval"
         if detail["job"]["status"] != expected or task["cancel_requested"]:
@@ -193,7 +197,7 @@ class ControlCommands:
         return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
 
     async def submit(self, owner: str, task_id: str, command: ControlCommand, *, upstream=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         task, child = self.api.scoped_task(task_id, owner)
         binding = self._binding(task, child, upstream)
         decision = command.decision()
@@ -255,7 +259,7 @@ class ControlCommands:
         """Claim adapter-owned continuation metadata inside the command transaction."""
 
     async def dispatch(self, owner, task_id, command_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         row = self.row(owner, task_id, command_id)
         if row["state"] != "PREPARED":
             return await self.recover(owner, task_id, command_id)
@@ -343,7 +347,7 @@ class ControlCommands:
             self._update(row, evidence={"kind": "receiver-command", "receipt": result})
 
     async def recover(self, owner, task_id, command_id):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         task, child = self.api.scoped_task(task_id, owner)
         row = self.row(owner, task_id, command_id)
         if row["state"] in {"PREPARED", "REJECTED"}:
@@ -430,7 +434,7 @@ class ControlCommands:
         return self.public(self.row(owner, task_id, command_id))
 
     async def list(self, owner, task_id=None, *, limit=50, after=None, outstanding=True):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         if task_id is not None:
             self.api.scoped_task(task_id, owner)
         rows = self.store.sql("""SELECT * FROM af_control_commands WHERE owner_id=:owner

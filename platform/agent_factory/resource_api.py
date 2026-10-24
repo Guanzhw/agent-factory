@@ -25,7 +25,7 @@ def resource_router(auth, resources, maintenance=None):
 
     def owner(request):
         user = auth.user(request)
-        auth.require(user["id"], "run")
+        auth.require_member(user["id"])
         return user["id"]
 
     @router.get("")
@@ -47,7 +47,7 @@ def resource_router(auth, resources, maintenance=None):
     @router.post("/maintenance")
     async def maintain(request: Request, body: Maintenance | None = None):
         user = auth.user(request)
-        auth.require(user["id"], "agent_os:admin")
+        auth.require_member(user["id"])
         if maintenance is None:
             from fastapi import HTTPException
             raise HTTPException(409, "Resource maintenance is unavailable")

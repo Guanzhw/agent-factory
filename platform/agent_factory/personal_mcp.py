@@ -10,13 +10,12 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-import ipaddress
 import json
 import logging
 import math
 import threading
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx2
 from anyio.abc import ObjectReceiveStream
@@ -26,12 +25,65 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.message import SessionMessage
 from referencing import Registry
 
-from .personal_remote_provider import SecretLease, reject_credential_echo
+from .personal_remote_provider import SecretLease, origin, reject_credential_echo
 from .personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
 
 
 _private_wire: ContextVar[bool] = ContextVar('personal_mcp_private_wire', default=False)
 _CLOSE_DEADLINE = 'agent_factory_mcp_close_deadline'
+
+
+def mcp_url(value: str) -> str:
+    """Normalize member-selected HTTP(S) endpoints, preserving the MCP path."""
+    try:
+        parsed = urlsplit(value)
+        if parsed.query or parsed.fragment or any(ord(char) < 33 for char in value):
+            raise ValueError()
+        destination = origin(urlunsplit((parsed.scheme, parsed.netloc, '', '', '')))
+        return destination + (parsed.path or '/')
+    except Exception:
+        raise ValueError('MCP_CONFIGURATION_INVALID') from None
+
+
+async def discover_mcp_tools(url: str, *, resolve_credential=lambda: None,
+                             check_authorized=lambda: None, timeout_seconds: float = 30) -> list[dict]:
+    """Read tools/list through the official SDK; never dispatch a business tool."""
+    endpoint = httpx2.URL(mcp_url(url))
+    invocation = ToolInvocation('', '', '', '', {}, None, check_authorized, resolve_credential)
+    state = _InvocationState(invocation)
+    marker = _private_wire.set(True)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            transport = _BoundedTransport(httpx2.AsyncHTTPTransport(retries=0, trust_env=False), 1048576, state)
+            async with httpx2.AsyncClient(auth=_OwnerAuth(state, endpoint, 2), transport=transport,
+                    timeout=timeout_seconds, trust_env=False, follow_redirects=False) as http:
+                async with streamable_http_client(str(endpoint), http_client=http, terminate_on_close=True) as (reader, writer):
+                    async with ClientSession(_PrivateErrors(reader), writer, read_timeout_seconds=timeout_seconds) as session:
+                        await session.initialize()
+                        cursor = None
+                        seen = set()
+                        tools = []
+                        for _ in range(32):
+                            await state.check()
+                            page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
+                            for tool in page.tools:
+                                value = {'name': tool.name, 'description': tool.description or tool.name,
+                                    'inputSchema': tool.input_schema,
+                                    'readOnly': bool(tool.annotations and tool.annotations.read_only_hint)}
+                                reject_credential_echo(value, state.lease)
+                                tools.append(value)
+                            cursor = page.next_cursor
+                            if not cursor:
+                                return tools
+                            if cursor in seen:
+                                break
+                            seen.add(cursor)
+                        raise ValueError('MCP_DISCOVERY_LIMIT')
+    except Exception:
+        raise ValueError('MCP_DISCOVERY_FAILED') from None
+    finally:
+        state.lease = None
+        _private_wire.reset(marker)
 
 
 class _PrivateWireFilter(logging.Filter):
@@ -134,11 +186,11 @@ class _InvocationState:
             self.authorization_rejected = True
             raise self.error('MCP_AUTHORIZATION_REJECTED') from None
 
-    async def credential(self) -> SecretLease:
+    async def credential(self) -> SecretLease | None:
         await self.check()
         try:
             lease = await self.checked_callback(self.invocation.resolve_credential)
-            if not isinstance(lease, SecretLease) or (self.lease is not None and lease != self.lease):
+            if (lease is not None and not isinstance(lease, SecretLease)) or (self.lease is not None and lease != self.lease):
                 raise ValueError()
         except Exception:
             self.authorization_rejected = True
@@ -165,7 +217,8 @@ class _OwnerAuth(httpx2.Auth):
         try:
             async with asyncio.timeout_at(deadline):
                 lease = await self._state.credential()
-                request.headers['authorization'] = 'Bearer ' + lease.password
+                if lease is not None:
+                    request.headers['authorization'] = 'Bearer ' + lease.password
         except TimeoutError:
             # The SDK swallows DELETE failures. Preserve an incomplete auth
             # check so the completed operation cannot bypass the final guard.
@@ -268,31 +321,23 @@ class _PrivateErrors(ObjectReceiveStream[SessionMessage | Exception]):
 
 
 class MCPToolAdapter:
-    """Trusted static HTTP endpoint and one exact tool; no stdio or installation.
+    """Member or installed HTTP endpoint and one declared native tool.
 
     ``http_transport_factory`` is a trusted test/deployment injection, created
     separately for every invocation. Credentials never live on this adapter.
     Stateful and stateless servers use the same per-invocation lifecycle, so
     there are no idle sessions or authentication pools to share across owners.
-    HTTPS is required; ``allow_loopback_http`` enables numeric loopback test
-    servers only. ``teardown_timeout_seconds`` bounds the whole session DELETE,
+    HTTP and HTTPS support local, private and public endpoints on custom ports.
+    ``teardown_timeout_seconds`` bounds the whole session DELETE,
     including authorization and a continuously streaming response.
     """
 
     def __init__(self, descriptor: ToolDescriptor, *, url: str,
                  remote_tool_name: str | None = None, authorization_interval: float = 0.05,
-                 allow_loopback_http: bool = False, teardown_timeout_seconds: float = 2.0,
+                 teardown_timeout_seconds: float = 2.0,
                  http_transport_factory: Callable[[], httpx2.AsyncBaseTransport] | None = None):
-        parsed = urlsplit(url)
-        loopback_http = False
-        if allow_loopback_http and parsed.scheme == 'http' and parsed.hostname and '%' not in parsed.hostname:
-            try:
-                loopback_http = ipaddress.ip_address(parsed.hostname).is_loopback
-            except ValueError:
-                pass
-        if (descriptor.transport != 'mcp' or (parsed.scheme != 'https' and not loopback_http)
-                or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
-                or any(ord(char) < 33 for char in url)
+        url = mcp_url(url)
+        if (descriptor.transport != 'mcp'
                 or not math.isfinite(descriptor.timeout_seconds) or descriptor.timeout_seconds <= 0
                 or descriptor.max_output_bytes < 1
                 or not math.isfinite(authorization_interval) or authorization_interval <= 0

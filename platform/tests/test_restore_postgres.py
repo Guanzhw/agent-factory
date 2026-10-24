@@ -1,6 +1,6 @@
 """Opt-in official PostgreSQL dump/restore of an owned synthetic Factory fixture.
 
-The app, native queue, managed SQL roles, review/material policies and artifacts
+The app, native queue, current membership, historical reviews and artifacts
 are real. One UNKNOWN reservation is deliberately created without a ticket.
 This proves clean-stop schema/data recovery, not production RPO/RTO, PITR,
 concurrent backup consistency, external workspace/credential backup or load.
@@ -57,7 +57,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
     def app(self, database, workspace_name):
         settings = Settings(db_url=database.url, jwt_key=self.fixture_key,
             workspace=Path(self.directory.name) / workspace_name, max_workers=1,
-            max_user_tasks=1, temporary_policy="admin-review", policy_revision=self.policy_revision,
+            max_user_tasks=1, temporary_policy="member-self-service", policy_revision=self.policy_revision,
             material_policy_revision=self.material_revision)
         app = create_app(settings)
         client = TestClient(app).__enter__()
@@ -87,16 +87,27 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         response = client.post("/api/factory/demo/login", json={"persona": persona})
         self.assertEqual(response.status_code, 200)
 
-    def approved_plan(self, client, policy, application):
+    def historical_plan(self, client, policy, application):
         self.login(client)
         result = client.post("/api/factory/plans", json={
             "topic": "Original synthetic restore " + application + " fixture", "mode": "literature",
             "application": application, "requestId": uuid4().hex})
         self.assertEqual(result.status_code, 201)
         plan = result.json()
-        review = policy.request_review("alice", plan["id"], uuid4().hex)
-        decision = policy.decide("manager", review["id"], True, uuid4().hex)
-        self.assertTrue(decision["approvalEffective"])
+        # Restore original persisted review/decision history without calling
+        # retired approval writers. Expired approval never gates this new run.
+        review = {"id": str(uuid4()), "owner_id": "alice", "plan_id": plan["id"],
+            "plan_hash": digest(plan), "plan_fingerprint": plan["fingerprint"],
+            "policy_revision": "old-admin-review", "policy_hash": "old-policy-digest",
+            "request_id": str(uuid4()), "intent_hash": "old-intent-digest",
+            "created_at": "2026-01-01T00:00:00+00:00", "expires_at": "2026-01-01T01:00:00+00:00"}
+        with policy.store.engine.begin() as connection:
+            connection.execute(policy.reviews.insert().values(**review))
+            connection.execute(policy.decisions.insert().values(review_id=review["id"], actor_id="manager",
+                request_id=str(uuid4()), intent_hash="original-decision", decision="approved",
+                decided_at="2026-01-01T00:30:00+00:00"))
+        self.assertFalse(policy.inspect("alice", review["id"])["approvalEffective"])
+        self.assertTrue(policy.require_execution("alice", plan)["allowed"])
         return plan["id"], review["id"]
 
     def wait_completed(self, client, task_id):
@@ -140,7 +151,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         home.mkdir(exist_ok=True)
         pgpass = home / "empty-pgpass"
         pgpass.write_text("", encoding="utf-8")
-        environment = {name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "LANG", "LC_ALL") if name in os.environ}
+        environment = {name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH") if name in os.environ}
         # Subprocess-only homes prevent libpq reading a personal pgpass,
         # service/config or SSL certificate. No provider environment is copied.
         environment.update(HOME=str(home), USERPROFILE=str(home), APPDATA=str(home),
@@ -159,7 +170,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         source_handle = self.app(self.source, "source-workspace")
         client, store, state = source_handle
         auth, policy, governance = state["auth"], state["plan_policy"], state["material_governance"]
-        plan_id, review_id = self.approved_plan(client, policy, "checksum")
+        plan_id, review_id = self.historical_plan(client, policy, "checksum")
         admitted_key = uuid4().hex
         admitted = client.post("/api/factory/instances", json={"planId": plan_id, "requestId": admitted_key})
         self.assertEqual(admitted.status_code, 202)
@@ -174,7 +185,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         run_id = store.task(task_id, "alice")["run_id"]
         self.assertEqual(store.native_db.get_job(run_id)["status"], "completed")
 
-        unknown_plan_id, unknown_review_id = self.approved_plan(client, policy, "research")
+        unknown_plan_id, unknown_review_id = self.historical_plan(client, policy, "research")
         unknown_key = uuid4().hex
         unknown, fresh = store.reserve_task(store.plan(unknown_plan_id, "alice"), unknown_key)
         self.assertTrue(fresh)
@@ -182,26 +193,22 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         self.assertFalse(store.task(unknown["id"], "alice")["terminal"])
         self.assertIsNone(store.task(unknown["id"], "alice")["run_id"])
 
-        # Current managed SQL grants override the old role in any JWT. Alice
-        # retains owner evidence reads while the run grant is revoked.
-        reader_role = "restore-fixture-reader"
-        reader_scopes = [f"agents:{EXECUTOR_ID}:read", "sessions:read", "components:read", "filesystem:read"]
-        auth.authorization.define_role(reader_role, reader_scopes)
-        auth.authorization.unassign("alice", "factory-user")
-        auth.authorization.assign("alice", reader_role)
-        with self.assertRaises(HTTPException) as denied:
-            auth.require("alice", "run")
-        self.assertEqual(denied.exception.status_code, 403)
-        auth.require("alice", "read")
-        governance.withdraw("manager", "checksum-tool", 1, uuid4().hex, "Synthetic current policy withdrawal after completed evidence")
-        governance.archive("manager", "research-prompt", 1, uuid4().hex, "Synthetic archival after UNKNOWN reservation")
+        # Register the actual synthetic bootstrap author as a member; material
+        # withdrawal belongs to that author rather than an account administrator.
+        auth.directory.upsert("demo-bootstrap", name="Synthetic bootstrap material owner")
+        governance.withdraw("demo-bootstrap", "checksum-tool", 1, uuid4().hex, "Synthetic current policy withdrawal after completed evidence")
+        governance.archive("demo-bootstrap", "research-prompt", 1, uuid4().hex, "Synthetic archival after UNKNOWN reservation")
         old_plan, old_unknown_plan = store.plan(plan_id, "alice"), store.plan(unknown_plan_id, "alice")
         old_task, old_unknown = store.task(task_id, "alice"), store.task(unknown["id"], "alice")
         old_policy, old_governance = policy.current(), governance.current()
-        source_materials = {mid: governance.inspect_version("manager", mid, 1) for mid in ("checksum-tool", "research-prompt")}
-        source_review = policy.inspect("manager", review_id)
-        source_unknown_review = policy.inspect("manager", unknown_review_id)
+        source_materials = {mid: governance.inspect_version("demo-bootstrap", mid, 1) for mid in ("checksum-tool", "research-prompt")}
+        source_review = policy.inspect("alice", review_id)
+        source_unknown_review = policy.inspect("alice", unknown_review_id)
         source_cookie = dict(client.cookies)
+        auth.directory.set_disabled("alice", True)
+        with self.assertRaises(HTTPException) as denied:
+            auth.require_member("alice")
+        self.assertEqual(denied.exception.status_code, 403)
         self.close_app(source_handle)
 
         expected = self.database_snapshot(self.source.url)
@@ -230,26 +237,32 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         self.assertEqual(restored_store.task(task_id, "alice"), old_task)
         restored_unknown = restored_store.task_for_request(unknown_key, "alice")
         # Schema/data digests were exact before startup. The trusted background
-        # observer may now add cancel intent because current run rights/material
-        # authority are revoked; immutable receipt and UNKNOWN hold stay intact.
+        # observer may now add cancel intent because current membership/material
+        # availability changed; immutable receipt and UNKNOWN hold stay intact.
         for key in ("id", "owner_id", "plan_id", "request_id", "fingerprint", "admission", "run_id", "terminal"):
             self.assertEqual(restored_unknown[key], old_unknown[key], key)
         self.assertEqual(restored_unknown["body"]["createdAt"], old_unknown["body"]["createdAt"])
         self.assertFalse(restored_unknown["terminal"])
         self.assertIsNone(restored_unknown["run_id"])
         self.assertEqual(restored_store.native_db.get_job(run_id)["status"], "completed")
-        self.assertEqual(restored_state["plan_policy"].inspect("manager", review_id), source_review)
-        self.assertEqual(restored_state["plan_policy"].inspect("manager", unknown_review_id), source_unknown_review)
-        self.assertEqual(set(restored_auth.authorization.roles_of("alice")), {reader_role})
-        restored_auth.require("alice", "read")
+        self.assertTrue(restored_auth.directory.get("alice")["disabled"])
         with self.assertRaises(HTTPException) as revoked:
-            restored_auth.require("alice", "run")
+            restored_auth.require_member("alice")
         self.assertEqual(revoked.exception.status_code, 403)
-        restored_auth.require("manager", "agent_os:admin")
+        restored_auth.require_account_admin("manager")
 
         # Preserve the source synthetic cookie to verify trusted same-key
-        # restart without provisioning/reassigning the revoked principal.
+        # restart and immediate enforcement of restored current membership.
         restored_client.cookies.update(source_cookie)
+        self.assertEqual(restored_client.get(artifact_path).status_code, 403)
+        self.assertEqual(restored_client.post("/api/factory/instances", json={"planId": unknown_plan_id, "requestId": unknown_key}).status_code, 403)
+        restored_auth.directory.set_disabled("alice", False)
+        restored_auth.require_member("alice")
+        self.assertEqual(restored_state["plan_policy"].inspect("alice", review_id), source_review)
+        self.assertEqual(restored_state["plan_policy"].inspect("alice", unknown_review_id), source_unknown_review)
+        with self.assertRaises(HTTPException) as other_owner:
+            restored_state["plan_policy"].inspect("manager", review_id)
+        self.assertEqual(other_owner.exception.status_code, 404)
         evidence = restored_client.get(artifact_path)
         self.assertEqual(evidence.status_code, 200)
         self.assertEqual(evidence.content, artifact_bytes)
@@ -263,14 +276,14 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         self.assertEqual(receipt.json()["taskId"], unknown["id"])
         self.assertEqual(receipt.json()["admission"], "unknown")
         self.assertIsNone(receipt.json()["runId"])
-        self.assertEqual(restored_client.post("/api/factory/instances", json={"planId": unknown_plan_id, "requestId": unknown_key}).status_code, 403)
+        self.assertEqual(restored_client.post("/api/factory/instances", json={"planId": unknown_plan_id, "requestId": unknown_key}).status_code, 409)
         with self.assertRaises(HTTPException) as held:
             restored_store.reserve_task(old_unknown_plan, uuid4().hex)
         self.assertEqual(held.exception.status_code, 429, "Restored UNKNOWN reservation must continue holding the owner's capacity")
         self.assertEqual(restored_store.sql("SELECT COUNT(*) AS n FROM ai.agno_jobs")[0]["n"], 1)
         self.assertEqual(restored_store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"], 2)
         for mid, material in source_materials.items():
-            self.assertEqual(restored_state["material_governance"].inspect_version("manager", mid, 1), material)
+            self.assertEqual(restored_state["material_governance"].inspect_version("demo-bootstrap", mid, 1), material)
         with self.assertRaises(HTTPException) as withdrawn:
             restored_state["material_governance"].require_materials_current(old_plan)
         self.assertEqual(withdrawn.exception.status_code, 409)

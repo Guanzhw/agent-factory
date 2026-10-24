@@ -51,22 +51,18 @@ def local_profile_settings(*, db_url: str, workspace: Path, provider: TaskLocalO
         runtime_adapters=[environment_registration()])
 
 
-def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewer: str | None = None, contract_revision: str = "1", source_application: dict[str, Any] | None = None) -> dict[str, Any]:
+def publish_local_orx_application(state: dict[str, Any], *, author: str, contract_revision: str = "1", source_application: dict[str, Any] | None = None) -> dict[str, Any]:
     """Publish the fixed local profile under current material governance.
 
     Reusing this exact profile is idempotent. A conflicting prior version fails;
     the installer never silently rewrites a previously published definition.
     """
-    member_publication = state["material_governance"].member_publication()
     if contract_revision not in {"1", "2"}:
         raise ValueError("Unsupported immutable ORX contract")
     suffix = "" if contract_revision == "1" else "-capabilities-v2"
     profile_revision = PROFILE_REVISION + suffix
-    if not member_publication and author == reviewer:
-        raise ValueError("The local toy profile requires a distinct publication reviewer")
     store, auth = state["store"], state["auth"]
-    auth.require(author, "run" if member_publication else "components:write")
-    if not member_publication: auth.require(reviewer, "agent_os:admin")
+    auth.require_member(author)
     governance, applications = state["material_governance"], state["applications"]
 
     def publish(identifier, kind, adapter, *, tool_name=None, scenario=None):
@@ -85,11 +81,7 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
             "permissions": permissions, "runtimeBinding": {"adapterId": adapter, "revision": contract_revision if kind == "tool" else "1", "config": config},
             "provenance": {"kind": "original", "notice": "Original Agent Factory no-provider toy recipe."},
         }, profile_revision + ":draft:" + identifier)
-        if member_publication:
-            governance.publish(author, identifier, material["version"], profile_revision + ":publish:" + identifier)
-        else:
-            review = governance.request_publication(author, identifier, material["version"], profile_revision + ":review:" + identifier)
-            governance.decide_publication(reviewer, review["id"], True, profile_revision + ":approve:" + identifier)
+        governance.publish(author, identifier, material["version"], profile_revision + ":publish:" + identifier)
         return next(row for row in store.materials(published_only=True)
                     if row["id"] == identifier and row["version"] == material["version"])
 
@@ -116,9 +108,5 @@ def publish_local_orx_application(state: dict[str, Any], *, author: str, reviewe
         "defaultMode": "success", "modes": modes, "discoveryKeywords": ["orx toy", "local toy experiment"]}
     application = (applications.create_draft(author, definition, profile_revision + ":application")
                    if source_application is None else applications.import_snapshot(author, source_application, profile_revision + ":import"))
-    if member_publication:
-        applications.publish(author, application["id"], application["version"], profile_revision + ":application-publish")
-    else:
-        review = applications.request_publication(author, application["id"], application["version"], profile_revision + ":application-review")
-        applications.decide_publication(reviewer, review["id"], True, profile_revision + ":application-approve")
+    applications.publish(author, application["id"], application["version"], profile_revision + ":application-publish")
     return application

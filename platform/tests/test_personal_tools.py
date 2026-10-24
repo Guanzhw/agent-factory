@@ -317,22 +317,22 @@ class PersonalToolTests(unittest.TestCase):
                 guarded.resolve_credential()
             resolve.assert_not_called()
 
-    def test_current_permission_denies_new_configuration_and_retained_handle_but_allows_owner_revoke(self):
+    def test_current_membership_allows_configuration_and_disabled_member_denies_retained_handle(self):
         row = self.configure()
         handle = self.binding(row).opaque_handle
         self.auth.reader = True
-        self.assertNotIn('bind', self.service.list('alice')[0]['allowedActions'])
-        with self.assertRaises(HTTPException) as denied:
-            self.configure(request_id='reader-configure')
-        self.assertEqual(denied.exception.status_code, 403)
+        self.assertIn('bind', self.service.list('alice')[0]['allowedActions'])
+        self.assertEqual(self.configure(request_id='reader-configure')['status'], 'configured')
+        self.assertEqual(handle.resolve_credential().password, PASSWORD)
+        self.auth.disabled = True
         with patch.object(self.vault, 'resolve', wraps=self.vault.resolve) as resolve:
             with self.assertRaises(HTTPException):
                 handle.resolve_credential()
             resolve.assert_not_called()
-        self.assertEqual(self.service.revoke('alice', row['registrationRef'], 'reader-revoke')['status'], 'revoked')
-        self.auth.disabled = True
         for operation in (lambda: self.service.list('alice'), lambda: self.service.describe('alice'),
-                          lambda: self.service.request_result('alice', 'configure-tool')):
+                          lambda: self.service.request_result('alice', 'configure-tool'),
+                          lambda: self.configure(request_id='disabled-configure'),
+                          lambda: self.service.revoke('alice', row['registrationRef'], 'disabled-revoke')):
             with self.assertRaises(HTTPException) as denied:
                 operation()
             self.assertEqual(denied.exception.status_code, 403)

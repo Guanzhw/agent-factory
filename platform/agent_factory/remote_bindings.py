@@ -267,7 +267,7 @@ class RemoteBindingService:
         self.bindings._connection(owner, entry, effective, context, resolve=False)
 
     def prepare(self, origin, remote_owner, origin_task, receipt_id, manifest, *, receiver_plan_id, source_configuration):
-        self.auth.require(remote_owner, "run")
+        self.auth.require_member(remote_owner)
         for value in (origin_task, receipt_id, receiver_plan_id):
             UUID(value)
         source = manifest.get("plan") if isinstance(manifest, dict) else None
@@ -353,7 +353,7 @@ class RemoteBindingService:
         execution mapping's current availability; cleanup/evidence must remain
         observable when an operator withdraws a map or user connection.
         """
-        self.auth.require(remote_owner, "read")
+        self.auth.require_member(remote_owner)
         with self._read() as conn:
             row = conn.execute(select(self.proofs).where(self.proofs.c.receipt_id == receipt_id,
                 self.proofs.c.receiver_owner == remote_owner)).mappings().first()
@@ -434,7 +434,7 @@ class RemoteBindingService:
         root = self._root(plan, context)
         if root is None:
             return None
-        self.auth.require(plan["ownerId"], "run")
+        self.auth.require_member(plan["ownerId"])
         if source_manifest != self.validate_source(plan):
             raise HTTPException(409, "REMOTE_BINDING_SOURCE: requested source manifest differs")
         with self._read() as conn:

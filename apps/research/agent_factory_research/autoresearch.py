@@ -26,13 +26,6 @@ ACCEPTANCE = ('modelExecuted', 'instructionsRead', 'agentDecision', 'managedExpe
               'independentResult', 'nextDecision')
 
 
-class ResearchPlanReviewRequired(HTTPException):
-    """A local admission refusal, raised before task reservation or dispatch."""
-
-    def __init__(self):
-        super().__init__(409, 'RESEARCH_PLAN_REVIEW_REQUIRED')
-
-
 @dataclass(frozen=True)
 class ResearchPreset:
     id: str
@@ -49,8 +42,6 @@ class ResearchPreset:
     candidate_validator: Callable | None = field(default=None, repr=False)
     candidate_builder: Callable | None = field(default=None, repr=False)
     experiment: Callable | None = field(default=None, repr=False)
-    # Explicit development operator standing approval, never model/user JSON.
-    review_owner: str | None = None
     # Explicit reviewed native pause boundary; existing inline presets remain unchanged.
     external_session: bool = False
     blockers: tuple[str, ...] = ()
@@ -62,7 +53,7 @@ class ResearchPreset:
     def fingerprint(self):
         return digest({'id': self.id, 'owner': self.owner_id, 'context': self.public_context(),
             'defaultGoal': self.default_goal, 'limits': self.limits, 'application': self.application_ref,
-            'connections': self.connection_refs, 'reviewOwner': self.review_owner,
+            'connections': self.connection_refs,
             'externalSession': self.external_session,
             **({'candidateInput': 'parameter-changes-v1'} if callable(self.candidate_builder) else {})})
 
@@ -96,7 +87,7 @@ class AutoResearchService:
         return blockers
 
     def list_presets(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return [{'id': p.id, 'name': p.name, 'defaultGoal': p.default_goal,
                  'ready': not self.unavailable(p), 'blockers': self.unavailable(p), 'limits': p.limits}
                 for p in self.presets.values() if type(p) is ResearchPreset and p.owner_id == owner]
@@ -122,7 +113,7 @@ class AutoResearchService:
             return result
 
     def projection(self, owner, task_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         row = self.row(owner, task_id)
         body = dict(row['body'])
         if body['status'] in {'completed', 'failed', 'awaiting-continuation'} and self._unresolved_tools(task_id):
@@ -130,7 +121,7 @@ class AutoResearchService:
             body['status'] = 'unknown'
         actions = []
         try:
-            self.auth.require(owner, 'run')
+            self.auth.require_member(owner)
             if body['status'] not in {'completed', 'failed', 'blocked'}:
                 actions = ['cancel']
         except HTTPException:
@@ -145,13 +136,13 @@ class AutoResearchService:
                    for effect in self.store.effects(task_id))
 
     def recover(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         rows = self.store.sql('SELECT task_id FROM af_autoresearch_runs WHERE owner_id=:owner AND request_id=:request',
                               owner=owner, request=request_id)
         return self.projection(owner, rows[0]['task_id']) if rows else None
 
     async def start(self, owner, preset_id, goal, request_id, *, expected_preset_fingerprint=None):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         preset = self.preset(owner, preset_id)
         if expected_preset_fingerprint is not None and preset.fingerprint != expected_preset_fingerprint:
             raise HTTPException(409, 'RESEARCH_PRESET_CHANGED')
@@ -173,12 +164,6 @@ class AutoResearchService:
         plan = self.store.composition.accept(owner, proposal['id'], key + ':accept')
         if plan['status'] != 'ready':
             raise HTTPException(409, 'RESEARCH_PLAN_BLOCKED')
-        authorization = self.store.plan_policy.status(owner, plan)
-        if not authorization['executionAllowed']:
-            if not self.store.settings.demo or not preset.review_owner:
-                raise ResearchPlanReviewRequired()
-            review = self.store.plan_policy.request_review(owner, plan['id'], key + ':review')
-            self.store.plan_policy.decide(preset.review_owner, review['id'], True, key + ':decision')
         self.store.require_plan_execution(owner, plan)
         task, _ = self.store.reserve_task(plan, request_id)
         body = {'id': task['id'], 'ownerId': owner, 'presetId': preset.id, 'presetFingerprint': preset.fingerprint,
@@ -476,7 +461,7 @@ class AutoResearchService:
         return result
 
     async def cancel(self, owner, task_id, request_id):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self.row(owner, task_id)
         from agent_factory.control_commands import ControlCommand
         if self.commands is None:

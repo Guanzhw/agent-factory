@@ -61,10 +61,8 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         self.requirements = {}
         self.stack.callback(self.store.engine.dispose)
         self.stack.callback(self.store.native_db.db_engine.dispose)
-        self.auth.authorization.unassign('bob', 'factory-user')
-        self.auth.authorization.assign('bob', 'factory-manager')
         self.application = publish_research_application(self.state, target_ref='research-main',
-            comparison_manifest=self.manifest, author='manager', reviewer='bob')
+            comparison_manifest=self.manifest, author='manager')
         self.client = self.stack.enter_context(TestClient(self.app))  # pyright: ignore[reportArgumentType]
         assert self.client.portal is not None
         self.portal = self.client.portal
@@ -299,12 +297,12 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         self.approve(task['id'], self.detail(task['id']), allowed={409})
         self.assertEqual(self.driver.launches, 1)
 
-    def test_current_role_revocation_stops_original_without_releasing_unknown_gpu(self):
+    def test_current_member_disablement_stops_original_without_releasing_unknown_gpu(self):
         task, _ = self.task()
         lease = self.portal.call(self.runtime.submit, 'alice', task['id'])
         self.portal.call(self.store.lifecycle_observer.stop)
         self.driver.unknown_stop = True
-        self.auth.authorization.unassign('alice', 'factory-user')
+        self.auth.directory.set_disabled('alice', True)
         try:
             held = self.portal.call(self.runtime.observe_lease, lease['id'])
             self.assertEqual(held['cancellationReason'], 'AUTHORITY_ENDED')
@@ -318,7 +316,7 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
             self.assertEqual(released['providerJobId'], held['providerJobId'])
             self.assertEqual(self.driver.launches, 1)
         finally:
-            self.auth.authorization.assign('alice', 'factory-user')
+            self.auth.directory.set_disabled('alice', False)
 
     def test_shared_maintenance_tick_routes_real_research_lease_and_controlled_ordinary_row(self):
         task, _ = self.task()

@@ -120,7 +120,7 @@ def process_settings(*, db_url, workspace: Path, target_ref, remote_targets, own
     return Settings(db_url=db_url, workspace=workspace, max_workers=1, max_tool_calls=2,
         runtime_tool_contract="bounded-process-v1", temporary_policy=temporary_policy,
         material_review_mode=material_review_mode,
-        policy_revision=APPLICATION_ID + ("-department-v1" if temporary_policy == "member-self-service" else ""),
+        policy_revision=APPLICATION_ID + "-department-v1",
         material_policy_revision=APPLICATION_ID + ("-department-v1" if material_review_mode == "member-self-service" else ""),
         runtime_adapters=registrations(target_ref=target_ref, owner=owner, include_fixture_model=True),
         remote_targets=remote_targets,
@@ -128,17 +128,10 @@ def process_settings(*, db_url, workspace: Path, target_ref, remote_targets, own
             local_model_type=ProcessFixtureModel, per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),))
 
 
-def publish_process_application(state, *, target_ref, author, reviewer=None):
+def publish_process_application(state, *, target_ref, author):
     target_ref = _target(target_ref)
     governance, applications = state["material_governance"], state["applications"]
-    member_publication = governance.member_publication()
-    if member_publication:
-        state["auth"].require(author, "run")
-    else:
-        if reviewer is None or author == reviewer:
-            raise ValueError("Distinct publication reviewer required")
-        state["auth"].require(author, "components:write")
-        state["auth"].require(reviewer, "agent_os:admin")
+    state["auth"].require_member(author)
     materials = []
     for kind, name, adapter in (("prompt", "instructions", None), ("model", "model", MODEL_ID),
                               ("tool", TOOL_NAME, TOOL_ID), ("environment", "environment", ENVIRONMENT_ID)):
@@ -154,11 +147,7 @@ def publish_process_application(state, *, target_ref, author, reviewer=None):
                 "targetRef": target_ref}}
         key = identifier + ":" + target_ref
         material = governance.create_draft(author, definition, key + ":draft")
-        if member_publication:
-            governance.publish(author, identifier, material["version"], key + ":publish")
-        else:
-            review = governance.request_publication(author, identifier, material["version"], key + ":review")
-            governance.decide_publication(reviewer, review["id"], True, key + ":approve")
+        governance.publish(author, identifier, material["version"], key + ":publish")
         materials.append(material)
     definition = {"id": APPLICATION_ID, "name": "受控进程执行", "defaultMode": "controlled-fixture",
         "description": "固定 operator 目标的原生执行与凭据；模型为确定性测试 fixture。", "discoveryKeywords": [],
@@ -168,9 +157,5 @@ def publish_process_application(state, *, target_ref, author, reviewer=None):
             "budget": {"toolCalls": 2, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 5, "outputBytes": 65536}}}}
     key = APPLICATION_ID + ":" + target_ref
     application = applications.create_draft(author, definition, key + ":draft")
-    if member_publication:
-        applications.publish(author, application["id"], application["version"], key + ":publish")
-    else:
-        review = applications.request_publication(author, application["id"], application["version"], key + ":review")
-        applications.decide_publication(reviewer, review["id"], True, key + ":approve")
+    applications.publish(author, application["id"], application["version"], key + ":publish")
     return application

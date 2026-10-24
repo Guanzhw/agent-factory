@@ -8,7 +8,7 @@ from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 from sqlalchemy.pool import QueuePool
 
 from agent_factory.applications import GovernedStorage
-from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
+from agent_factory.material_governance import MaterialGovernance
 
 
 class GovernedStorageConnectionTests(unittest.TestCase):
@@ -17,8 +17,7 @@ class GovernedStorageConnectionTests(unittest.TestCase):
             pool_size=1, max_overflow=0, pool_timeout=.05)
         self.addCleanup(engine.dispose)
         metadata = MetaData()
-        # These tables are reflected by MaterialGovernance; this regression
-        # exercises its actual persisted publication policy, not material writes.
+        # Reflect the real governance tables while bounding the pool to one connection.
         Table("af_materials", metadata, Column("id", String, primary_key=True))
         Table("af_audit", metadata, Column("id", String, primary_key=True))
         metadata.create_all(engine)
@@ -27,41 +26,39 @@ class GovernedStorageConnectionTests(unittest.TestCase):
         self.governance = MaterialGovernance(self.store, None)
         self.applications = GovernedStorage(self.store, "application-read-fixture")
 
-    def test_nested_member_publication_read_uses_one_connection_and_current_policy(self):
-        with self.applications.read():
-            self.assertTrue(self.governance.member_publication())
+    def test_nested_material_read_uses_outer_connection(self):
+        with self.applications.read() as outer:
+            with self.governance._read() as inner:
+                self.assertIs(inner, outer)
+                self.assertEqual(inner.execute(select(self.governance.audit.c.id)).scalars().all(), [])
         self.assertIsNone(self.store._connection.get())
-        current = self.governance.current()
-        self.governance.replace_configuration(
-            GovernanceConfig(review_mode="separate-admin", revision="legacy-publication"),
-            expected_revision=current["revision"])
-        with self.applications.read():
-            self.assertFalse(self.governance.member_publication())
         self.assertEqual(self.store.engine.pool.checkedout(), 0)
 
-    def test_denied_policy_read_releases_connection_and_does_not_cache_authority(self):
-        with self.assertRaises(HTTPException) as denied:
-            with self.applications.read() as conn:
-                conn.execute(self.governance.configs.update().values(hash="changed-after-registration"))
-                self.governance.member_publication()
-        self.assertEqual(denied.exception.status_code, 409)
+    def test_failed_nested_read_releases_connection_and_rolls_back_write(self):
+        with self.assertRaisesRegex(HTTPException, 'controlled read failure'):
+            with self.applications.write() as outer:
+                outer.execute(self.governance.audit.insert().values(id='rolled-back'))
+                with self.governance._read() as inner:
+                    self.assertIs(inner, outer)
+                    raise HTTPException(409, 'controlled read failure')
         self.assertIsNone(self.store._connection.get())
         self.assertEqual(self.store.engine.pool.checkedout(), 0)
-        # The failed read transaction rolled back and the next check reads the
-        # original persisted policy again on an available connection.
-        self.assertTrue(self.governance.member_publication())
+        with self.governance._read() as conn:
+            self.assertEqual(conn.execute(select(self.governance.audit.c.id)).scalars().all(), [])
 
     def test_nested_read_keeps_outer_write_transaction_until_commit(self):
         with self.applications.write() as outer:
             outer.execute(self.governance.audit.insert().values(id="outer-write"))
             with self.applications.read() as inner:
                 self.assertIs(inner, outer)
-                self.assertTrue(self.governance.member_publication())
+                with self.governance._read() as material_conn:
+                    self.assertIs(material_conn, outer)
             self.assertIs(self.store._connection.get(), outer)
             with self.assertRaisesRegex(ValueError, "controlled nested read failure"):
                 with self.applications.read() as inner:
                     self.assertIs(inner, outer)
-                    self.assertTrue(self.governance.member_publication())
+                    with self.governance._read() as material_conn:
+                        self.assertIs(material_conn, outer)
                     raise ValueError("controlled nested read failure")
             self.assertIs(self.store._connection.get(), outer)
         self.assertIsNone(self.store._connection.get())

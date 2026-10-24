@@ -70,7 +70,7 @@ class PersonalOrxLease:
 
     def refresh(self, owner, reference, expected_fingerprint, *, depth=0):
         service = self.connections
-        service.auth.require(owner, 'run')
+        service.auth.require_member(owner)
         if depth >= 32:
             raise HTTPException(409, 'ORX_LEASE_REFRESH_CHAIN_LIMIT')
         key = 'orx-lease-refresh:' + digest({'ref': reference, 'fingerprint': expected_fingerprint})[:40]
@@ -147,7 +147,7 @@ class PersonalOrxLease:
         return candidate
 
     def continue_session(self, owner, session_id, expected_fingerprint):
-        self.connections.auth.require(owner, 'run')
+        self.connections.auth.require_member(owner)
         session = self.sessions.inspect(owner, session_id)
         if session['namespace'] != 'native-openresearch' or not session['nativeSessionId']:
             raise HTTPException(409, 'PERSONAL_SESSION_ACK_UNKNOWN')

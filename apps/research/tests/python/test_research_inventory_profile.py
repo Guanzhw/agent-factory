@@ -262,7 +262,9 @@ class ResearchObserverProfileTests(unittest.TestCase):
         inventory['startupProfile'] = module.SETUPTOOLS_LOCAL_PROFILE
         inventory['startupFiles'] = deepcopy(module.UV_STARTUP_PROFILES[module.SETUPTOOLS_LOCAL_PROFILE][1])
         f.input('environment-inventory', 'inventory.json', inventory)
-        with patch.object(official, 'FILES', tiny):
+        stdlib = f.root / 'stdlib'
+        stdlib.mkdir()
+        with patch.object(official, 'FILES', tiny), patch('sysconfig.get_path', return_value=str(stdlib)):
             interpreter_patch = patch.object(module.sys, 'executable', str(f.venv / 'bin' / 'python'))
             interpreter_patch.start()
             self.addCleanup(interpreter_patch.stop)
@@ -300,6 +302,11 @@ class ResearchObserverProfileTests(unittest.TestCase):
                     large, _ = self.complete_observer()
                     self.assertEqual(large(f.request)['status'], 'UNKNOWN')
                     path.unlink()
+            hook = stdlib / '_distutils_system_mod.py'
+            hook.write_bytes(b'# unapproved system shim\n')
+            large, _ = self.complete_observer()
+            self.assertEqual(large(f.request)['status'], 'UNKNOWN')
+            hook.unlink()
             large, _ = self.complete_observer()
             self.assertEqual(large(f.request)['status'], 'VERIFIED')
 

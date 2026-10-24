@@ -3,7 +3,7 @@
 These tests exercise installed routes and native owner authorization. They never
 start a CLI, connect to an MCP server, or call a model.
 """
-from dataclasses import asdict, fields, replace
+from dataclasses import fields, replace
 import json
 import os
 from pathlib import Path
@@ -20,11 +20,10 @@ from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.main import create_app as create_core_app
 from agent_factory.personal_remote_provider import origin
 from agent_factory.personal_tool_contract import ToolDescriptor
-from agent_factory.tool_policy_registry import ToolPolicyRegistration, resolve_tool_policies
 from agent_factory_research.config import ResearchSettings
 from agent_factory_research.connections_compatibility import ResearchConnectionService
 from agent_factory_server.main import create_app as create_research_app, factory_state
-from pg_fixture import IsolatedPostgres
+from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
 
 
 class InertAdapter:
@@ -43,52 +42,37 @@ class InertAdapter:
         raise AssertionError('Assembly must not dispatch a personal tool')
 
 
-def declared_policy(adapter):
-    descriptor = adapter.descriptor
-    return ToolPolicyRegistration(descriptor.adapter_id, descriptor.revision,
-                                  descriptor.revision, descriptor.read_only)
-
-
 class PersonalToolSettingsTests(unittest.TestCase):
-    def test_dictionary_policies_survive_core_to_research_reconstruction(self):
+    def test_adapter_registration_survives_core_to_research_reconstruction(self):
         adapter = InertAdapter()
-        policy = declared_policy(adapter)
-        settings = Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,),
-                            tool_policies=(asdict(policy),))
+        settings = Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,))
         research = ResearchSettings(**{field.name: getattr(settings, field.name) for field in fields(Settings)})
         reconstructed = replace(research)
         for configured in (settings, research, reconstructed):
             self.assertEqual(len(configured.runtime_adapters), 1)
-            self.assertEqual(configured.tool_policies, (policy,))
             self.assertIs(configured.runtime_adapters[0], settings.runtime_adapters[0])
-            resolved = resolve_tool_policies(configured.tool_policies, configured.runtime_adapters)
-            self.assertEqual((resolved[0].name, resolved[0].capability, resolved[0].read_only),
-                             ('personal_inventory', 'inventory:read', True))
+            installed = configured.runtime_adapters[0]
+            self.assertEqual((installed.tool_name, installed.permissions),
+                             ('personal_inventory', ('inventory:read',)))
         self.assertEqual(adapter.calls, [])
 
-    def test_existing_operator_registration_and_dictionary_policy_are_preserved(self):
+    def test_existing_operator_registration_is_preserved(self):
         adapter = InertAdapter()
         entry = AdapterRegistration('tool', 'fixture.existing', 'existing-v1', lambda _: None,
                                     tool_name='existing_tool', permissions=('existing:read',))
-        policy = ToolPolicyRegistration(entry.adapter_id, entry.revision, 'existing-policy-v1', True)
         settings = Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,),
-                            runtime_adapters=[entry], tool_policies=(asdict(policy),))
+                            runtime_adapters=[entry])
         self.assertIs(settings.runtime_adapters[0], entry)
         self.assertEqual(len(settings.runtime_adapters), 2)
-        self.assertEqual(set(settings.tool_policies), {policy, declared_policy(adapter)})
 
-    def test_conflicting_policy_or_adapter_cannot_replace_an_installed_identity(self):
+    def test_conflicting_adapter_cannot_replace_an_installed_identity(self):
         adapter = InertAdapter()
         settings = Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,))
         with self.assertRaises(ValueError):
             replace(settings, personal_tool_adapters=(InertAdapter(),))
         with self.assertRaises(ValueError):
             Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter, adapter))
-        with self.assertRaises(ValueError):
-            Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,),
-                     tool_policies=(asdict(replace(declared_policy(adapter), read_only=False)),))
         self.assertEqual(len(settings.runtime_adapters), 1)
-        self.assertEqual(settings.tool_policies, (declared_policy(adapter),))
         self.assertEqual(adapter.calls, [])
 
 
@@ -265,7 +249,8 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
         current = self.request(client, 'GET', '/personal-tools/' + registration)
         self.assertEqual(current['status'], status)
         self.assertFalse(current['available'])
-        self.assertEqual(current['allowedActions'], ['inspect'] if status == 'revoked' else ['inspect', 'revoke'])
+        self.assertEqual(current['allowedActions'],
+                         ['inspect'] if status == 'revoked' else ['inspect', 'revoke', 'sharing'])
         for key in ('registrationRef', 'ownerId', 'adapterId', 'revision', 'descriptorRevision',
                     'credentialRef', 'credentialRevision', 'createdAt'):
             self.assertEqual(current[key], original[key])

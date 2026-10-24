@@ -12,7 +12,6 @@ from agno.workflow.step import Step
 from agno.workflow.types import HumanReview, OnError
 from agent_factory.native_workflows import NativeWorkflowRegistration
 from agent_factory.input_schema import input_model
-from agent_factory.plan_policy import PlanPolicyConfig
 
 INPUT_SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['goal'],
     'properties': {'goal': {'type': 'string', 'maxLength': 100}}}
@@ -95,8 +94,7 @@ class ApplicationContextNativePostgresTests(fixtures.ApplicationCompositionPostg
         mode['nativeComponent'] = self.store.native_workflows.pin('public-context-fixture-v1')
         mode['inputSchema'] = INPUT_SCHEMA
         draft = self.apps.create_draft('manager', definition, 'public-context-draft')
-        review = self.apps.request_publication('manager', draft['id'], draft['version'], 'public-context-review')
-        self.apps.decide_publication('bob', review['id'], True, 'public-context-approve')
+        self.apps.publish('manager', draft['id'], draft['version'], 'public-context-publish')
         return draft
 
     def test_public_context_example_runs_in_original_native_workflow_and_persists_scoped_output(self):
@@ -115,49 +113,42 @@ class ApplicationContextNativePostgresTests(fixtures.ApplicationCompositionPostg
         self.assertEqual(artifact['provenance']['verificationStatus'], 'unverified')
         self.assertTrue(any(event['type'] == 'application_summary_ready' for event in detail['events']))
 
-    def test_existing_managed_review_handoff_admits_the_same_original_plan_without_automatic_approval(self):
+    def test_member_start_submits_directly_and_old_plan_review_writes_are_gone(self):
         draft = self.publish_native_context()
-        policy = self.store.plan_policy.current()
-        self.store.plan_policy.replace_configuration(PlanPolicyConfig(name='admin-review', revision='public-native-review'),
-            expected_revision=policy['revision'])
         self.login('alice')
         body = {'requestId': '_request..001', 'application': draft['id'], 'mode': 'literature',
-            'goal': 'Original managed synthetic native goal', 'inputValues': {'goal': 'Original controlled managed input'}}
+            'goal': 'Original member synthetic native goal', 'inputValues': {'goal': 'Original controlled member input'}}
         prefix = '/api/factory/application-interface/v1/starts'
         submit = AsyncMock(wraps=self.state['bridge'].submit)
         with patch.object(self.state['bridge'], 'submit', submit):
-            blocked = self.client.post(prefix, json=body)
-            self.assertEqual(blocked.status_code, 409, blocked.text)
-            error = blocked.json(); self.assertEqual(error['code'], 'PLAN_REVIEW_REQUIRED')
+            started = self.client.post(prefix, json=body)
+            self.assertEqual(started.status_code, 202, started.text)
+            job_id = started.json()['job']['id']
+            detail = self.wait_job(job_id)
+            self.assertEqual(detail['job']['status'], 'completed', detail)
             receipt = self.client.get(prefix + '/' + body['requestId'])
             self.assertEqual(receipt.status_code, 200, receipt.text)
-            original = receipt.json(); self.assertEqual(original['planId'], error['planId'])
-            self.assertEqual(original['handoff'], error['handoff']); self.assertIsNone(original['taskId'])
+            original = receipt.json()
+            task = self.store.task(job_id, 'alice')
+            immutable = self.store.plan(task['plan_id'], 'alice')
+            self.assertEqual(original['planId'], immutable['id'])
+            self.assertEqual(original['taskId'], job_id)
             self.assertFalse(original['createsExecution']); self.assertFalse(original['automaticReplay'])
-            self.assertEqual(submit.await_count, 0); self.assertEqual(self.store.tasks('alice'), [])
-            immutable = self.store.plan(original['planId'], 'alice')
-            authorization = self.client.get(original['handoff']['authorizationURL']).json()
-            self.assertTrue(authorization['reviewRequired']); self.assertFalse(authorization['executionAllowed'])
-            reviewed = self.client.post(original['handoff']['reviewRequestURL'], json={
-                'planId': original['planId'], 'requestId': 'public-managed-review'})
-            self.assertEqual(reviewed.status_code, 201, reviewed.text)
-            review_id = reviewed.json()['id']
-            self.login('bob')
-            decided = self.client.post('/api/factory/plan-reviews/' + review_id + '/decision', json={
-                'approved': True, 'requestId': 'public-managed-decision'})
-            self.assertEqual(decided.status_code, 200, decided.text)
-            self.login('alice')
-            admitted = self.client.post(original['handoff']['instantiateURL'], json=original['handoff']['instantiateBody'])
-            self.assertEqual(admitted.status_code, 202, admitted.text)
-            detail = self.wait_job(admitted.json()['id'])
-            self.assertEqual(detail['job']['status'], 'completed', detail)
-            queried = self.client.get(prefix + '/' + body['requestId']).json()
-            self.assertEqual(queried['planId'], immutable['id']); self.assertEqual(queried['taskId'], admitted.json()['id'])
+            self.assertEqual(submit.await_count, 1)
             self.assertEqual(self.store.plan(immutable['id'], 'alice'), immutable)
+            self.assertEqual(len(self.store.tasks('alice')), 1)
+            retired_write = self.client.post('/api/factory/plan-reviews', json={
+                'planId': immutable['id'], 'requestId': 'public-retired-review'})
+            self.assertEqual(retired_write.status_code, 410, retired_write.text)
+            self.login('bob')
+            self.assertEqual(self.client.get(prefix + '/' + body['requestId']).status_code, 404)
+            retired_decision = self.client.post('/api/factory/plan-reviews/retired-id/decision', json={
+                'approved': True, 'requestId': 'public-retired-decision'})
+            self.assertEqual(retired_decision.status_code, 410, retired_decision.text)
+            self.login('alice')
             again = self.client.post(prefix, json=body)
             self.assertEqual(again.status_code, 202, again.text)
-            self.assertEqual(again.json()['job']['id'], admitted.json()['id']); self.assertEqual(submit.await_count, 1)
-        self.assertEqual(len(self.store.tasks('alice')), 1)
+            self.assertEqual(again.json()['job']['id'], job_id); self.assertEqual(submit.await_count, 1)
 
 
 # Reuse lifecycle helpers without rerunning inherited unrelated cases.

@@ -164,18 +164,12 @@ class GoDevelopmentProfileTests(unittest.TestCase):
             self.assertEqual(mode.connectionRequirements[0].requiredCapabilities, [])
             self.assertEqual(mode.capabilities, ["checksum:read"])
         self.assertNotIn("api_key", json.dumps(definition))
-        state = {"auth": Mock(), "material_governance": Mock()}
-        state["material_governance"].member_publication.return_value = False
-        with self.assertRaises(ValueError): publish_go_development_models(state, author="alice", reviewer="alice")
-        state["material_governance"].create_draft.assert_not_called()
-
     def test_member_publishes_exact_model_versions_without_review_or_dispatch(self):
         for revision in ("1", "2"):
             with self.subTest(revision=revision):
                 materials = [{**draft, "version": 3, "sha256": "a" * 64, "published": True}
                     for draft in material_drafts(luna_output_revision=revision)]
                 governance = Mock()
-                governance.member_publication.return_value = True
                 governance.create_draft.side_effect = materials
                 store = Mock()
                 store.materials.return_value = materials
@@ -183,7 +177,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
                 with patch("agent_factory.go_development.GoDevelopmentModel") as model:
                     result = publish_go_development_models(state, author="alice", luna_output_revision=revision)
                 self.assertEqual(result, materials)
-                state["auth"].require.assert_called_once_with("alice", "run")
+                state["auth"].require_member.assert_called_once_with("alice")
                 key = "go-development-v1" + (":output-2" if revision == "2" else "")
                 self.assertEqual(governance.publish.call_args_list, [
                     call("alice", material["id"], 3, key + ":publish:" + material["id"]) for material in materials])
@@ -195,9 +189,8 @@ class GoDevelopmentProfileTests(unittest.TestCase):
 
     def test_revoked_member_cannot_create_or_publish_model_materials(self):
         governance = Mock()
-        governance.member_publication.return_value = True
         state = {"auth": Mock(), "material_governance": governance}
-        state["auth"].require.side_effect = HTTPException(403, "Permission revoked")
+        state["auth"].require_member.side_effect = HTTPException(403, "Permission revoked")
         with self.assertRaises(HTTPException) as denied:
             publish_go_development_models(state, author="alice")
         self.assertEqual(denied.exception.status_code, 403)
@@ -215,7 +208,10 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         self.assertEqual(registry._entry("model", context.spec).adapter_id, context.spec["adapterId"])
         altered = copy.deepcopy(context.spec)
         altered["config"]["scope"] = "research"
-        with self.assertRaises(HTTPException): registry._entry("model", altered)
+        material = next(row for row in material_drafts() if row["runtimeBinding"]["adapterId"] == context.spec["adapterId"])
+        with self.assertRaises(HTTPException) as invalid:
+            registry._spec({**material, "version": 1, "sha256": "a" * 64, "runtimeBinding": altered}, {})
+        self.assertIn("BINDING_CONFIG_INVALID", invalid.exception.detail)
         context.settings.demo = False
         with self.assertRaises(HTTPException): registry._entry("model", context.spec)
         binding = trusted_model_binding("alice", context.connection)

@@ -1,6 +1,6 @@
 """Actual installed Agno cancellation schema and current-owner regression.
 
-This controlled ASGI target uses real native JWT, managed SQL policy, session/run
+This controlled ASGI target uses real native JWT, current team membership, session/run
 storage and cancellation intent. No model, worker, remote host or experiment is
 started. It proves native request compatibility, not Factory-to-Factory dispatch
 or confirmed external process cleanup. Factory native ingress remains closed.
@@ -83,7 +83,7 @@ class NativeRemoteCancelContractTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as wrong_binding:
             await self.adapter.cancel("alice", wrong_session)
         self.assertEqual(wrong_binding.exception.status_code, 404)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException) as revoked:
             await self.adapter.cancel("alice", self.lease)
         self.assertEqual(revoked.exception.status_code, 403)

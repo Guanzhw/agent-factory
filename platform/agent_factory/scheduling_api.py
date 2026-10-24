@@ -32,7 +32,7 @@ def scheduling_router(auth, service):
 
     def owner(request):
         user = auth.user(request)
-        auth.require(user["id"], "run")
+        auth.require_member(user["id"])
         return user["id"]
 
     @router.get("")

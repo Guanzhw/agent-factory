@@ -40,7 +40,12 @@ class CompositionInboxPostgresTests(unittest.TestCase):
             restored = self.fixture.client.get(path)
             self.assertEqual(restored.status_code, 200, restored.text)
             self.assertEqual(restored.json()['plan'], original)
-        self.fixture.apps.withdraw('bob', self.application['id'], self.application['version'], str(uuid4()), 'Synthetic inbox withdrawal')
+        self.fixture.login('manager')
+        withdrawn = self.fixture.client.post('/api/factory/applications/' + self.application['id'] +
+            '/versions/' + str(self.application['version']) + '/withdraw',
+            json={'requestId': str(uuid4()), 'reason': 'Synthetic inbox withdrawal'})
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.text)
+        self.fixture.login('alice')
         history = self.fixture.client.get(path)
         self.assertEqual(history.status_code, 200, history.text)
         self.assertEqual(history.json()['plan'], original)

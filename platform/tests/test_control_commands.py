@@ -33,12 +33,12 @@ class ControlCommandPostgresTests(unittest.TestCase):
         fixture.FactoryPostgresTests.tearDownClass.__func__(cls)
 
     def setUp(self):
+        self.state["auth"].directory.set_disabled("alice", False)
         self.login()
         self.tasks = []
 
     def tearDown(self):
-        self.state["auth"].authorization.unassign("alice", "command-reader")
-        self.state["auth"].authorization.assign("alice", "factory-user")
+        self.state["auth"].directory.set_disabled("alice", False)
         self.login()
         for task in self.tasks:
             self.client.post(f"/api/factory/jobs/{task}/cancel")
@@ -192,7 +192,7 @@ class ControlCommandPostgresTests(unittest.TestCase):
             self.assertTrue(response.json()["decisionRecorded"], response.text)
             self.assertEqual(dispatch.await_count, 1)
 
-    def test_owner_read_grant_and_stale_requirement_do_not_authorize_new_dispatch(self):
+    def test_disabled_owner_and_stale_requirement_do_not_authorize_new_dispatch(self):
         task, command = self.waiting()
         self.assertEqual(self.post(task, {**command, "version": command["version"] + 1}).status_code, 409)
         response = self.post(task, command)
@@ -201,30 +201,28 @@ class ControlCommandPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}').status_code, 404)
         self.assertEqual(self.post(task, command).status_code, 404)
         self.login()
-        auth = self.state["auth"].authorization
-        auth.define_role("command-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
-        auth.unassign("alice", "factory-user")
-        auth.assign("alice", "command-reader")
-        self.assertTrue(self.receipt(task, command)["decisionRecorded"])
+        auth = self.state["auth"]
+        auth.directory.set_disabled("alice", True)
         self.assertEqual(self.post(task, command).status_code, 403)
+        self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}').status_code, 403)
+        auth.directory.set_disabled("alice", False)
+        self.assertTrue(self.receipt(task, command)["decisionRecorded"])
 
-    def test_prepared_intent_rechecks_permission_and_changed_requirement(self):
+    def test_prepared_intent_rechecks_membership_and_changed_requirement(self):
         task, command = self.waiting()
         async def retain(service, owner, task_id, command_id):
             return service.public(service.row(owner, task_id, command_id))
         with patch("agent_factory.control_commands.ControlCommands.dispatch", retain):
             self.assertEqual(self.post(task, command).json()["state"], "INTENT_RECORDED")
         path = f'/api/factory/jobs/{task}/commands/{command["commandId"]}/dispatch'
-        auth = self.state["auth"].authorization
-        auth.unassign("alice", "factory-user")
-        auth.define_role("command-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
-        auth.assign("alice", "command-reader")
+        auth = self.state["auth"]
+        auth.directory.set_disabled("alice", True)
         self.assertEqual(self.client.post(path).status_code, 403)
+        self.assertEqual(self.api.commands.row("alice", task, command["commandId"])["state"], "PREPARED")
+        auth.directory.set_disabled("alice", False)
         self.assertEqual(self.receipt(task, command)["state"], "INTENT_RECORDED")
-        auth.unassign("alice", "command-reader")
-        auth.assign("alice", "factory-user")
-        # Revocation may already have stopped the first native task. Restoring
-        # a role cannot resurrect it; use a fresh task for requirement drift.
+        # Re-enabling membership cannot revive an observed cancelled task.
+        # Use a fresh original task to exercise requirement drift independently.
         task, command = self.waiting()
         with patch("agent_factory.control_commands.ControlCommands.dispatch", retain):
             self.assertEqual(self.post(task, command).json()["state"], "INTENT_RECORDED")

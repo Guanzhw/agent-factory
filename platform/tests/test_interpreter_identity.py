@@ -96,7 +96,12 @@ class InterpreterTests(unittest.TestCase):
         finally: os.close(fd)
 
     def test_link_replacement_same_literal_and_parent_replacement_deny(self):
-        raw = self.capture(); self.link.unlink(); self.link.symlink_to(self.target)
+        raw = self.capture()
+        # Retain the original inode: unlink/recreate can reuse it within the
+        # same filesystem timestamp tick, leaving every observed pin equal.
+        previous = self.root / 'previous-python-link'
+        self.link.rename(previous); self.link.symlink_to(self.target)
+        self.assertNotEqual(previous.lstat().st_ino, self.link.lstat().st_ino)
         with self.assertRaises(ValueError): open_interpreter(raw, str(self.link), self.sha)
         raw = self.capture()
         self.venv.rename(self.project / 'old-venv'); self.venv.mkdir(); (self.venv / 'bin').mkdir()
@@ -213,9 +218,16 @@ class InterpreterTests(unittest.TestCase):
 
     def test_namespace_existing_unselected_comment_pth_change_and_replacement_deny(self):
         startup = self.venv / 'comments.pth'; startup.write_text('# original comment')
-        raw = self.capture(); startup.write_text('# replaced comment')
+        raw = self.capture(); before = startup.stat(); startup.write_text('# replaced comment')
+        # Unselected namespace entries have metadata pins, so establish an
+        # observed stamp change independently of filesystem timestamp ticks.
+        os.utime(startup, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+        self.assertNotEqual(startup.stat().st_mtime_ns, before.st_mtime_ns)
         with self.assertRaises(ValueError): open_interpreter(raw, str(self.link), self.sha)
-        raw = self.capture(); saved = startup.read_bytes(); startup.unlink(); startup.write_bytes(saved)
+        raw = self.capture(); saved = startup.read_bytes()
+        previous = self.root / 'previous-comments.pth'
+        startup.rename(previous); startup.write_bytes(saved)
+        self.assertNotEqual(previous.stat().st_ino, startup.stat().st_ino)
         with self.assertRaises(ValueError): open_interpreter(raw, str(self.link), self.sha)
 
     def test_namespace_is_exact_pinned_venv_scope_not_general_ancestor(self):

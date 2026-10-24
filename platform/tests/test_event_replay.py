@@ -204,7 +204,7 @@ class EventReplayTests(unittest.TestCase):
 
         def revoke(*args):
             result = original(*args)
-            self.auth.authorization.unassign("alice", "factory-user")
+            self.auth.directory.set_disabled("alice", True)
             return result
 
         with patch.object(self.service, "_snapshot", side_effect=revoke), self.assertRaises(HTTPException) as revoked:
@@ -358,7 +358,7 @@ class EventReplayPostgresTests(unittest.TestCase):
         self.login("bob")
         self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 404)
         self.login("alice")
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 403)
 
     def test_postgres_large_history_other_job_gaps_and_late_events(self):

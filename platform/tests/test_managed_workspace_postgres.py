@@ -1,4 +1,4 @@
-"""Required real-PG composition/review/admission tests; no ORX/model/process IO.
+"""Required real-PG member composition/admission tests; no ORX/model/process IO.
 
 The dedicated no-skips gate must supply disposable PostgreSQL; portable jobs skip it.
 Native source observation is a named fixture; managed provider execution is not
@@ -49,8 +49,6 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
             max_disk_mb=1, max_seconds=5)
         def installed_profiles(store, auth, resources):
             self.assertIs(store.process_runtime.resources, resources)
-            auth.directory.upsert('probe-reviewer', name='Fixture independent reviewer')
-            auth.authorization.assign('probe-reviewer', 'factory-manager')
             state = {'material_governance': store.material_governance, 'applications': store.applications}
             self.application = self.publish_application(state)
             self.profile = {'ownerId': 'alice', 'targetRef': 'probe-target', 'connectionPin': self.pin,
@@ -58,9 +56,9 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
                 'applicationRef': {k: self.application[k] for k in ('id', 'version', 'sha256')}, 'mode': 'probe'}
             return {'probe': self.profile}
         # Explicit accounting compatibility fixture; no model/process IO is installed.
-        settings = Settings(material_review_mode="separate-admin", db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
+        settings = Settings(material_review_mode="member-self-service", db_url=self.database.url, workspace=Path(directory.name), max_workers=1,
             fee_management_enabled=True, platform_paid_models_enabled=True,
-            temporary_policy='admin-review', runtime_tool_contract='bounded-process-v1',
+            temporary_policy='member-self-service', runtime_tool_contract='bounded-process-v1',
             policy_revision='managed-probe-fixture-plan-v1',
             material_policy_revision='managed-probe-fixture-material-v1',
             managed_orx_profiles_factory=installed_profiles,
@@ -106,16 +104,14 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
             if adapter:
                 body['runtimeBinding'] = {'adapterId': adapter, 'revision': '1', 'config': {'targetRef': 'probe-target'}}
             material = governance.create_draft('manager', body, identifier + ':draft')
-            review = governance.request_publication('manager', identifier, material['version'], identifier + ':review')
-            governance.decide_publication('probe-reviewer', review['id'], True, identifier + ':approve')
+            governance.publish('manager', identifier, material['version'], identifier + ':publish')
             refs.append({k: material[k] for k in ('id', 'version', 'sha256')})
         app = applications.create_draft('manager', {'id': 'managed-probe-test', 'name': 'Managed probe fixture',
-            'description': 'Admission/review only; not native research', 'defaultMode': 'probe', 'discoveryKeywords': [],
+            'description': 'Member admission only; not native research', 'defaultMode': 'probe', 'discoveryKeywords': [],
             'modes': {'probe': {'materialRefs': refs, 'capabilities': ['compute:local'], 'toolOrder': [TOOL_NAME],
                 'inputSchema': exact_input_schema(self.contract), 'config': {}, 'connectionRequirements': [],
                 'budget': {'toolCalls': 2, 'maxDepth': 1, 'maxChildren': 1, 'experimentSeconds': 5, 'outputBytes': 65536}}}}, 'probe-app-draft')
-        review = applications.request_publication('manager', app['id'], app['version'], 'probe-app-review')
-        applications.decide_publication('probe-reviewer', review['id'], True, 'probe-app-approve')
+        applications.publish('manager', app['id'], app['version'], 'probe-app-publish')
         return app
 
     def request(self, method, path, body=None, owner='alice'):
@@ -128,23 +124,17 @@ class ManagedWorkspacePostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
-    def test_native_composition_review_required_and_original_unknown_recovery(self):
+    def test_native_member_composition_and_original_unknown_recovery(self):
         session = self.prepare()
         self.assertEqual(session['plan']['inputValues'], {'managedAttachment': self.contract})
         self.assertEqual(session['state'], 'prepared')
-        self.assertFalse(session['authorization']['executionAllowed'])
+        self.assertTrue(session['authorization']['executionAllowed'])
+        self.assertFalse(session['authorization']['reviewRequired'])
+        self.assertFalse(session['authorization']['reviewRequestSupported'])
         self.assertEqual(self.store.sql('SELECT id FROM af_tasks'), [])
         self.assertEqual(self.store.sql('SELECT id FROM af_plan_reviews'), [])
         start = self.root + '/sessions/' + session['id'] + '/start'
-        denied = self.request('POST', start, {'requestId': 'start-request'})
-        self.assertIn(denied.status_code, (403, 409), denied.text)
         self.bridge.submit.assert_not_awaited()
-        review = self.request('POST', '/api/factory/plan-reviews',
-            {'requestId': 'review-request', 'planId': session['planId']})
-        self.assertEqual(review.status_code, 201, review.text)
-        approval = self.request('POST', '/api/factory/plan-reviews/' + review.json()['id'] + '/decision',
-            {'requestId': 'approval-request', 'approved': True}, 'manager')
-        self.assertEqual(approval.status_code, 200, approval.text)
         admitted = self.request('POST', start, {'requestId': 'start-request'})
         self.assertEqual(admitted.status_code, 202, admitted.text)
         original = admitted.json()

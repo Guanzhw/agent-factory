@@ -40,11 +40,8 @@ class BrowserAuthPostgresTests(unittest.TestCase):
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.service = self.state["browser_auth"]
         self.service.exchanger = BrowserCodeExchanger(self.idp.config(), transport=self.idp.transport)
-        self.auth.authorization.define_role("browser-fixture-user", ["agents:factory-executor:read",
-            "agents:factory-executor:run", "components:read", "registry:read", "sessions:read", "filesystem:read"])
         for owner in ("alice", "bob"):
             self.auth.directory.upsert(owner, name="Synthetic " + owner)
-            self.auth.authorization.assign(owner, "browser-fixture-user")
         self.client = TestClient(self.app, base_url=ORIGIN, follow_redirects=False).__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.identity_client = TestClient(self.idp.app, base_url=self.idp.issuer, follow_redirects=False)
@@ -92,16 +89,15 @@ class BrowserAuthPostgresTests(unittest.TestCase):
         self.assertFalse(self.client.get("/api/factory/auth/session").json()["authenticated"])
         self.assertEqual(self.client.get("/api/factory/session").status_code, 401)
 
-    def test_current_sql_revocation_disablement_missing_owner_and_owner_isolation(self):
+    def test_current_sql_disablement_missing_owner_and_owner_isolation(self):
         self.login()
         plan = self.store.save_plan({"id": str(uuid4()), "ownerId": "alice", "syntheticFixture": True})
         task, _ = self.store.reserve_task(plan, "browser-" + str(uuid4()))
         artifact = self.store.artifact_write(task["id"], "synthetic.txt", b"Synthetic Alice artifact", "text/plain")
         path = f"/api/factory/jobs/{task['id']}/artifacts/{artifact['id']}"
         self.assertEqual(self.client.get(path).status_code, 200)
-        self.auth.authorization.unassign("alice", "browser-fixture-user")
-        self.assertEqual(self.client.get(path).status_code, 403)
         self.auth.directory.set_disabled("alice", True)
+        self.assertEqual(self.client.get(path).status_code, 403)
         self.assertIn(self.client.get("/api/factory/session").status_code, (401, 403))
         self.client.cookies.clear()
         self.login("subject-bob")

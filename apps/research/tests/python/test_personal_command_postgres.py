@@ -45,20 +45,13 @@ class PersonalCommandPostgresTests(unittest.TestCase):
         wire.setUp(); self.addCleanup(wire.doCleanups)
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
             settings = Settings(db_url=database.url, workspace=Path(folder), max_workers=1,
-                personal_agent_commands_enabled=True, temporary_policy='admin-review',
-                policy_revision='personal-command-ci-v1', material_policy_revision='personal-command-ci-v1',
+                personal_agent_commands_enabled=True, temporary_policy='member-self-service',
+                policy_revision='personal-command-department-v1', material_policy_revision='personal-command-department-v1',
                 personal_connection_providers={PERSONAL_PROVIDER_ID: wire.provider})
-            settings.temporary_policy = 'member-self-service'
-            settings.policy_revision = 'personal-command-department-v1'
-            # This existing publication fixture retains its historical setup;
-            # ordinary task execution uses the same rule as every other app.
-            settings.material_review_mode = 'separate-admin'
             app = create_app(settings)
             state = app.app.state.factory; store, auth = state['store'], state['auth']
             self.addCleanup(store.engine.dispose); self.addCleanup(store.native_db.db_engine.dispose)
-            auth.directory.upsert('personal-reviewer', name='Synthetic personal reviewer')
-            auth.authorization.assign('personal-reviewer', 'factory-manager')
-            publish_application(state, author='manager', reviewer='personal-reviewer')
+            publish_application(state, author='manager')
             connections = store.connections
             remote = connections.personal.configure('alice', PERSONAL_PROVIDER_ID,
                 {'origin': 'https://runtime.example.com', 'credentialRef': 'synthetic-reference',

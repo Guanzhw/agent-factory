@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
-from pg_fixture import IsolatedPostgres
+from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
 from agent_factory.personal_ssh import SSHEnrollmentConfig
 from agent_factory.ssh_credentials import PROVIDER_ID as SSH_CREDENTIAL_PROVIDER_ID
 from agent_factory_research.config import ResearchSettings
@@ -32,23 +34,24 @@ class ApplicationAssemblyPostgresTests(unittest.TestCase):
     def test_static_ssh_catalog_remains_owner_scoped_with_and_without_self_service(self):
         runtime = PlatformOpenResearchConfig('/synthetic/orx', '/synthetic/opencode', 'sha256:' + 'a' * 64)
         credentials = Mock(side_effect=AssertionError('Catalog reads must not acquire SSH credentials'))
+        host_key = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).decode()
         servers = tuple(SSHServer(owner + '-server', owner, '1', owner + ' server', '127.0.0.1',
-            2234, 'agent', 'ssh-ed25519 ' + 'B' * 68, '/synthetic/' + owner, owner + '-binding', '1')
+            2234, 'agent', host_key, '/synthetic/' + owner, owner + '-binding', '1')
             for owner in ('alice', 'bob'))
         config = SSHOpenResearchConfig(runtime, servers, credentials)
         for self_service in (False, True):
             with self.subTest(self_service=self_service), \
                     IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, \
                     TemporaryDirectory() as directory:
-                vault = SimpleNamespace(capabilities=lambda: {'providerIds': [SSH_CREDENTIAL_PROVIDER_ID]},
+                vault = SimpleNamespace(capabilities=lambda: {'providerIds': [SSH_CREDENTIAL_PROVIDER_ID] if self_service else []},
                     authorize=Mock(side_effect=AssertionError('No credential authorization expected')),
                     resolve=Mock(side_effect=AssertionError('No credential resolution expected')))
-                address_policy = Mock(side_effect=AssertionError('Catalog reads must not inspect a remote address'))
                 settings = ResearchSettings(db_url=database.url, workspace=Path(directory),
                     temporary_policy='member-self-service', storage_low_water_bytes=1, max_workers=1,
                     personal_agent_commands_enabled=True, ssh_openresearch=config,
-                    ssh_self_service=SSHEnrollmentConfig(runtime, address_policy) if self_service else None,
-                    credential_vault_factory=(lambda engine: vault) if self_service else None)
+                    ssh_self_service=SSHEnrollmentConfig() if self_service else None,
+                    credential_vault_factory=lambda engine: vault)
                 with patch('agent_factory_research.ssh_openresearch.SSHOpenResearchPackage', CatalogOnlySSHPackage):
                     app = create_app(settings)
                 store = factory_state(app)['store']
@@ -72,7 +75,6 @@ class ApplicationAssemblyPostgresTests(unittest.TestCase):
                             self.assertIs(store.personal_ssh.package, package)
                     package.close.assert_called_once_with()
                     credentials.assert_not_called()
-                    address_policy.assert_not_called()
                     vault.authorize.assert_not_called()
                     vault.resolve.assert_not_called()
                 finally:
@@ -116,6 +118,7 @@ class ApplicationAssemblyPostgresTests(unittest.TestCase):
                             self.assertEqual(response.status_code, 201, response.text)
                             original = response.json()
                         else:
+                            assert original is not None
                             response = client.get('/api/factory/openresearch/projects/' + original['id'])
                             self.assertEqual(response.status_code, 200, response.text)
                             self.assertEqual(response.json(), original)

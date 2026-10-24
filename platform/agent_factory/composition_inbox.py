@@ -81,7 +81,7 @@ class CompositionInboxService:
             "mode": candidate["mode"], "goalPreview": goal[:160], "preflightStatus": candidate["status"]}
 
     def list(self, owner, *, after=None, limit: Any = 20):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         _require(type(limit) is int and 1 <= limit <= 50, 400)
         created = self.table.c.body["createdAt"].as_string()
         with self.composition.db.read() as conn:
@@ -105,7 +105,7 @@ class CompositionInboxService:
                 items = [self._summary(self.composition._row(conn, owner, identifier)) for identifier in ids[:limit]]
                 if len(ids) > limit:
                     next_cursor = self._encode(owner, self._key(items[-1]), ceiling)
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         return {"schema": 1, "ownerId": owner, "items": items, "nextCursor": next_cursor, "snapshot": False}
 
     def read(self, owner, proposal_id):
@@ -121,5 +121,5 @@ class CompositionInboxService:
             _require(plan == expected and plan.get("ownerId") == owner)
         else:
             _require(proposal["state"] in _STATES and proposal.get("planId") is None)
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         return {"proposal": deepcopy(proposal), "plan": deepcopy(plan), "historical": True, "executionAuthorized": False}

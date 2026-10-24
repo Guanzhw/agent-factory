@@ -89,7 +89,7 @@ async def cancel_native_original(state, task_id, expected):
     if before.get('persistedRunStatus') not in {'pending', 'paused', 'running'}:
         return result
     _require(task['cancel_requested'] is True)
-    state['auth'].require(task['owner_id'], 'run')
+    state['auth'].require_member(task['owner_id'])
     native = state['store'].native_db
     inert = Agent(id='factory-executor', db=native, telemetry=False)
 

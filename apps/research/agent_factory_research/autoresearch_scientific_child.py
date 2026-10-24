@@ -39,7 +39,7 @@ def adapter_id(phase, kind):
 
 
 def child_pin(ctx, phase, *, custody=False):
-    _require(phase in PHASES and ctx.settings.demo is True and ctx.settings.temporary_policy in {'member-self-service', 'admin-review'})
+    _require(phase in PHASES and ctx.settings.demo is True and ctx.settings.temporary_policy == 'member-self-service')
     config = ctx.spec['config']
     _require(type(config) is dict and set(config) == {'presetId', 'phase'} and config['phase'] == phase)
     parent = ctx.plan.get('delegation')

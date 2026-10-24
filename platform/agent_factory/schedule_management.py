@@ -33,7 +33,7 @@ class ScheduleManagement:
             PRIMARY KEY(owner_id,request_id))""")
 
     def metadata(self, owner):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         try:
             self.service._require_write(owner)
             manage = True
@@ -112,7 +112,7 @@ class ScheduleManagement:
                 self._recover(owner, command)
 
     def recover(self, owner, request_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         rows = self.store.sql("SELECT * FROM af_schedule_editor_commands WHERE owner_id=:owner AND request_id=:request",
                               owner=owner, request=request_id)
         _require(bool(rows), 404, "SCHEDULE_COMMAND_NOT_FOUND")
@@ -122,12 +122,12 @@ class ScheduleManagement:
         return self._project(owner, command["schedule_id"])
 
     def inspect(self, owner, identifier):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self._read_recover(owner, identifier)
         return self._project(owner, identifier)
 
     def list(self, owner, after=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         if after is not None:
             _require(type(after) is str and re.fullmatch(r"[a-f0-9-]{36}", after), 400)
             self.service._bound(after, owner)
@@ -214,7 +214,7 @@ class ScheduleManagement:
             return self._project(owner, identifier)
 
     def occurrences(self, owner, identifier, after=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self.service._history_binding(identifier, owner)
         if after is not None:
             rows = self.store.sql("""SELECT id FROM af_schedule_occurrences
@@ -265,7 +265,7 @@ def schedule_management_router(auth, service):
     router = APIRouter(prefix="/api/factory/schedule-management")
     def owner(request):
         user = auth.user(request)
-        auth.require(user["id"], "run")
+        auth.require_member(user["id"])
         return user["id"]
 
     @router.get("/metadata")

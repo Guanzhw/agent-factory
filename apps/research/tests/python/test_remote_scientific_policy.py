@@ -1,4 +1,4 @@
-"""Real SQLite approval policy; synthetic remote journal/link, no native launch."""
+"""Real SQLite member policy; synthetic remote journal/link, no native launch."""
 from agent_factory_research.services import services_for
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -13,18 +13,18 @@ from fastapi import HTTPException
 from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory_research.policy_compatibility import ResearchPlanPolicyService as PlanPolicyService
 from agent_factory.store import Store
-from test_plan_policy import MetadataFixture
+from test_plan_policy import MetadataFixture, historical_review
 
 
 class RemoteScientificPolicyTests(unittest.TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
         self.db = SqliteDb(db_file=str(Path(self.temp.name) / 'metadata.sqlite'))
-        self.settings = SimpleNamespace(demo=True, temporary_policy='admin-review')
+        self.settings = SimpleNamespace(demo=True, temporary_policy='member-self-service')
         self.store = MetadataFixture(self.db, self.settings)
-        self.auth = Mock()
+        self.auth = SimpleNamespace(require_member=Mock())
         self.policy = PlanPolicyService(self.store, self.auth,
-            PlanPolicyConfig(name='admin-review', revision='plan-policy-v1'),
+            PlanPolicyConfig(revision='member-policy-v1'),
             clock=lambda: datetime(2026, 10, 7, tzinfo=timezone.utc))
         self.parent_plan = self.store.add()
         self.child_plan = self.store.add(delegation={'parentTaskId': 'parent', 'rootTaskId': 'parent', 'depth': 1})
@@ -55,26 +55,19 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         self.db.db_engine.dispose()
         self.temp.cleanup()
 
-    def approve(self):
-        review = self.policy.request_review('alice', self.parent_plan['id'], 'original-review')
-        return self.policy.decide('manager', review['id'], True, 'original-decision')
-
     def execute(self, **kwargs):
         return self.policy.require_execution('alice', self.child_plan, scientific_child_id='child', **kwargs)
 
-    def test_exact_journal_link_inherits_only_real_parent_approval_without_native_context(self):
-        with self.assertRaises(HTTPException):
-            self.execute()
-        approved = self.approve()
+    def test_exact_journal_link_uses_member_execution_without_native_context(self):
         result = self.execute()
-        self.assertTrue(result['inheritedFromRoot'])
-        self.assertEqual(result['reviewId'], approved['id'])
+        self.assertTrue(result['allowed'])
+        self.assertEqual(result['source'], 'member-self-service')
+        self.assertIsNone(result['reviewId'])
         self.assertEqual(result['planId'], self.child_plan['id'])
         services_for(self.store).remote_scientific.validate_source.assert_called_with(self.child_plan, self.envelope)
         self.store.delegation._mandate.assert_called_with('alice', self.parent)
 
     def test_missing_or_changed_journal_link_and_child_native_identity_deny(self):
-        self.approve()
         for key, value in [('run_id', 'unexpected-native'), ('plan_id', 'wrong-plan')]:
             with self.subTest(key=key):
                 original = self.child[key]; self.child[key] = value
@@ -89,7 +82,6 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         with self.assertRaises(HTTPException): self.execute()
 
     def test_current_child_cancel_terminal_failure_and_boolean_depth_deny(self):
-        self.approve()
         for key in ('cancel_requested', 'terminal'):
             self.child[key] = True
             with self.subTest(key=key), self.assertRaises(HTTPException): self.execute()
@@ -101,18 +93,18 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         with self.assertRaises(HTTPException): self.execute()
 
     def test_parent_scope_budget_and_current_mandate_still_deny(self):
-        self.approve()
         for change in ({'tools': []}, {'capabilities': []},
                        {'budget': {**self.parent_plan['budget'], 'toolCalls': 1}}):
             ancestor = self.store.add(**change)
             self.store.delegation._mandate.return_value = ('parent', [ancestor])
-            with self.subTest(change=change), self.assertRaises(HTTPException) as raised: self.execute()
-            self.assertIn(raised.exception.status_code, (403, 409))
+            with self.subTest(change=change):
+                with self.assertRaises(HTTPException) as raised:
+                    self.execute()
+                self.assertIn(raised.exception.status_code, (403, 409))
         self.store.delegation._mandate.side_effect = HTTPException(403, 'CURRENT_PARENT_REVOKED')
         with self.assertRaises(HTTPException): self.execute()
 
     def test_store_installed_guards_receive_no_fabricated_context_and_cannot_be_bypassed(self):
-        self.approve()
         guard = Mock(side_effect=HTTPException(403, 'CURRENT_BINDING_DENIED'))
         self.store.execution_guards['binding'] = guard
         with self.assertRaises(HTTPException):
@@ -121,19 +113,17 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         guard.side_effect = None
         checked = Store.require_plan_execution(self.store, 'alice', self.child_plan, scientific_child_id='child')
         self.assertIs(checked['binding'], guard)
-        self.auth.require.side_effect = HTTPException(403, 'CURRENT_OWNER_REVOKED')
+        self.auth.require_member.side_effect = HTTPException(403, 'CURRENT_OWNER_REVOKED')
         with self.assertRaises(HTTPException): self.execute()
 
     def test_non_delegated_plan_cannot_use_scientific_metadata_identity(self):
-        self.approve()
         with self.assertRaises(HTTPException) as raised:
             self.policy.require_execution('alice', self.parent_plan, scientific_child_id='child')
         self.assertEqual(raised.exception.status_code, 409)
         services_for(self.store).remote_scientific._row.assert_not_called()
         self.store.delegation._mandate.assert_not_called()
 
-    def test_missing_journal_service_or_link_denies_before_inheriting_approval(self):
-        self.approve()
+    def test_missing_journal_service_or_link_denies_before_execution(self):
         service = services_for(self.store).remote_scientific
         services_for(self.store).remote_scientific = None
         with self.assertRaises(HTTPException): self.execute()
@@ -146,19 +136,18 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         with self.assertRaises(HTTPException): self.execute()
         self.store.delegation._mandate.assert_not_called()
 
-    def test_current_policy_and_expired_parent_approval_are_not_cached(self):
-        self.approve()
+    def test_expired_historical_parent_review_does_not_gate_current_member(self):
+        historical = historical_review(self.policy, self.parent_plan, decision='approved')
         self.assertTrue(self.execute()['allowed'])
-        self.settings.temporary_policy = 'unset'
-        with self.assertRaises(HTTPException) as raised: self.execute()
-        self.assertEqual(raised.exception.status_code, 409)
-        self.settings.temporary_policy = 'admin-review'
         self.policy.clock = lambda: datetime(2026, 10, 9, tzinfo=timezone.utc)
-        with self.assertRaises(HTTPException) as raised: self.execute()
-        self.assertIn('EXPIRED', raised.exception.detail)
+        self.assertTrue(self.execute()['allowed'])
+        review = self.policy.inspect('alice', historical['id'])
+        self.assertTrue(review['expired'])
+        self.assertFalse(review['approvalEffective'])
+        self.auth.require_member.side_effect = HTTPException(403, 'CURRENT_MEMBER_DISABLED')
+        with self.assertRaises(HTTPException): self.execute()
 
     def test_all_installed_guards_run_with_absent_native_context(self):
-        self.approve()
         first, second = Mock(), Mock(side_effect=HTTPException(403, 'SECOND_GUARD_DENIED'))
         self.store.execution_guards.update(first=first, second=second)
         with self.assertRaises(HTTPException):

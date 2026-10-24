@@ -46,15 +46,15 @@ class DepartmentPublicationCases:
     def test_shared_revisions_preserve_exact_existing_application_and_material_bindings(self):
         material = self.material()
         self.governance.publish("alice", material["id"], 1, "material-publish")
-        revised_material = self.material("bob", id=material["id"], content="A new shared instruction.")
-        self.governance.publish("bob", revised_material["id"], 2, "new-material-publish")
+        revised_material = self.material("alice", id=material["id"], content="A new shared instruction.")
+        self.governance.publish("alice", revised_material["id"], 2, "new-material-publish")
         application = self.application()
         self.applications.publish("alice", application["id"], 1, "application-publish")
         bound_plan = self.store.composition.create_plan("alice", "Checksum the synthetic member fixture",
                                                        "literature", application_ref=pin(application))
         definition = app_definition(self.store, application["id"], name="Member revision")
-        revised = self.applications.revise("bob", application["id"], 1, definition, "application-revise")
-        self.applications.publish("bob", revised["id"], 2, "new-application-publish")
+        revised = self.applications.revise("alice", application["id"], 1, definition, "application-revise")
+        self.applications.publish("alice", revised["id"], 2, "new-application-publish")
         self.assertEqual(self.store.plan(bound_plan["id"], "alice"), bound_plan)
         self.assertEqual(bound_plan["applicationRef"], pin(application))
         self.assertEqual(revised["version"], 2)
@@ -80,7 +80,7 @@ class DepartmentPublicationCases:
         self.assertFalse(any(row["application"]["id"] == application["id"]
             for row in self.applications.list_definitions("bob", all_authors=True)))
 
-    def test_public_deactivation_requires_admin_and_keeps_history(self):
+    def test_owner_can_deactivate_public_versions_and_admin_cannot_override_other_owners(self):
         material = self.material()
         application = self.application()
         self.governance.publish("alice", material["id"], 1, "publish-material")
@@ -88,20 +88,15 @@ class DepartmentPublicationCases:
         for service, item in ((self.governance, material), (self.applications, application)):
             for action in ("archive", "withdraw"):
                 with self.assertRaises(HTTPException) as denied:
-                    getattr(service, action)("alice", item["id"], 1, action + "-member")
-                self.assertEqual(denied.exception.status_code, 403)
-            result = service.archive("manager", item["id"], 1, "admin-archive", "Retained fixture")
+                    getattr(service, action)("manager", item["id"], 1, action + "-foreign-admin")
+                self.assertIn(denied.exception.status_code, (403, 404))
+            result = service.archive("alice", item["id"], 1, "owner-archive", "Retained fixture")
             self.assertTrue(result["immutableBodyPreserved"])
-            # Deactivation does not turn a formerly public version private.
-            for action in ("archive", "withdraw"):
-                with self.assertRaises(HTTPException) as denied:
-                    getattr(service, action)("alice", item["id"], 1, action + "-after-admin")
-                self.assertEqual(denied.exception.status_code, 403)
             with self.assertRaises(HTTPException) as inactive:
-                service.publish("manager", item["id"], 1, "no-silent-restore")
+                service.publish("alice", item["id"], 1, "no-silent-restore")
             self.assertEqual(inactive.exception.status_code, 409)
-        self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], application)
-        self.assertEqual(self.governance.inspect_version("manager", material["id"], 1)["material"]["sha256"], material["sha256"])
+        self.assertEqual(self.applications.inspect("alice", application["id"], 1)["application"], application)
+        self.assertEqual(self.governance.inspect_version("alice", material["id"], 1)["material"]["sha256"], material["sha256"])
 
     def test_owner_can_archive_private_drafts_idempotently_without_losing_bodies(self):
         material, application = self.material(), self.application()
@@ -118,7 +113,7 @@ class DepartmentPublicationCases:
             receipts.append((service, item))
         self.assertEqual(self.applications.inspect("alice", application["id"], 1)["application"], application)
         self.assertEqual(self.governance.inspect_version("alice", material["id"], 1)["material"], material)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         for service, item in receipts:
             with self.assertRaises(HTTPException) as revoked:
                 service.archive("alice", item["id"], 1, "own-draft", "No longer needed")
@@ -133,21 +128,26 @@ class DepartmentPublicationCases:
                 for action in ("archive", "withdraw"):
                     with self.assertRaises(HTTPException) as denied:
                         getattr(service, action)("bob", item["id"], 1, action + "-other")
-                    self.assertEqual(denied.exception.status_code, 403)
+                self.assertIn(denied.exception.status_code, (403, 404))
+        # Bob owns distinct resources before exercising withdrawal authority.
+        bob_material = self.material("bob", id="bob-withdrawal-material")
+        bob_application = self.application("bob", identifier="bob-withdrawal-application")
+        self.assertEqual(self.governance.withdraw("bob", bob_material["id"], 1, "bob-own-withdrawal")["state"], "withdrawn")
+        self.assertEqual(self.applications.withdraw("bob", bob_application["id"], 1, "bob-own-withdrawal")["state"], "withdrawn")
 
     def test_archiving_own_unpublished_revision_preserves_public_version_pins(self):
         material, application = self.material(), self.application()
         self.governance.publish("alice", material["id"], 1, "public-material")
         self.applications.publish("alice", application["id"], 1, "public-application")
-        draft_material = self.material("bob", id=material["id"], content="Unpublished replacement")
-        draft_app = self.applications.revise("bob", application["id"], 1,
+        draft_material = self.material("alice", id=material["id"], content="Unpublished replacement")
+        draft_app = self.applications.revise("alice", application["id"], 1,
             app_definition(self.store, application["id"], name="Unpublished replacement"), "draft-revision")
-        self.governance.archive("bob", draft_material["id"], 2, "discard-private-material")
-        self.applications.archive("bob", draft_app["id"], 2, "discard-private-app")
+        self.governance.archive("alice", draft_material["id"], 2, "discard-private-material")
+        self.applications.archive("alice", draft_app["id"], 2, "discard-private-app")
         self.assertEqual(self.applications.require_current(pin(application)), application)
         self.assertTrue(self.governance.require_materials_current({"materialRefs": [pin(material)]})["allowed"])
-        self.assertEqual(self.applications.inspect("bob", draft_app["id"], 2)["application"], draft_app)
-        self.assertEqual(self.governance.inspect_version("bob", draft_material["id"], 2)["material"], draft_material)
+        self.assertEqual(self.applications.inspect("alice", draft_app["id"], 2)["application"], draft_app)
+        self.assertEqual(self.governance.inspect_version("alice", draft_material["id"], 2)["material"], draft_material)
 
     def test_idempotency_and_current_membership_are_checked_before_recovery(self):
         first = self.application(identifier="first")
@@ -157,23 +157,22 @@ class DepartmentPublicationCases:
         with self.assertRaises(HTTPException) as conflict:
             self.applications.publish("alice", second["id"], 1, "one-publication")
         self.assertEqual(conflict.exception.status_code, 409)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException) as revoked:
             self.applications.publish("alice", first["id"], 1, "one-publication")
         self.assertEqual(revoked.exception.status_code, 403)
 
     def test_basic_member_grant_suffices_without_native_component_write(self):
-        self.auth.authorization.define_role("department-member-fixture", ["agents:factory-executor:run"])
         self.auth.directory.upsert("member-only", name="Synthetic minimum member")
-        self.auth.authorization.assign("member-only", "department-member-fixture")
         material = self.material("member-only")
         application = self.application("member-only", identifier="minimum-member-app")
         self.governance.publish("member-only", material["id"], 1, "minimal-material-publish")
         self.applications.publish("member-only", application["id"], 1, "minimal-app-publish")
         self.assertEqual(self.applications.inspect("member-only", application["id"], 1)["application"], application)
         self.assertTrue(self.governance.inspect_version("member-only", material["id"], 1)["material"]["published"])
-        with self.assertRaises(HTTPException):
-            self.auth.require("member-only", "components:write")
+        with self.assertRaises(HTTPException) as denied:
+            self.auth.require_account_admin("member-only")
+        self.assertEqual(denied.exception.status_code, 403)
 
     def test_credential_and_runtime_authority_rejections_are_preserved(self):
         for changes in ({"content": "sk-proj-" + "x" * 32}, {"kind": "tool", "content": "arbitrary_shell"},
@@ -204,51 +203,23 @@ class DepartmentPublicationCases:
 class DepartmentPublicationTests(DepartmentPublicationCases, ApplicationCompositionFixture):
     def setUp(self):
         super().setUp()
-        self.auth.authorization.unassign("bob", "factory-manager")
-        self.auth.authorization.assign("bob", "factory-user")
         # Safe startup changes only the publication workflow, preserving seeds.
         self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(), seed_materials=SEEDS)
         self.store.material_governance = self.governance
 
-    def test_startup_keeps_pending_denied_and_approved_history_unchanged(self):
-        legacy = GovernanceConfig(review_mode="separate-admin", revision="legacy-history")
-        self.governance.replace_configuration(legacy, expected_revision=self.governance.current()["revision"])
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
-        materials, reviews = [], []
-        for state in ("pending", "denied", "approved"):
-            material = self.governance.create_draft("manager", {
-                "kind": "prompt", "name": state, "content": "Historical synthetic fixture."}, "legacy-" + state)
-            review = self.governance.request_publication("manager", material["id"], 1, "review-" + state)
-            if state != "pending":
-                self.governance.decide_publication("bob", review["id"], state == "approved", "decision-" + state)
-            materials.append(material)
-            reviews.append(review["id"])
-        app = self.applications.create_draft("manager", app_definition(self.store), "legacy-app")
-        self.applications.request_publication("manager", app["id"], 1, "legacy-app-review")
-        with self.store.engine.connect() as conn:
-            before = [dict(row) for row in conn.execute(select(self.governance.reviews)).mappings()]
-            app_before = [dict(row) for row in conn.execute(select(self.applications.reviews)).mappings()]
+    def test_service_restart_does_not_restore_review_mutations(self):
+        material, application = self.material(), self.application()
         self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(), seed_materials=SEEDS)
         self.store.material_governance = self.governance
-        with self.store.engine.connect() as conn:
-            self.assertEqual(before, [dict(row) for row in conn.execute(select(self.governance.reviews)).mappings()])
-            self.assertEqual(app_before, [dict(row) for row in conn.execute(select(self.applications.reviews)).mappings()])
-        for material in materials[:2]:
-            with self.assertRaises(HTTPException):
-                self.governance.require_materials_current({"materialRefs": [pin(material)]})
-        self.assertTrue(self.governance.require_materials_current({"materialRefs": [pin(materials[2])]})["allowed"])
-        with self.assertRaises(HTTPException):
-            self.applications.require_current(pin(app))
-        self.assertTrue(self.governance.inspect_review("manager", reviews[0])["readOnly"])
-
-    def test_startup_cannot_change_execution_contract_as_a_publication_upgrade(self):
-        previous = self.governance.current()
-        incompatible = GovernanceConfig(review_mode="member-self-service", revision="unexpected-contract", source_synthesis_enabled=True)
-        with self.assertRaises(ValueError):
-            MaterialGovernance(self.store, self.auth, incompatible, seed_materials=SEEDS)
-        self.assertEqual(self.governance.current(), previous)
-
+        for operation in (
+            lambda: self.governance.request_publication("alice", material["id"], 1, "legacy-review"),
+            lambda: self.applications.request_publication("alice", application["id"], 1, "legacy-app-review"),
+            lambda: self.governance.decide_publication("manager", "history", True, "legacy-decision"),
+            lambda: self.applications.decide_publication("manager", "history", True, "legacy-app-decision"),
+        ):
+            with self.assertRaises(HTTPException) as removed:
+                operation()
+            self.assertEqual(removed.exception.status_code, 410)
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated loopback PostgreSQL")
 class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.TestCase):
@@ -272,7 +243,7 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.applications = state["applications"]
         self.governance = self.store.material_governance
 
-    def test_http_member_publish_and_admin_only_delete_surface(self):
+    def test_http_member_can_publish_and_archive_own_resource(self):
         headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
         material = self.material()
         application = self.application()
@@ -285,12 +256,18 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
                      f"/api/factory/applications/{application['id']}/versions/1"):
             published = self.client.post(path + "/publish", headers=headers, json={"requestId": "http-publish"})
             self.assertEqual(published.status_code, 200, published.text)
-            denied = self.client.post(path + "/archive", headers=headers, json={"requestId": "http-delete"})
-            self.assertEqual(denied.status_code, 403, denied.text)
-        for identity in (headers, bob_headers):
+            archived = self.client.post(path + "/archive", headers=headers, json={"requestId": "http-delete"})
+            self.assertEqual(archived.status_code, 200, archived.text)
+            self.assertTrue(archived.json()["immutableBodyPreserved"])
+            self.assertEqual(self.client.get(path, headers=headers).status_code, 200)
+            self.assertEqual(self.client.get(path, headers=bob_headers).status_code, 404)
+        for identity, visible in ((headers, True), (bob_headers, False)):
             response = self.client.get("/api/factory/materials", headers=identity)
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertTrue(any(row["id"] == material["id"] and row["published"] for row in response.json()))
+            self.assertEqual(any(row["id"] == material["id"] for row in response.json()), visible)
+            if visible:
+                own = next(row for row in response.json() if row["id"] == material["id"])
+                self.assertFalse(own["published"])
         created = self.client.post("/api/factory/materials", headers=headers, json={
             "requestId": "compatible-create", "kind": "prompt", "name": "Member compatibility fixture",
             "description": "Inert synthetic fixture", "content": "Synthetic public prompt."})
@@ -308,7 +285,7 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         for path in (f"/api/factory/material-governance/versions/{material['id']}/1",
                      f"/api/factory/applications/{application['id']}/versions/1"):
             denied = self.client.post(path + "/archive", headers=bob_headers, json={"requestId": "foreign-draft"})
-            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.status_code, 404, denied.text)
             archived = self.client.post(path + "/archive", headers=headers, json={"requestId": "own-draft"})
             self.assertEqual(archived.status_code, 200, archived.text)
             self.assertTrue(archived.json()["immutableBodyPreserved"])

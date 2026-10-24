@@ -44,8 +44,8 @@ def require(value, code='PERSONAL_ORX_RESPONSE_INVALID'):
 
 class PersonalOrxHTTPS(PersonalAgentTransport):
     """Shared TLS/DNS/response bounds, with only actual pinned native routes."""
-    def __init__(self, policy=None, *, auth_mode):
-        super().__init__(policy)
+    def __init__(self, *, auth_mode):
+        super().__init__()
         require(auth_mode in {'bearer', 'basic-proxy'}, 'PERSONAL_ORX_AUTH_MODE_REQUIRED')
         self._auth_mode = auth_mode
 
@@ -91,6 +91,7 @@ class PersonalOrxHTTPS(PersonalAgentTransport):
 
 
 class PersonalOrxProvider(OpenCodeServeProvider):
+    requires_credential_reference = True
     provider_id = PERSONAL_ORX_PROVIDER_ID
     kind = 'orx'
     namespace = 'native-openresearch'
@@ -101,7 +102,7 @@ class PersonalOrxProvider(OpenCodeServeProvider):
 
     def __init__(self, secrets, *, transport=None, **kwargs):
         super().__init__(secrets, **kwargs)
-        self._transports = {mode: transport or PersonalOrxHTTPS(kwargs.get('network_policy'), auth_mode=mode)
+        self._transports = {mode: transport or PersonalOrxHTTPS(auth_mode=mode)
                             for mode in self.auth_modes}
 
     @staticmethod

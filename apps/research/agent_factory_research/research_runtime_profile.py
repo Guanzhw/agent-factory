@@ -103,7 +103,7 @@ def registrations(*, target_ref, comparison_manifest, owner='alice', variant_sha
 
     def scope(ctx):
         config(ctx.spec['config'])
-        _require(ctx.settings.demo is True and ctx.settings.temporary_policy in {'member-self-service', 'admin-review'}
+        _require(ctx.settings.demo is True and ctx.settings.temporary_policy == 'member-self-service'
             and ctx.run_context.user_id == owner and ctx.plan.get('ownerId') == owner
             and ctx.plan.get('application') == APPLICATION_ID
             and (ctx.plan.get('applicationRef') or {}).get('id') == APPLICATION_ID
@@ -147,7 +147,7 @@ def research_settings(*, db_url, workspace: Path, target_ref, remote_targets, co
     return Settings(db_url=db_url, workspace=workspace, demo=True, max_workers=1, max_tool_calls=2,
         runtime_tool_contract=TOOL_CONTRACT, temporary_policy=temporary_policy, material_review_mode=material_review_mode,
         experiment_timeout_seconds=30, experiment_output_bytes=1024 * 1024,
-        policy_revision=APPLICATION_ID + ('-department-v1' if temporary_policy == 'member-self-service' else ''),
+        policy_revision=APPLICATION_ID + '-department-v1',
         material_policy_revision=APPLICATION_ID + ('-department-v1' if material_review_mode == 'member-self-service' else ''),
         runtime_adapters=registrations(target_ref=target_ref, comparison_manifest=comparison_manifest, owner=owner, variant_sha256=variant_sha256),
         remote_targets=dict(remote_targets), usage_pricing=(PricingRevision(MODEL_ID, '1', PROVIDER_ID, MODEL_ID,
@@ -183,30 +183,18 @@ def application_definition(materials):
             'budget': {'toolCalls': 2, 'maxDepth': 1, 'maxChildren': 1, 'experimentSeconds': 30, 'outputBytes': 1024 * 1024}}}}
 
 
-def publish_research_application(state, *, target_ref, comparison_manifest, author, reviewer=None, variant_sha256=None, adapter_suffix=""):
+def publish_research_application(state, *, target_ref, comparison_manifest, author, variant_sha256=None, adapter_suffix=""):
     governance, applications = state['material_governance'], state['applications']
-    member_publication = governance.member_publication()
-    state['auth'].require(author, 'run' if member_publication else 'components:write')
-    if not member_publication:
-        _require(type(reviewer) is str and bool(reviewer) and author != reviewer)
-        state['auth'].require(reviewer, 'agent_os:admin')
+    state['auth'].require_member(author)
     definitions = material_drafts(target_ref=target_ref, comparison_manifest=comparison_manifest, variant_sha256=variant_sha256, adapter_suffix=adapter_suffix)
     materials = []
     for definition in definitions:
         key = 'research-fixture:' + digest(definition)
         material = governance.create_draft(author, definition, key + ':draft')
-        if member_publication:
-            governance.publish(author, material['id'], material['version'], key + ':publish')
-        else:
-            review = governance.request_publication(author, material['id'], material['version'], key + ':review')
-            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+        governance.publish(author, material['id'], material['version'], key + ':publish')
         materials.append(material)
     definition = application_definition(materials)
     key = 'research-fixture-app:' + manifest_fingerprint(comparison_manifest) + ':' + digest(definition)
     application = applications.create_draft(author, definition, key + ':draft')
-    if member_publication:
-        applications.publish(author, application['id'], application['version'], key + ':publish')
-    else:
-        review = applications.request_publication(author, application['id'], application['version'], key + ':review')
-        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    applications.publish(author, application['id'], application['version'], key + ':publish')
     return application

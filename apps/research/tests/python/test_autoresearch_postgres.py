@@ -91,7 +91,7 @@ class AutoResearchPostgresTests(unittest.TestCase):
             limits={'totalSeconds': 60, 'experimentSeconds': 5, 'maxExperiments': 1, 'toolCalls': 8, 'outputBytes': 65536},
             runtime_factory=runtime_factory, context_reader=lambda: {'evidenceMode': 'controlled-fixture'},
             candidate_validator=lambda _value: {'accepted': False}, experiment=unavailable_experiment,
-            review_owner='manager')
+            )
         self.settings = bootstrap.settings(db_url=self.database.url, workspace=self.workspace, preset=self.preset)
         # Explicit legacy accounting fixture; all model/provider IO remains controlled.
         self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
@@ -101,10 +101,7 @@ class AutoResearchPostgresTests(unittest.TestCase):
             return await original(model, *args, **kwargs)
         self.enterContext(patch.object(ORXResearchModel, 'aresponse', new=observed_outer))
         self.open_application()
-        auth = self.state['auth']
-        auth.authorization.unassign('bob', 'factory-user')
-        auth.authorization.assign('bob', 'factory-manager')
-        self.preset = bootstrap.publish_application(self.state, self.preset, author='manager', reviewer='bob')
+        self.preset = bootstrap.publish_application(self.state, self.preset, author='manager')
         self.settings.autoresearch_presets[self.preset.id] = self.preset
         services_for(self.store).autoresearch.presets[self.preset.id] = self.preset
         self.login('alice')

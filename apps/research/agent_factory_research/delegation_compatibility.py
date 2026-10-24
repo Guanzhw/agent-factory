@@ -40,7 +40,7 @@ class ResearchDelegationService(DelegationService):
             scientific_envelope=envelope)
         if row['state'] == 'RESERVED':
             receipt = await client.prepare(owner, task['id'])
-            if not receipt.get('receiverReviewRequired'):
+            if receipt.get('state') == 'PREPARED':
                 receipt = await client.dispatch(owner, task['id'])
         else:
             # An uncertain acknowledgement only reads the original receipt.

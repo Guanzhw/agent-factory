@@ -9,45 +9,32 @@ submit research; a goal is sent only through the owner's explicit start click.
 
 ## Self-service server enrollment
 
-On a deployment with the opt-in `Settings.ssh_self_service` policy, **My credentials
-and connections → My Linux servers** lets the owner add their server, confirm its
-fixed Ed25519 host public key, save or reuse a dedicated SSH identity, check
-connection/dependencies, and explicitly enable the server. **Go to OpenResearch**
-selects that server and private directory without installing or sending a goal.
-Personal enrollment requires no administrator review for each device.
+Use **Credentials and connections → SSH servers** to configure a server and
+confirm its host identity. Generic enrollment is provided by the platform; see
+[Member resource endpoints](MEMBER_RESOURCE_ENDPOINTS.md) for HTTP/SSH settings,
+key formats, sharing, and repeatable loopback verification.
 
-The deployment installs `SSHEnrollmentConfig(runtime, address_policy)` once,
-alongside the existing encrypted vault with
-`owner-ssh-server-v1: SSHCredentialPolicy(address_policy)`. The trusted callable
-allows only deployment-approved IP/port destinations; it is never owner/model
-input. The runtime pins and native personal-command channel must already be
-enabled. Without that policy the UI says self-service is unavailable and the
-registered-server adapter remains usable. No vault key is generated implicitly.
+The SSH connection accepts member-configured DNS names or IPs, ports, accounts
+and directories without an operator address policy. Host public keys and
+unencrypted private keys use the installed OpenSSH parser's supported formats,
+including RSA, ECDSA and Ed25519. Secrets remain in the owner's encrypted vault;
+a private, bounded local agent supplies the identity to SSH. Shared use retains
+the calling member separately from the credential owner.
 
-The owner copies the full host public key from the server's local terminal or a
-trusted console and explicitly confirms the fingerprint and SSH authorization.
-There is no TOFU, network host-key learning, hostname resolution, root login,
-password fallback, agent forwarding, sudo or system-security change. This first
-increment accepts a dedicated, already authorized **unencrypted Ed25519** private
-key; passphrase-protected keys and other algorithms are not supported.
+Generic **Check connection and directory** uses shell builtins. It neither
+requires Python/Docker/OpenResearch nor creates the configured directory.
+Choose the research application separately to prepare its environment. Research
+preparation checks Linux/architecture, Python 3.12+, Docker availability and
+permission, and the application's private directory requirements. It reports
+missing dependencies before installing the application. An explicit prepare can
+create one mode-0700 child under an existing owner-writable parent that is not
+writable by group/others; existing private roots must be owned by the SSH account,
+mode 0700, and have no symlinks. It does not change directory permissions.
 
-SSH secrets reuse the vault's encrypted owner/reference/revision/destination
-custody and original-command recovery. The canonical destination includes IP,
-port, account and host-key hash. Only the trusted execution adapter decrypts a
-short lease and feeds the key to a private, bounded-lifetime local `ssh-agent`
-over stdin. Private keys never enter argv, SSH private-key files, application
-packages, model context, logs, GET responses or browser storage. Active agents
-are bounded and revoked/expired entries are pruned. Every execution and model
-broker call rechecks owner permission, current resource binding and exact vault
-revision; a cached agent never substitutes an earlier weaker guard.
-
-The dependency check uses fixed bounded read-only Python/SSH code and reports
-Linux/architecture, Python 3.12+, Docker availability/permission and directory
-problems with corrective instructions. It never installs dependencies, grants
-Docker access or creates a directory. An explicit application prepare can create
-one mode-0700 child under an existing owner-writable parent that is not writable
-by group/others; existing private roots must be owned by the SSH account, mode
-0700, and have no symlinks. It does not chmod someone else's directory.
+The research package still needs its pinned runtime configuration and native
+personal-command channel. These application requirements are separate from
+`SSHEnrollmentConfig(max_active_seconds=300, max_agents=16)` and the generic
+`SSHCredentialPolicy()` vault destination parser.
 
 Credential/configure/verify/bind/revoke interruption records contain only owner,
 original request IDs, public server settings and credential references. Reload

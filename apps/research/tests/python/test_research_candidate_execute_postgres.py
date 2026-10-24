@@ -111,7 +111,7 @@ class CandidateExecutePostgresTests(unittest.TestCase):
             outer.assertEqual(kwargs['adapter_suffix'], '-candidate-' + stage)
             # Explicit synthetic adapter boundary: registered fixture target names.
             return publish_research_application(state, target_ref='local' if stage == 'training' else 'evaluator',
-                comparison_manifest=kwargs['comparison_manifest'], author='manager', reviewer='bob',
+                comparison_manifest=kwargs['comparison_manifest'], author='manager',
                 adapter_suffix='' if stage == 'training' else '-evaluator')
 
         def request_client(bundle, client):
@@ -148,7 +148,6 @@ class CandidateExecutePostgresTests(unittest.TestCase):
             mock(importlib.import_module('fastapi.testclient'), 'TestClient', side_effect=lambda app: nullcontext(SimpleNamespace(portal=self.portal)))
             control = importlib.import_module('bootstrap_research_control')
             mock(control, 'read_database_url', return_value=self.store.settings.db_url)
-            mock(control, 'ensure_task_development_reviewer', return_value='manager')
             mock(importlib.import_module('agent_factory_research.research_bootstrap_assembly'), 'prepare_application', return_value=base_bundle)
             mock(importlib.import_module('agent_factory_research.research_local_driver'), 'derive_local_identities',
                  return_value={'identities': {'candidate': {'sha256': variant}, 'baseline': {'sha256': baseline_variant}}})

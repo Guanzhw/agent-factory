@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
-import { personalToolConnectionApi, ToolConnectionError, type PersonalToolDescriptor, type PersonalToolConnection } from './personalToolConnectionApi.js';
+import { personalToolConnectionApi, ToolConnectionError, type DiscoveredTool, type MemberToolConfiguration, type PersonalToolDescriptor, type PersonalToolConnection } from './personalToolConnectionApi.js';
 
 type Props = { ownerId: string; revision?: number; onChanged: () => void };
 type Setup = {
@@ -76,7 +76,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
     void (async () => {
       await verifyOwner();
       const [installed, tools] = await Promise.all([personalToolConnectionApi.descriptors(ownerId, controller.signal), personalToolConnectionApi.list(ownerId, controller.signal)]);
-      const available = installed.length ? await personalRemoteApi.credentialAvailability(controller.signal) : { enabled: false, providerIds: [] };
+      const available = await personalRemoteApi.credentialAvailability(controller.signal);
       const saved = available.enabled ? (await personalRemoteApi.credentials(controller.signal, ownerId)).map(credential) : [];
       if (!controller.signal.aborted && alive.current) {
         setDescriptors(installed); setRecords(tools); setCredentials(saved); setProviders(available.enabled ? available.providerIds : []);
@@ -88,7 +88,8 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
     } });
     return () => controller.abort();
   }, [ownerId, revision, refresh]);
-  const descriptor = descriptors.find(d => d.adapterId === adapterId);
+  const installedDescriptors = descriptors.filter(value => !value.adapterId.startsWith('member-tool-'));
+  const descriptor = installedDescriptors.find(d => d.adapterId === adapterId);
   const matching = credentials.filter(c => c.status === 'active' && c.providerId === descriptor?.credentialProviderId && c.destination === descriptor?.credentialDestination);
   const selected = matching.find(c => c.credentialRef === credentialRef);
   function retain(command: Command, begin = false) {
@@ -260,12 +261,13 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
   const disabled = busy || blocked || !ready || !!pending;
   const canSave = !!descriptor && (source === 'saved' ? !!selected : !!token && consent && providers.includes(descriptor.credentialProviderId));
   return <section aria-labelledby="personal-tools-title"><h2 id="personal-tools-title">我的工具连接</h2>
-    <p>选择已安装的 CLI 或 MCP 工具，并绑定你自己的凭据。应用只在声明了此工具和连接时使用；这里不会执行工具。</p>
+    <p>连接自己的 MCP 服务或服务器上的 CLI 命令，保存后可用于组件与工作流。</p>
+    <MemberToolSetup ownerId={ownerId} credentials={credentials} providers={providers} disabled={disabled} onChanged={changed}/>
     <button className="secondary" disabled={busy || blocked} onClick={() => setRefresh(n => n + 1)}>重新读取工具连接</button>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {pending && <aside className="state-note"><p>原工具{pending.action === 'revoke' ? '撤销' : '保存或绑定'}尚待核对。仅恢复原请求，已发送的步骤不会重发。</p><button disabled={busy || blocked} onClick={recover}>核对原工具请求</button>{!pending.dispatched && <button className="secondary" disabled={busy || blocked} onClick={endUnsent}>结束未发送步骤</button>}</aside>}
-    {!ready ? <p className="quiet">正在读取已安装工具与本人连接。</p> : !descriptors.length ? <p className="list-empty">此部署尚未安装个人 CLI/MCP 工具。安装后可在这里绑定自己的凭据；无需添加凭据或提交审批。</p> : <form className="material-editor" aria-label="添加个人工具连接" onSubmit={event => { event.preventDefault(); save(); }}>
-      <fieldset disabled={disabled}><label>工具<select aria-label="个人工具" value={adapterId} onChange={event => { setAdapterId(event.target.value); setCredentialRef(''); setToken(''); setConsent(false); }}><option value="">选择已安装工具</option>{descriptors.map(d => <option key={d.adapterId} value={d.adapterId}>{d.toolName} · {d.transport.toUpperCase()}</option>)}</select></label>
+    {!ready ? <p className="quiet">正在读取工具与本人连接。</p> : !!installedDescriptors.length && <form className="material-editor" aria-label="添加个人工具连接" onSubmit={event => { event.preventDefault(); save(); }}>
+      <fieldset disabled={disabled}><label>工具<select aria-label="个人工具" value={adapterId} onChange={event => { setAdapterId(event.target.value); setCredentialRef(''); setToken(''); setConsent(false); }}><option value="">选择已安装工具</option>{installedDescriptors.map(d => <option key={d.adapterId} value={d.adapterId}>{d.toolName} · {d.transport.toUpperCase()}</option>)}</select></label>
         {descriptor && <><p>{descriptor.description}</p>{descriptor.transport === 'cli' && <p className="quiet">CLI 在部署服务器上运行；当前适配器支持 Linux/POSIX 服务器，Windows 浏览器可管理连接。</p>}<dl className="plan-details"><dt>凭据用途</dt><dd>{descriptor.credentialProviderId}</dd><dt>固定服务目标</dt><dd>{descriptor.credentialDestination}</dd><dt>允许能力</dt><dd>{descriptor.capabilities.join('、')}</dd></dl>
           <label>凭据来源<select aria-label="工具凭据来源" value={source} onChange={event => { setSource(event.target.value as 'saved' | 'new'); setToken(''); setConsent(false); }}><option value="saved">使用本人已保存的凭据</option><option value="new" disabled={!providers.includes(descriptor.credentialProviderId)}>安全保存新令牌</option></select></label>
           {source === 'saved' ? <><label>本人凭据<select aria-label="工具已有凭据" value={credentialRef} onChange={event => setCredentialRef(event.target.value)}><option value="">选择此用途与目标的凭据</option>{matching.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.credentialRef} · {c.credentialRevision}</option>)}</select></label>{!matching.length && <p className="quiet">没有与此工具用途及目标匹配的本人凭据。不会使用服务器或其他账户的凭据。</p>}</>
@@ -274,6 +276,176 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
         <button className="primary" disabled={!canSave}>保存并绑定工具</button>
       </fieldset>
     </form>}
-    {records.map(record => <article className="material-row review-row" key={record.registrationRef}><div className="material-info"><h3>{record.toolName} · {record.transport.toUpperCase()}</h3><p>{statusNames[record.status] ?? '状态待核对'}</p><p className="quiet">配置状态不代表第三方服务或命令已经验证。</p><details className="technical-detail"><summary>工具配置引用</summary><span>{record.registrationRef}</span><span>版本 {record.revision}</span><span>能力 {record.capabilities.join('、')}</span></details></div><button className="secondary danger" disabled={disabled || !record.allowedActions.includes('revoke')} onClick={() => revoke(record)}>{record.status === 'revoked' ? '工具已撤销' : '撤销工具配置'}</button></article>)}
+    {records.map(record => <article className="material-row review-row" key={record.registrationRef}><div className="material-info"><h3>{record.toolName} · {record.transport.toUpperCase()}</h3><p>{statusNames[record.status] ?? '状态待核对'} · {record.visibility === 'team' ? '团队共享' : '个人'}{!record.isOwner && ` · ${record.ownerId}`}</p><details className="technical-detail"><summary>组件运行声明</summary><span>{record.registrationRef}</span><pre>{JSON.stringify(record.runtimeBinding, null, 2)}</pre><span>能力 {record.capabilities.join('、')}</span></details></div><ToolResourceActions ownerId={ownerId} record={record} disabled={disabled} onChanged={changed}/>{record.isOwner && <button className="secondary danger" disabled={disabled || !record.allowedActions.includes('revoke')} onClick={() => revoke(record)}>{record.status === 'revoked' ? '工具已撤销' : '撤销工具配置'}</button>}</article>)}
   </section>;
+}
+
+type ResourceRequest = { owner: string; requestId: string; bindRequestId: string; stage: 'credential' | 'configure' | 'bind'; registrationRef?: string; capabilities?: string[] };
+export function readResourceToolRequest(raw: string | null, owner: string): ResourceRequest | null {
+  try {
+    const value = JSON.parse(raw ?? 'null') as ResourceRequest;
+    if (!value || value.owner !== owner || !identifier(value.requestId) || !identifier(value.bindRequestId)
+        || !['credential', 'configure', 'bind'].includes(value.stage)
+        || Object.keys(value).some(key => !['owner', 'requestId', 'bindRequestId', 'stage', 'registrationRef', 'capabilities'].includes(key))
+        || value.stage === 'bind' && (!identifier(value.registrationRef) || !Array.isArray(value.capabilities) || !value.capabilities.every(identifier))) return null;
+    return value;
+  } catch { return null; }
+}
+
+function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged }: {
+  ownerId: string; credentials: PersonalCredential[]; providers: string[]; disabled: boolean; onChanged: () => void;
+}) {
+  const storage = `factory-member-tool-request:${encodeURIComponent(ownerId)}`;
+  const [pending, setPending] = useState(() => readResourceToolRequest(localStorage.getItem(storage), ownerId));
+  const [transport, setTransport] = useState<'mcp' | 'cli'>('mcp');
+  const [url, setUrl] = useState(''); const [executable, setExecutable] = useState(''); const [argumentsJson, setArguments] = useState('[]');
+  const [workdir, setWorkdir] = useState(''); const [environment, setEnvironment] = useState('{}');
+  const [schema, setSchema] = useState('{"type":"object","properties":{}}'); const [toolName, setToolName] = useState('');
+  const [credentialRef, setCredentialRef] = useState(''); const [token, setToken] = useState('');
+  const [credentialVariable, setCredentialVariable] = useState('API_KEY'); const [outputFormat, setOutputFormat] = useState<'json' | 'text'>('json');
+  const [tools, setTools] = useState<DiscoveredTool[]>([]); const [remoteName, setRemoteName] = useState('');
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
+  const lock = useRef(false); const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const provider = `member-${transport}`;
+  const destination = transport === 'mcp' ? (() => { try { return new URL(url).toString(); } catch { return url; } })() : executable;
+  const matching = credentials.filter(value => value.status === 'active' && value.providerId === provider && value.destination === destination);
+  const selected = matching.find(value => value.credentialRef === credentialRef);
+  function retain(value: ResourceRequest | null) {
+    if (value) localStorage.setItem(storage, JSON.stringify(value)); else localStorage.removeItem(storage);
+    if (alive.current) setPending(value);
+  }
+  async function run(operation: () => Promise<void>) {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setMessage('');
+    try {
+      if ((await api.session()).id !== ownerId) throw new ToolConnectionError(403, 'EXPECTED_OWNER_MISMATCH');
+      await operation();
+    } catch (error) {
+      if (alive.current) {
+        setToken('');
+        const rejected = error instanceof ToolConnectionError && [400, 401, 403, 404, 422].includes(error.status)
+          || error instanceof RemoteRequestError && error.rejected;
+        if (rejected && !pending) retain(null);
+        setMessage(rejected && !pending ? '配置未被接受，请检查输入。' : '请求尚待核对，请恢复原请求。');
+      }
+    } finally { lock.current = false; if (alive.current) setBusy(false); }
+  }
+  async function bind(tool: PersonalToolConnection, request: ResourceRequest) {
+    if (!alive.current) return;
+    if ((await api.session()).id !== ownerId || !alive.current) throw new ToolConnectionError(403, 'EXPECTED_OWNER_MISMATCH');
+    if (!tool.available) { retain(null); onChanged(); setMessage('工具配置已保存，当前不可用。'); return; }
+    const next: ResourceRequest = { ...request, stage: 'bind', registrationRef: tool.registrationRef, capabilities: tool.capabilities };
+    retain(next);
+    await personalToolConnectionApi.bind(ownerId, tool.registrationRef, request.bindRequestId, tool.capabilities);
+    retain(null); onChanged(); if (alive.current) setMessage('工具已保存并绑定，可用于组件与工作流。');
+  }
+  function save() {
+    void run(async () => {
+      const request: ResourceRequest = { owner: ownerId, requestId: crypto.randomUUID(), bindRequestId: crypto.randomUUID(), stage: 'configure' };
+      const tool = tools.find(value => value.name === remoteName);
+      const config: MemberToolConfiguration = { transport, toolName, description: tool?.description || toolName,
+        inputSchema: transport === 'mcp' ? tool!.inputSchema : JSON.parse(schema) as Record<string, unknown>,
+        requestId: request.requestId, ...(selected ? { credentialRef: selected.credentialRef, credentialRevision: selected.credentialRevision } : {}),
+        ...(transport === 'mcp' ? { url, remoteToolName: remoteName, readOnly: tool?.readOnly } : {
+          executable, arguments: JSON.parse(argumentsJson) as string[], ...(workdir ? { workingDirectory: workdir } : {}),
+          environment: JSON.parse(environment) as Record<string, string>, stdinJson: true, outputFormat,
+          ...(selected ? { credentialEnvironmentVariable: credentialVariable } : {}) }) };
+      retain(request);
+      await bind(await personalToolConnectionApi.configureResource(ownerId, config), request);
+    });
+  }
+  function recover() {
+    if (!pending) return;
+    const request = pending;
+    void run(async () => {
+      if (request.stage === 'credential') {
+        await personalRemoteApi.recoverCredential(request.requestId, ownerId);
+        retain(null); onChanged(); setMessage('原凭据保存已核对，请选择已保存的凭据继续。');
+      } else if (request.stage === 'configure') {
+        const receipt = await personalToolConnectionApi.recover(ownerId, request.requestId);
+        if (receipt.action !== 'tool.configure') throw new Error('Unexpected receipt');
+        await bind(receipt.tool, request);
+      } else {
+        await personalToolConnectionApi.recoverBinding(ownerId, request.bindRequestId);
+        retain(null); onChanged(); setMessage('原工具绑定已核对。');
+      }
+    });
+  }
+  const blocked = disabled || busy || !!pending;
+  return <form className="material-editor" aria-label="连接自定义工具" onSubmit={event => { event.preventDefault(); save(); }}>
+    <h3>连接自己的工具</h3>
+    {message && <p role="status">{message}</p>}
+    {pending && <button type="button" disabled={busy || disabled} onClick={recover}>恢复原资源请求</button>}
+    <fieldset disabled={blocked}>
+      <label>连接类型<select aria-label="自定义工具类型" value={transport} onChange={event => { setTransport(event.target.value as 'cli' | 'mcp'); setCredentialRef(''); setTools([]); setToken(''); }}><option value="mcp">MCP 服务</option><option value="cli">CLI 命令</option></select></label>
+      {transport === 'mcp' ? <label>MCP URL<input aria-label="MCP URL" placeholder="http://localhost:8000/mcp" value={url} onChange={event => { setUrl(event.target.value); setTools([]); setCredentialRef(''); }}/></label> : <>
+        <p className="quiet">CLI 在部署服务器上运行。输入服务器上的可执行文件与工作目录；调用参数作为 JSON 传入 stdin。</p>
+        <label>可执行文件<input aria-label="CLI 可执行文件" value={executable} onChange={event => setExecutable(event.target.value)} placeholder="/usr/bin/python3"/></label>
+        <label>命令参数（JSON 数组）<textarea aria-label="CLI 命令参数" value={argumentsJson} onChange={event => setArguments(event.target.value)}/></label>
+        <label>工作目录<input aria-label="CLI 工作目录" value={workdir} onChange={event => setWorkdir(event.target.value)}/></label>
+        <label>用户配置环境变量（JSON）<textarea aria-label="CLI 用户配置" value={environment} onChange={event => setEnvironment(event.target.value)}/></label>
+        <label>输入 JSON Schema<textarea aria-label="CLI 输入 Schema" value={schema} onChange={event => setSchema(event.target.value)}/></label>
+        <label>输出格式<select aria-label="CLI 输出格式" value={outputFormat} onChange={event => setOutputFormat(event.target.value as 'json' | 'text')}><option value="json">JSON</option><option value="text">文本</option></select></label>
+      </>}
+      <label>访问凭据<select aria-label="自定义工具凭据" value={credentialRef} onChange={event => setCredentialRef(event.target.value)}><option value="">无需凭据</option>{matching.map(value => <option key={value.credentialRef} value={value.credentialRef}>{value.credentialRef}</option>)}</select></label>
+      {transport === 'cli' && selected && <label>凭据环境变量<input value={credentialVariable} onChange={event => setCredentialVariable(event.target.value)}/></label>}
+      {providers.includes(provider) && <><label>新访问令牌<input aria-label="自定义工具令牌" type="password" autoComplete="new-password" value={token} onChange={event => setToken(event.target.value)}/></label><button type="button" disabled={!token || !destination} onClick={() => { void run(async () => {
+        const secret = token; setToken('');
+        const request: ResourceRequest = { owner: ownerId, requestId: crypto.randomUUID(), bindRequestId: crypto.randomUUID(), stage: 'credential' };
+        retain(request);
+        const saved = await personalRemoteApi.saveCredential({ providerId: provider, destination, username: 'bearer', password: secret, requestId: request.requestId }, ownerId);
+        retain(null); setCredentialRef(saved.credentialRef); onChanged(); setMessage('凭据已加密保存。');
+      }); }}>加密保存令牌</button></>}
+      {transport === 'mcp' && <><button type="button" disabled={!url} onClick={() => { void run(async () => {
+        const result = await personalToolConnectionApi.discover(ownerId, url, selected);
+        setUrl(result.url); setTools(result.tools); setRemoteName(''); setMessage(`已发现 ${result.tools.length} 个工具。`);
+      }); }}>发现 MCP 工具</button><label>MCP 工具<select aria-label="发现的 MCP 工具" value={remoteName} onChange={event => { setRemoteName(event.target.value); setToolName(event.target.value.replace(/[^A-Za-z0-9_]/g, '_').replace(/^[^A-Za-z_]/, '_').slice(0, 64)); }}><option value="">选择工具</option>{tools.map(tool => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label></>}
+      <label>调用名称<input aria-label="自定义工具调用名称" value={toolName} onChange={event => setToolName(event.target.value)} pattern={'[A-Za-z_][A-Za-z0-9_\\-]{0,63}'} required/></label>
+      <button className="primary" disabled={!toolName || (transport === 'mcp' ? !remoteName : !executable)}>保存自定义工具并绑定</button>
+    </fieldset>
+  </form>;
+}
+
+type ToolResourceAction = { owner: string; reference: string; requestId: string; action: 'bind' | 'sharing'; visibility?: 'personal' | 'team' };
+function ToolResourceActions({ ownerId, record, disabled, onChanged }: { ownerId: string; record: PersonalToolConnection; disabled: boolean; onChanged: () => void }) {
+  const storage = `factory-tool-action:${encodeURIComponent(ownerId)}:${record.registrationRef}`;
+  const [pending, setPending] = useState<ToolResourceAction | null>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(storage) ?? 'null') as ToolResourceAction;
+      return value?.owner === ownerId && value.reference === record.registrationRef && identifier(value.requestId)
+        && (value.action === 'bind' || value.action === 'sharing' && ['personal', 'team'].includes(value.visibility ?? '')) ? value : null;
+    } catch { return null; }
+  });
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const lock = useRef(false);
+  async function act(action: 'bind' | 'sharing') {
+    if (lock.current || disabled) return;
+    lock.current = true; setBusy(true); setMessage('');
+    const original = pending;
+    try {
+      if ((await api.session()).id !== ownerId) throw new ToolConnectionError(403, 'EXPECTED_OWNER_MISMATCH');
+      const command: ToolResourceAction = original ?? { owner: ownerId, reference: record.registrationRef,
+        requestId: crypto.randomUUID(), action, ...(action === 'sharing' ? { visibility: record.visibility === 'team' ? 'personal' : 'team' } : {}) };
+      localStorage.setItem(storage, JSON.stringify(command)); setPending(command);
+      if (command.action === 'bind') {
+        const value = original ? (await personalToolConnectionApi.recoverBinding(ownerId, command.requestId)).connection
+          : await personalToolConnectionApi.bind(ownerId, record.registrationRef, command.requestId, record.capabilities);
+        if (value.registrationRef !== record.registrationRef) throw new Error('Unexpected binding');
+      } else if (original) {
+        const receipt = await personalToolConnectionApi.recover(ownerId, command.requestId);
+        if (receipt.action !== 'tool.sharing' || receipt.tool.registrationRef !== record.registrationRef) throw new Error('Unexpected sharing');
+      } else {
+        await personalToolConnectionApi.sharing(ownerId, record.registrationRef, command.visibility!, command.requestId);
+      }
+      localStorage.removeItem(storage); setPending(null); onChanged();
+      setMessage(command.action === 'bind' ? '工具连接已核对。' : '共享设置已核对。');
+    } catch (error) {
+      if (!original && error instanceof ToolConnectionError && [400, 401, 403, 404, 422].includes(error.status)) {
+        localStorage.removeItem(storage); setPending(null); setMessage('操作未被接受。');
+      } else setMessage('原请求尚待核对。');
+    } finally { lock.current = false; setBusy(false); }
+  }
+  return <div>{message && <p role="status">{message}</p>}{pending
+    ? <button disabled={disabled || busy} onClick={() => { void act(pending.action); }}>核对原工具操作</button>
+    : <>{record.allowedActions.includes('bind') && <button disabled={disabled || busy} onClick={() => { void act('bind'); }}>绑定此工具</button>}{record.allowedActions.includes('sharing') && <button disabled={disabled || busy} onClick={() => { void act('sharing'); }}>{record.visibility === 'team' ? '设为个人工具' : '共享给团队'}</button>}</>}</div>;
 }

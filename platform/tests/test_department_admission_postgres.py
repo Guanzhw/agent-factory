@@ -23,6 +23,7 @@ from agent_factory_server.main import create_app
 from agent_factory.native_workflows import NativeWorkflowRegistration
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import app_definition, pin
+from test_plan_policy import historical_review
 
 
 WORKFLOW_ID = 'department-synthetic-workflow-v1'
@@ -46,14 +47,13 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
             steps=[Step(name='checksum', step_id='department-summary', executor=synthetic_step,
                 max_retries=0, human_review=HumanReview(on_error=OnError.fail))])
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name),
-            max_workers=1, max_user_tasks=3, temporary_policy='admin-review',
+            max_workers=1, max_user_tasks=3, temporary_policy='member-self-service',
             policy_revision='department-legacy-fixture',
             native_workflows=(NativeWorkflowRegistration(workflow, '1', ('checksum',), 'd' * 64),))
         # Explicit fixture mode also works before shared Settings assembly lands.
         self.settings.material_review_mode = 'member-self-service'
         self.settings.material_policy_revision = 'department-material-fixture'
-        if 'legacy' not in self._testMethodName:
-            self.member_mode()
+        self.member_mode()
         self.start()
         self.addCleanup(self.stop)
 
@@ -109,42 +109,38 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
 
     def test_member_runs_multiple_applications_and_workflow_without_admin_decision(self):
         with self.assertRaises(HTTPException) as denied:
-            self.auth.require('alice', 'agent_os:admin')
+            self.auth.require_account_admin('alice')
         self.assertEqual(denied.exception.status_code, 403)
         self.assertEqual(self.client.get('/api/factory/session').status_code, 401)
         applications = [self.publish('department-text-one'), self.publish('department-text-two'),
             self.publish('department-original-workflow', workflow=True)]
-        with patch.object(self.state['plan_policy'], 'request_review',
-                side_effect=AssertionError('ORDINARY_TASK_MUST_NOT_REQUEST_REVIEW')), \
-                patch.object(self.state['plan_policy'], 'decide',
-                side_effect=AssertionError('ORDINARY_TASK_MUST_NOT_DECIDE_REVIEW')):
-            for application in applications:
-                with self.subTest(application=application['id']):
-                    plan = self.plan(applicationRef=pin(application),
-                        **({'inputValues': {'goal': 'Original synthetic Workflow'}}
-                            if application['id'] == 'department-original-workflow' else {}))
-                    authorization = self.request('GET', f'/plans/{plan["id"]}/authorization')
-                    self.assertTrue(authorization['executionAllowed'], authorization)
-                    body = {'planId': plan['id'], 'requestId': str(uuid4())}
-                    task = self.request('POST', '/instances', body, expected=202)
-                    detail = self.wait(task['id'], {'completed', 'failed'})
-                    self.assertEqual(detail['job']['status'], 'completed', detail)
-                    repeated = self.request('POST', '/instances', body, expected=202)
-                    self.assertEqual(repeated['id'], task['id'])
-                    native_task = self.store.task(task['id'], 'alice')
-                    native = self.store.native_db.get_job(native_task['run_id'])
-                    self.assertEqual(native['component_type'],
-                        'workflow' if application['id'] == 'department-original-workflow' else 'agent')
-                    self.assertEqual(self.store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id',
-                        id=task['id'])[0]['n'], 1)
-                    self.request('POST', '/instances', body, owner='bob', expected=404)
-                    self.request('POST', '/instances', body,
-                        headers={'X-Factory-Expected-Owner': 'bob'}, expected=403)
+        for application in applications:
+            with self.subTest(application=application['id']):
+                plan = self.plan(applicationRef=pin(application),
+                    **({'inputValues': {'goal': 'Original synthetic Workflow'}}
+                        if application['id'] == 'department-original-workflow' else {}))
+                authorization = self.request('GET', f'/plans/{plan["id"]}/authorization')
+                self.assertTrue(authorization['executionAllowed'], authorization)
+                body = {'planId': plan['id'], 'requestId': str(uuid4())}
+                task = self.request('POST', '/instances', body, expected=202)
+                detail = self.wait(task['id'], {'completed', 'failed'})
+                self.assertEqual(detail['job']['status'], 'completed', detail)
+                repeated = self.request('POST', '/instances', body, expected=202)
+                self.assertEqual(repeated['id'], task['id'])
+                native_task = self.store.task(task['id'], 'alice')
+                native = self.store.native_db.get_job(native_task['run_id'])
+                self.assertEqual(native['component_type'],
+                    'workflow' if application['id'] == 'department-original-workflow' else 'agent')
+                self.assertEqual(self.store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id',
+                    id=task['id'])[0]['n'], 1)
+                self.request('POST', '/instances', body, owner='bob', expected=404)
+                self.request('POST', '/instances', body,
+                    headers={'X-Factory-Expected-Owner': 'bob'}, expected=403)
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_plan_reviews')[0]['n'], 0)
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_application_reviews')[0]['n'], 0)
         self.request('POST', f'/applications/{applications[0]["id"]}/versions/1/archive',
-            {'requestId': str(uuid4()), 'reason': 'Synthetic non-admin deletion attempt'}, expected=403)
+            {'requestId': str(uuid4()), 'reason': 'Synthetic author archival'}, expected=200)
 
     def test_member_self_service_keeps_native_confirmation_before_dangerous_tool(self):
         plan = self.plan(application='research', mode='experiment')
@@ -165,14 +161,12 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
             self.assertTrue(stopped['snapshot']['delegation']['allStopped'])
             self.assertEqual(compute.call_count, 0)
 
-    def test_legacy_pending_denied_approved_and_unknown_remain_read_only_after_restart(self):
+    def test_legacy_reviews_survive_member_execution_and_unknown_recovery_after_restart(self):
         policy = self.state['plan_policy']
         old = {}
         for state in ('pending', 'denied', 'approved', 'unknown'):
             plan = self.plan()
-            review = policy.request_review('alice', plan['id'], 'legacy-request-' + state)
-            if state != 'pending':
-                policy.decide('manager', review['id'], state != 'denied', 'legacy-decision-' + state)
+            review = historical_review(policy, plan, decision=None if state == 'pending' else 'denied' if state == 'denied' else 'approved')
             old[state] = (plan, review)
         unknown_plan, _ = old['unknown']
         unknown_body = {'planId': unknown_plan['id'], 'requestId': 'legacy-unknown-original'}
@@ -186,28 +180,30 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
         self.stop()
         self.member_mode()
         self.start()
-        bridge = AsyncMock(side_effect=AssertionError('HISTORICAL_TASK_MUST_NOT_DISPATCH'))
+        bridge = AsyncMock(side_effect=AssertionError('UNKNOWN_TASK_MUST_NOT_REDISPATCH'))
         with patch.object(self.state['bridge'], 'submit', bridge):
-            for state, (plan, review) in old.items():
-                with self.subTest(state=state):
-                    self.assertEqual(self.store.plan(plan['id'], 'alice'), plans_before[state])
-                    request = unknown_body if state == 'unknown' else {
-                        'planId': plan['id'], 'requestId': 'legacy-resubmit-' + state}
-                    denied = self.request('POST', '/instances', request, expected=409)
-                    self.assertEqual(denied['code'], 'LEGACY_PLAN_READ_ONLY')
-                    history = self.request('GET', '/plan-reviews/' + review['id'])
-                    self.assertEqual(history['decision'], state if state in {'pending', 'denied'} else 'approved')
-                    self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
-                        {'requestId': str(uuid4()), 'approved': True}, owner='manager', expected=410)
+            recovered = self.request('POST', '/instances', unknown_body, expected=202)
+            self.assertEqual(recovered['id'], unknown['id'])
             self.request('POST', '/jobs/' + unknown['id'] + '/reconcile', {})
         self.assertEqual(bridge.await_count, 0)
+        for state, (plan, review) in old.items():
+            with self.subTest(state=state):
+                self.assertEqual(self.store.plan(plan['id'], 'alice'), plans_before[state])
+                history = self.request('GET', '/plan-reviews/' + review['id'])
+                self.assertEqual(history['decision'], state if state in {'pending', 'denied'} else 'approved')
+                self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
+                    {'requestId': str(uuid4()), 'approved': True}, owner='manager', expected=410)
+                if state != 'unknown':
+                    admitted = self.request('POST', '/instances', {
+                        'planId': plan['id'], 'requestId': 'historical-plan-member-run-' + state}, expected=202)
+                    self.assertEqual(self.wait(admitted['id'], {'completed', 'failed'})['job']['status'], 'completed')
         self.assertEqual(self.store.sql('SELECT * FROM af_plan_review_decisions ORDER BY id'), decisions_before)
         persisted = self.store.task(unknown['id'], 'alice')
         self.assertEqual(persisted['admission'], 'unknown')
         self.assertIsNone(persisted['run_id'])
         self.assertFalse(persisted['terminal'])
-        self.assertEqual(self.store.sql('SELECT count(*) AS n FROM ai.agno_jobs')[0]['n'], 0)
-        self.assertEqual(len(self.store.tasks('alice')), 1)
+        self.assertEqual(self.store.sql('SELECT count(*) AS n FROM ai.agno_jobs')[0]['n'], 3)
+        self.assertEqual(len(self.store.tasks('alice')), 4)
         fresh = self.plan()
         task = self.request('POST', '/instances', {'planId': fresh['id'], 'requestId': str(uuid4())}, expected=202)
         self.assertEqual(self.wait(task['id'], {'completed', 'failed'})['job']['status'], 'completed')

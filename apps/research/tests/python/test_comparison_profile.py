@@ -106,42 +106,31 @@ class ComparisonProfileTests(unittest.IsolatedAsyncioTestCase):
 
     def test_member_publishes_without_reviewer_and_keeps_exact_pins(self):
         def service():
-            return SimpleNamespace(member_publication=Mock(return_value=True),
-                create_draft=Mock(side_effect=lambda author, definition, key:
+            return SimpleNamespace(create_draft=Mock(side_effect=lambda author, definition, key:
                     {**deepcopy(definition), 'version': 1, 'sha256': digest(definition)}),
-                publish=Mock(), request_publication=Mock(), decide_publication=Mock())
-        state = {'auth': SimpleNamespace(require=Mock()), 'material_governance': service(), 'applications': service()}
+                publish=Mock())
+        state = {'auth': SimpleNamespace(require_member=Mock()), 'material_governance': service(), 'applications': service()}
         app = publish_comparison_application(state, {'linear-v1': 'fixed-target'}, author='alice')
-        state['auth'].require.assert_called_once_with('alice', 'run')
+        state['auth'].require_member.assert_called_once_with('alice')
         self.assertEqual(state['material_governance'].publish.call_count, 6)
         state['applications'].publish.assert_called_once_with('alice', app['id'], app['version'],
             'comparison-app:' + digest(application_definition({'linear-v1': [
                 {**call.args[1], 'version': 1, 'sha256': digest(call.args[1])}
                 for call in state['material_governance'].create_draft.call_args_list]})) + ':publish')
         for name in ('material_governance', 'applications'):
-            state[name].request_publication.assert_not_called()
-            state[name].decide_publication.assert_not_called()
+            state[name].publish.assert_called()
 
-    def test_explicit_legacy_scope_preserves_historical_fixture(self):
-        ctx = context()
-        ctx.settings.temporary_policy = 'admin-review'
-        self.assertIsInstance(self.entries[MODEL_ID].factory(ctx), ComparisonFixtureModel)
-
-    def test_legacy_publication_calls_distinct_reviewer_for_every_material_and_application(self):
+    def test_account_admin_publishes_its_own_comparison_directly(self):
         def manager():
-            return SimpleNamespace(member_publication=Mock(return_value=False), publish=Mock(), create_draft=Mock(side_effect=lambda author, definition, key:
-                {**deepcopy(definition), 'version': 1, 'sha256': digest(definition)}),
-                request_publication=Mock(return_value={'id': 'review'}), decide_publication=Mock())
-        state = {'auth': SimpleNamespace(require=Mock()), 'material_governance': manager(), 'applications': manager()}
-        with self.assertRaises(ValueError):
-            publish_comparison_application(state, {'linear-v1': 'fixed-target'}, author='manager', reviewer='manager')
-        state['material_governance'].create_draft.assert_not_called()
-        app = publish_comparison_application(state, {'linear-v1': 'fixed-target'}, author='manager', reviewer='manager2')
+            return SimpleNamespace(publish=Mock(), create_draft=Mock(side_effect=lambda author, definition, key:
+                {**deepcopy(definition), 'version': 1, 'sha256': digest(definition)}))
+        state = {'auth': SimpleNamespace(require_member=Mock()), 'material_governance': manager(), 'applications': manager()}
+        app = publish_comparison_application(state, {'linear-v1': 'fixed-target'}, author='manager')
         self.assertEqual(app['id'], APPLICATION_ID)
-        self.assertEqual(state['material_governance'].decide_publication.call_count, 6)
-        for call in state['material_governance'].decide_publication.call_args_list:
-            self.assertEqual(call.args[:3], ('manager2', 'review', True))
-        state['applications'].decide_publication.assert_called_once()
+        state['auth'].require_member.assert_called_once_with('manager')
+        self.assertEqual(state['material_governance'].publish.call_count, 6)
+        self.assertTrue(all(call.args[0] == 'manager' for call in state['material_governance'].publish.call_args_list))
+        state['applications'].publish.assert_called_once()
 
 
 if __name__ == '__main__':

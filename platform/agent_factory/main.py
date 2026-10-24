@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager, nullcontext
-from typing import Literal, cast
+from typing import cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
 
@@ -11,8 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .tool_policy_registry import resolve_tool_policies
-from .auth import AuthService, CookieBridge
+from .auth import AuthService, CookieBridge, EXECUTOR_ID, MemberTokenBoundary
 from .catalog import seed_catalog
 from .config import Settings
 from .connections import ConnectionService, connection_router
@@ -41,16 +40,17 @@ from .scheduling_api import scheduling_router
 
 
 class NativeIngress:
-    """The native executor accepts lifecycle calls through the scoped factory only.
+    """Factory-bound executors receive their plan through the factory API.
 
     A context variable is trusted in-process, not a user-controlled HTTP header.
     Native middleware still authenticates and authorizes every internal call.
     """
-    def __init__(self, app):
+    def __init__(self, app, workflow_ids=()):
         self.app = app
+        self.prefixes = (f"/agents/{EXECUTOR_ID}/", *(f"/workflows/{identifier}/" for identifier in workflow_ids))
 
     async def __call__(self, scope, receive, send):
-        protected = scope.get("path", "").startswith(("/agents/", "/workflows/", "/schedules"))
+        protected = scope.get("path", "").startswith(self.prefixes)
         if scope["type"] == "websocket" and protected and not INTERNAL_NATIVE.get():
             await send({"type": "websocket.close", "code": 1008})
             return
@@ -102,7 +102,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         seed_catalog(store, seed_materials)
     at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, governance_config or GovernanceConfig(
-        review_mode=cast(Literal["member-self-service", "separate-admin", "demo-self-review"], settings.material_review_mode), revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), seed_materials=seed_materials)
+        review_mode="member-self-service", revision=settings.material_policy_revision,
+        tool_contract=cast(ToolContract, settings.runtime_tool_contract)), seed_materials=seed_materials)
     at('PREPARATION_APP_DEMO_GOVERNANCE')
     if settings.demo:
         governance.adopt_demo_bootstrap()
@@ -110,7 +111,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     store.register_execution_guard("material-governance",
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     at('PREPARATION_APP_CONNECTIONS')
-    credential_vault = settings.credential_vault_factory(store.engine) if settings.credential_vault_factory else None
+    from .local_credentials import local_credential_vault
+    credential_vault = (settings.credential_vault_factory(store.engine) if settings.credential_vault_factory
+        else local_credential_vault(store.engine, settings.runtime_directory))
     bind_vault_reads = getattr(credential_vault, 'bind_read_context', None)
     if callable(bind_vault_reads):
         bind_vault_reads(store._connection)
@@ -122,9 +125,18 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         if getattr(provider, "provider_id", None) != provider_id:
             raise ValueError('Personal provider identity differs from trusted registration')
         personal_providers[provider_id] = provider
+    from .personal_remote_provider import OpenCodeServeProvider, PROVIDER_ID as OPENCODE_PROVIDER
+    from .credential_vault import VaultSecretProvider
+    if OPENCODE_PROVIDER in credential_vault.capabilities()['providerIds']:
+        personal_providers.setdefault(OPENCODE_PROVIDER, OpenCodeServeProvider(VaultSecretProvider(credential_vault, OPENCODE_PROVIDER)))
     connections = (connection_service_type or ConnectionService)(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
+    from .personal_ssh import PersonalSSHServers, SSHEnrollmentConfig, personal_ssh_router
+    from .ssh_credentials import PROVIDER_ID as SSH_PROVIDER
+    store.personal_ssh = (PersonalSSHServers(auth, connections, credential_vault,
+        settings.ssh_self_service or SSHEnrollmentConfig())
+        if SSH_PROVIDER in credential_vault.capabilities()['providerIds'] else None)
     from .personal_tools import PersonalTools, personal_tool_router
     store.personal_tools = PersonalTools(connections, credential_vault, settings.personal_tool_adapters)
     connections.personal_tools = store.personal_tools
@@ -143,6 +155,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
             demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
+    store.personal_tools.register(bindings)
     store.execution_bindings = bindings
     prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
     for price in settings.usage_pricing:
@@ -183,7 +196,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_PLAN_POLICY')
     policy = (plan_policy_type or PlanPolicyService)(store, auth, policy_config or PlanPolicyConfig(
         name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=cast(ToolContract, settings.runtime_tool_contract), tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
+        tool_contract=cast(ToolContract, settings.runtime_tool_contract)), ancestor_guard=persisted_ancestor_guard(store))
     store.plan_policy = policy
     at('PREPARATION_APP_HANDOFF')
     handoff_client = (handoff_client_type or TrustedHandoffClient)(store, auth, settings.handoff_targets)
@@ -201,6 +214,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     schedule_management = ScheduleManagement(schedules)
     at('PREPARATION_APP_ROUTES')
     base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
+    from .accounts import account_router
+    base.include_router(account_router(auth))
+    base.include_router(personal_ssh_router(auth, store.personal_ssh))
     if receiver:
         base.include_router(receiver.router)
     if settings.handoff_targets:
@@ -212,15 +228,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     base.include_router(personal_tool_router(auth, store.personal_tools))
     from .personal_connections import personal_connection_router
     base.include_router(personal_connection_router(auth, connections.personal))
-    if credential_vault is not None:
-        from .credential_vault import credential_vault_router
-        base.include_router(credential_vault_router(auth, credential_vault))
-    else:
-        @base.get('/api/factory/personal-credentials/capabilities')
-        def credential_capabilities(request: Request):
-            auth.require(auth.user(request)['id'], 'read')
-            return JSONResponse({'enabled': False, 'providerIds': []},
-                headers={'Cache-Control': 'private, no-store'})
+    from .credential_vault import credential_vault_router
+    base.include_router(credential_vault_router(auth, credential_vault))
     base.include_router(application_router(auth, applications))
     base.include_router(composition_router(auth, composition))
     base.include_router(plan_policy_router(auth, policy))
@@ -290,7 +299,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                          timeout_seconds=settings.native_timeout_seconds), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     at('PREPARATION_APP_ATTACH')
-    native.add_middleware(NativeIngress)
+    native.add_middleware(MemberTokenBoundary)
+    native.add_middleware(NativeIngress, workflow_ids=tuple(workflow.id for workflow in store.native_workflows.components))
     bridge.attach(native)
     # Start after the native DB/worker lifespans; stop before their drain.
     at('PREPARATION_APP_OBSERVER')
@@ -311,6 +321,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             try:
                 store.dispose_root_locks()
             finally:
+                if store.personal_ssh is not None:
+                    store.personal_ssh.close()
                 if shutdown_callback is not None:
                     shutdown_callback(native.state.factory)
 

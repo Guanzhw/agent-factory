@@ -69,7 +69,7 @@ def comparison_targets():
 def controlled_workflow_settings(base: Settings):
     """Keep provider SQL custody alive for the server; never delete supplied data."""
     _require(sys.platform == 'linux' and base.demo is True and base.development_mock_login is True
-             and base.temporary_policy in {'member-self-service', 'admin-review'} and not base.remote_targets
+             and base.temporary_policy == 'member-self-service' and not base.remote_targets
              and not base.runtime_adapters and not base.trusted_connections
              and not base.handoff_targets and not base.handoff_origins and not base.remote_binding_mappings
              and base.development_profile == 'disabled')
@@ -85,12 +85,11 @@ def controlled_workflow_settings(base: Settings):
             frozenset({pubmed_profile.CAPABILITY}), PROFILE, available=True,
             opaque_handle=provider, handle_ref=PROFILE)
         bindings[refs['model']] = trusted_model_binding(owner)
-    member_publication = base.temporary_policy == 'member-self-service'
-    revision = PROFILE + '-department-v1' if member_publication else PROFILE
+    revision = PROFILE + '-department-v1'
     settings = replace(base, source_synthesis_enabled=True, max_workers=1, max_tool_calls=8,
         experiment_timeout_seconds=30, experiment_output_bytes=65536,
         runtime_tool_contract=PROFILE, policy_revision=revision, material_policy_revision=revision,
-        material_review_mode='member-self-service' if member_publication else 'separate-admin', trusted_connections=bindings,
+        material_review_mode='member-self-service', trusted_connections=bindings,
         runtime_adapters=[*pubmed_profile.registrations(), *comparison_profile.registrations()],
         usage_pricing=(PricingRevision(pubmed_profile.MODEL_ID, '1', 'local-deterministic',
             pubmed_profile.MODEL_ID, 'zero-local-v1', local_model_type=pubmed_profile.PubMedEvidenceModel),
@@ -115,17 +114,13 @@ def controlled_workflow_settings(base: Settings):
         bootstrap.engine.dispose()
 
 
-def _publish_materials(state, definitions, *, author, reviewer):
+def _publish_materials(state, definitions, *, author):
     governance = state['material_governance']
     materials = []
     for definition in definitions:
         key = PROFILE + ':material:' + digest(definition)
         material = governance.create_draft(author, definition, key + ':draft')
-        if governance.member_publication():
-            governance.publish(author, material['id'], material['version'], key + ':publish')
-        else:
-            review = governance.request_publication(author, material['id'], material['version'], key + ':review')
-            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+        governance.publish(author, material['id'], material['version'], key + ':publish')
         # A replay never reactivates withdrawn material or replaces its version.
         current = governance.inspect_version(author, material['id'], material['version'])
         _require(current['material']['published'] is True and not current['material'].get('archived')
@@ -134,15 +129,11 @@ def _publish_materials(state, definitions, *, author, reviewer):
     return materials
 
 
-def _publish_application(state, definition, *, author, reviewer):
+def _publish_application(state, definition, *, author):
     applications = state['applications']
     key = PROFILE + ':application:' + digest(definition)
     application = applications.create_draft(author, definition, key + ':draft')
-    if state['material_governance'].member_publication():
-        applications.publish(author, application['id'], application['version'], key + ':publish')
-    else:
-        review = applications.request_publication(author, application['id'], application['version'], key + ':review')
-        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    applications.publish(author, application['id'], application['version'], key + ':publish')
     current = applications.inspect(author, application['id'], application['version'])
     _require(current['governance']['state'] == 'published')
     return current['application']
@@ -163,19 +154,14 @@ def _source_definitions():
     return rows
 
 
-def initialize_controlled_fixtures(state, *, author='manager', reviewer=None):
+def initialize_controlled_fixtures(state, *, author='manager'):
     """Explicit operator bootstrap; members publish their exact immutable versions."""
     settings = state['store'].settings
     _require(settings.demo is True and settings.development_mock_login is True
              and settings.runtime_tool_contract == PROFILE and settings.source_synthesis_enabled is True
-             and (settings.temporary_policy, settings.material_review_mode) in {
-                 ('member-self-service', 'member-self-service'), ('admin-review', 'separate-admin')})
-    member_publication = state['material_governance'].member_publication()
-    state['auth'].require(author, 'run' if member_publication else 'components:write')
-    if not member_publication:
-        _require(type(reviewer) is str and bool(reviewer) and author != reviewer)
-        state['auth'].require(reviewer, 'agent_os:admin')
-    publication = {'author': author, 'reviewer': reviewer}
+             and (settings.temporary_policy, settings.material_review_mode) == ('member-self-service', 'member-self-service'))
+    state['auth'].require_member(author)
+    publication = {'author': author}
     sources = _publish_materials(state, _source_definitions(), **publication)
     source_app = _publish_application(state, {'id': pubmed_profile.APPLICATION_ID,
         'name': '开发合成文献来源（无外网）', 'description': '内存合成数据，不是实际检索或科研证据。',

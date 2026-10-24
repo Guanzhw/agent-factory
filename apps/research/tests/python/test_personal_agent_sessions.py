@@ -27,8 +27,8 @@ from agent_factory.personal_remote_provider import SecretLease, RemoteConnection
 
 class Auth:
     enabled = True
-    def require(self, owner, action):
-        if not self.enabled: raise HTTPException(403, 'denied')
+    def require_member(self, owner):
+        if not self.enabled: raise HTTPException(403, 'member disabled')
 
 
 class Secrets:
@@ -101,7 +101,7 @@ class Sessions(unittest.TestCase):
         thread = Thread(target=self.server.serve_forever, daemon=True); thread.start()
         self.addCleanup(self.server.server_close); self.addCleanup(self.server.shutdown)
         self.patch = patch('agent_factory_research.personal_agent_transport._PinnedHTTPS',
-            side_effect=lambda host, address: http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=3))
+            side_effect=lambda host, address, port: http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=3))
         self.patch.start(); self.addCleanup(self.patch.stop)
         self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
         self.addCleanup(self.engine.dispose)
@@ -182,13 +182,17 @@ class Sessions(unittest.TestCase):
         self.assertEqual(posts, len(self.wire))
         self.assertEqual(len(self.remote), 1)
 
-    def test_owner_scope_revoke_rotation_and_current_grant_fences(self):
+    def test_owner_scope_revoke_rotation_and_current_member_fences(self):
         result = self.create(); sid = result['session']['id']
         for operation in (lambda: self.service.inspect('bob', sid),
                 lambda: self.service.request_result('bob', 'create')):
             with self.assertRaises(HTTPException): operation()
-        self.secrets.enabled = False
         posts = len(self.wire)
+        self.auth.enabled = False
+        with self.assertRaises(HTTPException): self.service.prompt('alice', sid, 'x', 'disabled-turn')
+        self.assertEqual(posts, len(self.wire))
+        self.auth.enabled = True
+        self.secrets.enabled = False
         with self.assertRaises(HTTPException): self.service.prompt('alice', sid, 'x', 'turn')
         self.assertEqual(posts, len(self.wire))
         self.secrets.enabled = True

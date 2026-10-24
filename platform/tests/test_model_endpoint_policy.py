@@ -13,15 +13,24 @@ from agent_factory.personal_remote_provider import SecretLease
 
 
 class ModelEndpointPolicyTests(unittest.TestCase):
-    def test_exact_prefixes_do_not_expand_general_url_policy(self):
-        for value in ('https://models.example.com/v1', GO_BASE, GO_CURRENT_BASE):
-            self.assertEqual(base_url(value + '/'), value)
-        for value in ('https://opencode.ai.evil.example/inference/go/v1',
-                'https://other.example/inference/go/v1', GO_CURRENT_BASE + '?key=synthetic',
-                GO_CURRENT_BASE + '#fragment', GO_CURRENT_BASE + '//',
-                'https://opencode.ai/inference/other/v1', 'https://127.0.0.1/v1',
-                'https://[::1]/v1', 'http://models.example/v1',
-                'https://user:synthetic@models.example/v1', 'https://models.example:8443/v1'):
+    def test_member_endpoint_addresses_and_custom_paths_are_normalized(self):
+        for value in ('https://models.example.com/v1', GO_BASE, GO_CURRENT_BASE,
+                'https://opencode.ai.evil.example/inference/go/v1',
+                'https://other.example/inference/go/v1', 'https://opencode.ai/inference/other/v1',
+                'https://127.0.0.1/v1', 'https://[::1]/v1', 'http://models.example/v1',
+                'https://models.example:8443/v1', 'http://192.168.1.25:8000/custom/api',
+                'http://localhost:8080/custom/inference'):
+            with self.subTest(value=value):
+                self.assertEqual(base_url(value + '/'), value)
+        self.assertEqual(base_url(GO_CURRENT_BASE + '//'), GO_CURRENT_BASE)
+
+    def test_malformed_urls_credentials_and_ambiguous_paths_are_rejected(self):
+        for value in (GO_CURRENT_BASE + '?key=synthetic', GO_CURRENT_BASE + '#fragment',
+                'https://user:synthetic@models.example/v1', 'ftp://models.example/v1',
+                'https:///v1', 'https://models.example:65536/v1',
+                'https://models.example:0/v1', 'https://[::1/v1',
+                'https://models.example/v1/../other', 'https://models.example/./v1',
+                'https://models.example/a b', 'https://models.example/v1' + chr(10)):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 base_url(value)
 
@@ -33,8 +42,10 @@ class ModelEndpointPolicyTests(unittest.TestCase):
             self.assertTrue(headers['User-Agent'].startswith('agent-factory/'))
             with self.assertRaises(ValueError):
                 chat_headers(base, lease, lease.password)
-        self.assertEqual(chat_headers('https://models.example/v1', lease, None),
-            {'Authorization': 'Bearer synthetic-policy-secret', 'Accept-Encoding': 'identity'})
+        for base in ('https://models.example/v1',
+                'https://opencode.ai.evil.example/inference/go/v1', 'https://other.example/inference/go/v1'):
+            self.assertEqual(chat_headers(base, lease, None),
+                {'Authorization': 'Bearer synthetic-policy-secret', 'Accept-Encoding': 'identity'})
 
     def test_legacy_extension_is_not_migrated_to_new_endpoint_or_protocol(self):
         old = {'baseURL': GO_BASE, 'model': 'longcat-2.5-preview-free', 'thinkingMode': 'disabled'}

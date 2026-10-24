@@ -4,6 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { api } from '../web/api.js';
+import { PersonalCredentials } from '../web/PersonalCredentials.js';
 import { PersonalSSHServers } from '../web/PersonalSSHServers.js';
 import { ConnectionsPanel } from '../web/ConnectionsPanel.js';
 import { credentialDestination, credentialReceipt, SSH_CREDENTIAL_PROVIDER } from '../web/credentialManagement.js';
@@ -55,7 +56,7 @@ async function field(label: string, value: string) {
 }
 async function preview() {
   await act(async () => button('添加我的服务器').click());
-  for (const [label, value] of [['服务器名称', input.name], ['服务器 IP', input.address], ['SSH 端口', String(input.port)], ['SSH 账户', input.username], ['服务器 Ed25519 主机公钥', publicKey], ['私有工作目录', input.allowedRoot]]) await field(label, value);
+  for (const [label, value] of [['服务器名称', input.name], ['服务器地址', input.address], ['SSH 端口', String(input.port)], ['SSH 账户', input.username], ['服务器主机公钥', publicKey], ['私有工作目录', input.allowedRoot]]) await field(label, value);
   await act(async () => button('核对服务器身份').click());
 }
 async function consent() { await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click()); }
@@ -70,7 +71,7 @@ it('requires explicit fixed-host authority, stores only encrypted-key metadata, 
   expect(personalRemoteApi.saveCredential).toHaveBeenCalledTimes(1); expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ providerId: SSH_CREDENTIAL_PROVIDER, destination, username: 'fixture', password: secret }), 'alice');
   expect(personalSSHApi.configure).toHaveBeenCalledTimes(1); expect(personalSSHApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ confirmedHostKey: true, credentialRef: credential.credentialRef, credentialRevision: 'r1' }), undefined);
   expect(JSON.stringify(localStorage)).not.toContain(secret); expect(host.textContent).not.toContain(secret); expect(localStorage.getItem(storage)).toBeNull(); expect(personalSSHApi.command).not.toHaveBeenCalled();
-  await act(async () => button('检查连接与依赖').click()); expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'verify', expect.any(String));
+  await act(async () => button('检查连接与目录').click()); expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'verify', expect.any(String));
   await act(async () => button('启用此服务器').click()); expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'bind', expect.any(String));
   await act(async () => button('去 OpenResearch 准备').click()); expect(onResearch).toHaveBeenCalledTimes(1);
   expect(JSON.parse(sessionStorage.getItem('factory-research-server:alice')!)).toEqual({ owner: 'alice', reference: server.reference, directory: server.defaultDirectory });
@@ -106,7 +107,7 @@ it('refreshes SSH identity revisions after rotation in the sibling credentials p
   await act(async () => button('核对服务器身份').click());
   await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
   await act(async () => button('更换凭据').click());
-  await field('新的专用 Ed25519 SSH 私钥', secret);
+  await field('新的专用 SSH 私钥', secret);
   await act(async () => host.querySelector<HTMLInputElement>('.personal-credentials input[type=checkbox]')!.click());
   await act(async () => button('保存更换后的凭据').click());
   expect(personalRemoteApi.rotateCredential).toHaveBeenCalledTimes(1);
@@ -144,7 +145,7 @@ it('makes a known missing dependency correctable and never enables or prepares t
   let release!: (value: PersonalSSHServer[]) => void;
   vi.mocked(personalSSHApi.list).mockResolvedValueOnce([{ ...server, diagnostic: 'SSH_DOCKER_MISSING' }]).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
   vi.mocked(personalSSHApi.command).mockRejectedValue(new RemoteRequestError(true, 'SSH_PYTHON_MISSING'));
-  await mount(); await act(async () => button('检查连接与依赖').click());
+  await mount(); await act(async () => button('检查连接与目录').click());
   expect(host.textContent).toContain('未找到 python3'); expect(host.textContent).toContain('Python 3.12+'); expect(localStorage.getItem(storage)).toBeNull(); expect(button('启用此服务器')).toBeUndefined(); expect(personalSSHApi.command).toHaveBeenCalledTimes(1);
   expect(host.textContent).not.toContain('未找到 Docker');
   await act(async () => release([{ ...server, status: 'failed', diagnostic: 'SSH_PYTHON_MISSING' }]));
@@ -154,7 +155,7 @@ it('recovers a failed original check by its matching failure evidence without ch
   vi.mocked(personalSSHApi.list).mockResolvedValue([server]); vi.mocked(personalSSHApi.command).mockRejectedValue(new Error('lost check result'));
   vi.spyOn(personalSSHApi, 'recover').mockRejectedValue(new RemoteRequestError(true));
   vi.spyOn(personalSSHApi, 'inspect').mockImplementation(async () => ({ ...server, status: 'failed', diagnostic: 'SSH_DOCKER_PERMISSION', lastCheckRequestId: JSON.parse(localStorage.getItem(storage)!).requestId }));
-  await mount(); await act(async () => button('检查连接与依赖').click()); await act(async () => button('核对原操作').click());
+  await mount(); await act(async () => button('检查连接与目录').click()); await act(async () => button('核对原操作').click());
   expect(personalSSHApi.command).toHaveBeenCalledTimes(1); expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('此 SSH 账户无权使用 Docker');
 });
 
@@ -169,7 +170,7 @@ it('keeps an unknown enable receipt pending until lookup, without auto binding o
 it('preserves an unresolved original lookup when explicitly stopping waiting', async () => {
   vi.mocked(personalSSHApi.list).mockResolvedValue([server]); vi.mocked(personalSSHApi.command).mockRejectedValue(new Error('unknown'));
   const recover = vi.spyOn(personalSSHApi, 'recover').mockRejectedValue(new RemoteRequestError(true)); vi.spyOn(personalSSHApi, 'inspect').mockResolvedValue(server);
-  await mount(); await act(async () => button('检查连接与依赖').click()); const p = JSON.parse(localStorage.getItem(storage)!);
+  await mount(); await act(async () => button('检查连接与目录').click()); const p = JSON.parse(localStorage.getItem(storage)!);
   await act(async () => button('核对原操作').click()); expect(localStorage.getItem(storage)).not.toBeNull();
   await act(async () => button('停止等待').click()); expect(localStorage.getItem(storage)).not.toBeNull(); await act(async () => button('确认停止等待并保留记录').click());
   expect(localStorage.getItem(storage)).toBeNull(); expect(JSON.parse(localStorage.getItem(storage + ':unresolved')!)).toEqual([p]);
@@ -208,7 +209,60 @@ it('ignores another owner lookup and malformed secret-bearing browser state', as
   await mount(); expect(button('核对原操作')).toBeUndefined(); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
 });
 
-it('retains the HTTPS credential domain and accepts SSH only for its explicit provider', () => {
-  expect(credentialDestination('https://example.org')).toBe('https://example.org'); expect(credentialReceipt(credential)).toEqual(credential);
+it('accepts HTTP(S) credential origins and accepts SSH only for its explicit provider', () => {
+  expect(credentialDestination('https://example.org')).toBe('https://example.org'); expect(credentialDestination('http://localhost:11434')).toBe('http://localhost:11434'); expect(credentialDestination('ssh://root@my-host.local:2222?hostkey=' + 'a'.repeat(64), SSH_CREDENTIAL_PROVIDER)).toContain('root@my-host.local'); expect(credentialReceipt(credential)).toEqual(credential);
   expect(() => credentialDestination(destination)).toThrow(); expect(() => credentialReceipt({ ...credential, providerId: 'byok-chat-v1' })).toThrow(); expect(() => credentialReceipt({ ...credential, destination: destination + '&extra=1' })).toThrow();
+});
+
+
+it('lets the owner share a server and keeps team use separate from owner controls', async () => {
+  vi.mocked(personalSSHApi.list).mockResolvedValue([{ ...server, ownerId: 'alice', isOwner: true, visibility: 'personal', status: 'verified', enabled: false }]);
+  vi.spyOn(personalSSHApi, 'share').mockResolvedValue({ ...server, ownerId: 'alice', isOwner: true, visibility: 'team' });
+  await mount(); await act(async () => button('共享服务器给团队').click());
+  expect(personalSSHApi.share).toHaveBeenCalledWith('alice', server.reference, 'team', expect.any(String));
+  await act(async () => root.unmount()); root = createRoot(host);
+  const { credentialRef: _credential, credentialRevision: _revision, ...shared } = server; void _credential; void _revision;
+  vi.mocked(personalSSHApi.list).mockResolvedValue([{ ...shared, ownerId: 'bob', isOwner: false, visibility: 'team', status: 'verified', enabled: false }]);
+  await mount(); expect(host.textContent).toContain('团队共享'); expect(host.textContent).toContain('所有者 bob');
+  for (const label of ['检查连接与目录', '更换连接设置', '撤销授权', '共享服务器给团队', '改为个人服务器']) expect([...host.querySelectorAll('button')].some(item => item.textContent === label)).toBe(false);
+  await act(async () => button('启用此服务器').click());
+  expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'bind', expect.any(String));
+});
+
+
+it('restores pending server metadata with parser-supported larger host keys and directories', async () => {
+  const longInput = { ...input, hostKey: 'ssh-rsa ' + 'A'.repeat(600), allowedRoot: '/home/fixture/' + 'directory/'.repeat(35) };
+  localStorage.setItem(storage, JSON.stringify({ owner: 'alice', action: 'configure', requestId: 'pending-long-key', input: longInput,
+    credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision }));
+  await mount(); expect(button('核对原操作')).toBeDefined(); expect(personalSSHApi.configure).not.toHaveBeenCalled();
+});
+
+
+it('accepts canonical encoded SSH account names and rejects invalid account boundaries', () => {
+  for (const username of ['member+lab@example', 'a'.repeat(128), "member!'()*", '组织成员']) {
+    const encoded = encodeURIComponent(username).replace(/[!'()*]/g, character => '%' + character.charCodeAt(0).toString(16).toUpperCase());
+    const target = `ssh://${encoded}@my-host.local:2222?hostkey=${pin}`;
+    expect(credentialDestination(target, SSH_CREDENTIAL_PROVIDER)).toBe(target);
+  }
+  for (const username of ['a'.repeat(129), 'member:password', 'member\nname']) {
+    expect(() => credentialDestination(`ssh://${encodeURIComponent(username)}@my-host.local:2222?hostkey=${pin}`, SSH_CREDENTIAL_PROVIDER)).toThrow();
+  }
+});
+it('renders the decoded SSH account and rotates with the original decoded account', async () => {
+  const username = 'member+lab@example'; const target = `ssh://${encodeURIComponent(username)}@my-host.local:2222?hostkey=${pin}`;
+  const saved = { ...credential, destination: target };
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [SSH_CREDENTIAL_PROVIDER] });
+  vi.mocked(personalRemoteApi.credentials).mockResolvedValue([saved]);
+  vi.spyOn(personalRemoteApi, 'rotateCredential').mockResolvedValue({ ...saved, credentialRevision: 'r2' });
+  await act(async () => root.render(createElement(PersonalCredentials, { ownerId: 'alice', onChanged: vi.fn() })));
+  expect(host.textContent).toContain(username + '@my-host.local:2222');
+  await act(async () => button('更换凭据').click()); await field('新的专用 SSH 私钥', secret);
+  await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click());
+  await act(async () => button('保存更换后的凭据').click());
+  expect(personalRemoteApi.rotateCredential).toHaveBeenCalledWith(saved, username, secret, expect.any(String), 'alice');
+});
+it('restores pending registration metadata for a 128-character SSH account', async () => {
+  localStorage.setItem(storage, JSON.stringify({ owner: 'alice', action: 'configure', requestId: 'pending-long-account', input: { ...input, username: 'm'.repeat(128) },
+    credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision }));
+  await mount(); expect(button('核对原操作')).toBeDefined();
 });

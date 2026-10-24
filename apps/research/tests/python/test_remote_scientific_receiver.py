@@ -22,7 +22,7 @@ class Store:
         self.rows = {}; self.tasks = {}; self.plans = {}; self.handoffs = {}; self.leases = []; self.evidence = {}
         self.remote_bindings = SimpleNamespace()
         self.event = Mock()
-        self.settings = SimpleNamespace(temporary_policy='admin-review')
+        self.settings = SimpleNamespace(temporary_policy='member-self-service')
         self.lifecycle_observer = SimpleNamespace(_binding=Mock(return_value={'status': 'paused', 'persistedRunStatus': 'paused'}))
         self.handoff_receiver = SimpleNamespace(_row=lambda rid, owner: deepcopy(self.handoffs[rid]), authorize=Mock(),
             _origin=Mock(return_value=SimpleNamespace(authorize=SimpleNamespace(consume_scientific_tool=Mock(return_value={'callProofSha256': 'a'*64})))))
@@ -81,7 +81,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
             'variantSha256': self.manifest['baselineSourceManifestSha256'], 'valBpb': 1.2}
         self.reader = AsyncMock(return_value=self.baseline)
         self.project = RemoteScientificProject('receiver-alice', '4'*64, self.assembler, Mock(), Mock(), self.manifest, self.reader)
-        self.service = RemoteScientificReceiver(self.store, Mock(), {'project': self.project}, SimpleNamespace(submit=AsyncMock()),
+        self.service = RemoteScientificReceiver(self.store, SimpleNamespace(require_member=Mock()), {'project': self.project}, SimpleNamespace(submit=AsyncMock()),
                                                 poll_seconds=.01, max_polls=1)
         self.source = {'id': 'origin-plan'}
 
@@ -245,7 +245,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): await self.service.drive_phase('receiver-alice', 'task-training')
         self.assertEqual(services_for(self.store).research_runtime.submit.await_count, 1)
 
-    async def test_custody_inspect_survives_run_revocation_without_dispatch(self):
+    async def test_internal_custody_inspect_survives_member_disable_without_dispatch(self):
         self.completed_prep(); ctx = self.bind('training')
         self.service.require_phase(ctx, 'training')
         body = self.store.rows['receipt-training']['body']
@@ -253,11 +253,14 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
                     runtimeSnapshot={'body': {'synthetic': True}, 'sha256': digest({'synthetic': True})})
         services_for(self.store).research_runtime._original.return_value = {'owner_id': 'receiver-alice', 'native_run_id': 'run-training', 'lease_id': 'original-lease'}
         services_for(self.store).research_runtime.observe_lease = AsyncMock(return_value={'id': 'original-lease', 'state': 'UNKNOWN'})
-        self.service.auth.require.side_effect = PermissionError('run revoked')
+        self.service.auth.require_member.side_effect = PermissionError('member disabled')
         result = await self.service.inspect_phase('receiver-alice', 'task-training')
         self.assertEqual(result['lease']['id'], 'original-lease')
         self.assembler.restore_phase.assert_called_once()
         services_for(self.store).research_runtime.observe_lease.assert_awaited_once_with('original-lease')
+        self.service.auth.require_member.assert_not_called()
+        with self.assertRaises(PermissionError):
+            await self.service.drive_phase('receiver-alice', 'task-training')
         services_for(self.store).research_runtime.submit.assert_not_called()
 
     async def test_prepared_projection_is_empty_not_a_stop_claim(self):

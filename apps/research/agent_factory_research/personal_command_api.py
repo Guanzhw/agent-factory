@@ -97,7 +97,7 @@ class PersonalCommandAPI:
             self.projects.require_approval(owner, command['requestId'], plan['id'], command['projectBundle'])
 
     def prepare(self, owner, body, *, refresh_lease=False):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         connection_ref = body.connectionRef
         if refresh_lease:
             # A replay must keep its original immutable plan, not refresh a pin.
@@ -151,7 +151,7 @@ class PersonalCommandAPI:
             'remoteBudgetEnforcement': 'advisory'}
 
     def _prepared_request_metadata(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         rows = self.store.sql('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:request',
             owner=owner, request=request_id)
         if not rows: raise HTTPException(404, 'PERSONAL_PREPARATION_NOT_FOUND')
@@ -219,7 +219,7 @@ class PersonalCommandAPI:
         return await self.start(owner, prepared['plan']['id'])
 
     async def submit_project(self, owner, request_id, body):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         if not body.approved:
             raise HTTPException(422, 'PERSONAL_PROJECT_OWNER_SUBMISSION_REQUIRED')
         consent = self.projects.consent(owner, request_id)
@@ -243,7 +243,7 @@ class PersonalCommandAPI:
         def owner(request): return self.auth.user(request)['id']
         @self.router.get('/capabilities')
         def capabilities(request: Request):
-            self.auth.require(owner(request), 'read')
+            self.auth.require_member(owner(request))
             return {'executionContract': CONTRACT, 'applicationId': APPLICATION_ID, 'nativeQueue': True,
                 'ownerSubmit': '/api/factory/personal-agent/commands/submit',
                 'modelConfiguration': 'remote-configured-model', 'factoryBYOKForwarded': False,
@@ -251,7 +251,7 @@ class PersonalCommandAPI:
                 'planPolicy': self.store.plan_policy.current(), 'planReviewDeterminedAtPreparation': True}
         @self.router.get('/projects')
         def projects(request: Request, connectionRef: str):
-            self.auth.require(owner(request), 'read')
+            self.auth.require_member(owner(request))
             return self.sessions.project(owner(request), connectionRef)
         @self.router.get('/project-selection')
         def existing_projects(request: Request, connectionRef: str):
@@ -286,12 +286,12 @@ class PersonalCommandAPI:
                 connectionRef: str = Query(min_length=1, max_length=200),
                 expectedOldFingerprint: str = Query(pattern=r'^[a-f0-9]{64}$')):
             actor = owner(request)
-            self.auth.require(actor, 'read')
+            self.auth.require_member(actor)
             return self.sessions.preview_rebind(actor, session_id, connectionRef, expectedOldFingerprint)
         @self.router.post('/sessions/{session_id}/rebind')
         def rebind(session_id: str, body: RebindSession, request: Request):
             actor = owner(request)
-            self.auth.require(actor, 'run')
+            self.auth.require_member(actor)
             return self.sessions.rebind(actor, session_id, body.connectionRef, body.requestId,
                 expected_old_fingerprint=body.expectedOldFingerprint,
                 expected_new_fingerprint=body.expectedNewFingerprint)

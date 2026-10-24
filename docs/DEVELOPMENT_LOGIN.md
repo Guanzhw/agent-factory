@@ -23,9 +23,8 @@
 loopback 地址，例如 `127.0.0.1`、`localhost` 或 `[::1]`，不接受外网监听地址。
 
 启动时输出明确的 DEVELOPMENT MOCK 标签及 Base URL，不输出数据库凭据。
-服务使用单 worker 和明确的开发 `admin-review` 临时计划策略。这是开发配置，
-不替代生产策略选择。现有 research 素材、原生审批、权限检查和任务流程继续使用
-正常 Factory 实现。
+服务使用单 worker 和 `member-self-service`。成员直接发布自己的材料和应用并提交任务；
+当前成员状态、资源归属、运行预算、取消和原生操作确认继续由正常 Factory 实现检查。
 
 ## 使用
 
@@ -33,9 +32,10 @@ loopback 地址，例如 `127.0.0.1`、`localhost` 或 `[::1]`，不接受外网
 2. 临时自签证书会触发浏览器证书提示；仅对这一已确认的 loopback 开发页面继续。
    不需要把证书加入系统 trust store，也不要关闭整个浏览器或机器的 TLS 校验。
 3. 点击应用登录按钮，在“开发模拟登录”页面选择 Alice、Bob、Manager 或第二位
-   Manager/reviewer。身份选择绑定当前浏览器 flow，不使用共享的全局角色选择。
-4. 使用正常应用导航、审批和退出登录按钮。Alice/Bob 为开发用户，两位 manager
-   是独立合成管理身份，适用于双人审核；不会创建真实公司用户或外部 IdP 账号。
+   Manager（页面旧标签含 reviewer）。身份选择绑定当前浏览器 flow。
+4. 使用正常应用导航、成员发布/运行和退出登录按钮。Alice/Bob 为开发成员；
+   两位 manager 仅额外管理账号，不能审批计划或管理其他成员的资源。
+   这些身份都是合成开发账号。
 
 模拟 IdP 仍走 authorization code、PKCE S256、state、nonce 和原有严格 ID token
 验证。token 兑换通过内存 ASGI transport，不发送 IdP 网络请求。应用继续使用

@@ -13,13 +13,11 @@ class GuardStore:
         self.tools = tuple(tools)
         self.execution_guards = {}
         self.tool_independent_execution_guards = {}
-        self.auth = self.plan_policy = None
+        self.auth = SimpleNamespace(require_member=lambda owner: None)
+        self.plan_policy = None
         self.usage_ledger = SimpleNamespace(inspect=lambda *args: {'scopes': []})
         self.record = {'id': 'task', 'owner_id': 'owner', 'plan_id': 'plan',
                        'run_id': 'run', 'request_id': 'request', 'cancel_requested': False}
-
-    def require_current_policy(self):
-        pass
 
     def task(self, *args):
         return dict(self.record)

@@ -313,7 +313,12 @@ class ResearchEnvironmentObserverTests(unittest.TestCase):
             result = read(path, *args, **kwargs)
             if str(path).endswith('research_torch_runtime.py'):
                 python = self.venv / 'bin' / 'python'
-                python.write_bytes(b'x' * python.stat().st_size)
+                before = python.stat()
+                python.write_bytes(b'x' * before.st_size)
+                # Receipt rechecks observe stamps; same-tick equal-size writes
+                # need not change an automatically assigned filesystem stamp.
+                os.utime(python, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+                self.assertNotEqual(python.stat().st_mtime_ns, before.st_mtime_ns)
             return result
         with patch.object(module, '_read', side_effect=later_mutation):
             self.assertEqual(self.observer(self.request)['status'], 'UNKNOWN')

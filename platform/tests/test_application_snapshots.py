@@ -48,9 +48,8 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
 
     def publish_import(self, snapshot, key="import"):
         self.applications.import_snapshot("manager", snapshot, key)
-        review = self.applications.request_publication("manager", snapshot["id"], snapshot["version"], key + "-review")
-        self.applications.decide_publication("bob", review["id"], True, key + "-approve")
-        return review
+        return self.applications.publish("manager", snapshot["id"], snapshot["version"], key + "-publish")
+
 
     def test_exact_body_digest_timestamp_local_draft_and_separate_publication(self):
         snapshot = self.snapshot()
@@ -70,29 +69,19 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
         with self.assertRaises(HTTPException) as unpublished:
             self.applications.require_current(pin(expected))
         self.assertEqual(unpublished.exception.status_code, 409)
-        review = self.applications.request_publication("manager", expected["id"], 1, "local-review")
-        with self.assertRaises(HTTPException) as self_review:
-            self.applications.decide_publication("manager", review["id"], True, "self-denied")
-        self.assertEqual(self_review.exception.status_code, 403)
-        self.applications.decide_publication("bob", review["id"], True, "separate-local-reviewer")
+        self.applications.publish("manager", expected["id"], 1, "local-publish")
         self.assertEqual(self.applications.require_current(pin(expected)), expected)
         self.assertEqual(self.applications.inspect("manager", expected["id"], 1)["application"], expected)
 
-    def test_current_native_admin_required_even_for_idempotent_receipt(self):
+    def test_current_membership_required_even_for_idempotent_import_receipt(self):
         snapshot = self.snapshot()
-        self.auth.directory.upsert("owned-editor", name="Original isolated synthetic editor")
-        self.auth.authorization.define_role("owned-editor-role", ["components:read", "components:write"])
-        self.auth.authorization.assign("owned-editor", "owned-editor-role")
-        for actor in ("alice", "owned-editor"):
-            with self.subTest(actor=actor), self.assertRaises(HTTPException) as denied:
-                self.applications.import_snapshot(actor, snapshot, "denied-" + actor)
-            self.assertEqual(denied.exception.status_code, 403)
-        imported = self.applications.import_snapshot("manager", snapshot, "current-admin")
-        self.auth.authorization.unassign("manager", "factory-manager")
+        imported = self.applications.import_snapshot("alice", snapshot, "member-import")
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException) as revoked:
-            self.applications.import_snapshot("manager", snapshot, "current-admin")
+            self.applications.import_snapshot("alice", snapshot, "member-import")
         self.assertEqual(revoked.exception.status_code, 403)
         self.assertEqual(imported, snapshot)
+
 
     def test_complete_canonical_safe_schema_hash_and_timezone_are_enforced(self):
         snapshot = self.snapshot()
@@ -157,9 +146,9 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
                 snapshot = self.snapshot("owned-" + (action or "published"))
                 self.publish_import(snapshot, "original-" + (action or "published"))
                 if action:
-                    getattr(self.applications, action)("bob", snapshot["id"], 1, "retire-" + action, "Owned synthetic retirement")
+                    getattr(self.applications, action)("manager", snapshot["id"], 1, "retire-" + action, "Owned synthetic retirement")
                 before = self.applications.inspect("manager", snapshot["id"], 1)
-                self.assertEqual(self.applications.import_snapshot("bob", snapshot, "observe-" + (action or "published")), snapshot)
+                self.assertEqual(self.applications.import_snapshot("manager", snapshot, "observe-" + (action or "published")), snapshot)
                 after = self.applications.inspect("manager", snapshot["id"], 1)
                 self.assertEqual(after, before)
                 self.assertEqual(after["governance"]["author_id"], "manager")
@@ -173,7 +162,10 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
         snapshot = self.snapshot()
         accepted = self.applications.import_snapshot("manager", snapshot, "before-material-withdrawal")
         assert self.store.material_governance is not None
-        self.store.material_governance.withdraw("bob", "synthetic-knowledge", 1, "withdraw-local-material", "Original isolated test")
+        with self.store.engine.begin() as conn:
+            conn.execute(self.store.material_governance.versions.update().where(
+                self.store.material_governance.versions.c.material_id == "synthetic-knowledge").values(author_id="manager"))
+        self.store.material_governance.withdraw("manager", "synthetic-knowledge", 1, "withdraw-local-material", "Original isolated test")
         # Exact retry recovers the original immutable import receipt; it does
         # not restore material publication or approve the local application.
         self.assertEqual(self.applications.import_snapshot("manager", snapshot, "before-material-withdrawal"), accepted)
@@ -182,7 +174,7 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
                 self.applications.import_snapshot("manager", body, key)
             self.assertEqual(denied.exception.status_code, 409)
         with self.assertRaises(HTTPException):
-            self.applications.request_publication("manager", snapshot["id"], 1, "no-current-review")
+            self.applications.publish("manager", snapshot["id"], 1, "no-current-material")
         self.assertEqual(self.applications.inspect("manager", snapshot["id"], 1)["application"], snapshot)
 
 
@@ -195,13 +187,13 @@ class OwnedFactory:
         test.addCleanup(self.database.__exit__, None, None, None)
         self.directory = TemporaryDirectory()
         test.addCleanup(self.directory.cleanup)
-        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
+        self.settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1)
         self.client: Any = None
         test.addCleanup(self.stop)
         self.start()
         # Explicit separate native administrator inside this generated DB.
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
+        self.auth.account_roles.unassign("bob", "factory-user")
+        self.auth.account_roles.assign("bob", "factory-manager")
 
     def start(self):
         self.app: Any = create_app(self.settings)
@@ -219,8 +211,7 @@ class OwnedFactory:
 
     def source_snapshot(self):
         application = self.applications.create_draft("manager", app_definition(self.store, "independently-distributed-config"), "source-draft")
-        review = self.applications.request_publication("manager", application["id"], 1, "source-review")
-        self.applications.decide_publication("bob", review["id"], True, "source-approve")
+        self.applications.publish("manager", application["id"], 1, "source-publish")
         return application
 
 
@@ -238,11 +229,7 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as unpublished:
             receiver.composition.create_plan("alice", "Checksum the original synthetic receiver fixture", "literature", application_ref=pin(snapshot))
         self.assertEqual(unpublished.exception.status_code, 409)
-        review = receiver.applications.request_publication("manager", snapshot["id"], 1, "receiver-review")
-        with self.assertRaises(HTTPException) as self_review:
-            receiver.applications.decide_publication("manager", review["id"], True, "receiver-self-denied")
-        self.assertEqual(self_review.exception.status_code, 403)
-        receiver.applications.decide_publication("bob", review["id"], True, "receiver-separate-reviewer")
+        receiver.applications.publish("manager", snapshot["id"], 1, "receiver-publish")
         self.assertEqual(receiver.applications.require_current(pin(snapshot)), source.applications.require_current(pin(snapshot)))
         plan = receiver.composition.create_plan("alice", "Checksum original independent receiver evidence", "literature", application_ref=pin(snapshot))
         self.assertEqual(plan["applicationRef"], pin(snapshot))
@@ -269,7 +256,7 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
         self.assertEqual(json.loads(raw)["algorithm"], "sha256")
         self.assertEqual(source.store.sql("SELECT COUNT(*) AS count FROM af_tasks")[0]["count"], 0)
         self.assertEqual(receiver.store.sql("SELECT COUNT(*) AS count FROM af_tasks")[0]["count"], 1)
-        receiver.applications.withdraw("bob", snapshot["id"], 1, "local-withdrawal", "Owned receiver-only withdrawal")
+        receiver.applications.withdraw("manager", snapshot["id"], 1, "local-withdrawal", "Owned receiver-only withdrawal")
         self.assertEqual(source.applications.require_current(pin(snapshot)), snapshot)
         self.assertEqual(receiver.client.get("/api/factory/jobs/" + identifier, headers=headers).json()["artifacts"], detail["artifacts"])
 
@@ -283,16 +270,15 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
             commands = conn.execute(select(func.count()).select_from(receiver.applications.commands).where(receiver.applications.commands.c.request_id == "concurrent-import")).scalar_one()
         self.assertEqual(versions, 1)
         self.assertEqual(commands, 1)
-        review = receiver.applications.request_publication("manager", snapshot["id"], 1, "concurrent-local-review")
-        receiver.applications.decide_publication("bob", review["id"], True, "concurrent-local-approval")
+        receiver.applications.publish("manager", snapshot["id"], 1, "concurrent-local-publish")
         before = receiver.applications.inspect("manager", snapshot["id"], 1)
         receiver.stop()
         receiver.start()
         self.assertEqual(receiver.applications.import_snapshot("manager", snapshot, "concurrent-import"), snapshot)
-        self.assertEqual(receiver.applications.import_snapshot("bob", snapshot, "restart-observation"), snapshot)
+        self.assertEqual(receiver.applications.import_snapshot("manager", snapshot, "restart-observation"), snapshot)
         self.assertEqual(receiver.applications.inspect("manager", snapshot["id"], 1), before)
         self.assertEqual(receiver.applications.require_current(pin(snapshot)), snapshot)
-        receiver.auth.authorization.unassign("manager", "factory-manager")
+        receiver.auth.directory.set_disabled("manager", True)
         with self.assertRaises(HTTPException) as revoked:
             receiver.applications.import_snapshot("manager", snapshot, "concurrent-import")
         self.assertEqual(revoked.exception.status_code, 403)

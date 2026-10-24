@@ -92,7 +92,7 @@ def execute_product(campaign, args, *, research_snapshot=None):
             wire_stream=True, native_retries=0, live_campaign=campaign)
         settings = Settings(db_url=args.database_url, workspace=Path(args.evidence_directory) / "factory",
             development_profile="opencode-go", development_live_validation=True,
-            max_workers=1, max_tool_calls=1, temporary_policy="read-only-auto",
+            max_workers=1, max_tool_calls=1, temporary_policy="member-self-service",
             policy_revision="go-project-policy-v1", material_policy_revision="go-project-material-v1",
             runtime_tool_contract="registered-runtime-v1",
             usage_policy=UsagePolicy(revision="go-project-nominal-v1", task_amount_micros=1_000_000,

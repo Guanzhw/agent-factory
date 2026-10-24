@@ -5,14 +5,14 @@ export const SSH_CREDENTIAL_PROVIDER = 'owner-ssh-server-v1';
 export function credentialDestination(value: string, providerId?: string): string {
   const url = new URL(value);
   if (providerId === SSH_CREDENTIAL_PROVIDER) {
-    const ipv4 = /^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) && url.hostname.split('.').every(n => Number(n) <= 255);
-    const ipv6 = /^\[[a-f0-9:]+\]$/.test(url.hostname);
-    if (url.protocol !== 'ssh:' || !/^[a-z_][a-z0-9_-]{0,31}$/.test(url.username) || url.username === 'root' || url.password ||
-        !url.port || !/^[1-9][0-9]{0,4}$/.test(url.port) || Number(url.port) > 65535 || (!ipv4 && !ipv6) || url.pathname || url.hash ||
-        !/^\?hostkey=[a-f0-9]{64}$/.test(url.search) || value !== `ssh://${url.username}@${url.hostname}:${url.port}${url.search}`) throw new Error('Invalid SSH destination');
+    const username = decodeURIComponent(url.username);
+    const encodedUsername = encodeURIComponent(username).replace(/[!'()*]/g, character => '%' + character.charCodeAt(0).toString(16).toUpperCase());
+    if (url.protocol !== 'ssh:' || !username || Array.from(username).length > 128 || Array.from(username).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 || character === ':') || url.password ||
+        !url.port || !/^[1-9][0-9]{0,4}$/.test(url.port) || Number(url.port) > 65535 || !url.hostname || url.pathname || url.hash ||
+        !/^\?hostkey=[a-f0-9]{64}$/.test(url.search) || value !== `ssh://${encodedUsername}@${url.hostname}:${url.port}${url.search}`) throw new Error('Invalid SSH destination');
     return value;
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/' || value !== url.origin) throw new Error('Invalid destination');
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/' || value !== url.origin) throw new Error('Invalid destination');
   return url.origin;
 }
 // Project only the current public vault receipt. Never render unexpected fields.

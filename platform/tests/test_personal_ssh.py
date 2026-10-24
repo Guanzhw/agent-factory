@@ -9,10 +9,10 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
 from tempfile import TemporaryDirectory
 import threading
 from types import SimpleNamespace
-from typing import cast
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -21,6 +21,7 @@ import httpx
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, create_engine, select
@@ -30,7 +31,6 @@ from agent_factory.connections import ConnectionService
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault, credential_vault_router
 from agent_factory.personal_remote_provider import RemoteConnectionError, origin
 from agent_factory.personal_ssh import PersonalSSHServers, SSHAgents, SSHEnrollmentConfig, personal_ssh_router
-from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
 from agent_factory_research.runtime_packages.openresearch_v1 import ssh_prerequisites
 from agent_factory.ssh_credentials import PROVIDER_ID, SSHCredentialPolicy, endpoint, ssh_destination
 from agent_factory_research.ssh_openresearch import BASE, SSHServer
@@ -54,15 +54,14 @@ class PersonalSSHTests(unittest.TestCase):
             Column('action', String), Column('target_id', String), Column('body', JSON), Column('created_at', String))
         metadata.create_all(self.engine)
         self.auth = Auth()
-        self.policy = SSHCredentialPolicy(lambda ip, port: ip == '127.0.0.1' and port == 2222)
+        self.policy = SSHCredentialPolicy()
         self.vault = EncryptedCredentialVault(self.engine, b'f' * 32, {PROVIDER_ID: self.policy, 'http-fixture': origin})
         shared = ContextVar('ssh-fixture-connection', default=None)
         self.vault.bind_read_context(shared)
         self.connections = ConnectionService(SimpleNamespace(engine=self.engine, _connection=shared), self.auth,
             clock=lambda: datetime(2026, 10, 11, tzinfo=timezone.utc))
-        runtime = cast(PlatformOpenResearchConfig, SimpleNamespace(max_active_seconds=60))
         self.service = PersonalSSHServers(self.auth, self.connections, self.vault,
-            SSHEnrollmentConfig(runtime, lambda ip, port: ip == '127.0.0.1' and port == 2222),
+            SSHEnrollmentConfig(max_active_seconds=60),
             probe_source=(BASE / 'ssh_prerequisites.py').read_text())
         self.addCleanup(self.service.close)
         self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard))
@@ -136,13 +135,119 @@ class PersonalSSHTests(unittest.TestCase):
                 json=payload | changes)
             self.assertEqual(response.status_code, 400)
             self.assertNotIn(payload['password'], response.text)
-        for values in (self.input | {'username': 'root'}, self.input | {'address': 'runtime.example.com'},
-                       self.input | {'port': 22}, self.input | {'hostKey': self.private},
+        for values in (self.input | {'address': 'bad address'}, self.input | {'port': 0}, self.input | {'hostKey': self.private},
                        self.input | {'allowedRoot': '/tmp/../etc/private'}):
             response = self.client.post(self.root + '/identity', headers=self.headers, json=values)
             self.assertEqual(response.status_code, 422)
             self.assertNotIn(self.private, response.text)
         self.assertEqual(self.acquire.call_count, 0)
+
+    def test_member_endpoint_accepts_dns_root_custom_port_and_long_directory(self):
+        values = self.input | {'address': 'worker.internal', 'username': 'root', 'port': 2244,
+            'allowedRoot': '/srv/' + 'project-' * 20}
+        identity = self.service.identity(values)
+        self.assertEqual(identity['address'], 'worker.internal')
+        self.assertEqual(ssh_destination(identity['origin']), identity['origin'])
+        self.assertEqual(identity['username'], 'root')
+        ipv6 = self.service.identity(self.input | {'address': '::1'})
+        self.assertIn('@[::1]:2222?', ipv6['origin'])
+        self.assertEqual(self.acquire.call_count, 0)
+
+    def test_pinned_ssh_uses_member_host_port_user_and_only_public_identity_files(self):
+        from agent_factory.ssh_identity import pinned_ssh
+        identity = self.service.identity(self.input | {'address': 'worker.internal', 'port': 2244, 'username': 'root'})
+        server = self.service.profile('alice', 'fixture', 'v1', {**self.input, **identity,
+            'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
+        lease = SimpleNamespace(socket='/fixture/agent.sock', public_key=self.input['hostKey'])
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+            pinned_ssh(server, lease, Path(folder), 'printf fixture')
+            command = launch.call_args.args[0]
+            self.assertEqual(command[-6:], ['-l', 'root', '-p', '2244', 'worker.internal', 'printf fixture'])
+            self.assertIn('StrictHostKeyChecking=yes', command)
+            self.assertIn('HostKeyAlias=factory-pinned', command)
+            self.assertIn('IdentityAgent=/fixture/agent.sock', command)
+            self.assertEqual((Path(folder) / 'known_hosts').read_text().strip(), 'factory-pinned ' + server.host_key)
+            self.assertEqual((Path(folder) / 'identity.pub').read_text().strip(), lease.public_key)
+            self.assertFalse(any('PRIVATE KEY' in path.read_text() for path in Path(folder).iterdir()))
+
+    @unittest.skipUnless(os.name == 'posix', 'generic remote shell fixture requires POSIX pipes')
+    def test_generic_ssh_check_runs_without_research_package_python_or_docker(self):
+        service = self.service
+        service.package = None; service.probe_source = None
+        server = service.profile('alice', 'fixture', 'v1', {**self.input,
+            'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
+        lease = SimpleNamespace(validate=lambda: None)
+        def local_shell(server, lease, folder, command):
+            self.assertNotIn('python', command); self.assertNotIn('docker', command)
+            return subprocess.Popen(['/bin/sh', '-c', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        with patch('agent_factory.personal_ssh.pinned_ssh', side_effect=local_shell):
+            result = PersonalSSHServers.probe(service, server, lease, 'inspect')
+        self.assertEqual(result['code'], 'SSH_CONNECTION_READY')
+        self.assertFalse(result['directoryExists'])
+
+    def test_team_server_uses_owner_credential_and_withdrawal_invalidates_member_lease(self):
+        server, _, _ = self.enabled()
+        reference = server['reference']
+        shared = self.client.post(f'{self.root}/{reference}/sharing', headers=self.headers,
+            json={'visibility': 'team', 'requestId': 'share-with-team'})
+        self.assertEqual(shared.status_code, 200, shared.text)
+        bob = {'x-fixture-owner': 'bob'}
+        visible = self.client.get(f'{self.root}/{reference}', headers=bob)
+        self.assertEqual(visible.status_code, 200, visible.text)
+        self.assertEqual(visible.json()['ownerId'], 'alice')
+        self.assertFalse(visible.json()['isOwner'])
+        self.assertNotIn('credentialRef', visible.json())
+        self.assertNotIn('credentialRevision', visible.json())
+        bound = self.client.post(f'{self.root}/{reference}/bind', headers=bob,
+            json={'requestId': 'bob-binds-team-server'})
+        self.assertEqual(bound.status_code, 200, bound.text)
+        profile = self.service.server('bob', reference)
+        self.assertEqual((profile.owner, profile.actor), ('alice', 'bob'))
+        lease = self.service.lease(profile); lease.validate()
+        self.assertEqual(self.acquire.call_args.args[0].owner, 'alice')
+        for action in ('verify', 'revoke'):
+            response = self.client.post(f'{self.root}/{reference}/{action}', headers=bob,
+                json={'requestId': 'bob-cannot-' + action})
+            self.assertEqual(response.status_code, 404)
+        response = self.client.post(f'{self.root}/{reference}/sharing', headers=self.headers,
+            json={'visibility': 'personal', 'requestId': 'withdraw-team-server'})
+        self.assertEqual(response.status_code, 200, response.text)
+        with self.assertRaises(HTTPException): lease.validate()
+        self.assertEqual(self.client.get(self.root, headers=bob).json(), [])
+
+    def test_parser_supported_rsa_ecdsa_ed25519_keys_roundtrip_in_encrypted_vault(self):
+        for key in (rsa.generate_private_key(public_exponent=65537, key_size=4096),
+                ec.generate_private_key(ec.SECP256R1()), Ed25519PrivateKey.generate()):
+            public = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).decode()
+            private = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
+                serialization.NoEncryption()).decode()
+            identity = self.service.identity(self.input | {'hostKey': public})
+            credential = self.vault.create(owner='alice', provider_id=PROVIDER_ID,
+                destination=identity['origin'], username='fixture', password=private)
+            lease = self.vault.resolve(owner='alice', reference=credential['credentialRef'],
+                revision=credential['credentialRevision'], provider_id=PROVIDER_ID, destination=identity['origin'])
+            restored = serialization.load_ssh_private_key(base64.b64decode(lease.password), password=None)
+            self.assertEqual(restored.public_key().public_bytes(serialization.Encoding.OpenSSH,
+                serialization.PublicFormat.OpenSSH).decode(), public)
+            with self.engine.connect() as conn:
+                row = conn.execute(select(self.vault.credentials).where(
+                    self.vault.credentials.c.reference == credential['credentialRef'])).mappings().one()
+            self.assertNotIn(private, repr(dict(row)))
+            self.assertNotIn('PRIVATE KEY', repr(dict(row)))
+
+    def test_username_is_preserved_as_one_ssh_argument_and_encoded_in_credential_destination(self):
+        from agent_factory.ssh_identity import pinned_ssh
+        values = self.input | {'username': 'member+lab@example'}
+        identity = self.service.identity(values)
+        self.assertIn('member%2Blab%40example@', identity['origin'])
+        self.assertEqual(ssh_destination(identity['origin']), identity['origin'])
+        server = self.service.profile('alice', 'fixture', 'v1', values | identity | {
+            'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+            pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
+                Path(folder), 'printf fixture')
+            self.assertEqual(launch.call_args.args[0][-6:],
+                ['-l', 'member+lab@example', '-p', '2222', '127.0.0.1', 'printf fixture'])
 
     def test_host_confirmation_is_required_before_registration_or_network(self):
         credential = self.credential()
@@ -223,11 +328,6 @@ class PersonalSSHTests(unittest.TestCase):
     def test_credential_rotation_and_resource_revocation_invalidate_live_guards(self):
         server, credential, _ = self.enabled(); profile = self.service.server('alice', server['reference'])
         lease = self.service.lease(profile); lease.validate()
-        original_policy = self.service.config
-        self.service.config = SSHEnrollmentConfig(original_policy.runtime, lambda ip, port: False)
-        with self.assertRaises(HTTPException): lease.validate()
-        self.assertFalse(self.service.inspect('alice', server['reference'])['enabled'])
-        self.service.config = original_policy
         self.vault.rotate(owner='alice', reference=credential['credentialRef'], revision=credential['credentialRevision'],
             username='fixture', password=fixture_key())
         with self.assertRaises(HTTPException): lease.validate()

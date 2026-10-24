@@ -64,16 +64,14 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
             max_disk_mb=1, max_seconds=5, capacity_pool=self.pool)
         self.settings = process_settings(db_url=self.database.url, workspace=self.root,
             target_ref=self.target_ref, remote_targets={self.target_ref: target, "capacity-probe": probe},
-            temporary_policy="admin-review", material_review_mode="separate-admin")
+            )
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.auth.directory.upsert("process-reviewer", name="Synthetic process reviewer")
-        self.auth.authorization.assign("process-reviewer", "factory-manager")
         self.application = publish_process_application(self.state, target_ref=self.target_ref,
-            author="manager", reviewer="process-reviewer")
+            author="manager")
         if start_client:
             self.client = TestClient(self.app).__enter__()
             self.addCleanup(self.client.__exit__, None, None, None)
@@ -105,16 +103,10 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal)
         plan = post("/compositions/proposals/" + proposal["id"] + "/accept", {})
         self.assertEqual(plan["tools"], [TOOL_NAME])
-        if plan["policy"] == "admin-review":
-            # This class retains explicit historical approval coverage; research
-            # preparation also reuses the helper with ordinary member settings.
-            review = post("/plan-reviews", {"planId": plan["id"]})
-            post("/plan-reviews/" + review["id"] + "/decision", {"approved": True}, "manager")
-        else:
-            self.assertEqual(plan["policy"], "member-self-service")
-            authorization = self.request("GET", "/plans/" + plan["id"] + "/authorization")
-            self.assertTrue(authorization["executionAllowed"])
-            self.assertFalse(authorization["reviewRequired"])
+        self.assertEqual(plan["policy"], "member-self-service")
+        authorization = self.request("GET", "/plans/" + plan["id"] + "/authorization")
+        self.assertTrue(authorization["executionAllowed"])
+        self.assertFalse(authorization["reviewRequired"])
         return post("/instances", {"planId": plan["id"]}), plan
 
     def until(self, probe, *, timeout=20):
@@ -210,17 +202,17 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
         self.assertEqual(custody.inspect(owner_id="alice")["state"], "CANCELLED")
         self.assertEqual(len(self.store.sql("SELECT id FROM af_process_allocations")), 1)
 
-    def test_current_role_revocation_stops_original_without_new_launch(self):
+    def test_current_member_disable_stops_original_without_new_launch(self):
         self.start(code="import time;time.sleep(20)")
         task, _ = self.submit()
         lease = self.until(lambda: self.lease(task))
         self.until(lambda: self.process_state(lease, running=True))
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True, actor="manager")
         self.until(lambda: self.process_state(lease))
         custody = BoundedProcessAdapter(self.provider.root / lease["id"] / "custody.sqlite")
         self.assertEqual(custody.inspect(owner_id="alice")["state"], "CANCELLED")
         self.assertEqual(len(self.store.sql("SELECT id FROM af_process_allocations")), 1)
-        self.assertEqual(self.auth.authorization.roles_of("alice"), [])
+        self.assertTrue(self.auth.directory.get("alice")["disabled"])
 
     def test_lost_launch_receipt_reconciles_original_process_without_replay(self):
         self.start(code="import time;time.sleep(.2);print('Original process only')")
@@ -347,7 +339,7 @@ class ProcessRuntimeTransactionPostgresTests(unittest.TestCase):
         self.task = self.store.task(self.task["id"])
 
     def test_terminal_commit_between_initial_read_and_reserve_lock_denies_allocation(self):
-        authority = SimpleNamespace(require=lambda *args: None)
+        authority = SimpleNamespace(require_member=lambda *args: None)
         target = RemoteTarget("Transaction-only fixture", "compute", frozenset({"alice"}),
             provider=MustNotAllocate(), synthetic_fixture=True,
             capacity_pool=ComputePool("transaction-pool", 1, 128, 1, max_leases=1, max_owner_leases=1))

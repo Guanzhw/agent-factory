@@ -7,6 +7,7 @@ sort fixture. No HTTP cancellation is used after authorization is revoked.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 import sys
 import tempfile
@@ -27,7 +28,8 @@ from agno.db.base import SessionType
 from pg_fixture import IsolatedPostgres
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory_server.main import create_app
-from agent_factory.plan_policy import PlanPolicyConfig
+from agent_factory.applications import ApplicationDefinition
+from agent_factory.material_governance import MaterialDefinition
 
 
 def process_running(pid: int) -> bool:
@@ -66,6 +68,21 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
         self.client = TestClient(self.app).__enter__()
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
+        source = next(row for row in self.store.materials(published_only=True) if row['id'] == 'experiment-tool')
+        definition = {key: deepcopy(source[key]) for key in MaterialDefinition.model_fields if key in source}
+        definition['id'] = 'authority-experiment-' + uuid4().hex[:10]
+        definition['runtimeBinding'] = {'adapterId': 'native-experiment-v1', 'revision': '1', 'config': {}}
+        material = self.state['material_governance'].create_draft('alice', definition, uuid4().hex)
+        self.state['material_governance'].publish('alice', material['id'], material['version'], uuid4().hex)
+        self.experiment_ref = {key: material[key] for key in ('id', 'version', 'sha256')}
+        application = self.state['applications'].inspect('alice', 'research', 1)['application']
+        definition = {key: deepcopy(application[key]) for key in ApplicationDefinition.model_fields}
+        definition['id'] = 'authority-research-' + uuid4().hex[:10]
+        for mode in definition['modes'].values():
+            mode['materialRefs'] = [self.experiment_ref if ref['id'] == 'experiment-tool' else ref for ref in mode['materialRefs']]
+        owned = self.state['applications'].create_draft('alice', definition, uuid4().hex)
+        self.state['applications'].publish('alice', owned['id'], owned['version'], uuid4().hex)
+        self.application_id = owned['id']
         self.client.post("/api/factory/demo/login", json={"persona": "alice"})
         self.task_id = None
 
@@ -98,7 +115,7 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
     def _start_confirmed_compute(self):
         plan_response = self.client.post("/api/factory/plans", json={
             "topic": "Bounded synthetic authority-loss integration fixture",
-            "mode": "experiment", "application": "research", "requestId": str(uuid4())})
+            "mode": "experiment", "application": self.application_id, "requestId": str(uuid4())})
         self.assertEqual(plan_response.status_code, 201, plan_response.text)
         plan = plan_response.json()
         self.assertEqual(plan["status"], "ready", plan)
@@ -177,29 +194,26 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
         native_status = getattr(native_runs[0].status, "value", native_runs[0].status)
         self.assertEqual(str(native_status).casefold(), "cancelled", {"runStatus": native_status, "queueStatus": native_job.get("status")})
 
-    def test_current_sql_role_revocation_stops_owned_compute(self):
+    def test_current_member_disable_stops_owned_compute(self):
         def revoke(_plan):
-            self.auth.authorization.unassign("alice", "factory-user")
+            self.auth.directory.set_disabled('alice', True)
         try:
             self._assert_authority_loss_cleans_compute(revoke)
         finally:
-            self.auth.authorization.assign("alice", "factory-user")
+            self.auth.directory.set_disabled('alice', False)
 
-    def test_persisted_plan_policy_unset_stops_owned_compute(self):
-        policy = self.state["plan_policy"]
-        original = policy.current()
-        def revoke(_plan):
-            policy.replace_configuration(
-                PlanPolicyConfig(name="unset", revision="authority-loss-unset-" + uuid4().hex),
-                expected_revision=original["revision"])
+    def test_governing_application_withdrawal_stops_owned_compute(self):
+        def revoke(plan):
+            application = plan['applicationRef']
+            self.state['applications'].withdraw('alice', application['id'], application['version'],
+                'authority-loss-application-' + uuid4().hex, reason='Synthetic runtime withdrawal')
         self._assert_authority_loss_cleans_compute(revoke)
 
     def test_governing_material_withdrawal_stops_owned_compute(self):
         governance = self.state["material_governance"]
-        self.auth.authorization.assign("manager", "factory-manager")
         def revoke(plan):
-            binding = next(ref for ref in plan["materialRefs"] if ref["id"] == "experiment-tool")
-            result = governance.withdraw("manager", binding["id"], binding["version"],
+            binding = next(ref for ref in plan["materialRefs"] if ref["id"] == self.experiment_ref['id'])
+            result = governance.withdraw("alice", binding["id"], binding["version"],
                                          "authority-loss-withdraw-" + uuid4().hex,
                                          reason="isolated runtime authority-loss acceptance fixture")
             self.assertEqual(result["state"], "withdrawn", result)

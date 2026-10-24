@@ -133,16 +133,19 @@ class ProjectTests(unittest.TestCase):
         selected = restarted.select_existing('alice', self.bound['ref'], 'native-project', 'explicit-new-selection')
         self.assertEqual(selected['ownerId'], 'alice')
 
-    def test_selection_permission_rejection_has_terminal_read_only_receipt(self):
-        require = self.service.auth.require
-        def denied(owner, action):
-            if action == 'run': raise HTTPException(403, 'Synthetic permission rejected')
-            return require(owner, action)
-        with patch.object(self.service.auth, 'require', side_effect=denied):
+    def test_selection_member_disabled_has_terminal_read_only_receipt(self):
+        select_existing = self.service._select_existing
+        def disabled_before_selection(*args):
+            self.fx.auth.enabled = False
+            return select_existing(*args)
+        calls = len(self.fx.wire.calls)
+        with patch.object(self.service, '_select_existing', side_effect=disabled_before_selection):
             with self.assertRaises(HTTPException) as error:
                 self.service.select_existing('alice', self.bound['ref'], 'native-project', 'denied-selection')
             self.assertEqual(error.exception.status_code, 403)
-            status = self.service.selection_status('alice', 'denied-selection')
+        self.assertEqual(len(self.fx.wire.calls), calls)
+        self.fx.auth.enabled = True
+        status = self.service.selection_status('alice', 'denied-selection')
         self.assertEqual((status['state'], status['localConfiguration'], status['failureStatus']), ('failed', 'none', 403))
 
     def test_partial_validation_failure_is_terminal_but_retains_local_configuration(self):

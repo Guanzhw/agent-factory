@@ -19,27 +19,20 @@ def preset():
         blockers=('Actual baseline and subordinate executor unavailable',))
 
 
-def state(*, member=False):
+def state():
     events = []
     def service(kind):
         obj = Mock()
-        obj.member_publication.return_value = member
         drafts = {}
         def draft(author, definition, key):
             (MaterialDefinition if kind == 'material' else ApplicationDefinition).model_validate(definition)
             events.append((kind, 'draft', author, key))
             drafts[definition['id']] = {**definition, 'version': 1, 'sha256': 'a'*64}
             return drafts[definition['id']]
-        def request(author, identifier, version, key):
-            events.append((kind, 'review', author, key)); return {'id': key}
-        def decision(reviewer, identifier, approved, key):
-            events.append((kind, 'decision', reviewer, key)); assert approved is True
         def publish(author, identifier, version, key):
             events.append((kind, 'publish', author, key))
             return drafts[identifier]
         obj.create_draft.side_effect = draft
-        obj.request_publication.side_effect = request
-        obj.decide_publication.side_effect = decision
         obj.publish.side_effect = publish
         return obj
     return {'auth': Mock(), 'material_governance': service('material'), 'applications': service('app')}, events
@@ -62,29 +55,28 @@ class BootstrapAutoResearchTests(unittest.TestCase):
 
     def test_member_publication_needs_no_reviewer_and_keeps_runtime_blockers(self):
         original = preset()
-        services, events = state(member=True)
+        services, events = state()
         result = module.publish_application(services, original, author='alice')
         self.assertEqual([event[1] for event in events], ['draft', 'publish'] * 11)
         self.assertTrue(all(event[2] == 'alice' for event in events))
-        services['auth'].require.assert_called_with('alice', 'run')
+        services['auth'].require_member.assert_called_once_with('alice')
         services['material_governance'].request_publication.assert_not_called()
         services['applications'].request_publication.assert_not_called()
         self.assertEqual(result.blockers, original.blockers)
         self.assertEqual(original.application_ref, {})
 
-    def test_explicit_publication_has_eleven_separate_reviews_and_preserves_original(self):
+    def test_direct_publication_preserves_original_and_stable_command_keys(self):
         original = preset(); services, events = state()
-        result = module.publish_application(services, original, author='author', reviewer='reviewer')
-        self.assertEqual(len(events), 33)
-        self.assertEqual([e[1] for e in events], ['draft', 'review', 'decision'] * 11)
-        self.assertTrue(all(e[2] == ('reviewer' if e[1] == 'decision' else 'author') for e in events))
+        result = module.publish_application(services, original, author='author')
+        self.assertEqual(len(events), 22)
+        self.assertEqual([e[1] for e in events], ['draft', 'publish'] * 11)
+        self.assertTrue(all(e[2] == 'author' for e in events))
         self.assertEqual(result.application_ref, {'id': 'autoresearch-goal-session-v1', 'version': 1, 'sha256': 'a'*64})
         self.assertEqual(result.blockers, original.blockers); self.assertEqual(original.application_ref, {})
         self.assertIs(result.runtime_factory, original.runtime_factory)
-        services['auth'].require.assert_any_call('author', 'components:write')
-        services['auth'].require.assert_any_call('reviewer', 'agent_os:admin')
+        services['auth'].require_member.assert_called_once_with('author')
         first_keys = [e[3] for e in events]
-        events.clear(); module.publish_application(services, original, author='author', reviewer='reviewer')
+        events.clear(); module.publish_application(services, original, author='author')
         self.assertEqual(first_keys, [e[3] for e in events])
 
     def test_scientific_settings_and_full_twenty_eight_material_closure(self):
@@ -96,8 +88,8 @@ class BootstrapAutoResearchTests(unittest.TestCase):
         self.assertIsNone(config.usage_pricing[0].local_model_type)
         self.assertTrue(all(row.local_model_type is not None for row in config.usage_pricing[1:]))
         services, events = state()
-        result = module.publish_application(services, original, author='author', reviewer='reviewer')
-        self.assertEqual(len(events), 29 * 3)
+        result = module.publish_application(services, original, author='author')
+        self.assertEqual(len(events), 29 * 2)
         self.assertEqual(services['material_governance'].create_draft.call_count, 28)
         definition = services['applications'].create_draft.call_args.args[1]
         self.assertEqual(set(definition['modes']), {'research', 'scientific-preparation', 'scientific-training', 'scientific-evaluation'})
@@ -108,18 +100,16 @@ class BootstrapAutoResearchTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.application_budget(replace(original, limits={**original.limits, 'maxExperiments': maximum}))
 
-    def test_self_review_denied_and_current_permission_failure_never_publishes(self):
+    def test_current_membership_failure_never_publishes(self):
         services, events = state()
-        with self.assertRaises(ValueError): module.publish_application(services, preset(), author='same', reviewer='same')
-        self.assertEqual(events, [])
-        denial = PermissionError('synthetic revoked'); services['auth'].require.side_effect = denial
+        denial = PermissionError('synthetic revoked'); services['auth'].require_member.side_effect = denial
         with self.assertRaises(PermissionError) as caught:
-            module.publish_application(services, preset(), author='author', reviewer='reviewer')
+            module.publish_application(services, preset(), author='author')
         self.assertIs(caught.exception, denial); self.assertEqual(events, [])
 
-    def test_failed_material_review_stops_before_application_and_budget_is_bounded(self):
+    def test_failed_material_publication_stops_before_application_and_budget_is_bounded(self):
         services, events = state()
-        services['material_governance'].decide_publication.side_effect = PermissionError('synthetic denied')
-        with self.assertRaises(PermissionError): module.publish_application(services, preset(), author='author', reviewer='reviewer')
+        services['material_governance'].publish.side_effect = PermissionError('synthetic denied')
+        with self.assertRaises(PermissionError): module.publish_application(services, preset(), author='author')
         services['applications'].create_draft.assert_not_called()
         with self.assertRaises(ValueError): module.application_budget(replace(preset(), limits={'experimentSeconds': True}))

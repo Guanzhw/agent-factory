@@ -83,7 +83,7 @@ class RemoteDisconnectReadTests(unittest.IsolatedAsyncioTestCase):
             request_cancel=mutation, observed=mutation, reserve_task=mutation, release_task=mutation)
         client = TrustedHandoffClient.__new__(TrustedHandoffClient)
         client.store, client.targets = store, {'receiver': target}
-        client.auth = SimpleNamespace(require=Mock())
+        client.auth = SimpleNamespace(require_member=Mock())
         client.admission_guard = None
         execution = RemoteExecution(store, client)
 

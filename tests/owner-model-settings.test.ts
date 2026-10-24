@@ -11,17 +11,86 @@ import { modelEndpoint, readModelSetup, setupMetadata, type ModelSetup } from '.
 import { MODEL_PROVIDER_PRESETS } from '../web/modelProviderConfig.js';
 
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'credential-revision', providerId: 'byok-chat-v1', destination: 'https://api.openai.com', status: 'active' };
-const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
+const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', visibility: 'personal', isOwner: true, provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
 const storage = 'factory-model-setup:alice'; const secret = 'synthetic-test-key-only';
 const goCredential = { ...credential, destination: 'https://opencode.ai' };
 const thinkingRow: OwnerModel = { ...row, provider: 'openai-compatible', baseURL: 'https://opencode.ai/zen/go/v1', model: 'longcat-2.5-preview-free', thinkingMode: 'disabled' };
-it('accepts the official Go Chat Completions base without accepting arbitrary provider prefixes', () => {
+
+it('uses a team model as default while preserving owner-only credential controls', async () => {
+  const shared: OwnerModel = { reference: row.reference, revision: row.revision, ownerId: 'bob',
+    visibility: 'team', isOwner: false, provider: row.provider, baseURL: row.baseURL, model: row.model,
+    updatedAt: row.updatedAt, status: 'configured', available: true, isDefault: false };
+  expect(ownerModel(shared, 'alice')).toEqual(shared);
+  expect(() => ownerModel({ ...shared, credentialRef: 'owner-vault-ref' }, 'alice')).toThrow();
+  vi.mocked(ownerModelApi.list).mockResolvedValue([shared]);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...shared, isDefault: true, connectionRef: 'actor-binding' });
+  await mount();
+  expect(button('更新密钥')).toBeUndefined(); expect(button('撤销模型')).toBeUndefined();
+  expect(button('共享给团队')).toBeUndefined();
+  await act(async () => button('设为默认').click());
+  expect(ownerModelApi.default).toHaveBeenCalledWith('alice', row.reference, expect.any(String));
+});
+
+it('lets the resource owner change model visibility', async () => {
+  vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
+  const share = vi.spyOn(ownerModelApi, 'sharing');
+  const dispatched = new Promise<void>(resolve => {
+    share.mockImplementation(async () => { resolve(); return { ...row, visibility: 'team' }; });
+  });
+  await mount();
+  await act(async () => {
+    button('共享给团队').click();
+    await dispatched;
+  });
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(share).toHaveBeenCalledWith('alice', row.reference, 'team', expect.any(String));
+  expect(host.textContent).toContain('团队成员现在可使用此模型。');
+});
+
+it('configures an unauthenticated model without a placeholder key or credential write', async () => {
+  const publicModel: OwnerModel = { ...row, credentialRef: null, credentialRevision: null };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(publicModel);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...publicModel, isDefault: true });
+  await mount(); await fill('模型名称', row.model);
+  await act(async () => { const source = host.querySelector<HTMLSelectElement>('[aria-label="模型凭据来源"]')!;
+    source.value = 'none'; source.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
+  await act(async () => button('保存并设为默认').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.not.objectContaining({ credentialRef: expect.anything() }), undefined);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+  expect(ownerModelApi.default).toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toBeNull();
+});
+
+it('recovers an unknown sharing request by its original receipt without another write', async () => {
+  vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
+  const share = vi.spyOn(ownerModelApi, 'sharing');
+  const dispatched = new Promise<void>(resolve => {
+    share.mockImplementation(async () => { resolve(); throw new ModelRequestError(0); });
+  });
+  vi.mocked(ownerModelApi.recover).mockImplementation(async (_owner, requestId) => ({ ownerId: 'alice', requestId,
+    action: 'model.sharing', result: { ...row, visibility: 'team' }, completedAt: '2026-10-09T00:00:01Z' }));
+  await mount();
+  await act(async () => {
+    button('共享给团队').click();
+    await dispatched;
+  });
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(button('共享给团队').disabled).toBe(true);
+  await act(async () => button('核对原共享请求').click());
+  expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', share.mock.calls[0][3]);
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(button('核对原共享请求')).toBeUndefined();
+});
+it('accepts model API bases with custom paths and local network destinations', () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
   expect(modelEndpoint(baseURL)).toBe(baseURL);
   expect(modelEndpoint('https://opencode.ai/inference/go/v1')).toBe('https://opencode.ai/inference/go/v1');
   expect(ownerModel({ ...row, provider: 'openai-compatible', baseURL }, 'alice').baseURL).toBe(baseURL);
   expect(modelEndpoint(' HTTPS://MODELS.EXAMPLE.COM/v1 ')).toBe('https://models.example.com/v1');
-  for (const url of ['https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1', 'https://opencode.ai.evil.example/zen/go/v1']) expect(() => modelEndpoint(url)).toThrow();
+  for (const url of ['http://localhost:11434', 'http://127.0.0.1:8080/custom/api', 'https://192.168.1.2:9443/api', 'http://[::1]:1234/v1']) expect(modelEndpoint(url)).toBe(url);
+  expect(modelEndpoint('http://localhost:11434/v1/')).toBe('http://localhost:11434/v1');
+  for (const url of ['https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1', 'https://opencode.ai.evil.example/zen/go/v1']) expect(modelEndpoint(url)).toBe(url);
 });
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
@@ -284,7 +353,7 @@ it('persists only owner-scoped safe setup metadata and rejects unsupported desti
   const setup: ModelSetup = { owner: 'alice', provider: 'openai', baseURL: row.baseURL, model: row.model, credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'credential', chooseDefault: true };
   const metadata = setupMetadata({ ...setup, password: secret } as ModelSetup); expect(JSON.stringify(metadata)).not.toContain(secret);
   expect(readModelSetup(JSON.stringify(metadata), 'bob')).toBeNull(); expect(readModelSetup(JSON.stringify(metadata), 'alice')).toEqual(setup);
-  for (const value of ['http://models.example/v1', 'https://user:pass@models.example/v1', 'https://models.example/v1?api_key=secret', 'https://127.0.0.1/v1', 'https://models.example/other']) expect(() => modelEndpoint(value)).toThrow();
+  for (const value of ['ftp://models.example/v1', 'https://user:pass@models.example/v1', 'https://models.example/v1?api_key=secret', 'https://models.example/v1#secret', 'https://models.example/../other']) expect(() => modelEndpoint(value)).toThrow();
 });
 
 it('clears stale drafts when another tab changes the cookie owner before Save, without submitting any secret', async () => {

@@ -92,14 +92,7 @@ def _verification_services(store, auth, settings):
     from agent_factory.usage_ledger import UsageLedger
     from agent_factory_research.synthetic_runtime import default_zero_prices
     from agent_factory.native_workflows import NativeWorkflows
-    from agent_factory.tool_policy_registry import resolve_tool_policies
 
-    # Existing configuration must be present before any service constructor.
-    for table, expected in (('af_plan_policy_state', settings.policy_revision),
-                            ('af_material_governance_current', settings.material_policy_revision)):
-        rows = store.sql('SELECT revision FROM ' + table + " WHERE id='current'")
-        if len(rows) != 1 or rows[0]['revision'] != expected:
-            raise ValueError('RESEARCH_CANDIDATE_POLICY_DRIFT')
     root = Path(settings.workspace) / 'managed-storage'
     for path in (root, root / 'objects', root / 'quarantine'):
         if path.is_symlink() or not path.is_dir():
@@ -108,8 +101,7 @@ def _verification_services(store, auth, settings):
         raise ValueError('RESEARCH_CANDIDATE_STORAGE_MISSING')
     governance = store.material_governance = MaterialGovernance(store, auth, GovernanceConfig(
         review_mode=settings.material_review_mode, revision=settings.material_policy_revision,
-        tool_contract=settings.runtime_tool_contract, source_synthesis_enabled=settings.source_synthesis_enabled,
-        tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), seed_materials=SEEDS)
+        tool_contract=settings.runtime_tool_contract, source_synthesis_enabled=settings.source_synthesis_enabled), seed_materials=SEEDS)
     store.register_execution_guard('material-governance',
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     connections = store.connections = ConnectionService(store, auth, settings.trusted_connections)
@@ -132,9 +124,8 @@ def _verification_services(store, auth, settings):
     bridge.configure_components(store.native_workflows.component_for_task)
     store.plan_policy = PlanPolicyService(store, auth, PlanPolicyConfig(
         name=settings.temporary_policy, revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=settings.runtime_tool_contract,
-        source_synthesis_enabled=settings.source_synthesis_enabled,
-        tool_policies=resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)), ancestor_guard=persisted_ancestor_guard(store))
+        tool_contract=settings.runtime_tool_contract,
+        source_synthesis_enabled=settings.source_synthesis_enabled), ancestor_guard=persisted_ancestor_guard(store))
     store.delegation = DelegationService(settings, store, auth, bridge)
     ResearchHandoffClient(store, auth, settings.handoff_targets).install_guard()
     prices = {(price.adapter_id, price.adapter_revision): price for price in default_zero_prices()}

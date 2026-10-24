@@ -92,6 +92,7 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         application = create_app(self.settings)
         self.state = application.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
+        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob', 'manager')}
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(application).__enter__()  # type: ignore[arg-type]
@@ -106,7 +107,7 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.other = PersistentResourceService(second_store, self.auth, self.targets)
 
     def headers(self, owner):
-        return {"Authorization": "Bearer " + self.auth._issue_native_token(owner)}
+        return {"Authorization": "Bearer " + self.tokens[owner]}
 
     def request(self, owner, method, path, *, expected=200, **kwargs):
         response = self.client.request(method, "/api/factory" + path, headers=self.headers(owner), **kwargs)
@@ -131,10 +132,10 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.fail("Controlled native task did not reach expected state")
 
     def stop_tasks(self):
-        # Restore fixture grants solely for test cleanup; production revocation
+        # Re-enable fixture accounts solely for test cleanup; production revocation
         # cleanup belongs to the separate maintenance boundary, not user APIs.
-        self.auth.authorization.assign("alice", "factory-user")
-        self.auth.authorization.assign("bob", "factory-user")
+        self.auth.directory.set_disabled('alice', False)
+        self.auth.directory.set_disabled('bob', False)
         for row in self.store.sql("SELECT id,owner_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL"):
             self.request(row["owner_id"], "POST", "/jobs/" + row["id"] + "/cancel")
             self.wait(row["owner_id"], row["id"], {"canceled", "failed", "unknown"})
@@ -191,12 +192,12 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.assert_capacity_denied("bob", bob)
         self.service.disconnect("alice", lease["id"])
         self.assert_capacity_denied("bob", bob)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled('alice', True)
         with self.assertRaises(HTTPException) as revoked:
             asyncio.run(self.other.cancel("alice", lease["id"]))
         self.assertEqual(revoked.exception.status_code, 403)
         self.assertEqual(self.peer.cancellations, 0)
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled('alice', False)
         asyncio.run(self.other.cancel("alice", lease["id"]))
         asyncio.run(self.service.cancel("alice", lease["id"]))
         self.assertEqual(self.peer.cancellations, 1)
@@ -233,22 +234,27 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.assert_capacity_denied("alice", second)
         self.assertEqual(self.peer.allocations, 1)
 
-    def test_admin_maintenance_cleans_revoked_owner_without_restoring_authority(self):
+    def test_owner_maintenance_preserves_custody_and_admin_has_no_cross_owner_scope(self):
         self.start(slots=1)
         alice, bob = self.task("alice"), self.task("bob")
         lease = self.request("alice", "POST", "/resources/allocate", json={"connectionRef": "first-ref",
             "taskId": alice, "requestId": str(uuid4()), "limits": self.limits()}).json()
         self.assert_capacity_denied("bob", bob)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled('alice', True)
         for operation in ("cancel", "reclaim"):
             self.request("alice", "POST", f"/resources/leases/{lease['id']}/{operation}", expected=403)
-        self.request("bob", "POST", "/resources/maintenance", expected=403)
+        self.assertEqual(self.request('bob', 'POST', '/resources/maintenance').json()['scanned'], 0)
+        self.assertEqual(self.request('manager', 'POST', '/resources/maintenance').json()['scanned'], 0)
         self.assertEqual((self.peer.cancellations, self.peer.reclaims), (0, 0))
+        self.auth.directory.set_disabled('alice', False)
+        self.store.request_cancel(alice)
         self.peer.confirm_cancel = self.peer.confirm_release = True
-        result = self.request("manager", "POST", "/resources/maintenance").json()
+        result = self.request("alice", "POST", "/resources/maintenance").json()
         self.assertEqual(result["scanned"], 1)
-        self.assertEqual(result["outcomes"], [{"leaseId": lease["id"], "status": "reclaimed",
-            "reason": "OWNER_REVOKED", "capacityHeld": False}])
+        outcome = result['outcomes'][0]
+        self.assertEqual({key: outcome[key] for key in ('leaseId', 'status', 'capacityHeld')},
+            {'leaseId': lease['id'], 'status': 'reclaimed', 'capacityHeld': False})
+        self.assertIn(outcome['reason'], {'TASK_CANCEL_REQUESTED', 'TASK_TERMINAL'})
         self.assertEqual(self.peer.effect_identities, [("cancel", lease["id"], "alice"),
             ("reclaim", lease["id"], "alice")])
         self.assertEqual(self.peer.allocations, 1, "Maintenance must not allocate replacement work")
@@ -257,7 +263,8 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.assertFalse(persisted["capacityHeld"])
         for key in ("id", "ownerId", "connectionRef", "fingerprint", "poolFingerprint"):
             self.assertEqual(persisted[key], lease[key])
-        # Maintenance has no grant-restoration side effect, even after cleanup.
+        # Cleanup cannot grant account authority or touch another owner's lease.
+        self.auth.directory.set_disabled('alice', True)
         self.request("alice", "POST", f"/resources/leases/{lease['id']}/cancel", expected=403)
         self.assertEqual(self.request("manager", "POST", "/resources/maintenance").json()["scanned"], 0)
         self.assertEqual((self.peer.cancellations, self.peer.reclaims), (1, 1))

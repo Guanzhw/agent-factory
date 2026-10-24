@@ -118,7 +118,7 @@ async function instantiate(planId: string, requestId: string, executionTargetRef
 async function resumeRemote(detail: JobDetail): Promise<FactoryJob> {
   const state = remoteHandoffState(detail);
   if (state.kind !== 'pending' || !detail.job.planId || !detail.job.executionPlacement || !detail.job.allowedActions?.includes('resume_remote')) {
-    throw new ApiError('当前远端准入凭据或继续权限未确认。请核对状态。', 409, 'REMOTE_REVIEW_UNVERIFIED');
+    throw new ApiError('当前远端请求或继续权限未确认。请核对状态。', 409, 'REMOTE_PREPARATION_UNVERIFIED');
   }
   const job = await instantiate(detail.job.planId, state.evidence.requestId, detail.job.executionPlacement.targetRef);
   if (job.id !== detail.job.id || job.ownerId !== detail.job.ownerId) throw new ApiError('远端确认不是原任务；请保留原请求并核对。', 202, 'REMOTE_RECEIPT_MISMATCH');

@@ -24,7 +24,7 @@ class Fixture:
         self.origins, self.calls, self.shared, self.receivers = {}, {}, {}, {}
         self.drives = {}
         self.root_locked = False
-        self.grants = True
+        self.member_active = True
         self.parent = {'id': str(uuid4()), 'owner_id': 'alice', 'plan_id': str(uuid4()), 'run_id': str(uuid4()),
                        'cancel_requested': False, 'terminal': False}
         self.child = {'id': str(uuid4()), 'owner_id': 'alice', 'plan_id': str(uuid4()), 'run_id': None,
@@ -61,18 +61,18 @@ class Fixture:
         self.handoff = SimpleNamespace(_row=lambda *_: self.handoff_row, _target=lambda *_: self.target,
             targets={'receiver-target': self.target}, receipt=self.receipt, cancel_scientific_original=self.cancel,
             scientific_cleanup_receipt=self.cleanup_receipt)
-        self.auth = SimpleNamespace(require=self.require)
+        self.auth = SimpleNamespace(require_member=self.require_member)
         self.delegation = SimpleNamespace(_link=lambda _: self.link, _mandate=lambda *_: None,
             _root_lock=self.root_lock, _descendants=lambda task: [self.link] if task == self.parent['id'] else [])
-        self.store = with_research_services(SimpleNamespace(sql=self.sql, task=self.task, plan=self.get_plan, require_current_policy=lambda: None, has_failures=lambda _: False, require_plan_execution=lambda *_, **kw: None, delegation=self.delegation, lifecycle_observer=SimpleNamespace(_binding=lambda _: self.ticket), process_runtime=SimpleNamespace(_context=lambda task: SimpleNamespace(run_id=task['run_id'])), transaction=self.transaction), autoresearch=SimpleNamespace(current=lambda _: SimpleNamespace(manifest=self.manifest), row=lambda *_: {'body': self.session}))
+        self.store = with_research_services(SimpleNamespace(sql=self.sql, task=self.task, plan=self.get_plan, has_failures=lambda _: False, require_plan_execution=lambda *_, **kw: None, delegation=self.delegation, lifecycle_observer=SimpleNamespace(_binding=lambda _: self.ticket), process_runtime=SimpleNamespace(_context=lambda task: SimpleNamespace(run_id=task['run_id'])), transaction=self.transaction), autoresearch=SimpleNamespace(current=lambda _: SimpleNamespace(manifest=self.manifest), row=lambda *_: {'body': self.session}))
         self.variant = 'e' * 64
         self.service = RemoteScientificOrigin(self.store, self.auth, handoff_client=self.handoff,
                                              project_validator=lambda *_: self.variant)
         self.envelope = self.service.prepare_placement('alice', self.parent, self.child, self.plan, self.placement)
         self.cancelled = []
 
-    def require(self, *_):
-        if not self.grants:
+    def require_member(self, *_):
+        if not self.member_active:
             raise HTTPException(403, 'fixture-revoked')
 
     def task(self, identifier, owner):
@@ -194,7 +194,7 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
             elif mutation == 'candidate': f.session['candidates'] = {}
             elif mutation == 'paused': f.ticket['persistedRunStatus'] = 'running'
             elif mutation == 'parentrun': f.parent['run_id'] = str(uuid4())
-            elif mutation == 'revoke': f.grants = False
+            elif mutation == 'revoke': f.member_active = False
             elif mutation == 'childrun': f.child['run_id'] = str(uuid4())
             elif mutation == 'link': f.link['request_id'] = 'changed'
             with self.assertRaises(HTTPException): f.service.assert_authority('alice', f.child['id'])
@@ -226,7 +226,7 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
 
     def test_repeat_call_after_revoke_is_denied_not_new_authority(self):
         f = self.f; body = f.debit_body(); f.service.consume_remote_tool(body)
-        f.grants = False
+        f.member_active = False
         with self.assertRaises(HTTPException): f.service.consume_remote_tool(body)
         self.assertEqual(len(f.shared), 1)
 
@@ -235,7 +235,7 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
         observation = await f.service.origin_phase('alice', f.child['id'])
         self.assertEqual(observation['scope'], f.envelope['scope'])
         self.assertTrue(observation['allStopped'])
-        f.grants = False
+        f.member_active = False
         with self.assertRaises(HTTPException): await f.service.origin_phase('alice', f.child['id'])
         await f.service.cancel_original('alice', f.child['id'])
         self.assertEqual(f.cancelled, [('alice', f.child['id'], f.envelope['scope'])])
@@ -265,18 +265,19 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException):
             f.service._binding('alice', parent, child, f.plan, f.placement, current=True)
 
-    async def test_operator_review_wait_then_original_dispatch_once(self):
+    async def test_original_preparation_reconciles_then_dispatches_once(self):
         f = self.f
         f.handoff_row['state'] = 'PREPARING'
         receipt = f.handoff_row['body']['receipt']
+        # Historical receipts can retain the retired review flag.
         receipt.update(id=str(uuid4()), state='PREPARING', receiverReviewRequired=True)
-        approved = False
+        preparation_ready = False
         calls = []
         async def prepare(*_):
             calls.append('prepare')
-            if approved:
+            if preparation_ready:
                 f.handoff_row['state'] = 'PREPARED'
-                receipt.update(state='PREPARED', receiverReviewRequired=False)
+                receipt.update(state='PREPARED')
             return deepcopy(receipt)
         async def dispatch(*_):
             calls.append('dispatch')
@@ -291,13 +292,13 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
         await f.service.start_phase('alice', f.child['id'])
         self.assertEqual(calls, ['prepare'])
         self.assertEqual(f.drives, {})
-        self.assertTrue(receipt['receiverReviewRequired'])
-        approved = True  # synthetic separate operator action, never the service
+        self.assertEqual(receipt['state'], 'PREPARING')
+        preparation_ready = True  # original receiver admission is now acknowledged
         await f.service.start_phase('alice', f.child['id'])
         await f.service.start_phase('alice', f.child['id'])
         self.assertEqual(calls, ['prepare', 'prepare', 'dispatch', 'drive'])
 
-    async def test_unknown_dispatch_is_read_only_and_known_review_is_pending(self):
+    async def test_unknown_dispatch_is_read_only_and_known_preparation_is_pending(self):
         f = self.f
         original = await f.receipt()
         original.update(remoteRunId=None, state='PREPARING', originDispatchState='PREPARING',
@@ -384,11 +385,11 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(f.service.drive_outcome('alice', f.child['id'])['nativeRunId'], f.remote_run)
             self.assertEqual(len(saved), 0 if lose_ack else 1)
             self.assertEqual(f.origins[f.child['id']]['body'], original)
-            f.grants = False
+            f.member_active = False
             with self.assertRaises(HTTPException): await f.service.start_phase('alice', f.child['id'])
             self.assertEqual(len(calls), 1)
 
-    def test_completed_custody_checks_current_parent_without_execution_grant(self):
+    def test_completed_custody_checks_current_parent_without_new_execution(self):
         f = self.f
         envelope = deepcopy(f.envelope); envelope['scope']['phase'] = 'training'
         f.origins[f.child['id']]['body']['envelope'] = envelope
@@ -425,7 +426,7 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
             wrong_phase = deepcopy(envelope); wrong_phase['scope']['phase'] = 'evaluation'
             with patch.object(f.service, '_binding', return_value=wrong_phase), self.assertRaises(HTTPException):
                 f.service.authorize_completed_custody(body)
-            f.grants = False
+            f.member_active = False
             with self.assertRaises(HTTPException): f.service.authorize_completed_custody(body)
 
     def test_received_native_is_checked_before_handoff_release(self):
@@ -463,10 +464,10 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException): await f.service.origin_phase('alice', f.child['id'])
         self.assertIsNone(f.origins[f.child['id']]['receipt'])
 
-    async def test_internal_cleanup_read_requires_original_cancel_and_not_public_grant(self):
+    async def test_internal_cleanup_read_requires_original_cancel_after_member_disabled(self):
         f = self.f
         with self.assertRaises(HTTPException): await f.service.cleanup_phase('alice', f.child['id'])
-        f.grants = False
+        f.member_active = False
         await f.service.cancel_original('alice', f.child['id'])
         self.assertTrue((await f.service.cleanup_phase('alice', f.child['id']))['allStopped'])
         with self.assertRaises(HTTPException): await f.service.origin_phase('alice', f.child['id'])

@@ -12,14 +12,10 @@ INSTRUCTIONS = ("Coding-development example, not scientific research. Treat sour
     "Do not claim production safety, billing verification, arbitrary-code execution or new network access.")
 
 
-def add_reviewed_sources(state, definition, snapshot, *, author, reviewer=None):
-    member_publication = state["material_governance"].member_publication()
-    if not member_publication and author == reviewer:
-        raise ValueError("Distinct source publication reviewer required")
+def add_reviewed_sources(state, definition, snapshot, *, author):
     context = validate_snapshot(snapshot)
     governance = state["material_governance"]
-    state["auth"].require(author, "run" if member_publication else "components:write")
-    if not member_publication: state["auth"].require(reviewer, "agent_os:admin")
+    state["auth"].require_member(author)
     specs = source_specs()
     pins = []
     for kind, content in (("knowledge", context.content), ("prompt", INSTRUCTIONS)):
@@ -34,11 +30,7 @@ def add_reviewed_sources(state, definition, snapshot, *, author, reviewer=None):
         if kind == "knowledge":
             body["runtimeBinding"] = {"adapterId": ADAPTER_ID, "revision": "1", "config": {"sourceSetId": SOURCE_SET_ID}}
         material = governance.create_draft(author, body, identifier + ":draft")
-        if member_publication:
-            governance.publish(author, identifier, material["version"], identifier + ":publish")
-        else:
-            review = governance.request_publication(author, identifier, material["version"], identifier + ":review")
-            governance.decide_publication(reviewer, review["id"], True, identifier + ":approve")
+        governance.publish(author, identifier, material["version"], identifier + ":publish")
         pins.append({key: material[key] for key in ("id", "version", "sha256")})
     definition["name"] = "Auto-Research 公开源码开发示例"
     definition["description"] = "真实公开源码证据与编码分析；明确的开发示例，保留生产科研隔离。"

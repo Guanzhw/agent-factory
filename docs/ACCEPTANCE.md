@@ -206,8 +206,8 @@ isolation or live science. Default startup installs no remote configuration.
 | Remote / AC-R8 | Extended ORX contract preserves legacy hashes, current authority and evidence provenance | AT-R8: four `test_remote_contracts.py` cases; process case09 | Actual native DONE effect and artifact; discovery transport explicitly controlled, no integrated ORX CLI experiment claim |
 | Remote / AC-R9 | Authenticated origin checks use actual current guards; transport errors cannot leak private details or read unbounded bodies | AT-R9: fourteen `test_remote_authority.py` and eight `test_remote_target_transport.py` cases | Bounded HTTP, no ambient proxy/redirect, non-loopback HTTP rejected; production host authorization still pending |
 
-The frontend shows the exact PREPARING receiver-review state and redacted binding
-proof, resumes only the original plan/target/request key and hides native controls
+The frontend shows interrupted `PREPARING` as an unknown preparation outcome with
+redacted binding proof, resumes only the original plan/target/request key and hides native controls
 until a verified receiver task exists. Exact parent-application child modes are
 projected from current immutable scope. Supported browser evidence and complete
 test counts are recorded in VERIFICATION.md.

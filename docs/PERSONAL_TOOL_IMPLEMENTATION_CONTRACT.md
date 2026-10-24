@@ -1,62 +1,55 @@
 # Personal CLI and MCP implementation contract
 
-Base: `3ef542ba0411e70d2d9de25d10124bb6efcebcfe`. This is the implementation contract for PR #88.
+The current member workflow is documented in [Member tools](MEMBER_TOOLS.md); [connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md) describes resource custody and original-operation recovery. This contract covers both member-defined resources and existing installed integrations.
 
-## Ownership
+## Modules
 
-| Owner | Files |
+| Module | Responsibility |
 | --- | --- |
-| A / integration | `platform/agent_factory/personal_tool_contract.py`, `personal_tool_execution.py`, `personal_tools.py`, connections/config/main integration, public API, dependency manifests/lock, architecture/CI maps, assembly/native PostgreSQL/browser regressions and PR documentation |
-| B / CLI | `platform/agent_factory/personal_cli.py`, `_personal_cli_process.py`, `platform/tests/test_personal_cli.py`, `test_personal_cli_process.py`, CLI-only synthetic fixtures |
-| C / MCP | `platform/agent_factory/personal_mcp.py`, `platform/tests/test_personal_mcp.py`, MCP-only synthetic fixtures |
-| A frontend agent | `web/PersonalToolConnections.tsx`, `web/personalToolConnectionApi.ts`, associated tests; insertion in ConnectionsPanel and ResourceCenter |
+| `personal_tool_contract.py` | Descriptor, invocation and fixed-error contracts; standard tool schemas |
+| `personal_tools.py` | Owner resource records, MCP discovery, optional credential references, sharing, immutable runtime declarations and native registry restoration |
+| `personal_tool_execution.py` | Agno Function wrapping, current actor/resource checks and existing durable effect receipts |
+| `personal_cli.py` | Member-configured command execution and specialized installed CLI credential strategies |
+| `_personal_cli_process.py` | POSIX process creation, bounded IO, cancellation and process-group stop evidence |
+| `personal_mcp.py` | Official SDK discovery and one-call session execution |
+| `PersonalToolConnections.tsx` | Member configuration, token saving, discovery, binding, sharing and original-request recovery |
 
-B/C import the dataclasses and Protocol from `agent_factory.personal_tool_contract`. Each adapter exposes `descriptor: ToolDescriptor` and `async invoke(ToolInvocation) -> JSON`. Constructors accept trusted static process/server configuration and injectable transports for tests. They must not edit shared manifests or registration files; send dependency needs to A. No application/research imports.
+Core/adapters import no research application. Composition provides a default encrypted vault and restores member tools; applications consume the native binding without another execution engine or per-tool permission registry.
 
-## Static assembly and credentials
+## Configuration boundary
 
-The operator supplies `Settings.personal_tool_adapters`, a tuple of adapter instances. Core registers each exact descriptor with existing `ExecutionBindings.register(kind='tool', connection_kind='tool')`. Application materials name that adapter/revision/toolName and `config.connectionName`; existing `connectionRequirements` and owner connection selection remain unchanged. No dynamic discovery or plugin installation.
+`POST /personal-tools/resources` normalizes and validates the member resource once. CLI fields include executable, arguments, working directory, explicit environment, JSON Schema, scalar option mappings, JSON-stdin selection and JSON/text output. An authenticated CLI also declares the credential environment variable. MCP fields include the selected HTTP(S) URL, remote name, native name and discovered schema. Credentials are optional and otherwise name an exact vault reference/revision owned by the resource owner.
 
-Descriptors contain stable adapter ID/revision, tool name/schema, `cli` or `mcp`, exact credential purpose (`credential_provider_id`) and target (`credential_destination`), capabilities and bounded timeout/output. The existing vault must explicitly register the purpose/target policy. Adapter executable/server details are trusted constructor configuration, never member-supplied argv or endpoints.
+The saved body contains immutable configuration metadata and a descriptor snapshot. It never contains vault secret values. Public projections include the native `runtimeBinding` and current availability. Team projections omit credential references/revisions. Sharing records track personal/team visibility separately from immutable configuration identity.
 
-Tool schemas use standard Draft 2020-12 JSON Schema, independently of the smaller application-form vocabulary. The root is an object; the normalized schema is bounded to 32,768 bytes and arguments to 64 KiB, with the shared JSON depth/node/container/string bounds. `fc`, `run_context` and `_agno_run_context` are reserved declaration/input names. Validation uses a registry without external retrieval: it never fetches a remote `$ref`. Descriptors/schema are copied and fingerprinted; changed declarations cannot reuse an existing connection or native wrapper silently.
+Startup calls `PersonalTools.register(bindings)` after installed registrations. New resources install the same native registration on save. Another worker resolves a missing member adapter by ID through `ensure_registered`; its source is the persisted resource record. Missing IDs fail as unavailable. Record-integrity or malformed configuration failures remain explicit.
 
-Settings generates existing adapter/policy registrations and accepts the existing dictionary policy form. Reconstructing core Settings as ResearchSettings reuses the exact generated registration without duplicating it; conflicting adapter instances or policy declarations are rejected. Research composition inherits the generic connection guards rather than providing a separate personal-tool execution path.
+Installed integrations can still use `Settings.personal_tool_adapters` and the existing installed-adapter configuration endpoint. They do not gate member resources.
 
-Core provides authenticated `/api/factory/personal-tools` list/configure/revoke/request-recovery and `/api/factory/personal-tools/descriptors`. Configure accepts `{adapterId, credentialRef, credentialRevision, requestId}` and yields an owner-scoped registration. The existing connection bind API produces the reusable application connection; UI chains this once with separately recoverable request IDs. Secret values enter only the existing vault API and never descriptor, material, plan, effect, command fingerprint or connection JSON.
+## Invocation contract
 
-## Invocation and lifecycle
+`ToolInvocation` carries the requesting actor, original connection/call identity, native RunContext, business arguments and current authorization/credential callbacks. A resource handle separately retains the credential owner. `resolve_credential()` returns a redacted `SecretLease` for the exact scope or `None` for an unauthenticated resource.
 
-`ToolInvocation` contains authenticated owner, connection ref/revision, original durable call ID, arguments, native RunContext, `check_authorized()` and `resolve_credential()`. Core reserves the existing effect before dispatch and owns receipts. Adapters check authorization immediately before IO and during execution; resolve returns the existing redacted `SecretLease` after repeating the complete owner/reference/revision/purpose/target check. Adapters must not infer identity from arguments.
+The native wrapper reserves the existing durable effect before transport dispatch. Only `new` dispatches; `done` rechecks current access and returns the retained receipt. UNKNOWN stops further model turns without redispatch. Task cancellation, budgets, concurrency reservations, current account state, connection revision, sharing and credential state remain active operational checks.
 
-Initial authentication lifecycle is one invocation/session, with invocation-owned teardown in `finally`; shared schemas and executables carry no mutable owner authentication. No ambient credentials, fallback to server/global account, automatic redispatch, or auth pooling across owners. CLI owns subprocess/stdin/stdout/file/HOME strategy and local process-group evidence. MCP owns async client/session transport and protocol cleanup. Neither transport close nor local process termination establishes remote operation termination. Unconfirmed local stop retains the CLI private directory; cleanup is not an unconditional guarantee.
+`ToolInvocationError` contains a fixed code, business outcome and positive local `stopped` evidence. A failed operation with unresolved cleanup retains UNKNOWN capacity; local process or session closure does not establish that a remote effect stopped. Known secret echoes and oversized results never enter retained output.
 
-Return bounded JSON with known credential echoes rejected. Throw `ToolInvocationError` containing only a fixed code. Business outcome and local `stopped` evidence are independent: a failed read-only probe may establish that business was never dispatched while reporting `failed, stopped=False`; this must not delete the private directory or imply cancellation/complete cleanup. `cancelled` requires positive stop evidence for the affected operation; an ambiguous dispatched business operation remains `unknown`, including a CLI whose local process group has since stopped.
+## CLI
 
-Core reserves by native run ID and original `fc.call_id`. Only `new` dispatches; `done` rechecks authority before returning the retained receipt. UNKNOWN raises native Agno `StopAgentRun` so a later model turn cannot replace the uncertain call with a new call ID. This does not undo other calls already dispatched concurrently in the same batch. Native queue completion/cancellation alone cannot settle the original UNKNOWN effect. No remote exactly-once guarantee is claimed.
+The member adapter starts the member-selected executable once, using argv rather than an implicit shell. It honors the selected working directory and environment, passes JSON stdin by default, maps declared options when selected, and parses JSON or wraps text output. Credential injection is explicit. Independent invocations use independent temporary state, and the adapter leaves the service environment unchanged.
 
-For a known failure, `stopped=True` allows the failed receipt to complete the effect. `stopped=False` records `{outcome: "failed", stopped: false}` while keeping the effect UNKNOWN and retaining capacity; native `StopAgentRun('PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED')` prevents continuation. Restart preserves both the failure result and unresolved custody. A later task is still rejected when the retained reservation exhausts its capacity limit.
+Specialized installed `PersonalCliAdapter` integrations retain their declared credential-delivery/probe behavior. Those probes are specific to that integration and are not prerequisites for arbitrary member commands.
 
-## CLI adapter constraints
+The process helper supports POSIX process groups. Windows-hosted CLI execution is rejected explicitly; Windows browsers can manage a Linux deployment. Timeouts and cancellation settle the owned local process group before reporting positive stop evidence. Temporary credentials remain when stop cannot be confirmed. Debug event loops are rejected because low-level pipe diagnostics can precede echo filtering.
 
-`PersonalCliAdapter` uses the owned POSIX process helper; real process acceptance runs on Linux. Windows-hosted CLI execution is unsupported. Browser configuration on Windows is independent of the server's process platform.
+## MCP
 
-A successful invocation runs three sequential processes under one execution deadline: an absent-credential negative probe, a supplied-credential identity/source probe, then the business command. Trusted registration must make both probes read-only and supply expected unauthenticated exit codes plus an identity/source verifier. A rejected probe never starts business. Executable contents and current authority are checked before each spawn. Only registered scalar business flags are mapped into argv; no shell or member-selected executable/authentication flags are accepted.
+Discovery and invocation use official `mcp==2.3.0` `ClientSession` and Streamable HTTP. Endpoints support HTTP/HTTPS, local/private/public hosts, IPv6 and custom ports. HTTPS keeps certificate verification. Each invocation owns its client/session, verifies the selected schema and sends one business call. Input-required replies, schema changes and network failures do not trigger an automatic repeat.
 
-Credential delivery explicitly selects stdin, a file, an environment variable or a private HOME file. Each invocation gets separate HOME/config/cache/temp state and an explicit child environment, without mutating the service environment. There is no persistent refresh/cache mode. Asyncio debug mode is rejected before secret/process work and rechecked during execution because pipe debug records can expose payloads before filtering; the adapter does not change the shared event loop or global logging settings. These same-UID processes are not hostile-code or network isolation.
+Authorization is owner-scoped for every protocol request and session DELETE. Unauthenticated resources omit the Authorization header. Requests stay on the configured endpoint; redirects, ambient proxy settings and transport retries are disabled. A two-second default DELETE deadline spans authorization, response headers and response body streaming. SDK cleanup and business outcome have separate evidence.
 
-Probe failures and business dispatch retain separate state. A business command's nonzero exit, timeout or interrupted acknowledgement remains UNKNOWN even after local termination. Private credentials are deleted only after local stop is established; deletion failures are sanitized errors. Local stop evidence does not cover descendants that deliberately leave the process group.
+## Acceptance evidence
 
-## MCP adapter constraints
+Focused tests use local processes, synthetic credentials and local MCP servers. They cover configuration persistence, real input/output contracts, concurrent owners, credential echoes, cancellation, schema changes, failed cleanup and original-effect recovery. The PostgreSQL restart test starts an independent worker process before member configuration exists, publishes materials/application through authenticated member APIs, then executes the real command through the native queue. Repeating the request and reopening services retain the task/run and execute the command once.
 
-`MCPToolAdapter` uses official `mcp==2.3.0` `ClientSession` and Streamable HTTP with its SDK-compatible HTTP client. It does not depend on FastMCP, start stdio servers, or use legacy SSE transport. Each invocation initializes and verifies the exact registered tool/schema before one `tools/call`; human-readable schema annotations may differ, but validation keywords, property names and typed literal values remain pinned. Input-required replies do not trigger automatic follow-up calls.
-
-HTTPS is required by default. `allow_loopback_http=True` is an explicit fixture option restricted to numeric loopback addresses. Requests are pinned to the exact endpoint, with redirects, ambient proxy configuration and transport retries disabled. Fresh owner-scoped Bearer authorization applies to protocol requests and session DELETE; credentials are not stored on the shared adapter.
-
-`teardown_timeout_seconds` defaults to two seconds and bounds session DELETE across credential/authority checks, response headers and all response body chunks. Repeated cancellation waits for the invocation-owned SDK cleanup path. This bounds the DELETE exchange, not arbitrary injected transport code or the lifetime of a blocking synchronous authorization thread, and does not prove remote operation cancellation or session deletion. SDK/session resources and the business effect remain separate evidence.
-
-Before `tools/call` dispatch, a failed invocation may attest `stopped=True` once its local tasks, authorization callbacks, SDK contexts and transport have finished. Session DELETE is best effort: an idle remote session, including a server that rejects DELETE, does not establish a running business call and must not alone retain call capacity. Incomplete local cleanup still retains UNKNOWN capacity. After business dispatch, failure or transport closure alone does not prove remote stop and cannot establish `stopped=True`.
-
-## Validation scope
-
-Validation uses synthetic credentials with real local CLI processes and a local MCP protocol server, two-owner concurrency, rotation/revocation, missing credentials without fallback, leak rejection, cancellation and original-effect recovery. Shared adapter integration tests call these real local adapters through `FunctionCall.aexecute()` and the wrapper, using an in-memory effect fixture to prove DONE replay does not redispatch. Separate real PostgreSQL/Agno tests exercise declared applications, inert synthetic tools and the local MCP server, using a deterministic model fixture. They check repeated native calls, restart receipt recovery, pre-dispatch failure capacity release, UNKNOWN native stop, retained capacity after failed/unconfirmed local cleanup and denial of the next call after revocation. Chromium checks the built resource/connection UI with all API responses intercepted, including lost acknowledgements, revoked recovery, owner changes and recovery from unsent steps or explicit binding refusals. Current browser evidence uses desktop widths; narrow viewport cases remain optional. No AutoResearch task or real model call is required. See [development checks](DEVELOPMENT_CHECKS.md#personal-cli-and-mcp-verification); external-vendor compatibility remains unverified by these fixtures.
+Retained-handle tests prove that disabled callers, withdrawn sharing and revoked owner credentials prevent another command. Vendor model/service compatibility and externally deployed throughput require separate target evidence. See [development checks](DEVELOPMENT_CHECKS.md#personal-cli-and-mcp-verification) for runnable commands.

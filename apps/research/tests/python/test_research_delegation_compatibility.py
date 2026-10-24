@@ -55,6 +55,28 @@ class ResearchDelegationCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.client.prepare.assert_not_awaited()
         self.client.dispatch.assert_not_awaited()
 
+    async def test_prepared_receipt_dispatches_despite_historical_review_flag(self):
+        self.client.reserve.return_value = {'state': 'RESERVED'}
+        self.client.prepare.return_value = {'state': 'PREPARED', 'receiverReviewRequired': True}
+        self.client.dispatch.return_value = {'state': 'ACCEPTED', 'remoteTaskId': 'original-child'}
+        result = await self.service._dispatch_placement('alice', self.parent, self.task,
+            {'id': 'child-plan'}, self.placement, 'original-native-request')
+        self.assertEqual(result['remoteTaskId'], 'original-child')
+        self.client.prepare.assert_awaited_once_with('alice', 'child')
+        self.client.dispatch.assert_awaited_once_with('alice', 'child')
+        self.client.receipt.assert_not_awaited()
+
+    async def test_unconfirmed_preparation_does_not_dispatch(self):
+        for state in ('PREPARING', 'UNKNOWN', 'PREPARE_UNKNOWN'):
+            with self.subTest(state=state):
+                self.client.reserve.return_value = {'state': 'RESERVED'}
+                original = {'state': state, 'remoteTaskId': 'original-child'}
+                self.client.prepare.return_value = original
+                result = await self.service._dispatch_placement('alice', self.parent, self.task,
+                    {'id': 'child-plan'}, self.placement, 'original-native-request')
+                self.assertEqual(result, original)
+                self.client.dispatch.assert_not_awaited()
+
     async def test_canceled_child_requires_original_cleanup_stop_proof(self):
         self.task['cancel_requested'] = True
         self.scientific.cleanup_phase.return_value = {'status': 'unknown', 'allStopped': False,

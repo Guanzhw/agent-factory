@@ -17,7 +17,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from agent_factory.personal_remote_provider import (OpenCodeServeProvider, PinnedHTTPSProbe,
-    RemoteConnectionError, SecretLease, _PinnedHTTPS, origin, MAX_BYTES, HTTP_TOTAL_SECONDS, reject_credential_echo)
+    RemoteConnectionError, SecretLease, _PinnedHTTPS, _PinnedHTTP, origin, MAX_BYTES, HTTP_TOTAL_SECONDS, reject_credential_echo)
 
 PERSONAL_CONTRACT = 'personal-external-v1'
 PERSONAL_PROVIDER_ID = 'opencode-personal-session-v1'
@@ -61,7 +61,7 @@ class PersonalAgentTransport(PinnedHTTPSProbe):
 
     @staticmethod
     def anonymous_allowed(method, path):
-        return False
+        return True
 
     @staticmethod
     def authorization_header(lease):
@@ -72,9 +72,9 @@ class PersonalAgentTransport(PinnedHTTPSProbe):
             raise RemoteConnectionError('REMOTE_PATH_DENIED')
         if not isinstance(lease, SecretLease) and not (lease is None and self.anonymous_allowed(method, path)):
             raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
-        host = urlsplit(origin(destination)).hostname
-        if not self.policy.permits(host, address):
-            raise RemoteConnectionError('REMOTE_ADDRESS_DENIED')
+        endpoint = urlsplit(origin(destination))
+        host = endpoint.hostname
+        port = endpoint.port or (443 if endpoint.scheme == 'https' else 80)
         raw = None if payload is None else json.dumps(payload, allow_nan=False, separators=(',', ':')).encode()
         if raw is not None and len(raw) > 65536:
             raise RemoteConnectionError('REMOTE_REQUEST_REJECTED')
@@ -82,7 +82,8 @@ class PersonalAgentTransport(PinnedHTTPSProbe):
             'Content-Type': 'application/json'}
         if lease is not None:
             headers['Authorization'] = self.authorization_header(lease)
-        conn = _PinnedHTTPS(host, address)
+        conn = (_PinnedHTTPS(host, address, port) if endpoint.scheme == 'https'
+            else _PinnedHTTP(host, address, port))
         deadline = time.monotonic() + HTTP_TOTAL_SECONDS
         conn.deadline = deadline
         expired = threading.Event()
@@ -143,7 +144,7 @@ class PersonalOpenCodeServeProvider(OpenCodeServeProvider):
 
     def __init__(self, secrets, *, transport=None, **kwargs):
         super().__init__(secrets, **kwargs)
-        self.transport = transport or PersonalAgentTransport(kwargs.get('network_policy'))
+        self.transport = transport or PersonalAgentTransport()
 
     def handle(self, owner, configuration):
         return PersonalAgentHandle(self, owner, dict(configuration))
@@ -185,7 +186,8 @@ class PersonalAgentHandle:
             raise RemoteConnectionError('PERSONAL_TRUSTED_SEND_GUARD_REQUIRED')
         destination = self.configuration['origin']
         addresses = self.provider.transport.addresses(destination)
-        lease = self.provider.secrets.resolve(**self.provider._scope(self.owner, self.configuration))
+        lease = (self.provider.secrets.resolve(**self.provider._scope(self.owner, self.configuration))
+            if self.configuration.get('credentialRef') is not None else None)
         self._check(required)  # Revoke/rotation fence after DNS and credential retrieval.
         if method == 'POST':
             assert before_send is not None

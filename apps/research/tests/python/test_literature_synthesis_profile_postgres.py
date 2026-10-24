@@ -90,9 +90,6 @@ class LiteratureSynthesisProfilePostgresTests(unittest.TestCase):
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(application).__enter__()  # type: ignore[arg-type]
         self.addCleanup(self.client.__exit__, None, None, None)
-        auth = self.state["auth"]
-        auth.authorization.unassign("bob", "factory-user")
-        auth.authorization.assign("bob", "factory-manager")
         application = publish_synthesis_application(self.state, self.question, self.sources, author="alice")
         self.reference = {key: application[key] for key in ("id", "version", "sha256")}
         self.connection = self.state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()),

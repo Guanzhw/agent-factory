@@ -38,30 +38,24 @@ class GoProductPostgresTests(unittest.TestCase):
     def start(self, *, retries=0):
         handle = GoDevelopmentHandle(mode="fixture", async_transport=self.peer.transport,
                                      wire_stream=True, native_retries=retries)
-        self.settings = Settings(material_review_mode="separate-admin", fee_management_enabled=True, platform_paid_models_enabled=True,
+        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
             db_url=self.database.url, workspace=Path(self.workspace.name),
             development_profile="opencode-go", max_workers=1, max_tool_calls=3,
-            temporary_policy="read-only-auto", policy_revision="go-test-policy-v1",
+            temporary_policy="member-self-service", policy_revision="go-test-policy-v1",
             material_policy_revision="go-test-material-v1", runtime_tool_contract="registered-runtime-v1",
             usage_policy=UsagePolicy(revision="go-fixture-usage-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
             trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
         self.open_application()
-        auth = self.state["auth"]
-        auth.authorization.unassign("bob", "factory-user")
-        auth.authorization.assign("bob", "factory-manager")
-        models = publish_go_development_models(self.state, author="manager", reviewer="bob")
+        models = publish_go_development_models(self.state, author="manager")
         seeds = self.store.materials(published_only=True)
         checksum = next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum")
         environment = next(row for row in seeds if row["id"] == "local-environment")
         self.login("bob")
         app = self.post("/api/factory/applications/drafts", {
             "definition": application_definition(models, checksum, environment), "requestId": str(uuid4())}, 201)
-        review = self.post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/review",
-                           {"requestId": str(uuid4())}, 201)
-        self.login("manager")
-        self.post(f"/api/factory/applications/reviews/{review['id']}/decision",
-                  {"approved": True, "requestId": str(uuid4())}, 200)
+        self.post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/publish",
+                  {"requestId": str(uuid4())}, 200)
         self.app_ref = {key: app[key] for key in ("id", "version", "sha256")}
         self.connection = self.state["connections"].bind("alice", REGISTRATION_REF,
             str(uuid4()), capabilities=[CAPABILITY])

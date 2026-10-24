@@ -24,19 +24,19 @@ class OnlineRestorePostgresTests(unittest.TestCase):
     close_app = fixture.PostgreSQLRestoreTests.close_app
     close_apps = fixture.PostgreSQLRestoreTests.close_apps
     login = fixture.PostgreSQLRestoreTests.login
-    approved_plan = fixture.PostgreSQLRestoreTests.approved_plan
+    historical_plan = fixture.PostgreSQLRestoreTests.historical_plan
     wait_completed = fixture.PostgreSQLRestoreTests.wait_completed
     postgres_command = fixture.PostgreSQLRestoreTests.postgres_command
 
     def test_exported_snapshot_with_live_artifact_writes_and_uncertain_admission(self):
         client, store, state = self.app(self.source, "online-source")
-        plan, _ = self.approved_plan(client, state["plan_policy"], "checksum")
+        plan, _ = self.historical_plan(client, state["plan_policy"], "checksum")
         accepted = client.post("/api/factory/instances", json={"planId": plan, "requestId": uuid4().hex})
         self.assertEqual(accepted.status_code, 202)
         task = accepted.json()["id"]
         self.wait_completed(client, task)
         before = store.artifact_write(task, "confirmed-before.txt", b"Confirmed before snapshot", "text/plain")
-        unknown_plan, _ = self.approved_plan(client, state["plan_policy"], "research")
+        unknown_plan, _ = self.historical_plan(client, state["plan_policy"], "research")
         unknown, _ = store.reserve_task(store.plan(unknown_plan, "alice"), uuid4().hex)
         store.admission_unknown(unknown["id"])
         engine = create_engine(self.source.url, isolation_level="REPEATABLE READ")

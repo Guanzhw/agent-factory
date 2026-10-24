@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from contextvars import ContextVar
 from contextlib import contextmanager
 
-from agno.exceptions import InputCheckError
+from agno.exceptions import InputCheckError, RunCancelledException
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event, text
 
@@ -359,31 +359,15 @@ class Store:
 
     def authorize_tool(self, ctx, name):
         plan = self.resolve_run(ctx)
-        self.require_current_policy()
-        if self.plan_policy is not None:
-            self.plan_policy.require_context_tool(ctx, name)
-        for guard in self.execution_guards.values():
-            guard(ctx.user_id, plan, ctx, name)
-        if self.auth is None:
-            raise PermissionError("Native authorization unavailable")
-        self.auth.require(ctx.user_id, "run")
-        if getattr(self, "delegation", None):
+        if self.cancellation_requested(ctx.run_id):
+            raise RunCancelledException("Factory cancellation requested before tool execution")
+        self.require_plan_execution(ctx.user_id, plan, run_context=ctx, tool_name=name)
+        if self.delegation is not None:
             self.delegation.authorize_child(ctx)
-        if name not in plan["tools"] or plan["status"] != "ready" or self.cancellation_requested(ctx.run_id):
-            self.event(ctx.run_id, "protected_denied", "Task authority denied a protected operation", {"tool": name})
-            raise PermissionError("Tool outside task authority or cancellation requested")
+        if name not in plan["tools"]:
+            self.event(ctx.run_id, "protected_denied", "Tool outside selected task", {"tool": name})
+            raise PermissionError("Tool outside selected task")
         return plan
-
-    def require_current_policy(self):
-        # Configuration only: per-plan review is checked separately. Keeping this
-        # boundary nonrecursive permits persisted ancestor mandate verification.
-        if self.settings.temporary_policy == "unset":
-            raise HTTPException(409, "POLICY_UNSET: current execution policy denies execution")
-        if self.plan_policy is not None:
-            if self.plan_policy.current()["name"] == "unset":
-                raise HTTPException(409, "POLICY_UNSET: current execution policy denies execution")
-        elif not self.settings.demo or self.settings.temporary_policy != "bounded-synthetic":
-            raise HTTPException(409, "POLICY_UNSET: plan policy service is unavailable")
 
     def register_execution_guard(self, name, guard, *, tool_independent=False):
         """Declare trusted guard scope without inheriting it across replacements."""
@@ -393,16 +377,18 @@ class Store:
         else:
             self.tool_independent_execution_guards.pop(name, None)
 
-    def require_plan_execution(self, owner, plan, *, run_context=None, scientific_child_id=None):
-        self.require_current_policy()
-        if self.auth is not None:
-            self.auth.require(owner, "run")
+    def require_plan_execution(self, owner, plan, *, run_context=None, scientific_child_id=None, tool_name=None):
         if self.plan_policy is not None:
-            self.plan_policy.require_execution(owner, self.plan(plan["id"], owner), run_context=run_context,
+            self.plan_policy.require_execution(owner, plan, run_context=run_context,
                 **({'scientific_child_id': scientific_child_id} if scientific_child_id is not None else {}))
+        elif self.auth is not None:
+            self.auth.require_member(owner)
+            self.plan(plan["id"], owner)
+        else:
+            raise PermissionError("Native membership unavailable")
         checked = {}
         for name, guard in self.execution_guards.items():
-            guard(owner, plan, run_context, None)
+            guard(owner, plan, run_context, tool_name)
             checked[name] = guard
         return checked
 

@@ -270,8 +270,7 @@ class UsageLedgerPostgresTests(unittest.TestCase):
         self.assertEqual([a["streaming"] for a in attempts], [False, True])
 
     def test_07_revocation_after_response_preserves_settlement_and_denies_next_attempt(self):
-        self.auth.authorization.define_role("controlled-ledger-denied", [])
-        self.options["after"] = lambda: self.db.replace_authz_subject_roles("alice", "controlled-ledger-denied")
+        self.options["after"] = lambda: self.auth.directory.set_disabled("alice", True)
         task, context = self.task(self.plan())
         model = self.selected(context)
         with self.assertRaises(HTTPException):

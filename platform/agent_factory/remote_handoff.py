@@ -77,7 +77,7 @@ class HandoffCancellationRequested(RunCancelledException):
 
 
 class FactoryPublicRoute(APIRoute):
-    """Translate late validated cleanup signals only at Factory HTTP ingress.
+    """Translate runtime cancellation signals at Factory HTTP ingress.
 
     Native AgentOS routes and background guards retain RunCancelledException.
     A signal for a different binding is rejected by _authority before reaching
@@ -91,6 +91,8 @@ class FactoryPublicRoute(APIRoute):
                 return await handler(request)
             except HandoffCancellationRequested as error:
                 raise HTTPException(409, "Origin cancellation ended this immutable handoff") from error
+            except RunCancelledException as error:
+                raise HTTPException(409, "Cancellation ended this immutable handoff") from error
 
         return scoped
 
@@ -189,17 +191,11 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(422, "Origin plan identity is invalid") from error
     if any(not isinstance(plan.get(key), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", plan[key]) for key in ("application", "mode")):
         raise HTTPException(422, "Remote application or mode is unsupported")
-    policy_service = getattr(store, "plan_policy", None)
-    contract = policy_service.current()["tool_contract"] if policy_service else store.settings.runtime_tool_contract
-    known_tools = tools_for_contract(contract)
-    from .tool_policy_registry import merged_tools, resolve_tool_policies
-    from .plan_policy import reserved_tool_names
-    known_tools = merged_tools(known_tools, resolve_tool_policies(getattr(store.settings, 'tool_policies', ()), getattr(store.settings, 'runtime_adapters', ())), reserved=reserved_tool_names())
     tools, caps, budget = plan.get("tools"), plan.get("capabilities"), plan.get("budget")
-    if not isinstance(tools, list) or not tools or any(type(name) is not str or name not in known_tools for name in tools):
-        raise HTTPException(422, "Manifest contains an unregistered remote tool")
-    if not isinstance(caps, list) or any(type(cap) is not str for cap in caps) or set(caps) != {known_tools[name] for name in tools}:
-        raise HTTPException(422, "Manifest capability scope does not exactly match registered tools")
+    if not isinstance(tools, list) or not tools or any(type(name) is not str for name in tools):
+        raise HTTPException(422, "Manifest tool names are invalid")
+    if not isinstance(caps, list) or any(type(cap) is not str for cap in caps):
+        raise HTTPException(422, "Manifest capabilities are invalid")
     if not isinstance(budget, dict) or set(budget) != BUDGET_KEYS | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != (1 if scientific else 0):
         raise HTTPException(422, "Only a root delegation tree may select an execution server")
     _check_budget({key: budget[key] for key in BUDGET_KEYS})
@@ -257,12 +253,12 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     if refs != expected_refs or any(not isinstance(dep, dict) or type(dep.get("id")) is not str or type(dep.get("version")) is not int or type(dep.get("sha256")) is not str
                                    or (dep["id"], dep["version"], dep["sha256"]) not in chosen for dep in dependencies):
         raise HTTPException(409, "Material reference closure is incomplete or changed")
+    if set(tools) != {item["content"] for item in materials if item["kind"] == "tool"}:
+        raise HTTPException(422, "Material tools do not match the immutable manifest")
     if set(caps) != {cap for item in materials for cap in item.get("permissions", [])}:
         raise HTTPException(422, "Material permissions do not match the immutable manifest")
-    if type(plan.get("syntheticFixture")) is not bool or plan.get("policy") not in {"member-self-service", "bounded-synthetic", "admin-review", "read-only-auto"}:
+    if type(plan.get("syntheticFixture")) is not bool or plan.get("policy") != "member-self-service":
         raise HTTPException(409, "Remote plan requires an explicit supported policy and provenance flag")
-    if plan.get("policy") == "bounded-synthetic" and (not store.settings.demo or plan["syntheticFixture"] is not True):
-        raise HTTPException(409, "Synthetic policy cannot authorize a production remote plan")
     return plan
 
 
@@ -327,9 +323,7 @@ class PreparedHandoffService:
             body JSONB NOT NULL, UNIQUE(origin_ref,origin_owner,request_id), UNIQUE(origin_ref,origin_task))""")
 
     def _origin(self, remote_owner: str, origin_ref: str, origin_owner: str, *, execution: bool = True) -> TrustedOrigin:
-        self.auth.require(remote_owner, "run" if execution else "read")
-        if execution:
-            self.store.require_current_policy()
+        self.auth.require_member(remote_owner)
         origin = self.origins.get(origin_ref)
         if origin is None or origin.identity_map.get(origin_owner) != remote_owner:
             raise HTTPException(404, "Trusted origin identity mapping not found")
@@ -487,14 +481,7 @@ class PreparedHandoffService:
                 else:
                     self.store.save_plan(imported)
                 if self.admission_guard:
-                    try:
-                        self.admission_guard(remote_owner, imported)
-                    except HTTPException as error:
-                        if error.status_code == 409 and str(error.detail).startswith("PLAN_REVIEW_REQUIRED:"):
-                            # Metadata preparation exposes the exact receiver
-                            # plan for independent approval, without a ticket.
-                            return {**self._public(row), "receiverReviewRequired": True}
-                        raise
+                    self.admission_guard(remote_owner, imported)
                 task, _ = self.store.reserve_task(imported, "remote-" + row["id"])
                 if task.get("run_id"):
                     raise HTTPException(409, "Preparation encountered an unexpected execution ticket")
@@ -644,7 +631,7 @@ class PreparedHandoffService:
     async def cancel(self, remote_owner: str, identifier: str, remote_task_id: str | None = None) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner, execution=False)
-        self.auth.require(remote_owner, "run")
+        self.auth.require_member(remote_owner)
         # A positive CAS proves no dispatch boundary was crossed, unlike a
         # missing ticket after UNKNOWN. Only that proof may settle preparation.
         if remote_task_id is None or remote_task_id == row["body"].get("remoteTaskId"):
@@ -674,8 +661,8 @@ class PreparedHandoffService:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner)
         task = self._task(row, remote_task_id)
-        # Root approval does not skip current receiver policy; children use its
-        # actual persisted ancestor/native mandate, never a caller's parent ID.
+        # Children use the persisted ancestor/native mandate rather than a
+        # caller's parent ID; current resource and task checks still apply.
         context = SimpleNamespace(session_id=task["id"], run_id=task["run_id"], user_id=remote_owner,
             session_state={"factory_envelope": {"plan_ref": task["plan_id"], "user_id": remote_owner,
                 "task_id": task["id"], "request_id": task["request_id"]}})
@@ -697,7 +684,7 @@ class PreparedHandoffService:
     async def control_command(self, remote_owner, identifier, body: RemoteControlCommand, remote_task_id=None):
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner, execution=body.action != "cancel")
-        self.auth.require(remote_owner, "run")
+        self.auth.require_member(remote_owner)
         task = self._task(row, remote_task_id)
         from .factory_api import FactoryAPI
         command = ControlCommand.model_validate(body.model_dump(exclude={"sourceFingerprint"}, exclude_none=True))
@@ -834,7 +821,7 @@ class PreparedHandoffService:
     def _routes(self) -> None:
         def owner(request, execution=False):
             user = self.auth.user(request)
-            self.auth.require(user["id"], "run" if execution else "read")
+            self.auth.require_member(user["id"])
             return user["id"]
 
         @self.router.post("/prepare", status_code=201)
@@ -955,8 +942,7 @@ class TrustedHandoffClient:
             raise HTTPException(409, 'Unexpected scientific evidence outside selected placement')
 
     def reserve(self, owner: str, plan_id: str, target_ref: str, request_id: str, *, scientific_envelope: dict | None = None) -> dict[str, Any]:
-        self.auth.require(owner, "run")
-        self.store.require_current_policy()
+        self.auth.require_member(owner)
         target = self.targets.get(target_ref)
         if target is None or owner not in target.identity_map:
             raise HTTPException(404, "Trusted execution target not found")
@@ -999,9 +985,7 @@ class TrustedHandoffClient:
 
     def _target(self, owner: str, row: Mapping[str, Any], *, execution: bool = True,
                 native_cancellation: bool = False) -> HandoffTarget:
-        self.auth.require(owner, "run" if execution else "read")
-        if execution:
-            self.store.require_current_policy()
+        self.auth.require_member(owner)
         target = self.targets.get(row["target_ref"])
         if target is None or owner not in target.identity_map or target.fingerprint != row["configuration_hash"]:
             raise HTTPException(409, "Trusted target identity/configuration is no longer valid")
@@ -1059,7 +1043,6 @@ class TrustedHandoffClient:
                 "AMBIGUOUS", "CHANGED", "INTEGRITY", "SCOPE", "ANCESTRY", "UNBOUND", "CONFLICT")} | {
                 "ORIGIN_AUTHORITY_" + name for name in ("BINDING_DENIED", "CONFIG_CHANGED", "DENIED", "UNAVAILABLE",
                     "AUTH_UNAVAILABLE", "SCHEMA_INVALID", "RESPONSE_INVALID")} | {
-                "PLAN_REVIEW_REQUIRED", "PLAN_REVIEW_DENIED", "PLAN_REVIEW_EXPIRED", "POLICY_UNSET"} | {
                 "USAGE_" + name for name in ("COMMITMENT_SCHEMA", "COMMITMENT_INTEGRITY", "BINDING_INTEGRITY",
                     "PRICE_UNAVAILABLE", "CURRENCY_MISMATCH", "APPROVAL_CEILING", "PRICING_DRIFT", "BUDGET_EXHAUSTED",
                     "REMOTE_LEDGER_REQUIRED", "REMOTE_QUOTE_REQUIRED", "REMOTE_QUOTE_INTEGRITY", "REMOTE_PRICE_MISMATCH",
@@ -1264,7 +1247,7 @@ class TrustedHandoffClient:
         return row, target, quote(receipt["id"], safe="")
 
     async def cancel(self, owner: str, task_id: str, remote_task_id: str | None = None) -> dict[str, Any]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         row = self._row(owner, task_id)
         self._target(owner, row, execution=False)
         if remote_task_id is None:

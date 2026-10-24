@@ -50,6 +50,7 @@ class TrustedModelProxy:
     _proxy_host: str = field(init=False, repr=False)
     _proxy_port: int = field(init=False, repr=False)
     _target_host: str = field(init=False, repr=False)
+    _target_authority: str = field(init=False, repr=False)
 
     def __post_init__(self):
         try:
@@ -67,6 +68,7 @@ class TrustedModelProxy:
             protocol_path(self.protocol)
             object.__setattr__(self, 'base_url', target_base)
             object.__setattr__(self, '_target_host', httpx.URL(target_base).host)
+            object.__setattr__(self, '_target_authority', urlsplit(target_base).netloc)
             url = urlsplit(self.proxy_url)
             if (type(self.proxy_url) is not str or any(char.isspace() for char in self.proxy_url)
                     or url.scheme not in {'http', 'https'} or not url.hostname
@@ -119,10 +121,9 @@ class TrustedModelProxy:
 
     def transport(self, checked_ip, hostname):
         self.validate_tls()
-        # Narrow current-cloud route. IPv6 support is not silently approximated.
         try:
-            address = ipaddress.IPv4Address(checked_ip)
-            if not address.is_global or str(address) != checked_ip or hostname != self._target_host:
+            address = ipaddress.ip_address(checked_ip)
+            if str(address) != checked_ip or hostname != self._target_host:
                 raise ValueError()
         except (ValueError, TypeError):
             raise ValueError('TRUSTED_MODEL_PROXY_TARGET_DENIED') from None
@@ -209,7 +210,7 @@ class _ProxyTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request):
         if (self.started or request.method != 'POST'
                 or request.url != self.target_url
-                or request.headers.get('host') != self.grant._target_host):
+                or request.headers.get('host') != self.grant._target_authority):
             raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
         self.grant.validate_tls()
         self.grant.validate_payload(await request.aread())

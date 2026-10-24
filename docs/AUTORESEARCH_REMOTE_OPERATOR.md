@@ -35,21 +35,19 @@ plane imports. No installation was performed as part of this documentation.
 | Receiver | Native scientific phases and original process/GPU custody; fixed preparation/training/evaluation adapters | Construct a parent research model, launch ORX, or access the controller's model credential |
 | Retained baseline | Original task/plan/lease/evaluation rows and sealed scientific bytes | Be reinitialized, migrated into the controller, or used as the new active task database |
 
-Controller and receiver each need an already initialized PostgreSQL database
-with the exact AutoResearch policy and existing principals. `--check` is a
-read-only compatibility gate, not a bootstrap command. It returns BLOCKED or
-NOT_CHECKED for incompatible/uninitialized policy; it never repairs it. Required
-settings include `admin-review`, `separate-admin`, tool contract
-`autoresearch-session-v1`, plan revision `autoresearch-goal-plan-v1` and material
-revision `autoresearch-goal-material-v1`. Use the existing administrative
-provisioning process; this entrypoint does not seed identities or grant rights.
+Controller and receiver each use an initialized PostgreSQL database with
+existing member accounts. `--check` reads the current namespace, required core
+execution tables and demo/production mode in a read-only transaction. Missing
+resources return NOT_CHECKED; inaccessible namespaces, incomplete tables and
+mode mismatches return BLOCKED. The command preserves existing records.
+Runtime settings select member self-service and `autoresearch-session-v1`.
+Historical plan/material approval configurations do not gate startup.
 
-The receiver also opens the distinct retained-baseline database through its
-original `task-research-bootstrap-v1` policy verification. The baseline context
-factory rejects the same database name as the active receiver database, even
-across hosts. Keep controller, receiver and retained baseline databases distinct.
-Connection aliases are not proof of distinct physical servers. Original retained
-row/plan/lease lineage is checked separately.
+The receiver opens a distinct retained-baseline database and verifies its
+original task, plan, lease and artifact lineage. The baseline context rejects
+the same database name as the active receiver, even across hosts. Keep
+controller, receiver and retained baseline databases distinct. Connection
+aliases alone do not establish distinct physical servers.
 
 Original tokenizer preparation belongs to the retained baseline database/root.
 The receiver's new task database must not install that original preparation
@@ -74,6 +72,7 @@ operator-reviewed original records, not from guesses.
 
 The complete top-level keys are `schema`, `role`, `workspace`, `port`,
 `databaseRef`, `jwtRef`, `handoffBearerRef`, `project`, `publication`.
+`publication` contains only `author`, the member who publishes the versions.
 Unknown keys, duplicate JSON keys and nonfinite values are rejected. References
 are environment-variable **names**; an operator process manager supplies their
 existing values privately. Never put credentials in JSON, command arguments,
@@ -123,29 +122,23 @@ uv run --offline --no-sync python scripts/autoresearch_operator.py \
   --config /private/operator/receiver.json --check
 ```
 
-`--check` reads the configured database reference, validates settings and current
-policy, and does not construct services or read model credentials. It is not a
+`--check` reads the configured database reference and validates the database
+resources described above. It does not construct services or read model credentials. It is not a
 connectivity test of the receiver, GPU compatibility test, retained-baseline
 verification, or model/billing authorization proof.
 
-With both policies compatible and the existing distinct publication identities
-approved for this action, first explicitly publish on the controller:
+With both database checks passing, publish as the configured member on the controller:
 
 ```sh
 uv run --offline --no-sync python scripts/autoresearch_operator.py \
   --config /private/operator/controller.json --prepare
 ```
 
-`--prepare` **writes governance records** using the named author and reviewer:
-material drafts, publication requests/decisions and application publication. The
-author needs `components:write`; importing a snapshot additionally requires
-`agent_os:admin` for the author. The distinct reviewer needs `agent_os:admin`.
-Listing two names is not evidence of independent human review. This operator
-command is an explicit publication action, not a request for later approval.
-It does not approve a task plan or start research. Receiver construction also
-reads the retained baseline and reconstructs its services; existing service
-constructors may perform idempotent metadata operations. Only the compatibility
-preflights are strictly read-only.
+`--prepare` creates material drafts and publishes the exact material and
+application versions as `publication.author`, an active member. Receiver
+construction also reads retained baseline evidence and reconstructs services;
+service constructors may perform idempotent metadata operations. The database
+preflight itself remains read-only. Preparation does not submit research work.
 
 Both endpoints must publish the **same full definition**: `research` plus
 `remote-scientific-preparation`, `remote-scientific-training` and
@@ -159,8 +152,8 @@ The first preparation returns `publication.applicationRef` **and** the full
 creating the same definition twice is not sufficient to obtain the same hash.
 Explicitly copy the complete returned snapshot into the receiver's private
 `project.applicationSnapshot`; keep its `applicationRef` null until local
-publication. Review this operator transfer; there is no automatic network copy
-or inherited publication approval. Do not manufacture timestamps or hashes.
+publication. Transfer the original returned snapshot explicitly; preserve its
+timestamps and hashes.
 
 ```sh
 uv run --offline --no-sync python scripts/autoresearch_operator.py \
@@ -170,8 +163,8 @@ uv run --offline --no-sync python scripts/autoresearch_operator.py \
 The receiver first verifies that the snapshot's complete normalized definition
 matches the locally generated four-mode application and exact material refs.
 It calls the existing trusted `ApplicationService.import_snapshot`, preserving
-source timestamp/version/hash, then creates and approves a **separate local**
-publication review. Import itself grants no execution authority. Conflicting
+source timestamp/version/hash, then publishes that exact version as the local
+member. Conflicting
 existing versions fail closed. A snapshot from a different project, budget,
 material version or tool scope cannot be substituted.
 
@@ -189,22 +182,20 @@ uv run --offline --no-sync python scripts/autoresearch_operator.py \
   --config /private/operator/controller.json --serve
 ```
 
-Serving requires a non-null current approved applicationRef. Both servers bind
+Serving requires a non-null current published applicationRef. Both servers bind
 only `127.0.0.1` at the configured port, with access logs disabled. Cross-host
 routing therefore requires an already authorized authenticated tunnel/reverse
 proxy and HTTPS endpoint. This command creates no public listener, tunnel,
 firewall rule, TLS termination or persistent remote access. Neither cloud
 loopback PostgreSQL nor a local URL implies target connectivity.
 
-## Review and execution boundaries
+## Execution and evidence
 
-User submission creates a current immutable plan subject to **admin review**.
-Publication alone cannot start it. Pending review is a real waiting state, not
-failure and not permission to auto-approve. Parent scope, origin authority,
-receiver mappings, plan/material currency and each native scientific phase stay
-bound to their original identities. Cancellation/UNKNOWN evidence must retain
-custody until positive original cleanup; restarting is not permission to replay
-an uncertain launch or model request.
+Members submit their immutable plans directly. Current member status, parent
+scope, origin authority, receiver mappings, application/material availability
+and each native scientific phase remain checked against their original
+identities. Cancellation and UNKNOWN effects retain custody until positive
+original cleanup; recovery preserves the original launch and model request.
 
 Completion of the three subordinate phases alone does not complete the parent
 research journey. The agent must call `research_result` to consume the verified
@@ -215,7 +206,7 @@ native child phases and evidence checks succeed.
 
 An evaluator reads the completed training checkpoint through a separate
 scientific-custody proof. The origin requires the same still-active paused
-parent, current review/material policy, the original completed training child,
+parent, current material availability, the original completed training child,
 and its exact successful reclaimed lease/checkpoint. The proof grants only
 that original custody read; it contains no execution capabilities, cannot
 reactivate the child, and does not debit another tool call. Receiver checkpoint
@@ -252,9 +243,9 @@ receiver constructors with sealed synthetic files while mocking database/archive
 and device boundaries; it is not a substitute for live retained-custody checks.
 
 Before operating on the actual target, supply the existing three database
-connections and exact policy states, reviewed private original snapshots and
-sealed package/interpreter pins, current author/reviewer identities, and an
+connections and core execution schemas, private original snapshots and
+sealed package/interpreter pins, the current publishing member, and an
 already authorized reachable origin/receiver route. The operator entrypoint
 cannot create these facts. A missing or incompatible fact remains a blocker;
-changing stored policy, regenerating baseline identities, installing into the
+regenerating baseline identities, installing into the
 sealed venv, or replaying UNKNOWN work is not a recovery procedure.

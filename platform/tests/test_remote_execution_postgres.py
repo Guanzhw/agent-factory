@@ -89,15 +89,13 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.handoff.targets.clear()
         self.handoff.targets[self.target.reference] = self.target
         for state, owner in ((self.origin, "alice"), (self.receiver, "bob")):
-            state["auth"].authorization.unassign(owner, "fixture-product-reader")
-            state["auth"].authorization.assign(owner, "factory-user")
+            state["auth"].directory.set_disabled(owner, False)
 
     def tearDown(self):
         self.handoff.targets.clear()
         self.handoff.targets[self.target.reference] = self.target
         for state, owner in ((self.origin, "alice"), (self.receiver, "bob")):
-            state["auth"].authorization.unassign(owner, "fixture-product-reader")
-            state["auth"].authorization.assign(owner, "factory-user")
+            state["auth"].directory.set_disabled(owner, False)
         # Only cancel this test's owned original reservations through product APIs.
         # Unknown is retained by the application; no table clearing or fake stop.
         for request_id in self.requests:
@@ -358,17 +356,15 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as identity:
             self.receiver["execution_bindings"].recheck(child_plan, forged)
         self.assertEqual(identity.exception.status_code, 403)
-        # Hold this owned group against background observation while replacing
-        # its native SQL role; current owner denial still applies to reservation
-        # metadata and the exact old grant is restored before releasing the lock.
-        authorization = self.receiver["auth"].authorization
-        authorization.define_role("fixture-product-reader", ["agents:factory-executor:read", "sessions:read", "components:read"])
+        # The owned root lock makes current membership loss deterministic
+        # before the observer can turn it into persisted cancellation.
+        auth = self.receiver["auth"]
         with store.delegation._root_lock(remote_root_id):
             try:
-                authorization.set_role("bob", "fixture-product-reader")
+                auth.directory.set_disabled("bob", True)
                 self.assertEqual(observer._reason(stale, None), "current-authority-ended")
             finally:
-                authorization.set_role("bob", "factory-user")
+                auth.directory.set_disabled("bob", False)
         # A current SQL material withdrawal is visible in the same trusted read
         # transaction. Rollback preserves other fixtures and immutable evidence.
         governance = self.receiver["material_governance"]
@@ -406,33 +402,33 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(self.ticket_count(self.receiver, remote_child_id), 1)
         self.assertEqual(self.ticket_count(self.origin), 0)
 
-    def test_05_lost_receiver_reply_read_only_recovery_without_second_dispatch(self):
+    def test_05_lost_receiver_reply_disabled_owner_recovery_keeps_original_dispatch(self):
         transport = ControlledDispatchLoss(self.receiver_app)
         self.install_transport(transport)
         job, body = self.submit(self.plan("sort", application="research"))
         self.wait(job["id"], {"waiting_input"})
         self.assertEqual(transport.attempts, 1)
-        for state, owner in ((self.origin, "alice"), (self.receiver, "bob")):
-            state["auth"].authorization.define_role("fixture-product-reader", ["agents:factory-executor:read",
-                                                     "sessions:read", "components:read", "registry:read"])
-            state["auth"].authorization.unassign(owner, "factory-user")
-            state["auth"].authorization.assign(owner, "fixture-product-reader")
+        headers = self.headers()
+        self.origin["auth"].directory.set_disabled("alice", True)
+        try:
+            for method, path, json_body in (("GET", "/requests/" + body["requestId"], None),
+                ("GET", "/jobs/" + job["id"], None),
+                ("POST", f'/jobs/{job["id"]}/cancel', {}), ("POST", "/instances", body)):
+                response = self.origin_client.request(method, "/api/factory" + path, headers=headers, json=json_body)
+                self.assertEqual(response.status_code, 403, response.text)
+            # Real lifecycle observation persists authority loss; reading a
+            # receipt cannot create another receiver task or renew execution.
+            self.origin_client.portal.call(self.origin["lifecycle_observer"].observe_root, job["id"])
+            self.assertTrue(self.origin["store"].task(job["id"], "alice")["cancel_requested"])
+        finally:
+            self.origin["auth"].directory.set_disabled("alice", False)
         receipt = self.request("GET", "/requests/" + body["requestId"]).json()
         self.assertEqual(receipt["taskId"], job["id"])
         self.assertEqual(receipt["executionTargetRef"], self.target.reference)
-        detail = self.request("GET", "/jobs/" + job["id"]).json()
-        self.assertIn(detail["job"]["status"], {"waiting_input", "canceling", "canceled", "failed"})
-        self.assertTrue(detail["snapshot"].get("run", detail["snapshot"]).get("readOnly"))
-        self.assertEqual(self.request("GET", f'/jobs/{job["id"]}/children').json(), [])
-        self.request("POST", f'/jobs/{job["id"]}/cancel', expected=403)
-        self.request("POST", "/instances", expected=403, json=body)
-        self.assertEqual(transport.attempts, 1)
-        remote_id = detail["job"]["executionPlacement"]["remoteTaskId"]
-        self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)
-        # Trusted cleanup is autonomous after current run authority ends;
-        # read-only recovery itself never submits or authorizes another effect.
         settled = self.wait(job["id"], {"canceled", "failed"})
         self.assertTrue(settled["snapshot"]["delegation"]["allStopped"])
+        remote_id = settled["job"]["executionPlacement"]["remoteTaskId"]
+        self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)
         self.assertEqual(transport.attempts, 1)
 
     def test_06_lost_request_before_delivery_retains_unknown_and_never_replays(self):
@@ -553,8 +549,13 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         other, _ = self.submit(self.plan("A second receiver replay checksum"))
         self.wait(other["id"], {"completed"})
         self.request("GET", f'/jobs/{other["id"]}/events', expected=404, params={"cursor": first["nextCursor"]})
-        self.origin["auth"].authorization.define_role("fixture-product-reader", ["agents:factory-executor:read"])
-        self.origin["store"].native_db.replace_authz_subject_roles("alice", "fixture-product-reader")
+        headers = self.headers()
+        self.origin["auth"].directory.set_disabled("alice", True)
+        try:
+            denied = self.origin_client.get("/api/factory" + path, params={"limit": 2}, headers=headers)
+            self.assertEqual(denied.status_code, 403, denied.text)
+        finally:
+            self.origin["auth"].directory.set_disabled("alice", False)
         self.assertEqual(self.request("GET", path, params={"limit": 2}).json(), first)
         self.assertEqual(self.ticket_count(self.origin), 0)
         self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)

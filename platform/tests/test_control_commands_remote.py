@@ -109,11 +109,15 @@ class RemoteControlCommandPostgresTests(unittest.TestCase):
             self.assertEqual(value["state"], "UNKNOWN")
         value = self.request("GET", f'/jobs/{task}/commands/{command["commandId"]}').json()
         self.assertTrue(value["decisionRecorded"])
-        auth = self.origin["auth"].authorization
-        auth.define_role("fixture-product-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
-        auth.unassign("alice", "factory-user")
-        auth.assign("alice", "fixture-product-reader")
-        self.request("POST", f"/jobs/{task}/commands", expected=403, json=command)
+        headers = self.headers()
+        self.origin["auth"].directory.set_disabled("alice", True)
+        try:
+            denied = self.origin_client.post(f"/api/factory/jobs/{task}/commands", headers=headers, json=command)
+            self.assertEqual(denied.status_code, 403, denied.text)
+            denied_read = self.origin_client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}', headers=headers)
+            self.assertEqual(denied_read.status_code, 403, denied_read.text)
+        finally:
+            self.origin["auth"].directory.set_disabled("alice", False)
         self.assertTrue(self.request("GET", f'/jobs/{task}/commands/{command["commandId"]}').json()["decisionRecorded"])
 
     def test_remote_approve_and_reject_lost_reply_preserve_exact_decision(self):

@@ -186,8 +186,7 @@ class DelegationService:
         return ticket
 
     def _mandate(self, owner: str, task: dict[str, Any], *, creating: bool = False) -> tuple[str, list[dict[str, Any]]]:
-        self.auth.require(owner, "run")
-        self.store.require_current_policy()
+        self.auth.require_member(owner)
         root_id, ancestors = self._ancestry(task)
         roots = self.store.sql("SELECT * FROM af_delegation_roots WHERE root_id=:id", id=root_id)
         if roots and (roots[0]["owner_id"] != owner or roots[0]["reclaimed"]):
@@ -261,8 +260,7 @@ class DelegationService:
         task = self.store.task(run_context.run_id, run_context.user_id)
         if task["id"] != run_context.session_id:
             raise PermissionError("Tool budget session binding mismatch")
-        self.auth.require(run_context.user_id, "run")
-        self.store.require_current_policy()
+        self.auth.require_member(run_context.user_id)
         root_id, ancestors = self._ancestry(task)
         # Always acquire root authority before borrowing metadata capacity.
         # Reversing this order deadlocks against observation on a one-slot pool.
@@ -390,8 +388,7 @@ class DelegationService:
             raise HTTPException(422, "A bounded delegation request ID is required")
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
             raise HTTPException(422, "Unsupported bounded child goal or mode")
-        self.auth.require(owner, "run")
-        self.store.require_current_policy()
+        self.auth.require_member(owner)
         parent = self.store.task(parentTaskId, owner)
         request = self._creation_request(owner, parent, goal, mode, placement)
         root_id, _ = self._ancestry(parent)
@@ -530,7 +527,7 @@ class DelegationService:
                 "cancelRequested": task["cancel_requested"], "unknown": unknown, "failed": failed, "pending": not stopped, "stopped": stopped}
 
     async def children(self, owner: str, parentid: str) -> list[dict[str, Any]]:
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         parent = self.store.task(parentid, owner)
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE parent_id=:parent ORDER BY created_at", parent=parent["id"])
         return [await self._linked_facts(owner, link) for link in links]
@@ -543,7 +540,7 @@ class DelegationService:
         return {**await self._facts(self.store.task(link["child_id"], owner)), "link": link}
 
     async def inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         parent = self.store.task(parentid, owner)
         children = [await self._linked_facts(owner, link) for link in self._descendants(parent["id"])]
         parent_facts = await self._facts(parent)
@@ -555,7 +552,7 @@ class DelegationService:
                 "unknown": parent_facts["unknown"] or any(child["unknown"] for child in children), "allStopped": all_stopped}
 
     async def cascade_cancel(self, owner: str, parentid: str) -> dict[str, Any]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         parent = self.store.task(parentid, owner)
         root_id, _ = self._ancestry(parent)
         with self._root_lock(root_id):

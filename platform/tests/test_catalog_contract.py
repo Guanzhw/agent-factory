@@ -20,12 +20,16 @@ class CatalogContractTests(ApplicationCompositionFixture):
     def test_transitive_permission_and_archived_dependency_fail_closed(self):
         with self.assertRaises(HTTPException):
             self.material(kind="knowledge", permissions=["agent_os:admin"])
-        original = self.plan()
-        self.store.material_governance.archive("manager", "synthetic-knowledge", 1, "archive-fixture", "Controlled inactive dependency")
-        blocked = self.plan()
-        self.assertEqual(blocked["status"], "blocked")
-        self.assertTrue(blocked["missing"])
-        self.assertNotIn("agent_os:admin", blocked["capabilities"])
+        owned = self.material(kind="knowledge", id="catalog-archive-owned")
+        definition = app_definition(self.store, identifier="catalog-archive-fixture")
+        refs = definition["modes"]["literature"]["materialRefs"]
+        refs[refs.index(next(ref for ref in refs if ref["id"] == "synthetic-knowledge"))] = pin(owned)
+        application = self.applications.create_draft("manager", definition, "catalog-archive-app")
+        self.applications.publish("manager", application["id"], application["version"], "catalog-archive-publish")
+        original = create_plan(self.store, "alice", "Compare synthetic candidates", "literature",
+                               application_ref=pin(application))
+        self.store.material_governance.archive("manager", owned["id"], owned["version"],
+            "archive-fixture", "Controlled inactive dependency")
         self.assertEqual(self.store.plan(original["id"], "alice"), original)
         with self.assertRaises(HTTPException):
             self.applications.require_plan_current(original)
@@ -63,8 +67,7 @@ class CatalogContractTests(ApplicationCompositionFixture):
         refs = revised_definition["modes"]["literature"]["materialRefs"]
         refs[refs.index(next(ref for ref in refs if ref["id"] == "research-prompt"))] = pin(alternate)
         revised = self.applications.revise("manager", application["id"], 1, revised_definition, "revise-config")
-        review = self.applications.request_publication("manager", revised["id"], 2, "review-config")
-        self.applications.decide_publication("bob", review["id"], True, "approve-config")
+        self.applications.publish("manager", revised["id"], 2, "publish-config")
         current = create_plan(self.store, "alice", "Original governed synthetic plan", "literature", application_ref=pin(revised))
         self.assertNotIn(alternate["content"], old["instructions"])
         self.assertIn(alternate["content"], current["instructions"])

@@ -218,7 +218,7 @@ class PersistentResourceService:
                 namespaces[namespace] = identity
 
     def _authorize(self, owner: str, ref: str) -> RemoteTarget:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         target = self.targets.get(ref)
         if target is None or owner not in target.owners:
             raise HTTPException(404, "Authorized resource reference not found")
@@ -277,7 +277,7 @@ class PersistentResourceService:
         return body
 
     def discover(self, owner: str) -> list[dict]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         return [self._resource(owner, ref) for ref, target in self.targets.items() if owner in target.owners]
 
     async def attach(self, owner: str, connection_ref: str, task_id: str | None = None, request_id: str | None = None) -> dict:
@@ -447,7 +447,7 @@ class PersistentResourceService:
         return body, True
 
     def inspect(self, owner: str, lease_id: str) -> dict:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         rows = self.store.sql("SELECT * FROM af_leases WHERE id=:id AND owner_id=:owner", id=lease_id, owner=owner)
         if not rows:
             raise HTTPException(404, "Scoped resource lease not found")
@@ -592,7 +592,7 @@ class PersistentResourceService:
                 **({"aggregateEvidence": aggregate} if aggregate is not None else {})}
 
     def list_leases(self, owner, *, after=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         if after is not None and (type(after) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", after)):
             raise HTTPException(400, "Invalid lease cursor")
         rows = self.store.sql("SELECT id,body FROM af_leases WHERE owner_id=:owner AND id>:after ORDER BY id LIMIT 100",

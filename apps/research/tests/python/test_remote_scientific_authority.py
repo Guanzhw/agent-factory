@@ -42,14 +42,14 @@ class RouteFixture:
         self.handoff = SimpleNamespace(targets={"fixture-target": self.target}, _row=lambda *_: self.row,
             _target=lambda *_, **__: None, authority_callback=self.authority,
             store=with_research_services(SimpleNamespace(), remote_scientific=SimpleNamespace(consume_remote_tool=self.consume)))
-        auth = SimpleNamespace(user=lambda _: {"id": self.actor}, require=self.require)
+        auth = SimpleNamespace(user=lambda _: {"id": self.actor}, require_member=self.require_member)
         app = FastAPI()
         app.include_router(origin_authority_router(auth, self.handoff,
             scientific_call=lambda body: services_for(self.handoff.store).remote_scientific.consume_remote_tool(body),
             scientific_custody=lambda body: services_for(self.handoff.store).remote_scientific.authorize_completed_custody(body)))
         self.client = TestClient(app)
 
-    def require(self, actor, operation):
+    def require_member(self, actor):
         if not self.allowed:
             raise HTTPException(403, "fixture-denied")
 
@@ -97,11 +97,11 @@ class ScientificAuthorityRouteTests(unittest.TestCase):
         self.assertEqual(one.headers["cache-control"], "private, no-store")
 
     def test_mutation_cannot_skip_actor_configuration_placement_or_cancellation(self):
-        for case in ("actor", "grant", "config", "placement", "cancel", "rotation"):
+        for case in ("actor", "member", "config", "placement", "cancel", "rotation"):
             f = RouteFixture()
             try:
                 if case == "actor": f.actor = "foreign"
-                elif case == "grant": f.allowed = False
+                elif case == "member": f.allowed = False
                 elif case == "config": f.target.configuration_revision = "2"
                 elif case == "placement": f.row["manifest_hash"] = "d" * 64
                 elif case == "cancel": f.cancelled = True

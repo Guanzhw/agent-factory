@@ -54,6 +54,19 @@ class GoLiveRunnerTests(unittest.TestCase):
             self.assertEqual(before, (path.read_bytes(), path.stat().st_mtime_ns))
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
+    def test_member_settings_reach_local_app_boundary_without_provider_access(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(runner, 'create_app', side_effect=RuntimeError('local-boundary')) as app, \
+             patch.object(runner, 'credential', side_effect=AssertionError) as credential:
+            result = runner.run(self.arguments(directory))
+        app.assert_called_once()
+        settings = app.call_args.args[0]
+        self.assertEqual(settings.temporary_policy, 'member-self-service')
+        self.assertEqual(settings.max_tool_calls, 1)
+        self.assertEqual(settings.usage_policy.task_token_limit, 500_000)
+        self.assertEqual(result['status'], 'stopped')
+        credential.assert_not_called()
+
     def test_setup_failure_is_durable_without_logging_or_credential(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(runner, 'credential', side_effect=AssertionError), \
@@ -117,11 +130,10 @@ class GoLiveRunnerTests(unittest.TestCase):
             credential.assert_not_called()
             state = states[0]
             governance, applications, auth = state["material_governance"], state["applications"], state["auth"]
-            self.assertTrue(governance.member_publication())
             for owner in ("alice", "bob"):
-                auth.require(owner, "run")
+                auth.require_member(owner)
                 with self.assertRaises(HTTPException) as denied:
-                    auth.require(owner, "agent_os:admin")
+                    auth.require_account_admin(owner)
                 self.assertEqual(denied.exception.status_code, 403)
             store = state["store"]
             # The runner has already disposed its engines; reopen only for local

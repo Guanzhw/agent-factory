@@ -119,16 +119,16 @@ job facts stay readable with execution/delegation actions disabled; local scoped
 cancel remains available. A read cannot manufacture a stop proof or release a
 paused/unknown native ticket.
 
-## Two-sided review and receiver descendants
+## Member preparation and receiver descendants
 
-Both sides enforce their own exact plan policy. Under receiver administrator
-review, prepare saves the exact receiver plan/proof and returns `PREPARING` with
-`receiverReviewRequired`; no receiver task or native ticket exists yet. The UI
-shows that specific waiting state. A current receiver administrator reviews the
-receiver plan ID, whose fingerprint includes the immutable proof reference.
-After approval, continuing the original source plan/target/request key performs
-idempotent prepare and crosses the existing one-shot dispatch boundary. Native
-tool confirmation remains a separate requirement.
+Both sides check current membership, selected resources and exact task scope.
+Prepare saves the receiver plan/proof and directly reserves the member's task.
+An interruption can retain `PREPARING` before a receiver task is confirmed; the UI
+projects an unknown preparation outcome with the original proof. An explicit
+continuation keeps the original source plan, target and request key, completes
+idempotent preparation and crosses the existing one-shot dispatch boundary.
+Historical receiver-review fields do not control preparation or continuation.
+Native tool confirmation remains a separate requirement.
 
 Receiver descendants retain the root's exact application/material alternatives,
 source connection pins and proof mapping. A child may select a permitted mode

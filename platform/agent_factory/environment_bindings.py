@@ -62,7 +62,7 @@ class EnvironmentBindings:
 
     def preview(self, owner, identifier):
         service = self.service
-        service.auth.require(owner, 'read')
+        service.auth.require_member(owner)
         with service.db.read() as conn: row = service._row(conn, owner, identifier)
         body, previous = row['body'], row['credential_binding']
         result = {'environmentId': identifier, 'projectId': body['projectId'], 'dataRetained': True,
@@ -122,7 +122,7 @@ class EnvironmentBindings:
 
     def rebind(self, owner, identifier, request_id, preview_hash):
         service = self.service
-        service.auth.require(owner, 'run'); service.connections._key(request_id)
+        service.auth.require_member(owner); service.connections._key(request_id)
         fingerprint = digest({'environmentId': identifier, 'previewHash': preview_hash})
         with service._fence(identifier):
             with service.db.read() as conn:
@@ -142,14 +142,14 @@ class EnvironmentBindings:
                 model = service.models.binding(conn, owner, proposed['modelReference'])
                 if model.revision != proposed['modelRevision']: raise HTTPException(409, 'ENVIRONMENT_MODEL_CHANGED')
                 model.opaque_handle.check()
-            service.auth.require(owner, 'run')
+            service.auth.require_member(owner)
             with service.db.write() as conn:
                 row = service._row(conn, owner, identifier)
                 if row['state'] != 'STOPPED' or digest(row['credential_binding']) != preview['currentBindingFingerprint']:
                     raise HTTPException(409, 'ENVIRONMENT_BINDING_PREVIEW_CHANGED')
                 if len(self.history(owner, identifier, conn=conn)) >= 1024:
                     raise HTTPException(409, 'ENVIRONMENT_BINDING_HISTORY_LIMIT')
-                service.auth.require(owner, 'run')
+                service.auth.require_member(owner)
                 current = conn.execute(select(self.current_table).where(self.current_table.c.environment_id == identifier)).first()
                 values = {'environment_id': identifier, 'owner_id': owner, 'body': proposed, 'body_hash': digest(proposed)}
                 if current:
@@ -168,7 +168,7 @@ class EnvironmentBindings:
         with self.service.db.read() as current: return [self.checked_change(row) for row in current.execute(query).mappings()]
 
     def request(self, owner, request_id):
-        service = self.service; service.auth.require(owner, 'read')
+        service = self.service; service.auth.require_member(owner)
         with service.db.read() as conn:
             row = conn.execute(select(self.changes).where(self.changes.c.owner_id == owner,
                 self.changes.c.request_id == request_id)).mappings().first()
@@ -196,7 +196,7 @@ class EnvironmentModelHandle:
     def __repr__(self): return 'EnvironmentModelHandle(credentials=<redacted>)'
 
     def check(self):
-        self._service.auth.require(self._owner, 'run')
+        self._service.auth.require_member(self._owner)
         with self._service.db.read() as conn:
             row = self._service._row(conn, self._owner, self._environment['id'])
             if row['body'] != self._environment or row['credential_binding'] != self._binding:

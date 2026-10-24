@@ -46,7 +46,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
         self.runtime._config.return_value = ('target1', {'artifactLimits': {'checkpointBytes': 4096}}, 'b'*64)
         self.resources = Mock()
         self.resources.execution_runtime.return_value = self.runtime
-        self.auth, self.store, self.storage = Mock(), Mock(), Mock()
+        self.auth, self.store, self.storage = Mock(spec=["require_member"]), Mock(), Mock()
         self.store.plan.return_value = self.plan
         self.store.task.side_effect = lambda *_args: deepcopy(self.task)
         self.store.settings = SimpleNamespace(storage_low_water_bytes=100)
@@ -141,7 +141,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
             self.service.reserve(self.binding, disk_bytes=8192)
         self.storage._directory.assert_not_called()
         self.assertEqual(self.held, 1024)
-        self.auth.require.side_effect = PermissionError('revoked')
+        self.auth.require_member.side_effect = PermissionError('revoked')
         with self.assertRaises(PermissionError):
             self.service.reserve(self.binding, disk_bytes=8192)
         self.storage._directory.assert_not_called()
@@ -198,13 +198,13 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
 
     def test_revocation_rechecked_before_publish_and_on_identity(self):
         self.produce()
-        self.auth.require.side_effect = [None, PermissionError('revoked')]
+        self.auth.require_member.side_effect = [None, PermissionError('revoked')]
         with self.assertRaises(PermissionError):
             self.service.import_completed('alice', 'lease1')
         self.store.artifact_write.assert_not_called()
-        self.auth.require.side_effect = None
+        self.auth.require_member.side_effect = None
         self.service.import_completed('alice', 'lease1')
-        self.auth.require.side_effect = PermissionError('revoked')
+        self.auth.require_member.side_effect = PermissionError('revoked')
         with self.assertRaises(PermissionError):
             self.service.identity('task1', 'artifact1', 4096)
 
@@ -226,7 +226,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
         @contextmanager
         def revoke_after_hash(*args):
             with original_open(*args) as opened:
-                self.auth.require.side_effect = PermissionError('revoked during stream')
+                self.auth.require_member.side_effect = PermissionError('revoked during stream')
                 yield opened
 
         with patch.object(self.service, '_open', revoke_after_hash), self.assertRaises(PermissionError):
@@ -259,7 +259,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, change=change):
                     self.task.update(terminal=False, cancel_requested=False)
                     self.held = 1024; self.events.clear(); self.store.sql.reset_mock()
-                    self.storage._directory.reset_mock(); self.auth.require.reset_mock(side_effect=True)
+                    self.storage._directory.reset_mock(); self.auth.require_member.reset_mock(side_effect=True)
                     self.store.require_plan_execution.reset_mock(side_effect=True)
                     revoked = False; denial = PermissionError('synthetic authority ended'); triggered = False
                     def check(*_args, **_kwargs):
@@ -271,7 +271,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
                         if change == 'revocation': revoked = True
                         elif change == 'cancel': self.task['cancel_requested'] = True
                         else: self.task['terminal'] = True
-                    self.auth.require.side_effect = check
+                    self.auth.require_member.side_effect = check
                     self.store.require_plan_execution.side_effect = check
                     self.lock_hook = mutate if boundary == 'retention' else None
                     self.sql_hook = (lambda statement: mutate() if 'pg_advisory_xact_lock' in statement else None) if boundary == 'admission' else None
@@ -328,7 +328,7 @@ class ResearchCheckpointStoreTests(unittest.TestCase):
     def test_reserve_object_lookup_authority_loss_prevents_chmod(self):
         denial = PermissionError('synthetic authority ended at object lookup')
         def revoke_object(*_args):
-            self.auth.require.side_effect = denial
+            self.auth.require_member.side_effect = denial
             return self.object_row
         self.storage._object.side_effect = revoke_object
         with patch('agent_factory_research.research_checkpoint_store.os.fchmod', create=True) as chmod:

@@ -124,16 +124,10 @@ def provision_owned_subjects(settings):
     native = PostgresDb(db_url=settings.db_url, id="owned-process-bootstrap")
     auth = AuthService(settings, native)
     try:
-        read_scopes = ["agents:factory-executor:read", "components:read", "registry:read", "sessions:read", "filesystem:read"]
-        auth.authorization.define_role("fixture-reader", read_scopes)
-        auth.authorization.define_role("fixture-user", [*read_scopes, "agents:factory-executor:run"])
-        auth.authorization.define_role("fixture-admin-role", ["agent_os:admin"])
         local_owner = ORIGIN_OWNER if settings.fixture_role == "origin" else RECEIVER_OWNER
         for subject in (ORIGIN_OWNER, RECEIVER_OWNER, OTHER_OWNER, MANAGER, REVIEWER):
             if auth.directory.get(subject) is None:
                 auth.directory.upsert(subject, name=subject)
-                role = "fixture-admin-role" if subject in {MANAGER, REVIEWER} else "fixture-user" if subject in {local_owner, OTHER_OWNER} else "fixture-reader"
-                auth.authorization.assign(subject, role)
         store = Store(settings.db_url, settings)
         try:
             service = ConnectionService(store, auth, settings.trusted_connections)
@@ -176,8 +170,7 @@ def publish_fixture(state, source_application=None):
     for definition in definitions:
         mid = definition["id"]
         created = governance.create_draft(MANAGER, definition, "fixture-draft-" + mid)
-        review = governance.request_publication(MANAGER, mid, created["version"], "fixture-review-" + mid)
-        governance.decide_publication(REVIEWER, review["id"], True, "fixture-approve-" + mid)
+        governance.publish(MANAGER, mid, created["version"], "fixture-publish-" + mid)
         materials[mid] = created
     common = [pin(materials["fixture-selected-" + suffix]) for suffix in ("model", "environment", "knowledge", "skill", "prompt", "checksum")]
     budget = {"toolCalls": 8, "maxDepth": 2, "maxChildren": 4, "experimentSeconds": 8, "outputBytes": 65536}
@@ -195,12 +188,21 @@ def publish_fixture(state, source_application=None):
             "description": "Actual non-demo policy path with explicitly controlled provider.", "defaultMode": "direct",
             "modes": modes}, "fixture-application-draft")
     else:
-        # Operator-only exact snapshot install does not copy source approval.
-        # The receiver below independently reviews its own imported draft.
+        # The receiver installs and publishes its exact imported snapshot.
         application = applications.import_snapshot(MANAGER, source_application, "fixture-application-import")
-    review = applications.request_publication(MANAGER, application["id"], application["version"], "fixture-application-review")
-    applications.decide_publication(REVIEWER, review["id"], True, "fixture-application-approve")
+    applications.publish(MANAGER, application["id"], application["version"], "fixture-application-publish")
     return pin(application), materials, application
+
+
+def install_dispatch_hold(state, controls):
+    """Fixture-only protocol staging; never writes production approval state."""
+    client = state['handoff_client']
+    dispatch = client.dispatch
+    async def staged_dispatch(owner, task_id):
+        if controls.get('holdDispatch'):
+            return await client.receipt(owner, task_id)
+        return await dispatch(owner, task_id)
+    client.dispatch = staged_dispatch
 
 
 class FixtureSessionBridge:
@@ -277,9 +279,9 @@ def main():
     if not workspace.is_relative_to(directory):
         raise ValueError("Fixture workspace must remain below its owned configuration directory")
     # Explicit historical accounting fixture; installed providers are controlled.
-    settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", fee_management_enabled=True, platform_paid_models_enabled=True,
+    settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
         db_url=configuration["dbUrl"], demo=False, jwt_key=configuration["jwtKey"], workspace=workspace,
-        port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24, temporary_policy="admin-review")
+        port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24)
     settings.fixture_role = role
     if configuration.get("registeredTools"):
         settings.runtime_tool_contract = "registered-runtime-v1"
@@ -344,6 +346,7 @@ def main():
                 {**copy.deepcopy(orx_source), "connection": settings.fixture_orx_pin})
     application = create_app(settings)
     state = application.app.state.factory
+    if role == 'origin': install_dispatch_hold(state, controls)
     application_ref, materials, snapshot = publish_fixture(state, configuration.get("sourceApplication"))
     marker = directory / (role + "-fault.json")
     if role == "origin":
@@ -391,10 +394,14 @@ def main():
                 query = query.where(table.c.session_id == taskId)
             with db.db_engine.connect() as conn:
                 count = conn.execute(query).scalar()
+        task = store.task(taskId, owner) if taskId else None
+        native = db.get_job(task['run_id']) if task and task.get('run_id') else None
         return {"fixtureOnly": True, "pid": os.getpid(), "mode": "production-policy-controlled-provider", "demo": settings.demo,
             "workspace": str(workspace), "applicationRef": application_ref, "applicationSnapshot": snapshot, "connection": connection_pin,
             "materials": {key: pin(value) for key, value in materials.items()}, "orxConnection": getattr(settings, "fixture_orx_pin", None), "providerCreated": list(provider.created),
             "nativeTickets": count, "tasks": store.tasks(owner),
+            'nativeStatus': native.get('status') if native else None,
+            'events': store.events(taskId) if taskId else [], 'artifacts': store.artifacts(taskId) if taskId else [],
             "plan": store.plan(store.task(taskId, owner)["plan_id"], owner) if taskId else None,
             "placements": store.sql("SELECT * FROM af_remote_placements") if role == "origin" else [],
             "handoffs": store.sql("SELECT * FROM af_remote_handoffs") if role == "receiver" else [],
@@ -426,8 +433,9 @@ def main():
                 replace(price, revision="fixture-tariff-v2", input_micros_per_million=2_000_000) if op == "usage-price-change" else
                 replace(price, model="changed-controlled-model-v2") for price in settings.usage_pricing}
         elif op in {"role-revoke", "role-restore"}:
-            state["auth"].authorization.unassign(owner, "fixture-user" if op == "role-revoke" else "fixture-reader")
-            state["auth"].authorization.assign(owner, "fixture-reader" if op == "role-revoke" else "fixture-user")
+            state['auth'].directory.set_disabled(owner, op == 'role-revoke')
+        elif op in {'dispatch-hold', 'dispatch-release'} and role == 'origin':
+            controls['holdDispatch'] = op == 'dispatch-hold'
         elif op in {"connection-unavailable", "connection-restore", "connection-rotate"}:
             state["connections"].trusted_bindings[CONNECTION_REGISTRATION] = trusted if op == "connection-restore" else replace(trusted,
                 available=False, opaque_handle=None) if op == "connection-unavailable" else replace(trusted, revision="fixture-provider-v2")

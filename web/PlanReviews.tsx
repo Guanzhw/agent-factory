@@ -57,10 +57,10 @@ export function PlanReviews({ ownerId, busy, renderScope }: { ownerId: string; b
       try {
         const session = await api.session(controller.signal);
         if (session.id !== ownerId) throw new Error('当前身份无法核对。');
-        const values = await api.planReviews(session.role === 'manager', controller.signal);
+        const values = await api.planReviews(false, controller.signal);
         if (!Array.isArray(values)) throw new Error('历史审查列表无法核对。');
         const next = values.map(checkedReview);
-        if (session.role !== 'manager' && next.some(item => item.ownerId !== ownerId)) throw new Error('历史审查归属无法核对。');
+        if (next.some(item => item.ownerId !== ownerId)) throw new Error('历史审查归属无法核对。');
         if (!controller.signal.aborted && identity.current.ownerId === ownerId && identity.current.epoch === epoch) { setReviews(next); setReadyOwner(ownerId); setError(''); }
       } catch (e) { if (!controller.signal.aborted && identity.current.ownerId === ownerId && identity.current.epoch === epoch) setError(message(e)); }
     }

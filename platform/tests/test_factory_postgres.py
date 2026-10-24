@@ -23,7 +23,7 @@ class FactoryPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         cls.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         cls.workspace = tempfile.TemporaryDirectory()
-        cls.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
+        cls.settings = Settings(material_policy_revision="material-governance-v1", db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
         cls.app = create_app(cls.settings)
         cls.settings = cls.app.app.state.factory["settings"]
         cls.client = TestClient(cls.app).__enter__()
@@ -88,7 +88,8 @@ class FactoryPostgresTests(unittest.TestCase):
         self.login("bob")
         self.assertEqual(self.client.get('/api/factory/jobs/' + task["id"]).status_code, 404)
         self.assertEqual(self.client.get(path).status_code, 404)
-        self.assertEqual(self.client.post("/api/factory/materials", json={"kind": "prompt", "name": "Denied", "content": "x", "description": "x"}).status_code, 403)
+        drafted = self.client.post("/api/factory/materials", json={"kind": "prompt", "name": "Member draft", "content": "x", "description": "x", "requestId": "bob-member-draft"})
+        self.assertEqual(drafted.status_code, 201, drafted.text)
 
     def test_02_question_exact_version_then_checksum(self):
         self.login()
@@ -128,45 +129,31 @@ class FactoryPostgresTests(unittest.TestCase):
         effects = detail["snapshot"]["effects"]
         self.assertTrue(all(row["status"] != "UNKNOWN" for row in effects), effects)
 
-    def test_04_native_bypass_and_manager_publication(self):
+    def test_04_native_bypass_and_author_publication(self):
         self.login("manager")
         body = {"id": "test-prompt", "kind": "prompt", "name": "Synthetic prompt", "description": "Fixture", "content": "Evidence only", "requestId": "draft-first-v1"}
         first = self.client.post("/api/factory/materials", json=body)
         self.assertEqual(first.status_code, 201, first.text)
         material = first.json()
-        reviewed = self.client.post(f'/api/factory/materials/{material["id"]}/{material["version"]}/publish', json={"requestId": "request-publication-v1"})
-        self.assertEqual(reviewed.status_code, 202, reviewed.text)
-        review = reviewed.json()
-        path = '/api/factory/material-governance/reviews/' + review["id"] + '/decision'
-        self.assertEqual(self.client.post(path, json={"approved": True, "requestId": "reject-self-review"}).status_code, 403)
-        state = self.app.app.state.factory
-        state["store"].native_db.replace_authz_subject_roles("bob", "factory-manager")  # Isolated test identity only.
-        try:
-            self.login("bob")
-            published = self.client.post(path, json={"approved": True, "requestId": "distinct-admin-review"})
-            self.assertEqual(published.status_code, 200, published.text)
-            self.assertEqual(published.json()["reviewerId"], "bob")
-        finally:
-            state["store"].native_db.replace_authz_subject_roles("bob", "factory-user")
-            self.login("manager")
+        published = self.client.post(f'/api/factory/materials/{material["id"]}/{material["version"]}/publish', json={"requestId": "request-publication-v1"})
+        self.assertEqual(published.status_code, 202, published.text)
+        self.assertTrue(published.json()["published"])
         second = self.client.post("/api/factory/materials", json={**body, "content": "New version", "requestId": "draft-second-v2"})
         self.assertEqual(second.json()["version"], material["version"] + 1)
         self.assertNotEqual(second.json()["sha256"], material["sha256"])
         self.assertEqual(self.client.post("/agents/factory-executor/runs", data={"message": "bypass", "background": "true"}).status_code, 403)
 
-    def test_05_current_policy_withdrawal_and_quota_recovery(self):
+    def test_05_current_member_state_and_quota_recovery(self):
         from uuid import uuid4
         self.login()
-        ready, _ = self.plan("Ready immutable plan before policy withdrawal")
+        ready, _ = self.plan("Ready immutable plan before account disable")
+        auth = self.app.app.state.factory["auth"]
         try:
-            self.settings.temporary_policy = "unset"
-            blocked, _ = self.plan("Preview after current policy withdrawal")
-            self.assertEqual(blocked["status"], "blocked")
-            denied = self.client.post("/api/factory/instances", json={"planId":ready["id"],"requestId":str(uuid4())})
-            self.assertEqual(denied.status_code,409,denied.text)
-            self.assertIn("POLICY_UNSET",denied.text)
+            auth.directory.set_disabled("alice", True)
+            denied = self.client.post("/api/factory/instances", json={"planId": ready["id"], "requestId": str(uuid4())})
+            self.assertEqual(denied.status_code, 403, denied.text)
         finally:
-            self.settings.temporary_policy = "bounded-synthetic"
+            auth.directory.set_disabled("alice", False)
         held = []
         try:
             for topic in ("one", "two"):

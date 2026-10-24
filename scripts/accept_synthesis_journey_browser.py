@@ -24,29 +24,18 @@ PREFIX = '/api/factory'
 SOURCE_APPLICATION = 'public-literature-evidence-v2'
 
 
-def approve_plan(reviewer, owner, goal):
-    reviewer.get_by_role('button', name='方案审查', exact=True).click()
-    row = reviewer.locator('article').filter(has=reviewer.get_by_role('heading', name=goal, exact=True))
-    row.get_by_role('button', name='同意方案', exact=True).click()
-    expect(row).to_contain_text('已同意')
-    owner.get_by_role('button', name='刷新授权与审查状态', exact=True).click()
-    expect(owner.get_by_role('button', name='确认方案并创建任务', exact=True)).to_be_enabled()
-
-
-def prepare_source(page, reviewer, context, base, connection_ref, label):
+def prepare_source(page, context, base, connection_ref, label):
     """Create a real native source task through original governed UI."""
-    page.get_by_label('已批准的应用', exact=True).select_option(SOURCE_APPLICATION)
+    page.get_by_label('1. 选择应用', exact=True).select_option(SOURCE_APPLICATION)
     page.get_by_label('应用执行方式', exact=True).select_option('bibliography')
     page.get_by_label('资源连接 publicLiterature', exact=True).select_option(connection_ref)
     goal = '受控来源证据验收，不访问真实文献服务 ' + label + ' ' + uuid4().hex[:10]
-    page.get_by_label('任务目标', exact=True).fill(goal)
+    page.get_by_label('2. 描述任务', exact=True).fill(goal)
     proposal = mutation(page, '/compositions/proposals',
-                        page.get_by_role('button', name='生成装配提案', exact=True).click)
+                        page.get_by_role('button', name='预览任务方案', exact=True).click)
     plan = mutation(page, '/compositions/proposals/' + proposal['id'] + '/accept',
-                    page.get_by_role('button', name='接受提案并固定方案', exact=True).click)
-    mutation(page, '/plan-reviews', page.get_by_role('button', name='提交方案审查', exact=True).click)
-    approve_plan(reviewer, page, goal)
-    task = mutation(page, '/instances', page.get_by_role('button', name='确认方案并创建任务', exact=True).click)
+                    page.get_by_role('button', name='确认范围并保存方案', exact=True).click)
+    task = mutation(page, '/instances', page.get_by_role('button', name='开始任务', exact=True).click)
     expect(page.get_by_role('region', name='任务详情', exact=True).get_by_role('heading', name=goal, exact=True)).to_be_visible()
     expect(page.get_by_text(re.compile('^执行已完成。研究结论是否通过验证：'))).to_be_visible(timeout=90000)
     detail = json_get(context, base, '/jobs/' + task['id'])
@@ -88,7 +77,7 @@ def verify_downloads(page, detail):
 def begin_contexts(browser, base, viewport):
     contexts = []
     try:
-        for persona in ('alice', 'manager2', 'bob'):
+        for persona in ('alice', 'bob'):
             context = browser.new_context(ignore_https_errors=True, viewport=viewport, accept_downloads=True)
             contexts.append(context)
             page = context.new_page()
@@ -113,7 +102,6 @@ def record_posts(page):
             (r'/api/factory/synthesis/snapshots', 'snapshots'),
             (r'/api/factory/compositions/proposals', 'proposals'),
             (r'/api/factory/compositions/proposals/[^/]+/accept', 'accept'),
-            (r'/api/factory/plan-reviews', 'plan-reviews'),
         ):
             if re.fullmatch(pattern, path):
                 counts[category] += 1
@@ -123,13 +111,13 @@ def record_posts(page):
 
 def scenario(browser, base, output, name, viewport, *, retrieval_connection, synthesis_connection):
     contexts = begin_contexts(browser, base, viewport)
-    owner, reviewer, foreign = contexts
-    alice, manager, bob = [context.pages[0] for context in contexts]
+    owner, foreign = contexts
+    alice, bob = [context.pages[0] for context in contexts]
     counts = record_posts(alice)
     stage = 'native-source'
     errors = []
     console_errors = []
-    for page in (alice, manager, bob):
+    for page in (alice, bob):
         page.on('pageerror', lambda _error: errors.append('PAGE_ERROR'))
         def console(message):
             if message.type != 'error':
@@ -143,7 +131,7 @@ def scenario(browser, base, output, name, viewport, *, retrieval_connection, syn
                                    'http409': '409' in message.text})
         page.on('console', console)
     try:
-        source_task, source_detail = prepare_source(alice, manager, owner, base, retrieval_connection, name)
+        source_task, source_detail = prepare_source(alice, owner, base, retrieval_connection, name)
         source_goal = source_detail['job']['input']['topic']
         journey = alice.get_by_role('region', name='来源综合工作流', exact=True)
         expect(journey).to_be_visible()
@@ -179,22 +167,20 @@ def scenario(browser, base, output, name, viewport, *, retrieval_connection, syn
         assert foreign.request.get(base + PREFIX + '/synthesis/sources/' + source_task['id']).status == 404
         stage = 'synthesis-proposal-lost-ack'
         sealed.get_by_role('button', name='用此快照准备合成方案', exact=True).click()
-        alice.get_by_label('已批准的应用', exact=True).select_option('source-grounded-synthesis-fixture-v1')
+        alice.get_by_label('1. 选择应用', exact=True).select_option('source-grounded-synthesis-fixture-v1')
         alice.get_by_label('应用执行方式', exact=True).select_option('controlled-fixture')
         alice.get_by_label('资源连接 scientificFixture', exact=True).select_option(synthesis_connection)
-        expect(alice.get_by_label('任务目标', exact=True)).to_have_value(question)
+        expect(alice.get_by_label('2. 描述任务', exact=True)).to_have_value(question)
         proposal = lost_reply(alice, base, '/compositions/proposals',
-                              alice.get_by_role('button', name='生成装配提案', exact=True).dblclick)
+                              alice.get_by_role('button', name='预览任务方案', exact=True).dblclick)
         restore(alice, question)
         recovered = json_get(owner, base, '/compositions/proposals/' + proposal['id'] + '/recovery')
         assert recovered['proposal']['id'] == proposal['id'] and recovered['plan'] is None
         plan = mutation(alice, '/compositions/proposals/' + proposal['id'] + '/accept',
-                        alice.get_by_role('button', name='接受提案并固定方案', exact=True).click)
+                        alice.get_by_role('button', name='确认范围并保存方案', exact=True).click)
         assert plan['sourceSnapshotRef'] == original_ref
-        mutation(alice, '/plan-reviews', alice.get_by_role('button', name='提交方案审查', exact=True).click)
-        approve_plan(manager, alice, question)
         stage = 'native-synthesis'
-        task = mutation(alice, '/instances', alice.get_by_role('button', name='确认方案并创建任务', exact=True).dblclick)
+        task = mutation(alice, '/instances', alice.get_by_role('button', name='开始任务', exact=True).dblclick)
         expect(alice.get_by_role('region', name='任务详情', exact=True).get_by_role('heading', name=question, exact=True)).to_be_visible()
         expect(alice.get_by_text(re.compile('^执行已完成。研究结论是否通过验证：'))).to_be_visible(timeout=90000)
         report = alice.get_by_role('region', name='来源综合报告', exact=True)
@@ -212,7 +198,7 @@ def scenario(browser, base, output, name, viewport, *, retrieval_connection, syn
         assert foreign.request.get(base + PREFIX + '/jobs/' + task['id']).status == 404
         for identifier in artifact_ids:
             assert foreign.request.get(base + PREFIX + '/jobs/' + task['id'] + '/artifacts/' + identifier).status == 404
-        assert counts == {'instances': 2, 'proposals': 2, 'accept': 2, 'plan-reviews': 2, 'snapshots': 1}
+        assert counts == {'instances': 2, 'proposals': 2, 'accept': 2, 'snapshots': 1}
         assert not errors and not console_errors
         return {'viewport': name, 'sourceTaskId': source_task['id'], 'sourceBundleVerified': True,
                 'snapshotId': snapshot['id'], 'snapshotPosts': 1, 'snapshotLostAckReadOnlyRecovery': True,

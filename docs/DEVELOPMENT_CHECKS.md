@@ -2,6 +2,12 @@
 
 Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform apps/research deployment scripts`, `uv run pyright` and the relevant tests for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
 
+CI uses Node 24. When reproducing the frontend checks on Node 26, set
+`NODE_OPTIONS=--no-experimental-webstorage` for the check process. The pinned DOM
+test environment otherwise encounters Node's experimental `localStorage` before
+browser storage is installed. The local Node 26 verification used this flag;
+the browser application itself does not require it.
+
 ## Daily checks and release verification
 
 | Mode | Trigger | Work performed |
@@ -42,9 +48,10 @@ The five old `check_*_postgres.py` commands remain focused local entrypoints; CI
 The [connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md) and
 [implementation contract](PERSONAL_TOOL_IMPLEMENTATION_CONTRACT.md) describe the
 implemented boundaries. Dependencies are locked, including official `mcp==2.3.0`;
-the MCP adapter uses `ClientSession` and Streamable HTTP, without FastMCP or a
-second agent framework. Normal endpoints require HTTPS. Local MCP fixtures use
-an explicit numeric-loopback HTTP option and synthetic authentication.
+the MCP adapter uses `ClientSession` and Streamable HTTP. Member endpoints accept
+HTTP/HTTPS, local/private/public hosts, IPv6 and custom ports. Credentials are
+optional for unauthenticated resources. [Member tools](MEMBER_TOOLS.md) documents
+configuration, sharing and use in published applications.
 
 The daily selections in [fast_test_groups.py](../scripts/fast_test_groups.py)
 include personal tool connection regressions. For focused adapter/assembly checks
@@ -53,13 +60,14 @@ on Linux, without PostgreSQL or live providers:
 ```sh
 PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
   test_personal_cli test_personal_cli_process test_personal_mcp \
-  test_personal_tools test_personal_tool_execution test_personal_tool_adapter_integration \
+  test_personal_tools test_personal_tool_execution test_personal_tool_adapter_integration test_member_tool_resources \
   test_personal_tool_assembly.PersonalToolSettingsTests -v
 ```
 
-CLI tests launch real local synthetic processes. Each successful invocation uses
-an absent-credential probe, an identity/source probe and the business command;
-tests distinguish business dispatch from local stop and retained-directory state.
+CLI tests launch real local synthetic processes. Member commands run once with
+their selected arguments, workdir, environment and input/output contract.
+Specialized installed adapters retain their integration-specific probes. Tests
+distinguish business dispatch from local stop and retained-directory state.
 Execution requires POSIX process groups and is verified on Linux; a Windows skip
 does not establish Windows CLI support. Debug event loops are intentionally
 rejected by the adapter, not silently reconfigured. MCP tests run a local protocol
@@ -76,6 +84,7 @@ With an authorized disposable **loopback** `FACTORY_TEST_DATABASE_URL`, run:
 PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
   test_personal_tool_assembly.PersonalToolAssemblyPostgresTests \
   test_personal_tool_native_postgres.PersonalToolNativePostgresTests \
+  test_member_tool_restart_postgres.MemberToolRestartPostgresTests \
   test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests -v
 ```
 
@@ -89,6 +98,13 @@ after reopening services, denial of the next native call after revocation, and
 Agno `StopAgentRun` preventing a new model turn after an UNKNOWN effect. They do
 not claim that native stop recalls calls already concurrent in the same batch,
 or that queue termination proves the original effect stopped.
+
+The member restart class starts a separate Python worker before a new command
+exists, creates the command and publishes its materials/application through
+member HTTP APIs, and executes the real CLI in that worker through the native
+queue. It proves lazy lookup, service restart persistence, original start/receipt
+identity and a single command dispatch. A retained-handle case verifies disabled
+callers, withdrawn sharing and revoked credentials before another process starts.
 
 The failure/custody case records `{outcome: "failed", stopped: false}` without
 completing the UNKNOWN effect, and checks that its occupied capacity still rejects

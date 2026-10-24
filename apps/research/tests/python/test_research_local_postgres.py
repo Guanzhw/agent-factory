@@ -246,15 +246,14 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         self.stack.callback(self.store.dispose_root_locks)
         self.stack.callback(bootstrap.dispose_root_locks)
         self.stack.callback(self.store.engine.dispose); self.stack.callback(self.store.native_db.db_engine.dispose)
-        self.auth.authorization.unassign('bob', 'factory-user'); self.auth.authorization.assign('bob', 'factory-manager')
-        self.application = publish_research_application(self.state, target_ref='local', comparison_manifest=self.manifest, author='manager', reviewer='bob')
+        self.application = publish_research_application(self.state, target_ref='local', comparison_manifest=self.manifest, author='manager')
         self.client = self.stack.enter_context(TestClient(self.app))  # pyright: ignore[reportArgumentType]
         assert self.client.portal is not None
         self.portal = self.client.portal
         self.stack.callback(self.cleanup)
 
     def cleanup(self):
-        self.auth.authorization.assign('alice', 'factory-user')
+        self.auth.directory.set_disabled('alice', False, actor='manager')
         for row in self.store.sql('SELECT id,owner_id FROM af_process_allocations'):
             lease = self.runtime.resources.inspect(row['owner_id'], row['id'])
             provider = self.evaluator if lease['connectionRef'] == 'evaluator' else self.provider
@@ -367,7 +366,7 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         task, _ = self.task()
         lease = self.portal.call(self.runtime.submit, 'alice', task['id'])
         self.portal.call(self.store.lifecycle_observer.stop)
-        self.auth.authorization.unassign('alice', 'factory-user')
+        self.auth.directory.set_disabled('alice', True, actor='manager')
         settled = self.until(lambda: self.portal.call(self.runtime.observe_lease, lease['id']),
             lambda value: value['state'] == 'RECLAIMED')
         self.assertEqual(settled['providerJobId'], lease['providerJobId'])
@@ -386,7 +385,7 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
             ('ownerId', 'taskId', 'nativeRunId', 'planId', 'planFingerprint', 'leaseId', 'providerJobId', 'variantSha256')}
         self.training_contract['checkpoint'] = {'artifactId': artifact['id'], **identity}
         self.application = publish_research_application(self.state, target_ref='evaluator', comparison_manifest=self.manifest,
-            author='manager', reviewer='bob', adapter_suffix='-evaluator')
+            author='manager', adapter_suffix='-evaluator')
         evaluation, _ = self.task()
         eval_lease = self.portal.call(self.runtime.submit, 'alice', evaluation['id'])
         settled = self.settled(evaluation['id'])

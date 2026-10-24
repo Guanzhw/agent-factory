@@ -119,11 +119,9 @@ env -u OPENCODE_GO AGNO_TELEMETRY=false PYTHONDONTWRITEBYTECODE=1 \
 超时退出不算健康成功，必须记录实际 HTTP/数据库结果。已创建的 `new-control-check` 保留；
 CLI 不复用或重置它。
 
-此 CLI 本身不调用 `ensure_task_development_reviewer(state)`，health 成功不代表 reviewer
-权限检查完成。可信 bootstrap 仍需在该专用开发数据库的原应用 state 上单独调用此 helper，
-并验证返回 `task-dev-reviewer`；既有 runner 在材料发布前执行它。本轮不为这项检查提前启动
-runner 或科研任务，尚未调用时须明确记为待验证。该 helper 是代码身份检查，不需要新用户
-密码或 OAuth，也不是生产 IdP/独立人类审批验收。
+当前 CLI 使用成员直接发布和执行，不创建开发 reviewer 账号。health 成功证明服务和数据库
+健康；原始任务、产物、设备和预算条件仍由实际执行边界检查。历史安装验收器保留当时的
+固定配置与字节身份，不作为当前审批要求。
 
 完成上述小范围步骤不等于 combined 环境或训练已准入。资源 probe 的测量、真实空间与完整
 环境准入，以及训练/独立评价总 wall 预算均齐备后，原 local worker 才执行既有三阶段入口。

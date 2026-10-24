@@ -42,10 +42,6 @@ class Harness:
             return {'id': 'original-proposal'}
         if path.endswith('/accept'):
             return {'id': 'original-plan'}
-        if path.endswith('/plan-reviews'):
-            return {'id': 'original-review'}
-        if path.endswith('/decision'):
-            return {'approved': True}
         if path.endswith('/instances'):
             return {'id': 'original-task'}
         if '/requests/' in path:
@@ -67,7 +63,7 @@ class Harness:
     def run(self, **kwargs):
         controller = ResearchBootstrapController(self.state, self.request,
             lambda method: asyncio.run(method()), clock=lambda: self.now, sleep=self.sleep)
-        return controller.run(owner='alice', reviewer=kwargs.get('reviewer', 'task-dev-reviewer'),
+        return controller.run(owner='alice',
             application_ref={'id': 'approved-app', 'version': 1, 'sha256': 'a' * 64},
             goal='Original governed training', request_id='operator-attempt', after_reclaimed=self.imported,
             on_progress=self.progress.append, timeout_seconds=kwargs.get('timeout_seconds', 1))
@@ -76,7 +72,7 @@ class Harness:
 class ControllerTests(unittest.TestCase):
     def test_member_admission_keeps_native_consent_without_plan_review(self):
         h = Harness()
-        result = h.run(reviewer=None)
+        result = h.run()
         self.assertEqual(result['progress']['phase'], 'COMPLETED')
         self.assertFalse(any('/plan-reviews' in path for _, path, _, _ in h.calls))
         self.assertEqual(sum(path.endswith('/instances') for _, path, _, _ in h.calls), 1)
@@ -98,12 +94,11 @@ class ControllerTests(unittest.TestCase):
         submitted = next(p for p in h.progress if p['phase'] == 'PROCESS_SUBMITTED')
         self.assertEqual(submitted['processSubmissionMeaning'], 'allocation-acknowledgement-not-spawn-proof')
         self.assertTrue(result['lease']['syntheticFixture'])
-        decision = next(c for c in h.calls if c[1].endswith('/decision'))
-        self.assertEqual(decision[3], 'task-dev-reviewer')
+        self.assertFalse(any('/plan-reviews' in path for _, path, _, _ in h.calls))
         approval = next(c for c in h.calls if c[1].endswith('/approve'))
         self.assertEqual(approval[2], {'requirementId': 'original-requirement', 'version': 'original-version', 'approved': True})
         h.store.request_cancel.assert_not_called()
-        self.assertEqual([p['phase'] for p in h.progress], ['STARTED', 'PLAN_APPROVED', 'TASK_ACCEPTED',
+        self.assertEqual([p['phase'] for p in h.progress], ['STARTED', 'PLAN_READY', 'TASK_ACCEPTED',
             'NATIVE_PAUSED', 'PROCESS_SUBMITTED', 'PROCESS_RECLAIMED', 'EVIDENCE_IMPORTED', 'COMPLETED'])
 
     def test_prelaunch_rejection_stops_without_full_lease_wait_or_new_submit(self):

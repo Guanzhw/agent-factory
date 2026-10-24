@@ -242,7 +242,7 @@ class StorageGovernance:
             os.close(root_fd)
 
     async def summary(self, owner):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         pending = self.store.sql("SELECT task_id FROM af_disk_holds WHERE owner_id=:owner AND state='HELD' ORDER BY created_at LIMIT 20", owner=owner)
         reconciliation_errors = []
         for hold in pending:
@@ -303,7 +303,7 @@ class StorageGovernance:
         return task
 
     async def plan(self, owner, identifier, request_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self._object(owner, identifier)
         old = self.store.sql("SELECT * FROM af_retention_plans WHERE owner_id=:owner AND request_id=:request", owner=owner, request=request_id)
         if old:
@@ -314,7 +314,7 @@ class StorageGovernance:
             return await self._create_plan(owner, identifier, request_id)
 
     async def _create_plan(self, owner, identifier, request_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         row = self._object(owner, identifier)
         if row["state"] != "AVAILABLE":
             raise HTTPException(409, "Retention requires an available object")
@@ -375,7 +375,7 @@ class StorageGovernance:
         return actual
 
     async def inspect(self, owner, identifier):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         plan = self._plan(owner, identifier)
         with self._lock(plan["object_id"]):
             return self._inspect(owner, identifier)
@@ -399,12 +399,12 @@ class StorageGovernance:
         return self.public(self._plan(owner, identifier))
 
     async def transition(self, owner, identifier, action):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         plan = self._plan(owner, identifier)
         row = self._object(owner, plan["object_id"])
         await self._eligible(owner, row)
         with self._lock(row["id"]):
-            self.auth.require(owner, "run")
+            self.auth.require_member(owner)
             row = self._object(owner, plan["object_id"])
             await self._eligible(owner, row)
             self._inspect(owner, identifier)

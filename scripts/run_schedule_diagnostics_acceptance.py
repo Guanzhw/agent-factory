@@ -64,7 +64,7 @@ def run(database_url, output, evidence):
         origin = 'https://127.0.0.1:' + str(sock.getsockname()[1])
         cert, key = stack.enter_context(temporary_development_tls(origin))
         settings = Settings(db_url=database.url, workspace=workspace, demo=True,
-                            temporary_policy='admin-review', development_mock_login=True,
+                            temporary_policy='member-self-service', development_mock_login=True,
                             development_public_origin=origin, max_workers=1)
         settings.schedule_poll_seconds = 3600  # Fixture-only explicit claim driver, not a timer test.
         app = create_app(settings)
@@ -93,11 +93,11 @@ def run(database_url, output, evidence):
                 else:
                     raise AssertionError('CONTROLLED_CLAIM_WAS_NOT_REJECTED')
             claimed = claim()
-            auth.authorization.unassign('manager', 'factory-manager')
+            auth.directory.set_disabled('manager', True, actor='manager')
             try:
                 denied(claimed, 403)
             finally:
-                auth.authorization.assign('manager', 'factory-manager')
+                auth.directory.set_disabled('manager', False, actor='manager')
             claimed = claim()
             with store.engine.connect() as holder:
                 lock_key = 'af_schedule:' + identifier

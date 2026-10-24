@@ -97,8 +97,7 @@ class RemoteScientificOrigin:
         return row
 
     def _parent_current(self, owner, parent, placement):
-        self.auth.require(owner, 'run')
-        self.store.require_current_policy()
+        self.auth.require_member(owner)
         actual = self.store.task(parent['id'], owner)
         require(all(actual.get(key) == parent.get(key) for key in ('id', 'owner_id', 'plan_id', 'request_id', 'fingerprint', 'run_id'))
                 and actual['owner_id'] == owner and actual.get('run_id')
@@ -262,7 +261,7 @@ class RemoteScientificOrigin:
                     and target.identity_map.get(owner) == body['receiverIdentity']
                     and receipt.get('remoteTaskId') == body['receiverTaskId']
                     and receipt.get('remoteRunId') in (None, body['nativeRunId']))
-            self.auth.require(body['receiverIdentity'], 'read')
+            self.auth.require_member(body['receiverIdentity'])
             # The authenticated receiver may reach its first protected tool
             # before the dispatch response arrives. Pin that attested original
             # native identity against the already authenticated PREPARED task.
@@ -332,8 +331,6 @@ class RemoteScientificOrigin:
                 receipt = await self.handoff.prepare(owner, child_id)
                 self.assert_authority(owner, child_id)
                 row = self.handoff._row(owner, child_id)
-            if receipt.get('receiverReviewRequired') is True:
-                return None
             if row.get('state') == 'PREPARED' and receipt.get('state') == 'PREPARED' and not row['body'].get('dispatchAttempted'):
                 self.assert_authority(owner, child_id)
                 receipt = await self.handoff.dispatch(owner, child_id)
@@ -363,7 +360,7 @@ class RemoteScientificOrigin:
     async def origin_phase(self, owner, child_id):
         # Custody remains readable after execution authority ends. This method
         # never returns an execution grant and never clears UNKNOWN capacity.
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return await self._phase_receipt(owner, child_id, cleanup=False)
 
     async def cleanup_phase(self, owner, child_id):
@@ -417,7 +414,7 @@ class RemoteScientificOrigin:
         return {'scope': deepcopy(scope), 'receipt': receipt, 'status': status, 'allStopped': stopped}
 
     async def project_baseline(self, owner, target_ref, project_id, project_pin):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         pin = self.project_bindings.get(project_id)
         require(pin and pin['ownerId'] == owner and pin['targetRef'] == target_ref and pin['projectPin'] == project_pin)
         pin = cast(dict[str, Any], pin)
@@ -427,7 +424,7 @@ class RemoteScientificOrigin:
         reply = await self.handoff._request(owner, target, 'GET',
             '/api/factory/remote-handoffs/scientific-projects/' + quote(project_id, safe='') + '/baseline',
             params={'projectPin': project_pin})
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         current = self.handoff.targets.get(target_ref)
         require(current is not None and current.fingerprint == fingerprint and owner in current.identity_map
                 and type(reply) is dict and set(reply) == {'schema', 'projectId', 'projectPin', 'observation'}

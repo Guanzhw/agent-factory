@@ -15,14 +15,14 @@ const descriptor: PersonalToolDescriptor = {
   capabilities: ['lookup:read'], permission: 'lookup:read', readOnly: true, timeoutSeconds: 30, maxOutputBytes: 65536,
 };
 const tool: PersonalToolConnection = {
-  ownerId: 'alice', registrationRef: 'owner-tool-one', adapterId: descriptor.adapterId,
+  ownerId: 'alice', visibility: 'personal', isOwner: true, registrationRef: 'owner-tool-one', adapterId: descriptor.adapterId,
   revision: 'owner-configuration-1', descriptorRevision: descriptor.revision, kind: 'tool',
   toolName: descriptor.toolName, transport: 'cli', credentialRef: 'owner-credential', credentialRevision: 'credential-1',
   status: 'configured', available: true, capabilities: ['lookup:read'], createdAt: '2026-10-13T00:00:00Z',
   expiresAt: null, allowedActions: ['inspect', 'revoke', 'bind'],
 };
 const configuration: ToolConfiguration = {
-  adapterId: tool.adapterId, credentialRef: tool.credentialRef, credentialRevision: tool.credentialRevision, requestId: 'configure:one',
+  adapterId: tool.adapterId, credentialRef: tool.credentialRef!, credentialRevision: tool.credentialRevision!, requestId: 'configure:one',
 };
 const connection: UserConnection = {
   ref: 'connection-one', ownerId: 'alice', kind: 'tool', version: 1, revision: tool.revision,
@@ -70,6 +70,25 @@ describe('personal CLI/MCP public metadata', () => {
 });
 
 describe('owner tool configuration and original receipt recovery', () => {
+  it('accepts team metadata for another member while keeping owner credential references absent', async () => {
+    const publicTool = { ...tool }; delete publicTool.credentialRef; delete publicTool.credentialRevision;
+    const shared = { ...publicTool, visibility: 'team', isOwner: false, allowedActions: ['inspect', 'bind'] };
+    request.mockResolvedValueOnce([shared]);
+    expect(await api.list('bob')).toEqual([shared]);
+    request.mockResolvedValueOnce([{ ...shared, credentialRef: 'owner-private-reference', credentialRevision: 'owner-private-revision' }]);
+    await expect(api.list('bob')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
+  it('saves sharing with its own request identity and recovers the original receipt read-only', async () => {
+    const shared = { ...tool, visibility: 'team' as const, allowedActions: ['inspect', 'revoke', 'bind', 'sharing'] };
+    request.mockResolvedValueOnce(shared);
+    expect(await api.sharing('alice', tool.registrationRef, 'team', 'share:one')).toEqual(shared);
+    expect(request).toHaveBeenLastCalledWith(`/personal-tools/${tool.registrationRef}/sharing`, 'POST',
+      { visibility: 'team', requestId: 'share:one' }, undefined, 'alice');
+    request.mockResolvedValueOnce({ requestId: 'share:one', action: 'tool.sharing', tool: shared });
+    expect(await api.recover('alice', 'share:one')).toEqual({ requestId: 'share:one', action: 'tool.sharing', tool: shared });
+    expect(request.mock.calls.map(call => call[1])).toEqual(['POST', 'GET']);
+  });
   it('sends only immutable credential references once, with expected owner and original request ID', async () => {
     request.mockResolvedValueOnce({ ...tool, token: 'synthetic-secret' });
     expect(await api.configure('alice', { ...configuration, password: 'must-not-send', endpoint: 'https://untrusted.invalid' } as ToolConfiguration)).toEqual(tool);

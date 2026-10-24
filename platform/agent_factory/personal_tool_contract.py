@@ -1,4 +1,4 @@
-"""Static CLI/MCP adapter contract; descriptors never contain owner credentials.
+"""CLI/MCP adapter contract; descriptors never contain owner credentials.
 
 Core owns connection resolution, native Function wrapping and effect receipts.
 Adapters own their process/protocol lifecycle, including positive stop evidence.
@@ -103,7 +103,7 @@ class ToolInvocation:
     arguments: Mapping[str, Any]
     run_context: Any = field(repr=False)
     check_authorized: Callable[[], None] = field(repr=False)
-    resolve_credential: Callable[[], SecretLease] = field(repr=False)
+    resolve_credential: Callable[[], SecretLease | None] = field(repr=False)
 
 
 class ToolInvocationError(RuntimeError):

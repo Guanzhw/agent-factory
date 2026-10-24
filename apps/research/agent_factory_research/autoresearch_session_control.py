@@ -208,7 +208,7 @@ class AutoResearchSessionControl:
                 break
 
     async def run(self, owner, task_id):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         task = deepcopy(self.store.task(task_id, owner))
         _, pin = self.paused(task)
         def admit(body):
@@ -244,7 +244,7 @@ class AutoResearchSessionControl:
 
     def start(self, owner, task_id):
         _require(not self.closed)
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         admitted = self.store.task(task_id, owner)
         identity = {key: admitted[key] for key in ('id', 'owner_id', 'plan_id', 'run_id')}
         _require(bool(identity['run_id']))

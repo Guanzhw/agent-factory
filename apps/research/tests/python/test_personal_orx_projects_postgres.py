@@ -35,21 +35,14 @@ class OrxProjectPostgresTests(unittest.TestCase):
         try:
             with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as database, TemporaryDirectory() as folder:
                 settings = Settings(db_url=database.url, workspace=Path(folder), max_workers=1,
-                    personal_agent_commands_enabled=True, temporary_policy='admin-review',
-                    policy_revision='project-create-ci-v1', material_policy_revision='project-create-ci-v1',
+                    personal_agent_commands_enabled=True, temporary_policy='member-self-service',
+                    policy_revision='project-create-department-v1', material_policy_revision='project-create-ci-v1',
                     personal_connection_providers={PERSONAL_ORX_PROVIDER_ID: fixture.fx.provider})
-                settings.temporary_policy = 'member-self-service'
-                settings.policy_revision = 'project-create-department-v1'
-                # Keep publication bootstrap explicit while task admission uses
-                # the same department rule as every other application.
-                settings.material_review_mode = 'separate-admin'
                 app = create_app(settings)
                 self.app = app
                 state = app.app.state.factory; self.store, self.auth = state['store'], state['auth']
-                self.auth.directory.upsert('project-reviewer', name='Synthetic project reviewer')
-                self.auth.authorization.assign('project-reviewer', 'factory-manager')
-                publish_application(state, author='manager', reviewer='project-reviewer')
-                publish_application(state, author='manager', reviewer='project-reviewer', project_creation=True)
+                publish_application(state, author='manager')
+                publish_application(state, author='manager', project_creation=True)
                 remote = self.store.connections.personal.configure('alice', PERSONAL_ORX_PROVIDER_ID,
                     fixture.config, 'project-native-config')
                 self.store.connections.personal.verify('alice', remote['registrationRef'], 'project-native-verify')
@@ -318,8 +311,11 @@ class OrxProjectPostgresTests(unittest.TestCase):
             revoked = self.request('POST', '/personal-agent/project-commands/prepare', {
                 **body, 'requestId': revoked_key, 'project': {**fixture.values, 'path': '/synthetic/revoked'}})
             self.assert_project_disclosure(revoked['plan']); self.approve(revoked_key, revoked)
-            self.auth.authorization.unassign('alice', 'factory-user')
-            self.request('POST', '/personal-agent/commands/start', {'planId': revoked['plan']['id']}, expected=403)
+            token = self.auth._issue_native_token('alice')
+            self.auth.directory.set_disabled('alice', True)
+            response = self.client.post('/api/factory/personal-agent/commands/start',
+                json={'planId': revoked['plan']['id']}, headers={'Authorization': 'Bearer ' + token})
+            self.assertEqual(response.status_code, 403, response.text)
             self.assertEqual(self.wire.creation_posts, 1)
 
     def test_independent_workers_serialize_task_reservation_and_original_effect(self):

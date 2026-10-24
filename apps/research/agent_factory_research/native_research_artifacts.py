@@ -33,7 +33,7 @@ class NativeResearchArtifacts:
         self.sessions, self.store, self.auth = sessions, sessions.store, sessions.auth
 
     def _scope(self, owner, task_id, request_id, expected_pin):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
         command = command_from_plan(self.store.plan(task['plan_id'], owner))
         require(command['action'] == 'prompt' and command['requestId'] == request_id, 'NATIVE_ARTIFACT_TASK_MISMATCH')
@@ -90,7 +90,7 @@ class NativeResearchArtifacts:
         # It also excludes a concurrent prompt/rebind/interrupt while saving.
         with self.store.transaction() as conn:
             self.sessions.connections._lock(conn, 'personal-agent:' + owner)
-            self.auth.require(owner, 'run')
+            self.auth.require_member(owner)
             current = conn.execute(select(self.sessions.sessions).where(self.sessions.sessions.c.owner_id == owner,
                 self.sessions.sessions.c.id == row['id'])).mappings().one()
             current_command = conn.execute(select(self.sessions.commands).where(self.sessions.commands.c.owner_id == owner,
@@ -133,7 +133,7 @@ class NativeResearchArtifacts:
                     'nativeTurnId': (receipt['result'] or {}).get('nativeTurnId'),
                     'connectionPinFingerprint': expected_pin})
                 existing.append(item); captured.append(item); used += len(raw)
-            self.auth.require(owner, 'run')
+            self.auth.require_member(owner)
         return {'taskId': task_id, 'ownerId': owner, 'commandRequestId': request_id,
             'nativeProjectId': body['nativeProjectId'], 'nativeSessionId': body['nativeSessionId'],
             'artifacts': captured, 'skipped': skipped, 'scientificConclusionVerified': False}

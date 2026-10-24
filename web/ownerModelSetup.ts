@@ -14,6 +14,7 @@ export interface ModelSetup {
   stage: 'credential' | 'model' | 'default'; reference?: string;
   credential?: PersonalCredential; rotating?: { credentialRef: string; credentialRevision: string };
   chooseDefault: boolean;
+  noCredentials?: true;
 }
 export function setupCredential(value: PersonalCredential, setup: ModelSetup): PersonalCredential {
   if (!value || value.status !== 'active' || value.providerId !== 'byok-chat-v1'
@@ -34,7 +35,7 @@ export function setupMetadata(setup: ModelSetup): ModelSetup {
         || Object.values(setup.dispatched).some(value => value !== true))) throw new Error('Invalid setup metadata');
   return { owner: setup.owner, provider: setup.provider, baseURL: setup.baseURL, model: setup.model,
     credentialRequest: setup.credentialRequest, modelRequest: setup.modelRequest, defaultRequest: setup.defaultRequest,
-    stage: setup.stage, chooseDefault: setup.chooseDefault, ...(setup.reference ? { reference: setup.reference } : {}),
+    stage: setup.stage, chooseDefault: setup.chooseDefault, ...(setup.noCredentials ? { noCredentials: true as const } : {}), ...(setup.reference ? { reference: setup.reference } : {}),
     ...(Object.prototype.hasOwnProperty.call(setup, 'protocol') ? { protocol: setup.protocol } : {}),
     ...(setup.dispatched ? { dispatched: { ...(setup.dispatched.model ? { model: true as const } : {}), ...(setup.dispatched.default ? { default: true as const } : {}) } } : {}),
     ...(setup.thinkingMode ? { thinkingMode: setup.thinkingMode } : {}),

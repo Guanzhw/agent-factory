@@ -34,7 +34,7 @@ class ResearchPreparationStore:
         self._manifest, self._source = preparation_manifest_sha256, source_sha256
 
     def _original(self, owner, lease_id, *, stopped):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         runtime = self.resources.execution_runtime('bounded-process-run-v1')
         lease, target, task, _ = runtime._custody(lease_id)
         _require(lease['ownerId'] == owner and task['owner_id'] == owner and not task['cancel_requested'])

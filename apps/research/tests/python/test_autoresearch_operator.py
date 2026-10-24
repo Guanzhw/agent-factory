@@ -24,7 +24,7 @@ def config():
     return {'schema': 1, 'role': 'controller', 'workspace': str(Path.cwd()), 'port': 3100,
         'databaseRef': 'EXISTING_DATABASE', 'jwtRef': 'EXISTING_JWT',
         'handoffBearerRef': 'EXISTING_HANDOFF', 'project': {'presetId': 'reviewed-science', 'applicationRef': {'id': 'existing'}},
-        'publication': {'author': 'manager', 'reviewer': 'reviewer'}}
+        'publication': {'author': 'alice'}}
 
 
 class OperatorTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class OperatorTests(unittest.TestCase):
         for raw in (b'{"schema":1,"schema":1}', b'{"x":NaN}', b'{}', b'[]'):
             with self.assertRaises(ValueError): operator.configuration(raw)
         for key, value in (('port', True), ('workspace', '../private'), ('jwtRef', 'secret=value'),
-                ('role', 'execute'), ('publication', {'author': 'same', 'reviewer': 'same'})):
+                ('role', 'execute'), ('publication', {'author': 'alice', 'reviewer': 'legacy-reviewer'})):
             changed = {**config(), key: value}
             with self.subTest(key=key), self.assertRaises(ValueError):
                 operator.configuration(json.dumps(changed).encode())

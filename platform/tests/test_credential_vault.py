@@ -139,11 +139,11 @@ class CredentialVaultTests(unittest.TestCase):
         self.assertFalse(self.vault.authorize(**new_scope))
         with self.assertRaises(CredentialVaultError): self.vault.resolve(**new_scope)
 
-    def test_global_provider_policy_and_exact_origin_binding(self):
+    def test_provider_protocol_and_exact_origin_binding(self):
         created = self.vault.create(owner="alice", provider_id=PROVIDER_ID,
             destination="https://RUNTIME.example.com:443/", username="synthetic", password=PASSWORD)
         self.assertEqual(created["destination"], DESTINATION)
-        for destination in ("http://runtime.example.com", "https://127.0.0.1", "https://user:pw@runtime.example.com",
+        for destination in ("https://user:pw@runtime.example.com",
                             "https://runtime.example.com/path", "https://runtime.example.com?secret=x"):
             with self.assertRaises(CredentialVaultError):
                 self.vault.create(owner="alice", provider_id=PROVIDER_ID, destination=destination,
@@ -151,10 +151,15 @@ class CredentialVaultTests(unittest.TestCase):
         with self.assertRaises(CredentialVaultError):
             self.vault.create(owner="alice", provider_id="model-installed", destination=DESTINATION,
                               username="synthetic", password=PASSWORD)
+        for destination in ("http://runtime.example.com:8123", "https://127.0.0.1:9443"):
+            value = self.vault.create(owner="alice", provider_id=PROVIDER_ID, destination=destination,
+                                      username="synthetic", password=PASSWORD)
+            self.assertEqual(value["destination"], destination)
 
     def test_http_manual_validation_all_errors_redacted(self):
         bad = [self.payload | {"password": {"nested": PASSWORD}}, self.payload | {"owner": PASSWORD},
-               self.payload | {"username": PASSWORD + ":"}, self.payload | {"password": PASSWORD * 500},
+               self.payload | {"username": PASSWORD + ":"},
+               self.payload | {"password": PASSWORD * (MAX_CREDENTIAL_REQUEST_BYTES // len(PASSWORD) + 1)},
                self.payload | {"providerId": PASSWORD}]
         for body in bad:
             response = self.client.post(self.root, json=body, headers=self.headers)

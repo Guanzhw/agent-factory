@@ -20,7 +20,7 @@ def operation(step_input):
 
 class NativeWorkflowsTests(TestCase):
     def setUp(self):
-        self.auth = SimpleNamespace(require=Mock())
+        self.auth = SimpleNamespace(require_member=Mock())
 
     def registration(self):
         return NativeWorkflowRegistration(Workflow(id='test-workflow', name='Test', steps=[
@@ -82,7 +82,7 @@ class NativeWorkflowsTests(TestCase):
                              'task_id': 'task', 'request_id': 'request'}})
         registration.component.steps[0].executor(None, context)
         self.assertEqual(events, ['bind', 'authorize', 'budget', 'effect'])
-        self.auth.require.assert_called_with('alice', 'run', 'workflows', 'test-workflow')
+        self.auth.require_member.assert_called_with('alice')
         original_ticket = deepcopy(ticket)
         original_envelope = deepcopy(context.session_state)
         for key in ('id', 'session_id', 'user_id', 'component_type', 'component_id', 'status'):
@@ -136,11 +136,11 @@ class NativeWorkflowsTests(TestCase):
         registration = self.registration()
         bridge = NativeWorkflows(SimpleNamespace(), self.auth, None, [registration])
         plan = {'nativeComponent': bridge.pin('test-workflow'), 'tools': ['protected']}
-        self.auth.require.side_effect = HTTPException(403, 'CONTROLLED_REVOKED')
+        self.auth.require_member.side_effect = HTTPException(403, 'CONTROLLED_REVOKED')
         with self.assertRaises(HTTPException) as raised:
             bridge.require_plan_current('alice', plan)
         self.assertEqual(raised.exception.status_code, 403)
-        self.auth.require.assert_called_once_with('alice', 'run', 'workflows', 'test-workflow')
+        self.auth.require_member.assert_called_once_with('alice')
 
     def test_plan_input_schema_must_match_registered_native_schema(self):
         from agent_factory.input_schema import input_model
@@ -172,7 +172,7 @@ class NativeWorkflowsTests(TestCase):
         self.assertEqual(raised.exception.detail, 'NATIVE_WORKFLOW_WAIT_POLICY_MISSING')
         plan['tools'] = ['factory_wait_operations']
         bridge.require_plan_current('alice', plan)
-        self.auth.require.assert_called_with('alice', 'run', 'workflows', 'wait-workflow')
+        self.auth.require_member.assert_called_with('alice')
 
     def test_same_name_executor_replacement_rejected(self):
         registration = self.registration()

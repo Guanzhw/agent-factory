@@ -59,21 +59,19 @@ def main():
             time.sleep(.2)
         else: raise AssertionError('Owned service startup timed out')
         fixture = json.loads(fixture_path.read_text())
-    def api(method, path, body=None, reviewer=False):
+    def api(method, path, body=None):
         response = client.request(method, '/api/factory' + path, json=body,
-            headers=fixture['reviewerHeaders' if reviewer else 'ownerHeaders'])
+            headers=fixture['ownerHeaders'])
         assert response.is_success, (method, path, response.status_code)
         return response.json()
-    def post(path, body, reviewer=False):
-        return api('POST', path, {'requestId': str(uuid4()), **body}, reviewer)
+    def post(path, body):
+        return api('POST', path, {'requestId': str(uuid4()), **body})
     try:
         start()
         app = next(a for a in api('GET', '/applications') if a['id'] == fixture['applicationId'])
         proposal = post('/compositions/proposals', {'goal': 'Owned real native queue crash recovery', 'mode': 'cancellable',
             'applicationRef': {k: app[k] for k in ('id', 'version', 'sha256')}, 'connectionRefs': fixture['connectionRefs']})
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {})
-        review = post('/plan-reviews', {'planId': plan['id']})
-        post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, True)
         job = post('/instances', {'planId': plan['id']}); task_id = job['id']
         def detail(): return api('GET', '/jobs/' + task_id)
         paused = wait_for(lambda: (d if (d := detail())['job']['status'] == 'waiting_approval' else None))

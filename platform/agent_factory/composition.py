@@ -18,7 +18,6 @@ from .application_schema import budget_limits, task_config
 from .input_schema import bounded_json, validate_input_values
 from .applications import ApplicationService, GovernedStorage
 from .material_governance import MaterialGovernance, PinnedRef
-from .plan_policy import application_tool_catalog
 from .store import digest, now
 from .runtime_hooks import execution_classification
 from .billing_mode import ledger_for_plan
@@ -76,7 +75,7 @@ class CompositionService:
         return values
 
     def _application(self, owner, values):
-        self.auth.require(owner, "components:read")
+        self.auth.require_member(owner)
         if values["applicationRef"]:
             return self.applications.require_current(values["applicationRef"]), {"method": "explicit-application", "matchedKeywords": []}
         active = self.applications.list_active(owner)
@@ -164,17 +163,12 @@ class CompositionService:
                 missing.append("Selected material tools differ from the approved application tool order")
             else:
                 tools = mode["toolOrder"][:]
-        known_tools = application_tool_catalog(self.store)
-        if set(caps) - set(mode["capabilities"]) or any(name not in known_tools for name in tools):
+        if set(caps) - set(mode["capabilities"]):
             missing.append("Selected materials exceed the application/mode authority ceiling")
-        if set(caps) != {known_tools[name] for name in tools if name in known_tools}:
-            missing.append("Selected capabilities do not exactly match registered tools")
         limits = budget_limits(self.store.settings, application.get("contractVersion", 1))
         budget = {key: min(value, limits[key]) for key, value in mode["budget"].items()}
         budget["depth"] = 0
         policy = self.store.settings.temporary_policy
-        if policy == "unset":
-            missing.append("POLICY_UNSET: current configuration denies execution")
         connection_pins, connection_missing = self._connections(owner, mode, values["connectionRefs"])
         missing.extend(connection_missing)
         execution = None
@@ -274,13 +268,13 @@ class CompositionService:
         return {**copy.deepcopy(row["body"]), "state": row["state"], "planId": row["plan_id"], "allowedActions": actions, "revisedBy": successor}
 
     def inspect(self, owner, proposal_id):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             return self._projection(self._row(conn, owner, proposal_id), conn=conn)
 
     def propose(self, owner, goal, mode=None, application=None, application_ref=None, material_choices=None,
                 connection_refs=None, *, request_id, parent_id=None, source_snapshot_ref=None, input_values=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         values = self._input(goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref, input_values)
         fingerprint = digest({"action": "propose", "input": values, "parentId": parent_id})
         with self.db.write() as conn:
@@ -295,7 +289,7 @@ class CompositionService:
             body = {"id": str(uuid4()), "ownerId": owner, "createdAt": now(), "parentId": parent_id,
                     "input": values, "candidate": candidate, "selection": selection}
             body["fingerprint"] = digest(body)
-            self.auth.require(owner, "run")
+            self.auth.require_member(owner)
             conn.execute(self.proposals.insert().values(id=body["id"], owner_id=owner, body=body, hash=digest(body), state="pending", plan_id=None))
             if parent:
                 conn.execute(self.proposals.update().where(self.proposals.c.id == parent_id).values(state="revised"))
@@ -308,7 +302,7 @@ class CompositionService:
                             request_id=request_id, parent_id=proposal_id, source_snapshot_ref=source_snapshot_ref, input_values=input_values)
 
     def reject(self, owner, proposal_id, request_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         fingerprint = digest({"action": "reject", "proposalId": proposal_id})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
@@ -317,13 +311,13 @@ class CompositionService:
             row = self._row(conn, owner, proposal_id)
             if row["state"] != "pending":
                 raise HTTPException(409, "Proposal is no longer pending")
-            self.auth.require(owner, "run")
+            self.auth.require_member(owner)
             conn.execute(self.proposals.update().where(self.proposals.c.id == proposal_id).values(state="rejected"))
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, "composition.reject",
                                   self._projection(self._row(conn, owner, proposal_id)))
 
     def accept(self, owner, proposal_id, request_id, *, plan_store=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         fingerprint = digest({"action": "accept", "proposalId": proposal_id})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
@@ -340,17 +334,12 @@ class CompositionService:
                 self.store.material_governance.require_materials_current(candidate)
             self._connections(owner, mode, row["body"]["input"]["connectionRefs"], expected=candidate["bindingManifest"]["connections"])
             if candidate["status"] == "ready":
-                if candidate["policy"] != self.store.settings.temporary_policy or self.store.settings.temporary_policy == "unset":
-                    raise HTTPException(409, "Frozen composition policy differs from current configuration")
-                configured_guard = getattr(self.store, "require_current_policy", None)
-                if configured_guard is not None:
-                    configured_guard()
                 self.applications.require_plan_current(candidate)
                 self.bindings.inspect(candidate)
                 ledger = ledger_for_plan(self.store, candidate)
                 if ledger is not None:
                     ledger.validate_commitment(candidate, candidate.get("usageBudget"))
-            self.auth.require(owner, "run")
+            self.auth.require_member(owner)
             plan = {**candidate, "id": str(uuid4()), "createdAt": now(), "compositionProposalId": proposal_id}
             plan["fingerprint"] = digest({key: value for key, value in plan.items() if key not in {"id", "createdAt", "fingerprint"}})
             plan = (plan_store or self.store).save_plan(plan)

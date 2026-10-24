@@ -27,8 +27,8 @@ class AuthFixture:
     def __init__(self):
         self.revoked = set()
 
-    def require(self, owner, action):
-        if owner not in {"alice", "bob"} or owner in self.revoked or action != "run":
+    def require_member(self, owner):
+        if owner not in {"alice", "bob"} or owner in self.revoked:
             raise HTTPException(403, "Current authority denied")
 
 

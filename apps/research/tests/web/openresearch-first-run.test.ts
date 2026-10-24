@@ -14,7 +14,7 @@ import type { Plan, UserConnection } from '../../../../web/models.js';
 vi.mock('../../../../web/PlanReviews.js', () => ({ PlanReviewGate: () => null }));
 const owner = { id: 'fixture-owner', name: 'Fixture', role: 'user' as const };
 const connection = { ref: 'creation-binding', registrationRef: 'creation-remote', ownerId: owner.id, kind: 'orx', status: 'active', available: true, taskId: null, capabilities: ['runtime:health', 'project:read', 'project:create'], fingerprint: 'a'.repeat(64), revision: 'r1', version: 1 } as UserConnection;
-const remote = { registrationRef: connection.registrationRef, providerId: ORX_PERSONAL_PROVIDER } as PersonalRemote;
+const remote = { registrationRef: connection.registrationRef, providerId: ORX_PERSONAL_PROVIDER, ownerId: owner.id, visibility: 'personal', isOwner: true } as PersonalRemote;
 const request = { name: 'Synthetic project', path: '/synthetic/new-project', createFolder: true, requireNewFolder: true, initializeGit: true, cloneUrl: null, paperId: null, locale: 'zh', github_sync_enabled: false, githubSyncEnabled: false } as const;
 const preview: ProjectPreview = { previewHash: 'b'.repeat(64), connectionPin: connection, request,
   disclosure: { version: 'native-orx-create-consent-v2', remotePath: request.path, repository: null, paperId: null, remoteWrites: 'create-new-folder-and-project', clone: false, paperDownload: false, gitInitialization: true, githubSyncEnabled: false, pathResolution: 'upstream-canonical-path-and-enclosing-git-root', starterSuggestions: 'may-request-four-project-chat-suggestions', modelInput: ['README', 'selected-code', 'file-list', 'paper-summary'], modelSelection: 'remote-preferred-or-ready-harness', billing: 'owner-remote-account-possible-cost', hardBudgetEnforced: false, automaticExperiment: false, emptyCacheHitOrNoHarness: 'may-skip-model-request', unknownResponse: 'read-only-reconcile-never-resend' } };
@@ -70,7 +70,7 @@ async function fill(label: string, value: string) { await act(async () => {
 it.each([false, true])('adds, verifies and binds an empty service, then previews its first project without remounting or losing the goal (pending command keys: %s)', async pendingKeys => {
   await act(async () => root.render(createElement(PersonalAgentSessions, { ownerId: owner.id, namespace: 'native-openresearch', researchJourney: true })));
   expect(bindings).toEqual([]); expect(host.querySelector<HTMLSelectElement>('[aria-label="项目创建资源"]')!.options.length).toBe(1);
-  await fill('研究目标', 'Preserve my first research goal'); await fill('HTTPS 服务源', credential.destination);
+  await fill('研究目标', 'Preserve my first research goal'); await fill('服务地址', credential.destination);
   await click('输入并保存个人凭据'); await fill('OpenResearch 服务令牌', 'synthetic-only');
   await act(async () => host.querySelector<HTMLInputElement>('[aria-label="安全保存个人凭据"] input[type="checkbox"]')!.click());
   await click('确认安全保存凭据');

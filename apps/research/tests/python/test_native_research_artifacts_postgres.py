@@ -35,9 +35,7 @@ class NativeArtifactPostgresTests(unittest.TestCase):
                 personal_agent_commands_enabled=True, personal_connection_providers={provider.provider_id: provider}))
             state = app.app.state.factory; store, auth = state['store'], state['auth']
             self.addCleanup(store.engine.dispose); self.addCleanup(store.native_db.db_engine.dispose)
-            auth.directory.upsert('artifact-reviewer', name='Synthetic reviewer')
-            auth.authorization.assign('artifact-reviewer','factory-manager')
-            publish_application(state,author='manager',reviewer='artifact-reviewer')
+            publish_application(state, author='manager')
             remote = store.connections.personal.configure('alice',provider.provider_id,
                 {'origin':'https://runtime.example.com','credentialRef':'synthetic-reference','credentialRevision':'r1',
                     'projectId':'native-project','authMode':'basic-proxy'},'artifact-configure')

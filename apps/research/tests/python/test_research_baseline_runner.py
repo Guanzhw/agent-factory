@@ -116,7 +116,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), b'first')
 
     def test_preparation_uses_ordinary_native_instance_and_imports_original(self):
-        bootstrap = importlib.import_module('bootstrap_research_control')
         from agent_factory import process_runtime_profile
         lease = {'id': 'original-lease', 'state': 'RECLAIMED', 'executionStatus': 'COMPLETED',
                  'capacityHeld': False, 'stopEvidence': {'allStopped': True}, 'nativeRunId': 'original-run',
@@ -128,20 +127,17 @@ class RunnerTests(unittest.TestCase):
         prep = Mock(); prep.import_completed.return_value = {'id': 'original-artifact'}
         prep.input_pin.return_value = {'binding': {'taskId': 'original-task'}}
         bundle = {'state': {'store': store,
-                           'settings': SimpleNamespace(temporary_policy='admin-review')}, 'preparation': prep}
+                           'settings': SimpleNamespace(temporary_policy='member-self-service')}, 'preparation': prep}
         calls = []
         def request(method, path, body, *, owner):
             calls.append((method, path, body, owner))
             if path.endswith('/proposals'): return {'id': 'proposal'}
             if path.endswith('/accept'): return {'id': 'plan'}
-            if path.endswith('/plan-reviews'): return {'id': 'review'}
-            if path.endswith('/decision'): return {}
             if path.endswith('/instances'): return {'id': 'original-task'}
             if path.endswith('/jobs/original-task'): return {'job': {'status': 'completed'}}
             raise AssertionError('Unexpected request')
         progress = Mock()
-        with patch.object(bootstrap, 'ensure_task_development_reviewer', return_value='task-dev-reviewer'), \
-             patch.object(process_runtime_profile, 'publish_process_application', return_value={'id': 'app', 'version': 1, 'sha256': 'a'*64}), \
+        with patch.object(process_runtime_profile, 'publish_process_application', return_value={'id': 'app', 'version': 1, 'sha256': 'a'*64}), \
              patch.object(runner, 'request_client', return_value=request):
             result = runner.preparation_phase(bundle, object(), 'operator-attempt', progress)
         self.assertEqual(result[0:2], ('original-task', 'original-artifact'))
@@ -174,7 +170,6 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn(key, env)
 
     def test_preparation_lost_ack_never_cancels_mismatched_original_plan(self):
-        bootstrap = importlib.import_module('bootstrap_research_control')
         from agent_factory import process_runtime_profile
         from agent_factory_research import research_bootstrap_controller
         store = Mock()
@@ -184,19 +179,16 @@ class RunnerTests(unittest.TestCase):
             calls.append(path)
             if path.endswith('/proposals'): return {'id': 'proposal'}
             if path.endswith('/accept'): return {'id': 'plan'}
-            if path.endswith('/plan-reviews'): return {'id': 'review'}
-            if path.endswith('/decision'): return {}
             if path.endswith('/instances'): raise RuntimeError('lost acknowledgement')
             if '/requests/' in path:
                 return {'planId': 'plan', 'taskId': 'original-task', 'requestId': 'operator-attempt:prep:instance'}
             raise AssertionError('Unexpected request')
-        with patch.object(bootstrap, 'ensure_task_development_reviewer', return_value='task-dev-reviewer'), \
-             patch.object(process_runtime_profile, 'publish_process_application', return_value={'id': 'app', 'version': 1, 'sha256': 'a'*64}), \
+        with patch.object(process_runtime_profile, 'publish_process_application', return_value={'id': 'app', 'version': 1, 'sha256': 'a'*64}), \
              patch.object(runner, 'request_client', return_value=request), \
              patch.object(research_bootstrap_controller, 'cleanup_original') as cleanup:
             with self.assertRaisesRegex(RuntimeError, 'lost acknowledgement'):
                 runner.preparation_phase({'state': {'store': store,
-                    'settings': SimpleNamespace(temporary_policy='admin-review')}},
+                    'settings': SimpleNamespace(temporary_policy='member-self-service')}},
                     object(), 'operator-attempt', Mock())
         cleanup.assert_not_called()
         store.request_cancel.assert_not_called()

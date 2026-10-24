@@ -66,7 +66,7 @@ class NativeBridge:
     async def _request(self, method: str, path: str, user_id: str, **kwargs: Any) -> dict[str, Any]:
         if self._app is None:
             raise RuntimeError("Native HTTP application has not been attached")
-        self.auth.require(user_id, "read" if method == "GET" else "run")
+        self.auth.require_member(user_id)
         headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.auth._issue_native_token(user_id)}"}
         trusted_context = INTERNAL_NATIVE.set(True)
         try:
@@ -154,7 +154,7 @@ class NativeBridge:
         Queue commit can precede the session's accepted-run row. Read the native
         ticket first, without replaying submission or changing native queue state.
         """
-        self.auth.require(user_id, "read")
+        self.auth.require_member(user_id)
         component = self._component(session_id, user_id)
         kind, identifier = component["kind"], component["id"]
         session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
@@ -227,7 +227,7 @@ class NativeBridge:
         from agno.os.job_queue import acontinue_via_queue, payload_is_queueable
         from .factory_api import native_requirements
         from .store import digest
-        self.auth.require(user_id, "run")
+        self.auth.require_member(user_id)
         if self._component(session_id, user_id)["kind"] != "agent":
             raise HTTPException(409, "APPROVED_RECOVERY_QUEUE: workflow requires its own native step proof")
         worker = getattr(getattr(self._app, "state", None), "queue_worker", None)

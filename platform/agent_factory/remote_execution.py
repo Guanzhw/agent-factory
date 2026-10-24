@@ -92,7 +92,7 @@ class RemoteExecution:
             for key in ("parentTaskId", "rootTaskId"):
                 scope[key] = self.identifier(task, scope[key], remote_root)
         try:
-            self.client.auth.require(task["owner_id"], "run")
+            self.client.auth.require_member(task["owner_id"])
         except HTTPException as error:
             if error.status_code != 403:
                 raise
@@ -132,10 +132,10 @@ class RemoteExecution:
                         except HTTPException as denied:
                             if denied.status_code not in {403, 409, 503}:
                                 raise
-                        pending["job"].update(status="canceled" if cancelled else "waiting_approval",
-                            validationStatus="接收端已确认未开始执行" if cancelled else "接收端管理员审批待完成",
+                        pending["job"].update(status="canceled" if cancelled else "unknown",
+                            validationStatus="接收端已确认未开始执行" if cancelled else "接收端准备尚未完成，请核对原请求状态",
                             allowedActions=actions)
-                        pending["snapshot"].update(remoteUnavailable=False, receiverReviewRequired=not cancelled,
+                        pending["snapshot"].update(remoteUnavailable=False,
                             remoteHandoff=receipt, allStopped=cancelled)
                         return pending
             detail = await self.client.detail(task["owner_id"], task["id"], child)

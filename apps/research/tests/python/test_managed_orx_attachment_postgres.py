@@ -36,7 +36,7 @@ class ManagedORXPostgresTests(unittest.TestCase):
             active = {'allowed': True}
             def authorized(*args, **kwargs):
                 if not active['allowed']: raise HTTPException(403, 'Controlled original grant revoked')
-            store.auth = SimpleNamespace(require=authorized)
+            store.auth = SimpleNamespace(require_member=authorized)
             store.require_plan_execution = authorized
             store.authorize_tool = authorized
             store.connections = SimpleNamespace(preflight=authorized)

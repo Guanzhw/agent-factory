@@ -27,13 +27,9 @@ def literature_settings(*, db_url: str, workspace: Path, provider, owner="alice"
         trusted_connections={REGISTRATION_REF: trusted}, runtime_adapters=[environment_registration()])
 
 
-def publish_literature_application(state, *, author, reviewer=None):
-    member_publication = state["material_governance"].member_publication()
-    if not member_publication and author == reviewer:
-        raise ValueError("A distinct publication reviewer is required")
+def publish_literature_application(state, *, author):
     governance, applications, store = state["material_governance"], state["applications"], state["store"]
-    state["auth"].require(author, "run" if member_publication else "components:write")
-    if not member_publication: state["auth"].require(reviewer, "agent_os:admin")
+    state["auth"].require_member(author)
     materials = []
     for kind, name, adapter_id, revision in [("model", "model", MODEL_ID, "1"),
             ("environment", "environment", ENVIRONMENT_ADAPTER_ID, "1"),
@@ -46,11 +42,7 @@ def publish_literature_application(state, *, author, reviewer=None):
             "permissions": [CAPABILITY] if kind == "tool" else [],
             "runtimeBinding": {"adapterId": adapter_id, "revision": revision, "config": config},
             "provenance": {"kind": "original", "notice": "Original no-provider public-query workflow."}}, PROFILE + ":draft:" + name)
-        if member_publication:
-            governance.publish(author, identifier, material["version"], PROFILE + ":publish:" + name)
-        else:
-            review = governance.request_publication(author, identifier, material["version"], PROFILE + ":review:" + name)
-            governance.decide_publication(reviewer, review["id"], True, PROFILE + ":approve:" + name)
+        governance.publish(author, identifier, material["version"], PROFILE + ":publish:" + name)
         materials.append(next(row for row in store.materials(published_only=True) if row["id"] == identifier and row["version"] == material["version"]))
     application = applications.create_draft(author, {"id": APPLICATION_ID, "name": "公开文献来源证据",
         "description": "批准的公开查询、书目、摘录、缺正文状态与可下载证据包；无模型服务。",
@@ -60,9 +52,5 @@ def publish_literature_application(state, *, author, reviewer=None):
             "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "orx", "requiredCapabilities": [CAPABILITY], "required": True}],
             "budget": {"toolCalls": 8, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 30, "outputBytes": 65536}}},
         "discoveryKeywords": ["公开文献", "来源证据", "literature evidence"]}, PROFILE + ":application")
-    if member_publication:
-        applications.publish(author, application["id"], application["version"], PROFILE + ":app-publish")
-    else:
-        review = applications.request_publication(author, application["id"], application["version"], PROFILE + ":app-review")
-        applications.decide_publication(reviewer, review["id"], True, PROFILE + ":app-approve")
+    applications.publish(author, application["id"], application["version"], PROFILE + ":app-publish")
     return application

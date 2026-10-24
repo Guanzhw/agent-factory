@@ -23,7 +23,7 @@ def recover(config, inputs, journal, *, database_url_file=None, database_url=Non
         database_url = resolve_database(inputs, database_url_file)
     db = database_url if database_url is not None else read_database_url(original['databaseUrlFile'])
     settings = development_settings(Settings(db_url=db, workspace=workspace, max_workers=1,
-                                             temporary_policy='admin-review'))
+                                             temporary_policy='member-self-service'))
     report = {'schema': 1, 'kind': 'candidate-original-stop-only', 'stages': {},
               'trainingResumed': False, 'newAttempts': 0, 'scientificConclusionVerified': False}
     # Only one invocation's explicitly consumed stages are visited. No global tick.

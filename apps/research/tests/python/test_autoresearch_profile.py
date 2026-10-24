@@ -1,7 +1,6 @@
 """Native ORX profile boundaries with inert services; no ORX/provider/DB execution."""
 from research_services_fixture import with_research_services
 from agent_factory_research.services import services_for
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import json
 from types import SimpleNamespace
@@ -14,8 +13,8 @@ from agno.models.message import Message
 from agno.run import RunContext
 from agent_factory_research import autoresearch_profile as profile
 from agent_factory.applications import ApplicationDefinition
-from agent_factory.execution_bindings import BindingContext
-from agent_factory.material_governance import MaterialDefinition, MaterialGovernance
+from agent_factory.execution_bindings import BindingContext, ExecutionBindings
+from agent_factory.material_governance import GovernanceConfig, MaterialDefinition, MaterialGovernance
 from agent_factory.plan_policy import tools_for_contract
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.usage_ledger import zero_local_usage
@@ -127,12 +126,22 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): profile._config(bad)
 
     def test_actual_governance_validation_matches_registered_tool_catalog(self):
-        # Run the real validation function; only the persisted config read is inert.
+        # Run the real validation function against the installed tool contract.
         governance = object.__new__(MaterialGovernance)
         governance.seed_materials = ()
-        governance._read = Mock(side_effect=lambda: nullcontext(None))
         catalog = tools_for_contract('autoresearch-session-v1')
-        governance._config = Mock(return_value=SimpleNamespace(known_tools=catalog, tool_policies=()))
+        governance.config = GovernanceConfig(tool_contract='autoresearch-session-v1')
+        settings = SimpleNamespace(runtime_tool_contract='autoresearch-session-v1', demo=True)
+        store = SimpleNamespace(settings=settings)
+        bindings = ExecutionBindings(settings, store)
+        for entry in profile.registrations():
+            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
+                tool_name=entry.tool_name, connection_kind=entry.connection_kind,
+                required_capabilities=entry.required_capabilities, permissions=entry.permissions,
+                demo_only=entry.demo_only, validator=entry.validator,
+                connection_adapter_ref=entry.connection_adapter_ref)
+        store.execution_bindings = bindings
+        governance.store = store
         registered = {entry.tool_name: entry for entry in profile.registrations() if entry.kind == 'tool'}
         for material in profile.material_drafts('approved-project'):
             checked = governance.validate_definition(material)

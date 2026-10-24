@@ -7,7 +7,6 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('control_bootstrap', Path(__file__).parents[4] / 'scripts/bootstrap_research_control.py')
 assert spec is not None and spec.loader is not None
@@ -116,35 +115,3 @@ class BootstrapTests(unittest.TestCase):
             return data
         with patch.object(bootstrap.os, 'read', side_effect=swap):
             self.assertRaises(ValueError, bootstrap.read_database_url, str(self.url))
-
-
-class DevelopmentReviewerTests(unittest.TestCase):
-    def state(self):
-        auth = Mock()
-        return {'auth': auth, 'settings': SimpleNamespace(demo=True, temporary_policy='admin-review',
-                                                         host='127.0.0.1', max_workers=1)}
-
-    def test_new_code_identity_uses_existing_directory_and_native_role(self):
-        state = self.state()
-        auth = state['auth']
-        auth.directory.get.return_value = None
-        self.assertEqual(bootstrap.ensure_task_development_reviewer(state), 'task-dev-reviewer')
-        auth.directory.upsert.assert_called_once()
-        auth.authorization.assign.assert_called_once_with('task-dev-reviewer', 'factory-manager')
-        auth.require.assert_called_once_with('task-dev-reviewer', 'agent_os:admin')
-        auth.issue_demo_token.assert_not_called()
-
-    def test_existing_revocation_is_not_restored_and_production_rejected(self):
-        state = self.state()
-        auth = state['auth']
-        auth.directory.get.return_value = {'id': 'task-dev-reviewer'}
-        auth.require.side_effect = PermissionError('revoked')
-        with self.assertRaises(PermissionError):
-            bootstrap.ensure_task_development_reviewer(state)
-        auth.authorization.assign.assert_not_called()
-        auth.directory.upsert.assert_not_called()
-        state['settings'].demo = False
-        auth.reset_mock()
-        with self.assertRaises(ValueError):
-            bootstrap.ensure_task_development_reviewer(state)
-        auth.directory.get.assert_not_called()

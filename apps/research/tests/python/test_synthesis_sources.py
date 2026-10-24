@@ -15,11 +15,11 @@ from test_literature_projection import EvidenceStore
 
 
 class Auth:
-    denied = False
+    enabled = True
 
-    def require(self, owner, action):
-        if self.denied:
-            raise HTTPException(403, 'revoked')
+    def require_member(self, owner):
+        if not self.enabled:
+            raise HTTPException(403, 'member disabled')
 
 
 class Store(EvidenceStore):
@@ -118,7 +118,7 @@ class SynthesisSourceTests(unittest.TestCase):
             self.assertEqual(conn.execute(select(self.service.snapshots)).all(), [])
 
     def test_current_authority_rechecked_on_read_replay_and_consumption(self):
-        value = self.create(); self.auth.denied = True
+        value = self.create(); self.auth.enabled = False
         for call in (lambda: self.create(), lambda: self.service.read('alice', value['id']),
                      lambda: self.service.list('alice'), lambda: self.service.revalidate('alice', value['id'])):
             with self.assertRaises(HTTPException) as error: call()

@@ -43,9 +43,16 @@ class MultiPlanStore(ContractStore):
             "run_id": context.run_id, "cancel_requested": False}
         return self.resolve_run(context)
 
+    def authorize_tool(self, context, name):
+        plan = self.resolve_run(context)
+        self.require_plan_execution(context.user_id, plan, run_context=context)
+        return super().authorize_tool(context, name)
+
     def require_plan_execution(self, owner, plan, *, run_context=None):
         if self.model_revoked or owner != plan["ownerId"]:
             raise PermissionError("Controlled current model authority was revoked")
+        # Production Store invokes the installed binding guard at this boundary.
+        self.execution_bindings.recheck(plan, run_context)
 
 
 class ChoiceModel(DemoModel):
@@ -123,6 +130,29 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         plan["executionBindings"] = self.registry.build(materials, owner, {"provider": connection} if connection else {})
         self.store.plans[identifier] = copy.deepcopy(plan)
         return plan
+
+    async def test_provider_turn_uses_registered_resource_guard_once(self):
+        from unittest.mock import patch
+        from agent_factory.model_dispatch import DelegatingModel
+        plan = self.plan("single-provider-current-check")
+        agent, _ = build_runtime(self.settings, self.store, self.db)
+        output = await self.run_plan(agent, plan, "single-provider-current-session")
+        self.assertEqual(output.status, RunStatus.completed)
+        prepared = DelegatingModel(self.registry)._prepare_selection((), {"run_response": output})
+        with patch.object(self.registry, "recheck", wraps=self.registry.recheck) as checked:
+            prepared[3]()
+        self.assertEqual(checked.call_count, 1)
+
+    async def test_compiled_config_is_consumed_without_repeated_static_validation(self):
+        from unittest.mock import Mock
+        validate = Mock()
+        self.registry.register("tool", "compile-once-checksum", "1", lambda context: lambda: None,
+            tool_name="checksum", validator=validate)
+        plan = self.plan("compile-once", tool_adapter="compile-once-checksum")
+        self.assertEqual(validate.call_count, 1)
+        self.registry.inspect(plan)
+        self.registry.inspect(plan)
+        self.assertEqual(validate.call_count, 1)
 
     async def test_preflight_identifies_only_missing_binding_and_never_constructs_adapters(self):
         materials = [self.material("absent-provider", "model", "operator-model-not-installed"),
@@ -238,16 +268,15 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.status, RunStatus.error)
         self.assertEqual(records, [])
         legitimate = self.plan("forged")
-        forged = copy.deepcopy(legitimate)
-        forged["executionBindings"]["model"]["adapterId"] = "another-installed-provider"
-        forged["executionBindings"]["sha256"] = digest({key: value for key, value in forged["executionBindings"].items() if key != "sha256"})
-        self.registry.register("model", "another-installed-provider", "1", lambda context: ChoiceModel("unwanted", records))
-        with self.assertRaises(HTTPException):
-            self.registry.inspect(forged)
+        # Store.plan owns persisted integrity. Internal binding consumers use
+        # the compiled projection instead of re-proving all material snapshots.
+        from unittest.mock import patch
+        with patch.object(self.registry, "_spec", side_effect=AssertionError("unexpected recompilation")):
+            self.assertEqual(self.registry.inspect(legitimate), legitimate["executionBindings"])
         old = copy.deepcopy(legitimate); old.pop("executionBindings")
         with self.assertRaises(HTTPException) as unadopted:
             self.registry.inspect(old)
-        self.assertIn("LEGACY_PROOF_REQUIRED", unadopted.exception.detail)
+        self.assertIn("BINDING_MANIFEST_REQUIRED", unadopted.exception.detail)
         self.assertFalse(records)
         self.assertFalse(self.store.effects)
 

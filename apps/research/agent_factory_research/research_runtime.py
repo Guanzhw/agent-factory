@@ -98,7 +98,7 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
 
     async def submit(self, owner, task_id):
         """Trusted controller entry, no model arguments, never a replacement run."""
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
         plan = self.store.plan(task["plan_id"], owner)
         target_ref, manifest, variant = self._config(task, plan)
@@ -128,7 +128,7 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
             execution={"nativeRunId": task["run_id"], "effectKey": EFFECT, "requirement": guard})
 
     async def inspect_task(self, owner, task_id):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
         original = self._original(task_id)
         _require(original is not None and original["owner_id"] == owner and original["native_run_id"] == task["run_id"])
