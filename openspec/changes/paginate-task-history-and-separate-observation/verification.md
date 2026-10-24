@@ -71,3 +71,9 @@ callback180有189条SQL，wall3.101637s、thread CPU0.652443s、SQL wall2.336546
 独立核心wheel安装/实际loopback启动/干净关闭/临时DB清理通过（history-core-install，12.303s，exit0）。最终Pyright零错误零警告。Web架构首次漏传必需--config，exit2，仅命令配置错误；正确配置另录。
 
 正确配置Web架构检查exit0（history-web-architecture-configured）。daily PG未通过且共同原因仍在诊断，保持Draft验收限制，不将局部读路径收益外推整体稳定性。
+
+## 精确CI与兼容夹具修正
+
+head4be4eb4的fast CI40101761285全部success。full CI40101802533的Windows discovery在3231项中5 errors/1238 skips；5项均由旧夹具未适配新内部接口触发：nominal定价fixture transaction不接受read_only（2项）、remote receipt mock不接受persist=False、科研observer facts缺unknown、stopproof断言依赖最后一条SQL。原日志保留history-full-windows-errors.log。
+
+修正仅测试夹具：SQLite实际query_only并断言只读/no lock；remote显式persist=False且原row不变；观察facts补全并保持取消不写失败事件；stopproof定位terminal更新并补summary不得释放/重开终态。原语义断言保留。定向15项通过/0跳过（0.071s），Ruff通过；未改生产或放宽期限。完整PG仍等待该次run终态，后续修正head需重新验收。
