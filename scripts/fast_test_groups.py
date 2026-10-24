@@ -46,6 +46,7 @@ FAST_PYTHON_TESTS = {
     'original_receipt_and_stop': (
         'test_process_receipt_validation.ProcessReceiptValidation',
         'test_research_candidate_native_stop.NativeStopTests',
+        'test_guardian_reaping',
     ),
     'research_input_contracts': (
         'test_research_package_paths.RelativePackagePathTests',

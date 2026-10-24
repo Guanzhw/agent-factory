@@ -103,3 +103,15 @@ ObservedMCPAdapter仅在super.invoke完成收尾后的finally将state换成标�
 最终daily Python241通过/0跳过（41.396s，driver45.802s），full discovery3223、daily PG59仅collection/选择确认，未重跑整组PG追绿。最终Ruff/Pyright零错误。
 
 另一次轻量标量观察的单app最多6顺序任务，保持原20s/5s期限、零restart/零retry/零强制GC，实际6/6完成、12次原工具调用、每任务2个DONE completed effects、无authorizationRejected，所有临时服务正常清理；native等待至terminal区间8.368–9.315s。3次gen2最大190.184ms（gen0/1最大3.543/3.546ms）。driver61.612s。该probe绕过的仅fixture保留state诊断，不绕过生产MCP方法或monitor；原始身份/阶段/GC计数在mcp-single-app-six-events.jsonl和analysis.json。它支持单app该短窗口未重现，但不足以证明长期稳定，不能将与重启prefix的差异全部归于生命周期修复或强tracer。
+
+## 精确 CI 与 guardian 回收缺口
+
+16c861f2b7bc68b71391d08b06bdf715c4b77d22 的 fast40104417594、full40104489669 均 success；full PG3223项，3157通过/66跳过，1681.010s，七组required均通过。Windows/Web/Chromium/core均通过。此终态不覆盖后续修改，也不关闭前述历史本地失败。
+
+后续 #97 定向运行暴露 `Popen` ResourceWarning，观察到退出后 PPID1/Zs 进程。源码确认 provider 创建的原 adapter 在launch后不再有回收owner，重开的adapter只有journal、没有原Popen；guardian虽回收了workload，自身仍需存活服务父进程wait。具体日志PID到guardian的对应未记录，不能仅凭源码推断成每个PID的事实。
+
+本分支增加仅等待原Popen的daemon reaper；每个活guardian一个线程，退出后结束，不修改journal/取消/stop proof，不根据进程退出释放UNKNOWN，不阻止服务死亡后guardian继续守护。先启动waiter再派生，finally转交原对象或None。四项纯mock含线程已启动后的中断窗口通过。独立复核确认CPython waitpid锁保护并发wait/poll，未发现阻塞项。无生产超时增加，无PID扫描或强杀补救。
+
+串行真实guardian/enforcement共20项首次19通过/1失败：新parent-exit夹具误配置wall8s，被既有最大5s合同正确拒绝；未派生该fixture guardian。修正夹具为既有wall5s、要求controller3s内正常退出，单项通过（0.648s driver），因此20个唯一用例均有实际通过记录，未重跑整组追绿。覆盖正常退出、原取消、wall停止、guardian死亡仍UNKNOWN、原身份重开、内核CPU/内存/文件限制。parent-exit测试在独立subreaper中证明原guardian继续RUNNING，同身份重开拒绝dispatch，原cancel取得stop proof并回收原guardian。此subreaper只属于测试进程。
+
+Ruff/Pyright通过；daily新增8项选择校验249项、零缺失/重叠（仅collection，不声称重跑全部249）。日志与命令位于cloud scratch `task-history-20261024/audit-guardian-*`。保留初次错误夹具的原失败日志。新增head的精确CI另行记录。

@@ -49,3 +49,11 @@ containers/volumes removed; no live owned fixture server found by scoped scan.
 - [x] 受控源hash与SQL对照；首交错污染基线保留并排除。
 - [ ] 新head精确CI与资源清理。
 - [ ] 历史第二任务、ORX gate和remote parent偶发失败的完整共同归因；GC本轮关联不能替代历史根因证据。
+
+## Guardian 回收后续
+
+- [x] coordinator：核对16c861f exact fast/full success，保留历史失败限制。
+- [x] history_backend：原Popen独立wait责任与三项纯失败路径验证；只改process_enforcement及专用回归。
+- [x] coordinator：串行运行真实guardian回收和既有enforcement验证；原20项中19通过，错误夹具修正后剩余1通过，保留失败。
+- [x] history_remote：独立复核退出/UNKNOWN/线程资源边界；补线程启动后中断窗口测试。
+- [ ] coordinator：扫描并提交新head，记录精确CI与清理。
