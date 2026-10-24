@@ -126,3 +126,11 @@ Ruff/Pyright通过；daily新增8项选择校验249项、零缺失/重叠（仅c
 原PG撤回重启、legacy执行、两个原MCP失败案例按序定向运行：`closure-pg-mcp-regressions`4项中3通过/1失败、零skip，84.657s测试/96.429s driver；slow DELETE案例第二任务仍未在原20s内到native terminal。此明确反证不能把读取优化宣称为MCP稳定性修复。加仅失败后、teardown前的原task/run/queue/effect/callback计数/线程位置诊断（不记录locals、凭据、消息）后按同序一次复现：4/4通过，54.216s driver；未再次复现，不能覆盖前次失败。没有延长等待或重复完整套件追绿。两次期间均未并行其它重PG，但轻量静态/便携检查可能共享CPU，不作精确耗时收益比较。
 
 daily Python旧249选择实际通过（37.508s，42.768s driver）；将11个有界闭包快速案例纳入日常选择，原20 focused已执行，不外推新增260为整组本地执行。新增head以fast CI及上述定向PG验证，前一head full结果不外推为新head full。外部模型/供应商仍未验证。
+
+## MCP第二任务有界时序诊断（2026-10-24）
+
+c939d56 exactfast40114643214最终成功；frontend日志17:12完成，但job终态17:37才更新，曾有502/ReadTimeout/streamerror。通过check-run与最终run核对成功，没有取消/重跑或将未终态当通过。
+
+原native20s超限未获失败现场，不能归因GC、池争用或DELETE，也不能称无害flaky。新诊断仅在第二task启用512event ring（含丢弃计数），记录回调schedule/thread-enter/exit/await-return、调用/SDK退出、已有native polls及每秒worker await-chain位置；不记录locals/SQL参数/凭据，不新增DB poll。原20s/5s与UNKNOWN/stop断言均保留，仅失败快照输出。新增校准用Event区分executor未开始、线程运行但awaiter取消、线程返回但await未恢复；5纯测试通过0.024s。首个校准默认executor导致runner收尾挂起，已改测试独立executor显式join；生产未改。
+
+root只运行一次原四项序列`mcp-second-task-phase-ring`，4通过（driver55.470s），未触发failure snapshot，因此没有新真实根因证据。期间轻量Pyright28.595s重叠，结果不作性能对照。没有第二次整套或重复目标追绿。原完整两轮失败/无整套加速结论和未解MCP限制继续成立。后续实际失败可提供有界阶段证据，而本次不能宣布根因已解决。

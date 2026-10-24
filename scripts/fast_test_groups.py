@@ -35,6 +35,7 @@ FAST_PYTHON_TESTS = {
         'test_personal_cli',
         'test_personal_cli_process',
         'test_personal_mcp',
+        'test_mcp_phase_ring',
         'test_personal_mcp_callbacks',
         'test_personal_mcp_teardown_auth',
         'test_mcp_diagnostic_custody',
