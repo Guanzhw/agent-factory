@@ -15,7 +15,7 @@ from agent_factory_research.autoresearch_profile import APPLICATION_ID
 def context(phase='preparation'):
     receiver = SimpleNamespace(require_phase=Mock(return_value={'comparisonManifest': {'synthetic': True}}), consume_tool=Mock())
     run = SimpleNamespace(user_id='alice', session_id='receiver-task', run_id='original-native')
-    return SimpleNamespace(settings=SimpleNamespace(temporary_policy='admin-review'),
+    return SimpleNamespace(settings=SimpleNamespace(temporary_policy='member-self-service'),
         store=with_research_services(SimpleNamespace(), remote_scientific_receiver=receiver), run_context=run,
         spec={'config': {'projectId': 'project', 'phase': phase}},
         plan={'application': APPLICATION_ID, 'applicationRef': {'id': APPLICATION_ID}, 'mode': MODE_NAMES[phase],

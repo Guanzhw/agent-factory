@@ -53,10 +53,9 @@ def configuration(raw) -> dict[str, Any]:
         require(type(value[key]) is str and re.fullmatch('[A-Z_][A-Z0-9_]{0,127}', value[key]))
     require(type(value['project']) is dict and bool(value['project']))
     publication = value['publication']
-    require(type(publication) is dict and set(publication) == {'author', 'reviewer'})
+    require(type(publication) is dict and set(publication) == {'author'})
     for owner in publication.values():
         require(type(owner) is str and 1 <= len(owner) <= 200 and owner.isprintable())
-    require(publication['author'] != publication['reviewer'])
     json.dumps(value, allow_nan=False)
     return value
 

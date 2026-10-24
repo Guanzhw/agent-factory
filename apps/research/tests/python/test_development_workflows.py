@@ -96,19 +96,17 @@ class DevelopmentWorkflowTests(unittest.TestCase):
             row = {**definition, 'version': 1, 'sha256': digest(definition), 'published': True}
             definitions[(row['id'], 1)] = row
             return row
-        governance = SimpleNamespace(member_publication=Mock(return_value=True), publish=Mock(), create_draft=Mock(side_effect=draft),
-            request_publication=Mock(side_effect=lambda owner, identifier, version, request: {'id': identifier + '-review'}),
-            decide_publication=Mock(), inspect_version=Mock(side_effect=lambda owner, identifier, version:
+        governance = SimpleNamespace(publish=Mock(), create_draft=Mock(side_effect=draft),
+            inspect_version=Mock(side_effect=lambda owner, identifier, version:
                 {'material': definitions[(identifier, version)], 'governance': {'state': 'published'}}))
         def application(owner, definition, request):
             row = {**definition, 'version': 1, 'sha256': digest(definition)}
             applications[(row['id'], 1)] = row
             return row
         app = SimpleNamespace(publish=Mock(), create_draft=Mock(side_effect=application),
-            request_publication=Mock(side_effect=lambda owner, identifier, version, request: {'id': identifier + '-review'}),
-            decide_publication=Mock(), inspect=Mock(side_effect=lambda owner, identifier, version:
+            inspect=Mock(side_effect=lambda owner, identifier, version:
                 {'application': applications[(identifier, version)], 'governance': {'state': 'published'}}))
-        return {'store': SimpleNamespace(settings=settings), 'auth': SimpleNamespace(require=Mock()),
+        return {'store': SimpleNamespace(settings=settings), 'auth': SimpleNamespace(require_member=Mock()),
                 'material_governance': governance, 'applications': app,
                 'connections': SimpleNamespace(bind=Mock(return_value={'status': 'revoked'}))}
 
@@ -123,50 +121,38 @@ class DevelopmentWorkflowTests(unittest.TestCase):
                 self.assertTrue(all(call.args[0] == 'alice' for call in state[service].create_draft.call_args_list))
                 self.assertEqual(state[service].publish.call_count, state[service].create_draft.call_count)
                 self.assertTrue(all(call.args[0] == 'alice' for call in state[service].publish.call_args_list))
-                state[service].request_publication.assert_not_called()
-                state[service].decide_publication.assert_not_called()
-            state['auth'].require.assert_called_once_with('alice', 'run')
+            state['auth'].require_member.assert_called_once_with('alice')
             first = list(state['connections'].bind.call_args_list)
             workflows.initialize_controlled_fixtures(state, author='alice')
             self.assertEqual(first, state['connections'].bind.call_args_list[4:])
             self.assertEqual({call.args[0] for call in first}, {'alice', 'bob'})
 
-    def test_explicit_legacy_bootstrap_keeps_distinct_review_and_request_identity(self):
+    def test_account_admin_bootstrap_uses_owner_publication(self):
         with TemporaryDirectory() as directory:
             state = self.state(directory)
-            state['store'].settings.temporary_policy = 'admin-review'
-            state['store'].settings.material_review_mode = 'separate-admin'
-            state['material_governance'].member_publication.return_value = False
-            with self.assertRaises(ValueError):
-                workflows.initialize_controlled_fixtures(state, author='manager', reviewer='manager')
-            state['material_governance'].create_draft.assert_not_called()
-            workflows.initialize_controlled_fixtures(state, author='manager', reviewer='manager2')
+            workflows.initialize_controlled_fixtures(state, author='manager')
             for service in ('material_governance', 'applications'):
-                state[service].publish.assert_not_called()
-                self.assertEqual(state[service].decide_publication.call_count, state[service].create_draft.call_count)
-                self.assertTrue(all(call.args[0] == 'manager2' and call.args[2] is True
-                    for call in state[service].decide_publication.call_args_list))
-            state['auth'].require.assert_any_call('manager2', 'agent_os:admin')
+                self.assertEqual(state[service].publish.call_count, state[service].create_draft.call_count)
+                self.assertTrue(all(call.args[0] == 'manager' for call in state[service].publish.call_args_list))
+            state['auth'].require_member.assert_called_once_with('manager')
 
-    def test_explicit_legacy_profile_preserves_policy_contract(self):
+    def test_profile_settings_keep_application_owned_revision(self):
         store = SimpleNamespace(engine=SimpleNamespace(dispose=Mock()))
         with TemporaryDirectory() as directory, patch.object(workflows, 'Store', return_value=store), \
                 patch.object(workflows, 'ProcessResourceProvider', autospec=True), \
                 patch.object(workflows.sys, 'platform', 'linux'), \
                 patch.object(workflows.stat, 'S_IMODE', return_value=0o700):
             base = self.settings(directory)
-            base.temporary_policy = 'admin-review'
-            base.material_review_mode = 'separate-admin'
             with workflows.controlled_workflow_settings(base) as settings:
-                self.assertEqual(settings.temporary_policy, 'admin-review')
-                self.assertEqual(settings.material_review_mode, 'separate-admin')
-                self.assertEqual(settings.policy_revision, workflows.PROFILE)
-                self.assertEqual(settings.material_policy_revision, workflows.PROFILE)
+                self.assertEqual(settings.temporary_policy, 'member-self-service')
+                self.assertEqual(settings.material_review_mode, 'member-self-service')
+                self.assertEqual(settings.policy_revision, workflows.PROFILE + "-department-v1")
+                self.assertEqual(settings.material_policy_revision, workflows.PROFILE + "-department-v1")
 
     def test_revoked_member_and_withdrawn_material_stop_bootstrap(self):
         with TemporaryDirectory() as directory:
             state = self.state(directory)
-            state['auth'].require.side_effect = PermissionError('synthetic revoked')
+            state['auth'].require_member.side_effect = PermissionError('synthetic revoked')
             with self.assertRaises(PermissionError):
                 workflows.initialize_controlled_fixtures(state)
             state['material_governance'].create_draft.assert_not_called()

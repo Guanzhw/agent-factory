@@ -2,7 +2,7 @@
 
 本交接用于已经授权的本地开发训练。入口是
 [`scripts/run_research_baseline.py`](../scripts/run_research_baseline.py)；一次调用顺序执行三个阶段，
-复用 Factory 的素材发布、方案审批、原生任务、进程租约及证据存储。
+复用 Factory 的成员素材发布、直接计划执行、原生任务、进程租约及证据存储。
 它不安装依赖、不创建数据库、不开放远程服务，也不购买模型或计算资源。
 
 **2026-10-07 09:48 UTC：首个真实本地 baseline 已完成，`val_bpb = 1.6711944975804394`。**
@@ -170,8 +170,7 @@ PYTHONDONTWRITEBYTECODE=1 SETUPTOOLS_USE_DISTUTILS=local \
 不要通过 checkout `PYTHONPATH`、抽取 coding-agent 凭据或新登录流程修补包准入失败。
 本调用在进程内启动原生控制应用；不需要另起公网监听器。
 当前成员自助策略由 author 发布并直接提交任务，不创建 reviewer 或提升其他用户权限。
-只有显式选择历史审批策略时，才使用独立 reviewer **代码身份**调用旧发布/审批接口；
-该合成身份不是独立人类审查或生产 IdP 证明。
+旧审批写入与执行模式已退役；历史验收器继续验证其固定发布物。
 
 ## canonical 入口失败诊断
 
@@ -210,7 +209,7 @@ runner 在退出 lifespan 和处理清理前保存它最早观察到的失败。
 
 | 阶段 | 实际操作与成功条件 | 必须保留的关联 |
 | --- | --- | --- |
-| 1. Token-byte 准备 | 原 proposal → immutable plan → native task；仅显式历史审批策略在 plan 后经过 review。generic bounded process 从安全 tokenizer JSON 导出 `token_bytes` I32。原进程 COMPLETED/exit0、正停止证明和 RECLAIMED 后才 import。 | 真正的 task/nativeRun/plan/lease/providerJob、独立 preparation manifest、tokenizer hash、原 artifact/reference。没有手写执行 ID。 |
+| 1. Token-byte 准备 | 原 proposal → immutable plan → native task；成员直接提交。generic bounded process 从安全 tokenizer JSON 导出 `token_bytes` I32。原进程 COMPLETED/exit0、正停止证明和 RECLAIMED 后才 import。 | 真正的 task/nativeRun/plan/lease/providerJob、独立 preparation manifest、tokenizer hash、原 artifact/reference。没有手写执行 ID。 |
 | 2. 本地 baseline | 完整环境与输入 capture 后发布研究应用；原 native run 暂停，controller 仅对该暂停调用一次 `research_runtime.submit`。训练由固定 SDPA 本地适配运行，原租约正停止并释放设备后导入 checkpoint，再继续原 native run。 | 本地派生源码 pin、准备 artifact binding、数据/sample-set、环境/lock、设备、原 checkpoint producer binding。 |
 | 3. 独立评价 | 创建独立 evaluator task/nativeRun/plan/lease/job，固定评价代码从阶段 2 的原 checkpoint artifact 读取，并核验原输入与评价 contract。完成后继续该 evaluator 原 native run。 | 与训练不同的执行身份、同一 checkpoint hash、固定 evaluator/source/input pins、有限结果与 stop/device release 证明。 |
 
@@ -298,41 +297,26 @@ execution or reclamation. Do not restart an old attempt or alter its historical
 `cleanupConfirmed:false`; use any subsequent execution only under the existing
 local attempt policy.
 
-### Persisted policy compatibility and assembly-only diagnosis
+### Database readiness and assembly-only diagnosis
 
-The PR46 target preflight reported 76 PASS, zero BLOCKED, and two NOT_CHECKED:
-`DATABASE_AND_APPLICATION` and `RUNTIME_ADMISSION`. Do not recycle the passed
-static fields as unexplained suspects.
-
-A controlled regression now proves a concrete entrypoint defect: the control
-bootstrap originally initialized `material-governance-v1` / `plan-policy-v1`
-with `legacy-v1` and a 3600-second review TTL, while canonical preparation
-requested `task-research-bootstrap-v1` / `research-bootstrap-v1` and 86400 seconds.
-The real SQLite-backed governance constructors reject that sequence. Both
-entrypoints now use one shared `development_settings` contract. This fixes new
-initialization; it does **not** rewrite an already initialized database or prove
-that the target's persisted policy was the observed failure.
-
-After target reconnection, first inspect the existing authorized database:
+Inspect the existing configured database with:
 
 ```sh
 <pinned-python> -B <source>/scripts/run_research_baseline.py --database-preflight --config <original-private-config>
 ```
 
-Unlike `--preflight`, this mode reads the existing configured `databaseUrlFile`
-through the original private-file/loopback reader and connects to that database.
-It never reads an alternative password file, constructs Store/create_app,
-initializes tables, changes current revisions, or creates a workspace/executor.
-PostgreSQL queries run inside a read-only repeatable-read transaction with bounded
-statement/lock waits. The fixed JSON reports current-revision compatibility,
-registered body/hash integrity and mode; values, revisions, hashes, paths, DSN
-and exception text are never returned. Missing tables/configuration are explicitly
-NOT_CHECKED, not successful initialization. No automatic reconciliation occurs.
-An existing revision mismatch requires a separate, evidence-grounded reconciliation
-of the original policy through its native authority; do not delete the database,
-reset history, rebind immutable revisions or silently adopt a different policy.
+`--database-preflight` reads the existing database without constructing services.
+It checks the selected PostgreSQL namespace, required core execution-table
+columns and the stored demo/production mode. Missing tables report NOT_CHECKED;
+namespace/column/mode failures report BLOCKED. The report does not expose
+connection secrets or private row values, and it does not initialize tables.
 
-If policy compatibility is established but application construction still needs
+Historical plan/material policy revisions and review TTLs remain historical
+records. Current services use the supplied runtime configuration; those rows
+are not startup or execution credentials. Frozen `verify_closure.py` and
+`verify_pr50_closure.py` retain the original artifact checks and identities.
+
+If database readiness is established but application construction still needs
 diagnosis, use a fresh diagnostic configuration/workspace under the same approved
 local environment and database. Preserve every original attempt:
 

@@ -24,64 +24,39 @@ class DepartmentPlanPolicyTests(unittest.TestCase):
         self.auth.initialize_demo()
         self.store = MetadataFixture(self.db, self.settings)
 
-    def test_default_accepts_every_registered_application_and_workflow_without_review(self):
+    def test_default_accepts_every_application_and_workflow_without_review(self):
         service = PlanPolicyService(self.store, self.auth)
-        self.assertEqual(service.current()['name'], 'member-self-service')
-        for app, component in [('department-analysis', None), ('new-application', None),
-                               ('department-workflow', {'kind': 'workflow', 'id': 'fixture-workflow'})]:
-            plan = self.store.add(application=app, nativeComponent=component, policy='member-self-service')
-            status = service.status('alice', plan)
-            self.assertTrue(status['executionAllowed'])
-            self.assertFalse(status['reviewRequired'])
-            self.assertFalse(status['reviewRequestSupported'])
-            self.assertEqual(status['approval']['source'], 'member-self-service')
-            with self.assertRaises(HTTPException) as readonly:
-                service.request_review('alice', plan['id'], app)
-            self.assertEqual(readonly.exception.status_code, 410)
-        self.assertEqual(service.list_reviews('alice'), [])
+        for app, component in [("department-analysis", None), ("new-application", None),
+                               ("department-workflow", {"kind": "workflow", "id": "fixture-workflow"})]:
+            plan = self.store.add(application=app, nativeComponent=component,
+                tools=["member_created_tool"], capabilities=["tool:invoke"], policy="member-self-service")
+            status = service.status("alice", plan)
+            self.assertTrue(status["executionAllowed"])
+            self.assertFalse(status["reviewRequired"])
+            self.assertFalse(status["reviewRequestSupported"])
+        self.assertEqual(service.list_reviews("alice"), [])
 
-    def test_migration_preserves_decisions_and_never_releases_old_plans(self):
-        legacy = PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name='admin-review', revision='old'))
-        plans, reviews = [], []
-        for index, approved in enumerate([None, False, True]):
-            plan = self.store.add(policy='admin-review')
-            review = legacy.request_review('alice', plan['id'], 'legacy-' + str(index))
-            if approved is not None:
-                legacy.decide('manager', review['id'], approved, 'decision-' + str(index))
-            plans.append(plan); reviews.append(review)
+    def test_old_configuration_tables_are_preserved_but_not_execution_inputs(self):
+        from sqlalchemy import Column, JSON, MetaData, String, Table, select
+        old_configs = Table("af_plan_policy_configs", MetaData(), Column("revision", String, primary_key=True),
+            Column("policy_hash", String), Column("body", JSON))
+        old_configs.metadata.create_all(self.store.engine)
+        original = {"revision": "old-review", "policy_hash": "original-hash",
+                    "body": {"name": "unset", "review_ttl_seconds": 3600}}
+        with self.store.engine.begin() as conn:
+            conn.execute(old_configs.insert().values(**original))
         service = PlanPolicyService(self.store, self.auth)
-        self.assertEqual([r['decision'] for r in service.list_reviews('alice')].count('approved'), 1)
-        for plan, review in zip(plans, reviews):
-            status = service.status('alice', plan)
-            self.assertFalse(status['executionAllowed'])
-            self.assertIn('LEGACY_PLAN_READ_ONLY', status['reason'])
-            with self.assertRaises(HTTPException) as readonly:
-                service.decide('manager', review['id'], True, 'new-decision')
-            self.assertEqual(readonly.exception.status_code, 410)
-        self.assertTrue(service.status('alice', self.store.add(policy='member-self-service'))['executionAllowed'])
-        # New defaults do not bypass tool authority, disabled users or ownership.
-        for changes in [{'tools': ['shell']}, {'capabilities': ['agent_os:admin']}, {'status': 'blocked'}]:
-            self.assertFalse(service.status('alice', self.store.add(policy='member-self-service', **changes))['executionAllowed'])
-        with self.assertRaises(HTTPException): service.require_execution('bob', plans[0])
-        self.auth.directory.set_disabled('alice', True)
-        with self.assertRaises(HTTPException): service.require_execution('alice', plans[0])
+        plan = self.store.add(policy="admin-review")
+        self.assertTrue(service.require_execution("alice", plan)["allowed"])
+        with self.store.engine.connect() as conn:
+            self.assertEqual(dict(conn.execute(select(old_configs)).mappings().one()), original)
+        with self.assertRaises(ValueError): PlanPolicyConfig(name="admin-review")
 
-    def test_configuration_upgrade_cannot_change_tool_contract_or_undo_emergency_stop(self):
-        PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name='unset', revision='emergency'))
-        with self.assertRaises(ValueError): PlanPolicyService(self.store, self.auth)
-        legacy = PlanPolicyService(self.store, self.auth, PlanPolicyConfig(name='unset', revision='emergency'))
-        legacy.replace_configuration(PlanPolicyConfig(name='admin-review', revision='old'), expected_revision='emergency')
-        with self.assertRaises(ValueError):
-            PlanPolicyService(self.store, self.auth, PlanPolicyConfig(tool_contract='registered-runtime-v1'))
-        self.assertEqual(legacy.current()['revision'], 'old')
-
-    def test_component_author_is_not_an_administrator(self):
-        self.auth.authorization.define_role('component-author', ['components:write', 'agents:factory-executor:run'])
-        self.auth.directory.upsert('author', name='Department author')
-        self.auth.authorization.assign('author', 'component-author')
-        self.assertEqual(self.auth.identity('author')['role'], 'user')
-        with self.assertRaises(HTTPException): self.auth.require('author', 'agent_os:admin')
-
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_current_membership_and_owner_are_the_authority(self):
+        service = PlanPolicyService(self.store, self.auth)
+        plan = self.store.add()
+        self.auth.require_member("alice")
+        with self.assertRaises(HTTPException): self.auth.require_account_admin("alice")
+        with self.assertRaises(HTTPException): service.require_execution("bob", plan)
+        self.auth.directory.set_disabled("alice", True)
+        with self.assertRaises(HTTPException): service.require_execution("alice", plan)

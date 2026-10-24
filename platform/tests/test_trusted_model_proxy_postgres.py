@@ -36,9 +36,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state['store'], self.state['auth']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.auth.directory.upsert('fixture-reviewer', name='Synthetic reviewer')
-        self.auth.authorization.assign('fixture-reviewer', 'factory-manager')
-        publish_application(self.state, author='manager', reviewer='fixture-reviewer')
+        publish_application(self.state, author='manager')
         self.client = TestClient(self.app)
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)

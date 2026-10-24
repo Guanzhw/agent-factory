@@ -231,7 +231,7 @@ def validate_plan_source(store, plan):
         return
     settings = store.settings
     _require(settings.demo is True and getattr(settings, "source_synthesis_enabled", False) is True
-             and settings.temporary_policy in {"member-self-service", "admin-review"})
+             and settings.temporary_policy == "member-self-service")
     _require(plan.get("mode") == "controlled-fixture" and plan.get("tools") == [TOOL_NAME]
              and plan.get("capabilities") == [PERMISSION] and not plan.get("delegation")
              and not plan.get("remoteHandoff"))

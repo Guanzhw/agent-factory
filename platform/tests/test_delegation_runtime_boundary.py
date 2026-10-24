@@ -16,8 +16,8 @@ class CoreDelegationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.parent = {'id': 'parent', 'plan_id': 'parent-plan'}
         self.store = SimpleNamespace(task=Mock(return_value=self.parent),
-            require_current_policy=Mock(), sql=Mock(), reserve_task=Mock())
-        self.auth = SimpleNamespace(require=Mock())
+            sql=Mock(), reserve_task=Mock())
+        self.auth = SimpleNamespace(require_member=Mock())
         self.bridge = SimpleNamespace(submit=AsyncMock())
         self.service = DelegationService(None, self.store, self.auth, self.bridge)
 
@@ -27,8 +27,7 @@ class CoreDelegationTests(unittest.IsolatedAsyncioTestCase):
                 'request-001', placement={'targetRef': 'uninstalled'})
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual(caught.exception.detail, 'Delegation placement is unavailable')
-        self.auth.require.assert_called_once_with('alice', 'run')
-        self.store.require_current_policy.assert_called_once_with()
+        self.auth.require_member.assert_called_once_with('alice')
         self.store.task.assert_called_once_with('parent', 'alice')
         self.store.sql.assert_not_called()
         self.store.reserve_task.assert_not_called()

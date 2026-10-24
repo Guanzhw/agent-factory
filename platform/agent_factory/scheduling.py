@@ -98,11 +98,10 @@ class SchedulingService:
 
     def _require_write(self, owner: str) -> None:
         # Personal schedules use the owner's current execution authority.
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
 
     def _plan(self, plan_id: str, owner: str) -> dict[str, Any]:
-        self.store.require_current_policy()
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         plan = self.store.plan(plan_id, owner)
         if plan["status"] != "ready" or plan.get("delegation") or plan.get("remoteHandoff"):
             raise HTTPException(409, "Schedule requires a ready, top-level immutable plan")
@@ -145,11 +144,11 @@ class SchedulingService:
         return schedule.to_dict()
 
     def get(self, owner: str, schedule_id: str) -> dict[str, Any]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         return self._bound(schedule_id, owner)[0].to_dict()
 
     def list(self, owner: str) -> list[dict[str, Any]]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         rows = self.store.sql("SELECT schedule_id FROM af_schedule_bindings WHERE owner_id=:owner ORDER BY created_at DESC LIMIT 100", owner=owner)
         return [self.get(owner, row["schedule_id"]) for row in rows]
 
@@ -196,7 +195,7 @@ class SchedulingService:
         return rows[0]
 
     def occurrences(self, owner: str, schedule_id: str) -> list[dict[str, Any]]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self._history_binding(schedule_id, owner)
         rows = self.store.sql("SELECT * FROM af_schedule_occurrences WHERE schedule_id=:id AND owner_id=:owner ORDER BY created_at DESC LIMIT 100", id=schedule_id, owner=owner)
         for row in rows:
@@ -214,7 +213,7 @@ class SchedulingService:
         return await self._fire(schedule, "manual:" + request_id, release=False)
 
     async def cancel_occurrence(self, owner: str, schedule_id: str, occurrence_id: str) -> dict[str, Any]:
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self._history_binding(schedule_id, owner)
         rows = self.store.sql("SELECT * FROM af_schedule_occurrences WHERE id=:id AND schedule_id=:schedule AND owner_id=:owner",
                               id=occurrence_id, schedule=schedule_id, owner=owner)
@@ -316,7 +315,7 @@ class SchedulingService:
                 owner = claimed.user_id
                 if not owner:
                     raise HTTPException(403, "Unowned schedules cannot admit Factory tasks")
-                self.auth.require(owner, "run")
+                self.auth.require_member(owner)
                 observation["reason"] = "CLAIM_CHANGED"
                 if release:
                     self._require_lease(claimed)
@@ -418,7 +417,7 @@ class SchedulingService:
         rows = self.store.sql("SELECT * FROM af_schedule_occurrences WHERE status IN ('reserving','unknown') ORDER BY created_at LIMIT 100")
         for receipt in rows:
             try:
-                self.auth.require(receipt["owner_id"], "run")
+                self.auth.require_member(receipt["owner_id"])
                 with self._lock(receipt["schedule_id"]):
                     await self._reconcile(receipt)
             except HTTPException:

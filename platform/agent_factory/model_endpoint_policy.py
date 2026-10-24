@@ -1,8 +1,4 @@
-"""Reviewed endpoint/header policy, separate from owner custody and wire codecs.
-
-Only exact provider prefixes are added to the public HTTPS /v1 baseline. No
-user-supplied headers, network policy, credentials or arbitrary body overrides.
-"""
+"""Owner endpoint normalization and provider-specific headers/options."""
 from __future__ import annotations
 
 import hashlib
@@ -20,16 +16,18 @@ CLIENT_USER_AGENT = 'agent-factory/0.2 (+https://github.com/Guanzhw/agent-factor
 
 
 def base_url(value):
+    """Normalize the owner's HTTP(S) model base, including custom API paths."""
     try:
+        if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+            raise ValueError()
         parsed = urlsplit(value)
-        path = parsed.path.rstrip('/')
+        if parsed.query or parsed.fragment or any(c in value for c in '? #\\'):
+            raise ValueError()
         destination = origin(f'{parsed.scheme}://{parsed.netloc}')
-        normalized = destination + path
-        if path != '/v1' and normalized not in ADDITIONAL_BASE_URLS:
+        path = parsed.path.rstrip('/')
+        if any(part in {'.', '..'} for part in path.split('/')):
             raise ValueError()
-        if value not in {normalized, normalized + '/'}:
-            raise ValueError()
-        return normalized
+        return destination + path
     except (ValueError, TypeError, AttributeError):
         raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED') from None
 
@@ -61,10 +59,12 @@ def requires_session(base):
 
 def chat_headers(base, lease, session_id):
     """Compatibility name: headers are independent of CC versus Responses."""
-    headers = {'Authorization': 'Bearer ' + lease.password, 'Accept-Encoding': 'identity'}
+    headers = {'Accept-Encoding': 'identity'}
+    if lease is not None:
+        headers['Authorization'] = 'Bearer ' + lease.password
     if requires_session(base):
         if (type(session_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', session_id)
-                or session_id == lease.password):
+                or lease is not None and session_id == lease.password):
             raise ValueError('PERSONAL_MODEL_SESSION_REQUIRED')
         headers.update({'User-Agent': CLIENT_USER_AGENT, 'x-opencode-session': session_id})
     return headers

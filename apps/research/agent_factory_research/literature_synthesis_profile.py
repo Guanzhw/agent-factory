@@ -202,12 +202,8 @@ def synthesis_settings(*, db_url, workspace: Path, question, evidence_projection
             local_model_type=ScientificFixtureModel, per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),))
 
 
-def publish_synthesis_application(state, question, evidence_projection, *, author, reviewer=None):
-    member_publication = state["material_governance"].member_publication()
-    if not member_publication and author == reviewer:
-        raise ValueError("Distinct publication reviewer required")
-    state["auth"].require(author, "run" if member_publication else "components:write")
-    if not member_publication: state["auth"].require(reviewer, "agent_os:admin")
+def publish_synthesis_application(state, question, evidence_projection, *, author):
+    state["auth"].require_member(author)
     context = build_source_context(question, evidence_projection)
     fingerprint = context.provenance["snapshotSha256"]
     governance, applications = state["material_governance"], state["applications"]
@@ -226,11 +222,7 @@ def publish_synthesis_application(state, question, evidence_projection, *, autho
             definition["runtimeBinding"] = {"adapterId": adapter, "revision": "1",
                 "config": {"snapshotSha256": fingerprint, **({"connectionName": CONNECTION_NAME} if kind == "model" else {})}}
         material = governance.create_draft(author, definition, identifier + ":draft:" + fingerprint)
-        if member_publication:
-            governance.publish(author, identifier, material["version"], identifier + ":publish:" + fingerprint)
-        else:
-            review = governance.request_publication(author, identifier, material["version"], identifier + ":review:" + fingerprint)
-            governance.decide_publication(reviewer, review["id"], True, identifier + ":approve:" + fingerprint)
+        governance.publish(author, identifier, material["version"], identifier + ":publish:" + fingerprint)
         materials.append(material)
     definition = {"id": APPLICATION_ID, "name": "受控文献综合流程", "defaultMode": "controlled-fixture",
         "description": "离线原生流程与引用完整性验证；科研语义仍需人工审查。", "discoveryKeywords": [],
@@ -239,9 +231,5 @@ def publish_synthesis_application(state, question, evidence_projection, *, autho
             "connectionRequirements": [{"name": CONNECTION_NAME, "kind": "model", "requiredCapabilities": [], "required": True}],
             "budget": {"toolCalls": 2, "maxDepth": 1, "maxChildren": 1, "experimentSeconds": 8, "outputBytes": 65536}}}}
     application = applications.create_draft(author, definition, APPLICATION_ID + ":draft:" + fingerprint)
-    if member_publication:
-        applications.publish(author, application["id"], application["version"], APPLICATION_ID + ":publish:" + fingerprint)
-    else:
-        review = applications.request_publication(author, application["id"], application["version"], APPLICATION_ID + ":review:" + fingerprint)
-        applications.decide_publication(reviewer, review["id"], True, APPLICATION_ID + ":approve:" + fingerprint)
+    applications.publish(author, application["id"], application["version"], APPLICATION_ID + ":publish:" + fingerprint)
     return application

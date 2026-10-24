@@ -7,6 +7,17 @@ targets of 32 cores/64 GB or 54 cores/192 GB have not been load benchmarked.
 
 ## Logical backup and restore
 
+Normal startup stores encrypted resource credentials in PostgreSQL and the
+32-byte master key in `FACTORY_WORKSPACE/runtime/credential-vault.key`.
+Stop the API/workers, then preserve that key alongside the paired database
+backup and restore it at the same workspace location before restarting.
+Keep filesystem access limited to the service account. The key is reused on
+restart; losing or replacing it makes existing ciphertext unreadable.
+When an organization injects its own vault, use that vault's backup procedure.
+Historical approval/configuration rows are retained during the trusted-team
+migration. Remove retired approval modes and review TTL settings from startup
+configuration; current member configuration governs new operations.
+
 The automated acceptance test uses official PostgreSQL 17.11 `pg_dump` custom
 format with `--no-owner --no-acl`, followed by `pg_restore` into a distinct empty
 generated database. It stops its original API/worker/poller before backup and

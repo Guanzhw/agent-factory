@@ -75,7 +75,7 @@ class EventReplay:
     def _scope(self, owner, task_id):
         self._identifier(owner)
         self._identifier(task_id)
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
         self._identifier(task["id"])
         return task
@@ -93,7 +93,7 @@ class EventReplay:
                     "stream_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL)"))
                 initialized_owned = owned
             current = self.store.task(task["id"], owner)
-            self.auth.require(owner, "read")
+            self.auth.require_member(owner)
             conn.execute(text("INSERT INTO af_event_streams(task_id,owner_id,stream_id,schema_version) "
                               "VALUES(:task,:owner,:stream,:schema) ON CONFLICT(task_id) DO NOTHING"),
                          {"task": current["id"], "owner": owner, "stream": str(uuid4()), "schema": CURSOR_SCHEMA})

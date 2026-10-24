@@ -1,8 +1,8 @@
-"""Recover synthetic proposals/reviews against an already running loopback demo.
+"""Recover original synthetic proposals and plans in a loopback member demo.
 
-Requires development_mock_login, admin-review policy, and approved demo research
-materials. Creates proposals/plans/reviews, never task instances or model calls.
-Start no services and preserve no traces, cookies, tokens, or raw exceptions.
+Requires development mock login and published demo research materials. The
+harness verifies lost acknowledgements and owner isolation without creating
+native task instances.
 """
 import argparse
 from collections import Counter
@@ -84,9 +84,9 @@ def restore(page, goal, accepted=False):
         next_page.click()
     else:
         raise AssertionError('Fixture inbox exceeded bounded page limit')
-    expect(page.get_by_label('任务目标', exact=True)).to_have_value(goal)
+    expect(page.get_by_label('2. 描述任务', exact=True)).to_have_value(goal)
     if accepted:
-        page.get_by_role('heading', name='已固定的执行方案', exact=True).wait_for()
+        page.get_by_role('heading', name='4. 开始任务', exact=True).wait_for()
 
 
 def capture(page, output, name):
@@ -96,7 +96,6 @@ def capture(page, output, name):
 
 def scenario(browser, base, output, name, viewport):
     context = browser.new_context(ignore_https_errors=True, viewport=viewport)
-    manager = browser.new_context(ignore_https_errors=True, viewport=viewport)
     foreign = browser.new_context(ignore_https_errors=True, viewport=viewport)
     try:
         page = context.new_page()
@@ -107,7 +106,7 @@ def scenario(browser, base, output, name, viewport):
             if message.type != 'error':
                 return
             path = urlsplit(message.location.get('url', '')).path
-            injected = path == PREFIX + '/compositions/proposals' or path == PREFIX + '/plan-reviews' or path.endswith('/accept')
+            injected = path == PREFIX + '/compositions/proposals' or path.endswith('/accept')
             expected_failure = injected and 'Failed to load resource' in message.text and 'ERR_FAILED' in message.text
             initial_signed_out = path == PREFIX + '/session' and '401' in message.text
             if not (expected_failure or initial_signed_out):
@@ -120,13 +119,13 @@ def scenario(browser, base, output, name, viewport):
         page.on('request', count)
         login(page, base, 'alice')
         goal = '合成研究提案恢复验收 ' + name + ' ' + uuid4().hex[:12]
-        selector = page.get_by_label('已批准的应用', exact=True)
+        selector = page.get_by_label('1. 选择应用', exact=True)
         expect(selector).to_be_enabled()
         selector.select_option('research')
         page.get_by_label('应用执行方式', exact=True).select_option('literature')
-        page.get_by_label('任务目标', exact=True).fill(goal)
+        page.get_by_label('2. 描述任务', exact=True).fill(goal)
         proposal = lost_reply(page, base, '/compositions/proposals', lambda:
-            page.get_by_role('button', name='生成装配提案', exact=True).click())
+            page.get_by_role('button', name='预览任务方案', exact=True).click())
         assert proposal['ownerId'] == 'alice' and proposal['state'] == 'pending'
         assert proposal['candidate']['syntheticFixture'] is True
         restore(page, goal)
@@ -135,33 +134,12 @@ def scenario(browser, base, output, name, viewport):
         capture(page, output, name + '-proposal-recovered')
         # Also lose acceptance ACK: restoration must GET the original sealed plan.
         plan = lost_reply(page, base, '/compositions/proposals/' + proposal['id'] + '/accept', lambda:
-            page.get_by_role('button', name='接受提案并固定方案', exact=True).click())
+            page.get_by_role('button', name='确认范围并保存方案', exact=True).click())
         restore(page, goal, accepted=True)
         recovered = json_get(context, base, '/compositions/proposals/' + proposal['id'] + '/recovery')
         assert recovered['plan'] == plan
-        gate = page.get_by_role('region', name='方案执行授权', exact=True)
-        expect(gate).to_contain_text('管理员审查')
-        review = lost_reply(page, base, '/plan-reviews', lambda:
-            gate.get_by_role('button', name='提交方案审查', exact=True).click())
-        assert review['planId'] == plan['id'] and review['decision'] == 'pending'
-        restore(page, goal, accepted=True)
-        expect(gate).to_contain_text('审查状态：等待决定')
-        expect(page.get_by_role('button', name='确认方案并创建任务', exact=True)).to_be_disabled()
-        reviews = json_get(context, base, '/plan-reviews?allOwners=false&planId=' + plan['id'])
-        assert [item['id'] for item in reviews] == [review['id']]
-        capture(page, output, name + '-review-pending-recovered')
-        # Independent reviewer decides only this exact synthetic plan through UI.
-        manager_page = manager.new_page()
-        login(manager_page, base, 'manager')
-        manager_page.get_by_role('button', name='方案审查', exact=True).click()
-        row = manager_page.locator('article').filter(has=manager_page.get_by_role('heading', name=goal, exact=True))
-        row.get_by_role('button', name='拒绝方案', exact=True).click()
-        expect(row).to_contain_text('已拒绝')
-        restore(page, goal, accepted=True)
-        expect(gate).to_contain_text('审查状态：已拒绝')
-        expect(page.get_by_role('button', name='确认方案并创建任务', exact=True)).to_be_disabled()
-        expect(gate.get_by_role('button', name='明确提交新的审查请求', exact=True)).to_be_visible()
-        capture(page, output, name + '-review-denied-recovered')
+        expect(page.get_by_role('button', name='开始任务', exact=True)).to_be_enabled()
+        capture(page, output, name + '-direct-admission-ready')
         # A separate session cannot read the first owner's original record.
         foreign_page = foreign.new_page()
         login(foreign_page, base, 'bob')
@@ -169,19 +147,18 @@ def scenario(browser, base, output, name, viewport):
         assert denied.status == 404
         assert posts[PREFIX + '/compositions/proposals'] == 1
         assert posts[PREFIX + '/compositions/proposals/' + proposal['id'] + '/accept'] == 1
-        assert posts[PREFIX + '/plan-reviews'] == 1
         assert not any('/instances' in path for path in posts)
         assert not errors and not console_errors
-        return {'viewport': name, 'proposalId': proposal['id'], 'planId': plan['id'], 'reviewId': review['id'],
+        return {'viewport': name, 'proposalId': proposal['id'], 'planId': plan['id'],
                 'proposalLostReplyRecovered': True, 'acceptLostReplyRecoveredReadOnly': True,
-                'pendingAndDeniedReviewRecovered': True, 'foreignOwnerDenied': True,
-                'browserStorageLoss': True, 'duplicateCreateAcceptReviewPosts': 0,
+                'directMemberAdmissionReady': True, 'foreignOwnerDenied': True,
+                'browserStorageLoss': True, 'duplicateCreateAcceptPosts': 0,
                 'instancePosts': 0, 'pageErrors': 0, 'unexpectedConsoleErrors': 0, 'horizontalOverflow': False}
     except Exception:
         page.screenshot(path=str(output / (name + '-failure.png')), full_page=True)
         raise
     finally:
-        foreign.close(); manager.close(); context.close()
+        foreign.close(); context.close()
 
 
 def main():

@@ -33,7 +33,7 @@ class MemoryService(AutoResearchService):
         return result
 
     def recover(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return self.projection(owner, 'task') if request_id == self.saved['body']['requestId'] else None
 
 

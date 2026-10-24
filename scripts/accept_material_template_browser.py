@@ -25,10 +25,8 @@ PREFIX = '/api/factory'
 def safe_path(url):
     path = urlsplit(url).path
     for pattern, label in (
-        (r'/api/factory/applications/[^/]+/versions/[0-9]+/review', '/applications/:id/versions/:version/review'),
-        (r'/api/factory/applications/reviews/[^/]+/decision', '/applications/reviews/:id/decision'),
+        (r'/api/factory/applications/[^/]+/versions/[0-9]+/publish', '/applications/:id/versions/:version/publish'),
         (r'/api/factory/compositions/proposals/[^/]+/accept', '/compositions/proposals/:id/accept'),
-        (r'/api/factory/plan-reviews/[^/]+/decision', '/plan-reviews/:id/decision'),
         (r'/api/factory/jobs/[^/]+/artifacts/[^/]+', '/jobs/:id/artifacts/:id'),
         (r'/api/factory/jobs/[^/]+', '/jobs/:id'),
     ):
@@ -36,8 +34,8 @@ def safe_path(url):
             return label
     return path.removeprefix(PREFIX) if path in {
         PREFIX + '/applications/drafts', PREFIX + '/applications/definitions',
-        PREFIX + '/applications/reviews', PREFIX + '/applications', PREFIX + '/session',
-        PREFIX + '/compositions/proposals', PREFIX + '/plan-reviews', PREFIX + '/instances',
+        PREFIX + '/applications', PREFIX + '/session',
+        PREFIX + '/compositions/proposals', PREFIX + '/instances',
     } else '/other'
 
 
@@ -91,10 +89,10 @@ def application_row(page, name, button):
 
 def scenario(browser, base, output, name, viewport):
     contexts = [browser.new_context(ignore_https_errors=True, viewport=viewport, accept_downloads=True)
-                for _ in range(4)]
-    author, reviewer, owner, foreign = contexts
+                for _ in range(3)]
+    author, owner, foreign = contexts
     pages = [context.new_page() for context in contexts]
-    manager, manager2, alice, bob = pages
+    manager, alice, bob = pages
     posts = Counter()
     diagnostics = []
     page_errors = []
@@ -119,7 +117,7 @@ def scenario(browser, base, output, name, viewport):
             {'path': safe_path(response.url), 'status': response.status})
             if response.status >= 400 and len(diagnostics) < 50 else None)
     try:
-        for page, persona in zip(pages, ('manager', 'manager2', 'alice', 'bob'), strict=True):
+        for page, persona in zip(pages, ('manager', 'alice', 'bob'), strict=True):
             login(page, base, persona)
         stage = 'template'
         governance(manager)
@@ -165,51 +163,31 @@ def scenario(browser, base, output, name, viewport):
         draft = uncertain_draft(manager, base, editor, save)
         assert draft['name'] == app_name and draft['version'] == 1 and draft['id'] != source['id']
         manager.reload(wait_until='domcontentloaded'); governance(manager)
-        row = application_row(manager, app_name, '申请发布此版本')
+        row = application_row(manager, app_name, '发布此版本')
         expect(row).to_contain_text('草稿')
         versions = json_get(author, base, '/applications/definitions?allAuthors=false')
         assert [item['application'] for item in versions if item['application']['id'] == draft['id']] == [draft]
         assert posts['/applications/drafts'] == 2
-        publication = mutation(manager, f"/applications/{draft['id']}/versions/1/review",
-                               row.get_by_role('button', name='申请发布此版本', exact=True).click)
-        self_review = application_row(manager, app_name, '同意发布此版本')
-        expect(self_review).to_contain_text('不能审查自己的发布申请')
-        expect(self_review.get_by_role('button', name='同意发布此版本', exact=True)).to_be_disabled()
-        manager.reload(wait_until='domcontentloaded'); governance(manager)
-        reviews = json_get(author, base, '/applications/reviews?allAuthors=false')
-        assert [item['id'] for item in reviews if item['application']['id'] == draft['id']] == [publication['id']]
-        capture(manager, output, name + '-draft-independent-review')
         stage = 'publish'
-        governance(manager2)
-        manager2.get_by_label('查看全部作者（需当前管理员权限）', exact=True).check()
-        review_row = application_row(manager2, app_name, '同意发布此版本')
-        published = mutation(manager2, f"/applications/reviews/{publication['id']}/decision",
-                             review_row.get_by_role('button', name='同意发布此版本', exact=True).click)
-        assert published['decision'] == 'approved' and published['reviewerId'] == 'manager2'
-        manager2.reload(wait_until='domcontentloaded'); governance(manager2)
-        assert any(item == draft for item in json_get(reviewer, base, '/applications'))
-        capture(manager2, output, name + '-published')
+        published = mutation(manager, f"/applications/{draft['id']}/versions/1/publish",
+                             row.get_by_role('button', name='发布此版本', exact=True).click)
+        assert published == draft
+        manager.reload(wait_until='domcontentloaded'); governance(manager)
+        assert any(item == draft for item in json_get(author, base, '/applications'))
+        capture(manager, output, name + '-published')
         stage = 'assemble'
         alice.reload(wait_until='domcontentloaded')
-        alice.get_by_label('已批准的应用', exact=True).select_option(draft['id'])
+        alice.get_by_label('1. 选择应用', exact=True).select_option(draft['id'])
         alice.get_by_label('应用执行方式', exact=True).select_option('literature')
         goal = '合成文献单次执行 ' + app_name
-        alice.get_by_label('任务目标', exact=True).fill(goal)
+        alice.get_by_label('2. 描述任务', exact=True).fill(goal)
         proposal = mutation(alice, '/compositions/proposals',
-                            alice.get_by_role('button', name='生成装配提案', exact=True).click)
+                            alice.get_by_role('button', name='预览任务方案', exact=True).click)
         assert proposal['candidate']['syntheticFixture'] is True
         plan = mutation(alice, f"/compositions/proposals/{proposal['id']}/accept",
-                        alice.get_by_role('button', name='接受提案并固定方案', exact=True).click)
-        plan_review = mutation(alice, '/plan-reviews',
-                               alice.get_by_role('button', name='提交方案审查', exact=True).click)
-        manager2.get_by_role('button', name='方案审查', exact=True).click()
-        plan_row = manager2.locator('article').filter(has=manager2.get_by_role('heading', name=goal, exact=True))
-        plan_row.get_by_role('button', name='同意方案', exact=True).click()
-        expect(plan_row).to_contain_text('已同意')
-        alice.get_by_role('button', name='刷新授权与审查状态', exact=True).click()
-        stage = 'native-instance'
+                        alice.get_by_role('button', name='确认范围并保存方案', exact=True).click)
         job = mutation(alice, '/instances',
-                       alice.get_by_role('button', name='确认方案并创建任务', exact=True).click)
+                       alice.get_by_role('button', name='开始任务', exact=True).click)
         assert job['planId'] == plan['id']
         # Browser-visible artifact is the completion condition, never an estimated sleep.
         download = alice.get_by_role('button', name=re.compile('^校验并下载 ')).first
@@ -230,20 +208,19 @@ def scenario(browser, base, output, name, viewport):
         stage = 'isolation'
         assert foreign.request.get(base + PREFIX + '/jobs/' + job['id']).status == 404
         assert foreign.request.get(base + PREFIX + '/jobs/' + job['id'] + '/artifacts/' + artifact['id']).status == 404
-        for endpoint in ('/applications/drafts', '/applications/:id/versions/:version/review',
-                         '/applications/reviews/:id/decision', '/compositions/proposals',
-                         '/compositions/proposals/:id/accept', '/plan-reviews', '/instances'):
+        for endpoint in ('/applications/drafts', '/applications/:id/versions/:version/publish', '/compositions/proposals',
+                         '/compositions/proposals/:id/accept', '/instances'):
             assert posts[endpoint] == (2 if endpoint == '/applications/drafts' else 1), 'DUPLICATE_MUTATION'
         assert not page_errors and not console_errors
         return {'viewport': name, 'evidenceMode': 'controlled-fixture', 'draftId': draft['id'],
-                'publicationId': publication['id'], 'planId': plan['id'], 'planReviewId': plan_review['id'],
+                'publishedVersion': draft['version'], 'planId': plan['id'],
                 'taskId': job['id'], 'nativeRunPresent': True, 'artifactIntegrityVerified': True,
-                'invalidBudgetAndMissingMaterialRejected': True, 'independentPublicationReview': True,
+                'invalidBudgetAndMissingMaterialRejected': True, 'directOwnerPublication': True,
                 'refreshPreservedOriginalRecords': True, 'instancePosts': 1, 'bobIsolation': True,
                 'lostDraftAcknowledgementRecovered': True, 'draftRequests': 2, 'uniqueDrafts': 1,
                 'liveProviderVerified': False, 'pageErrors': 0, 'unexpectedConsoleErrors': 0}
     except Exception as error:
-        failed_page = manager if stage in {'template', 'invalid-budget', 'missing-material', 'draft'} else manager2 if stage == 'publish' else alice
+        failed_page = manager if stage in {'template', 'invalid-budget', 'missing-material', 'draft', 'publish'} else alice
         overflow = failed_page.evaluate('document.documentElement.scrollWidth > window.innerWidth')
         overflow_elements = failed_page.evaluate("""() => [...document.querySelectorAll('body *')]
             .filter(element => element.getBoundingClientRect().right > window.innerWidth + 1)

@@ -263,23 +263,19 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
                 self.assertIn(self.post(self.body(**fields)).status_code, {403, 404, 409})
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
 
-    def test_actual_current_source_and_receiver_native_grants_cannot_be_replaced_by_request(self):
+    def test_actual_current_source_and_receiver_membership_cannot_be_replaced_by_request(self):
         self._native_grant_transition(observe_revocation=False)
 
-    def test_observed_revocation_survives_role_restoration_and_only_fresh_task_gets_authority(self):
+    def test_observed_revocation_survives_reenable_and_only_fresh_task_gets_authority(self):
         self._native_grant_transition(observe_revocation=True)
 
     def test_authority_cleanup_flag_and_failure_reason_are_atomically_visible(self):
         observer = self.state["lifecycle_observer"]
         loop = observer._task.get_loop()
         asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
-        self.auth.authorization.define_role("authority-reader", ["agents:factory-executor:read", "sessions:read", "components:read", "registry:read"])
-        self.auth.authorization.unassign("alice", "factory-user")
-        self.auth.authorization.assign("alice", "authority-reader")
-        self.auth.require("alice", "read")
-        self.assertEqual(self.auth.authorization.roles_of("alice"), ["authority-reader"])
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException):
-            self.auth.require("alice", "run")
+            self.auth.require_member("alice")
         task = self.store.task(self.placement["task_id"], "alice")
         at_failure_event, release = threading.Event(), threading.Event()
         original_event = self.store.event
@@ -317,15 +313,15 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
 
     def _native_grant_transition(self, *, observe_revocation):
         # Control only scheduling, on the actual service loop. Both cases still
-        # use real native grants, the real observer and loopback HTTP authority.
+        # use current directory membership, the real observer and loopback HTTP authority.
         # A periodic tick during withdrawal commits sticky task cancellation;
-        # restoring a role must never be mistaken for reviving that mandate.
+        # re-enabling the member must never be mistaken for reviving that mandate.
         observer = self.state["lifecycle_observer"]
         self.assertIsNotNone(observer._task)
         loop = observer._task.get_loop()
         asyncio.run_coroutine_threadsafe(observer.stop(), loop).result(timeout=5)
         original = self.placement
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException) as withdrawn:
             self.call()
         self.assertEqual(withdrawn.exception.status_code, 403,
@@ -340,7 +336,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
             self.assertTrue(self.store.task(original["task_id"], "alice")["cancel_requested"])
             self.assertTrue(self.store.has_failures(original["task_id"]))
 
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", False)
         if observe_revocation:
             # This is the previously intermittent CI outcome, now required.
             with self.assertRaises(HTTPException) as ended:
@@ -354,34 +350,59 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.assertEqual(authority.tools, frozenset({"checksum"}))
         self.assertEqual(authority.capabilities, frozenset({"checksum:read"}))
         self.assertFalse(self.store.task(self.placement["task_id"], "alice")["cancel_requested"])
-        self.auth.authorization.unassign("bob", "factory-user")
+        self.auth.directory.set_disabled("bob", True)
         with self.assertRaises(HTTPException) as receiver:
             self.call()
         self.assertEqual(receiver.exception.status_code, 403)
+        self.auth.directory.set_disabled("bob", False)
         self.assertEqual(self.post(self.body(ownerId="manager", role="manager")).status_code, 422)
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
         self.assertIsNone(self.store.task(original["task_id"], "alice")["run_id"])
         self.assertIsNone(self.store.task(self.placement["task_id"], "alice")["run_id"])
         self.assertEqual(self.provider_calls, [])
 
-    def test_current_material_application_adapter_and_policy_withdrawals_each_deny(self):
+    def test_current_adapter_withdrawal_denies(self):
         # Each fixture has fresh immutable seed versions; no archive is restored.
         self.state["execution_bindings"].withdraw("model", "local-synthetic-model-v1", "1")
         with self.assertRaises(HTTPException):
             self.call()
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
 
-    def test_current_policy_and_application_withdrawal_deny(self):
-        self.settings.temporary_policy = "unset"
-        with self.assertRaises(HTTPException):
-            self.call()
-        self.settings.temporary_policy = "bounded-synthetic"
-        self.state["applications"].withdraw("manager", "checksum", 1, "owned-withdraw-app", "Controlled fixture")
+    def owned_withdrawal_plan(self, *, own_tool=False):
+        applications = self.state["applications"]
+        original = applications.require_current(self.plan["applicationRef"])
+        from copy import deepcopy
+        definition = deepcopy({key: value for key, value in original.items()
+            if key not in {"schema", "version", "createdAt", "sha256", "origin"}})
+        definition["id"] = "owned-withdrawal-checksum"
+        material = None
+        if own_tool:
+            governance = self.state["material_governance"]
+            material = governance.create_draft("alice", {"id": "owned-checksum-tool", "kind": "tool",
+                "name": "Owned native checksum", "content": "checksum", "permissions": ["checksum:read"],
+                "runtimeBinding": {"adapterId": "native-checksum-v1", "revision": "1", "config": {}}}, "owned-tool-draft")
+            governance.publish("alice", material["id"], 1, "owned-tool-publish")
+            for mode in definition["modes"].values():
+                mode["materialRefs"] = [{key: material[key] for key in ("id", "version", "sha256")}
+                    if ref["id"] == "checksum-tool" else ref for ref in mode["materialRefs"]]
+        application = applications.create_draft("alice", definition, "owned-app-draft")
+        applications.publish("alice", application["id"], 1, "owned-app-publish")
+        self.plan = self.state["composition"].create_plan("alice", "Checksum owned withdrawal fixture", "literature",
+            application_ref={key: application[key] for key in ("id", "version", "sha256")})
+        self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
+        return application, material
+
+    def test_current_application_withdrawal_denies(self):
+        application, _ = self.owned_withdrawal_plan()
+        self.assertEqual(self.call().tools, frozenset({"checksum"}))
+        self.state["applications"].withdraw("alice", application["id"], 1, "owned-withdraw-app", "Controlled fixture")
         with self.assertRaises(HTTPException):
             self.call()
 
     def test_current_material_withdrawal_deny_and_retains_source_immutable_plan(self):
-        self.state["material_governance"].withdraw("manager", "checksum-tool", 1, "owned-withdraw-tool", "Controlled fixture")
+        _, material = self.owned_withdrawal_plan(own_tool=True)
+        self.assertEqual(self.call().tools, frozenset({"checksum"}))
+        self.state["material_governance"].withdraw("alice", material["id"], 1, "owned-withdraw-tool", "Controlled fixture")
         with self.assertRaises(HTTPException):
             self.call()
         self.assertEqual(self.store.plan(self.plan["id"], "alice"), self.plan)
@@ -389,8 +410,6 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
     def test_actual_current_owner_connection_revocation_denies_without_resolving_or_constructing_provider(self):
         # A private inert handle exists only in operator fixture configuration;
         # published material/proposal/HTTP contain its redacted owner pin only.
-        self.auth.directory.upsert("owned-publication-reviewer", name="Owned synthetic administrator fixture")
-        self.auth.authorization.assign("owned-publication-reviewer", "factory-manager")
         governance = self.state["material_governance"]
         model = governance.create_draft("alice", {"kind": "model", "name": "Owned connection-selected model",
             "content": "No provider construction during authority preflight.", "license": "MIT",
@@ -408,21 +427,14 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         application = applications.create_draft("alice", definition, "owned-connected-app")
         applications.publish("alice", application["id"], 1, "owned-connected-publish")
         connection = self.state["connections"].bind("alice", "owned-source-model", "owned-model-binding")
-        # A custom registered model is not proven synthetic merely because the
-        # server is a demo. Exercise this authority fixture through an explicit
-        # reviewed plan instead of weakening the production handoff guard.
-        from agent_factory.plan_policy import PlanPolicyConfig
+        # Source authority validates the selected owner connection without
+        # constructing a provider or using historical review decisions.
         policy = self.state["plan_policy"]
-        self.settings.temporary_policy = "admin-review"
-        policy.replace_configuration(PlanPolicyConfig(name="admin-review", revision="owned-connected-review-v1"),
-            expected_revision=policy.current()["revision"])
         plan = self.state["composition"].create_plan("alice", "Checksum bound connection authority", "literature",
             application_ref={key: application[key] for key in ("id", "version", "sha256")}, connection_refs={"source-model": connection["ref"]})
         self.assertEqual(plan["status"], "ready", plan["missing"])
         self.assertFalse(plan["syntheticFixture"])
-        self.assertFalse(policy.status("alice", plan)["executionAllowed"])
-        plan_review = policy.request_review("alice", plan["id"], "owned-connected-plan-review")
-        policy.decide("owned-publication-reviewer", plan_review["id"], True, "owned-connected-plan-approve")
+        self.assertTrue(policy.status("alice", plan)["executionAllowed"])
         self.placement = self.handoff.reserve("alice", plan["id"], self.target.reference, "owned-connected-placement")
         self.assertEqual(self.call().tools, frozenset({"checksum"}))
         self.state["connections"].revoke("alice", connection["ref"], "owned-revoke-connection")

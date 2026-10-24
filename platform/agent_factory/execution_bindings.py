@@ -157,21 +157,15 @@ class ExecutionBindings:
         return copy.deepcopy(value)
 
     def _entry(self, kind: str, spec: Mapping[str, Any]) -> AdapterRegistration:
-        adapter_id, revision = spec.get("adapterId"), spec.get("revision")
-        if not isinstance(adapter_id, str) or not isinstance(revision, str) or not _IDENTIFIER.fullmatch(adapter_id) or not _IDENTIFIER.fullmatch(revision):
-            raise HTTPException(409, "BINDING_SPEC_INVALID: adapter ID/revision must be exact bounded identifiers")
+        adapter_id, revision = spec["adapterId"], spec["revision"]
         with self._lock:
             entry = self._adapters.get((kind, adapter_id, revision))
+        if entry is None and kind == "tool" and getattr(self.store, "personal_tools", None) is not None:
+            self.store.personal_tools.ensure_registered(adapter_id)
+            with self._lock:
+                entry = self._adapters.get((kind, adapter_id, revision))
         if entry is None or entry.demo_only and not self.settings.demo:
             raise HTTPException(409, "BINDING_ADAPTER_UNAVAILABLE: exact trusted adapter revision is unavailable")
-        config = self._configuration(spec.get("config", {}))
-        if entry.validator is not None:
-            try:
-                entry.validator({key: val for key, val in config.items() if key != "connectionName"})
-            except (ValueError, TypeError) as error:
-                raise HTTPException(409, "BINDING_CONFIG_INVALID: " + str(error)) from error
-        if kind == "tool" and spec.get("toolName") != entry.tool_name:
-            raise HTTPException(409, "BINDING_TOOL_MISMATCH: native tool name differs from the registered adapter")
         return entry
 
     def _spec(self, material: Mapping[str, Any], connections: Mapping[str, Any]) -> dict[str, Any]:
@@ -198,18 +192,19 @@ class ExecutionBindings:
             raise HTTPException(409, "BINDING_CONFIG_INVALID: invalid inert runtime binding") from error
         spec = {"materialRef": {key: material[key] for key in ("id", "version", "sha256")},
                 "adapterId": binding.get("adapterId"), "revision": binding.get("revision"),
-                "config": self._configuration(binding.get("config", {}))}
-        with self._lock:
-            entry = self._adapters.get((kind, spec["adapterId"], spec["revision"]))
-        if entry is not None and kind == "tool":
-            spec["toolName"] = entry.tool_name
+                "config": binding["config"]}
         entry = self._entry(kind, spec)
-        if not set(entry.permissions) <= set(material.get("permissions", [])):
-            raise HTTPException(409, "BINDING_PERMISSION_MISSING: material lacks registered adapter permissions")
+        if entry.validator is not None:
+            try:
+                entry.validator({key: val for key, val in spec["config"].items() if key != "connectionName"})
+            except (ValueError, TypeError) as error:
+                raise HTTPException(409, "BINDING_CONFIG_INVALID: " + str(error)) from error
+        if kind == "tool":
+            spec["toolName"] = entry.tool_name
         name = spec["config"].get("connectionName")
         if entry.connection_kind:
             if not isinstance(name, str) or name not in connections:
-                raise HTTPException(409, "BINDING_CONNECTION_REQUIRED: approved owner-scoped connection is unavailable")
+                raise HTTPException(409, "BINDING_CONNECTION_REQUIRED: selected resource connection is unavailable")
             value = connections[name]
             if not isinstance(value, dict):
                 raise HTTPException(409, "BINDING_CONNECTION_INVALID: connection pin must be redacted metadata")
@@ -288,42 +283,8 @@ class ExecutionBindings:
                 return effective
         manifest = plan.get("executionBindings")
         if manifest is None:
-            # Old immutable plans can only use the explicit original seed map.
-            if not self.settings.demo:
-                raise HTTPException(409, "BINDING_MANIFEST_REQUIRED: live execution has no immutable binding manifest")
-            applications = getattr(self.store, "applications", None)
-            if applications is None:
-                raise HTTPException(409, "BINDING_LEGACY_PROOF_REQUIRED: old demo plan has not been explicitly adopted")
-            applications.require_legacy_demo_plan(plan)
-            manifest = self.build(plan.get("materials", []), plan["ownerId"])
-        if (not isinstance(manifest, dict) or set(manifest) != {"schema", "model", "environment", "tools", "knowledge", "sha256"}
-                or manifest["schema"] != 1 or digest({key: val for key, val in manifest.items() if key != "sha256"}) != manifest["sha256"]):
-            raise HTTPException(409, "BINDING_MANIFEST_INTEGRITY: execution bindings differ from their immutable hash")
-        selected_materials = plan.get("materials", [])
-        if not isinstance(selected_materials, list) or len(selected_materials) > 30:
-            raise HTTPException(409, "BINDING_MATERIAL_LIMIT: invalid selected material closure")
-        for material in selected_materials:
-            if digest({key: value for key, value in material.items() if key not in {"sha256", "published", "createdAt"}}) != material.get("sha256"):
-                raise HTTPException(409, "BINDING_MATERIAL_INTEGRITY: selected material differs from its exact hash")
-        materials = {digest({key: value[key] for key in ("id", "version", "sha256")}): value for value in selected_materials}
-        names = []
-        for kind, spec in self._items(manifest):
-            if not isinstance(spec, dict) or set(spec) - {"materialRef", "adapterId", "revision", "config", "connection", "toolName"}:
-                raise HTTPException(409, "BINDING_SPEC_INVALID: unknown execution binding fields")
-            material = materials.get(digest(spec.get("materialRef")))
-            if material is None or material.get("kind") != kind:
-                raise HTTPException(409, "BINDING_MATERIAL_MISMATCH: adapter is outside its exact selected material")
-            # Recompile the selected material specification to prevent a valid
-            # digest on a separately forged runtime adapter or connection pin.
-            connection_name = spec.get("config", {}).get("connectionName")
-            expected = self._spec(material, {connection_name: spec.get("connection")} if connection_name else {})
-            if spec != expected:
-                raise HTTPException(409, "BINDING_SPEC_MISMATCH: runtime adapter differs from the material specification")
-            if kind == "tool":
-                names.append(spec["toolName"])
-        if len(names) != len(set(names)) or set(names) != set(plan.get("tools", [])):
-            raise HTTPException(409, "BINDING_TOOL_SCOPE: execution tool selection differs from the immutable plan")
-        return copy.deepcopy(manifest)
+            raise HTTPException(409, "BINDING_MANIFEST_REQUIRED: regenerate the plan with explicit runtime bindings")
+        return manifest
 
     def _connection(self, owner: str, entry: AdapterRegistration, spec: Mapping[str, Any], context: Any, *, resolve: bool):
         pin = spec.get("connection")
@@ -436,9 +397,13 @@ class ExecutionBindings:
             if (context.user_id != expected.user_id or context.session_id != expected.session_id
                     or context.run_id != expected.run_id):
                 raise HTTPException(403, "BINDING_NATIVE_IDENTITY: retained tool belongs to a different native run")
-            self.store.require_plan_execution(context.user_id, binding.plan, run_context=context)
-            self.recheck(binding.plan, context)
-            self.store.authorize_tool(context, binding.spec["toolName"])
+            try:
+                self.store.authorize_tool(context, binding.spec["toolName"])
+            except RunCancelledException:
+                raise
+            except Exception:
+                self.store.event(context.run_id, "protected_denied", "Current member, selected tool or resource denied execution", {"tool": binding.spec["toolName"]})
+                raise
         def local_current():
             if self.store.cancellation_requested(expected.run_id):
                 raise RunCancelledException("Factory cancellation requested before tool execution")
@@ -496,5 +461,5 @@ class ExecutionBindings:
 
 
 def default_bindings(settings: Any, store: Any, connections: Any = None, *, legacy_materials=(), legacy_bindings=None) -> ExecutionBindings:
-    """An empty trusted registry. Applications install their reviewed factories."""
+    """Installed adapters plus lazily registered member resource adapters."""
     return ExecutionBindings(settings, store, connections, legacy_materials=legacy_materials, legacy_bindings=legacy_bindings)

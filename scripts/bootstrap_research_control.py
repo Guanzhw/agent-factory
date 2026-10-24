@@ -99,27 +99,6 @@ def _workspace(path, *, create):
     return Path(path)
 
 
-DEVELOPMENT_REVIEWER = 'task-dev-reviewer'
-
-
-def ensure_task_development_reviewer(state):
-    """Trusted bootstrap only; separate code identity, not independent human review.
-
-    Does not grant a token or restore an existing identity's revoked rights.
-    Call from the operator factory before governed publication, on its explicitly
-    designated development database. All publication APIs still check authority.
-    """
-    settings, auth = state['settings'], state['auth']
-    _require(settings.demo is True and settings.temporary_policy == 'admin-review'
-             and settings.host == '127.0.0.1' and settings.max_workers == 1)
-    if auth.directory.get(DEVELOPMENT_REVIEWER) is None:
-        auth.directory.upsert(DEVELOPMENT_REVIEWER,
-                              name='Task development reviewer (code identity, not independent human)')
-        auth.authorization.assign(DEVELOPMENT_REVIEWER, 'factory-manager')
-    auth.require(DEVELOPMENT_REVIEWER, 'agent_os:admin')
-    return DEVELOPMENT_REVIEWER
-
-
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError(FAILURE)

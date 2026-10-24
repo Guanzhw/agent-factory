@@ -57,8 +57,6 @@ class PubMedProfilePostgresTests(unittest.TestCase):
         self.store = self.state['store']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.state['auth'].authorization.unassign('bob', 'factory-user')
-        self.state['auth'].authorization.assign('bob', 'factory-manager')
         self.application = publish_pubmed_application(self.state, author='alice')
         self.connection = self.state['connections'].bind('alice', REGISTRATION_REF, str(uuid4()), capabilities=['research:read'])
         self.client = TestClient(self.app).__enter__()

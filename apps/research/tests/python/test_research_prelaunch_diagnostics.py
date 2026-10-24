@@ -148,12 +148,12 @@ class DurableCase:
             with case.assertRaises(ValueError):
                 PersistentResourceService.process_snapshot(previous, omitted)
             # Listing is metadata only: exercise its owner query without a provider call.
-            auth = SimpleNamespace(require=Mock())
+            auth = SimpleNamespace(require_member=Mock())
             store = SimpleNamespace(sql=Mock(return_value=[{'id': previous['id'], 'body': canonical(previous)}]))
             manager = PersistentResourceService(store, auth, {})
             listing = manager.list_leases('alice')
             case.assertEqual(listing['leases'][0]['preDispatchFailure'], diagnostic)
-            auth.require.assert_called_once_with('alice', 'run')
+            auth.require_member.assert_called_once_with('alice')
             case.assertEqual(store.sql.call_args.kwargs['owner'], 'alice')
             case.assertEqual(self.observer.calls, [])
             popen.assert_not_called()

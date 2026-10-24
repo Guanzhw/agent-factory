@@ -1,4 +1,4 @@
-"""Native Function registration for static, owner-scoped personal tool adapters.
+"""Native Function registration for owner-scoped CLI/MCP adapters.
 
 The native run and FunctionCall identify one durable effect. Neither an unknown
 acknowledgement nor a repeated native call may dispatch that effect again.
@@ -61,7 +61,7 @@ def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistrat
         expected = (binding.run_context.user_id, binding.run_context.session_id, binding.run_context.run_id)
         connection = dict(binding.spec['connection'])
         if (service.adapters.get(descriptor.adapter_id) is not adapter or handle.adapter is not adapter
-                or handle.service is not service or handle.owner != expected[0]):
+                or handle.service is not service or handle.requesting_actor != expected[0]):
             raise PermissionError('PERSONAL_TOOL_BINDING_DENIED')
 
         async def invoke(*, run_context, fc, **arguments):
@@ -79,7 +79,7 @@ def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistrat
                             or fc.function._run_context is not run_context
                             or service.adapters.get(descriptor.adapter_id) is not adapter
                             or handle.adapter is not adapter or handle.service is not service
-                            or handle.owner != expected[0] or digest(asdict(adapter.descriptor)) != fingerprint):
+                            or handle.requesting_actor != expected[0] or digest(asdict(adapter.descriptor)) != fingerprint):
                         raise PermissionError()
                     store.require_plan_execution(expected[0], binding.plan, run_context=run_context)
                     store.execution_bindings.recheck(binding.plan, run_context)
@@ -120,14 +120,15 @@ def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistrat
                 check_authorized()
                 try:
                     lease = handle.resolve_credential()
-                    if not isinstance(lease, SecretLease):
+                    if lease is not None and not isinstance(lease, SecretLease):
                         raise ValueError()
                 except RunCancelledException:
                     raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
                 except Exception:
                     raise PermissionError('PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE') from None
                 check_authorized()
-                leases.append(lease)
+                if lease is not None:
+                    leases.append(lease)
                 return lease
 
             invocation = ToolInvocation(owner_id=expected[0], connection_ref=connection['ref'],

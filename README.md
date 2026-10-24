@@ -1,6 +1,6 @@
 # Agent Factory
 
-An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators handle public deletion, withdrawal and archival. Auto-Research is the first application. New published applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
+An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. Auto-Research is the first application. New published applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
 
 This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: native authorization, PostgreSQL queue, questions, native operation confirmations, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled by default. Historical live and failed retrieval evidence stays scoped to its recorded run; controlled fixtures do not establish scientific validity. Full production acceptance remains open.
 
@@ -67,23 +67,32 @@ $env:FACTORY_POSTGRES_BIN = 'C:\path\to\postgresql\bin'
 npm start
 ```
 
-Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or material administrator. The demo script initializes only `.local/postgres`, binds both services to loopback and stops its owned services on Ctrl+C. Its trust authentication belongs only to the disposable local cluster. Do not expose the demo to a network. Logs, database, runtime files and credentials are ignored by Git.
+Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or account administrator. The demo script initializes only `.local/postgres`, binds both services to loopback and stops its owned services on Ctrl+C. Its trust authentication belongs only to the disposable local cluster. Do not expose the demo to a network. Logs, database, runtime files and credentials are ignored by Git.
 
-For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate clean database and native managed users/roles; it provisions no identities. Execution is checked per plan against exact published applications and materials, installed adapters, owner connection pins and current admission policy. Missing items block that plan; there is no automatic demo-model fallback. Real provider SDK attempt/retry enforcement, production browser identity entry, reviewed mutable research workloads and production OS acceptance remain implementation/integration work; credentials alone do not complete them. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
+For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate database and existing member accounts; it provisions no identities. Active members use ordinary components and workflows; account administrators manage accounts. Execution checks published applications/materials, installed adapters, owner/shared resource access and task bounds. Real provider SDK attempt/retry enforcement and production OS acceptance remain integration work. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
 
 Normal entrypoints use `Settings.from_env()` / `ResearchSettings.from_env()` with
 `member-self-service` for task admission and material/application publication.
 Members publish their versions directly and submit new tasks without ordinary
 plan approval. Native hazardous-tool and exact project-creation confirmations
-remain. Historical plans and reviews stay readable, but cannot authorize new
-execution; create a new plan explicitly. An unknown original outcome still
-requires original-request reconciliation. Explicit `Settings(demo=True)` synthetic
-fixtures can retain legacy policies; they do not set the normal product default.
+remain. Historical reviews stay readable and do not authorize new tasks.
+Plans without explicit execution bindings must be regenerated. An unknown original outcome still
+requires original-request reconciliation. Retired plan/publication modes and
+review TTL settings must be removed from startup configuration.
 See [department collaboration and migration](docs/department-minimal-integration.md).
+
+The standalone core starts with `python -m agent_factory` after installing
+`department-agent-factory-core`. It provides accounts, encrypted credentials,
+models, remote services, CLI/MCP tools and SSH without the research application.
+Normal startup creates a persistent 32-byte vault key at
+`FACTORY_WORKSPACE/runtime/credential-vault.key` (workspace defaults to `.local`).
+Back up this key with its PostgreSQL database and retain it across restarts;
+restoring the database alone cannot decrypt credentials. Restrict filesystem
+access to the service account. An injected organizational vault remains supported.
 
 ## Implemented boundary
 
-- Six material kinds, immutable content versions/digests, member drafts and direct publication, administrator-only public archive/withdrawal, inert structured import, pinned transitive dependency preflight and bounded published-material discovery.
+- Six material kinds, immutable content versions/digests, member drafts and direct publication, author-managed archive/withdrawal, inert structured import, pinned transitive dependency preflight and bounded published-material discovery.
 - Published immutable application definitions, bounded goal-based discovery and proposal/revise/reject/accept, exact permitted material alternatives, and member publication of new shared versions.
 - Trusted registered model/tool/knowledge/environment factories selected by immutable material bindings; current owner connection references with bind/revoke, expiry, rotation and redacted metadata.
 - Personal CLI/MCP adapters are installed statically; members register them with matching owner credentials and bind connections for on-demand calls ([setup and lifecycle](docs/PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)).
@@ -174,7 +183,7 @@ Guarded hard-process schedule recovery and its native lease-release limitation a
 recorded in [SCHEDULING](docs/SCHEDULING.md). Exact-source ORX build/preflight is
 recorded separately from unverified live research.
 
-Material-driven composition, adapter registration and compatibility rules are described in [MATERIAL_ASSEMBLY.md](docs/MATERIAL_ASSEMBLY.md). The default CLI installs only explicit demo adapters and safe native primitives. Real integrations require trusted same-process `Settings.runtime_adapters` and `Settings.trusted_connections`; these cannot be installed over HTTP. Enabling `FACTORY_RUNTIME_TOOL_CONTRACT=registered-runtime-v1` also requires new `FACTORY_POLICY_REVISION` and `FACTORY_MATERIAL_POLICY_REVISION` values. Preserve existing v1 policy hashes. Normal member-mode admission rejects historical plans with `LEGACY_PLAN_READ_ONLY`; old reviews and request IDs are not reused for new execution. `ApplicationService.adopt_legacy_demo_plan` remains an explicit legacy fixture path, not a migration shortcut for the normal deployment.
+Material-driven composition and compatibility rules are described in [MATERIAL_ASSEMBLY.md](docs/MATERIAL_ASSEMBLY.md). Members configure persistent [CLI/MCP tools](docs/MEMBER_TOOLS.md) and owned/shared resource connections through the normal APIs. Installations may also supply trusted same-process `Settings.runtime_adapters` and `Settings.trusted_connections`. Publication and execution use the selected adapter identities and current descriptors. Historical reviews retain their original contents; plans without explicit execution bindings must be regenerated. Original request IDs still recover their original operations.
 
 Versioned publication/import and current material guards are described in
 [material governance](docs/MATERIAL_GOVERNANCE.md). History pagination is documented

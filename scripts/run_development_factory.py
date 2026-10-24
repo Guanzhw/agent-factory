@@ -35,7 +35,7 @@ def main(argv=None):
     parser.add_argument("--profile", choices=("basic", "controlled-workflows"), default="basic",
                         help="Explicit controlled-workflows adds synthetic source/synthesis and fixed local comparisons")
     parser.add_argument("--initialize-controlled-fixtures", action="store_true",
-                        help="Explicit separate-review fixture publication and initial owner connection binding; no task approval")
+                        help="Publish controlled fixtures as their owner and create initial owner connection bindings")
     args = parser.parse_args(argv)
     try:
         if args.initialize_controlled_fixtures and args.profile != "controlled-workflows":
@@ -76,7 +76,7 @@ def main(argv=None):
             print("Development profile: " + args.profile, flush=True)
             if args.profile == "controlled-workflows":
                 print("Synthetic sources and controlled synthesis; fixed Linux comparison processes. No live retrieval/model, remote host or aggregate isolation.", flush=True)
-                print("Fixture publication is explicit; every task still needs its own current plan review.", flush=True)
+                print("Fixture publication is explicit; members submit their own plans directly.", flush=True)
             uvicorn.run(application, host=bind_host, port=parsed.port, ssl_certfile=str(certificate), ssl_keyfile=str(key),
                         access_log=False, log_level="warning")
         return 0

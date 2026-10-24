@@ -53,7 +53,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
         self.resources.execution_runtime.return_value = self.runtime
         self.resources._authorize.return_value = self.target
         self.resources._target_fingerprint.return_value = '9'*64
-        self.auth, self.store, self.storage = Mock(), Mock(), Mock()
+        self.auth, self.store, self.storage = Mock(spec=["require_member"]), Mock(), Mock()
         self.store.plan.return_value = self.plan
         self.store.task.return_value = self.task
         self.store.settings = SimpleNamespace(storage_low_water_bytes=100)
@@ -122,7 +122,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
             self.service.reserve('alice', 'lease1', disk_bytes=8192)
         self.storage._directory.assert_not_called()
         self.assertEqual(self.held, 1024)
-        self.auth.require.side_effect = PermissionError('revoked')
+        self.auth.require_member.side_effect = PermissionError('revoked')
         with self.assertRaises(PermissionError):
             self.service.reserve('alice', 'lease1', disk_bytes=8192)
         self.storage._directory.assert_not_called()
@@ -130,7 +130,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
     def test_reserve_rechecks_revoke_and_cancel_after_retention_lock(self):
         for cancelled in (False, True):
             with self.subTest(cancelled=cancelled):
-                self.auth.require.side_effect = None
+                self.auth.require_member.side_effect = None
                 self.task['cancel_requested'] = False
 
                 @contextmanager
@@ -138,7 +138,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
                     if cancelled:
                         self.task['cancel_requested'] = True
                     else:
-                        self.auth.require.side_effect = PermissionError('revoked')
+                        self.auth.require_member.side_effect = PermissionError('revoked')
                     yield
 
                 self.storage._lock.side_effect = enter
@@ -150,13 +150,13 @@ class ResearchPreparationStoreTests(unittest.TestCase):
     def test_reserve_rechecks_revoke_cancel_and_terminal_after_admission_wait(self):
         for mutation in ('revoke', 'cancel_requested', 'terminal'):
             with self.subTest(mutation=mutation):
-                self.auth.require.side_effect = None
+                self.auth.require_member.side_effect = None
                 self.task.update(cancel_requested=False, terminal=False)
 
                 def sql(statement, **params):
                     if 'pg_advisory_xact_lock' in statement:
                         if mutation == 'revoke':
-                            self.auth.require.side_effect = PermissionError('revoked')
+                            self.auth.require_member.side_effect = PermissionError('revoked')
                         else:
                             self.task[mutation] = True
                     return self.sql(statement, **params)
@@ -181,7 +181,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
 
     def test_reserve_rechecks_before_chmod_and_before_return(self):
         def revoke_object(*_args):
-            self.auth.require.side_effect = PermissionError('revoked')
+            self.auth.require_member.side_effect = PermissionError('revoked')
             return self.object_row
 
         self.storage._object.side_effect = revoke_object
@@ -189,10 +189,10 @@ class ResearchPreparationStoreTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.service.reserve('alice', 'lease1', disk_bytes=8192)
             chmod.assert_not_called()
-        self.auth.require.side_effect = None
+        self.auth.require_member.side_effect = None
         self.storage._object.side_effect = lambda *_args: self.object_row
         with patch('agent_factory_research.research_preparation_store.os.fsync',
-                   side_effect=lambda _fd: setattr(self.auth.require, 'side_effect', PermissionError('revoked'))):
+                   side_effect=lambda _fd: setattr(self.auth.require_member, 'side_effect', PermissionError('revoked'))):
             with self.assertRaises(PermissionError):
                 self.service.reserve('alice', 'lease1', disk_bytes=8192)
 
@@ -248,13 +248,13 @@ class ResearchPreparationStoreTests(unittest.TestCase):
 
     def test_revocation_rechecked_before_publish_and_on_identity(self):
         self.produce()
-        self.auth.require.side_effect = [None, PermissionError('revoked')]
+        self.auth.require_member.side_effect = [None, PermissionError('revoked')]
         with self.assertRaises(PermissionError):
             self.service.import_completed('alice', 'lease1')
         self.store.artifact_write.assert_not_called()
-        self.auth.require.side_effect = None
+        self.auth.require_member.side_effect = None
         self.service.import_completed('alice', 'lease1')
-        self.auth.require.side_effect = PermissionError('revoked')
+        self.auth.require_member.side_effect = PermissionError('revoked')
         with self.assertRaises(PermissionError):
             self.service.identity('alice', 'task1', 'artifact1', 4096)
 
@@ -276,7 +276,7 @@ class ResearchPreparationStoreTests(unittest.TestCase):
         @contextmanager
         def revoke_after_hash(*args):
             with original_open(*args) as opened:
-                self.auth.require.side_effect = PermissionError('revoked during stream')
+                self.auth.require_member.side_effect = PermissionError('revoked during stream')
                 yield opened
 
         with patch.object(self.service, '_open', revoke_after_hash), self.assertRaises(PermissionError):

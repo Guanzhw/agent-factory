@@ -57,7 +57,7 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
         training = self.run_stage(training_import, training_progress)
         self.training_contract = training['imported']
         self.application = publish_research_application(self.state, target_ref='evaluator',
-            comparison_manifest=self.manifest, author='manager', reviewer='bob', adapter_suffix='-evaluator')
+            comparison_manifest=self.manifest, author='manager', adapter_suffix='-evaluator')
         original_service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
             {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
         evaluation = self.run_stage(lambda owner, task, lease:
@@ -93,10 +93,10 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'RESEARCH_RETAINED_BASELINE_UNVERIFIED'):
                 self.portal.call(gate)
             # A fresh authorization lookup must preserve current revocation.
-            state['auth'].authorization.unassign('alice', 'factory-user')
+            state['auth'].directory.set_disabled('alice', True)
             with self.assertRaises(HTTPException) as denied:
                 self.portal.call(service.verify, 'alice', self.evaluation_contract)
             self.assertEqual(denied.exception.status_code, 403)
-            state['auth'].authorization.assign('alice', 'factory-user')
+            state['auth'].directory.set_disabled('alice', False)
         self.assertEqual(tuple(len(self.store.sql('SELECT id FROM ' + table)) for table in
             ('af_tasks', 'af_process_allocations')), counts)

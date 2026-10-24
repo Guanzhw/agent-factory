@@ -2,7 +2,7 @@
 """Actual Factory/Agno/PostgreSQL ORX discovery integration using local fixtures.
 
 Only the trusted adapter's discovery transport and DemoModel response are
-synthetic. Main wiring, material/admin review, owner connection resolution,
+synthetic. Main wiring, member publication, owner connection resolution,
 application composition, native task queue, Agent tool loop, effects, and
 artifact persistence remain the real Factory implementation.
 """
@@ -84,17 +84,13 @@ class ORXNativeFactoryPostgresTests(unittest.TestCase):
             opaque_handle=self.provider, handle_ref="synthetic-provider-handle-v1")
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.workspace.name),
             max_workers=1, max_tool_calls=4, experiment_timeout_seconds=10,
-            experiment_output_bytes=65536, temporary_policy="read-only-auto",
+            experiment_output_bytes=65536, temporary_policy="member-self-service",
             policy_revision="orx-plan-policy-v1", material_policy_revision="orx-material-policy-v1",
-            runtime_tool_contract="registered-runtime-v1", material_review_mode="separate-admin",
+            runtime_tool_contract="registered-runtime-v1", material_review_mode="member-self-service",
             trusted_connections={self.registration_ref: self.trusted})
         self.application = create_app(self.settings)
         self.state = self.application.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
-        # This generated test database owns these native grants. The separately
-        # authenticated Bob reviewer is deliberately elevated only in-fixture.
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(self.application).__enter__()  # type: ignore[arg-type]
@@ -108,7 +104,7 @@ class ORXNativeFactoryPostgresTests(unittest.TestCase):
         result = self.client.post("/api/factory/demo/login", json={"persona": persona})
         self.assertEqual(result.status_code, 200, result.text)
 
-    def test_approved_material_application_and_native_task_execute_discovery(self):
+    def test_member_published_material_application_and_native_task_execute_discovery(self):
         seeds = {row["id"]: row for row in self.store.materials(published_only=True)}
         self.assertIn("demo-model", seeds)
         self.assertIn("local-environment", seeds)
@@ -129,18 +125,9 @@ class ORXNativeFactoryPostgresTests(unittest.TestCase):
             }})
         self.assertEqual(material_response.status_code, 201, material_response.text)
         material = material_response.json()
-        review = self.client.post("/api/factory/material-governance/reviews", json={
-            "materialId": material["id"], "version": material["version"], "requestId": "orx-material-review"})
-        self.assertEqual(review.status_code, 201, review.text)
-        review_id = review.json()["id"]
-        self.assertEqual(self.client.post(f"/api/factory/material-governance/reviews/{review_id}/decision",
-            json={"approved": True, "requestId": "orx-material-self-review"}).status_code, 403)
-
-        # A distinct native manager approves publication.
-        self.login("bob")
-        approved_material = self.client.post(f"/api/factory/material-governance/reviews/{review_id}/decision",
-            json={"approved": True, "requestId": "orx-material-distinct-admin"})
-        self.assertEqual(approved_material.status_code, 200, approved_material.text)
+        published = self.client.post(f"/api/factory/material-governance/versions/{material['id']}/{material['version']}/publish",
+            json={"requestId": "orx-material-member-publish"})
+        self.assertEqual(published.status_code, 200, published.text)
         material = next(row for row in self.store.materials(published_only=True)
                         if row["id"] == material["id"] and row["version"] == material["version"])
 
@@ -162,16 +149,9 @@ class ORXNativeFactoryPostgresTests(unittest.TestCase):
             "definition": app_definition, "requestId": "orx-application-draft"})
         self.assertEqual(application_response.status_code, 201, application_response.text)
         app = application_response.json()
-        application_review = self.client.post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/review",
-            json={"requestId": "orx-application-review"})
-        self.assertEqual(application_review.status_code, 201, application_review.text)
-        application_review_id = application_review.json()["id"]
-        self.assertEqual(self.client.post(f"/api/factory/applications/reviews/{application_review_id}/decision",
-            json={"approved": True, "requestId": "orx-application-self-review"}).status_code, 403)
-        self.login("manager")
-        application_approved = self.client.post(f"/api/factory/applications/reviews/{application_review_id}/decision",
-            json={"approved": True, "requestId": "orx-application-distinct-admin"})
-        self.assertEqual(application_approved.status_code, 200, application_approved.text)
+        published = self.client.post(f"/api/factory/applications/{app['id']}/versions/{app['version']}/publish",
+            json={"requestId": "orx-application-member-publish"})
+        self.assertEqual(published.status_code, 200, published.text)
 
         connection = self.state["connections"].bind("alice", self.registration_ref,
             "orx-owner-connection", capabilities=[CAPABILITY])

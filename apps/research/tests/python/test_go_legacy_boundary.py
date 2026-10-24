@@ -89,7 +89,7 @@ class GoLegacyBoundaryTests(unittest.TestCase):
         bindings.store.has_failures.assert_not_called()
         bindings.store.require_plan_execution.assert_called_once()
 
-    def test_legacy_preflight_remains_after_integrity_checks_with_original_plan(self):
+    def test_legacy_preflight_requires_explicit_bindings_and_original_plan(self):
         bindings, plan, _ = self.fixture(MODEL_ADAPTER_IDS["gpt-6-luna"])
         with patch("agent_factory.go_development.preflight_plan", side_effect=HTTPException(409, "synthetic-denial")) as preflight:
             with self.assertRaises(HTTPException) as denied:
@@ -97,10 +97,12 @@ class GoLegacyBoundaryTests(unittest.TestCase):
             self.assertEqual(denied.exception.detail, "synthetic-denial")
             preflight.assert_called_once_with(bindings.settings, plan, bindings.connections, None)
             preflight.reset_mock()
-            plan["executionBindings"]["sha256"] = "changed"
-            with self.assertRaises(HTTPException) as integrity:
+            # Persisted integrity belongs to Store.plan. Missing an explicit
+            # manifest still prevents entering the historical adapter path.
+            plan.pop("executionBindings")
+            with self.assertRaises(HTTPException) as missing:
                 bindings.recheck(plan)
-            self.assertTrue(integrity.exception.detail.startswith("BINDING_MANIFEST_INTEGRITY"))
+            self.assertTrue(missing.exception.detail.startswith("BINDING_MANIFEST_REQUIRED"))
             preflight.assert_not_called()
 
     def test_legacy_failure_still_denies_replay_without_campaign_dependency(self):

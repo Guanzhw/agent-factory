@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.store import canonical, digest
-from agent_factory.tool_policy_registry import ToolPolicyRegistration
 from agent_factory.usage_ledger import PricingRevision
 
 APPLICATION_ID = 'personal-agent-command-v1'
@@ -149,7 +148,7 @@ def reconcile_command(store, service, owner, request_id):
     This is an owner-scoped observation, not execution or reauthorization. It
     can run after permission revocation and never dispatches a remote command.
     """
-    service.auth.require(owner, 'read')
+    service.auth.require_member(owner)
     row = service._command(owner, request_id)  # Validates persisted intent/identity hashes.
     if row is None or row['state'] not in {'acknowledged', 'result_observed'}: return
     if row['intent']['action'] in {'attach', 'rebind'}: return  # Local metadata has no native command task.
@@ -232,7 +231,6 @@ def registrations():
             runtime_id=ENVIRONMENT_ID, timeout_seconds=30), validator=validate)]
 
 
-def tool_policy(): return ToolPolicyRegistration(TOOL_ID, '1', 'personal-command-policy-v1', False)
 def pricing(): return PricingRevision(MODEL_ID, '1', PROVIDER_ID, MODEL_ID,
     'personal-controller-zero-v1', local_model_type=PersonalCommandModel)
 
@@ -247,12 +245,9 @@ def input_schema():
     return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
 
 
-def publish_application(state, *, author, reviewer=None, project_creation=False):
+def publish_application(state, *, author, project_creation=False):
     """Publish native command materials through the current governance policy."""
-    member_publication = state["material_governance"].member_publication()
-    require(member_publication or author != reviewer, 'PERSONAL_INDEPENDENT_REVIEW_REQUIRED')
-    state['auth'].require(author, 'run' if member_publication else 'components:write')
-    if not member_publication: state['auth'].require(reviewer, 'agent_os:admin')
+    state['auth'].require_member(author)
     governance, applications = state['material_governance'], state['applications']
     application_id = PROJECT_APPLICATION_ID if project_creation else APPLICATION_ID
     materials = []
@@ -266,11 +261,7 @@ def publish_application(state, *, author, reviewer=None, project_creation=False)
             'provenance': {'kind': 'original', 'notice': 'Remote command acceptance only; live integration unverified.'}}
         if adapter: definition['runtimeBinding'] = {'adapterId': adapter, 'revision': '1', 'config': {}}
         material = governance.create_draft(author, definition, identifier + ':draft')
-        if member_publication:
-            governance.publish(author, identifier, material['version'], identifier + ':publish')
-        else:
-            review = governance.request_publication(author, identifier, material['version'], identifier + ':review')
-            governance.decide_publication(reviewer, review['id'], True, identifier + ':approve')
+        governance.publish(author, identifier, material['version'], identifier + ':publish')
         materials.append(material)
     schema = input_schema()
     if project_creation: schema['properties']['action']['enum'] = ['project_create']
@@ -281,9 +272,5 @@ def publish_application(state, *, author, reviewer=None, project_creation=False)
             'inputSchema': schema, 'budget': {'toolCalls': 1, 'maxDepth': 1, 'maxChildren': 1,
                 'experimentSeconds': 30, 'outputBytes': 65536}}}}
     application = applications.create_draft(author, definition, application_id + ':draft')
-    if member_publication:
-        applications.publish(author, application['id'], application['version'], application_id + ':publish')
-    else:
-        review = applications.request_publication(author, application['id'], application['version'], application_id + ':review')
-        applications.decide_publication(reviewer, review['id'], True, application_id + ':approve')
+    applications.publish(author, application['id'], application['version'], application_id + ':publish')
     return application

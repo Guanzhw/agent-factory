@@ -93,7 +93,7 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             schema, 'mcp', 'synthetic-vault', 'synthetic-mcp-server', ('tool:query',),
             permission='fixture:query', timeout_seconds=5)
         async with MCPProtocolServer() as server:
-            adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo', allow_loopback_http=True)
+            adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo')
             lease = SecretLease('synthetic-mcp', ALICE_TOKEN)
             call, store, handle = native_call(adapter, lease, {'value': 'native-mcp'})
             self.assertEqual(call.function.parameters, schema)
@@ -120,7 +120,7 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             schema, 'mcp', 'synthetic-vault', 'synthetic-mcp-server', ('tool:query',),
             permission='fixture:query', timeout_seconds=5)
         async with MCPProtocolServer() as server:
-            adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo', allow_loopback_http=True)
+            adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo')
             lease = SecretLease('synthetic-mcp', 'synthetic-rejected-mcp-token')
             call, store, handle = native_call(adapter, lease, {'value': 'must-not-dispatch'})
             try:

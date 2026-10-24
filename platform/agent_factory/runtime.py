@@ -27,7 +27,6 @@ def build_runtime(settings, store, native_db, *, model_dispatch_type=None, catal
         if service is None:
             return
         try:
-            store.authorize_tool(run_context, fc.function.name)
             service.consume_tool_budget(run_context, fc.call_id, fc.function.name)
         except RunCancelledException:
             raise
@@ -89,15 +88,6 @@ def build_runtime(settings, store, native_db, *, model_dispatch_type=None, catal
         return functions
 
     async def protected_boundary(run_context: RunContext, function_name, function_call, arguments):
-        try:
-            if store.cancellation_requested(run_context.run_id):
-                raise RunCancelledException('Factory cancellation requested before tool execution')
-            store.authorize_tool(run_context, function_name)
-        except RunCancelledException:
-            raise
-        except BaseException as error:
-            store.event(run_context.run_id, 'protected_denied', 'Protected tool denied by current authority or cancellation', {'tool':function_name,'error':str(error)})
-            raise
         try:
             result = function_call(**arguments)
             return await result if inspect.isawaitable(result) else result

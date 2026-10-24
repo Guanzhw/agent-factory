@@ -36,7 +36,7 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=1,
             development_mock_login=True, development_public_origin=ORIGIN,
-            temporary_policy="admin-review", storage_task_reserve_bytes=8*1024*1024)
+            storage_task_reserve_bytes=8*1024*1024)
         # Backend CI intentionally has no frontend build. Supply a disposable
         # document through the real FileResponse route instead of depending on
         # an unrelated local dist/ directory or mocking an HTTP success.
@@ -120,9 +120,8 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         self.addCleanup(other.close)
         self.login("bob", other)
         self.assertEqual(other.get(path).status_code, 404)
-        self.auth.authorization.unassign("alice", "factory-user")
-        self.assertEqual(self.client.get(path).status_code, 403)
         self.auth.directory.set_disabled("alice", True)
+        self.assertEqual(self.client.get(path).status_code, 403)
         self.assertFalse(self.client.get("/api/factory/auth/session").json()["authenticated"])
         self.assertIn(self.client.get("/api/factory/session").status_code, (401, 403))
         self.client.cookies.clear()
@@ -134,7 +133,7 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
             self.client.cookies.clear()
             self.login(manager)
             self.assertEqual(self.client.get("/api/factory/session").json()["role"], "manager")
-            self.auth.require(manager, "agent_os:admin")
+            self.auth.require_account_admin(manager)
         self.assertEqual(other.get("/api/factory/session").json()["id"], "bob")
 
 

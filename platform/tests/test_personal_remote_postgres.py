@@ -12,7 +12,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.auth import EXECUTOR_ID
 from agent_factory.config import Settings
 from agent_factory.connections import ConnectionService
 from agent_factory.main import create_app
@@ -45,7 +44,7 @@ class PersonalRemotePostgresTests(unittest.TestCase):
         self.client.cookies.clear()
         self.assertEqual(self.client.post("/api/factory/demo/login", json={"persona": owner}).status_code, 200)
 
-    def test_actual_http_auth_scope_bind_restart_and_native_grant_revocation(self):
+    def test_actual_http_member_scope_bind_restart_and_member_disable(self):
         self.assertEqual(self.client.get(self.root).status_code, 401)
         self.login("alice")
         payload = {"providerId": PROVIDER_ID, "origin": "https://runtime.example.com",
@@ -68,12 +67,13 @@ class PersonalRemotePostgresTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"{self.root}/{reference}/verify", json={"requestId": uuid4().hex}).status_code, 404)
         self.assertEqual(self.client.post(self.root, json=payload | {"requestId": uuid4().hex}).status_code, 403)
         self.login("alice")
-        self.auth.authorization.define_role("personal-remote-reader", [f"agents:{EXECUTOR_ID}:read", "components:read", "sessions:read"])
-        self.auth.authorization.set_role("alice", "personal-remote-reader")
+        self.auth.directory.set_disabled('alice', True)
         with self.assertRaises(HTTPException) as denied:
             restarted.resolve("alice", bound["ref"], "environment")
         self.assertEqual(denied.exception.status_code, 403)
         self.assertEqual(self.client.post(f"{self.root}/{reference}/verify", json={"requestId": uuid4().hex}).status_code, 403)
+        self.assertEqual(self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex}).status_code, 403)
+        self.auth.directory.set_disabled('alice', False)
         revoked = self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex})
         self.assertEqual(revoked.status_code, 200)
         self.assertEqual(revoked.json()["status"], "revoked")

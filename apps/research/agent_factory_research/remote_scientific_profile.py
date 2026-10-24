@@ -41,7 +41,7 @@ def call_id(phase):
 
 
 def phase_pin(ctx, phase, *, custody=False):
-    _require(phase in PHASES and ctx.settings.temporary_policy in {'member-self-service', 'admin-review'})
+    _require(phase in PHASES and ctx.settings.temporary_policy == 'member-self-service')
     config = ctx.spec['config']
     _require(type(config) is dict and set(config) == {'projectId', 'phase'} and config['phase'] == phase
              and ctx.plan.get('application') == APPLICATION_ID

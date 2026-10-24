@@ -1,8 +1,4 @@
-"""Real SQLite governance constructors expose control/canonical policy drift.
-
-No PostgreSQL, native worker, provider or model executes. Historical defaults are
-retained as explicit negative fixtures; the actual CLI must align both policies.
-"""
+"""Control settings and runtime services reopen without persisted review gates."""
 from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import replace
 import importlib.util
@@ -14,6 +10,7 @@ import unittest
 from unittest.mock import Mock
 
 from agno.db.sqlite import SqliteDb
+from sqlalchemy import text
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
 from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService
 from agent_factory_research.research_bootstrap_assembly import development_settings
@@ -32,7 +29,7 @@ def governance(settings):
 
 def policy(settings):
     return PlanPolicyConfig(name=settings.temporary_policy, revision=settings.policy_revision,
-        review_ttl_seconds=settings.plan_review_ttl_seconds, tool_contract=settings.runtime_tool_contract)
+        tool_contract=settings.runtime_tool_contract)
 
 
 @unittest.skipUnless(os.name == 'posix', 'Control launcher requires private POSIX files')
@@ -54,45 +51,29 @@ class BootstrapPolicyAlignmentTests(unittest.TestCase):
         self.addCleanup(self.db.db_engine.dispose)
         self.store = PortableMetadata(self.db, self.actual)
 
-    def legacy(self):
-        return replace(self.actual, temporary_policy='admin-review', material_review_mode='separate-admin',
-            material_policy_revision='material-governance-v1',
-            policy_revision='plan-policy-v1', runtime_tool_contract='legacy-v1',
-            plan_review_ttl_seconds=3600)
+    def test_control_and_canonical_settings_select_member_execution(self):
+        self.assertEqual(self.actual.temporary_policy, 'member-self-service')
+        self.assertEqual(self.actual.material_review_mode, 'member-self-service')
+        self.assertEqual(governance(self.actual), governance(self.canonical))
+        self.assertEqual(policy(self.actual), policy(self.canonical))
 
-    def test_legacy_control_material_revision_conflicts_with_canonical(self):
-        MaterialGovernance(self.store, None, governance(self.legacy()))
-        with self.assertRaisesRegex(ValueError, '^Material governance configuration differs from persisted current revision$'):
-            MaterialGovernance(self.store, None, governance(self.canonical))
+    def test_current_runtime_settings_can_change_revision_without_rebinding_history(self):
+        for revision in ('prior-runtime-v1', 'current-runtime-v2'):
+            settings = replace(self.actual, policy_revision=revision, material_policy_revision=revision)
+            material = MaterialGovernance(self.store, None, governance(settings))
+            plans = PlanPolicyService(self.store, None, policy(settings))
+            self.assertEqual(material.current()['revision'], revision)
+            self.assertEqual(plans.current()['revision'], revision)
 
-    def test_legacy_control_plan_revision_conflicts_with_canonical(self):
-        PlanPolicyService(self.store, None, policy(self.legacy()))
-        with self.assertRaisesRegex(ValueError, '^Configured policy differs from persisted current revision; reconcile operator configuration$'):
-            PlanPolicyService(self.store, None, policy(self.canonical))
-
-    def test_explicit_legacy_bootstrap_migrates_only_review_policy(self):
-        legacy = development_settings(replace(self.canonical, temporary_policy='admin-review',
-            material_review_mode='separate-admin'))
-        self.assertEqual(legacy.runtime_tool_contract, self.canonical.runtime_tool_contract)
-        self.assertEqual(legacy.policy_revision, 'task-research-bootstrap-v1')
-        MaterialGovernance(self.store, None, governance(legacy))
-        PlanPolicyService(self.store, None, policy(legacy))
-        material = MaterialGovernance(self.store, None, governance(self.canonical))
-        plans = PlanPolicyService(self.store, None, policy(self.canonical))
-        self.assertTrue(material.member_publication())
-        self.assertEqual(plans.current()['name'], 'member-self-service')
-
-    def test_shared_development_settings_can_reopen_both_governance_services(self):
+    def test_historical_policy_rows_remain_unchanged_when_services_reopen(self):
+        with self.store.engine.begin() as conn:
+            conn.execute(text('CREATE TABLE af_plan_policy_state (id TEXT, revision TEXT)'))
+            conn.execute(text("INSERT INTO af_plan_policy_state VALUES ('current','historical-admin-review')"))
+            conn.execute(text('CREATE TABLE af_material_governance_current (id TEXT, revision TEXT)'))
+            conn.execute(text("INSERT INTO af_material_governance_current VALUES ('current','historical-separate-admin')"))
         for _ in range(2):
             MaterialGovernance(self.store, None, governance(self.canonical))
             PlanPolicyService(self.store, None, policy(self.canonical))
-
-    def test_actual_control_entry_then_canonical_reopens_without_policy_migration(self):
-        self.assertEqual(self.actual.temporary_policy, 'member-self-service')
-        self.assertEqual(self.actual.material_review_mode, 'member-self-service')
-        MaterialGovernance(self.store, None, governance(self.actual))
-        PlanPolicyService(self.store, None, policy(self.actual))
-        MaterialGovernance(self.store, None, governance(self.canonical))
-        PlanPolicyService(self.store, None, policy(self.canonical))
-        self.assertEqual(governance(self.actual), governance(self.canonical))
-        self.assertEqual(policy(self.actual), policy(self.canonical))
+        with self.store.engine.connect() as conn:
+            self.assertEqual(conn.execute(text('SELECT revision FROM af_plan_policy_state')).scalar(), 'historical-admin-review')
+            self.assertEqual(conn.execute(text('SELECT revision FROM af_material_governance_current')).scalar(), 'historical-separate-admin')

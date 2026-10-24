@@ -136,7 +136,13 @@ class ResearchTorchRuntimeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     with module._input_file(root, identity, pin, 8) as handle:
                         self.assertEqual(handle.read(), b'original')
-                        if attack == 'inplace': file.write_bytes(b'modified')
+                        if attack == 'inplace':
+                            before = file.stat()
+                            file.write_bytes(b'modified')
+                            # Consumption rechecks observe metadata. Make the
+                            # mutation visible even within one timestamp tick.
+                            os.utime(file, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+                            self.assertNotEqual(file.stat().st_mtime_ns, before.st_mtime_ns)
                         elif attack == 'path':
                             file.unlink()
                             file.write_bytes(b'original')

@@ -41,6 +41,8 @@ class _OutputLimit(Exception):
 
 
 def _group_stopped(group: int) -> bool:
+    if sys.platform == 'win32':
+        raise RuntimeError('CLI_PLATFORM_UNAVAILABLE')
     try:
         os.killpg(group, 0)
     except ProcessLookupError:
@@ -81,6 +83,8 @@ async def _settle(task: asyncio.Task[Any], on_cancel: Callable[[], None]):
 
 
 async def _stop(process: asyncio.subprocess.Process) -> bool:
+    if sys.platform == 'win32':
+        raise RuntimeError('CLI_PLATFORM_UNAVAILABLE')
     for sig, grace in ((signal.SIGTERM, .2), (signal.SIGKILL, 1.0)):
         if _group_stopped(process.pid) and process.returncode is not None:
             return True

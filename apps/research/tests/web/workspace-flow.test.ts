@@ -383,6 +383,6 @@ describe('workspace mounted application boundaries', () => {
     window.history.replaceState(null, '', '/?tab=applications');
     const manager: User = { id: 'manager', name: 'Manager', role: 'manager' }; vi.mocked(api.session).mockResolvedValue(manager);
     await render(manager); expect(text()).toContain('应用管理内容');
-    expect(host.querySelector('.identity small')?.textContent).toBe('管理员');
+    expect(host.querySelector('.identity small')?.textContent).toBe('账号管理员');
   });
 });

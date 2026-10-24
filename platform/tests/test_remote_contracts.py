@@ -15,17 +15,13 @@ from agent_factory.remote_handoff import TrustedOrigin, _manifest
 from agent_factory.store import digest
 
 
+def _no_authority(*_):
+    raise AssertionError("Metadata contract checks must not request runtime authority")
+
+
 class _Applications:
     def require_plan_current(self, plan):
         return None
-
-
-class _Policy:
-    def __init__(self, contract: str):
-        self.contract = contract
-
-    def current(self):
-        return {"tool_contract": self.contract}
 
 
 class _Connections:
@@ -49,7 +45,6 @@ class _Store:
             experiment_timeout_seconds=8,
             experiment_output_bytes=65536,
         )
-        self.plan_policy = _Policy(contract)
         self._materials = deepcopy(materials)
         self.applications = _Applications()
 
@@ -147,7 +142,7 @@ def _fixture():
         "missing": [],
         "status": "ready",
         "createdAt": "2026-10-02T00:00:00+00:00",
-        "policy": "read-only-auto",
+        "policy": "member-self-service",
         "budget": {
             "toolCalls": 2,
             "maxDepth": 1,
@@ -177,7 +172,7 @@ class RemoteContractsTests(unittest.TestCase):
         service.store, service.bindings = store, registry
         store.execution_bindings = registry
         store.remote_bindings = service
-        for policy in ('member-self-service', 'unknown-policy', 'unset'):
+        for policy in ('member-self-service', 'unknown-policy', 'unset', 'admin-review', 'read-only-auto', 'bounded-synthetic'):
             with self.subTest(policy=policy):
                 candidate = {**plan, 'policy': policy}
                 candidate['fingerprint'] = digest({key: value for key, value in candidate.items()
@@ -201,7 +196,7 @@ class RemoteContractsTests(unittest.TestCase):
                 "run_experiment": "experiment:synthetic",
             },
         )
-        origin = TrustedOrigin("fixture-origin", {"alice": "bob"}, lambda *_: None)
+        origin = TrustedOrigin("fixture-origin", {"alice": "bob"}, _no_authority)
         self.assertEqual(origin.fingerprint, "54041d86f7edace9b101ea7104a5b0127d0f083d610199d300e39f8ac4ad809b")
         self.assertEqual(origin.tool_contract, "legacy-v1")
 
@@ -210,7 +205,7 @@ class RemoteContractsTests(unittest.TestCase):
             TrustedOrigin(
                 "fixture-origin",
                 {"alice": "bob"},
-                lambda *_: None,
+                _no_authority,
                 capabilities=frozenset({"research:read"}),
                 tools=frozenset({"orx_discover"}),
                 tool_contract="registered-runtime-v1",
@@ -219,7 +214,7 @@ class RemoteContractsTests(unittest.TestCase):
         origin = TrustedOrigin(
             "fixture-origin",
             {"alice": "bob"},
-            lambda *_: None,
+            _no_authority,
             capabilities=frozenset({"research:read"}),
             tools=frozenset({"orx_discover"}),
             configuration_revision="orx-contract-r2",
@@ -228,7 +223,7 @@ class RemoteContractsTests(unittest.TestCase):
         self.assertEqual(origin.tool_contract, "registered-runtime-v1")
         self.assertNotEqual(origin.fingerprint, "54041d86f7edace9b101ea7104a5b0127d0f083d610199d300e39f8ac4ad809b")
 
-    def test_orx_manifest_is_rejected_by_legacy_admission(self):
+    def test_exact_source_bindings_are_independent_of_builtin_tool_contract(self):
         materials, _, manifest = _fixture()
         store = _Store("legacy-v1", materials)
         registry = ExecutionBindings(store.settings, store, _Connections())
@@ -237,12 +232,29 @@ class RemoteContractsTests(unittest.TestCase):
         store.execution_bindings = registry
         store.remote_bindings = service
 
-        with self.assertRaises(HTTPException) as denied:
-            _manifest(manifest, store, "alice", receiver=True)
-
-        self.assertEqual(denied.exception.status_code, 422)
-        self.assertIn("unregistered remote tool", str(denied.exception.detail))
+        self.assertEqual(_manifest(manifest, store, "alice", receiver=True), manifest["plan"])
         self.assertEqual(tools_for_contract("legacy-v1").get("orx_discover"), None)
+
+    def test_manifest_tool_and_capability_scope_matches_selected_materials(self):
+        materials, plan, _ = _fixture()
+        store = _Store("legacy-v1", materials)
+        registry = ExecutionBindings(store.settings, store, _Connections())
+        service = RemoteBindingService.__new__(RemoteBindingService)
+        service.store, service.bindings = store, registry
+        store.execution_bindings = registry
+        store.remote_bindings = service
+        for changes, expected_status in (({"tools": ["orx_discover", "unselected_tool"]}, 409),
+                                         ({"capabilities": ["research:read", "compute:local"]}, 422)):
+            with self.subTest(changes=changes):
+                candidate = deepcopy(plan)
+                candidate.update(changes)
+                candidate["config"]["toolOrder"] = candidate["tools"]
+                candidate["fingerprint"] = digest({key: value for key, value in candidate.items()
+                    if key not in {"id", "createdAt", "fingerprint"}})
+                manifest = {"plan": candidate, "sha256": digest(candidate)}
+                with self.assertRaises(HTTPException) as denied:
+                    _manifest(manifest, store, "alice", receiver=True)
+                self.assertEqual(denied.exception.status_code, expected_status)
 
     def test_registered_orx_scope_requires_exact_registered_adapter_and_preflight(self):
         materials, plan, manifest = _fixture()

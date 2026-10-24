@@ -10,6 +10,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from agent_factory_research.ssh_openresearch import SSHServer, SSHAgentLease, SSHOpenResearchPackage, SSHOpenResearchConfig
 from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
 from agent_factory_research.runtime_packages.openresearch_v1.ssh_install import directory
@@ -27,9 +30,11 @@ class SSHOpenResearchTests(unittest.TestCase):
         self.revoked = False
         def check():
             if self.revoked: raise ValueError('REVOKED')
-        self.lease = SSHAgentLease(str(self.root / 'agent.sock'), 'ssh-ed25519 ' + 'A' * 68, check)
+        public = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).decode()
+        self.lease = SSHAgentLease(str(self.root / 'agent.sock'), public, check)
         self.server = SSHServer('mine', 'alice', '1', 'My server', '127.0.0.1', 2234, 'agent',
-            'ssh-ed25519 ' + 'B' * 68, str(self.root), 'agent-binding', '1')
+            public, str(self.root), 'agent-binding', '1')
         self.package = object.__new__(SSHOpenResearchPackage)
         self.package.config = SimpleNamespace(servers=(self.server,), credentials=lambda **_: self.lease)
         self.package.personal_servers = None

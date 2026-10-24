@@ -7,10 +7,8 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory.schedule_contract import preview_schedule
 from agent_factory_research.config import ResearchSettings
 from agent_factory_server.main import create_app, factory_state
@@ -39,9 +37,7 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.assertTrue(self.plan['authorization']['executionAllowed'])
         self.assertFalse(self.plan['authorization']['reviewRequired'])
         for owner in ('alice', 'bob'):
-            with self.assertRaises(HTTPException) as denied:
-                self.auth.require(owner, 'components:write')
-            self.assertEqual(denied.exception.status_code, 403)
+            self.auth.require_member(owner)
 
     @staticmethod
     def command(**body):
@@ -132,14 +128,6 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.request('POST', '/schedules', {key: value for key, value in self.creation().items()
             if key != 'requestId'}, owner='bob', status=404)
         self.assertEqual(self.request('GET', '/schedule-management', owner='bob')['items'], [])
-        self.auth.authorization.unassign('alice', 'factory-user')
-        try:
-            for method, path, body in [*operations, ('GET', '/schedule-management/metadata', None),
-                    ('POST', '/schedule-management', self.creation())]:
-                with self.subTest(owner='revoked-alice', path=path, method=method):
-                    self.request(method, path, body, status=403)
-        finally:
-            self.auth.authorization.assign('alice', 'factory-user')
         self.auth.directory.set_disabled('alice', True)
         try:
             for method, path, body in [('GET', '/schedule-management/metadata', None),
@@ -149,15 +137,6 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         finally:
             self.auth.directory.set_disabled('alice', False)
         self.assertEqual(self.request('GET', editor), schedule)
-        policy = self.state['plan_policy']
-        policy.replace_configuration(PlanPolicyConfig(name='unset', revision='member-schedule-emergency'),
-            expected_revision=policy.current()['revision'])
-        for method, path, body in [('PATCH', editor, update), ('POST', native + '/trigger', self.command()),
-                ('POST', editor + '/enabled', {**enable, 'enabled': True}),
-                ('POST', '/schedule-management', self.creation())]:
-            with self.subTest(policy='unset', path=path):
-                denied = self.request(method, path, body, status=409)
-                self.assertEqual(denied['code'], 'POLICY_UNSET')
         self.assertFalse(self.enabled(schedule, False)['enabled'])
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_tasks')[0]['n'], 0)
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_schedule_occurrences')[0]['n'], 0)

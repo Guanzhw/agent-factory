@@ -96,7 +96,7 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
             opaque_handle=self.provider, handle_ref="actual-reviewed-task-local-toy-v1")
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.workspace.name),
             max_workers=1, queue_poll=.03, max_tool_calls=8, experiment_timeout_seconds=30,
-            experiment_output_bytes=65536, temporary_policy="admin-review", policy_revision="actual-orx-plan-v1",
+            experiment_output_bytes=65536, temporary_policy="member-self-service", policy_revision="actual-orx-plan-v1",
             material_policy_revision="actual-orx-material-v1", runtime_tool_contract="local-orx-v1",
             trusted_connections={self.registration: trusted})
         self.app = create_app(self.settings)
@@ -113,9 +113,6 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
             runtime_id="local-orx-reviewed-toy-v1", timeout_seconds=30, output_bytes=65536,
             memory_bytes=512 * 1024 * 1024, process_limit=self.process_limit, cpu_percent=25))
         initialize_orx_experiments(self.store)
-        # Only this generated disposable database receives a distinct fixture reviewer.
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
         self.client = TestClient(self.app).__enter__()  # type: ignore[arg-type]
         self.addCleanup(self.client.__exit__, None, None, None)
         self.task_id = None
@@ -172,11 +169,8 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
                 "compatibility": ["agno:3.1.0"], "dependencies": [], "permissions": permissions,
                 "runtimeBinding": {"adapterId": adapter, "revision": "1", "config": config},
                 "provenance": {"kind": "original", "notice": "Original generated acceptance fixture."}}})
-        review = self.request("POST", "/material-governance/reviews", 201, {
-            "materialId": material["id"], "version": material["version"], "requestId": "review-" + identifier})
-        self.login("bob")
-        self.request("POST", "/material-governance/reviews/" + review["id"] + "/decision", 200,
-                     {"approved": True, "requestId": "approve-" + identifier})
+        self.request("POST", f"/material-governance/versions/{material['id']}/{material['version']}/publish", 200,
+                     {"requestId": "publish-" + identifier})
         return next(row for row in self.store.materials(published_only=True) if row["id"] == identifier)
 
     def _publish_application(self):
@@ -201,11 +195,8 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
             "definition": {"id": "fixture-orx-local-toy", "name": "Reviewed actual ORX local toy",
                 "description": "Actual CLI deterministic comparison without model providers.",
                 "defaultMode": "success", "modes": modes, "discoveryKeywords": ["toy experiment"]}})
-        review = self.request("POST", f"/applications/{application['id']}/versions/{application['version']}/review", 201,
-                              {"requestId": "actual-orx-app-review"})
-        self.login("manager")
-        self.request("POST", f"/applications/reviews/{review['id']}/decision", 200,
-                     {"approved": True, "requestId": "actual-orx-app-publish"})
+        self.request("POST", f"/applications/{application['id']}/versions/{application['version']}/publish", 200,
+                     {"requestId": "actual-orx-app-publish"})
         self.application = application
 
     def start(self, scenario):
@@ -216,10 +207,6 @@ class ActualORXNativeFactoryTests(unittest.TestCase):
             "connectionRefs": {"localExperiment": self.connection["ref"]}, "requestId": str(uuid4())})
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal["candidate"])
         plan = self.request("POST", f"/compositions/proposals/{proposal['id']}/accept", 201, {"requestId": str(uuid4())})
-        review = self.request("POST", "/plan-reviews", 201, {"planId": plan["id"], "requestId": str(uuid4())})
-        self.login("manager")
-        self.request("POST", f"/plan-reviews/{review['id']}/decision", 200, {"approved": True, "requestId": str(uuid4())})
-        self.login("alice")
         job = self.request("POST", "/instances", 202, {"planId": plan["id"], "requestId": str(uuid4())})
         self.task_id = job["id"]
         detail = self.wait({"waiting_approval", "failed", "unknown"}, 90 if self.process_limit == 64 else 30)

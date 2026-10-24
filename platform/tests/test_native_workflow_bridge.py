@@ -21,7 +21,7 @@ class NativeWorkflowBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.ticket = {'id': 'run', 'session_id': self.session, 'user_id': 'alice',
                        'component_type': 'workflow', 'component_id': 'operator-flow', 'status': 'paused'}
         self.db = SimpleNamespace(id='db', get_job=Mock(side_effect=lambda _: deepcopy(self.ticket)), get_session=Mock())
-        self.bridge = NativeBridge(None, self.db, SimpleNamespace(require=Mock()))
+        self.bridge = NativeBridge(None, self.db, SimpleNamespace(require_member=Mock()))
         self.bridge.configure_components(lambda session, owner: deepcopy(self.pin))
         self.http = AsyncMock(return_value={'run_id': 'run', 'workflow_id': 'operator-flow'})
         self.bridge._request = self.http
@@ -104,7 +104,7 @@ class NativeWorkflowBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.status_code, 409)
 
     async def test_default_agent_routes_and_tools_unchanged(self):
-        bridge = NativeBridge(None, self.db, SimpleNamespace(require=Mock()))
+        bridge = NativeBridge(None, self.db, SimpleNamespace(require_member=Mock()))
         bridge._request = AsyncMock(return_value={})
         plan = dict(self.plan); del plan['nativeComponent']
         await bridge.submit(plan, 'alice', 'request')

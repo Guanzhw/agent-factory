@@ -1,12 +1,13 @@
-"""Owner-model HTTPS transport shared by Agno and the private runtime broker.
+"""Owner-model HTTP(S) transport shared by Agno and the private runtime broker.
 
 Dispatch/replay decisions remain with callers. This layer never discovers an
-environment proxy/key, redirects, retries, or relaxes TLS and public DNS policy.
+environment proxy/key, redirects, retries, or relaxes HTTPS certificate validation.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,10 +44,10 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
         addresses = await asyncio.to_thread(self.probe.addresses, self.destination)
         if self.before_send is not None:
             await asyncio.to_thread(self.before_send)
-        # Connect the checked public IP while preserving the bound hostname for
-        # Host, TLS certificate verification and SNI.
+        # Connect the resolved IP while preserving the configured HTTP authority
+        # and HTTPS certificate identity.
         forwarded = httpx.Request('POST', request.url.copy_with(host=addresses[0]),
-            headers={**dict(request.headers), 'host': request.url.host}, content=await request.aread(),
+            headers={**dict(request.headers), 'host': urlsplit(self.destination).netloc}, content=await request.aread(),
             extensions={**request.extensions, 'sni_hostname': request.url.host})
         if self.trusted_proxy is not None:
             if self.transport is not None:

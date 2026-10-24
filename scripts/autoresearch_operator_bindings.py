@@ -147,7 +147,7 @@ def describe_settings(config, database_url):
     preset = ResearchPreset(id=project['id'], name=project['name'], owner_id=project['ownerId'],
         default_goal=project['defaultGoal'], instructions='Read original approved research context.',
         manifest=project['manifest'], limits=project['limits'], external_session=True,
-        application_ref=project['applicationRef'] or {}, review_owner=config['publication']['reviewer'])
+        application_ref=project['applicationRef'] or {})
     settings = base_settings(db_url=database_url, workspace=Path(config['workspace']), preset=preset)
     if config['role'] == 'controller':
         from agent_factory_research.autoresearch_profile import registrations, pricing_registration
@@ -242,7 +242,7 @@ def _controller(config, settings, resolve):
             max_requests=project['limits']['modelRequests'], max_output_tokens=project['limits']['modelOutputTokens'])
     preset = make_preset(OperatorScientificConfig(project['id'], project['name'], project['ownerId'],
         project['defaultGoal'], project['manifest'], project['limits'], lambda: _upstream(project), baseline,
-        microbatch=project['microbatch'], review_owner=config['publication']['reviewer']),
+        microbatch=project['microbatch']),
         runtime_factory=runtime, subordinate_executor=experiment, result_verifier=verify)
     preset = replace(preset, application_ref=project['applicationRef'] or {})
     return replace(settings, jwt_key=resolve(config['jwtRef']), handoff_targets={target.reference: target},
@@ -259,29 +259,19 @@ def _state(app):
 
 
 def prepare_publication(app, publication):
-    """Publish exact shared versions under the current governance policy."""
+    """Publish exact shared versions as the requesting member."""
     from agent_factory_research.services import services_for
     from agent_factory_research import remote_scientific_profile as profile
     from agent_factory.store import digest
     from agent_factory_research.autoresearch_profile import material_drafts, application_definition
     state = _state(app); config = app.operator_config; project = project_descriptor(config)
-    author, reviewer = publication['author'], publication.get('reviewer')
+    author = publication['author']
     governance, applications = state['material_governance'], state['applications']
-    member_publication = governance.member_publication()
-    if member_publication:
-        state['auth'].require(author, 'run')
-    else:
-        require(type(reviewer) is str and bool(reviewer) and author != reviewer)
-        state['auth'].require(author, 'components:write')
-        state['auth'].require(reviewer, 'agent_os:admin')
+    state['auth'].require_member(author)
     def material(definition):
         key = 'remote-science:' + digest(definition)
         row = governance.create_draft(author, definition, key + ':draft')
-        if member_publication:
-            governance.publish(author, row['id'], row['version'], key + ':publish')
-        else:
-            review = governance.request_publication(author, row['id'], row['version'], key + ':review')
-            governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+        governance.publish(author, row['id'], row['version'], key + ':publish')
         return row
     budget = {key: project['limits'][key] for key in ('toolCalls', 'experimentSeconds', 'outputBytes')}
     budget.update(maxDepth=1, maxChildren=3)
@@ -299,18 +289,14 @@ def prepare_publication(app, publication):
     snapshot = project.get('applicationSnapshot')
     if snapshot is not None:
         # Only the exact shared definition is importable. Preserve source
-        # timestamp/version/digest; local publication remains independently reviewed.
+        # timestamp/version/digest when the member publishes it locally.
         require({field: snapshot[field] for field in ApplicationDefinition.model_fields} == normalized)
         key = 'remote-science-app-import:' + digest(snapshot)
         row = applications.import_snapshot(author, snapshot, key + ':import')
     else:
         key = 'remote-science-app:' + digest(definition)
         row = applications.create_draft(author, definition, key + ':draft')
-    if member_publication:
-        applications.publish(author, row['id'], row['version'], key + ':publish')
-    else:
-        review = applications.request_publication(author, row['id'], row['version'], key + ':review')
-        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    applications.publish(author, row['id'], row['version'], key + ':publish')
     ref = {key: row[key] for key in ('id', 'version', 'sha256')}
     if config['role'] == 'controller':
         from dataclasses import replace
@@ -362,7 +348,7 @@ def _receiver(config, settings, resolve, stack):
     prep_snapshot = load(descriptor['preparationSnapshotFile'])
     baseline_db = resolve(source['databaseRef'])
     basic = development_settings(Settings(db_url=baseline_db, workspace=Path(original['workspace']),
-        temporary_policy='admin-review', max_workers=1))
+        temporary_policy='member-self-service', max_workers=1))
     engine = create_engine(baseline_db, connect_args={'connect_timeout': 5})
     try:
         require(database_preflight(engine, basic)['status'] == 'PASS')

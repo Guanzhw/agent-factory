@@ -4,14 +4,14 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api } from '../web/api.js';
-import { PersonalToolConnections, readToolCommand } from '../web/PersonalToolConnections.js';
+import { PersonalToolConnections, readResourceToolRequest, readToolCommand } from '../web/PersonalToolConnections.js';
 import { personalToolConnectionApi as tools, ToolConnectionError, type PersonalToolConnection, type PersonalToolDescriptor } from '../web/personalToolConnectionApi.js';
 import { personalRemoteApi as vault, RemoteRequestError } from '../web/personalRemoteApi.js';
 import type { UserConnection } from '../web/models.js';
 
 const descriptor: PersonalToolDescriptor = { adapterId: 'fixture-cli-v1', revision: 'descriptor-v1', toolName: 'fixture_lookup', description: 'Synthetic installed tool', inputSchema: { type: 'object' }, transport: 'cli', credentialProviderId: 'fixture-tool-token', credentialDestination: 'https://fixture.example.org', capabilities: ['tool:lookup'], permission: 'read', readOnly: true };
 const saved = { credentialRef: 'credential-fixture', credentialRevision: 'credential-r1', providerId: descriptor.credentialProviderId, destination: descriptor.credentialDestination, status: 'active' };
-const configured: PersonalToolConnection = { ownerId: 'alice', registrationRef: 'personal-tool-fixture', adapterId: descriptor.adapterId, revision: 'owner-config-r1', descriptorRevision: descriptor.revision, kind: 'tool', toolName: descriptor.toolName, transport: descriptor.transport, credentialRef: saved.credentialRef, credentialRevision: saved.credentialRevision, status: 'configured', available: true, capabilities: descriptor.capabilities, createdAt: '2026-10-13T00:00:00Z', expiresAt: null, allowedActions: ['inspect', 'bind', 'revoke'] };
+const configured: PersonalToolConnection = { ownerId: 'alice', visibility: 'personal', isOwner: true, registrationRef: 'personal-tool-fixture', adapterId: descriptor.adapterId, revision: 'owner-config-r1', descriptorRevision: descriptor.revision, kind: 'tool', toolName: descriptor.toolName, transport: descriptor.transport, credentialRef: saved.credentialRef, credentialRevision: saved.credentialRevision, status: 'configured', available: true, capabilities: descriptor.capabilities, createdAt: '2026-10-13T00:00:00Z', expiresAt: null, allowedActions: ['inspect', 'bind', 'revoke'] };
 const bound: UserConnection = { ref: 'bound-tool-fixture', ownerId: 'alice', version: 1, fingerprint: 'a'.repeat(64), kind: 'tool', revision: configured.revision, capabilities: descriptor.capabilities, taskId: null, registrationRef: configured.registrationRef, expiresAt: null, createdAt: '2026-10-13T00:00:00Z', revokedAt: null, status: 'active', available: true, allowedActions: ['inspect', 'revoke'] };
 const secret = 'synthetic-tool-secret-only';
 const storage = 'factory-personal-tool-command:alice';
@@ -268,10 +268,82 @@ it('settles an unavailable recovered binding without creating a replacement or b
   expect(host.textContent).toContain('没有重新绑定或改用其他凭据');
 });
 
-it('shows an explicit empty installation without collecting credentials or offering approval', async () => {
+it('offers member resource onboarding when no adapter was installed', async () => {
   vi.mocked(tools.descriptors).mockResolvedValue([]); await mount();
-  expect(host.textContent).toContain('此部署尚未安装个人 CLI/MCP 工具'); expect(host.querySelector('input[type=password]')).toBeNull();
-  expect(vault.credentials).not.toHaveBeenCalled(); expect(vault.credentialAvailability).not.toHaveBeenCalled(); expect(tools.configure).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('连接自己的工具');
+  expect(host.querySelector('[aria-label="MCP URL"]')).not.toBeNull();
+  expect(vault.credentials).toHaveBeenCalled(); expect(vault.credentialAvailability).toHaveBeenCalled();
+});
+
+it('uses an HTML pattern compatible with current UnicodeSets validation', async () => {
+  await mount();
+  const input = host.querySelector<HTMLInputElement>('[aria-label="自定义工具调用名称"]')!;
+  const pattern = new RegExp(`^(?:${input.pattern})$`, 'v');
+  expect(pattern.test('my_tool-name')).toBe(true);
+  expect(pattern.test('1invalid')).toBe(false);
+});
+
+it('discovers and binds a member MCP tool without preinstalled adapters or credentials', async () => {
+  vi.mocked(tools.descriptors).mockResolvedValue([]);
+  const resource = { ...configured, adapterId: 'member-tool-example', toolName: 'private_lookup', transport: 'mcp' as const,
+    credentialRef: null, credentialRevision: null, capabilities: ['tool:invoke'] };
+  vi.spyOn(tools, 'discover').mockResolvedValue({ url: 'http://localhost:8999/mcp', tools: [{ name: 'private.lookup',
+    description: 'Private local tool', inputSchema: { type: 'object', properties: {} }, readOnly: true }] });
+  vi.spyOn(tools, 'configureResource').mockResolvedValue(resource);
+  await mount(); await field('MCP URL', 'http://localhost:8999/mcp'); await click('发现 MCP 工具');
+  await field('发现的 MCP 工具', 'private.lookup'); await click('保存自定义工具并绑定');
+  expect(tools.configureResource).toHaveBeenCalledWith('alice', expect.objectContaining({ transport: 'mcp',
+    url: 'http://localhost:8999/mcp', remoteToolName: 'private.lookup', toolName: 'private_lookup', readOnly: true }));
+  expect(tools.bind).toHaveBeenCalledWith('alice', resource.registrationRef, expect.any(String), ['tool:invoke']);
+  expect(localStorage.getItem('factory-member-tool-request:alice')).toBeNull();
+});
+
+it('recovers an unknown member configuration with GET and never repeats its command', async () => {
+  vi.spyOn(tools, 'discover').mockResolvedValue({ url: 'http://localhost:8999/mcp', tools: [{ name: 'lookup',
+    description: 'Local tool', inputSchema: { type: 'object', properties: {} }, readOnly: true }] });
+  vi.spyOn(tools, 'configureResource').mockRejectedValue(new ToolConnectionError(0));
+  await mount(); await field('MCP URL', 'http://localhost:8999/mcp'); await click('发现 MCP 工具');
+  await field('发现的 MCP 工具', 'lookup'); await click('保存自定义工具并绑定');
+  const pending = readResourceToolRequest(localStorage.getItem('factory-member-tool-request:alice'), 'alice')!;
+  expect(pending.stage).toBe('configure');
+  await remount();
+  vi.mocked(tools.recover).mockRejectedValueOnce(new ToolConnectionError(404));
+  await click('恢复原资源请求');
+  expect(localStorage.getItem('factory-member-tool-request:alice')).not.toBeNull();
+  expect(tools.bind).not.toHaveBeenCalled();
+  await click('恢复原资源请求');
+  expect(tools.configureResource).toHaveBeenCalledTimes(1);
+  expect(tools.recover).toHaveBeenCalledWith('alice', pending.requestId);
+  expect(tools.bind).toHaveBeenCalledTimes(1);
+});
+
+it('lets another member bind a shared tool while showing only its resource owner actions', async () => {
+  vi.mocked(api.session).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' });
+  const publicTool = { ...configured }; delete publicTool.credentialRef; delete publicTool.credentialRevision;
+  vi.mocked(tools.list).mockResolvedValue([{ ...publicTool, visibility: 'team', isOwner: false, allowedActions: ['inspect', 'bind'] }]);
+  vi.mocked(tools.bind).mockResolvedValue({ ...bound, ownerId: 'bob' });
+  await mount('bob');
+  expect(host.textContent).toContain('团队共享 · alice');
+  expect(Array.from(host.querySelectorAll('button')).some(value => value.textContent === '撤销工具配置')).toBe(false);
+  expect(Array.from(host.querySelectorAll('button')).some(value => value.textContent === '共享给团队')).toBe(false);
+  await click('绑定此工具');
+  expect(tools.bind).toHaveBeenCalledExactlyOnceWith('bob', configured.registrationRef, expect.any(String), configured.capabilities);
+});
+
+it('recovers a lost sharing acknowledgement without repeating its POST', async () => {
+  vi.mocked(tools.list).mockResolvedValue([{ ...configured, allowedActions: ['inspect', 'revoke', 'bind', 'sharing'] }]);
+  vi.spyOn(tools, 'sharing').mockRejectedValue(new ToolConnectionError(0));
+  await mount(); await click('共享给团队');
+  const original = vi.mocked(tools.sharing).mock.calls[0][3];
+  await remount();
+  vi.mocked(tools.recover).mockRejectedValueOnce(new ToolConnectionError(404));
+  await click('核对原工具操作');
+  expect(localStorage.getItem(`factory-tool-action:alice:${configured.registrationRef}`)).not.toBeNull();
+  vi.mocked(tools.recover).mockResolvedValueOnce({ requestId: original, action: 'tool.sharing', tool: { ...configured, visibility: 'team' } });
+  await click('核对原工具操作');
+  expect(tools.sharing).toHaveBeenCalledTimes(1);
+  expect(tools.recover).toHaveBeenCalledWith('alice', original);
+  expect(localStorage.getItem(`factory-tool-action:alice:${configured.registrationRef}`)).toBeNull();
 });
 
 it('filters saved credentials by exact purpose, target and active status with no fallback', async () => {

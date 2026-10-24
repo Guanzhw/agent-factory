@@ -128,7 +128,13 @@ class CloneTests(unittest.TestCase):
                         calls += 1
                         if calls == 2:
                             target = source if tree == 'source' else next(parent.iterdir())
-                            (target / 'a').write_bytes(b'xyz')
+                            path = target / 'a'
+                            before = path.stat()
+                            path.write_bytes(b'xyz')
+                            # The final sweep observes metadata. Guarantee the
+                            # intended change even within one timestamp tick.
+                            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+                            self.assertNotEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
                     return value
                 with patch.object(clone, 'scan', side_effect=scan), patch.object(clone, 'reflink', side_effect=self.fake_clone):
                     with self.assertRaises(clone.CloneError):

@@ -56,7 +56,6 @@ class DelegatingModel(Model):
             latest = store.resolve_run(context)
             self._check_selected_plan(latest, context)
             store.require_plan_execution(context.user_id, latest, run_context=context)
-            self.bindings.recheck(latest, context)
 
         current()
         self._check_task_wait(task)

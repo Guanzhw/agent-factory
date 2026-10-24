@@ -59,7 +59,7 @@ class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.store.composition.accept.return_value = self.plan
         self.store.composition._candidate.return_value = self.plan
         self.store.plan.return_value = self.plan
-        self.store.plan_policy.status.return_value = {'executionAllowed': False}
+        self.store.plan_policy.status.return_value = {'executionAllowed': True}
         self.body = WorkspaceManagedPrepare(requestId='prepare-request', profileId='probe', goal='Verify original attachment')
         self.store.task_for_request.side_effect = HTTPException(404, 'not found')
 
@@ -67,7 +67,7 @@ class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         result = await self.service.prepare_managed('alice', 'project-1', self.body)
         self.assertEqual(result['state'], 'prepared')
         self.assertEqual(result['plan'], self.plan)
-        self.assertFalse(result['authorization']['executionAllowed'])
+        self.assertTrue(result['authorization']['executionAllowed'])
         self.assertEqual(self.store.composition.propose.call_args.kwargs['input_values'], {'managedAttachment': self.contract})
         self.factory.instantiate.assert_not_awaited()
         self.store.plan_policy.request_review.assert_not_called()
@@ -88,9 +88,9 @@ class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.prepare_managed('alice', 'project-1', self.body)
         self.store.composition.propose.assert_not_called()
 
-    async def test_start_rechecks_approval_and_unknown_never_resubmits(self):
+    async def test_start_rechecks_current_resources_and_unknown_never_resubmits(self):
         result = await self.service.prepare_managed('alice', 'project-1', self.body)
-        self.store.require_plan_execution.side_effect = HTTPException(403, 'review required')
+        self.store.require_plan_execution.side_effect = HTTPException(403, 'resource revoked')
         with self.assertRaises(HTTPException):
             await self.service.start_managed('alice', 'project-1', result['id'], 'start-request')
         self.factory.instantiate.assert_not_awaited()
@@ -121,7 +121,7 @@ class ManagedWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_revoked_execution_does_not_hide_readable_original_session(self):
         value = await self.service.prepare_managed('alice', 'project-1', self.body)
         self.store.plan_policy.status.side_effect = HTTPException(403, 'run revoked')
-        self.store.plan_policy.current.return_value = {'name': 'admin-review'}
+        self.store.plan_policy.current.return_value = {'name': 'member-self-service'}
         current = self.service.session('alice', 'project-1', value['id'])
         self.assertFalse(current['authorization']['executionAllowed'])
         self.assertFalse(current['authorization']['reviewRequestSupported'])

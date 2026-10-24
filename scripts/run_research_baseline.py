@@ -279,14 +279,11 @@ def request_client(bundle, client):
 
 
 def preparation_phase(bundle, client, request_id, progress):
-    from bootstrap_research_control import ensure_task_development_reviewer
     from agent_factory.process_runtime_profile import publish_process_application
     state, store = bundle['state'], bundle['state']['store']
     progress.at('PREPARATION_PUBLICATION')
-    member_submission = state['settings'].temporary_policy == 'member-self-service'
-    reviewer = None if member_submission else ensure_task_development_reviewer(state)
     app = publish_process_application(state, target_ref='preparation',
-        author='alice' if member_submission else 'manager', reviewer=reviewer)
+        author='alice')
     request = request_client(bundle, client)
     deadline, task_id, plan_id = time.monotonic() + 60, None, None
     def post(path, body, key, owner='alice'):
@@ -298,11 +295,6 @@ def preparation_phase(bundle, client, request_id, progress):
         progress.at('PREPARATION_PLAN')
         plan = post('/compositions/proposals/' + proposal['id'] + '/accept', {}, 'accept')
         plan_id = plan['id']
-        if not member_submission:
-            progress.at('PREPARATION_REVIEW')
-            review = post('/plan-reviews', {'planId': plan['id']}, 'review')
-            progress.at('PREPARATION_APPROVAL')
-            post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, 'decision', reviewer)
         try:
             progress.at('PREPARATION_SUBMIT')
             task = post('/instances', {'planId': plan['id']}, 'instance')
@@ -469,7 +461,7 @@ def execute(config, workspace, progress):
     # Imports stay inside the explicitly acknowledged execution path. No Torch import.
     progress.at('EXECUTION_IMPORTS')
     from fastapi.testclient import TestClient
-    from bootstrap_research_control import read_database_url, ensure_task_development_reviewer
+    from bootstrap_research_control import read_database_url
     from agent_factory_research.research_bootstrap_assembly import prepare_application, research_application
     from agent_factory_server.main import create_app
     from agent_factory_research.research_bootstrap_inventory import build_inventory
@@ -563,11 +555,9 @@ def execute(config, workspace, progress):
             with TestClient(bundle['app']) as client:
                 try:
                     progress.at(stage.upper() + '_PUBLICATION')
-                    member_submission = bundle['state']['settings'].temporary_policy == 'member-self-service'
-                    reviewer = None if member_submission else ensure_task_development_reviewer(bundle['state'])
                     app = publish_research_application(bundle['state'], target_ref=stage,
                         comparison_manifest=captured['comparisonManifest'],
-                        author='alice' if member_submission else 'manager', reviewer=reviewer,
+                        author='alice',
                         adapter_suffix='-evaluation' if stage == 'evaluation' else '')
                     assert client.portal is not None
                     portal = client.portal
@@ -585,7 +575,7 @@ def execute(config, workspace, progress):
                             owner, bundle['pending']['evaluationContract'])
                     progress.at(stage.upper() + '_RUN')
                     result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(
-                        owner='alice', reviewer=reviewer, application_ref={k: app[k] for k in ('id', 'version', 'sha256')},
+                        owner='alice', application_ref={k: app[k] for k in ('id', 'version', 'sha256')},
                         goal='Source-bound baseline' if stage == 'training' else 'Independent checkpoint evaluation',
                         request_id=config['requestId'] + ':' + stage, timeout_seconds=int(min(86400, limits.wall_seconds + 120)),
                         after_reclaimed=imported, on_progress=lambda value: progress.record(stage, value))

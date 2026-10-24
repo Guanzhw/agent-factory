@@ -27,10 +27,10 @@ function fixture(): JobDetail {
   return {
     job: { id: originTask, ownerId: 'fixture-origin-user', planId: sourcePlan, definitionId: 'fixture', definitionVersion: 1,
       definition: { id: 'fixture', version: 1, name: 'Controlled fixture', description: '', instructions: '', skills: [], tools: [], knowledge: [], modelPolicy: { providerId: 'controlled', modelId: 'controlled', maxSteps: 8 }, runtimePolicy: { timeoutSeconds: 10, allowExperiment: true }, published: true, createdAt: '2026-10-02T00:00:00Z' },
-      binding: {}, input: { topic: 'Controlled remote experiment', mode: 'paused', scenario: 'normal' }, status: 'waiting_approval', runtime: 'live', attempt: 0, createdAt: '2026-10-02T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z',
+      binding: {}, input: { topic: 'Controlled remote experiment', mode: 'paused', scenario: 'normal' }, status: 'unknown', runtime: 'live', attempt: 0, createdAt: '2026-10-02T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z',
       executionPlacement: { kind: 'remote-factory', targetRef: 'trusted-receiver', originTaskId: originTask, state: 'PREPARING' }, allowedActions: ['inspect', 'reconcile', 'cancel', 'resume_remote'],
-      approvalDetail: { id: 'unrelated-native-tool', version: 1, scope: 'Must not be mistaken for receiver-plan review' } },
-    events: [], artifacts: [], snapshot: { receiverReviewRequired: true, remoteHandoff: { id: receiptId, originRef: 'trusted-origin', originOwnerId: 'fixture-origin-user', originTaskId: originTask, remoteOwnerId: 'fixture-receiver-user', requestId: 'original-source-admission', manifestHash: 'c'.repeat(64), remotePlanId: receiverPlan, remoteTaskId: null, remoteRunId: null, state: 'PREPARING', receiverBindingProof: proof } },
+      approvalDetail: { id: 'unrelated-native-tool', version: 1, scope: 'Native tool confirmation after remote preparation' } },
+    events: [], artifacts: [], snapshot: { remoteHandoff: { id: receiptId, originRef: 'trusted-origin', originOwnerId: 'fixture-origin-user', originTaskId: originTask, remoteOwnerId: 'fixture-receiver-user', requestId: 'original-source-admission', manifestHash: 'c'.repeat(64), remotePlanId: receiverPlan, remoteTaskId: null, remoteRunId: null, state: 'PREPARING', receiverBindingProof: proof } },
   };
 }
 
@@ -40,12 +40,12 @@ function accepted(): JobDetail {
   const detail = fixture();
   Object.assign(receipt(detail), { state: 'ACCEPTED', remoteTaskId: receiverTask, remoteRunId: receiverRun });
   Object.assign(detail.job.executionPlacement!, { state: 'ACCEPTED', remoteTaskId: receiverTask, remoteRootTaskId: receiverTask, remoteRunId: receiverRun });
-  detail.snapshot!.receiverReviewRequired = false;
+  detail.job.status = 'waiting_approval';
   detail.job.allowedActions = ['inspect', 'reconcile', 'cancel', 'approve'];
   return detail;
 }
 
-describe('receiver-plan review and native task approval are separate', () => {
+describe('remote preparation and native task approval are separate', () => {
   it('recognizes the exact pending reservation and suppresses any native approval payload', () => {
     const detail = fixture();
     expect(remoteHandoffState(detail)).toMatchObject({ kind: 'pending', evidence: { receiverPlanId: receiverPlan, requestId: 'original-source-admission', receiverTaskId: null } });
@@ -53,6 +53,16 @@ describe('receiver-plan review and native task approval are separate', () => {
     expect(pendingApproval(detail)).toBeUndefined();
     expect(nativeInteractionAvailable(accepted())).toBe(true);
     expect(pendingApproval(accepted())).toMatchObject({ id: 'unrelated-native-tool' });
+  });
+
+  it('ignores historical receiver-review fields when projecting preparation or native task confirmation', () => {
+    for (const historical of [true, false]) {
+      const pending = fixture(); pending.snapshot!.receiverReviewRequired = historical;
+      expect(remoteHandoffState(pending).kind).toBe('pending');
+      const running = accepted(); running.snapshot!.receiverReviewRequired = historical;
+      expect(remoteHandoffState(running).kind).toBe('execution');
+      expect(pendingApproval(running)).toMatchObject({ id: 'unrelated-native-tool' });
+    }
   });
 
   it('fails closed on scope substitution or a contradictory pre-dispatch task', async () => {
@@ -65,7 +75,7 @@ describe('receiver-plan review and native task approval are separate', () => {
       detail => { proof(detail).sha256 = 'not-a-digest'; },
       detail => { proof(detail).receiverConfiguration = { revision: 'v2', sha256: 'e'.repeat(64), endpoint: 'unexpected' }; },
       detail => { receipt(detail).remoteTaskId = receiverTask; },
-      detail => { detail.snapshot!.receiverReviewRequired = false; },
+      detail => { detail.job.status = 'waiting_approval'; },
       detail => { const entries = proof(detail).entries as { effectiveSpec: { materialRef: { sha256: string } } }[]; entries[0].effectiveSpec.materialRef.sha256 = '9'.repeat(64); },
     ];
     for (const change of mutations) {
@@ -73,7 +83,7 @@ describe('receiver-plan review and native task approval are separate', () => {
       const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
       expect(remoteHandoffState(detail).kind).toBe('invalid');
       expect(pendingApproval(detail)).toBeUndefined();
-      await expect(api.resumeRemote(detail)).rejects.toMatchObject({ code: 'REMOTE_REVIEW_UNVERIFIED' });
+      await expect(api.resumeRemote(detail)).rejects.toMatchObject({ code: 'REMOTE_PREPARATION_UNVERIFIED' });
       expect(fetch).not.toHaveBeenCalled();
     }
   });
@@ -103,7 +113,7 @@ describe('receiver-plan review and native task approval are separate', () => {
     const detail = fixture();
     detail.job.status = 'canceled'; detail.job.allowedActions = ['inspect', 'reconcile'];
     detail.job.executionPlacement!.state = 'CANCELLED_NO_DISPATCH';
-    receipt(detail).state = 'CANCELLED_NO_DISPATCH'; detail.snapshot!.receiverReviewRequired = false; detail.snapshot!.allStopped = true;
+    receipt(detail).state = 'CANCELLED_NO_DISPATCH'; detail.snapshot!.allStopped = true;
     expect(remoteHandoffState(detail)).toMatchObject({ kind: 'execution', evidence: { receiverPlanId: receiverPlan, receiverTaskId: null } });
     expect(nativeInteractionAvailable(detail)).toBe(false);
     expect(pendingApproval(detail)).toBeUndefined();
@@ -117,6 +127,10 @@ describe('receiver-plan review and native task approval are separate', () => {
     expect(html).toContain('receiver-model@receiver-v2');
     expect(html).toContain('receiver-config-v2');
     expect(html).toContain('f'.repeat(64));
+    expect(html).toContain('接收端准备尚未完成');
+    expect(html).toContain('核对并继续原请求');
+    expect(html).not.toContain('审批');
+    expect(html).not.toContain('管理员');
     expect(html).toMatch(/<button[^>]+disabled/);
     expect(html).not.toContain('do-not-export-connection');
     expect(html).not.toContain('do-not-render-config');
@@ -129,7 +143,7 @@ describe('explicit remote continuation retains the original admitted scope', () 
   it('requires current resume authority instead of treating read/reconcile as a run grant', async () => {
     const detail = fixture(); detail.job.allowedActions = ['inspect', 'reconcile'];
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    await expect(api.resumeRemote(detail)).rejects.toMatchObject({ code: 'REMOTE_REVIEW_UNVERIFIED' });
+    await expect(api.resumeRemote(detail)).rejects.toMatchObject({ code: 'REMOTE_PREPARATION_UNVERIFIED' });
     expect(fetch).not.toHaveBeenCalled();
   });
 

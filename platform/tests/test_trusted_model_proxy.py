@@ -183,6 +183,22 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                             and tls['context_identity_preserved'] for tls in backend.tls))
                         self.assertGreater(backend.closed, 0)
 
+    async def test_custom_gateway_port_and_model_path_keep_authority_and_tls_identity(self):
+        configuration = grant(base_url='https://models.example.com:8443/custom/api')
+        backend = GatewayBackend(configuration, target_host='models.example.com')
+        transport = PinnedChatTransport('https://models.example.com:8443', base_path='/custom/api', trusted_proxy=configuration)
+        transport.probe.addresses = lambda destination: ['10.20.30.40']
+        with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+            async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+                response = await client.post('https://models.example.com:8443/custom/api/chat/completions',
+                    headers={'authorization': 'Bearer synthetic-fixture'}, json={'model': 'fixture-model', 'stream': False})
+                self.assertEqual(response.status_code, 200)
+        wire = b''.join(backend.writes)
+        self.assertIn(b'CONNECT 10.20.30.40:8443 HTTP/1.1', wire)
+        self.assertIn(b'host: models.example.com:8443', wire.lower())
+        self.assertIn(b'POST /custom/api/chat/completions', wire)
+        self.assertEqual([item['server_hostname'] for item in backend.tls], ['models.example.com'])
+
     async def test_explicit_grants_bind_scope_and_reject_invalid_configuration(self):
         for base in PROXY_BASES:
             for protocol in PROTOCOL_PATHS:
@@ -214,11 +230,8 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                                 self.assertRaisesRegex(ValueError, '^TRUSTED_MODEL_PROXY_REQUEST_DENIED$'):
                             PinnedChatTransport('https://' + urlsplit(other_base).netloc,
                                 base_path=urlsplit(other_base).path, protocol=other_protocol, trusted_proxy=configuration)
-        bad_bases = (None, 'http://models.example.com/v1', 'https://user:secret@models.example.com/v1',
-            'https://models.example.com:8443/v1', 'https://localhost/v1', 'https://127.0.0.1/v1',
-            'https://models.example.com/v2', 'https://models.example.com/zen/go/v1',
-            GENERIC_BASE + '?key=secret', GENERIC_BASE + '#fragment', GENERIC_BASE + '//',
-            GO_CURRENT_BASE + '/responses', 'https://opencode.ai/other/v1')
+        bad_bases = (None, 'ftp://models.example.com/v1', 'https://user:secret@models.example.com/v1',
+            GENERIC_BASE + '?key=secret', GENERIC_BASE + '#fragment')
         for changes in [*({'base_url': base} for base in bad_bases),
                 *({'protocol': protocol} for protocol in (None, '', 'Responses', 'unknown', []))]:
             with self.subTest(changes=changes), self.assertRaisesRegex(
@@ -260,9 +273,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         configuration = grant(base_url=GENERIC_BASE, protocol='responses', proxy_url=f'https://{PROXY}:8080')
         backend = GatewayBackend(configuration, target_host='models.example.com', protocol='responses')
         with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
-            for address, host in [*((address, 'models.example.com') for address in
-                    ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '2606:4700:78::90:0:140')),
-                    (IP, 'opencode.ai'), (IP, 'models.example.com.attacker.invalid')]:
+            for address, host in [(IP, 'opencode.ai'), (IP, 'models.example.com.attacker.invalid')]:
                 with self.subTest(address=address, host=host), self.assertRaisesRegex(
                         ValueError, '^TRUSTED_MODEL_PROXY_TARGET_DENIED$'):
                     configuration.transport(address, host)
@@ -365,6 +376,8 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                     sock.connect(address)
                 with self.assertRaises(AssertionError):
                     sock.connect_ex(address)
+        if sys.platform != 'win32':
+            return  # The remaining stdlib fallback is Windows-specific.
         # Exercise the real Windows fallback and real standard event-loop method,
         # including the actual _fallback_socketpair frame identity. No model data
         # is sent; these sockets are only the event loop's internal loopback IPC.
@@ -386,16 +399,17 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
             def __enter__(self): return self
             def __exit__(self,*args): return False
         current = body()
-        model_row = {'state':'ACTIVE','revision':current['revision'],'body':current}
+        model_row = {'state':'ACTIVE','owner_id':'alice','revision':current['revision'],'body':current}
         models = object.__new__(PersonalModels)
         models.transport_factory = None
         models.proxy_environment_id = 'fixture-environment'
         models.trusted_model_proxy = None
         models.install_trusted_model_proxy(configuration)
-        models.auth = SimpleNamespace(require=lambda owner,action: None)
+        models.auth = SimpleNamespace(require_member=lambda owner: None)
         models.db = SimpleNamespace(read=Read)
-        models.connections = SimpleNamespace(_key=lambda value: None)
-        models._row = lambda conn,owner,reference: model_row
+        models.connections = SimpleNamespace(_key=lambda value: None,
+            sharing=SimpleNamespace(owner=lambda *args: 'alice'))
+        models._row = lambda conn,owner,reference,**kwargs: model_row
         models._authorize = lambda owner,values: True
         resolves = []
         def resolve(**values):
@@ -499,16 +513,20 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
             configuration.select('alice', body(), 'fixture-environment')
         self.assertIsNone(configuration.select('bob', {**body(), 'ownerId': 'bob'}, 'fixture-environment'))
 
-    async def test_private_ipv6_or_changed_origin_rejected_before_dispatch(self):
-        for address in ['127.0.0.1','10.0.0.1','169.254.169.254','::1','2606:4700:78::90:0:140']:
+    async def test_private_ipv6_targets_preserve_configured_identity(self):
+        for address in ['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '2606:4700:78::90:0:140']:
+            configuration = grant()
+            backend = GatewayBackend(configuration)
             marks = []
             transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1',
-                trusted_proxy=grant(), on_dispatch=lambda: marks.append('dispatch'))
+                trusted_proxy=configuration, on_dispatch=lambda: marks.append('dispatch'))
             transport.probe.addresses = lambda destination: [address]
-            async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
-                with self.assertRaises(ValueError):
-                    await client.post(GO_BASE + '/chat/completions', json={'model':'fixture-model','stream':False})
-            self.assertEqual(marks, [])
+            with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+                    response = await client.post(GO_BASE + '/chat/completions', json={'model':'fixture-model','stream':False})
+                    self.assertEqual(response.status_code, 200)
+            self.assertEqual(marks, ['dispatch'])
+            self.assertEqual([item['server_hostname'] for item in backend.tls], ['opencode.ai'])
         with self.assertRaises(ValueError):
             PinnedChatTransport('https://other.example.com', trusted_proxy=grant())
 
@@ -572,9 +590,10 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         class Read:
             def __enter__(self): return self
             def __exit__(self, *args): return False
-        service.auth = SimpleNamespace(require=lambda owner, action: None)
+        service.auth = SimpleNamespace(require_member=lambda owner: None)
+        service.connections = SimpleNamespace(sharing=SimpleNamespace(owner=lambda *args: 'alice'))
         service.db = SimpleNamespace(read=Read)
-        service._row = lambda conn, owner, reference: {'state':'ACTIVE','revision':'model-revision','body':body()}
+        service._row = lambda conn, owner, reference, **kwargs: {'state':'ACTIVE','owner_id':'alice','revision':'model-revision','body':body()}
         service._authorize = lambda owner, values: True
         handle.check()
         service.install_trusted_model_proxy(None)

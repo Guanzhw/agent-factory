@@ -41,7 +41,7 @@ class CapacityPostgresTests(unittest.TestCase):
         cls.users = [f"fixture-capacity-{index:02d}" for index in range(20)]
         for index, owner in enumerate(cls.users):
             cls.auth.directory.upsert(owner, name=f"Synthetic capacity user {index:02d}")
-            cls.auth.authorization.assign(owner, "factory-user")
+        cls.tokens = {owner: cls.auth._issue_native_token(owner) for owner in cls.users}
         cls.client = TestClient(cls.app).__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
@@ -52,7 +52,7 @@ class CapacityPostgresTests(unittest.TestCase):
             self.cancel_and_confirm(row["owner_id"], row["id"])
 
     def headers(self, owner):
-        return {"Authorization": "Bearer " + self.auth._issue_native_token(owner)}
+        return {"Authorization": "Bearer " + self.tokens[owner]}
 
     def request(self, owner, method, path, *, expected=200, **kwargs):
         response = self.client.request(method, "/api/factory" + path, headers=self.headers(owner), **kwargs)
@@ -196,13 +196,13 @@ class CapacityPostgresTests(unittest.TestCase):
         peer_job, _ = self.submit(peer, self.plan(peer))
         self.wait(peer, peer_job["id"], {"waiting_input"})
         self.assertEqual(self.held(), 3)
-        self.auth.authorization.unassign(owner, "factory-user")
+        self.auth.directory.set_disabled(owner, True)
         try:
             self.request(owner, "POST", "/instances", expected=403, json=denied_body)
             self.request(owner, "GET", "/jobs/" + first["id"], expected=403)
         finally:
-            # Explicit test-only fixture assignment, inside the disposable DB.
-            self.auth.authorization.assign(owner, "factory-user")
+            # Explicit fixture account restoration inside the disposable DB.
+            self.auth.directory.set_disabled(owner, False)
         self.cancel_and_confirm(owner, first["id"])
         recovered = self.request(owner, "POST", "/instances", expected=202, json=denied_body).json()
         self.wait(owner, recovered["id"], {"waiting_input"})

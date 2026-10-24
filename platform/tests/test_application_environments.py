@@ -32,7 +32,7 @@ class ApplicationEnvironmentTests(unittest.TestCase):
         models = SimpleNamespace(db=SimpleNamespace(read=read),
             default=lambda owner: {'reference': 'fixture-model-' + owner, 'revision': self.model_revision},
             binding=lambda conn, owner, reference: SimpleNamespace(revision=self.model_revision, opaque_handle=handle))
-        auth = SimpleNamespace(require=lambda owner, permission: check())
+        auth = SimpleNamespace(require_member=lambda owner: check())
         def prepare(body, model):
             self.prepares.append(body['id']); model.check()
             if body['id'] not in self.allocations: self.allocations.append(body['id'])

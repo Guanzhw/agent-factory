@@ -32,11 +32,8 @@ async def main():
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**({"channel": "msedge"} if args.browser_channel == "msedge" else {}), headless=True)
         owner = await browser.new_context(extra_http_headers=fixture["ownerHeaders"], accept_downloads=True, viewport={"width": 1440, "height": 1050})
-        reviewer = await browser.new_context(extra_http_headers=fixture["reviewerHeaders"], viewport={"width": 1360, "height": 900})
         page = await owner.new_page()
-        manager = await reviewer.new_page()
         page.set_default_timeout(20000)
-        manager.set_default_timeout(20000)
         def observed(request):
             if request.method == "POST" and "/api/factory/" in request.url:
                 body = request.post_data_json or {}
@@ -44,8 +41,6 @@ async def main():
         page.on("request", observed)
         await page.goto(origin)
         await page.get_by_role("heading", name="研究工作台", exact=True).wait_for()
-        await manager.goto(origin)
-        await manager.get_by_role("button", name="方案审查", exact=True).click()
 
         async def api(path):
             return await page.evaluate("async path => { const r = await fetch('/api/factory'+path); if (!r.ok) throw Error('Owned fixture read failed '+r.status); return r.json(); }", path)
@@ -61,16 +56,10 @@ async def main():
                 await page.get_by_role("combobox", name="资源连接 " + name, exact=True).select_option(ref)
             await page.locator("#research-topic").fill(goal)
             before = len(requests)
-            await page.get_by_role("button", name="生成装配提案", exact=True).dblclick()
-            await page.get_by_role("button", name="接受提案并固定方案", exact=True).wait_for()
-            await page.get_by_role("button", name="接受提案并固定方案", exact=True).dblclick()
-            await page.get_by_role("heading", name="已固定的执行方案", exact=True).wait_for()
-            await page.get_by_role("button", name="提交方案审查", exact=True).dblclick()
-            row = manager.locator("article.review-row").filter(has=manager.get_by_role("heading", name=goal, exact=True))
-            await row.wait_for()
-            await row.get_by_role("heading", name="固定令牌与金额承诺", exact=True).wait_for()
-            await row.get_by_role("button", name="同意方案", exact=True).dblclick()
-            await page.wait_for_function("() => [...document.querySelectorAll('button')].some(b => b.textContent === '确认方案并创建任务' && !b.disabled)")
+            await page.get_by_role("button", name="预览任务方案", exact=True).dblclick()
+            await page.get_by_role("button", name="确认范围并保存方案", exact=True).wait_for()
+            await page.get_by_role("button", name="确认范围并保存方案", exact=True).dblclick()
+            await page.get_by_role("heading", name="4. 开始任务", exact=True).wait_for()
             if lose_ack:
                 async def lose_once(route):
                     if route.request.method != "POST":
@@ -79,7 +68,7 @@ async def main():
                     assert response.ok
                     await route.abort("failed")
                 await page.route("**/api/factory/instances", lose_once, times=1)
-            await page.get_by_role("button", name="确认方案并创建任务", exact=True).dblclick()
+            await page.get_by_role("button", name="开始任务", exact=True).dblclick()
             await page.get_by_role("heading", name="等待执行审批", exact=True).wait_for(timeout=90000)
             await page.wait_for_function("() => [...document.querySelectorAll('button')].some(b => b.textContent === '同意本次请求' && !b.disabled)", timeout=90000)
             jobs = await api("/jobs")
@@ -209,7 +198,6 @@ async def main():
             raise
         finally:
             await owner.close()
-            await reviewer.close()
             await browser.close()
     target = args.output / "actual-orx-browser-evidence.json"
     target.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")

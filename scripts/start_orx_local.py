@@ -1,7 +1,7 @@
 """Opt-in task-owned loopback ORX toy service with generated demo identities.
 
-Only a newly generated database receives fixture reviewer grants. The marker,
-store and experiment workspaces are retained for exact-run restart/recovery.
+The marker, store and experiment workspaces are retained for exact-run
+restart/recovery.
 No provider credentials, cloud resources, dashboard warm-up or paid models.
 """
 from __future__ import annotations
@@ -83,19 +83,14 @@ def main():
     application = create_app(settings)
     state = application.app.state.factory
     auth, store = state["auth"], state["store"]
-    if not args.resume:
-        # Only the just-created generated fixture store gets a distinct native admin.
-        auth.authorization.unassign("bob", "factory-user")
-        auth.authorization.assign("bob", "factory-manager")
-    published = publish_local_orx_application(state, author="manager", reviewer="bob")
+    published = publish_local_orx_application(state, author="alice")
     connection = state["connections"].bind("alice", REGISTRATION_REF, PROFILE_REVISION + ":owner-binding",
         capabilities=[READ_CAPABILITY, RUN_CAPABILITY])
     if args.fixture_file:
         args.fixture_file.parent.mkdir(parents=True, exist_ok=True)
         args.fixture_file.write_text(json.dumps({"baseUrl": f"http://127.0.0.1:{args.port}",
             "applicationId": APPLICATION_ID, "connectionRefs": {CONNECTION_NAME: connection["ref"]},
-            "ownerHeaders": {"Authorization": "Bearer " + auth._issue_native_token("alice", lifetime_seconds=3600)},
-            "reviewerHeaders": {"Authorization": "Bearer " + auth._issue_native_token("manager", lifetime_seconds=3600)}}, indent=2), encoding="utf-8")
+            "ownerHeaders": {"Authorization": "Bearer " + auth._issue_native_token("alice", lifetime_seconds=3600)}}, indent=2), encoding="utf-8")
     stop = workspace / "stop-local-orx.txt"
     if args.resume and stop.exists():
         if stop.is_symlink() or not stop.is_file():

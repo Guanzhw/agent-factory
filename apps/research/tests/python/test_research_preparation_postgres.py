@@ -66,9 +66,7 @@ class PreparationPostgresTests(unittest.TestCase):
         self.addCleanup(self.store.engine.dispose); self.addCleanup(self.store.native_db.db_engine.dispose)
         self.preparation = ResearchPreparationStore(self.store, self.auth, self.state['resources'], self.store.storage,
             preparation_manifest_sha256='b'*64, source_sha256=self.driver.configuration_fingerprint)
-        self.auth.directory.upsert('prep-reviewer', name='Synthetic preparation reviewer')
-        self.auth.authorization.assign('prep-reviewer', 'factory-manager')
-        self.application = publish_process_application(self.state, target_ref=self.target_ref, author='manager', reviewer='prep-reviewer')
+        self.application = publish_process_application(self.state, target_ref=self.target_ref, author='manager')
         self.client = TestClient(cast(Any, self.app)).__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
         self.addCleanup(self.cleanup_processes)
 

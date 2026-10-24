@@ -136,7 +136,7 @@ class OperationCustody:
         task = self.store.task(ctx.session_id, ctx.user_id)
         require(task['run_id'] == ctx.run_id and not task['terminal'] and not task['cancel_requested'])
         plan = self.store.plan(task['plan_id'], ctx.user_id)
-        self.auth.require(ctx.user_id, 'run')
+        self.auth.require_member(ctx.user_id)
         self.store.require_plan_execution(ctx.user_id, plan, run_context=ctx)
         return task, plan
 
@@ -197,7 +197,7 @@ class OperationCustody:
         return self._accept(body, observed)
 
     def read(self, owner, operation_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         body = self._load(owner, operation_id)
         self._identity(body)
         return body

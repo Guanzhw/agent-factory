@@ -1,22 +1,30 @@
-"""Real SQLite read-only diagnostics; no Store, PostgreSQL or initialization."""
-from contextlib import nullcontext
-from unittest.mock import Mock, patch
-from dataclasses import asdict
+"""Read-only SQLite probes of existing execution records and database mode."""
 import json
 from types import SimpleNamespace
 import unittest
 
-from sqlalchemy import create_engine, event, text
-from agent_factory.material_governance import GovernanceConfig
-from agent_factory.plan_policy import PlanPolicyConfig
+from sqlalchemy import create_engine, event, inspect, text
 from agent_factory_research.research_bootstrap_database_preflight import database_preflight
 
 
 def settings():
-    return SimpleNamespace(demo=True, material_review_mode='separate-admin',
-        material_policy_revision='task-research-bootstrap-v1', runtime_tool_contract='research-bootstrap-v1',
-        source_synthesis_enabled=False, temporary_policy='admin-review', policy_revision='task-research-bootstrap-v1',
-        plan_review_ttl_seconds=86400)
+    return SimpleNamespace(demo=True)
+
+
+def seed_database(engine):
+    statements = (
+        'CREATE TABLE af_bootstrap (id TEXT PRIMARY KEY, mode TEXT)',
+        'CREATE TABLE af_plans (id TEXT, owner_id TEXT, body TEXT, hash TEXT)',
+        'CREATE TABLE af_tasks (id TEXT, owner_id TEXT, plan_id TEXT, request_id TEXT, fingerprint TEXT, run_id TEXT, admission TEXT, terminal BOOLEAN, cancel_requested BOOLEAN, body TEXT)',
+        'CREATE TABLE af_effects (effect_key TEXT, task_id TEXT, run_id TEXT, fingerprint TEXT, status TEXT, result TEXT)',
+        'CREATE TABLE af_artifacts (id TEXT, task_id TEXT, body TEXT, content BYTEA)',
+        'CREATE TABLE af_resources (id TEXT, owner_id TEXT, body TEXT)',
+        'CREATE TABLE af_leases (id TEXT, owner_id TEXT, target_id TEXT, request_id TEXT, fingerprint TEXT, state TEXT, body TEXT)',
+    )
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
+        conn.execute(text("INSERT INTO af_bootstrap VALUES ('mode','demo')"))
 
 
 class DatabasePreflightTests(unittest.TestCase):
@@ -24,28 +32,6 @@ class DatabasePreflightTests(unittest.TestCase):
         self.engine = create_engine('sqlite://')
         self.addCleanup(self.engine.dispose)
         self.settings = settings()
-
-    def seed(self, *, legacy=False):
-        material = GovernanceConfig(review_mode='separate-admin', revision='material-governance-v1') if legacy else GovernanceConfig(
-            review_mode=self.settings.material_review_mode, revision=self.settings.material_policy_revision,
-            tool_contract=self.settings.runtime_tool_contract)
-        policy = PlanPolicyConfig(name='admin-review', revision='plan-policy-v1') if legacy else PlanPolicyConfig(
-            name=self.settings.temporary_policy, revision=self.settings.policy_revision,
-            tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=86400)
-        with self.engine.begin() as conn:
-            for statement in ('CREATE TABLE af_bootstrap (id TEXT PRIMARY KEY, mode TEXT)',
-                'CREATE TABLE af_material_governance_current (id TEXT PRIMARY KEY, revision TEXT)',
-                'CREATE TABLE af_material_governance_configs (revision TEXT PRIMARY KEY, hash TEXT, body TEXT)',
-                'CREATE TABLE af_plan_policy_state (id TEXT PRIMARY KEY, revision TEXT)',
-                'CREATE TABLE af_plan_policy_configs (revision TEXT PRIMARY KEY, policy_hash TEXT, body TEXT)'):
-                conn.execute(text(statement))
-            conn.execute(text("INSERT INTO af_bootstrap VALUES ('mode','demo')"))
-            for state, table, column, config in (
-                ('af_material_governance_current', 'af_material_governance_configs', 'hash', material),
-                ('af_plan_policy_state', 'af_plan_policy_configs', 'policy_hash', policy)):
-                conn.execute(text(f"INSERT INTO {state} VALUES ('current',:revision)"), {'revision': config.revision})
-                conn.execute(text(f'INSERT INTO {table} (revision,{column},body) VALUES (:revision,:hash,:body)'),
-                    {'revision': config.revision, 'hash': config.fingerprint, 'body': json.dumps(asdict(config))})
 
     def preflight(self):
         statements = []
@@ -60,129 +46,69 @@ class DatabasePreflightTests(unittest.TestCase):
         self.assertTrue(statements)
         return report, {row['field']: row for row in report['checks']}
 
-    def test_empty_database_is_not_initialized_without_creating_tables(self):
+    def test_empty_database_stays_uninitialized(self):
         report, rows = self.preflight()
         self.assertEqual(report['status'], 'NOT_CHECKED')
         self.assertEqual(rows['bootstrap.mode']['code'], 'NOT_INITIALIZED')
-        self.assertEqual(rows['material.current']['code'], 'NOT_INITIALIZED')
-        with self.engine.connect() as conn:
-            self.assertEqual(conn.execute(text("SELECT count(*) FROM sqlite_master WHERE type='table'")).scalar(), 0)
+        self.assertEqual(inspect(self.engine).get_table_names(), [])
 
-    def test_canonical_database_passes_without_writes(self):
-        self.seed()
+    def test_execution_schema_passes_without_policy_registration(self):
+        seed_database(self.engine)
         report, _ = self.preflight()
         self.assertEqual(report['status'], 'PASS', report)
-        public = json.dumps(report)
-        self.assertNotIn(self.settings.policy_revision, public)
-        self.assertNotIn('sqlite', public)
+        self.assertIs(report['executionVerified'], False)
+        self.assertNotIn('plan.current', json.dumps(report))
 
-    def test_legacy_revisions_both_reported_without_rebinding(self):
-        self.seed(legacy=True)
+    def test_historical_review_rows_remain_readable_and_do_not_gate_start(self):
+        seed_database(self.engine)
+        with self.engine.begin() as conn:
+            conn.execute(text('CREATE TABLE af_plan_policy_configs (revision TEXT, policy_hash TEXT, body TEXT)'))
+            conn.execute(text("INSERT INTO af_plan_policy_configs VALUES ('legacy', 'historical', 'unparsed review body')"))
+        report, _ = self.preflight()
+        self.assertEqual(report['status'], 'PASS', report)
+        with self.engine.connect() as conn:
+            self.assertEqual(tuple(conn.execute(text('SELECT * FROM af_plan_policy_configs')).one()),
+                             ('legacy', 'historical', 'unparsed review body'))
+
+    def test_mode_mismatch_blocks_without_exposing_row(self):
+        seed_database(self.engine)
+        with self.engine.begin() as conn:
+            conn.execute(text("UPDATE af_bootstrap SET mode='private-mode'"))
         report, rows = self.preflight()
         self.assertEqual(report['status'], 'BLOCKED')
-        for field in ('material.current', 'plan.current'):
-            self.assertEqual(rows[field]['code'], 'CURRENT_REVISION_MISMATCH')
-        self.assertEqual(rows['material.currentConfig']['status'], 'PASS')
-        self.assertEqual(rows['plan.currentConfig']['status'], 'PASS')
-        self.assertEqual(rows['plan.expectedConfig']['code'], 'NOT_REGISTERED')
-        with self.engine.connect() as conn:
-            self.assertEqual(conn.execute(text('SELECT count(*) FROM af_plan_policy_configs')).scalar(), 1)
+        self.assertEqual(rows['bootstrap.mode']['code'], 'MODE_MISMATCH')
+        self.assertNotIn('private-mode', json.dumps(report))
 
-    def test_mode_and_both_hash_mismatches_accumulate(self):
-        self.seed()
+    def test_missing_execution_table_is_reported_without_repair(self):
+        seed_database(self.engine)
         with self.engine.begin() as conn:
-            conn.execute(text("UPDATE af_bootstrap SET mode='production'"))
-            conn.execute(text("UPDATE af_material_governance_configs SET hash='private-bad-hash'"))
-            conn.execute(text("UPDATE af_plan_policy_configs SET policy_hash='private-bad-hash'"))
+            conn.execute(text('DROP TABLE af_artifacts'))
         report, rows = self.preflight()
-        for field in ('bootstrap.mode', 'material.currentConfig', 'plan.currentConfig'):
-            self.assertEqual(rows[field]['status'], 'BLOCKED')
-        self.assertNotIn('private-bad-hash', json.dumps(report))
-
-    def test_same_revision_valid_but_different_body_cannot_rebind(self):
-        self.seed()
-        changed = PlanPolicyConfig(name=self.settings.temporary_policy, revision=self.settings.policy_revision, tool_contract=self.settings.runtime_tool_contract, review_ttl_seconds=3600)
-        with self.engine.begin() as conn:
-            conn.execute(text('UPDATE af_plan_policy_configs SET body=:body,policy_hash=:hash'),
-                {'body': json.dumps(asdict(changed)), 'hash': changed.fingerprint})
-        _, rows = self.preflight()
-        self.assertEqual(rows['plan.currentConfig']['status'], 'PASS')
-        self.assertEqual(rows['plan.expectedConfig']['status'], 'BLOCKED')
-
-    def test_invalid_policy_body_and_orphan_registration_fail_closed(self):
-        self.seed()
-        with self.engine.begin() as conn:
-            conn.execute(text("UPDATE af_plan_policy_configs SET body=:body"), {'body': '{"name":"private-bad-enum"}'})
-            conn.execute(text('DELETE FROM af_material_governance_configs'))
-        report, rows = self.preflight()
-        self.assertEqual(rows['plan.policyEnum']['status'], 'BLOCKED')
-        self.assertEqual(rows['material.currentConfig']['code'], 'CURRENT_CONFIG_MISSING')
-        self.assertNotIn('private-bad-enum', json.dumps(report))
-
-    def test_missing_and_extra_current_rows_are_distinct(self):
-        self.seed()
-        with self.engine.begin() as conn:
-            conn.execute(text('DELETE FROM af_plan_policy_state'))
-            conn.execute(text("INSERT INTO af_material_governance_current VALUES ('unexpected','private-revision')"))
-        _, rows = self.preflight()
-        self.assertEqual(rows['plan.current']['code'], 'NOT_INITIALIZED')
-        self.assertEqual(rows['material.current']['code'], 'CURRENT_ROW_INVALID')
-
-    def test_postgres_transaction_declares_read_only_before_inspection(self):
-        connection = Mock()
-        connection.begin.return_value = nullcontext()
-        engine = Mock()
-        engine.dialect.name = 'postgresql'
-        engine.connect.return_value = nullcontext(connection)
-        inspector = Mock()
-        inspector.has_table.return_value = False
-        def inspected(actual):
-            self.assertIs(actual, connection)
-            self.assertEqual([str(call.args[0]) for call in connection.execute.call_args_list], [
-                'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
-                "SET LOCAL statement_timeout = '5000ms'",
-                "SET LOCAL lock_timeout = '1000ms'"])
-            return inspector
-        with patch('agent_factory_research.research_bootstrap_database_preflight.inspect', side_effect=inspected):
-            report = database_preflight(engine, self.settings)
         self.assertEqual(report['status'], 'NOT_CHECKED')
-        self.assertEqual(connection.execute.call_count, 3)
+        self.assertEqual(rows['schema.af_artifacts']['code'], 'NOT_INITIALIZED')
+        self.assertNotIn('af_artifacts', inspect(self.engine).get_table_names())
 
-    def test_oversized_body_is_filtered_by_database_before_decode(self):
-        self.seed()
+    def test_incomplete_execution_table_blocks(self):
+        seed_database(self.engine)
         with self.engine.begin() as conn:
-            conn.execute(text('UPDATE af_plan_policy_configs SET body=:body'),
-                         {'body': '{"private":"' + 'x' * 65536 + '"}'})
-        from agent_factory_research import research_bootstrap_database_preflight as module
-        original = module._body
-        observed = []
-        def bounded_body(value):
-            observed.append(value)
-            self.assertTrue(value is None or len(json.dumps(value).encode()) <= 65536)
-            return original(value)
-        with patch.object(module, '_body', side_effect=bounded_body):
-            report, rows = self.preflight()
-        self.assertIn(None, observed)
-        self.assertEqual(rows['plan.currentConfig']['code'], 'CONFIG_BODY_INVALID')
-        self.assertIs(report['executionVerified'], False)
-        self.assertNotIn('private', json.dumps(report))
+            conn.execute(text('DROP TABLE af_tasks'))
+            conn.execute(text('CREATE TABLE af_tasks (id TEXT)'))
+        report, rows = self.preflight()
+        self.assertEqual(report['status'], 'BLOCKED')
+        self.assertEqual(rows['schema.af_tasks']['code'], 'REQUIRED_COLUMNS_MISSING')
 
-    def test_oversized_current_revision_is_not_returned_to_caller(self):
-        self.seed()
+    def test_missing_mode_row_requires_initialization(self):
+        seed_database(self.engine)
         with self.engine.begin() as conn:
-            conn.execute(text('UPDATE af_material_governance_current SET revision=:revision'),
-                         {'revision': 'private-' + 'x' * 100})
-            conn.execute(text('UPDATE af_plan_policy_configs SET policy_hash=:hash'),
-                         {'hash': 'private-' + 'x' * 64})
+            conn.execute(text('DELETE FROM af_bootstrap'))
         report, rows = self.preflight()
-        self.assertEqual(rows['material.current']['code'], 'CURRENT_ROW_INVALID')
-        self.assertEqual(rows['plan.currentConfig']['code'], 'CONFIG_BODY_OR_HASH_MISMATCH')
-        self.assertNotIn('private-', json.dumps(report))
+        self.assertEqual(report['status'], 'NOT_CHECKED')
+        self.assertEqual(rows['bootstrap.mode']['code'], 'NOT_INITIALIZED')
 
-    def test_invalid_settings_do_not_hide_persisted_mode(self):
-        self.seed()
-        self.settings.temporary_policy = 'private-unsupported'
+    def test_invalid_demo_mode_is_reported(self):
+        seed_database(self.engine)
+        self.settings.demo = 'private-mode'
         report, rows = self.preflight()
-        self.assertEqual(rows['settings.plan']['status'], 'BLOCKED')
-        self.assertEqual(rows['bootstrap.mode']['status'], 'PASS')
-        self.assertNotIn('private-unsupported', json.dumps(report))
+        self.assertEqual(rows['settings.mode']['code'], 'MODE_INVALID')
+        self.assertEqual(report['status'], 'BLOCKED')
+        self.assertNotIn('private-mode', json.dumps(report))

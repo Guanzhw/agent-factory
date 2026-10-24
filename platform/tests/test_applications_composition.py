@@ -9,6 +9,7 @@ from contextvars import ContextVar
 import copy
 import hashlib
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
@@ -29,6 +30,8 @@ from agent_factory.auth import AuthService
 from agent_factory.catalog import create_plan, seed_catalog
 from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
 from agent_factory.composition import CompositionService, composition_router
+from agent_factory.connections import ConnectionService
+from agent_factory.personal_tools import ConfigureResourceRequest, PersonalTools
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory_research.demo_model import DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
@@ -114,56 +117,121 @@ class ApplicationCompositionFixture(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "owned-composition.sqlite"))
         self.addCleanup(self.db.db_engine.dispose)
-        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url="sqlite://", workspace=Path(self.directory.name))
+        self.settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url="sqlite://", workspace=Path(self.directory.name))
         self.auth = AuthService(self.settings, self.db)
         self.auth.initialize_demo()
         # Explicitly owned test subjects/roles; no production grants are touched.
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
+        self.auth.account_roles.unassign("bob", "factory-user")
+        self.auth.account_roles.assign("bob", "factory-manager")
         self.store = PortableCompositionStore(self.db, self.settings)
         seed_catalog(self.store, SEEDS)
         self.store.material_governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(
-            review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+            review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
         self.applications = ApplicationService(self.store, self.auth)
         self.applications.seed_demo(all_demo_definitions)
         self.store.applications = self.applications
         self.bindings = default_bindings(self.settings, self.store, None)
+        self.store.execution_bindings = self.bindings
         self.composition = CompositionService(self.store, self.auth, self.applications, self.bindings, None)
         self.store.composition = self.composition
 
     def publish(self, definition=None):
         application = self.applications.create_draft("manager", definition or app_definition(self.store), str(uuid4()))
-        review = self.applications.request_publication("manager", application["id"], application["version"], str(uuid4()))
-        self.applications.decide_publication("bob", review["id"], True, str(uuid4()))
+        self.applications.publish("manager", application["id"], application["version"], str(uuid4()))
         return application
 
     def material(self, **changes):
         material = self.store.material_governance.create_draft("manager", {
             "kind": "prompt", "name": "Original alternate fixture", "content": "Alternate approved deterministic instructions.",
             "license": "MIT", "provenance": {"kind": "original", "notice": "Original synthetic fixture."}, **changes}, str(uuid4()))
-        review = self.store.material_governance.request_publication("manager", material["id"], 1, str(uuid4()))
-        self.store.material_governance.decide_publication("bob", review["id"], True, str(uuid4()))
+        self.store.material_governance.publish("manager", material["id"], 1, str(uuid4()))
         return material
 
 
 class ApplicationCompositionTests(ApplicationCompositionFixture):
-    def test_publication_binds_exact_version_and_requires_separate_current_native_admin(self):
-        application = self.applications.create_draft("manager", app_definition(self.store), "draft-one")
+    def test_member_publication_binds_exact_version_and_only_owner_can_manage_it(self):
+        definition = app_definition(self.store)
+        application = self.applications.create_draft("alice", definition, "member-draft")
         original = copy.deepcopy(application)
-        review = self.applications.request_publication("manager", application["id"], 1, "review-one")
-        self.assertEqual(review["applicationRef"], pin(application))
-        for actor in ("manager", "alice"):
-            with self.assertRaises(HTTPException) as denied:
-                self.applications.decide_publication(actor, review["id"], True, "decide-" + actor)
-            self.assertEqual(denied.exception.status_code, 403)
-        self.auth.authorization.unassign("bob", "factory-manager")
-        with self.assertRaises(HTTPException):
-            self.applications.decide_publication("bob", review["id"], True, "bob-current-denied")
-        self.auth.authorization.assign("bob", "factory-manager")
-        decision = self.applications.decide_publication("bob", review["id"], True, "bob-current-approved")
-        self.assertEqual(decision["reviewerId"], "bob")
+        self.applications.publish("alice", application["id"], 1, "member-publish")
         self.assertEqual(self.applications.require_current(pin(application)), original)
-        self.assertTrue(decision["taskApprovalSeparate"])
+        self.assertEqual(self.applications.list_reviews("alice"), [])
+        self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], original)
+        for actor in ("manager", "bob"):
+            for action in (lambda: self.applications.publish(actor, application["id"], 1, "publish"),
+                           lambda: self.applications.revise(actor, application["id"], 1, definition, "revise"),
+                           lambda: self.applications.create_draft(actor, definition, "takeover"),
+                           lambda: self.applications.withdraw(actor, application["id"], 1, "withdraw"),
+                           lambda: self.applications.archive(actor, application["id"], 1, "archive")):
+                with self.assertRaises(HTTPException):
+                    action()
+            for action in (lambda: self.applications.request_publication(actor, application["id"], 1, "review"),
+                           lambda: self.applications.decide_publication(actor, "old-review", True, "decision")):
+                with self.assertRaises(HTTPException) as retired:
+                    action()
+                self.assertEqual(retired.exception.status_code, 410)
+        copied = self.applications.create_draft("bob", {key: value for key, value in definition.items() if key != "id"}, "copy-public-app")
+        self.assertNotEqual(copied["id"], application["id"])
+        self.assertEqual(self.applications.inspect("bob", copied["id"], 1)["governance"]["author_id"], "bob")
+        self.applications.publish("bob", copied["id"], 1, "publish-copy")
+        self.assertEqual(self.applications.require_current(pin(application)), original)
+        self.applications.withdraw("alice", application["id"], 1, "owner-withdraw")
+        self.applications.archive("alice", application["id"], 1, "owner-archive")
+        revised = self.applications.revise("alice", application["id"], 1, definition, "owner-revise")
+        self.assertEqual(revised["version"], 2)
+
+
+    def test_same_named_private_member_tool_does_not_replace_builtin_material_contract(self):
+        connections = ConnectionService(self.store, self.auth)
+        personal = PersonalTools(connections, None, ())
+        connections.personal_tools = personal
+        self.store.personal_tools = personal
+        self.bindings.connections = connections
+        self.composition.connections = connections
+        personal.register(self.bindings)
+        original = self.publish()
+        before = self.composition.create_plan("bob", "Checksum built-in before another member tool", "literature", application_ref=pin(original))
+        resource = personal.configure_resource("alice", ConfigureResourceRequest(transport="cli", toolName="checksum",
+            executable=sys.executable, arguments=["-c", "print(123)"], requestId="private-same-name"))
+        # The exact built-in declaration and its application remain usable.
+        self.applications.require_plan_current(before)
+        unchanged = self.composition.create_plan("bob", "Checksum built-in after another member tool", "literature", application_ref=pin(original))
+        self.assertEqual(unchanged["capabilities"], ["checksum:read"])
+        self.assertEqual(unchanged["executionBindings"]["tools"][0]["adapterId"], "native-checksum-v1")
+        material = self.store.material_governance.create_draft("alice", {
+            "kind": "tool", "name": "Member checksum", "content": "checksum", "permissions": ["tool:invoke"],
+            "runtimeBinding": {**resource["runtimeBinding"], "config": {"connectionName": "memberCommand"}}}, "same-name-tool-draft")
+        self.store.material_governance.publish("alice", material["id"], 1, "same-name-tool-publish")
+        definition = app_definition(self.store, identifier="member-checksum-application")
+        mode = definition["modes"]["literature"]
+        mode["materialRefs"] = [pin(material) if item["id"] == "checksum-tool" else item for item in mode["materialRefs"]]
+        mode["capabilities"] = ["tool:invoke"]
+        mode["connectionRequirements"] = [{"name": "memberCommand", "kind": "tool", "requiredCapabilities": ["tool:invoke"]}]
+        application = self.applications.create_draft("alice", definition, "member-same-name-app")
+        self.applications.publish("alice", application["id"], 1, "member-same-name-publish")
+        connection = connections.bind("alice", resource["registrationRef"], "member-command-bind")
+        selected = self.composition.create_plan("alice", "Use my exact member checksum", "literature", application_ref=pin(application),
+            connection_refs={"memberCommand": connection["ref"]})
+        self.assertEqual(selected["capabilities"], ["tool:invoke"])
+        self.assertEqual(selected["executionBindings"]["tools"][0]["adapterId"], resource["adapterId"])
+        with self.assertRaises(HTTPException):
+            self.store.material_governance.create_draft("alice", {"kind": "tool", "name": "Mismatched declaration",
+                "content": "checksum", "permissions": ["checksum:read"], "runtimeBinding": resource["runtimeBinding"]}, "wrong-same-name-permission")
+
+    def test_historical_reviews_remain_owner_scoped_and_do_not_control_publication(self):
+        app = self.publish()
+        row = {"id": "historical-publication", "application_id": app["id"], "version": app["version"],
+               "author_id": "manager", "sha": app["sha256"], "policy_hash": "old-policy",
+               "decision": "pending", "created_at": now()}
+        with self.store.engine.begin() as conn:
+            conn.execute(self.applications.reviews.insert().values(**row))
+            conn.execute(self.applications.states.update().where(self.applications.states.c.id == app["id"])
+                         .values(review_id=row["id"]))
+        self.assertTrue(self.applications.inspect_review("manager", row["id"])["readOnly"])
+        self.assertEqual(self.applications.list_reviews("bob", all_authors=True), [])
+        with self.assertRaises(HTTPException):
+            self.applications.inspect_review("bob", row["id"])
+        self.assertEqual(self.applications.require_current(pin(app)), app)
 
     def test_new_six_kind_configuration_is_discovered_without_application_branches(self):
         app = self.publish()
@@ -275,7 +343,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         application = self.publish()
         pending = self.composition.propose("alice", "Text audit pending", application_ref=pin(application), request_id="pending")
         plan = self.composition.create_plan("alice", "Text audit accepted", "literature", application_ref=pin(application))
-        self.applications.withdraw("bob", application["id"], 1, "withdraw", "Owned withdrawal fixture")
+        self.applications.withdraw("manager", application["id"], 1, "withdraw", "Owned withdrawal fixture")
         with self.assertRaises(HTTPException):
             self.composition.accept("alice", pending["id"], "deny-after-withdrawal")
         with self.assertRaises(HTTPException):
@@ -296,12 +364,10 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         with self.assertRaises(HTTPException) as scoped:
             self.applications.inspect("alice", draft["id"], 1)
         self.assertEqual(scoped.exception.status_code, 404)
-        review = self.applications.request_publication("manager", draft["id"], 1, "review")
-        self.assertEqual(self.applications.decide_publication("bob", review["id"], False, "reject")["decision"], "denied")
         self.applications.archive("manager", draft["id"], 1, "archive")
         next_version = self.applications.revise("manager", draft["id"], 1, definition, "version-two")
         self.assertEqual(next_version["version"], 2)
-        self.assertEqual(len(self.applications.list_definitions("manager")), 2)
+        self.assertEqual(len([item for item in self.applications.list_definitions("manager") if item["application"]["id"] == draft["id"]]), 2)
         self.assertEqual(self.applications.inspect("manager", draft["id"], 1)["application"], draft)
         with self.assertRaises(HTTPException):
             self.applications.request_publication("manager", draft["id"], 1, "inactive-review")
@@ -320,9 +386,8 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.applications.require_plan_current(plan)
         proposal = self.composition.propose("alice", "Checksum before config revocation", application="checksum", request_id="before-unset")
         self.settings.temporary_policy = "unset"
-        with self.assertRaises(HTTPException):
-            self.composition.accept("alice", proposal["id"], "after-unset")
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.assertEqual(self.composition.accept("alice", proposal["id"], "after-unset")["ownerId"], "alice")
+        self.auth.directory.set_disabled("alice", True)
         with self.assertRaises(HTTPException):
             self.composition.accept("alice", proposal["id"], "after-rights-revoked")
 
@@ -335,7 +400,10 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.bindings.manifest(legacy)
         proof = self.applications.adopt_legacy_demo_plan(legacy)
         self.assertFalse(proof["productionAllowed"])
-        self.assertEqual(self.bindings.manifest(legacy)["tools"][0]["toolName"], "checksum")
+        with self.assertRaises(HTTPException) as no_reconstruction:
+            self.bindings.manifest(legacy)
+        self.assertEqual(no_reconstruction.exception.status_code, 409)
+        self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
         self.applications.require_plan_current(legacy)
         with self.assertRaises(HTTPException):
             self.applications.require_legacy_demo_plan({**legacy, "normalizedGoal": "Changed historical intent"})
@@ -353,7 +421,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             manager = {"Authorization": "Bearer " + self.auth.issue_demo_token("manager")}
             path = "/api/factory/compositions/proposals"
             self.assertEqual(client.get("/api/factory/applications").status_code, 401)
-            self.assertEqual(client.post("/api/factory/applications/drafts", headers=alice, json={"definition": app_definition(self.store), "requestId": "user-draft"}).status_code, 403)
+            self.assertEqual(client.post("/api/factory/applications/drafts", headers=alice, json={"definition": app_definition(self.store), "requestId": "user-draft"}).status_code, 201)
             for forbidden in ({"ownerId": "manager"}, {"capabilities": ["agent_os:admin"]}, {"budget": {"toolCalls": 128}}):
                 response = client.post(path, headers=alice, json={"goal": "Checksum fixture", "requestId": str(uuid4()), **forbidden})
                 self.assertEqual(response.status_code, 422, response.text)
@@ -370,11 +438,11 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.addCleanup(self.database.__exit__, None, None, None)
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1, max_user_tasks=2)
+        self.settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1, max_user_tasks=2)
         self.start()
         self.addCleanup(self.stop)
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
+        self.auth.account_roles.unassign("bob", "factory-user")
+        self.auth.account_roles.assign("bob", "factory-manager")
 
     def start(self):
         self.app = create_app(self.settings)
@@ -401,14 +469,10 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         drafted = self.client.post("/api/factory/applications/drafts", json={"definition": app_definition(self.store), "requestId": "native-app-draft"})
         self.assertEqual(drafted.status_code, 201, drafted.text)
         app = drafted.json()
-        reviewed = self.client.post(f'/api/factory/applications/{app["id"]}/versions/1/review', json={"requestId": "native-app-review"})
-        self.assertEqual(reviewed.status_code, 201, reviewed.text)
-        decision_path = "/api/factory/applications/reviews/" + reviewed.json()["id"] + "/decision"
-        self.assertEqual(self.client.post(decision_path, json={"approved": True, "requestId": "self-review-denied"}).status_code, 403)
-        self.login("bob")
-        approved = self.client.post(decision_path, json={"approved": True, "requestId": "distinct-native-admin"})
-        self.assertEqual(approved.status_code, 200, approved.text)
+        published = self.client.post(f'/api/factory/applications/{app["id"]}/versions/1/publish', json={"requestId": "native-app-publish"})
+        self.assertEqual(published.status_code, 200, published.text)
         return app
+
 
     def wait_job(self, identifier):
         end = time.monotonic() + 15
@@ -444,7 +508,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
             self.assertTrue(any(event["type"] == "checksum_completed" for event in events))
             self.assertEqual(len(list(conn.execute(select(self.composition.proposals)))), 1)
         # Publication withdrawal applies at admission; completed evidence remains readable.
-        self.login("bob")
+        self.login("manager")
         withdrawn = self.client.post(f'/api/factory/applications/{app["id"]}/versions/1/withdraw', json={"requestId": "native-withdraw", "reason": "Owned test withdrawal"})
         self.assertEqual(withdrawn.status_code, 200, withdrawn.text)
         self.login("alice")
@@ -476,7 +540,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
 
     def test_seed_application_references_are_stable_across_independent_postgres_databases(self):
         with IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as other_database, TemporaryDirectory() as directory:
-            other_settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=other_database.url, workspace=Path(directory), max_workers=1,
+            other_settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=other_database.url, workspace=Path(directory), max_workers=1,
                                       max_tool_calls=3, experiment_timeout_seconds=5)
             other_app = create_app(other_settings)
             other_state = other_app.app.state.factory
@@ -492,7 +556,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                 other_state["store"].engine.dispose()
                 other_state["store"].native_db.db_engine.dispose()
 
-    def test_explicit_adopted_legacy_plan_executes_native_bound_projection_and_denies_changed_fields(self):
+    def test_historical_legacy_plan_remains_readable_and_new_composition_executes(self):
         original = self.composition.create_plan("alice", "Checksum exact historical synthetic fixture", "literature", "checksum")
         legacy = {key: value for key, value in original.items() if key not in {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}}
         legacy["id"] = str(uuid4())
@@ -500,21 +564,26 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.store.save_plan(legacy)
         self.apps.adopt_legacy_demo_plan(legacy)
         self.login("alice")
-        admitted = self.client.post("/api/factory/instances", json={"planId": legacy["id"], "requestId": "legacy-native-instance"})
+        rejected = self.client.post("/api/factory/instances", json={"planId": legacy["id"], "requestId": "legacy-native-instance"})
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertIn("BINDING_MANIFEST_REQUIRED", rejected.text)
+        self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
+        for changed in ({"instructions": ["Changed after adoption"]}, {"unexpected": "silently stripped value"}):
+            with self.subTest(changed=changed), self.assertRaises(HTTPException):
+                self.apps.require_legacy_demo_plan({**legacy, **changed})
+        admitted = self.client.post("/api/factory/instances", json={"planId": original["id"], "requestId": "current-native-instance"})
         self.assertEqual(admitted.status_code, 202, admitted.text)
         detail = self.wait_job(admitted.json()["id"])
         self.assertEqual(detail["job"]["status"], "completed", detail)
         self.assertTrue(detail["artifacts"])
-        task = self.store.task(detail["job"]["id"], "alice")
-        projected = {**legacy, "taskId": task["id"], "runId": task["run_id"]}
-        self.apps.require_plan_current(projected)
-        for changed in ({"runId": str(uuid4())}, {"taskId": str(uuid4())}, {"instructions": ["Changed after adoption"]}, {"unexpected": "silently stripped value"}):
-            with self.subTest(changed=changed), self.assertRaises(HTTPException):
-                self.apps.require_legacy_demo_plan({**projected, **changed})
+        self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
 
     def test_actual_factory_restart_withdrawn_seed_keeps_history_and_blocks_current_execution(self):
         plan = self.composition.create_plan("alice", "Investigate owned historical evidence", "literature", "research")
-        self.store.material_governance.withdraw("bob", "synthetic-knowledge", 1, "withdraw-seed", "Owned inactive fixture")
+        with self.store.engine.begin() as conn:
+            conn.execute(self.store.material_governance.versions.update().where(
+                self.store.material_governance.versions.c.material_id == "synthetic-knowledge").values(author_id="manager"))
+        self.store.material_governance.withdraw("manager", "synthetic-knowledge", 1, "withdraw-seed", "Owned inactive fixture")
         self.stop()
         self.start()
         version = self.store.material_governance.inspect_version("manager", "synthetic-knowledge", 1)
@@ -535,18 +604,15 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
             registrations = [AdapterRegistration("environment", "owned-environment-v1", "1", forbidden_factory),
                              AdapterRegistration("tool", "owned-checksum-v1", "1", forbidden_factory, tool_name="checksum", permissions=("checksum:read",)),
                              AdapterRegistration("knowledge", "owned-knowledge-v1", "1", forbidden_factory)]
-            settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=database.url, demo=False, jwt_key=self.settings.jwt_key,
+            settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=database.url, demo=False, jwt_key=self.settings.jwt_key,
                                 workspace=Path(directory), runtime_adapters=registrations, max_workers=1)
             app = create_app(settings)
             state = app.app.state.factory
             store, auth = state["store"], state["auth"]
             try:
                 # Managed subjects/grants are restricted to this generated database.
-                auth.authorization.define_role("owned-review-admin", ["agent_os:admin"])
-                auth.authorization.define_role("owned-plan-user", ["agents:factory-executor:read", "agents:factory-executor:run", "components:read"])
                 for subject, role in (("owned-author", "owned-review-admin"), ("owned-reviewer", "owned-review-admin"), ("owned-user", "owned-plan-user")):
                     auth.directory.upsert(subject, name="Original isolated synthetic authorization fixture")
-                    auth.authorization.assign(subject, role)
                 materials = []
                 for kind, binding, content, caps in (
                     ("skill", None, "Original inert workflow guidance.", []),
@@ -560,14 +626,12 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                     if binding:
                         definition["runtimeBinding"] = binding
                     material = store.material_governance.create_draft("owned-author", definition, "prod-material-" + kind)
-                    review = store.material_governance.request_publication("owned-author", material["id"], 1, "prod-review-" + kind)
-                    store.material_governance.decide_publication("owned-reviewer", review["id"], True, "prod-approve-" + kind)
+                    store.material_governance.publish("owned-author", material["id"], 1, "prod-publish-" + kind)
                     materials.append(material)
                 definition = {"id": "owned-production-config", "name": "Isolated production-mode fixture",
                     "modes": {"literature": {"materialRefs": [pin(material) for material in materials], "capabilities": ["checksum:read"], "toolOrder": ["checksum"]}}}
                 application = state["applications"].create_draft("owned-author", definition, "prod-app")
-                review = state["applications"].request_publication("owned-author", application["id"], 1, "prod-app-review")
-                state["applications"].decide_publication("owned-reviewer", review["id"], True, "prod-app-approve")
+                state["applications"].publish("owned-author", application["id"], 1, "prod-app-publish")
                 with TestClient(app) as client:
                     headers = {"Authorization": "Bearer " + auth._issue_native_token("owned-user")}
                     proposal = client.post("/api/factory/compositions/proposals", headers=headers, json={"goal": "Controlled production-mode fixture with no provider calls", "applicationRef": pin(application), "requestId": "prod-proposal"})

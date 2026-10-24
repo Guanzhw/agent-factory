@@ -24,16 +24,16 @@ lifespan must satisfy these constraints.
 
 | Service operation | Input and authority |
 | --- | --- |
-| `create(owner, plan_id, name, cron, timezone="UTC")` | Owner's current `run` permission; own ready, top-level immutable plan |
-| `list(owner)`, `get(owner, id)`, `occurrences(owner, id)` | Current executor `run`; owner partition |
-| `update(owner, id, cron, timezone="UTC")` | Owner's current `run` permission; cannot change plan or owner |
-| `set_enabled(owner, id, enabled)` | Owner's current `run` permission; enabling repeats plan/policy checks |
-| `await trigger(owner, id, request_id)` | Owner's current `run` permission; scoped stable manual request key |
-| `await cancel_occurrence(owner, id, occurrence_id)` | Current executor run; exact owned occurrence/task, existing cancellation tree |
+| `create(owner, plan_id, name, cron, timezone="UTC")` | Active member; own ready, top-level immutable plan |
+| `list(owner)`, `get(owner, id)`, `occurrences(owner, id)` | Active member; owner partition |
+| `update(owner, id, cron, timezone="UTC")` | Active member; cannot change plan or owner |
+| `set_enabled(owner, id, enabled)` | Active member; enabling repeats plan/resource checks |
+| `await trigger(owner, id, request_id)` | Active member; scoped stable manual request key |
+| `await cancel_occurrence(owner, id, occurrence_id)` | Active member; exact owned occurrence/task, existing cancellation tree |
 
-An owner with current `run` permission can manage that owner's schedules; no
-separate `components:write` grant is required. Reads and writes remain owner-scoped,
-and the backend rechecks the plan and current policy when enabling or dispatching.
+An active member manages their own schedules. Reads and writes remain
+owner-scoped, and the backend rechecks plan readiness and current execution
+resources when enabling or dispatching.
 UI role labels do not grant authority. A schedule stores only
 `planId` and `planHash`; callers cannot supply URLs, session state, owner IDs,
 versions, raw agent configuration or credentials. Plan material/version snapshots
@@ -49,8 +49,8 @@ owner, schedule ID and due timestamp; each manual occurrence uses the owner,
 schedule ID and request ID. A changed definition with the same manual key returns
 an explicit conflict.
 
-Before submission, the executor reads CURRENT directory/grants, the immutable
-plan, and CURRENT execution policy. `Store.reserve_task` enforces the existing
+Before submission, the executor checks current membership, the immutable plan
+and current execution resources. `Store.reserve_task` enforces the existing
 per-user and aggregate active-task budgets transactionally. Every new occurrence
 gets a fresh task UUID/session and its own native queue run. A PostgreSQL advisory
 lock serializes admission and schedule edits without blocking another async
@@ -123,14 +123,11 @@ Keep one scheduler-active application process in the supported initial topology;
 concurrent scheduler replicas require an upstream conditional-release API and
 additional acceptance. The full default 300-second grace was not awaited.
 
-The current application execution policy admits bounded synthetic demo plans.
-Normal environment entrypoints use `member-self-service` for direct plan admission;
-`admin-review` remains an explicit plan-policy choice. A schedule does not bypass
-plan preflight, current rights or budgets, and live adapter, identity and model
-budget acceptance remain separate. Owner self-service schedule management uses
-current `run` permission; catalog quota and deletion/history retention remain
-separate policy work. Active task quotas are enforced now. No worker-capacity or
-multi-host scheduling claim is made.
+Members schedule their own ready plans under `member-self-service`. Every
+occurrence retains current membership, plan/resource checks and active-task
+budgets. Provider configuration, model spend limits and deployed capacity need
+their own acceptance. Schedule catalog quotas and deletion/history retention
+remain separate work. No worker-capacity or multi-host scheduling claim is made.
 
 Run the public integration contracts against an explicitly disposable database:
 
@@ -144,11 +141,9 @@ uv run python -m unittest discover -s platform/tests -p test_scheduling_postgres
 
 The **计划任务** workspace exposes owner-scoped list/detail, five-field cron
 and IANA timezone preview, editing, pause/resume, occurrence history and links to
-original tasks. An owner with current `run` permission can create a schedule from
-their own ready immutable plan. If the plan policy requires review, that review
-must already be satisfied; schedule management itself does not require
-`components:write`. Backend permissions remain authoritative at every write and
-every dispatch. New editor-created
+original tasks. An active member can create a schedule from their own ready
+immutable plan. Membership, ownership and current execution resources are checked
+at every write and dispatch. New editor-created
 schedules are persisted **paused**, with explicit separate enable. The editor has
 no manual-trigger or external-notification action. Test fixtures may explicitly
 use the existing owned trigger endpoint with far-future cron definitions.
@@ -209,7 +204,7 @@ spend policy and production identity/host acceptance remain separate work. Offli
 no comparison execution or full scientific workflow is claimed.
 
 History in this initial editor covers persisted occurrences, not a complete log of
-all clock claims or refusals. Current-role/plan/pending/lease checks may reject
+all clock claims or refusals. Current-member/plan/pending/lease checks may reject
 before occurrence persistence and remain internal audit only; lock acquisition can
 fail before that audit boundary. An empty history does not prove no tick occurred.
 Owner-visible finite pre-admission refusal diagnostics remain code work; this
@@ -217,7 +212,7 @@ milestone does not claim that every non-execution can be diagnosed from the UI.
 
 | Requirement | Current milestone | Remaining code / external validation |
 |---|---|---|
-| Create/edit/list/pause/resume/history | Owner's own ready plan, initially paused create, immutable plan pin, CAS, finite owner projections and actual UI; writes use current owner `run` permission | Production operating policy and account onboarding |
+| Create/edit/list/pause/resume/history | Owner's own ready plan, initially paused create, immutable plan pin, CAS, finite owner projections and actual UI; writes check current membership and ownership | Production operating policy and account onboarding |
 | Timezone/DST/missed runs | Five-field cron, IANA zone, UTC/local-offset preview; deterministic native clock comparisons; missed ticks coalesce | No catch-up/backfill feature; deployed clock/zone-data operations not certified |
 | Overlap/per-owner limits | Concurrent occurrences allowed within current owner/global active quotas, storage admission and per-plan execution/usage budgets | Per-schedule no-overlap, cumulative daily/monthly spend caps and catalog quota |
 | Identity/permission changes | Current authorization and plan/binding checks at each dispatch; pause/revoke race coverage | Production identity deployment and operator policy |

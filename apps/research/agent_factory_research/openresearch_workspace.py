@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
-from .autoresearch import ResearchPlanReviewRequired
 from agent_factory.store import digest, now
 
 ID = r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$'
@@ -84,7 +83,7 @@ class OpenResearchWorkspace:
         metadata.create_all(store.engine)
 
     def capabilities(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return {'contractVersion': 1, 'projectKind': 'factory-workspace',
             'sessionExecution': ['controlled-workload-v1'],
             'nativeProjectAttachment': True, 'nativeAttachmentRequiresTrustedConnection': True,
@@ -95,7 +94,7 @@ class OpenResearchWorkspace:
 
     def request_result(self, owner, request_id):
         """Read-only recovery of an acknowledged or in-flight owner command."""
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         from agent_factory.material_governance import MaterialGovernance
         MaterialGovernance._key(request_id)
         with self.db.read() as conn:
@@ -129,7 +128,7 @@ class OpenResearchWorkspace:
         return handle, current
 
     async def native_projects(self, owner, reference):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         from .orx_research_session import OrxSessionError
         adapter, pin = self._native_adapter(owner, reference)
         try:
@@ -141,7 +140,7 @@ class OpenResearchWorkspace:
             raise HTTPException(409, 'OPENRESEARCH_NATIVE_PROJECT_OBSERVATION_FAILED') from None
 
     async def attach_native_project(self, owner, body: WorkspaceNativeAttach):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         from .orx_research_session import OrxSessionError
         fp = digest({'action': 'native-project-attach', 'payload': body.model_dump(exclude={'requestId'})})
         with self.db.read() as conn:
@@ -173,7 +172,7 @@ class OpenResearchWorkspace:
             return project
 
     async def refresh_native_project(self, owner, project_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         project = self.project(owner, project_id)
         if project['kind'] != 'native-openresearch':
             raise HTTPException(409, 'OPENRESEARCH_NATIVE_PROJECT_REQUIRED')
@@ -192,7 +191,7 @@ class OpenResearchWorkspace:
     def _managed_profile(self, owner, project, profile_id):
         """Resolve only operator-installed original custody; never accept JSON proof."""
         from .managed_orx_attachment import ManagedORXSessionProvider
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         if project['kind'] != 'native-openresearch':
             raise HTTPException(409, 'OPENRESEARCH_NATIVE_PROJECT_REQUIRED')
         value = self.managed_profiles.get(profile_id)
@@ -246,7 +245,7 @@ class OpenResearchWorkspace:
             raise HTTPException(409, 'OPENRESEARCH_MANAGED_PLAN_BINDING_INVALID')
 
     async def list_managed_profiles(self, owner, project_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         project = await self.refresh_native_project(owner, project_id)
         result = []
         for identifier in self.managed_profiles:
@@ -263,7 +262,7 @@ class OpenResearchWorkspace:
         return result
 
     async def prepare_managed(self, owner, project_id, body):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         fp = digest({'action': 'managed-prepare', 'projectId': project_id, 'payload': body.model_dump(exclude={'requestId'})})
         with self.db.read() as conn:
             old = self.db.old(conn, self.commands, owner, body.requestId, fp)
@@ -301,7 +300,7 @@ class OpenResearchWorkspace:
         from agent_factory.factory_api import InstanceRequest
         if self.factory is None:
             raise HTTPException(503, 'OPENRESEARCH_MANAGED_ADMISSION_UNAVAILABLE')
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             row = dict(self._session(conn, owner, project_id, session_id))
         if row['body'].get('executionContract') != 'managed-native-attachment-v1':
@@ -362,7 +361,7 @@ class OpenResearchWorkspace:
         return row
 
     def create_project(self, owner, body: WorkspaceProjectCreate):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         payload = body.model_dump(exclude={'requestId'})
         if not body.name.strip():
             raise HTTPException(422, 'OPENRESEARCH_PROJECT_NAME_INVALID')
@@ -386,18 +385,18 @@ class OpenResearchWorkspace:
             return project
 
     def list_projects(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             return [dict(row['body']) for row in conn.execute(select(self.projects).where(
                 self.projects.c.owner_id == owner).order_by(self.projects.c.created_at, self.projects.c.id)).mappings()]
 
     def project(self, owner, project_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             return dict(self._project(conn, owner, project_id)['body'])
 
     def list_sessions(self, owner, project_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             self._project(conn, owner, project_id)
             rows = list(conn.execute(select(self.sessions).where(self.sessions.c.owner_id == owner,
@@ -435,7 +434,7 @@ class OpenResearchWorkspace:
         return result
 
     def session(self, owner, project_id, session_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             row = dict(self._session(conn, owner, project_id, session_id))
         return self._projection(owner, row)
@@ -456,7 +455,7 @@ class OpenResearchWorkspace:
             raise HTTPException(409, 'OPENRESEARCH_WORKLOAD_UNAVAILABLE')
 
     async def create_session(self, owner, project_id, body: WorkspaceSessionCreate):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         fp = digest({'action': 'session-create', 'projectId': project_id, 'payload': body.model_dump(exclude={'requestId'})})
         with self.db.write() as conn:
             project = dict(self._project(conn, owner, project_id)['body'])
@@ -494,14 +493,6 @@ class OpenResearchWorkspace:
         try:
             run = await self.research.start(owner, body.workloadPresetId, body.goal, native_request,
                 expected_preset_fingerprint=value['workloadFingerprint'])
-        except ResearchPlanReviewRequired:
-            # This exception is emitted at the local review gate, before task
-            # reservation. Other HTTP errors and lost acknowledgements retain
-            # unknown custody; their error text cannot authorize a replay.
-            with self.db.write() as conn:
-                conn.execute(self.sessions.update().where(self.sessions.c.id == identifier,
-                    self.sessions.c.owner_id == owner).values(state='prepared'))
-            raise
         except BaseException:
             with self.db.write() as conn:
                 conn.execute(self.sessions.update().where(self.sessions.c.id == identifier,
@@ -531,7 +522,7 @@ class OpenResearchWorkspace:
                 self.sessions.c.owner_id == owner).values(task_id=task_id, state='task-linked'))
 
     def reconcile(self, owner, project_id, session_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             row = dict(self._session(conn, owner, project_id, session_id))
         if row['body'].get('executionContract') == 'managed-native-attachment-v1':
@@ -551,7 +542,7 @@ class OpenResearchWorkspace:
         return self.session(owner, project_id, session_id)
 
     async def cancel(self, owner, project_id, session_id, request_id):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         value = self.reconcile(owner, project_id, session_id)
         if value['taskId'] is None:
             raise HTTPException(409, 'OPENRESEARCH_DISPATCH_RECONCILIATION_REQUIRED')

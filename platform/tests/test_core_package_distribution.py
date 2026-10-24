@@ -83,6 +83,16 @@ try:
             assert response.status_code == 200, (route, response.status_code)
             assert response.json() == [], (route, response.json())
         assert client.get('/api/factory/openresearch/capabilities', headers=headers).status_code == 404
+        for route in ('/api/factory/personal-credentials/capabilities', '/api/factory/personal-models/capabilities',
+                      '/api/factory/personal-remotes/providers', '/api/factory/personal-tools/descriptors',
+                      '/api/factory/personal-ssh/capabilities'):
+            response = client.get(route, headers=headers)
+            assert response.status_code == 200, (route, response.status_code)
+        assert client.get('/api/factory/accounts', headers=headers).status_code == 403
+        from agent_factory.auth import ACCOUNT_ADMIN_ROLE
+        state['auth'].account_roles.assign('alice', ACCOUNT_ADMIN_ROLE)
+        assert client.get('/api/factory/accounts', headers=headers).status_code == 200
+        assert len((settings.runtime_directory / 'credential-vault.key').read_bytes()) == 32
         snapshots['running'] = tables()
     snapshots['stopped'] = tables()
 finally:

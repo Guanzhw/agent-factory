@@ -124,7 +124,7 @@ class FactoryLifecycleObserver:
             return None
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         try:
-            self.auth.require(task["owner_id"], "run")
+            self.auth.require_member(task["owner_id"])
             envelope = {"plan_ref": plan["id"], "user_id": task["owner_id"],
                         "task_id": task["id"], "request_id": task["request_id"]}
             context = SimpleNamespace(session_id=task["id"], run_id=task.get("run_id"), user_id=task["owner_id"],
@@ -141,7 +141,6 @@ class FactoryLifecycleObserver:
                 # its old None run ID: a current strict binding guard would
                 # mistake admission progress for authority revocation. Exact
                 # contexts remain mandatory for observed acknowledged tickets.
-                self.store.require_current_policy()
                 for guard in self.store.execution_guards.values():
                     guard(task["owner_id"], plan, None, None)
             else:

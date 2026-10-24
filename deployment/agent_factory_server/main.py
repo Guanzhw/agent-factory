@@ -1,13 +1,12 @@
 """Static deployment composition: public Factory plus the research application."""
 from dataclasses import fields
 from copy import copy
-from typing import cast, Literal
+from typing import cast
 
 from agent_factory.main import create_app as create_core_app
 from agent_factory.config import Settings
 from agent_factory.material_governance import GovernanceConfig
 from agent_factory.plan_policy import PlanPolicyConfig, PolicyName, ToolContract
-from agent_factory.tool_policy_registry import resolve_tool_policies
 from agent_factory_research.assembly import (install_research, research_bindings, research_lifespan,
     research_shutdown, abort_research_install)
 from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
@@ -49,15 +48,14 @@ def create_app(settings=None, *, diagnostics=None):
     # Keep existing explicit operator overrides last, as in the original startup.
     settings.runtime_adapters = [*settings.runtime_adapters, *extra_adapters]
     settings.usage_pricing = (*extra_prices, *settings.usage_pricing)
-    policies = resolve_tool_policies(settings.tool_policies, settings.runtime_adapters)
     governance = GovernanceConfig(
-        review_mode=cast(Literal['member-self-service', 'separate-admin', 'demo-self-review'], settings.material_review_mode),
+        review_mode='member-self-service',
         revision=settings.material_policy_revision, tool_contract=cast(ToolContract, settings.runtime_tool_contract),
-        source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=policies)
+        source_synthesis_enabled=settings.source_synthesis_enabled)
     policy = PlanPolicyConfig(name=cast(PolicyName, settings.temporary_policy),
-        revision=settings.policy_revision, review_ttl_seconds=settings.plan_review_ttl_seconds,
+        revision=settings.policy_revision,
         tool_contract=cast(ToolContract, settings.runtime_tool_contract),
-        source_synthesis_enabled=settings.source_synthesis_enabled, tool_policies=policies)
+        source_synthesis_enabled=settings.source_synthesis_enabled)
     app = create_core_app(settings, diagnostics=diagnostics, factory_api_type=ResearchFactoryAPI,
         storage_governance_type=ResearchStorageGovernance,
         lifecycle_observer_type=ResearchLifecycleObserver, model_dispatch_type=ResearchDelegatingModel,

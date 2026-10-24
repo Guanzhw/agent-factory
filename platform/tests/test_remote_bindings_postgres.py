@@ -240,7 +240,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         source = plan["executionBindings"]["model"]
         self.connections.revoke("bob", self.local_pin["ref"], str(uuid4()))
         self.service.mappings = {}
-        self.auth.authorization.unassign("bob", "factory-user")
+        self.auth.directory.set_disabled('bob', True)
         with self.assertRaises(HTTPException):
             self.service.effective(plan, plan["executionBindings"])
         self.assertEqual(self.service.historical_spec(plan, "model", source), self.effective_spec)

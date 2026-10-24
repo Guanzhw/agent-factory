@@ -31,8 +31,8 @@ Python 装配调用公共底座的 `create_app`，再由应用的
 
 研究专用的科学子任务放置、回执/停止事实与原实验连接回收由应用的兼容子类实现；
 部署入口显式选择委派和连接服务类型。底座的普通委派仍负责原请求身份、共享预算与
-原生任务生命周期。应用的策略子类扩展工具目录，SSH 服务器目录也由应用显式传入；
-公共服务不按研究应用 ID 查找业务服务或读取研究表。旧策略指纹与 wire 字段保持兼容。
+原生任务生命周期。科研专用准备与业务工具留在应用中；通用 SSH、工具、模型与远程资源
+接入由底座提供。公共服务不按研究应用 ID 查找业务服务或读取研究表。历史数据保留原身份。
 
 `agent_factory.main.create_app` 是不预装研究材料/路由的底座入口；完整研究部署使用
 `agent_factory_server.main.create_app`。需要组合现有能力的新应用，仍可仅发布声明与
@@ -69,17 +69,22 @@ python -m agent_factory_server
 `temporary_policy=member-self-service`、`policy_revision=department-member-v1`，以及
 `material_review_mode=member-self-service`、`material_policy_revision=material-department-v1`。
 成员自行创建、配置和发布材料/应用的新版本，并直接提交新任务；普通任务不经过 plan 审批。
-公开资源的删除、撤回与归档仍由管理员执行，私人凭据和数据保持原 owner 范围。
+作者直接修订、撤回和归档自己的公开版本；其他成员复制后获得自己拥有的新资源 ID。
+账号管理员只管理账号，不能覆盖其他作者的资源或私人历史。
 
 危险工具操作、精确项目创建意图和原生 Workflow 的确认/输入仍走各自原生契约。
-成员发布声明不会安装任意代码、提供新远端授权或放宽执行能力。可信能力仍由部署入口显式注册。
+成员发布内容引用已安装能力或自己接入的 CLI/MCP 工具声明。Python 工厂和原生 Workflow
+由部署入口注册；成员工具配置通过底座资源接口持久化，并进入同一个执行绑定注册表。
 
-历史计划和 review 可读取，不能用于授权新的执行；新模式返回 `LEGACY_PLAN_READ_ONLY`
-时必须显式创建新计划，不能改写旧计划或复用旧审批。历史 review 写接口在新模式下返回 410。
-未知应答仍需查询原请求/操作，不能把模式切换当作重发依据。代码中显式构造的
-`Settings(demo=True)` 可保留 `bounded-synthetic` 等历史合成 fixture 策略；需要
-`separate-admin` 的回归也须显式配置，它们不是普通启动入口的默认流程。
-迁移条件和保留边界见 [部门协作说明](department-minimal-integration.md)。
+历史计划和 review 按原归属可读，旧 review 写接口返回 410。缺少显式运行绑定的旧计划
+执行时返回 `BINDING_MANIFEST_REQUIRED`，需重新组合新计划；原计划与请求身份保留。
+未知应答继续查询原请求/操作，不能靠重建请求绕过原操作恢复。
+
+`member-self-service` 是唯一支持的新运行模式；`bounded-synthetic`、`admin-review`、
+`separate-admin` 等旧计划或发布模式作为当前配置会明确报错，demo 也不恢复旧审批路径。
+数据库中的旧审批模式、记录、摘要和版本保留，启动使用当前传入配置。
+流程及迁移边界见 [成员发布](MEMBER_PUBLICATION.md) 与
+[部门协作说明](department-minimal-integration.md)。
 
 ## 公共契约与兼容边界
 
@@ -113,12 +118,12 @@ python -m agent_factory_server
 
 既有 v1 定义、保存的计划和摘要保持原值。不要给 v1 添加 `contractVersion: 1`，
 也不要原地改成 v2 或混合两套预算字段；字符串、布尔和未知版本被拒绝。
-v2 不回退到 v1 的时间上限。执行仍会重检权限、素材状态和连接；格式兼容不保留已撤销的授权。
+v2 不回退到 v1 的时间上限。执行仍会检查当前成员、素材状态和连接；格式兼容保留原内容身份。
 冻结 v1、严格版本和预算检查见
 [`test_application_contract_v2.py`](../platform/tests/test_application_contract_v2.py)。
 
 改变输入解释、预算、能力或 runtime 行为时，使用新的契约或实现 revision，发布新引用，
-重新组合计划并重新检查权限与所需原生确认；不要重算旧计划摘要或用旧审批静默扩大权限。
+重新组合计划并重新检查当前成员、资源状态与所需原生确认；保留旧计划的摘要和历史审批。
 兼容的声明更新发布新应用/素材版本；破坏既有字段或请求语义的升级需先实现明确的新契约
 并保留旧解析路径，不能仅给请求添加未支持的版本号。当前仅支持缺省 v1 和显式整数 `2`。
 新增字段也需核对已有 strict schema，不能假设旧解析器会接受它。
@@ -204,7 +209,7 @@ Agent 或 model；进程内身份检查不等同于代码沙箱。
 
 | 注册 kind | 工厂产物 | 开发者必须交付 |
 | --- | --- | --- |
-| `tool` | Agno 工具 | 固定工具名、最小能力、参数验证、当前权限与副作用契约 |
+| `tool` | Agno 工具 | 精确 adapter/修订的名称与能力、参数验证、当前资源状态与副作用契约 |
 | `model` | Agno `Model` | 实际 provider/model 身份、请求/重试/流式 usage 契约和 pricing 接线 |
 | `knowledge` | `KnowledgeContext` | 受控内容及 provenance，不能伪称真实来源 |
 | `environment` | `EnvironmentLimits` | 底层实现实际执行的时间、输出、内存、PID、CPU 限额 |
@@ -259,10 +264,10 @@ operation。命令 ID 和原 payload 持久保留；未知应答先读取原 rec
 
 完整的可运行合成接线参考是
 [`test_native_workflow_factory_postgres.py`](../platform/tests/test_native_workflow_factory_postgres.py)：
-`build_workflow` 定义组件，`settings` 安装工厂和 policy，`publish` 发布素材及应用，
+`build_workflow` 定义组件，`settings` 安装工厂，`publish` 由作者直接发布素材及应用，
 `serve` 安装应用并绑定其状态；测试通过实际 Factory API 创建任务，验证原 run 暂停/恢复、
-未知应答 lookup 与取消 custody。该 fixture 的 `admin-review` 与发布审批步骤属于历史契约
-回归，不代表普通成员流程；运行该路径需显式配置历史策略。SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
+未知应答 lookup 与取消 custody。Workflow 自身的确认/输入保持原生契约。
+SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
 
 [`test_native_workflow_reuse_postgres.py`](../platform/tests/test_native_workflow_reuse_postgres.py)
 补充原生 enum Agent→Router、Condition、Parallel 和持久化 HITL 的机制示例；直接的 Agno
@@ -276,12 +281,8 @@ operation。命令 ID 和原 payload 持久保留；未知应答先读取原 rec
 或研究部署的 `ResearchSettings.from_env()` 读取，HTTP 不提供安装代码接口：
 
 - `runtime_adapters`：上述模型、工具、知识和环境工厂。
-- `tool_policies`：每个新增工具对应四字段
-  `ToolPolicyRegistration(adapter_id, adapter_revision, revision, read_only)`。
-  工具名和唯一 capability 从精确 AdapterRegistration 推导，不重复手写第二份身份。
-  `read_only` 要匹配实际行为；不能靠声明消除外部副作用。
 - `native_workflows`：上述四参数 NativeWorkflowRegistration；函数步骤名称必须精确列入
-  `tool_names`，并具有已发布的对应工具素材及已注册 policy。
+  `tool_names`，并具有已发布的对应工具素材与精确适配器声明。
 - `workflow_runtimes`：若有外部操作，以 `(adapter_id, revision, configFingerprint)` 为 key
   安装原 runtime 对象。这个配置与素材 `runtime_adapters` 的环境工厂不同。
 - `trusted_connections`：只安装用户/任务范围明确的可信连接；素材及请求只引用 opaque ref。
@@ -290,9 +291,9 @@ operation。命令 ID 和原 payload 持久保留；未知应答先读取原 rec
 
 查看 [`Settings`](../platform/agent_factory/config.py)、
 [适配器接线](MATERIAL_ASSEMBLY.md)、[token ledger](TOKEN_LEDGER.md) 和
-[工具 policy 实现](../platform/agent_factory/tool_policy_registry.py)。默认 CLI 只配置显式 demo
-能力；新应用不能假设实际服务已经安装。启用新的工具治理契约时使用新的 plan/material
-policy revision，不要沿用旧审批哈希静默扩大能力。
+[执行绑定实现](../platform/agent_factory/execution_bindings.py)。独立底座提供通用资源接入；
+研究部署另外安装自己的显式 demo 工厂。成员 CLI/MCP 工具不需要额外工具许可登记或审批
+policy revision；发布核对所选 adapter ID、revision、工具名和声明能力，实际调用还检查资源状态。
 
 ### 2. 发布素材与应用
 
@@ -303,7 +304,8 @@ model、environment。每项包含来源/许可证、兼容版本、依赖、权
 对应 HTTP 为 `POST /api/factory/material-governance/versions/{id}/{version}/publish`，
 请求体为 `{requestId}`，并携带 `X-Factory-Expected-Owner` 校验头。
 保留返回的 `{id, version, sha256}` 精确引用。
-修改公共定义会生成新版本，不重写旧版本；公开撤回、归档或删除仍需管理员。
+作者修改自己的公开定义会生成新版本，撤回和归档也由作者直接操作。其他成员复制时
+省略原 ID，建立自己的版本链；原版本、任务和摘要保持不变。
 
 新应用使用以下 v2 最小结构；既有 v1 定义按上面的保留格式继续支持。
 `published_refs` 是已发布的实际六类引用，
@@ -329,41 +331,41 @@ def application_definition(published_refs, native_pin, input_schema):
     }
 ```
 
-这里的 `summary:execute` 必须与工具注册、素材权限及当前用户权限一致，不能仅填写字符串
-就获得授权。toolOrder 和素材需要包括该 mode 实际使用的工具；如果加入 wait Agent，也
-要加入 `factory_wait_operations` 的素材和 policy。普通注册执行器应用省略 nativeComponent；
+这里的 `summary:execute` 必须与所选工具的实际能力声明、素材权限及 mode 范围一致。
+`toolOrder` 和素材需要包括该 mode 实际使用的工具；如果加入 wait Agent，也要加入
+`factory_wait_operations` 的素材与运行绑定。普通注册执行器应用省略 nativeComponent；
 不是所有应用都需要 Workflow。
 
 v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues` 传入。
 `configSchema` 不能声明 permissions、credentials、budget、executionBindings 等授权字段。
 可用 `application_schema.definition_model(body).model_validate(body)` 校验声明格式；这不替代素材发布、
-组件身份、权限、连接和生产准入检查，也不会执行该应用。
+组件身份、资源归属、连接和生产准入检查，也不会执行该应用。
 
 再通过 `ApplicationService.create_draft → publish` 发布应用，调用
 `publish(actor, application_id, version, request_id)`；对应 HTTP 为
 `POST /api/factory/applications/{id}/versions/{version}/publish`，请求体同样为 `{requestId}`，
 并携带 `X-Factory-Expected-Owner` 校验头。成员自助发布示例见
 [`test_department_publication.py`](../platform/tests/test_department_publication.py)。
-上文原生 Workflow fixture 中的 `request_publication/decide_publication` 只用于显式历史策略回归，
-不应复制到新的普通成员流程，也不要把测试账户用于生产。
+`request_publication/decide_publication` 已退役并返回 410；原生 Workflow fixture 也使用
+作者直接发布。历史 review 只按原作者范围读取，测试账号不用于生产。
 
 ### 3. 让用户组合并运行
 
 用户在组合界面选择应用和 mode、填写输入、绑定允许的连接。API 对应
 `POST /api/factory/compositions/proposals`，字段包含 `goal/application/mode/inputValues/requestId`，
 以及可选的精确 applicationRef、允许的 materialChoices 和 connectionRefs。查看并修订 proposal，
-接受后获得不可变 plan；缺少适配器、连接或权限时处理具体 preflight 阻碍。
+接受后获得不可变 plan；适配器或连接缺失、资源不可用时处理具体 preflight 阻碍。
 
 需要直接固定应用时，`POST /api/factory/plans` 使用 `topic/application/mode/inputValues/requestId`；
 随后 `POST /api/factory/instances` 使用 `planId/requestId`。不要把 proposal 的 `goal` 字段照搬
 到 plans 请求。普通成员新计划使用 `member-self-service` 直接准入，不需要另建审批请求；
-执行前仍检查当前权限、精确绑定及预算。同一 requestId 改变意图会冲突。
+执行前仍检查当前成员身份、资源可用性、精确绑定及预算。同一 requestId 改变意图会冲突。
 
-权限、素材发布状态、精确连接 pin 与原生身份在执行时重新检查。工具和模型调用使用
+当前成员、素材发布状态、共享与资源状态、精确连接 pin 及原生身份在实际调用时重新检查。工具和模型调用使用
 共享预算，子任务不能另开预算；外部 wait 完成也按原 native tool call ID 计账。扩大预算或
 更换材料需显式创建新计划，并完成该操作要求的原生确认，不能修改进行中的不可变 plan。
 
-部署生产实例需独立数据库、受管身份与角色、私密服务配置及实际 runtime 资源边界。
+部署生产实例需独立数据库、受管成员身份、账号管理员标记、私密服务配置及实际 runtime 资源边界。
 默认 demo 登录仅适合 loopback。远端执行还需单独的受信映射和当前源授权，不能把应用
 输入中的地址当受信执行目标。参见 [部署决策](PRODUCTION_DECISIONS.md)、
 [部门协作与历史计划迁移](department-minimal-integration.md) 和 [远端绑定](REMOTE_BINDINGS.md)。
@@ -372,10 +374,11 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 
 ### 使用本人的 CLI / MCP 工具连接
 
-部署将明确安装的 adapter 实例放入 `Settings.personal_tool_adapters`，并在现有 vault
-注册该描述的 `credential_provider_id` 与准确 `credential_destination` 策略。工具描述
-还固定原生工具名、输入 schema、capabilities、单一 permission 及 read-only policy。
-Settings 自动装配现有 runtime adapter 与工具 policy；应用不导入 CLI/MCP 实现。
+成员可以在工具连接页面接入 CLI 命令或 MCP 服务，保存命令/参数/工作目录或 MCP 地址、
+当前工具名称与输入 schema。协议无需认证时可以省略凭据；需要认证时，凭据由资源所有者
+托管到 vault。配置持久化后进入原生绑定注册表，服务重启或其他工作进程可按精确 ID 加载。
+部署提供的 `Settings.personal_tool_adapters` 仍可复用，同样不需要第二套工具许可登记。
+工具描述固定输入 schema、capabilities、单一 permission 和实际读写语义；应用只引用声明。
 
 例如，已安装的 `department.lookup` 适配器提供 `lookup_record`，需要
 `records:read` 能力及权限，则工具材料的关键字段为：
@@ -393,7 +396,7 @@ Settings 自动装配现有 runtime adapter 与工具 policy；应用不导入 C
 }
 ```
 
-这是材料内容片段；提交时仍须补齐原有材料身份、版本、许可与发布字段。应用 mode
+这是材料内容片段；创建草稿时补齐名称、来源和许可证，版本与摘要由服务端生成。应用 mode
 使用该材料引用，并声明：
 
 ```json
@@ -404,10 +407,12 @@ Settings 自动装配现有 runtime adapter 与工具 policy；应用不导入 C
 }
 ```
 
-成员在“资源 → 我的凭据与连接 → 我的工具连接”选择静态工具，保存或选择用途及目标匹配的本人凭据，页面完成登记与绑定；
-装配应用时选择该连接，后续按原 owner/revision pin 调用。应用定义、输入参数、提示词
-不含密码、token、命令行或服务器地址。配置并不证明外部账号认证成功；新供应商仍需
-明确其认证来源及输出/停止契约。详见[个人工具生命周期](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)。
+成员在工具连接页面配置并绑定个人或团队工具，在材料编辑器选择“已接入工具”加载当前
+声明；页面填写精确运行绑定并允许指定应用中的连接名称。装配应用时选择该名称对应的
+个人或团队连接，调用者和凭据所有者分别检查。命令、MCP 地址与秘密由资源连接保存，
+应用和材料只固定 adapter/connection 引用。配置成功与外部实际调用的验收分别记录。
+详见[成员工具](MEMBER_TOOLS.md)、[成员发布](MEMBER_PUBLICATION.md)及
+[个人工具生命周期](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)。
 
 在仓库根目录准备已锁定依赖后，先运行不需要数据库的定向检查：
 
@@ -456,7 +461,7 @@ uv run python -m unittest discover -s platform/tests -p 'test_native_workflow_re
 ```
 
 这些重型测试串行运行。完整仓库检查见 [README](../README.md#checks)，结果必须记录精确
-commit、执行环境、运行数、失败和 skip。应覆盖输入拒绝、权限撤销、原 run 新进程恢复、
+commit、执行环境、运行数、失败和 skip。应覆盖输入拒绝、账号禁用与资源撤回、原 run 新进程恢复、
 重复命令、未知提交不重放、取消未知保留 custody、停止证据后释放，以及原生运行状态与
 业务结果的区分。浏览器 mock、合成模型和合成后端分别标注，不冒充真实 provider 或业务验收。
 

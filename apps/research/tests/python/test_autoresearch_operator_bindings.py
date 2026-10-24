@@ -99,19 +99,24 @@ class ConcreteOperatorTests(unittest.TestCase):
         self.assertEqual(children.target_ref, 'receiver')
         resolver.assert_called_once_with('EXISTING_JWT')
 
-    def test_receiver_publication_uses_distinct_existing_governance(self):
+    def test_receiver_publication_is_direct_member_publication(self):
         value = config('receiver'); governance, applications, auth = Mock(), Mock(), Mock()
         governance.create_draft.side_effect = lambda owner, definition, request: {**definition, 'version': 1, 'sha256': 'a'*64}
-        governance.request_publication.return_value = {'id': 'review'}
         applications.create_draft.side_effect = lambda owner, definition, request: {**definition, 'version': 1, 'sha256': 'b'*64}
-        applications.request_publication.return_value = {'id': 'app-review'}
         state = {'auth': auth, 'material_governance': governance, 'applications': applications}
         app = SimpleNamespace(operator_config=value, state=SimpleNamespace(factory=state))
         result = bindings.prepare_publication(app, deepcopy(value['publication']))
         self.assertEqual(result['applicationRef']['sha256'], 'b'*64)
         from agent_factory_research.autoresearch_profile import material_drafts
         self.assertEqual(governance.create_draft.call_count, 15 + len(material_drafts(value['project']['id'], external_session=True)))
-        self.assertTrue(all(call.args[0] == 'reviewer' for call in governance.decide_publication.call_args_list))
+        auth.require_member.assert_called_once_with(value['publication']['author'])
+        self.assertEqual(governance.publish.call_count, governance.create_draft.call_count)
+        self.assertTrue(all(call.args[0] == value['publication']['author'] for call in governance.publish.call_args_list))
+        applications.publish.assert_called_once()
+        governance.request_publication.assert_not_called()
+        governance.decide_publication.assert_not_called()
+        applications.request_publication.assert_not_called()
+        applications.decide_publication.assert_not_called()
         definition = applications.create_draft.call_args.args[1]
         self.assertEqual(set(definition['modes']), {'research', *('remote-scientific-'+p for p in ('preparation','training','evaluation'))})
 
@@ -147,13 +152,11 @@ class ConcreteOperatorTests(unittest.TestCase):
                 value['project']['applicationSnapshot'] = deepcopy(source_snapshot)
             settings = bindings.describe_settings(value, 'postgresql://unused')
             governance, applications = Mock(), Mock()
-            governance.member_publication.return_value = False  # Explicit historical publication fixture.
             catalogue = []
             def material(owner, definition, request):
                 catalogue.append(deepcopy(definition))
                 return {**definition, 'version': 1, 'sha256': digest(definition)}
             governance.create_draft.side_effect = material
-            governance.request_publication.return_value = {'id': 'material-review'}
             def create(owner, definition, request):
                 body = {**ApplicationDefinition.model_validate(definition).model_dump(exclude_none=True),
                     'version': 1, 'schema': 1, 'origin': 'manager-authored',
@@ -161,7 +164,6 @@ class ConcreteOperatorTests(unittest.TestCase):
                 return {**body, 'sha256': digest(body)}
             applications.create_draft.side_effect = create
             applications.import_snapshot.side_effect = lambda actor, snapshot, request: deepcopy(snapshot)
-            applications.request_publication.return_value = {'id': 'application-review'}
             state = {'auth': Mock(), 'material_governance': governance, 'applications': applications,
                      'settings': settings, 'store': with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(presets=settings.autoresearch_presets))}
             app = SimpleNamespace(operator_config=value, state=SimpleNamespace(factory=state))
@@ -171,8 +173,9 @@ class ConcreteOperatorTests(unittest.TestCase):
                 applications.create_draft.assert_not_called()
                 applications.import_snapshot.assert_called_once()
                 self.assertEqual(source_snapshot['createdAt'], '2026-10-07T12:00:00+00:00')
-                applications.request_publication.assert_called_once()
-                applications.decide_publication.assert_called_once()
+                applications.publish.assert_called_once()
+                applications.request_publication.assert_not_called()
+                applications.decide_publication.assert_not_called()
                 accepted_catalogue = deepcopy(catalogue)
                 value['project']['applicationSnapshot']['description'] = 'Different project scope'
                 applications.import_snapshot.reset_mock()
@@ -308,7 +311,7 @@ class ReceiverBootstrapTests(unittest.TestCase):
             self.assertEqual(len(opened_settings), 2)
             self.assertTrue(all(row.db_url == baseline_url for row, _ in opened_settings))
             self.assertEqual([full for _, full in opened_settings], [False, True])
-            self.assertEqual(opened_settings[0][0].policy_revision, 'task-research-bootstrap-v1')
+            self.assertEqual(opened_settings[0][0].policy_revision, 'task-research-bootstrap-department-v1')
             for phase, stage in selected.assembler.stages.items():
                 self.assertEqual(stage.spec.interpreter_contract, spec.interpreter_contract)
                 self.assertEqual(stage.spec.working_directory, project['assembly']['stageRoots'][phase]['program'])

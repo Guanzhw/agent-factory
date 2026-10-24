@@ -47,7 +47,7 @@ describe('exact approved material catalog selection', () => {
     expect(selected[0]!.id).toBe('source');
   });
   it('shows only registered binding summary without content or installation actions', () => {
-    const bound = { ...material(), runtimeBinding: { adapterId: 'controlled-reader', revision: 'v1', privateField: 'not-rendered' } };
+    const bound = { ...material(), runtimeBinding: { adapterId: 'controlled-reader', revision: 'v1', config: {}, privateField: 'not-rendered' } };
     expect(runtimeBindingSummary(bound)).toBe('controlled-reader · v1');
     const html = renderToStaticMarkup(createElement(MaterialPicker, { materials: [bound], selected: [], label: '模式素材', onChange: () => {} }));
     expect(html).toContain('controlled-reader');

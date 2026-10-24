@@ -1,4 +1,4 @@
-"""Current native member grants drive schedule writes and action projections."""
+"""Current native membership drive schedule writes and action projections."""
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -30,10 +30,8 @@ class ScheduleMemberPermissionTests(unittest.TestCase):
         self.service.store = SimpleNamespace(sql=Mock(return_value=[]), plan=Mock(return_value=self.plan))
         self.management = ScheduleManagement(self.service)
 
-    def test_member_write_metadata_and_actions_need_current_run_only(self):
-        with self.assertRaises(HTTPException) as denied:
-            self.auth.require('alice', 'components:write')
-        self.assertEqual(denied.exception.status_code, 403)
+    def test_active_member_write_metadata_and_actions(self):
+        self.auth.require_member('alice')
         self.service._require_write('alice')
         metadata = self.management.metadata('alice')
         self.assertEqual((metadata['ownerId'], metadata['canManage']), ('alice', True))
@@ -48,18 +46,11 @@ class ScheduleMemberPermissionTests(unittest.TestCase):
             self.assertEqual(projected['ownerId'], 'alice')
             self.service._bound.assert_called_once_with(schedule.id, 'alice')
 
-    def test_revoked_or_disabled_member_cannot_manage_or_read_metadata(self):
-        for revoked in (True, False):
-            with self.subTest(revoked=revoked):
-                if revoked:
-                    self.auth.authorization.unassign('alice', 'factory-user')
-                else:
-                    self.auth.directory.set_disabled('alice', True)
-                try:
-                    for operation in (self.service._require_write, self.management.metadata):
-                        with self.assertRaises(HTTPException) as denied:
-                            operation('alice')
-                        self.assertEqual(denied.exception.status_code, 403)
-                finally:
-                    self.auth.authorization.assign('alice', 'factory-user')
-                    self.auth.directory.set_disabled('alice', False)
+    def test_disabled_or_unregistered_member_cannot_manage_or_read_metadata(self):
+        self.auth.directory.set_disabled('alice', True)
+        for owner in ('alice', 'unregistered'):
+            for operation in (self.service._require_write, self.management.metadata):
+                with self.subTest(owner=owner, operation=operation.__name__):
+                    with self.assertRaises(HTTPException) as denied:
+                        operation(owner)
+                    self.assertEqual(denied.exception.status_code, 403)

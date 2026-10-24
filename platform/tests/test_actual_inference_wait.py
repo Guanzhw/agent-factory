@@ -39,8 +39,7 @@ class InferenceWaitFixture(unittest.TestCase):
         self.settings.queue_poll=.1
         self.gate={'failures':1, 'actualFailures':0}
         self.start_app()
-        auth=self.state['auth'];auth.authorization.unassign('bob','factory-user');auth.authorization.assign('bob','factory-manager')
-        self.application=publish_local_orx_application(self.state,author='manager',reviewer='bob',contract_revision='2')
+        self.application=publish_local_orx_application(self.state,author='manager',contract_revision='2')
         self.pins={name:self.state['connections'].bind('alice',REGISTRATION_REF,name,capabilities=[cap])
             for name,cap in (('localExperimentRead','research:read'),('localExperimentRun','compute:local'))}
 

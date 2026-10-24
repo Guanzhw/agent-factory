@@ -7,9 +7,9 @@ plane has no allocatable original-preparation target.
 Explicit seams: fixed synthetic ORX decisions; self-authored stdlib generated
 programs; synthetic uv.lock identity; fixture environment/device observations.
 Original preparation/process/checkpoint/evaluation, native delegation, handoff,
-receiver scope, evidence validators, approvals and usage/debit journals are real.
-Origin and receiver explicitly select the historical plan-review policy so the
-three original receiver-review assertions remain covered after the default change.
+receiver scope, evidence validators and usage/debit journals are real.
+Origin and receiver use member execution; all three phases prepare directly
+without creating plan-review rows.
 No GPU, upstream training, live model, TLS or scientific acceptance is claimed.
 """
 from agent_factory_research.services import services_for
@@ -75,15 +75,11 @@ class Actor(unittest.TestCase):
     stage = local.ScientificChildrenPostgresTests.stage
 
 
-class ReviewedTransport(httpx.AsyncBaseTransport):
-    """Real receiver preparation then explicit independent manager approval.
-
-    Repeats the same prepared request only after review; normal responses are
-    never mocked. Optional lost drive ACK is injected after its real acceptance.
-    """
+class DirectMemberTransport(httpx.AsyncBaseTransport):
+    """Real member preparation with an optional lost accepted-drive reply."""
     def __init__(self, app, state):
         self.inner = httpx.ASGITransport(app=app); self.state = state
-        self.reviews = []; self.lose_drive = False; self.lost = False; self.errors = []; self.drive_posts = []
+        self.prepared = []; self.lose_drive = False; self.lost = False; self.errors = []; self.drive_posts = []
     async def handle_async_request(self, request):
         try:
             return await self._request(request)
@@ -98,13 +94,9 @@ class ReviewedTransport(httpx.AsyncBaseTransport):
         await response.aread()
         if request.method == 'POST' and request.url.path.endswith('/prepare') and response.status_code < 300:
             body = response.json()
-            if body.get('receiverReviewRequired'):
-                policy = self.state['plan_policy']
-                review = policy.request_review('alice', body['remotePlanId'], 'review:' + body['id'])
-                policy.decide('manager', review['id'], True, 'approve:' + body['id'])
-                self.reviews.append(review['id'])
-                response = await self.inner.handle_async_request(request)
-                await response.aread()
+            if body['state'] != 'PREPARED' or 'receiverReviewRequired' in body:
+                raise AssertionError('Member scientific phases must prepare directly')
+            self.prepared.append(body['id'])
         if self.lose_drive and not self.lost and request.method == 'POST' and request.url.path.endswith('/scientific-drive') and response.status_code < 300:
             self.lost = True
             raise httpx.ReadTimeout('Controlled accepted-drive acknowledgment loss', request=request)
@@ -124,8 +116,6 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
         stack.callback(state['store'].native_db.db_engine.dispose)
         stack.callback(state['store'].dispose_root_locks)
         client = stack.enter_context(TestClient(app))
-        state['auth'].authorization.unassign('bob', 'factory-user')
-        state['auth'].authorization.assign('bob', 'factory-manager')
         actor = Actor(); actor.settings, actor.state, actor.store = settings, state, state['store']
         actor.auth, actor.client = state['auth'], client
         stack.callback(actor.doCleanups)
@@ -163,10 +153,10 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 provider=provider, synthetic_fixture=False, max_cpu=1, max_memory_mb=128, max_disk_mb=4,
                 max_seconds=20, capacity_pool=ComputePool('original-preparation', 1, 128, 4, 1, 1))
             receiver_config = operator_fixture.config('receiver'); receiver_config['workspace'] = str(receiver_root)
-            receiver_config['publication'] = {'author': 'manager', 'reviewer': 'bob'}
+            receiver_config['publication'] = {'author': 'alice'}
             receiver_settings = operator.describe_settings(receiver_config, receiver_db.url)
-            receiver_settings.temporary_policy = 'admin-review'
-            receiver_settings.policy_revision = bootstrap.POLICY_REVISION
+            receiver_settings.temporary_policy = 'member-self-service'
+            receiver_settings.policy_revision = bootstrap.MEMBER_POLICY_REVISION
             # Controlled accounting compatibility; no real model/service calls.
             receiver_settings.fee_management_enabled = receiver_settings.platform_paid_models_enabled = True
             prep_settings = process_runtime_profile.process_settings(db_url=baseline_db.url, workspace=baseline_root,
@@ -176,7 +166,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint)
             holder['preparation'] = preparation
             producer.application = process_runtime_profile.publish_process_application(baseline,
-                target_ref='original-preparation', author='manager', reviewer='bob')
+                target_ref='original-preparation', author='alice')
             original_task, _ = producer.submit()
             producer.until(lambda: baseline['store'].lifecycle_observer._binding(
                 baseline['store'].task(original_task['id'], 'alice'))['status'] == 'completed', timeout=40)
@@ -203,14 +193,14 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             publication = operator.prepare_publication(SimpleNamespace(operator_config=receiver_config,
                 state=SimpleNamespace(factory=remote)), receiver_config['publication'])
             evidence = {}; origin_config = operator_fixture.config('controller')
-            origin_config.update(workspace=str(origin_root), publication={'author':'manager','reviewer':'bob'})
+            origin_config.update(workspace=str(origin_root), publication={'author':'alice'})
             origin_config['project']['manifest'] = manifest
             origin_config['project']['applicationSnapshot'] = publication['applicationSnapshot']
-            transport = ReviewedTransport(remote_app, remote)
+            transport = DirectMemberTransport(remote_app, remote)
             transport.lose_drive = True
             handoff_target = HandoffTarget('receiver', 'origin', 'http://receiver.fixture', {'alice':'alice'},
                 lambda owner: {'Authorization': 'Bearer ' + remote['auth']._issue_native_token(owner)},
-                transport=transport, configuration_revision='reviewed-v1')
+                transport=transport, configuration_revision='member-v1')
             outer = self
             class Runtime:
                 async def run(self):
@@ -242,12 +232,12 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 return await holder['children'].experiment(ctx, candidate, call_id)
             project_id = origin_config['project']['id']
             preset = ResearchPreset(project_id, 'Controlled remote science', 'Verify original remote scientific phases',
-                'alice', 'Read reviewed context', manifest, origin_config['project']['limits'],
+                'alice', 'Read member context', manifest, origin_config['project']['limits'],
                 runtime_factory=runtime, context_reader=lambda: {}, candidate_validator=lambda _: {'controlledFixture':True},
-                experiment=experiment, external_session=True, review_owner='manager')
+                experiment=experiment, external_session=True)
             origin_settings = operator.describe_settings(origin_config, origin_db.url)
-            origin_settings.temporary_policy = 'admin-review'
-            origin_settings.policy_revision = bootstrap.POLICY_REVISION
+            origin_settings.temporary_policy = 'member-self-service'
+            origin_settings.policy_revision = bootstrap.MEMBER_POLICY_REVISION
             origin_settings.fee_management_enabled = origin_settings.platform_paid_models_enabled = True
             origin_settings.autoresearch_presets = {project_id:preset}
             origin_settings.handoff_targets = {'receiver':handoff_target}
@@ -265,7 +255,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             origin_ref = operator.prepare_publication(SimpleNamespace(operator_config=origin_config,
                 state=SimpleNamespace(factory=origin)), origin_config['publication'])
             self.assertEqual(origin_ref['applicationRef'], publication['applicationRef'],
-                'Independently approved imported catalogue preserves the exact source identity')
+                'Member-published imported catalogue preserves the exact source identity')
             self.assertEqual(origin_ref['applicationSnapshot'], publication['applicationSnapshot'])
             # Same-process trusted authority callbacks stand in only for network;
             # original handoff checks and shared scientific debit remain real.
@@ -293,7 +283,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 tools=frozenset({'research_preparation_verify','research_process_run'}),
                 capabilities=frozenset({'research:read','compute:local'}),
                 budget={'toolCalls':32,'maxDepth':1,'maxChildren':3,'experimentSeconds':600,'outputBytes':65536},
-                configuration_revision='reviewed-v1',tool_contract='autoresearch-session-v1')
+                configuration_revision='member-v1',tool_contract='autoresearch-session-v1')
             remote_receiver = ResearchPreparedHandoffService(remote['store'], remote['auth'], remote['bridge'], {'origin':trusted})
             remote['store'].remote_bindings.delegated_root_validator = remote_receiver.validate_delegated_root
             remote_receiver.install_guard(); remote['store'].handoff_receiver = remote_receiver
@@ -355,7 +345,11 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             self.assertFalse(final['acceptance']['modelExecuted']); self.assertFalse(evidence['result']['scientificConclusionVerified'])
             self.assertTrue(final['acceptance']['independentResult'])
             self.assertTrue(final['acceptance']['nextDecision'])
-            self.assertEqual(len(transport.reviews),3)
+            self.assertEqual(len(transport.prepared), 3)
+            self.assertEqual(len(set(transport.prepared)), 3)
+            for state in (origin, remote):
+                self.assertEqual(state['store'].sql('SELECT * FROM af_plan_reviews'), [])
+                self.assertEqual(state['store'].sql('SELECT * FROM af_plan_review_decisions'), [])
             self.assertEqual(len(origin['store'].sql('SELECT * FROM af_delegation_links')),3)
             self.assertEqual(len(origin['store'].sql('SELECT * FROM af_remote_scientific_calls')),3)
             self.assertEqual(len(remote['store'].sql('SELECT * FROM af_remote_scientific_phases')),3)

@@ -76,7 +76,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
         async def exercise():
             task, original, snapshot = fixture()
             store = SimpleNamespace(sql=Mock(return_value=[{"command_id": "repair-original"}]))
-            api = SimpleNamespace(store=store, auth=SimpleNamespace(require=Mock()), bridge=None)
+            api = SimpleNamespace(store=store, auth=SimpleNamespace(require_member=Mock()), bridge=None)
             commands = ControlCommands(api)
             commands.row = Mock(return_value=original)
             commands._completed_launch = Mock(return_value={"orxRunId": "orx-1"})
@@ -90,7 +90,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
 
     def test_unknown_dispatch_is_read_only_recovery(self):
         async def exercise():
-            api = SimpleNamespace(store=None, auth=SimpleNamespace(require=Mock()), bridge=SimpleNamespace(continue_approved_run=AsyncMock()))
+            api = SimpleNamespace(store=None, auth=SimpleNamespace(require_member=Mock()), bridge=SimpleNamespace(continue_approved_run=AsyncMock()))
             commands = ControlCommands(api)
             commands.row = Mock(return_value={"state": "DISPATCHING"})
             commands.recover = AsyncMock(return_value={"state": "UNKNOWN"})
@@ -118,7 +118,7 @@ class ApprovedRecoveryQueueTests(unittest.TestCase):
         queue_store = QueueStore()
         component = Agent(id=EXECUTOR_ID, telemetry=False)
         worker = SimpleNamespace(store=queue_store, resolve_component=lambda *_: component)
-        bridge = NativeBridge(None, None, SimpleNamespace(require=Mock()))
+        bridge = NativeBridge(None, None, SimpleNamespace(require_member=Mock()))
         bridge.attach(SimpleNamespace(state=SimpleNamespace(queue_worker=worker)))
         bridge.detail = AsyncMock(return_value=snapshot)
         bridge._request = AsyncMock(side_effect=AssertionError("Detached HTTP fallback is forbidden"))
@@ -254,7 +254,7 @@ class ApprovedRecoveryReceiptTests(unittest.TestCase):
         ticket = snapshot["queue"]
         bridge = SimpleNamespace(continue_approved_run=AsyncMock())
         store = SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(side_effect=lambda *_args, **_kwargs: copy.deepcopy(ticket))))
-        api = SimpleNamespace(store=store, auth=SimpleNamespace(require=Mock()), bridge=bridge, remote=None,
+        api = SimpleNamespace(store=store, auth=SimpleNamespace(require_member=Mock()), bridge=bridge, remote=None,
                               scoped_task=Mock(return_value=(task, None)))
         commands = ControlCommands(api)
         commands.row = Mock(return_value=row)

@@ -86,7 +86,7 @@ class OperationCustodyTests(unittest.IsolatedAsyncioTestCase):
         self.store = SQLiteStore(Path(directory) / 'operations.db')
         self.stack.callback(self.store.engine.dispose)
         self.runtime = Runtime()
-        self.auth = SimpleNamespace(require=Mock())
+        self.auth = SimpleNamespace(require_member=Mock())
         self.ctx = SimpleNamespace(user_id='alice', session_id='task', run_id='native')
         self.runtimes = {(PIN['adapterId'], '1', PIN['configFingerprint']): self.runtime}
         self.service = OperationCustody(self.store, self.auth, runtimes=self.runtimes)

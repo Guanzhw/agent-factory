@@ -14,7 +14,6 @@ from uuid import uuid4
 
 import httpx
 from fastapi.testclient import TestClient
-from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory_server.main import create_app
 from agent_factory_research import synthesis_runtime
 from agent_factory_research.literature_synthesis_profile import (trusted_model_binding, ScientificFixtureModel,
@@ -164,12 +163,8 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
         plan = self.request('POST', '/compositions/proposals/' + proposal['id'] + '/accept', command, status=201)
         return plan, proposal, command
 
-    def run_synthesis(self, plan, *, legacy_review=False):
-        if legacy_review:
-            review = self.post('/plan-reviews', {'planId': plan['id']})
-            self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager', status=200)
-        else:
-            self.assert_member_admission(plan)
+    def run_synthesis(self, plan):
+        self.assert_member_admission(plan)
         task = self.post('/instances', {'planId': plan['id']}, status=202)['id']
         detail = self.detail(task)
         self.assertEqual(detail['job']['status'], 'completed', detail)
@@ -182,23 +177,12 @@ class SynthesisJourneyPostgresTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(response.content).hexdigest(), artifact['sha256'])
         return task, detail, response.json(), path
 
-    def test_selected_snapshot_approved_plan_native_report_and_owner_download(self):
+    def test_selected_snapshot_member_plan_native_report_and_owner_download(self):
         source, preview = self.source()
         snapshot, _ = self.snapshot(source, preview)
-        # This case keeps historical exact-plan approval coverage explicitly;
-        # the other synthesis journeys use the normal member policy.
-        service = self.state['plan_policy']
-        current = service.current()
-        legacy = PlanPolicyConfig(**{key: value for key, value in current.items()
-            if key in PlanPolicyConfig.__dataclass_fields__})
-        legacy = replace(legacy, name='admin-review', revision=legacy.revision + ':legacy-review')
-        service.replace_configuration(legacy, expected_revision=current['revision'])
-        self.store.settings.temporary_policy = legacy.name
-        self.store.settings.policy_revision = legacy.revision
         plan, _, _ = self.synthesis_plan(snapshot)
         self.assertEqual(plan['sourceSnapshotRef'], {key: snapshot[key] for key in ('id', 'fingerprint')})
-        self.post('/instances', {'planId': plan['id']}, status=409)
-        task, detail, report, path = self.run_synthesis(plan, legacy_review=True)
+        task, detail, report, path = self.run_synthesis(plan)
         self.assertEqual(report['snapshotSha256'], snapshot['contextFingerprint'])
         self.assertTrue(report['citationIntegrityVerified'])
         self.assertFalse(report['scientificConclusionVerified'])

@@ -19,15 +19,14 @@ class ApplicationRuns:
     @staticmethod
     def _handoff(plan_id, original_request):
         # Route/body references only, never an authorization or dispatch grant.
-        # The existing review and instance APIs recheck their own current policy.
+        # The instance API rechecks current membership, ownership and resources.
         return {'authorizationURL': '/api/factory/plans/' + plan_id + '/authorization',
-            'reviewRequestURL': '/api/factory/plan-reviews',
             'instantiateURL': '/api/factory/instances',
             'instantiateBody': {'planId': plan_id, 'requestId': original_request}}
 
     def _prepare(self, owner, body):
         store = self.factory.store
-        self.factory.auth.require(owner, 'run')
+        self.factory.auth.require_member(owner)
         key = factory_request_id(body.requestId)
         values = body.model_dump(exclude={'interfaceVersion', 'requestId'})
         plan = store.admit_plan(owner, key, values, lambda: create_plan(store, owner,
@@ -43,18 +42,11 @@ class ApplicationRuns:
         # current policy, reserves the original task before dispatch, and never
         # re-admits a task whose acknowledgement is unknown. No new approval or
         # retry policy is implemented here.
-        try:
-            job = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=key))
-        except HTTPException as error:
-            reason = str(error.detail)
-            if error.status_code == 409 and reason.startswith(('PLAN_REVIEW_REQUIRED', 'PLAN_REVIEW_DENIED', 'PLAN_REVIEW_EXPIRED')):
-                raise HTTPException(409, {'code': reason.split(':', 1)[0], 'message': reason,
-                    'planId': plan['id'], 'handoff': self._handoff(plan['id'], key)}) from None
-            raise
+        job = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=key))
         return {'interfaceVersion': 1, 'requestId': body.requestId, 'planId': plan['id'], 'job': job}
 
     def request(self, owner, request_id):
-        self.factory.auth.require(owner, 'read')
+        self.factory.auth.require_member(owner)
         key = factory_request_id(request_id)
         store = self.factory.store
         rows = store.sql('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:key',
@@ -88,6 +80,6 @@ def application_runs_router(factory):
 
     @router.get('/starts/{request_id}')
     def receipt(request: Request, request_id: str = Path(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_.:-]+$')):
-        return service.request(factory.user(request, 'read')['id'], request_id)
+        return service.request(factory.user(request)['id'], request_id)
 
     return router

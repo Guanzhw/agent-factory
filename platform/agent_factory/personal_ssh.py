@@ -1,12 +1,11 @@
 """Owner SSH enrollment over existing vault, remote registry and scoped bindings.
 
-Network policy and application package are global deployment configuration.
-Owners confirm each fixed host/identity themselves; no per-device administrator.
+Members choose their endpoint and confirm its host identity. Application
+prerequisites are checked separately when preparing an application.
 """
 import asyncio
 import base64
-from dataclasses import dataclass
-import hashlib
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,26 +16,22 @@ import subprocess
 from tempfile import TemporaryDirectory
 import threading
 import time
-from typing import Callable, Protocol
+from typing import Protocol
 
 from cryptography.hazmat.primitives import serialization
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID, endpoint
-from .ssh_identity import SSHAgentLease, SSHServer
+from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
+from .resource_sharing import SharingCommand
 
 CODES = frozenset({'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
     'SSH_DIRECTORY_UNSAFE', 'SSH_DIRECTORY_PARENT_REQUIRED', 'SSH_CHECK_UNCONFIRMED',
     'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
-
-
-class SSHRuntimeLimits(Protocol):
-    @property
-    def max_active_seconds(self) -> int: ...
 
 
 class _SSHProbeTransport(Protocol):
@@ -47,9 +42,12 @@ class _SSHProbeTransport(Protocol):
 
 @dataclass(frozen=True)
 class SSHEnrollmentConfig:
-    runtime: SSHRuntimeLimits
-    address_policy: Callable
+    max_active_seconds: int = 300
     max_agents: int = 16
+
+    def __post_init__(self):
+        if type(self.max_active_seconds) is not int or not 1 <= self.max_active_seconds <= 86400:
+            raise ValueError('SSH lease duration invalid')
 
 
 class SSHAgents:
@@ -142,6 +140,7 @@ class SSHAgents:
 
 
 class SSHServerProvider:
+    requires_credential_reference = True
     provider_id = PROVIDER_ID
     policy_revision = 'owner-ssh-fixed-host-v1'
     kind = 'environment'
@@ -164,8 +163,7 @@ class SSHServerProvider:
 
     def authorized(self, owner, configuration):
         try:
-            self.service.auth.require(owner, 'run')
-            if self.service.config.address_policy(configuration['address'], configuration['port']) is not True: return False
+            self.service.auth.require_member(owner)
             return self.service.vault.authorize(owner=owner, reference=configuration['credentialRef'],
                 revision=configuration['credentialRevision'], provider_id=PROVIDER_ID, destination=configuration['origin'])
         except Exception: return False
@@ -183,26 +181,24 @@ class PersonalSSHServers:
     @staticmethod
     def static_unavailable(**scope):
         raise RemoteConnectionError('SSH_STATIC_CREDENTIAL_UNAVAILABLE')
-    def __init__(self, auth, connections, vault, config, *, probe_source: str):
-        if (not isinstance(config, SSHEnrollmentConfig) or not callable(config.address_policy)
-                or PROVIDER_ID not in vault.capabilities()['providerIds']):
-            raise ValueError('Self-service SSH requires global runtime, network policy and SSH vault policy')
+    def __init__(self, auth, connections, vault, config, *, probe_source: str | None = None):
+        if (not isinstance(config, SSHEnrollmentConfig) or PROVIDER_ID not in vault.capabilities()['providerIds']):
+            raise ValueError('Self-service SSH requires lease limits and SSH vault support')
         self.auth, self.connections, self.vault, self.config = auth, connections, vault, config
-        self.agents = SSHAgents(vault, max_agents=config.max_agents, seconds=config.runtime.max_active_seconds + 30)
+        self.agents = SSHAgents(vault, max_agents=config.max_agents, seconds=config.max_active_seconds + 30)
         self.package: _SSHProbeTransport | None = None
         self.provider = SSHServerProvider(self)
         self.probe_source = probe_source
-        self.provider.policy_revision = 'owner-ssh-v1-' + hashlib.sha256(self.probe_source.encode()).hexdigest()[:20]
+        self.provider.policy_revision = 'owner-ssh-endpoint-v2'
         if PROVIDER_ID in connections.personal.providers: raise ValueError('Duplicate SSH server provider')
         connections.personal.providers[PROVIDER_ID] = self.provider
 
     def identity(self, values):
         try:
             identity = endpoint(values['address'], values['port'], values['username'], values['hostKey'])
-            if self.config.address_policy(identity['address'], identity['port']) is not True: raise ValueError()
             root = PurePosixPath(values['allowedRoot'])
             if (not root.is_absolute() or '..' in root.parts or str(root) != values['allowedRoot']
-                    or any(c in str(root) for c in '\n\r,:') or len(str(root / 'research' / 'connections' / ('a' * 24) / 'broker.sock').encode()) >= 104
+                    or any(ord(c) < 32 for c in str(root))
                     or not isinstance(values['name'], str) or not 1 <= len(values['name']) <= 80
                     or any(ord(c) < 32 for c in values['name'])): raise ValueError()
             return identity
@@ -214,12 +210,12 @@ class PersonalSSHServers:
             values['username'], values['hostKey'], values['allowedRoot'], values['credentialRef'], values['credentialRevision'])
 
     def _configuration(self, conn, owner, reference):
-        row, body = self.connections.personal._row(conn, owner, reference)
+        row, body = self.connections.personal._row(conn, owner, reference, shared=True)
         if body['providerId'] != PROVIDER_ID: raise HTTPException(404, 'SSH_SERVER_NOT_FOUND')
         return row, body
 
     def server(self, owner, reference):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         with self.connections._read() as conn:
             _, body = self._configuration(conn, owner, reference)
             rows = conn.execute(select(self.connections.references).where(
@@ -230,30 +226,35 @@ class PersonalSSHServers:
                 if row['body']['taskId'] is not None or 'ssh:prepare' not in row['body']['capabilities']: continue
                 try: self.connections._current(conn, owner, dict(row), task_id=None)
                 except HTTPException: continue
-                return self.profile(owner, reference, body['revision'], body['configuration'])
+                return replace(self.profile(body['ownerId'], reference, body['revision'], body['configuration']), actor=owner)
         raise HTTPException(409, 'SSH_SERVER_NOT_ENABLED')
 
     def inspect(self, owner, reference):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.connections._read() as conn:
             row, body = self._configuration(conn, owner, reference)
             public = self.connections.personal._projection(conn, owner, reference)
         try: self.server(owner, reference); enabled = True
         except HTTPException: enabled = False
         config = body['configuration']; proof = row['verification'] or {}
-        return {'reference': reference, 'name': config['name'], 'address': config['address'], 'port': config['port'],
+        result = {'reference': reference, 'ownerId': body['ownerId'], 'visibility': public['visibility'],
+            'isOwner': body['ownerId'] == owner, 'name': config['name'], 'address': config['address'], 'port': config['port'],
             'username': config['username'], 'hostFingerprint': config['hostFingerprint'], 'allowedRoot': config['allowedRoot'],
             'hostKey': config['hostKey'],
-            'defaultDirectory': str(PurePosixPath(config['allowedRoot']) / 'research'), 'status': public['status'], 'enabled': enabled,
-            'diagnostic': proof.get('errorCode'), 'lastCheckRequestId': proof.get('requestId'),
-            'credentialRef': config['credentialRef'], 'credentialRevision': config['credentialRevision']}
+            'defaultDirectory': config['allowedRoot'], 'status': public['status'], 'enabled': enabled,
+            'diagnostic': proof.get('errorCode'), 'lastCheckRequestId': proof.get('requestId')}
+        if result['isOwner']:
+            result.update(credentialRef=config['credentialRef'], credentialRevision=config['credentialRevision'])
+        return result
 
     def list(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.connections._read() as conn:
             refs = conn.execute(select(self.connections.personal.resources.c.registration_ref).where(
-                self.connections.personal.resources.c.owner_id == owner).limit(100)).scalars().all()
-            matching = [r for r in refs if self.connections.personal._row(conn, owner, r)[1]['providerId'] == PROVIDER_ID]
+                or_(self.connections.personal.resources.c.owner_id == owner,
+                    self.connections.personal.resources.c.registration_ref.in_(
+                        self.connections.sharing.visible_refs(conn, owner)))).limit(100)).scalars().all()
+            matching = [r for r in refs if self.connections.personal._row(conn, owner, r, shared=True)[1]['providerId'] == PROVIDER_ID]
         return [self.inspect(owner, r) for r in matching]
 
     def available(self, owner):
@@ -268,25 +269,36 @@ class PersonalSSHServers:
         def guard():
             if require_binding:
                 # server() rechecks owner authority, active scoped binding,
-                # both network policies and the exact live vault revision.
-                if self.server(server.owner, server.reference).pin() != server.pin():
+                # the exact live vault revision.
+                if self.server(server.actor or server.owner, server.reference).pin() != server.pin():
                     raise RemoteConnectionError('SSH_CONFIGURATION_CHANGED')
             elif not self.provider.authorized(server.owner, configuration):
                 raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
         return self.agents.acquire(server, configuration['origin'], guard)
 
     def probe(self, server, lease, action):
-        if self.package is None: raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED')
         lease.validate()
         nonce = secrets.token_hex(12)
-        source = self.probe_source
-        command = 'if command -v python3 >/dev/null 2>&1; then exec python3 -I -B -c ' + shlex.quote(source)
-        command += '; else printf \'%s\\n\' ' + shlex.quote(json.dumps({'nonce': nonce, 'ok': False, 'code': 'SSH_PYTHON_MISSING'})) + '; fi'
-        with TemporaryDirectory(dir=self.package.root, prefix='probe-') as folder:
-            process = self.package._ssh(server, lease, Path(folder), command)
+        if action == 'inspect':
+            success = json.dumps({'nonce': nonce, 'ok': True, 'code': 'SSH_CONNECTION_READY', 'directoryExists': True})
+            missing = json.dumps({'nonce': nonce, 'ok': True, 'code': 'SSH_CONNECTION_READY', 'directoryExists': False})
+            command = 'if test -d ' + shlex.quote(server.allowed_root) + '; then printf \'%s\\n\' ' + shlex.quote(success)
+            command += '; else printf \'%s\\n\' ' + shlex.quote(missing) + '; fi'
+            transport = pinned_ssh
+            folder_root = self.agents.root
+        elif action == 'prepare' and self.package is not None and self.probe_source is not None:
+            command = 'if command -v python3 >/dev/null 2>&1; then exec python3 -I -B -c ' + shlex.quote(self.probe_source)
+            command += '; else printf \'%s\\n\' ' + shlex.quote(json.dumps({'nonce': nonce, 'ok': False, 'code': 'SSH_PYTHON_MISSING'})) + '; fi'
+            transport = self.package._ssh
+            folder_root = self.package.root
+        else:
+            raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED')
+        with TemporaryDirectory(dir=folder_root, prefix='probe-') as folder:
+            process = transport(server, lease, Path(folder), command)
             assert process.stdin is not None and process.stdout is not None
             try:
-                process.stdin.write(json.dumps({'nonce': nonce, 'root': server.allowed_root, 'action': action}).encode() + b'\n')
+                if action == 'prepare':
+                    process.stdin.write(json.dumps({'nonce': nonce, 'root': server.allowed_root, 'action': action}).encode() + b'\n')
                 process.stdin.close(); output = b''; deadline = time.monotonic() + 30
                 while b'\n' not in output:
                     remaining = deadline - time.monotonic()
@@ -300,7 +312,8 @@ class PersonalSSHServers:
                 if not result['ok']:
                     code = result.get('code')
                     raise RemoteConnectionError(code if code in CODES else 'SSH_CHECK_UNCONFIRMED')
-                if result.get('code') != 'SSH_PREREQUISITES_READY' or type(result.get('directoryExists')) is not bool: raise ValueError()
+                if (result.get('code') != ('SSH_CONNECTION_READY' if action == 'inspect' else 'SSH_PREREQUISITES_READY')
+                        or type(result.get('directoryExists')) is not bool): raise ValueError()
                 if process.wait(timeout=max(.1, deadline - time.monotonic())) != 0: raise ValueError()
                 lease.validate(); return result
             except RemoteConnectionError: raise
@@ -310,6 +323,7 @@ class PersonalSSHServers:
                     process.terminate()
                     try: process.wait(timeout=5)
                     except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
+                process.stdin.close(); process.stdout.close()
 
     def close(self): self.agents.close()
 
@@ -317,11 +331,11 @@ class PersonalSSHServers:
 class IdentityRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=80)
-    address: str = Field(min_length=1, max_length=64)
+    address: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535, strict=True)
-    username: str = Field(min_length=1, max_length=32)
-    hostKey: str = Field(min_length=1, max_length=200)
-    allowedRoot: str = Field(min_length=1, max_length=80)
+    username: str = Field(min_length=1, max_length=128)
+    hostKey: str = Field(min_length=1, max_length=16384)
+    allowedRoot: str = Field(min_length=1, max_length=4096)
 
 
 class ConfigureSSHRequest(IdentityRequest):
@@ -355,14 +369,14 @@ async def body(request, schema):
 def personal_ssh_router(auth, service):
     router = APIRouter(prefix='/api/factory/personal-ssh', tags=['personal-ssh'])
     def owner(request, action='read'):
-        identifier = auth.user(request)['id']; auth.require(identifier, action)
+        identifier = auth.user(request)['id']; auth.require_member(identifier)
         if service is None: raise HTTPException(404, 'SSH_SELF_SERVICE_UNAVAILABLE')
         return identifier
 
     @router.get('/capabilities')
     def capabilities(request: Request):
-        auth.require(auth.user(request)['id'], 'read')
-        return {'enabled': service is not None, 'keyType': 'dedicated-ed25519', 'learnsHostKeys': False}
+        auth.require_member(auth.user(request)['id'])
+        return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False}
 
     @router.post('/identity')
     async def identity(request: Request):
@@ -400,7 +414,7 @@ def personal_ssh_router(auth, service):
             receipt = service.connections.request_result(actor, request_id)
             if receipt['action'] != 'bind': raise HTTPException(409, 'SSH_REQUEST_MISMATCH')
             reference = receipt['connection']['registrationRef']
-        elif action in {'configure', 'verify', 'revoke'}:
+        elif action in {'configure', 'verify', 'revoke', 'sharing'}:
             receipt = service.connections.personal.request_result(actor, request_id)
             if receipt['action'] != 'remote.' + action: raise HTTPException(409, 'SSH_REQUEST_MISMATCH')
             reference = receipt['remote']['registrationRef']
@@ -417,6 +431,13 @@ def personal_ssh_router(auth, service):
         elif action == 'verify': service.connections.personal.verify(actor, reference, request_id)
         elif action == 'revoke': service.connections.personal.revoke(actor, reference, request_id)
         else: raise HTTPException(422, 'SSH_ACTION_INVALID')
+        return service.inspect(actor, reference)
+
+    @router.post('/{reference}/sharing')
+    async def share(reference: str, request: Request):
+        command = await body(request, SharingCommand)
+        actor = owner(request)
+        service.connections.personal.share(actor, reference, command.visibility, command.requestId)
         return service.inspect(actor, reference)
 
     @router.post('/{reference}/{action}')

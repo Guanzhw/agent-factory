@@ -14,7 +14,7 @@ from agent_factory_research.factory_compatibility import ResearchFactoryAPI as F
 class PersonalCommandAPITests(unittest.TestCase):
     def setUp(self):
         self.api = PersonalCommandAPI.__new__(PersonalCommandAPI)
-        self.auth = SimpleNamespace(user=Mock(return_value={'id': 'alice'}), require=Mock())
+        self.auth = SimpleNamespace(user=Mock(return_value={'id': 'alice'}), require_member=Mock())
         self.api.auth, self.api.store, self.api.factory = self.auth, Mock(), Mock()
         self.receipt = {'requestId': 'original-rebind', 'action': 'rebind', 'state': 'acknowledged',
             'factoryIdentity': None, 'session': {'id': 'personal-original', 'nativeSessionId': 'chat_original'}}
@@ -47,8 +47,7 @@ class PersonalCommandAPITests(unittest.TestCase):
         self.assertIsNone(result.json()['factoryIdentity'])
         self.sessions.rebind.assert_called_once_with('alice', 'personal-original', 'new-owner-ref', 'original-rebind',
             expected_old_fingerprint='a' * 64, expected_new_fingerprint='b' * 64)
-        self.assertIn((('alice', 'read'), {}), self.auth.require.call_args_list)
-        self.assertIn((('alice', 'run'), {}), self.auth.require.call_args_list)
+        self.assertEqual(self.auth.require_member.call_args_list, [(('alice',), {}), (('alice',), {})])
         self.api.factory.assert_not_called(); self.assertEqual(self.api.factory.mock_calls, [])
         self.assertEqual(self.api.store.mock_calls, [])
 
@@ -73,8 +72,8 @@ class PersonalCommandAPITests(unittest.TestCase):
         self.assertEqual(result.json()['detail'], 'PERSONAL_REBIND_PENDING_UNRESOLVED')
         self.assertEqual(self.api.factory.mock_calls, [])
 
-    def test_current_auth_revocation_prevents_local_mapping_change(self):
-        self.auth.require.side_effect = HTTPException(403, 'revoked')
+    def test_disabled_member_prevents_local_mapping_change(self):
+        self.auth.require_member.side_effect = HTTPException(403, 'member disabled')
         result = self.client.post(self.base + '/sessions/personal-original/rebind', json=self.body)
         self.assertEqual(result.status_code, 403)
         self.sessions.rebind.assert_not_called()

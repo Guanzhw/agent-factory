@@ -231,7 +231,8 @@ class ResearchCandidatePostgresTests(unittest.TestCase):
                     'nativeRunId': original_task['run_id'], 'leaseId': lease['id'],
                     'providerJobId': lease['providerJobId']}
         governance = self.store.material_governance
-        governance.withdraw('manager', 'checksum-tool', 1, str(uuid4()), 'Synthetic retained withdrawal')
+        self.state['auth'].directory.upsert('demo-bootstrap', name='Synthetic bootstrap material owner')
+        governance.withdraw('demo-bootstrap', 'checksum-tool', 1, str(uuid4()), 'Synthetic retained withdrawal')
         self.state['auth'].directory.set_disabled('bob', True)
         source = Path(__file__).resolve().parents[4] / 'scripts/research_candidate_state.py'
         spec = importlib.util.spec_from_file_location('candidate_pg_existing_state', source)
@@ -245,7 +246,7 @@ class ResearchCandidatePostgresTests(unittest.TestCase):
             with module.open_state(settings) as reopened:
                 self.assertIsNot(reopened['store'], self.store)
                 self.assertTrue(reopened['auth'].directory.get('bob')['disabled'])
-                self.assertEqual(governance.inspect_version('manager', 'checksum-tool', 1)['governance']['state'],
+                self.assertEqual(governance.inspect_version('demo-bootstrap', 'checksum-tool', 1)['governance']['state'],
                                  'withdrawn')
                 runtime = reopened['research_runtime']
                 with patch.object(runtime, 'submit', side_effect=AssertionError('NO_SUBMIT_REPLAY')):
@@ -254,7 +255,7 @@ class ResearchCandidatePostgresTests(unittest.TestCase):
                 self.assertTrue(result['cleanupConfirmed'])
                 self.assertEqual(result['leaseId'], original['leaseId'])
                 self.assertTrue(reopened['auth'].directory.get('bob')['disabled'])
-        self.assertEqual(governance.inspect_version('manager', 'checksum-tool', 1)['governance']['state'],
+        self.assertEqual(governance.inspect_version('demo-bootstrap', 'checksum-tool', 1)['governance']['state'],
                          'withdrawn')
         self.assert_original_released(original)
         self.assertFalse((self.work / 'release').exists())

@@ -162,7 +162,7 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Pragma"] = "no-cache"
         actor = auth.user(request)["id"]
-        auth.require(actor, "read")
+        auth.require_member(actor)
         target = handoff_client.targets.get(body.targetRef)
         if target is None or target.origin_ref != body.originRef or target.identity_map.get(body.originOwner) != actor or body.receiverIdentity != actor:
             raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: receiver identity is outside the selected target")
@@ -195,7 +195,7 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
         current = handoff_client.targets.get(body.targetRef)
         if current is None or current.fingerprint != body.targetFingerprint or current.identity_map.get(body.originOwner) != actor:
             raise HTTPException(409, "ORIGIN_AUTHORITY_CONFIG_CHANGED: selected target configuration differs")
-        auth.require(actor, "read")
+        auth.require_member(actor)
         return AuthorityReply(**body.model_dump(), outcome=outcome, authority=scope)
 
     @router.post(SCIENTIFIC_CUSTODY_PATH, response_model=ScientificCustodyReply)
@@ -203,7 +203,7 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Pragma"] = "no-cache"
         actor = auth.user(request)["id"]
-        auth.require(actor, "read")
+        auth.require_member(actor)
         target = handoff_client.targets.get(body.targetRef)
         if (target is None or target.origin_ref != body.originRef
                 or target.identity_map.get(body.originOwner) != actor or body.receiverIdentity != actor
@@ -216,7 +216,7 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
             current = handoff_client.targets.get(body.targetRef)
             if current is None or current.fingerprint != body.targetFingerprint or current.identity_map.get(body.originOwner) != actor:
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: custody target changed")
-            auth.require(actor, "read")
+            auth.require_member(actor)
             if type(proof) is not dict or set(proof) != {"custodyProofSha256"}:
                 raise ValueError()
             return ScientificCustodyReply(**body.model_dump(), outcome="custody-readable", **proof)

@@ -11,11 +11,12 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Column, JSON, MetaData, String, Table, select
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select
 
 from .personal_remote_provider import RemoteConnectionError
 from .store import digest, now
+from .resource_sharing import SharingCommand
 
 
 class PersonalRemoteConnections:
@@ -33,16 +34,19 @@ class PersonalRemoteConnections:
             Column("created_at", String, nullable=False), Column("updated_at", String, nullable=False))
         metadata.create_all(connections.store.engine)
 
-    def _row(self, conn, owner, reference):
+    def _row(self, conn, owner, reference, *, shared=False):
         self.connections._key(reference)
-        row = conn.execute(select(self.resources).where(self.resources.c.registration_ref == reference,
-            self.resources.c.owner_id == owner)).mappings().first()
+        query = select(self.resources).where(self.resources.c.registration_ref == reference)
+        if not shared: query = query.where(self.resources.c.owner_id == owner)
+        row = conn.execute(query).mappings().first()
         if not row:
             raise HTTPException(404, "REMOTE_NOT_FOUND")
+        if shared: self.connections.sharing.owner(conn, owner, reference, row['owner_id'])
+        resource_owner = row['owner_id']
         config = conn.execute(select(self.configs).where(self.configs.c.registration_ref == reference,
-            self.configs.c.revision == row["config_revision"], self.configs.c.owner_id == owner)).mappings().first()
+            self.configs.c.revision == row["config_revision"], self.configs.c.owner_id == resource_owner)).mappings().first()
         if (not config or digest(config["body"]) != config["fingerprint"]
-                or config["body"].get("ownerId") != owner
+                or config["body"].get("ownerId") != resource_owner
                 or config["body"].get("registrationRef") != reference
                 or config["body"].get("revision") != row["config_revision"]):
             raise HTTPException(409, "REMOTE_INTEGRITY")
@@ -57,7 +61,7 @@ class PersonalRemoteConnections:
         return provider
 
     def _projection(self, conn, owner, reference):
-        row, body = self._row(conn, owner, reference)
+        row, body = self._row(conn, owner, reference, shared=True)
         status = row["state"].lower()
         verified = row["verification"]
         if status == "verified":
@@ -67,7 +71,9 @@ class PersonalRemoteConnections:
                 status = {"REMOTE_VERIFICATION_EXPIRED": "expired", "REMOTE_CREDENTIAL_UNAVAILABLE": "credential_unavailable",
                           "REMOTE_POLICY_CHANGED": "policy_changed"}.get(str(error.detail), "unavailable")
         can_run = self.connections._can_bind(owner)
-        return {"registrationRef": reference, "providerId": body["providerId"], "kind": body.get("kind", "environment"),
+        is_owner = row['owner_id'] == owner
+        return {"registrationRef": reference, **self.connections.sharing.projection(conn, owner, reference, row['owner_id']),
+            "providerId": body["providerId"], "kind": body.get("kind", "environment"),
             "configRevision": body["revision"], "status": status, "available": status == "verified",
             "origin": body["configuration"]["origin"], "projectId": body["configuration"]["projectId"],
             "capabilities": verified["capabilities"] if verified and status == "verified" else [],
@@ -75,36 +81,39 @@ class PersonalRemoteConnections:
             "expiresAt": verified["expiresAt"] if verified else None,
             "createdAt": row["created_at"], "updatedAt": row["updated_at"],
             "allowedActions": ["inspect"] + ([] if status == "revoked" else
-                (["revoke"] + (["configure", "verify"] + (["bind"] if status == "verified" else []) if can_run else [])))}
+                ((["revoke", "sharing"] + (["configure", "verify"] if can_run else []) if is_owner else [])
+                    + (["bind"] if can_run and status == "verified" else [])))}
 
     def list(self, owner):
-        self.connections.auth.require(owner, "read")
+        self.connections.auth.require_member(owner)
         with self.connections._read() as conn:
             refs = list(conn.execute(select(self.resources.c.registration_ref).where(
-                self.resources.c.owner_id == owner).limit(100)).scalars())
+                or_(self.resources.c.owner_id == owner, self.resources.c.registration_ref.in_(
+                    self.connections.sharing.visible_refs(conn, owner)))).limit(100)).scalars())
             return [self._projection(conn, owner, ref) for ref in refs]
 
     def inspect(self, owner, reference):
-        self.connections.auth.require(owner, "read")
+        self.connections.auth.require_member(owner)
         with self.connections._read() as conn:
             return self._projection(conn, owner, reference)
 
     def request_result(self, owner, request_id):
-        self.connections.auth.require(owner, 'read')
+        self.connections.auth.require_member(owner)
         self.connections._key(request_id)
         with self.connections._read() as conn:
             command = conn.execute(select(self.connections.commands).where(
                 self.connections.commands.c.owner_id == owner,
                 self.connections.commands.c.request_id == request_id)).mappings().first()
-            if command is None or command['action'] not in {'remote.configure', 'remote.verify', 'remote.revoke'}:
+            if command is None or command['action'] not in {'remote.configure', 'remote.verify', 'remote.revoke', 'remote.sharing'}:
                 raise HTTPException(404, 'REMOTE_REQUEST_NOT_FOUND')
             return {'requestId': request_id, 'action': command['action'],
                 'remote': self._projection(conn, owner, command['result_ref'])}
 
     def available_providers(self, owner):
-        self.connections.auth.require(owner, "read")
+        self.connections.auth.require_member(owner)
         return [{"providerId": key, "kind": provider.kind, "capabilities": sorted(provider.capabilities),
-                 "policyRevision": provider.policy_revision, "requiresCredentialReference": True,
+                 "policyRevision": provider.policy_revision,
+                 "requiresCredentialReference": bool(getattr(provider, 'requires_credential_reference', False)),
                  "provisionsCompute": False, "namespace": getattr(provider, "namespace", "opencode"),
                  "authModes": list(getattr(provider, "auth_modes", ())),
                  "sessionTemplateSupported": bool(getattr(provider, "session_template_supported", False)),
@@ -113,7 +122,7 @@ class PersonalRemoteConnections:
 
     def configure(self, owner, provider_id, configuration, request_id, *, reference=None):
         service = self.connections
-        service.auth.require(owner, "run")
+        service.auth.require_member(owner)
         service._key(request_id); service._key(provider_id)
         provider = self.providers.get(provider_id)
         if provider is None:
@@ -154,6 +163,7 @@ class PersonalRemoteConnections:
             else:
                 conn.execute(self.resources.insert().values(registration_ref=reference, owner_id=owner,
                     created_at=at, **values))
+            service.sharing.register(conn, owner, reference)
             conn.execute(service.commands.insert().values(owner_id=owner, request_id=request_id,
                 fingerprint=fingerprint, action="remote.configure", result_ref=reference, created_at=at))
             conn.execute(service.audit.insert().values(actor_id=owner, action="remote.configure", target_id=reference,
@@ -162,7 +172,7 @@ class PersonalRemoteConnections:
 
     def verify(self, owner, reference, request_id):
         service = self.connections
-        service.auth.require(owner, "run"); service._key(request_id)
+        service.auth.require_member(owner); service._key(request_id)
         # Do not hold a SQL transaction/lock while performing bounded remote IO.
         with service._read() as conn:
             row, body = self._row(conn, owner, reference)
@@ -193,7 +203,7 @@ class PersonalRemoteConnections:
         with service._write() as conn:
             service._lock(conn, owner)
             current, current_body = self._row(conn, owner, reference)
-            service.auth.require(owner, "run")
+            service.auth.require_member(owner)
             if current["state"] == "REVOKED" or current_body != body or self._provider(body) is not provider:
                 raise HTTPException(409, "REMOTE_CONFIGURATION_CHANGED")
             if not provider.authorized(owner, body["configuration"]):
@@ -217,7 +227,7 @@ class PersonalRemoteConnections:
 
     def revoke(self, owner, reference, request_id):
         service = self.connections
-        service.auth.require(owner, "read"); service._key(request_id)
+        service.auth.require_member(owner); service._key(request_id)
         fingerprint = digest({"operation": "remote.revoke", "reference": reference})
         with service._write() as conn:
             service._lock(conn, owner)
@@ -233,7 +243,8 @@ class PersonalRemoteConnections:
 
     def binding(self, conn, owner, reference):
         from .connections import TrustedConnectionBinding
-        row, body = self._row(conn, owner, reference)
+        row, body = self._row(conn, owner, reference, shared=True)
+        resource_owner = row['owner_id']
         if row["state"] == "REVOKED":
             raise HTTPException(409, "REMOTE_REVOKED")
         if row["state"] != "VERIFIED":
@@ -252,28 +263,48 @@ class PersonalRemoteConnections:
             raise HTTPException(409, "REMOTE_INTEGRITY") from None
         if self.connections._at() >= expires:
             raise HTTPException(409, "REMOTE_VERIFICATION_EXPIRED")
-        if not provider.authorized(owner, body["configuration"]):
+        if not provider.authorized(resource_owner, body["configuration"]):
             raise HTTPException(409, "REMOTE_CREDENTIAL_UNAVAILABLE")
         capabilities = provider.effective_capabilities(body['configuration']) if callable(getattr(provider, 'effective_capabilities', None)) else provider.capabilities
         if frozenset(verification["capabilities"]) != capabilities:
             raise HTTPException(409, "REMOTE_POLICY_CHANGED")
-        return TrustedConnectionBinding(owner, provider.kind, provider.provider_id, capabilities,
+        return TrustedConnectionBinding(resource_owner, provider.kind, provider.provider_id, capabilities,
             verification["revision"], expires_at=expires.astimezone(timezone.utc), available=True,
-            opaque_handle=provider.handle(owner, body["configuration"]),
+            opaque_handle=provider.handle(resource_owner, body["configuration"]),
             handle_ref="remote-handle-" + digest({"configuration": body, "verification": verification}))
+
+    def share(self, owner, reference, visibility, request_id):
+        service = self.connections
+        service.auth.require_member(owner); service._key(request_id)
+        fingerprint = digest({'operation': 'remote.sharing', 'reference': reference, 'visibility': visibility})
+        with service._write() as conn:
+            service._lock(conn, owner)
+            self._row(conn, owner, reference)
+            if not service._command(conn, owner, request_id, fingerprint):
+                service.sharing.register(conn, owner, reference)
+                service.sharing.set(conn, owner, reference, visibility)
+                conn.execute(service.commands.insert().values(owner_id=owner, request_id=request_id,
+                    fingerprint=fingerprint, action='remote.sharing', result_ref=reference, created_at=now()))
+            return self._projection(conn, owner, reference)
 
 
 class ConfigureRemoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     providerId: str = Field(min_length=1, max_length=200)
     origin: str = Field(min_length=1, max_length=512)
-    credentialRef: str = Field(min_length=1, max_length=200)
-    credentialRevision: str = Field(min_length=1, max_length=200)
+    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
+    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
     projectId: str | None = Field(default=None, min_length=1, max_length=200)
     projectCreation: Literal[True] | None = None
     authMode: Literal["bearer", "basic-proxy"] | None = None
     sessionTemplateId: str | None = Field(default=None, min_length=1, max_length=160)
     requestId: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode='after')
+    def credential_pair(self):
+        if (self.credentialRef is None) != (self.credentialRevision is None):
+            raise ValueError('REMOTE_CREDENTIAL_INVALID')
+        return self
 
 
 class RemoteCommandRequest(BaseModel):
@@ -313,4 +344,7 @@ def personal_connection_router(auth, service):
     @router.post("/{reference}/revoke")
     def revoke(reference: str, body: RemoteCommandRequest, request: Request):
         return service.revoke(owner(request), reference, body.requestId)
+    @router.post('/{reference}/sharing')
+    def sharing(reference: str, body: SharingCommand, request: Request):
+        return service.share(owner(request), reference, body.visibility, body.requestId)
     return router

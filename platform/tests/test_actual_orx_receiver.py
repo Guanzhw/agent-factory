@@ -54,15 +54,13 @@ class ActualORXReceiverTests(unittest.TestCase):
             app = create_app(settings); state = app.app.state.factory
             self.addCleanup(state['store'].engine.dispose)
             self.addCleanup(state['store'].native_db.db_engine.dispose)
-            state['auth'].authorization.unassign('bob', 'factory-user')
-            state['auth'].authorization.assign('bob', 'factory-manager')
             current = {}
             for name, cap in (('localExperimentRead', 'research:read'), ('localExperimentRun', 'compute:local')):
                 current[name] = state['connections'].bind('alice', REGISTRATION_REF, role + '-' + name, capabilities=[cap])
             states.append(state); apps.append(app); pins.append(current); settings_list.append(settings)
         origin, receiver = states
-        application = publish_local_orx_application(origin, author='manager', reviewer='bob', contract_revision='2')
-        publish_local_orx_application(receiver, author='manager', reviewer='bob', contract_revision='2', source_application=application)
+        application = publish_local_orx_application(origin, author='manager', contract_revision='2')
+        publish_local_orx_application(receiver, author='manager', contract_revision='2', source_application=application)
         target = HandoffTarget('receiver', 'actual-orx-origin', 'http://receiver.factory.invalid', {'alice': 'alice'},
             lambda owner: {'Authorization': 'Bearer ' + receiver['auth']._issue_native_token('alice')},
             transport=httpx.ASGITransport(app=apps[1]))

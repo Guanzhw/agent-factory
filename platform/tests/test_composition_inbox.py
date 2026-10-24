@@ -45,7 +45,7 @@ class CompositionInboxTests(unittest.TestCase):
     def test_accepted_original_plan_restores_without_accept_key_or_current_publication(self):
         proposal = self.propose()
         original = self.fixture.composition.accept('alice', proposal['id'], str(uuid4()))
-        self.fixture.applications.withdraw('bob', self.app['id'], self.app['version'], str(uuid4()), 'synthetic withdrawal')
+        self.fixture.applications.withdraw('manager', self.app['id'], self.app['version'], str(uuid4()), 'synthetic withdrawal')
         with patch.object(self.fixture.composition, 'accept', side_effect=AssertionError('no reaccept')):
             page = self.service.list('alice')
             recovered = self.service.read('alice', proposal['id'])
@@ -105,7 +105,7 @@ class CompositionInboxTests(unittest.TestCase):
         self.propose()
         for limit in (True, 0, -1, 51, 1.5):
             with self.assertRaises(HTTPException): self.service.list('alice', limit=limit)
-        self.fixture.auth.authorization.unassign('alice', 'factory-user')
+        self.fixture.auth.directory.set_disabled('alice', True)
         with self.assertRaises(HTTPException): self.service.list('alice')
         self.assertEqual(self.count(self.fixture.composition.proposals), 1)
 

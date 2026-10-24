@@ -37,7 +37,7 @@ def run(args):
             PubMedProvider, REGISTRATION_REF, CONNECTION_NAME, CAPABILITY)
         settings = pubmed_settings(db_url=args.database_url, workspace=root / "factory", provider=PubMedProvider("alice"))
         def publish(state):
-            return publish_pubmed_application(state, author="manager", reviewer="bob")
+            return publish_pubmed_application(state, author="alice")
         mode = "bibliography"
     else:
         from agent_factory_research.literature_synthesis_profile import (synthesis_settings, publish_synthesis_application,
@@ -53,7 +53,7 @@ def run(args):
         settings = synthesis_settings(db_url=args.database_url, workspace=root / "factory", question=QUESTION,
                                       evidence_projection=projection)
         def publish(state):
-            return publish_synthesis_application(state, QUESTION, projection, author="manager", reviewer="bob")
+            return publish_synthesis_application(state, QUESTION, projection, author="alice")
         mode = "controlled-fixture"
         evidence.update(sourceEvidenceSha256=hashlib.sha256(raw).hexdigest(), sourceTaskId=previous["taskId"],
                         modelExecution="controlled-fixture", sourceEvidenceKind=projection["evidenceKind"])
@@ -65,8 +65,6 @@ def run(args):
             stack.callback(store.engine.dispose)
             stack.callback(store.native_db.db_engine.dispose)
             client = stack.enter_context(TestClient(app))  # type: ignore[arg-type]
-            state["auth"].authorization.unassign("bob", "factory-user")
-            state["auth"].authorization.assign("bob", "factory-manager")
             application = publish(state)
             binding = state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()), capabilities=[CAPABILITY])
 
@@ -84,9 +82,6 @@ def run(args):
                 "connectionRefs": {CONNECTION_NAME: binding["ref"]}})
             require(proposal["candidate"]["status"] == "ready")
             plan = post("/compositions/proposals/" + proposal["id"] + "/accept", {})
-            if settings.temporary_policy == "admin-review":
-                review = post("/plan-reviews", {"planId": plan["id"]})
-                post("/plan-reviews/" + review["id"] + "/decision", {"approved": True}, "manager")
             request_id = str(uuid4())
             task = post("/instances", {"planId": plan["id"], "requestId": request_id})["id"]
             evidence.update(taskId=task, planId=plan["id"], requestId=request_id)

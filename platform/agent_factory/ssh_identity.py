@@ -1,13 +1,15 @@
 """Pinned SSH identities shared by enrollment and trusted runtime adapters."""
 from dataclasses import dataclass, field
-import ipaddress
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import subprocess
 from typing import Callable
 
 from .store import digest
+from .personal_remote_provider import hostname
+from .ssh_credentials import host_identity, ssh_username
 
 
 def require(value):
@@ -29,13 +31,14 @@ class SSHAgentLease:
     socket: str
     public_key: str
     check: Callable = field(repr=False)
+    def __post_init__(self):
+        object.__setattr__(self, 'public_key', host_identity(self.public_key)[0])
     def validate(self):
         self.check()
         path = Path(self.socket)
         private_directory(path.parent)
         info = path.lstat()
         require(stat.S_ISSOCK(info.st_mode) and info.st_uid == getattr(os, 'getuid')() and stat.S_IMODE(info.st_mode) == 0o600)
-        require(re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{40,120}', self.public_key))
     def __repr__(self): return 'SSHAgentLease(credentials=<redacted>)'
 
 
@@ -52,18 +55,34 @@ class SSHServer:
     allowed_root: str
     credential_ref: str
     credential_revision: str
+    actor: str | None = field(default=None, repr=False, compare=False)
     def validate(self):
         require(re.fullmatch('[A-Za-z0-9_.-]{1,80}', self.reference) and self.owner and self.revision)
-        ipaddress.ip_address(self.address)
+        require(hostname(self.address) == self.address)
         require(type(self.port) is int and 1 <= self.port <= 65535)
-        require(re.fullmatch('[a-z_][a-z0-9_-]{0,31}', self.username))
-        require(re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{40,120}', self.host_key))
+        require(ssh_username(self.username) == self.username)
+        require(host_identity(self.host_key)[0] == self.host_key)
         root = PurePosixPath(self.allowed_root)
-        require(root.is_absolute() and '..' not in root.parts and not any(c in str(root) for c in '\n\r,:'))
-    def pin(self): return digest(self.__dict__)
+        require(root.is_absolute() and '..' not in root.parts and not any(ord(c) < 32 for c in str(root)))
+    def pin(self): return digest({key: value for key, value in self.__dict__.items() if key != 'actor'})
 
     def scope_pin(self):
         return digest({key: getattr(self, key) for key in
             ('reference', 'owner', 'address', 'port', 'username', 'host_key', 'allowed_root')})
 
 
+def pinned_ssh(server, lease, local, command, forward=None):
+    """Use exactly the member's endpoint, key and host identity for one process."""
+    identity = local / 'identity.pub'; identity.write_text(lease.public_key + '\n'); identity.chmod(0o600)
+    known = local / 'known_hosts'; known.write_text('factory-pinned ' + server.host_key + '\n'); known.chmod(0o600)
+    args = ['ssh', '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
+        '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}', '-o', 'GlobalKnownHostsFile=/dev/null',
+        '-o', 'IdentitiesOnly=yes', '-o', f'IdentityAgent={lease.socket}', '-i', str(identity),
+        '-o', 'BatchMode=yes', '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
+        '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
+        '-o', 'PermitLocalCommand=no', '-o', 'ExitOnForwardFailure=yes', '-o', 'StreamLocalBindUnlink=no',
+        '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
+    if forward: args += ['-R', forward]
+    args += ['-l', server.username, '-p', str(server.port), server.address, command]
+    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env={'PATH': '/usr/local/bin:/usr/bin:/bin'}, bufsize=-1)

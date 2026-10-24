@@ -325,7 +325,7 @@ class RemoteScientificReceiver:
         return deepcopy(snapshot)
 
     async def drive_phase(self, owner, task_id):
-        self.auth.require(owner, 'run'); ctx = self._context(owner, task_id)
+        self.auth.require_member(owner); ctx = self._context(owner, task_id)
         body, task, project = self._bound(ctx, custody=True); phase = body['binding']['scope']['phase']
         if phase == 'preparation':
             ticket = self.store.lifecycle_observer._binding(task)
@@ -468,7 +468,7 @@ class RemoteScientificReceiver:
         An intent surviving process restart is not a launch grant. Repeated POSTs
         return that original intent and never reconstruct a controller coroutine.
         """
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         ctx = self._context(owner, task_id)
         body, task, _ = self._bound(ctx, custody=True)
         if 'driveRequest' in body:
@@ -546,7 +546,7 @@ class RemoteScientificReceiver:
                 pass  # Durable pending intent still forbids restart dispatch.
 
     async def project_baseline(self, remote_owner, project_id, project_pin):
-        self.auth.require(remote_owner, 'run')
+        self.auth.require_member(remote_owner)
         project = self.projects[project_id]
         require(project.owner == remote_owner and project.project_pin == project_pin)
         observation = await project.baseline_reader()

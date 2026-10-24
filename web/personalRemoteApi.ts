@@ -1,10 +1,10 @@
 import type { UserConnection } from './models.js';
 import { ApiError, factoryRequest } from './api.js';
 export interface RemoteProvider { providerId: string; kind: string; capabilities: string[]; namespace?: 'opencode' | 'native-openresearch' | 'owner-ssh'; authModes?: ('bearer' | 'basic-proxy')[]; sessionTemplateSupported?: boolean; projectCreationSupported?: boolean; }
-export interface PersonalRemote { registrationRef: string; providerId: string; configRevision: string; revision: string; status: string; available: boolean; origin: string; projectId: string; capabilities: string[]; expiresAt: string | null; allowedActions: string[]; }
+export interface PersonalRemote { registrationRef: string; ownerId: string; visibility: 'personal' | 'team'; isOwner: boolean; providerId: string; configRevision: string; revision: string; status: string; available: boolean; origin: string; projectId: string; capabilities: string[]; expiresAt: string | null; allowedActions: string[]; }
 export interface PersonalCredential { credentialRef: string; credentialRevision: string; providerId: string; destination: string; status: string; }
 export interface CredentialInput { providerId: string; destination: string; username: string; password: string; requestId: string; }
-export interface RemoteConfiguration { providerId: string; origin: string; projectId?: string; projectCreation?: true; credentialRef: string; credentialRevision: string; requestId: string; authMode?: 'bearer' | 'basic-proxy'; sessionTemplateId?: string; }
+export interface RemoteConfiguration { providerId: string; origin: string; projectId?: string; projectCreation?: true; credentialRef?: string; credentialRevision?: string; requestId: string; authMode?: 'bearer' | 'basic-proxy'; sessionTemplateId?: string; }
 export function definitivelyRejected(status: number): boolean { return [400, 401, 403, 404, 405, 413, 415, 422].includes(status); }
 export class RemoteRequestError extends Error {
   constructor(public readonly rejected: boolean, public readonly code?: string) { super(rejected ? '请求已被拒绝，请检查输入和权限后重试。' : '请求结果尚未确认，请核对原请求。'); }
@@ -28,6 +28,7 @@ export const personalRemoteApi = {
   recover: (requestId: string) => safe<{ requestId: string; action: string; remote: PersonalRemote }>(`/personal-remotes/requests/${ref(requestId)}`),
   configure: (input: RemoteConfiguration, reference?: string) => safe<PersonalRemote>(`/personal-remotes${reference ? `/${ref(reference)}/configure` : ''}`, 'POST', input),
   command: (remote: PersonalRemote, action: 'verify' | 'revoke', requestId: string) => safe<PersonalRemote>(`/personal-remotes/${ref(remote.registrationRef)}/${action}`, 'POST', { requestId }),
+  sharing: (remote: PersonalRemote, visibility: 'personal' | 'team', requestId: string) => safe<PersonalRemote>(`/personal-remotes/${ref(remote.registrationRef)}/sharing`, 'POST', { visibility, requestId }),
 };
 export function remoteCanBind(remote: PersonalRemote, at = Date.now()): boolean {
   return remote.available && remote.status === 'verified' && remote.allowedActions.includes('bind') && !!remote.expiresAt && Number.isFinite(Date.parse(remote.expiresAt)) && Date.parse(remote.expiresAt) > at;

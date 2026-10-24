@@ -69,7 +69,7 @@ class BaselineContextTests(unittest.TestCase):
             'snapshots': {'training': object(), 'evaluation': object()}}
         factory = self.factory()
         settings = subject.Settings(db_url='postgresql://fixture@localhost/original',
-                                    temporary_policy='admin-review', max_workers=1)
+                                    max_workers=1)
         checkpoints = Mock()
         with patch.object(subject, 'create_engine'), \
              patch.object(subject, 'database_preflight', side_effect=lambda *args: events.append(('policy',)) or {'status': 'PASS'}), \

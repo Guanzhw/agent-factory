@@ -48,7 +48,7 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.current_variant = self.contract['training']['variantSha256']
         runtime = SimpleNamespace(_custody=lambda identifier: self.records[identifier], _context=lambda task: task,
             _config=lambda task, plan: ('training' if task['id'] == 'train-task' else 'evaluation', self.current_manifest, self.current_variant))
-        self.auth = SimpleNamespace(require=Mock())
+        self.auth = SimpleNamespace(require_member=Mock())
         self.store = SimpleNamespace(sql=Mock(side_effect=lambda query, **args: [self.rows[args['task']]]),
             plan=lambda identifier, owner: self.plans[identifier], require_plan_execution=Mock())
         self.resources = SimpleNamespace(targets=self.targets, _target_fingerprint=lambda target: target.pin,

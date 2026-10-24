@@ -38,13 +38,13 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
         self.client = self.stack.enter_context(TestClient(self.app))  # pyright: ignore[reportArgumentType]
         assert self.client.portal is not None
         self.portal = self.client.portal
-        self.auth.authorization.unassign('bob', 'factory-user')
-        self.auth.authorization.assign('bob', 'factory-manager')
+        self.auth.account_roles.unassign('manager', 'factory-manager')
+        self.assertEqual(self.auth.identity('manager')['role'], 'user')
+        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('manager', 'bob')}
         self.ids = []
         self.stack.callback(self.cleanup)
 
     def cleanup(self):
-        self.auth.authorization.assign('manager', 'factory-manager')
         self.auth.directory.set_disabled('manager', False)
         for identifier in self.ids:
             self.service.set_enabled('manager', identifier, False)
@@ -71,7 +71,7 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
 
     def get(self, path, *, owner='manager', status=200):
         response = self.client.get('/api/factory/schedule-management' + path,
-            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner)})
+            headers={'Authorization': 'Bearer ' + self.tokens[owner]})
         self.assertEqual(response.status_code, status, response.text)
         return response.json()
 
@@ -82,26 +82,20 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
         return tuple(self.store.sql('SELECT count(*) AS n FROM ' + table)[0]['n']
             for table in ('af_tasks', 'af_schedule_occurrences', 'ai.agno_jobs'))
 
-    def test_native_authority_loss_records_finite_denial_without_occurrence(self):
-        for disable in (False, True):
-            with self.subTest(disabled=disable):
-                schedule = self.schedule()
-                claim = self.claim(schedule)
-                before = self.effect_counts()
-                try:
-                    if disable:
-                        self.auth.directory.set_disabled('manager', True)
-                    else:
-                        self.auth.authorization.unassign('manager', 'factory-manager')
-                    self.execute_denied(claim)
-                finally:
-                    self.auth.authorization.assign('manager', 'factory-manager')
-                    self.auth.directory.set_disabled('manager', False)
-                self.assertEqual(self.effect_counts(), before)
-                rows = self.rows(schedule['id'])
-                self.assertEqual(len(rows), 1)
-                self.assertEqual(rows[0]['reason_code'], 'AUTHORIZATION_DENIED')
-                self.assertEqual(rows[0]['source'], 'native')
+    def test_disabled_member_records_finite_denial_without_occurrence(self):
+        schedule = self.schedule()
+        claim = self.claim(schedule)
+        before = self.effect_counts()
+        self.auth.directory.set_disabled('manager', True)
+        try:
+            self.execute_denied(claim)
+        finally:
+            self.auth.directory.set_disabled('manager', False)
+        self.assertEqual(self.effect_counts(), before)
+        rows = self.rows(schedule['id'])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['reason_code'], 'AUTHORIZATION_DENIED')
+        self.assertEqual(rows[0]['source'], 'native')
 
     def test_real_advisory_and_pool_contention_deduplicate_same_claim(self):
         schedule = self.schedule()
@@ -235,27 +229,22 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
             diagnostics.record(claim, 'failed-observation', 'CLOCK_BUSY')
         self.assertEqual(self.effect_counts(), before)
 
-    def test_current_read_only_grant_can_inspect_denial_but_not_editor(self):
+    def test_enabled_member_can_inspect_own_diagnostics_and_editor_until_disabled(self):
         schedule = self.schedule()
         claim = self.claim(schedule)
-        self.auth.authorization.set_role_scopes('diagnostic-reader', ['agents:factory-executor:read'])
-        self.auth.authorization.unassign('manager', 'factory-manager')
-        self.auth.authorization.assign('manager', 'diagnostic-reader')
+        self.service.set_enabled('manager', schedule['id'], False)
+        self.execute_denied(claim)
+        page = self.get('/' + schedule['id'] + '/diagnostics')
+        self.assertEqual(page['items'][0]['reasonCode'], 'PAUSED')
+        self.get('/diagnostic-schedules')
+        self.get('/' + schedule['id'])
+        self.auth.directory.set_disabled('manager', True)
         try:
-            self.auth.require('manager', 'read')
-            with self.assertRaises(HTTPException):
-                self.auth.require('manager', 'run')
-            self.execute_denied(claim)
-            page = self.get('/' + schedule['id'] + '/diagnostics')
-            self.assertEqual(page['items'][0]['reasonCode'], 'AUTHORIZATION_DENIED')
-            self.get('/diagnostic-schedules')
-            self.get('/' + schedule['id'], status=403)
-            self.auth.authorization.unassign('manager', 'diagnostic-reader')
             self.get('/' + schedule['id'] + '/diagnostics', status=403)
             self.get('/diagnostic-schedules', status=403)
+            self.get('/' + schedule['id'], status=403)
         finally:
-            self.auth.authorization.unassign('manager', 'diagnostic-reader')
-            self.auth.authorization.assign('manager', 'factory-manager')
+            self.auth.directory.set_disabled('manager', False)
 
     def test_pending_editor_is_not_recovered_by_diagnostics_and_cursor_is_schedule_scoped(self):
         schedule = self.schedule()

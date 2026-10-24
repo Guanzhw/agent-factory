@@ -1,83 +1,81 @@
 # Versioned material governance
 
-Six inert material kinds are supported: instructions/prompts, skills, tools,
-knowledge, models and environments. A material content version, SHA-256 and
-pinned dependencies are immutable. Draft, published, withdrawn and archived
-state lives in a separate governance record; it never changes old plan content
-or artifact evidence.
+Six inert material kinds are supported: prompts, skills, tools, knowledge,
+models and environments. Content versions, SHA-256 values and pinned dependencies
+are immutable. Draft, published, withdrawn and archived state lives in a separate
+record, preserving earlier plans and artifact evidence.
 
-## Current permissions and publication
+## Membership, ownership and publication
 
-Normal `Settings.from_env()` and `ResearchSettings.from_env()` use
-`member-self-service`. A member with current native `run` permission can draft
-and directly publish the member's own exact material versions; this ordinary
-publication path does not add a separate administrator review. Ordinary discovery
-returns only active published versions. Authors inspect their own draft/history;
-current administrators can inspect all authors. UI labels reflect capabilities,
-not grants.
+`Settings` and `ResearchSettings` use `member-self-service`. Every active member
+can create and directly publish their own exact versions. Authors manage their
+own drafts, revisions, withdrawals and archives. Account administrators manage
+accounts and have no override over another author's materials or private history.
 
-`separate-admin` remains an explicit configured mode. In that mode, authors use
-`components:write` and request review for one exact version/digest; a different
-current `agent_os:admin` principal approves or denies it. Reviewing a plan or
-approving one experiment does not publish materials. Policy revisions are
-persisted and cannot silently overwrite another running process's current
-governance configuration. Stale revision/digest, lost rights, self-review and
-conflicting duplicate commands fail closed. A published version must match its
-exact immutable governance record and active policy: unreviewed publication is
-accepted under `member-self-service`, while `separate-admin` requires the exact
-administrator decision.
+Members can use active published versions. Copying another author's published
+material creates a new ID owned by the copying member; the original version chain
+and task references retain their identity. Revising an owned material creates a
+new immutable version. Withdrawn or archived versions require a new draft before
+publication. See [member publication](MEMBER_PUBLICATION.md) for the page flow and
+API examples.
 
-`FACTORY_MATERIAL_REVIEW_MODE=demo-self-review` is an explicit compatibility mode
-accepted only in synthetic demo configuration. Production rejects it. The
-checked-in nine original synthetic bootstrap versions have exact-content,
-original-audit adoption; startup does not restore an archived/withdrawn version.
-No second administrator or production account is provisioned automatically.
+Publication requires the stored immutable body and its published dependency
+closure to remain current. A withdrawal or archive removes the exact version from
+active discovery and later execution checks. Admission, tool invocation and
+relevant delegated ancestors continue to check current resource state and budgets.
+Completed plans, artifacts and version history retain their original content.
 
-An author may archive their own unpublished private draft. Archiving or
-withdrawing a published/shared version requires a current native administrator;
-withdrawal requires an administrator for any version. Both states remove the
-version from discovery and current plan execution. Native admission, resumes, tools and every delegated ancestor recheck
-current governed versions. Active fixed compute also rechecks current authority
-every 250 ms and cleans up its owned process when authority ends. Existing
-historical plans/results remain inspectable with current read permission.
+The original synthetic bootstrap versions have exact-content and seed-audit
+adoption. Demo startup preserves an existing withdrawal or archive; it does not
+reactivate it. Synthetic seed publication remains restricted to demo use.
 
-## Bounded inert import
+## Bounded inert import and tool declarations
 
 The importer accepts at most 30 structured JSON definitions, 256 KiB, depth 12
-and 3,000 nodes. It does not fetch a URL, install a package, load code or run an
-agent. Definitions include compatibility, supported license, provenance/notice,
-typed schemas and exact versioned dependencies. Upstream reuse requires a source,
-pinned revision and preserved notice. Secret fields, credential-bearing URLs,
-external schema references and unknown runtime tool/capability names are rejected.
-A new imported definition enters draft state and follows the active policy-aware publication path: direct publication under `member-self-service`, or exact review under `separate-admin`.
+and 3,000 nodes. Definitions include compatibility, supported license,
+provenance/notice, schemas and exact versioned dependencies. Upstream reuse
+requires a source, pinned revision and preserved notice. Secret fields,
+credential-bearing URLs and external schema references are rejected. Import saves
+drafts and starts no process or provider call.
 
-Registered tools use fixed identifiers and permission sets; editor text cannot
-register arbitrary code. Current original runtime tools remain allowlisted.
+A tool material with `runtimeBinding` names an exact adapter ID and revision.
+Its tool name and declared capabilities must match that adapter's current
+registration. Member CLI/MCP connections use the same registry as installed
+adapters; no deployment tool-permission list or extra policy revision is needed.
+Same-name tools remain distinct by adapter identity. The material editor can load
+current connected tool declarations and retains their binding when revising or
+copying a material. Commands, endpoints and credentials stay in resource connections.
+
 Supported import licenses are MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause,
-CC0-1.0 and CC-BY-4.0. This validation preserves supplied provenance; it cannot
-independently certify an author's licensing claim.
+CC0-1.0 and CC-BY-4.0. Validation preserves supplied provenance; it does not
+independently certify the author's licensing claim.
 
-## Commands and UI recovery
+## Commands, history and recovery
 
-`/api/factory/material-governance` exposes draft/import, version inspection,
-direct publication, review request/decision, archive and withdrawal. Mutations
-require a semantic request key. Identical retries return the persisted command
-result; changed payload with the same key returns conflict. Current permissions
-are checked even on a repeated command. Direct publication is available under
-`member-self-service`; review requests/decisions apply under `separate-admin`,
-while historical review commands are read-only under member-self-service.
+`/api/factory/material-governance` exposes draft/import, inspection, direct
+publication, archive and withdrawal. Mutations require `requestId`. Identical
+retries recover the persisted result; changed intent under the same key returns
+conflict. Membership is checked on retries, and version mutations remain
+owner-scoped.
 
-The material UI supports all six kinds, exact active dependencies, registered
-tool selection, provenance/license/schema editing and bounded JSON import.
-Session storage contains only payload hashes and opaque command IDs, never
-material text or credentials. Lost acknowledgements retain the same command key.
-Malformed policy/review responses disable write actions until a verified refresh.
+Publication review request and decision APIs return HTTP 410. Historical reviews
+remain readable only within their author's scope. Existing review/configuration
+rows, hashes and version bodies remain intact. Runtime startup uses the current
+supplied configuration, so old database approval modes do not gate startup or
+publication. Supplying retired `separate-admin` or `demo-self-review` modes as new
+runtime configuration is rejected.
 
-Nineteen focused tests include actual PostgreSQL/native queue/HTTP, author/reviewer
-separation, concurrency, current permissions, immutable history, import rejection
-and dependency/plan guards. Review-specific and actual Edge acceptance exercised
-the explicit `separate-admin` path: duplicate clicks, lost acknowledgement
-recovery, independent administrator publication, version archive/withdrawal,
-fail-closed malformed responses and 390px layouts. These tests do not make
-`separate-admin` the current default. All identities and materials in that
-acceptance belong to disposable synthetic DBs.
+The material page supports six kinds, exact active dependencies, current tool
+declarations, provenance/license/schema editing and bounded JSON import. Session
+storage retains payload hashes and opaque command IDs for acknowledgement
+recovery; a lost reply is retried with the original key. Historical review loading
+is separate from direct publication.
+
+Focused regressions cover owner lifecycle and copies, administrator isolation,
+old configuration/review preservation through a real PostgreSQL restart,
+size-one-pool concurrency, exact same-name tool declarations, and native execution
+of a newly connected member tool. See
+[`test_material_governance.py`](../platform/tests/test_material_governance.py),
+[`test_applications_composition.py`](../platform/tests/test_applications_composition.py)
+and [`test_member_tool_restart_postgres.py`](../platform/tests/test_member_tool_restart_postgres.py).
+Run records and live/browser acceptance remain separate from these source contracts.

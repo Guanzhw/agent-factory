@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 from agent_factory.connections import ConnectionService, connection_router
 from agent_factory.personal_connections import personal_connection_router
 from agent_factory.personal_remote_provider import (PROVIDER_ID, OpenCodeServeProvider,
-    PinnedHTTPSProbe, RemoteConnectionError, RemoteNetworkPolicy, SecretLease, origin)
+    PinnedHTTPSProbe, RemoteConnectionError, SecretLease, origin)
 
 
 class Secrets:
@@ -52,6 +52,9 @@ class Probe:
 class Auth:
     reader = False
     disabled = False
+    def require_member(self, owner):
+        if self.disabled:
+            raise HTTPException(403, 'denied')
     def require(self, owner, action):
         if self.disabled or (self.reader and action == "run"):
             raise HTTPException(403, "denied")
@@ -123,7 +126,7 @@ class PersonalRemoteTests(unittest.TestCase):
         self.assertEqual(personal['status'], 'verified')
         self.assertIn('verify', personal['allowedActions'])
         self.auth.reader = True
-        self.assertEqual(self.registration(ref)['allowedActions'], ['inspect'])
+        self.assertEqual(self.registration(ref)['allowedActions'], ['inspect', 'bind'])
         self.auth.reader = False
         self.personal.revoke('alice', ref, uuid4().hex)
         self.assertEqual(self.registration(ref)['status'], 'unavailable')
@@ -220,7 +223,8 @@ class PersonalRemoteTests(unittest.TestCase):
         self.assertEqual(self.client.post(root, headers={"x-fixture-owner": "bob"}, json=payload).status_code, 403)
         self.assertEqual(self.personal.list("bob"), [])
         self.auth.reader = True
-        self.assertEqual(self.personal.inspect("alice", reference)["allowedActions"], ["inspect", "revoke"])
+        self.assertIn('verify', self.personal.inspect('alice', reference)['allowedActions'])
+        self.auth.disabled = True
         with self.assertRaises(HTTPException):
             self.personal.verify("alice", reference, "denied")
 
@@ -240,10 +244,10 @@ class PersonalRemoteTests(unittest.TestCase):
 
     def test_policy_expiry_revocation_grants_and_failed_probe(self):
         bound = self.bound()
-        self.auth.reader = True
+        self.auth.disabled = True
         with self.assertRaises(HTTPException):
             self.service.resolve("alice", bound["ref"], "environment")
-        self.auth.reader = False
+        self.auth.disabled = False
         self.at += timedelta(minutes=16)
         self.assertEqual(self.personal.inspect("alice", bound["registrationRef"])["status"], "expired")
         with self.assertRaises(HTTPException):
@@ -300,35 +304,26 @@ class PersonalRemoteTests(unittest.TestCase):
 
 
 class NetworkPolicyTests(unittest.TestCase):
-    def test_origin_and_global_default_deny(self):
-        for value in ("http://runtime.example.com", "https://127.0.0.1", "https://user:pass@runtime.example.com",
-                      "https://runtime.example.com/path", "https://runtime.example.com?token=x",
-                      "https://runtime.example.com#", "https://runtime.example.com:444", "https://localhost"):
-            with self.subTest(value=value), self.assertRaises(RemoteConnectionError):
-                origin(value)
-        policy = RemoteNetworkPolicy()
-        for address in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "100.100.100.200", "168.63.129.16"):
-            self.assertFalse(policy.permits("runtime.example.com", address))
+    def test_owner_origins_include_local_private_ip_dns_and_custom_ports(self):
+        for value in ('http://localhost:8080', 'https://127.0.0.1:444', 'http://10.0.0.1',
+                'http://[::1]:9000', 'https://runtime', 'https://runtime.example.com:444'):
+            self.assertEqual(origin(value), value)
+        for value in ('ftp://runtime', 'https://user:pass@runtime.example.com',
+                'https://runtime.example.com/path', 'https://runtime.example.com?token=x',
+                'https://runtime.example.com#', 'http://localhost:0', 'http://bad host'):
+            with self.subTest(value=value), self.assertRaises(RemoteConnectionError): origin(value)
 
-    def test_reviewed_private_requires_host_and_cidr_and_metadata_stays_denied(self):
-        policy = RemoteNetworkPolicy(frozenset({"runtime.internal.example"}), ("10.20.0.0/16",))
-        self.assertTrue(policy.permits("runtime.internal.example", "10.20.1.2"))
-        self.assertFalse(policy.permits("other.internal.example", "10.20.1.2"))
-        self.assertFalse(policy.permits("runtime.internal.example", "10.21.1.2"))
-        self.assertFalse(policy.permits("runtime.internal.example", "169.254.169.254"))
-
-    def test_dns_mixed_answers_rejected_and_connection_pinned(self):
+    def test_dns_private_answers_and_connection_pinning_preserve_tls_identity(self):
         probe = PinnedHTTPSProbe()
-        with patch("subprocess.run", return_value=SimpleNamespace(stdout='["93.184.216.34", "127.0.0.1"]')):
-            with self.assertRaises(RemoteConnectionError):
-                probe.addresses("https://runtime.example.com")
+        with patch('subprocess.run', return_value=SimpleNamespace(stdout='["93.184.216.34", "127.0.0.1"]')):
+            self.assertEqual(probe.addresses('https://runtime.example.com:8443'), ['93.184.216.34', '127.0.0.1'])
         from agent_factory.personal_remote_provider import _PinnedHTTPS
-        with patch("socket.create_connection") as connect:
-            connection = _PinnedHTTPS("runtime.example.com", "93.184.216.34")
-            with patch.object(connection._tls_context, "wrap_socket") as wrap:
+        with patch('socket.create_connection') as connect:
+            connection = _PinnedHTTPS('runtime.example.com', '10.0.0.1', 8443)
+            with patch.object(connection._tls_context, 'wrap_socket') as wrap:
                 connection.connect()
-                connect.assert_called_once_with(("93.184.216.34", 443), 5)
-                wrap.assert_called_once_with(connect.return_value, server_hostname="runtime.example.com")
+                connect.assert_called_once_with(('10.0.0.1', 8443), 5)
+                wrap.assert_called_once_with(connect.return_value, server_hostname='runtime.example.com')
 
     def test_redirect_is_not_followed_and_error_body_is_not_exposed(self):
         response = Mock(status=302)
@@ -340,7 +335,7 @@ class NetworkPolicyTests(unittest.TestCase):
             status, body = PinnedHTTPSProbe().get("https://runtime.example.com", "93.184.216.34",
                 "/global/health", SecretLease("opencode", "synthetic-password"))
         self.assertEqual((status, body), (302, None))
-        create.assert_called_once_with("runtime.example.com", "93.184.216.34")
+        create.assert_called_once_with("runtime.example.com", "93.184.216.34", 443)
         connection.request.assert_called_once()
         connection.close.assert_called_once()
 
@@ -354,7 +349,7 @@ class NetworkPolicyTests(unittest.TestCase):
 
     def test_dns_timeout_is_bounded_by_killed_and_reaped_helper(self):
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("synthetic-helper", 3)) as run:
-            with self.assertRaisesRegex(RemoteConnectionError, "REMOTE_ADDRESS_DENIED"):
+            with self.assertRaisesRegex(RemoteConnectionError, "REMOTE_DNS_FAILED"):
                 PinnedHTTPSProbe().addresses("https://runtime.example.com")
         self.assertEqual(run.call_args.kwargs["timeout"], 3)
         self.assertTrue(run.call_args.kwargs["check"])

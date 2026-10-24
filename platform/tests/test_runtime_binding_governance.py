@@ -3,7 +3,6 @@
 Portable SQLite tests do not claim PostgreSQL concurrency or live providers.
 The optional PG test uses a disposable DB and the actual governance HTTP routes.
 """
-from dataclasses import asdict
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -21,7 +20,7 @@ from agent_factory.material_governance import (
     GovernanceConfig, LICENSES, MaterialGovernance, RuntimeBinding, normalize_runtime_binding,
 )
 from agent_factory.plan_policy import (
-    LEGACY_TOOLS, PlanPolicyConfig,
+    LEGACY_TOOLS,
 )
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
@@ -42,16 +41,19 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def test_legacy_fingerprints_and_old_persisted_config_body_remain_exact(self):
-        legacy = GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1")
+    def test_old_configuration_body_hash_and_material_bodies_remain_exact(self):
+        old_body = {"review_mode": "separate-admin", "revision": "material-governance-v1", "source_synthesis_enabled": False}
         expected = digest({"review_mode": "separate-admin", "revision": "material-governance-v1",
             "licenses": LICENSES, "toolBindings": LEGACY_TOOLS, "schemaVersion": "structured-material/v1"})
-        self.assertEqual(legacy.fingerprint, expected)
-        old_body = {key: value for key, value in asdict(legacy).items() if key != "tool_contract"}
         with self.store.engine.begin() as connection:
-            connection.execute(self.service.configs.update().values(body=old_body))
-        restarted = MaterialGovernance(self.store, self.fixture.auth, legacy, seed_materials=governance_fixture.SEEDS)
-        self.assertEqual(restarted.current()["fingerprint"], expected)
+            connection.execute(self.service.configs.insert().values(revision=old_body["revision"], hash=expected, body=old_body))
+            connection.execute(self.service.current_config.insert().values(id="current", revision=old_body["revision"]))
+        restarted = MaterialGovernance(self.store, self.fixture.auth, GovernanceConfig(), seed_materials=governance_fixture.SEEDS)
+        self.assertEqual(restarted.current()["review_mode"], "member-self-service")
+        with self.store.engine.connect() as connection:
+            row = connection.execute(select(restarted.configs)).mappings().one()
+            self.assertEqual(row["body"], old_body)
+            self.assertEqual(row["hash"], expected)
         self.store.seed()
         before = [self.store.raw({"id": seed[0], "version": 1})["body"] for seed in governance_fixture.SEEDS]
         restarted.adopt_demo_bootstrap()
@@ -122,26 +124,19 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
             self.service.create_draft("manager", {**definition, "runtimeBinding": binding("different-fixture")}, "binding-key")
         self.assertEqual(conflict.exception.status_code, 409)
 
-    def test_orx_registration_is_explicit_fixed_read_capability_and_new_revision(self):
-        definition = governance_fixture.definition(kind="tool", content="orx_discover", permissions=["research:read"],
-            runtimeBinding=binding("orx-discover-v1", connectionName="literatureProvider"))
-        with self.assertRaises(HTTPException):
-            self.service.create_draft("manager", definition, "legacy-orx")
-        for revision in ("material-governance-v1", "material-department-v1"):
-            with self.subTest(revision=revision), self.assertRaises(ValueError):
-                GovernanceConfig(tool_contract="registered-runtime-v1", revision=revision)
-        new = GovernanceConfig(review_mode="separate-admin", revision="material-runtime-v2", tool_contract="registered-runtime-v1")
-        self.service.replace_configuration(new, expected_revision="material-governance-v1")
-        created = self.service.create_draft("manager", definition, "registered-orx")
-        self.assertEqual(created["permissions"], ["research:read"])
-        self.assertNotEqual(new.fingerprint, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1").fingerprint)
-        for tool in ("orx_run", "orx_spawn", "orx_login", "orx_up", "orx_serve"):
-            with self.assertRaises(HTTPException):
-                self.service.create_draft("manager", {**definition, "content": tool}, str(uuid4()))
-        self.fixture.publish(created)
+    def test_installed_tool_declarations_need_no_operator_policy_or_new_revision(self):
+        registry = self.store.execution_bindings
+        registry.register("tool", "member-fixture-adapter", "1", lambda _: None,
+                          tool_name="member_fixture_tool", permissions=("member:fixture",))
+        configuration = GovernanceConfig(tool_contract="registered-runtime-v1", revision="material-governance-v1")
+        self.service.replace_configuration(configuration, expected_revision="material-governance-v1")
+        definition = governance_fixture.definition(kind="tool", content="member_fixture_tool", permissions=["member:fixture"],
+            runtimeBinding=binding("member-fixture-adapter"))
+        created = self.service.create_draft("alice", definition, "member-installed-tool")
+        self.service.publish("alice", created["id"], 1, "member-installed-publish")
         plan = {"materialRefs": [governance_fixture.ref(created)]}
         self.assertTrue(self.service.require_materials_current(plan)["allowed"])
-        self.service.replace_configuration(GovernanceConfig(review_mode="separate-admin", revision="legacy-contract-again"), expected_revision=new.revision)
+        registry.withdraw("tool", "member-fixture-adapter", "1")
         with self.assertRaises(HTTPException):
             self.service.require_materials_current(plan)
 
@@ -154,32 +149,11 @@ class RuntimeToolPolicyTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def test_old_policy_hash_and_old_persisted_body_are_preserved(self):
-        old = PlanPolicyConfig(name="admin-review", revision="plan-policy-v1")
-        expected = digest({"name": "admin-review", "revision": "plan-policy-v1", "review_ttl_seconds": 3600,
-            "knownTools": LEGACY_TOOLS, "readOnlyTools": ["ask_scope", "checksum", "literature_search"],
-            "readOnlyCapabilities": ["checksum:read", "question:ask", "research:read"]})
-        self.assertEqual(old.fingerprint, expected)
-        with self.fixture.store.engine.begin() as connection:
-            connection.execute(self.fixture.service.configs.update().values(body={key: value for key, value in asdict(old).items() if key != "tool_contract"}))
-        self.assertEqual(self.fixture.service.current()["fingerprint"], expected)
-
-    def test_orx_read_only_requires_operator_contract_and_stays_tool_scoped(self):
+    def test_runtime_tools_follow_selected_plan_without_secondary_policy_contract(self):
         fixture = self.fixture
-        plan = fixture.store.add(tools=["orx_discover"], capabilities=["research:read"], syntheticFixture=False, policy="read-only-auto")
-        fixture.service.replace_configuration(PlanPolicyConfig(name="read-only-auto", revision="legacy-read-only"), expected_revision="plan-policy-v1")
-        with self.assertRaises(HTTPException):
-            fixture.service.require_execution("alice", plan["id"])
-        for revision in ("plan-policy-v1", "department-member-v1"):
-            with self.subTest(revision=revision), self.assertRaises(ValueError):
-                PlanPolicyConfig(tool_contract="registered-runtime-v1", revision=revision)
-        configuration = PlanPolicyConfig(name="read-only-auto", revision="registered-read-only", tool_contract="registered-runtime-v1")
-        fixture.service.replace_configuration(configuration, expected_revision="legacy-read-only")
-        approved = fixture.service.require_tool("alice", plan["id"], "orx_discover")
-        self.assertEqual(approved["source"], "read-only-auto")
-        self.assertFalse(fixture.service.status("alice", plan["id"])["nativeToolConfirmationRequired"])
-        with self.assertRaises(HTTPException):
-            fixture.service.require_tool("alice", plan["id"], "run_experiment")
+        plan = fixture.store.add(tools=["orx_discover", "custom_member_tool"], capabilities=["research:read", "tool:invoke"], syntheticFixture=False)
+        self.assertEqual(fixture.service.require_execution("alice", plan)["source"], "member-self-service")
+        self.assertEqual(fixture.service.list_reviews("alice"), [])
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")

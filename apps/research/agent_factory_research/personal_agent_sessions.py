@@ -98,7 +98,7 @@ class PersonalAgentSessions:
         return {**project, 'connectionPin': pin, 'sessions': sessions}
 
     def attach(self, owner, connection_ref, native_project_id, native_session_id, request_id):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         native_id(native_project_id); native_id(native_session_id)
         old = self._command(owner, request_id)
@@ -156,12 +156,12 @@ class PersonalAgentSessions:
                     fingerprint=digest(intent), intent=intent, identity=None, identity_hash=digest(None),
                     state='acknowledged', result={'nativeProjectId': native_project_id,
                         'nativeSessionId': native_session_id, 'status': 'attached_read_only'}, created_at=now()))
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self._handle(owner, pin, capability='session:read')
         return self.request_result(owner, request_id)
 
     def _rebind_target(self, owner, session_id, new_connection_ref, expected_old_fingerprint):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         row = self._session(owner, session_id)
         body, old = row['body'], row['body']['connectionPin']
         if old['fingerprint'] != expected_old_fingerprint:
@@ -239,7 +239,7 @@ class PersonalAgentSessions:
 
     def rebind(self, owner, session_id, new_connection_ref, request_id, *,
                expected_old_fingerprint, expected_new_fingerprint):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         def same_request(previous):
             intent = previous['intent']
@@ -271,7 +271,7 @@ class PersonalAgentSessions:
         body = {**row['body'], 'connectionPin': new, 'bindingHistory': history}
         intent = self._intent('rebind', request_id, session_id, old, body['nativeProjectId'],
             body['nativeSessionId'], newConnectionPin=new)
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self._handle(owner, new, capability='session:read')
         try:
             with self.store.engine.begin() as conn:
@@ -308,7 +308,7 @@ class PersonalAgentSessions:
         return self.request_result(owner, request_id)
 
     def list(self, owner, connection_ref=None):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.store.engine.connect() as conn:
             rows = conn.execute(select(self.sessions.c.id, self.sessions.c.body).where(
                 self.sessions.c.owner_id == owner).order_by(self.sessions.c.created_at).limit(100)).mappings().all()
@@ -335,7 +335,7 @@ class PersonalAgentSessions:
         return dict(row) if row else None
 
     def _authorize(self, owner, intent, expected=None):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         identity = self.admission(owner, deepcopy(intent))
         if (not isinstance(identity, dict) or set(identity) != {'planId', 'taskId', 'nativeRunId', 'executionContract'}
                 or identity['executionContract'] != PERSONAL_CONTRACT):
@@ -394,7 +394,7 @@ class PersonalAgentSessions:
             nativeSessionId=native_session, **kwargs)
 
     def create(self, owner, connection_ref, native_project_id, request_id, *, title='Factory personal session'):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         if not isinstance(title, str) or not 1 <= len(title) <= 120:
             raise HTTPException(422, 'PERSONAL_TITLE_INVALID')
         old = self._command(owner, request_id)
@@ -430,7 +430,7 @@ class PersonalAgentSessions:
         return self._mutate(owner, session_id, request_id, 'interrupt')
 
     def _mutate(self, owner, session_id, request_id, action, **kwargs):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         row = self._session(owner, session_id)
         body = row['body']
         if not body['nativeSessionId']: raise HTTPException(409, 'PERSONAL_SESSION_ACK_UNKNOWN')
@@ -492,14 +492,14 @@ class PersonalAgentSessions:
             pass
 
     def request_result(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         row = self._command(owner, request_id)
         if row is None: raise HTTPException(404, 'PERSONAL_REQUEST_NOT_FOUND')
         return {'requestId': request_id, 'action': row['intent']['action'], 'state': row['state'],
             'result': row['result'], 'factoryIdentity': row['identity'], 'session': self.inspect(owner, row['intent']['factorySessionId'])}
 
     def inspect(self, owner, session_id, *, refresh=False):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         row = self._session(owner, session_id)
         if refresh and row['body']['nativeSessionId']:
             self._refresh(owner, row)

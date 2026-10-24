@@ -22,7 +22,6 @@ from pg_fixture import IsolatedPostgres
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory_server.main import create_app
-from agent_factory.plan_policy import PlanPolicyConfig
 from agent_factory_research.tools import build_tools
 
 
@@ -51,12 +50,12 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.observer = FactoryLifecycleObserver(self.store, self.auth, self.store.native_db,
                                                  lambda: self.app.app.state.queue_worker, interval=.05)
         self.owned = []
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", False)
 
     def tearDown(self):
         self.call(self.observer.stop)
         self.call(self.wired.stop)
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", False)
         self.call(self.app.app.state.queue_worker.start)
         for identifier in self.owned:
             self.store.request_cancel(identifier)
@@ -168,7 +167,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.assertEqual(before, {identifier: len(self.store.events(identifier)) for identifier in before})
         self.assertEqual([event["type"] for event in self.store.events(root)].count("lifecycle_cleanup_requested"), 1)
 
-    def test_02_current_role_revocation_cleans_paused_root_and_unstarted_queued_child(self):
+    def test_02_current_member_disabling_cleans_paused_root_and_unstarted_queued_child(self):
         root = self.task()
         self.wait_native(root, {"paused"})
         worker = self.app.app.state.queue_worker
@@ -177,12 +176,12 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         ticket = self.wait_native(child, {"queued"})
         self.assertEqual(ticket["attempt"], 0)
         self.assertEqual(self.store.artifacts(child), [])
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with mock.patch.object(self.auth, "_issue_native_token", side_effect=AssertionError("Cleanup is not owner impersonation")):
             self.call(self.observer.start)
             self.assert_stopped_without_user_read(root, child)
             self.call(self.observer.stop)
-        self.assertNotIn("factory-user", self.auth.authorization.roles_of("alice"))
+        self.assertTrue(self.auth.directory.get("alice")["disabled"])
         self.assertEqual(self.store.artifacts(child), [])
         self.assertFalse(any(event["type"] == "plan_bound" for event in self.store.events(child)))
         self.assertTrue(self.store.sql("SELECT reclaimed FROM af_delegation_roots WHERE root_id=:id", id=root)[0]["reclaimed"])
@@ -191,7 +190,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         with mock.patch.object(self.bridge, "submit", side_effect=HTTPException(503, "Controlled native acceptance uncertainty")):
             root = self.task()
         self.assertIsNone(self.native(root))
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with mock.patch("agent_factory.lifecycle_observer.Agent.acancel_run") as signal:
             observed = self.call(self.observer.observe_root, root)
         self.assertFalse(observed["allStopped"], observed)
@@ -244,7 +243,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.continue_native(root, approved=True)
         self.wait_condition(lambda: any(event["type"] == "compute_started" for event in self.store.events(root)),
                             "Actual owned experiment process did not start")
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         self.call(self.observer.start)
         self.wait_condition(lambda: any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete")
                                        for event in self.store.events(root)), "Owned running process did not clean up")
@@ -263,13 +262,13 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.assertTrue(observed["allStopped"], observed)
         self.assertTrue(self.store.task(root)["cancel_requested"])
         self.assertFalse(any(event["type"] == "experiment_completed" for event in self.store.events(root)))
-        self.assertNotIn("factory-user", self.auth.authorization.roles_of("alice"))
+        self.assertTrue(self.auth.directory.get("alice")["disabled"])
         print(f"Native running cleanup evidence: persistedRun=cancelled, effects=CANCELLED, queue={queue_status}, allStopped={observed['allStopped']}")
 
     def test_06_unknown_authority_store_does_not_imply_known_revocation(self):
         root = self.task()
         self.wait_native(root, {"paused"})
-        with mock.patch.object(self.auth, "require", side_effect=HTTPException(503, "Controlled authorization store outage")), \
+        with mock.patch.object(self.auth, "require_member", side_effect=HTTPException(503, "Controlled authorization store outage")), \
              mock.patch("agent_factory.lifecycle_observer.Agent.acancel_run") as signal:
             observed = self.call(self.observer.observe_root, root)
         self.assertTrue(observed["errors"], observed)
@@ -287,7 +286,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.assertTrue(self.store.task(root)["terminal"])
         events = self.store.events(root)
         artifacts = self.store.artifacts(root)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with mock.patch("agent_factory.lifecycle_observer.Agent.acancel_run") as signal:
             unchanged = self.call(self.observer.observe_root, root)
         self.assertTrue(unchanged["allStopped"])
@@ -296,7 +295,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.events(root), events)
         self.assertEqual(self.store.artifacts(root), artifacts)
         signal.assert_not_called()
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", False)
         self.request("POST", f"/jobs/{root}/children", 409,
                      json={"goal": "Controlled late child", "mode": "literature", "requestId": str(uuid4())})
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links WHERE root_id=:id", id=root)[0]["n"], 0)
@@ -353,7 +352,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         child = self.child(root)
         self.wait_native(child, {"paused"})
         self.assertIs(self.wired.worker_getter(), self.app.app.state.queue_worker)
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         with mock.patch.object(self.auth, "_issue_native_token", side_effect=AssertionError("Default cleanup must not impersonate owner")):
             self.call(self.wired.start)
             self.wait_condition(lambda: all(self.store.task(identifier)["terminal"] for identifier in (root, child)),
@@ -363,24 +362,15 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.assertTrue(self.store.task(identifier)["cancel_requested"])
             self.assertEqual(self.native(identifier)["status"], "cancelled")
             self.assertEqual(self.store.artifacts(identifier), [])
-        self.assertNotIn("factory-user", self.auth.authorization.roles_of("alice"))
+        self.assertTrue(self.auth.directory.get("alice")["disabled"])
         self.assertTrue(self.store.sql("SELECT reclaimed FROM af_delegation_roots WHERE root_id=:id", id=root)[0]["reclaimed"])
 
 
-    def test_11_reviewed_healthy_child_survives_pre_ack_and_completed_with_pending_descendant(self):
+    def test_11_healthy_child_survives_pre_ack_and_completed_with_pending_descendant(self):
         policy = self.state["plan_policy"]
-        original = policy.current()
-        policy.replace_configuration(PlanPolicyConfig(name="admin-review", revision="lifecycle-reviewed-child"),
-                                     expected_revision=original["revision"])
         try:
             plan = self.request("POST", "/plans", 201,
                                 json={"topic": "sort", "mode": "literature", "requestId": str(uuid4())})
-            review = self.request("POST", "/plan-reviews", 201,
-                                  json={"planId": plan["id"], "requestId": str(uuid4())})
-            approved = self.client.post(f'/api/factory/plan-reviews/{review["id"]}/decision',
-                headers={"Authorization": "Bearer " + self.auth._issue_native_token("manager")},
-                json={"approved": True, "requestId": str(uuid4())})
-            self.assertEqual(approved.status_code, 200, approved.text)
             job = self.request("POST", "/instances", 202,
                                json={"planId": plan["id"], "requestId": str(uuid4())})
             root = job["id"]
@@ -408,8 +398,8 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             child_task = self.store.task(child, "alice")
             receipt = policy.require_execution("alice", child_task["plan_id"],
                 run_context=mock.Mock(session_id=child, run_id=child_task["run_id"], user_id="alice"))
-            self.assertTrue(receipt["inheritedFromRoot"])
-            self.assertEqual(receipt["reviewId"], review["id"])
+            self.assertTrue(receipt["allowed"])
+            self.assertIsNone(receipt["reviewId"])
             grandchild = self.child(child)
             self.wait_native(grandchild, {"paused"})
             self.continue_native(child, answer="Controlled reviewed child synthetic evidence scope")
@@ -440,8 +430,6 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.assertTrue(self.store.sql("SELECT reclaimed FROM af_delegation_roots WHERE root_id=:id", id=root)[0]["reclaimed"])
         finally:
             self.call(self.wired.stop)
-            policy.replace_configuration(PlanPolicyConfig(name=original["name"], revision=original["revision"]),
-                                         expected_revision="lifecycle-reviewed-child")
 
     def test_12_exact_native_ack_preserves_rejection_and_stop_and_denies_resumed_or_direct_effects(self):
         """Controlled rejection/late-ACK phases; native queues/HITL are real."""
@@ -590,7 +578,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         service.revoke("alice", pin["ref"], uuid4().hex)
         with self.assertRaises(HTTPException):
             service.resolve("alice", pin["ref"], "orx")
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         self.assertIs(service.cleanup_handle("alice", pin, adapter_ref=ADAPTER_ID, task_id=root), handle)
         self.store.sql("UPDATE af_effects SET fingerprint=:hash WHERE effect_key=:key",
             hash="0" * 64, key=task["run_id"] + ":" + LAUNCH_EFFECT_KEY)

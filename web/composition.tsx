@@ -4,6 +4,7 @@ import App, { Workspace as WorkspaceShell, type WorkspaceSessionProps, type Work
 import { api } from './api.js';
 import { ApplicationComposer, type ComposerSeed } from './ApplicationComposer.js';
 import { ApplicationCatalog, type InstalledApplication } from './ApplicationCatalog.js';
+import { AccountManagement } from './AccountManagement.js';
 import { ResourceCenter } from './ResourceCenter.js';
 import { ModelSettings } from './ModelSettings.js';
 import { ConnectionsPanel } from './ConnectionsPanel.js';
@@ -36,6 +37,7 @@ function Pages({ context: original }: { context: WorkspaceContext }) {
   const { route, user, navigate, materials, targets, jobs, busy, act, notice, onTask } = context;
   const tab = route.tab;
   return <>
+    {tab === 'accounts' && user.role === 'manager' && <AccountManagement/>}
     {tab === 'catalog' && <ApplicationCatalog applications={installedApplications} onSelect={navigate}/>}
     {tab === 'resources' && <ResourceCenter onModels={() => navigate({ tab: 'models', modelReturn: 'resources' })} onConnections={() => navigate({ tab: 'connections' })} applicationLabel="OpenResearch" onResearch={() => navigate({ tab: 'openresearch' })}/>}
     {tab === 'models' && <ModelSettings key={`ModelSettings:${user.id}`} ownerId={user.id} onResearch={() => navigate({ tab: route.modelReturn ?? 'catalog' })} onCredentials={() => navigate({ tab: 'connections' })}/>}

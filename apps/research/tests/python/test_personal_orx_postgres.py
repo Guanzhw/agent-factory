@@ -39,9 +39,7 @@ class PersonalOrxPostgresTests(unittest.TestCase):
             app = create_app(settings)
             state = app.app.state.factory; store, auth = state['store'], state['auth']
             self.addCleanup(store.engine.dispose); self.addCleanup(store.native_db.db_engine.dispose)
-            auth.directory.upsert('orx-personal-reviewer', name='Controlled ORX reviewer')
-            auth.authorization.assign('orx-personal-reviewer', 'factory-manager')
-            publish_application(state, author='manager', reviewer='orx-personal-reviewer')
+            publish_application(state, author='manager')
             remote = store.connections.personal.configure('alice', PERSONAL_ORX_PROVIDER_ID,
                 fixture.config, 'native-orx-configure')
             store.connections.personal.verify('alice', remote['registrationRef'], 'native-orx-verify')

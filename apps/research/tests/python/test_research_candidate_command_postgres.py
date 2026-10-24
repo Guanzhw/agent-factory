@@ -50,7 +50,7 @@ class CandidateCommandPostgresTests(unittest.TestCase):
                     replace(original_price, adapter_id=original_price.adapter_id + '-candidate-training')),
             policy=self.store.settings.usage_policy)
         self.application = publish_research_application(self.state, target_ref='training',
-            comparison_manifest=self.manifest, author='manager', reviewer='bob', adapter_suffix='-candidate-training')
+            comparison_manifest=self.manifest, author='manager', adapter_suffix='-candidate-training')
         invocation = 'candidate-' + uuid4().hex[:16]
         proposal = self.post('/compositions/proposals', {'goal': 'Synthetic top-level stop command',
             'mode': 'controlled-fixture', 'applicationRef': {key: self.application[key] for key in ('id', 'version', 'sha256')}})

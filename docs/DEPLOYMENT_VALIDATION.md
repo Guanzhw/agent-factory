@@ -77,7 +77,7 @@ complete public configuration. No unspecified constructor defaults are filled in
 | `identity` | `accessToken`, `browserLogin`; at least one selected for configuration completeness |
 | `runtimeAttachment` | Explicit `{ "kind": "none" }`, or the native-runtime fields below |
 | `computeBackend` | Explicit `{ "kind": "none" }`, or a selected backend below |
-| `policy` | `temporaryPolicy`, `materialReviewMode`, `policyRevision`, `materialPolicyRevision`, `runtimeToolContract`, `maxWorkers`, `planReviewTtlSeconds` |
+| `policy` | `temporaryPolicy`, `materialReviewMode`, `policyRevision`, `materialPolicyRevision`, `runtimeToolContract`, `maxWorkers` |
 
 Runtime attachment and compute allocation are independent axes. A runtime-only
 configuration may explicitly select compute `none`; no allocator is then required.
@@ -103,14 +103,14 @@ The callback path must be `/api/factory/auth/callback`. ID-token and RFC9068 acc
 token contracts remain separate. Config validity does not prove existing owners
 or current SQL permissions, real IdP registration, login or deployment TLS.
 
-Policy validation reuses `PlanPolicyConfig` and `GovernanceConfig`. A production
-declaration accepts `temporaryPolicy` values `member-self-service`, `admin-review`
-or `read-only-auto`, and `materialReviewMode` values `member-self-service` or
-`separate-admin`. These fields are validated independently: `admin-review` is a
-plan-admission policy, while `separate-admin` is a material-publication policy.
-Declaration validity does not install these settings into Factory or prove
-production acceptance. Worker concurrency remains within the currently
-implemented 1–4 bound; this is not target-host capacity acceptance.
+Policy validation reuses `PlanPolicyConfig` and `GovernanceConfig`. Both
+`temporaryPolicy` and `materialReviewMode` must be `member-self-service`.
+Members publish and execute directly. Retired review modes and the removed
+`planReviewTtlSeconds` field fail validation. The revision fields identify the
+current configuration; historical approval records remain readable by their
+owners and do not gate startup or execution. Worker concurrency retains the
+implemented 1–4 bound. Declaration validity does not establish host capacity or
+production acceptance.
 
 Both compute backends require `kind`, `configurationRevision`, `owners`, `pool`
 and `limits`. `pool` requires `poolId`, `cpu`, `memoryMb`, `diskMb`, `maxLeases`,

@@ -84,9 +84,9 @@ class WorkflowControlTests(unittest.IsolatedAsyncioTestCase):
                        body=canonical(self.plan), hash=digest(self.plan))
         self.store.sql('CREATE TABLE af_effects(effect_key TEXT PRIMARY KEY,task_id TEXT,run_id TEXT,fingerprint TEXT,status TEXT,result JSONB)')
         self.runtime = Runtime()
-        def authority(owner, permission):
+        def authority(owner):
             if owner != 'alice': raise HTTPException(403, 'CONTROLLED_OWNER_DENIED')
-        self.auth = SimpleNamespace(require=authority)
+        self.auth = SimpleNamespace(require_member=authority)
         self.pin = {'adapterId': 'controlled', 'revision': '1', 'configFingerprint': 'b' * 64}
         self.service = OperationCustody(self.store, self.auth, runtimes={('controlled', '1', 'b' * 64): self.runtime})
         self.requirement = StepRequirement(step_id='review', step_name='Review', requires_confirmation=True).to_dict()

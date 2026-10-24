@@ -9,18 +9,28 @@ export interface PersonalToolDescriptor {
 }
 export interface PersonalToolConnection {
   ownerId: string; registrationRef: string; adapterId: string; revision: string; descriptorRevision: string;
-  kind: 'tool'; toolName: string; transport: 'cli' | 'mcp'; credentialRef: string; credentialRevision: string;
+  visibility: 'personal' | 'team'; isOwner: boolean;
+  kind: 'tool'; toolName: string; transport: 'cli' | 'mcp'; credentialRef?: string | null; credentialRevision?: string | null;
+  runtimeBinding?: { adapterId: string; revision: string; config: Record<string, unknown> };
   status: 'configured' | 'revoked' | 'credential_unavailable' | 'adapter_changed' | 'unavailable';
   available: boolean; capabilities: string[]; createdAt: string; expiresAt: null;
-  allowedActions: ('inspect' | 'revoke' | 'bind')[];
+  allowedActions: ('inspect' | 'revoke' | 'bind' | 'sharing')[];
 }
 export interface ToolConfiguration {
   adapterId: string; credentialRef: string; credentialRevision: string; requestId: string;
 }
 export interface ToolConnectionReceipt {
-  requestId: string; action: 'tool.configure' | 'tool.revoke'; tool: PersonalToolConnection;
+  requestId: string; action: 'tool.configure' | 'tool.revoke' | 'tool.sharing'; tool: PersonalToolConnection;
 }
 export interface ToolBindingReceipt { requestId: string; action: 'bind'; connection: UserConnection }
+export interface DiscoveredTool { name: string; description: string; inputSchema: Record<string, unknown>; readOnly: boolean }
+export interface MemberToolConfiguration {
+  transport: 'cli' | 'mcp'; toolName: string; description: string; inputSchema: Record<string, unknown>;
+  requestId: string; credentialRef?: string | null; credentialRevision?: string | null;
+  url?: string; remoteToolName?: string; executable?: string; arguments?: string[];
+  workingDirectory?: string; environment?: Record<string, string>; argumentOptions?: Record<string, string>;
+  stdinJson?: boolean; credentialEnvironmentVariable?: string; outputFormat?: 'json' | 'text'; readOnly?: boolean;
+}
 
 export class ToolConnectionError extends Error {
   constructor(public readonly status: number, public readonly code?: string) {
@@ -67,21 +77,29 @@ function descriptor(value: unknown): PersonalToolDescriptor {
 }
 
 function connection(value: unknown, owner: string): PersonalToolConnection {
-  if (!record(value) || value.ownerId !== owner || value.kind !== 'tool'
-      || ![value.registrationRef, value.adapterId, value.revision, value.descriptorRevision, value.toolName,
-        value.credentialRef, value.credentialRevision].every(identifier)
+  if (!record(value) || !identifier(value.ownerId) || value.isOwner !== (value.ownerId === owner)
+      || !['personal', 'team'].includes(String(value.visibility)) || value.kind !== 'tool'
+      || ![value.registrationRef, value.adapterId, value.revision, value.descriptorRevision, value.toolName].every(identifier)
+      || !(value.isOwner ? value.credentialRef === null && value.credentialRevision === null
+        || identifier(value.credentialRef) && identifier(value.credentialRevision)
+        : value.visibility === 'team' && value.credentialRef === undefined && value.credentialRevision === undefined)
       || !transport(value.transport) || !strings(value.capabilities) || !date(value.createdAt) || value.expiresAt !== null
       || !['configured', 'revoked', 'credential_unavailable', 'adapter_changed', 'unavailable'].includes(String(value.status))
       || typeof value.available !== 'boolean' || value.available !== (value.status === 'configured')
-      || !strings(value.allowedActions) || !value.allowedActions.every(action => ['inspect', 'revoke', 'bind'].includes(action))
+      || !strings(value.allowedActions) || !value.allowedActions.every(action => ['inspect', 'revoke', 'bind', 'sharing'].includes(action))
+      || !value.isOwner && value.allowedActions.some(action => action === 'revoke' || action === 'sharing')
       || value.allowedActions.includes('bind') && !value.available
       || value.status === 'revoked' && value.allowedActions.some(action => action !== 'inspect')) throw invalid();
-  return { ownerId: owner, registrationRef: value.registrationRef as string, adapterId: value.adapterId as string,
+  return { ownerId: value.ownerId as string, visibility: value.visibility as 'personal' | 'team', isOwner: value.isOwner as boolean,
+    registrationRef: value.registrationRef as string, adapterId: value.adapterId as string,
     revision: value.revision as string, descriptorRevision: value.descriptorRevision as string, kind: 'tool',
-    toolName: value.toolName as string, transport: value.transport, credentialRef: value.credentialRef as string,
-    credentialRevision: value.credentialRevision as string, status: value.status as PersonalToolConnection['status'],
+    toolName: value.toolName as string, transport: value.transport,
+    ...(value.isOwner ? { credentialRef: value.credentialRef as string | null, credentialRevision: value.credentialRevision as string | null } : {}),
+    status: value.status as PersonalToolConnection['status'],
     available: value.available, capabilities: [...value.capabilities], createdAt: value.createdAt, expiresAt: null,
-    allowedActions: [...value.allowedActions] as PersonalToolConnection['allowedActions'] };
+    allowedActions: [...value.allowedActions] as PersonalToolConnection['allowedActions'],
+    ...(record(value.runtimeBinding) ? { runtimeBinding: { adapterId: value.adapterId as string,
+      revision: value.descriptorRevision as string, config: {} } } : {}) };
 }
 
 function binding(value: unknown, owner: string): UserConnection {
@@ -101,6 +119,17 @@ function binding(value: unknown, owner: string): UserConnection {
 }
 
 export const personalToolConnectionApi = {
+  discover: async (owner: string, url: string, credential?: { credentialRef: string; credentialRevision: string }): Promise<{ url: string; tools: DiscoveredTool[] }> => {
+    const result = await safe('/personal-tools/discover', owner, 'POST', { url, ...credential });
+    if (!record(result) || typeof result.url !== 'string' || !Array.isArray(result.tools)
+        || result.tools.some(tool => !record(tool) || typeof tool.name !== 'string' || typeof tool.description !== 'string'
+          || !record(tool.inputSchema) || typeof tool.readOnly !== 'boolean')) throw invalid();
+    return { url: result.url, tools: result.tools as DiscoveredTool[] };
+  },
+  configureResource: async (owner: string, input: MemberToolConfiguration): Promise<PersonalToolConnection> =>
+    connection(await safe('/personal-tools/resources', owner, 'POST', input), owner),
+  sharing: async (owner: string, registrationRef: string, visibility: 'personal' | 'team', requestId: string): Promise<PersonalToolConnection> =>
+    connection(await safe(`/personal-tools/${ref(registrationRef)}/sharing`, owner, 'POST', { visibility, requestId }), owner),
   descriptors: async (owner: string, signal?: AbortSignal): Promise<PersonalToolDescriptor[]> => {
     const values = await safe('/personal-tools/descriptors', owner, 'GET', undefined, signal);
     if (!Array.isArray(values)) throw invalid();
@@ -121,7 +150,7 @@ export const personalToolConnectionApi = {
   },
   recover: async (owner: string, requestId: string): Promise<ToolConnectionReceipt> => {
     const value = await safe(`/personal-tools/requests/${ref(requestId)}`, owner);
-    if (!record(value) || value.requestId !== requestId || !['tool.configure', 'tool.revoke'].includes(String(value.action))) throw invalid();
+    if (!record(value) || value.requestId !== requestId || !['tool.configure', 'tool.revoke', 'tool.sharing'].includes(String(value.action))) throw invalid();
     return { requestId, action: value.action as ToolConnectionReceipt['action'], tool: connection(value.tool, owner) };
   },
   revoke: async (owner: string, registrationRef: string, requestId: string): Promise<PersonalToolConnection> => {

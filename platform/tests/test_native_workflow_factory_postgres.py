@@ -38,7 +38,6 @@ from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLim
 from agent_factory.main import create_app
 from agent_factory.native_workflows import NativeWorkflowRegistration
 from agent_factory.native_external_wait import factory_wait_operations
-from agent_factory.tool_policy_registry import ToolPolicyRegistration
 from agent_factory.usage_ledger import PricingRevision
 from agent_factory.workflow_contracts import WorkflowAcknowledgementUnknown
 from pg_fixture import IsolatedPostgres
@@ -188,11 +187,10 @@ def settings(configuration, backend, holder):
             lambda ctx: EnvironmentLimits(timeout_seconds=30), demo_only=True),
         AdapterRegistration('knowledge', 'native-fixture-knowledge-v1', '1',
             lambda ctx: KnowledgeContext('Representative synthetic source.', {'evidenceKind': 'synthetic'}), demo_only=True)]
-    return Settings(material_review_mode="separate-admin", db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
+    return Settings(db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
         jwt_key=configuration['jwtKey'], max_workers=1, max_tool_calls=32, max_user_tasks=3,
-        temporary_policy='admin-review', policy_revision=APP, material_policy_revision=APP,
+        temporary_policy='member-self-service', policy_revision=APP, material_policy_revision=APP,
         runtime_adapters=entries,
-        tool_policies=tuple(ToolPolicyRegistration(adapter_id=name+'-v1', adapter_revision='1', revision='1', read_only=False) for name in TOOLS),
         native_workflows=(NativeWorkflowRegistration(build_workflow(holder), '1', FUNCTION_TOOLS, 'a' * 64),),
         workflow_runtimes={(ADAPTER, '1', PIN['configFingerprint']): backend},
         usage_pricing=(PricingRevision(MODEL, '1', PROVIDER, MODEL, 'controlled-local-zero-v1',
@@ -215,8 +213,7 @@ def publish(state):
         if adapter:
             value['runtimeBinding'] = {'adapterId': adapter, 'revision': '1', 'config': {}}
         material = governance.create_draft('manager', value, identifier + ':draft')
-        review = governance.request_publication('manager', identifier, material['version'], identifier + ':review')
-        governance.decide_publication('bob', review['id'], True, identifier + ':approve')
+        governance.publish('manager', identifier, material['version'], identifier + ':publish')
         refs.append({key: material[key] for key in ('id', 'version', 'sha256')})
     value = {'id': APP, 'name': 'Representative workflow', 'description': 'Synthetic original-native workflow.',
         'defaultMode': 'workflow', 'discoveryKeywords': [], 'modes': {'workflow': {
@@ -225,8 +222,7 @@ def publish(state):
             'connectionRequirements': [], 'budget': {'toolCalls': 32, 'maxDepth': 1, 'maxChildren': 1,
                 'experimentSeconds': 30, 'outputBytes': 65536}}}}
     application = apps.create_draft('manager', value, APP + ':draft')
-    review = apps.request_publication('manager', APP, application['version'], APP + ':review')
-    apps.decide_publication('bob', review['id'], True, APP + ':approve')
+    apps.publish('manager', APP, application['version'], APP + ':publish')
     return application
 
 
@@ -266,8 +262,6 @@ def serve(configuration):
     app = create_app(settings(configuration, backend, holder))
     state = app.app.state.factory
     holder['state'] = state
-    state['auth'].authorization.unassign('bob', 'factory-user')
-    state['auth'].authorization.assign('bob', 'factory-manager')
     application = publish(state)
 
     def control(request):
@@ -310,9 +304,9 @@ def serve(configuration):
         if value == {'op': 'complete'}:
             backend.complete()
         elif value == {'op': 'revoke'}:
-            state['auth'].authorization.unassign('alice', 'factory-user')
+            state['auth'].directory.set_disabled('alice', True, actor='manager')
         elif value == {'op': 'restore'}:
-            state['auth'].authorization.assign('alice', 'factory-user')
+            state['auth'].directory.set_disabled('alice', False, actor='manager')
         elif value == {'op': 'observer-stop'}:
             await state['store'].lifecycle_observer.stop()
         elif value == {'op': 'observer-start'}:
@@ -448,8 +442,7 @@ class NativeWorkflowFactoryPostgresTests(unittest.TestCase):
             'inputValues': {'scenario': scenario}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
         self.assertEqual(plan['inputValues'], {'scenario': scenario})
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.post('/plan-reviews/' + review['id'] + '/decision', {'approved': True}, owner='manager')
+        self.assertEqual(plan['status'], 'ready')
         return self.post('/instances', {'planId': plan['id']})
 
     def until(self, task, predicate):

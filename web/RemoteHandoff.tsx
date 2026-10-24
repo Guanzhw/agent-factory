@@ -15,7 +15,7 @@ export function RemoteHandoffPanel({ detail, busy, act, onNotice }: { detail: Jo
   async function resume() {
     await act('resume-remote', async () => {
       const job = await api.resumeRemote(detail);
-      onNotice(job.executionPlacement?.state === 'PREPARING' ? '接收端仍等待管理员审查；原请求和固定方案已保留。' : '已核对并继续原远端请求。执行状态以接收端记录为准。');
+      onNotice(job.executionPlacement?.state === 'PREPARING' ? '接收端准备尚未完成；原请求和固定方案已保留，请继续核对状态。' : '已核对并继续原远端请求。执行状态以接收端记录为准。');
     });
   }
   const provenance = <details className="technical-detail"><summary>远端方案与绑定来源</summary><span>接收端方案 {evidence.receiverPlanId}</span><span>当前任务方案 {evidence.sourcePlanId ?? '未提供'}</span><span>源身份 {account(evidence.sourceOwner)} → 接收端身份 {account(evidence.receiverOwner)}</span><span>绑定证据 SHA-256 {evidence.proofHash}</span><span>原始范围 SHA-256 {evidence.manifestHash}</span><span>源配置版本 {evidence.sourceConfiguration.revision}</span><span>源配置 SHA-256 {evidence.sourceConfiguration.sha256}</span><span>接收端配置版本 {evidence.receiverConfiguration.revision}</span><span>接收端配置 SHA-256 {evidence.receiverConfiguration.sha256}</span>
@@ -23,5 +23,5 @@ export function RemoteHandoffPanel({ detail, busy, act, onNotice }: { detail: Jo
     <span>原请求 {evidence.requestId}</span><span>接收记录 {evidence.receiptId}</span>{evidence.receiverTaskId && <span>接收端根任务 {evidence.receiverTaskId}</span>}
   </details>;
   if (state.kind === 'execution') return <section className="remote-provenance" aria-label="远端执行来源">{provenance}<RemoteProcessEvidence detail={detail}/></section>;
-  return <section className="attention-panel" aria-label="接收端方案审查"><h3>等待接收端管理员审查</h3><p>接收端需要独立审查这份固定方案与绑定范围，尚未创建接收端执行任务。</p><p className="quiet">这是方案准入审查。接收端同意后，任务内需要确认的工具调用仍会另行询问。</p><p>接收端方案 <code className="remote-plan-reference">{evidence.receiverPlanId}</code></p>{provenance}<button className="primary" disabled={!!busy || !detail.job.allowedActions?.includes('resume_remote')} onClick={() => void resume()}>{busy === 'resume-remote' ? '等待远端确认…' : '核对接收端审批并继续'}</button><p className="quiet">此操作沿用原请求。你也可以取消该请求或核对状态；不会替管理员批准方案。</p></section>;
+  return <section className="attention-panel" aria-label="接收端准备待核对"><h3>接收端准备尚未完成</h3><p>原请求与绑定范围已保存，接收端执行任务尚未确认。请核对准备结果，或沿用原请求继续准备。</p><p>接收端方案 <code className="remote-plan-reference">{evidence.receiverPlanId}</code></p>{provenance}<button className="primary" disabled={!!busy || !detail.job.allowedActions?.includes('resume_remote')} onClick={() => void resume()}>{busy === 'resume-remote' ? '等待远端确认…' : '核对并继续原请求'}</button><p className="quiet">此操作保留原请求身份。你也可以请求取消或核对执行状态。</p></section>;
 }

@@ -29,6 +29,7 @@ from agent_factory.auth import AuthService
 from agent_factory_research.bootstrap_catalog import SEEDS
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory_research.demo_model import DemoModel
+from agent_factory_research.synthetic_runtime import default_bindings
 from agent_factory_server.main import create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance, material_governance_router
 from agent_factory.store import digest, now
@@ -82,14 +83,13 @@ class MaterialGovernanceTests(unittest.TestCase):
         self.auth = AuthService(self.settings, self.db)
         self.auth.initialize_demo()
         # Second administrator and editor exist only in this disposable native DB.
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
-        self.auth.authorization.define_role("fixture-editor-role", ["components:read", "components:write"])
+        self.auth.account_roles.unassign("bob", "factory-user")
+        self.auth.account_roles.assign("bob", "factory-manager")
         self.auth.directory.upsert("fixture-editor", name="Owned editor fixture")
-        self.auth.authorization.assign("fixture-editor", "fixture-editor-role")
         self.store = PortableMetadata(self.db, self.settings)
+        self.store.execution_bindings = default_bindings(self.settings, self.store)
         self.service = MaterialGovernance(self.store, self.auth, GovernanceConfig(
-            review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+            review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
 
     def tearDown(self):
         self.db.db_engine.dispose()
@@ -100,26 +100,36 @@ class MaterialGovernanceTests(unittest.TestCase):
 
     def publish(self, material=None):
         material = material or self.draft()
-        review = self.service.request_publication("manager", material["id"], material["version"], str(uuid4()))
-        decision = self.service.decide_publication("bob", review["id"], True, str(uuid4()))
-        return material, decision
+        published = self.service.publish("manager", material["id"], material["version"], str(uuid4()))
+        return material, published
 
-    def test_legacy_requires_separate_current_native_admin_and_exact_digest(self):
-        material = self.draft()
+    def historical_review(self, material):
+        row = {"id": str(uuid4()), "material_id": material["id"], "version": material["version"],
+               "author_id": "manager", "material_sha": material["sha256"],
+               "immutable_digest": self.service._immutable(material), "policy_revision": "material-governance-v1",
+               "policy_hash": self.service.current()["fingerprint"], "requested_by": "manager",
+               "created_at": now(), "decision": "pending"}
+        with self.store.engine.begin() as conn:
+            conn.execute(self.service.reviews.insert().values(**row))
+        return row
+
+
+    def test_member_publication_preserves_exact_digest_and_has_no_review_execution(self):
+        material = self.service.create_draft("alice", definition(), "member-draft")
         original = self.store.raw(material)["body"]
-        review = self.service.request_publication("manager", material["id"], 1, "review-first")
-        self.assertEqual(review["sha256"], material["sha256"])
-        self.assertEqual(review["immutableDigest"], self.service._immutable(original))
-        self.assertTrue(review["taskApprovalSeparate"])
-        for actor in ("manager", "alice", "fixture-editor"):
-            with self.assertRaises(HTTPException) as denied:
-                self.service.decide_publication(actor, review["id"], True, "decision-" + actor)
-            self.assertEqual(denied.exception.status_code, 403)
-        approved = self.service.decide_publication("bob", review["id"], True, "bob-approves")
-        self.assertEqual(approved["reviewerId"], "bob")
+        published = self.service.publish("alice", material["id"], 1, "member-publish")
+        self.assertEqual(published["sha256"], material["sha256"])
         self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
         self.assertEqual(self.store.raw(material)["body"], original)
-        self.assertTrue(self.store.raw(material)["published"])
+        for actor in ("alice", "manager", "bob"):
+            with self.subTest(actor=actor):
+                for action in (lambda: self.service.request_publication(actor, material["id"], 1, "review"),
+                               lambda: self.service.decide_publication(actor, "historical", True, "decision")):
+                    with self.assertRaises(HTTPException) as retired:
+                        action()
+                    self.assertEqual(retired.exception.status_code, 410)
+        self.assertEqual(self.service.list_reviews("alice"), [])
+
 
     def test_import_all_six_kinds_is_inert_and_persists_provenance(self):
         values = [definition(kind=kind) for kind in ("skill", "prompt", "knowledge", "model", "environment")]
@@ -156,6 +166,33 @@ class MaterialGovernanceTests(unittest.TestCase):
         with self.store.engine.connect() as conn:
             self.assertEqual(list(conn.execute(select(self.store.materials))), [])
 
+    def test_member_registered_tools_publish_without_operator_policy_registration(self):
+        registry = self.store.execution_bindings
+        registry.register("tool", "personal-tool-command", "1", lambda _: None,
+                          tool_name="owned_member_tool", permissions=("member:owned-tool",))
+        material = self.service.create_draft("alice", definition(kind="tool", content="owned_member_tool",
+            permissions=["member:owned-tool"], runtimeBinding={"adapterId": "personal-tool-command", "revision": "1", "config": {}}), "dynamic-draft")
+        self.service.publish("alice", material["id"], 1, "dynamic-publish")
+        self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
+        registry.withdraw("tool", "personal-tool-command", "1")
+        with self.assertRaises(HTTPException):
+            self.service.require_materials_current({"materialRefs": [ref(material)]})
+
+    def test_historical_configuration_never_blocks_startup_or_overrides_current_contract(self):
+        material, _ = self.publish()
+        legacy = {"review_mode": "separate-admin", "revision": "legacy-authority", "tool_contract": "legacy-v1"}
+        with self.store.engine.begin() as conn:
+            conn.execute(self.service.configs.insert().values(revision="legacy-authority", hash="original-legacy-hash", body=legacy))
+            conn.execute(self.service.current_config.insert().values(id="current", revision="legacy-authority"))
+        restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(), seed_materials=SEEDS)
+        self.assertEqual(restarted.current()["review_mode"], "member-self-service")
+        self.assertTrue(restarted.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
+        with self.store.engine.connect() as conn:
+            saved = conn.execute(select(restarted.configs)).mappings().one()
+            self.assertEqual(saved["body"], legacy)
+            self.assertEqual(saved["hash"], "original-legacy-hash")
+            self.assertEqual(conn.execute(select(restarted.current_config.c.revision)).scalar_one(), "legacy-authority")
+
     def test_registered_tool_binding_and_reserved_identity_cannot_expand(self):
         for value in [definition(kind="tool", content="arbitrary_shell", permissions=["checksum:read"]),
                       definition(kind="tool", content="checksum", permissions=["experiment:synthetic"]),
@@ -181,20 +218,17 @@ class MaterialGovernanceTests(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 self.service.require_materials_current(plan)
 
-    def test_revoked_author_or_admin_cannot_replay_persisted_commands(self):
+    def test_revoked_member_cannot_replay_persisted_commands(self):
         material = self.service.create_draft("fixture-editor", definition(id="revocation-fixture"), "editor-original")
-        review = self.service.request_publication("fixture-editor", material["id"], 1, "editor-review")
-        decision = self.service.decide_publication("bob", review["id"], True, "bob-original")
-        self.assertEqual(decision["decision"], "approved")
-        self.auth.authorization.unassign("fixture-editor", "fixture-editor-role")
-        self.auth.directory.set_disabled("bob", True)
-        with self.assertRaises(HTTPException):
-            self.service.create_draft("fixture-editor", definition(id="revocation-fixture"), "editor-original")
-        with self.assertRaises(HTTPException):
-            self.service.decide_publication("bob", review["id"], True, "bob-original")
-        with self.assertRaises(HTTPException):
-            self.service.withdraw("bob", material["id"], 1, "revoked-withdrawal")
+        self.service.publish("fixture-editor", material["id"], 1, "publish-original")
+        self.auth.directory.set_disabled("fixture-editor", True)
+        for action in (lambda: self.service.create_draft("fixture-editor", definition(id="revocation-fixture"), "editor-original"),
+                       lambda: self.service.publish("fixture-editor", material["id"], 1, "publish-original"),
+                       lambda: self.service.withdraw("fixture-editor", material["id"], 1, "withdraw")):
+            with self.assertRaises(HTTPException):
+                action()
         self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
+
 
     def test_immutable_pinned_dependency_closure_and_withdrawal(self):
         dependency, _ = self.publish()
@@ -206,7 +240,7 @@ class MaterialGovernanceTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.draft(dependencies=[{**ref(dependency), "sha256": "0" * 64}])
         before = copy.deepcopy(self.store.raw(dependency))
-        self.service.withdraw("bob", dependency["id"], 1, "withdraw-dependency", "Fixture review rescinded")
+        self.service.withdraw("manager", dependency["id"], 1, "withdraw-dependency", "Fixture review rescinded")
         self.assertEqual(before, self.store.raw(dependency))
         with self.assertRaises(HTTPException):
             self.service.require_materials_current(plan)
@@ -215,13 +249,14 @@ class MaterialGovernanceTests(unittest.TestCase):
             self.draft(dependencies=[ref(dependency)])
 
     def test_archive_and_withdraw_preserve_versions_hashes_and_history(self):
-        material, decision = self.publish()
+        material, _ = self.publish()
+        review = self.historical_review(material)
         before = self.store.raw(material)
         self.service.archive("manager", material["id"], 1, "archive-original", "Superseded fixture")
         self.assertEqual(self.store.raw(material), before)
         inspection = self.service.inspect_version("manager", material["id"], 1)
         self.assertEqual(inspection["governance"]["state"], "archived")
-        self.assertEqual(self.service.inspect_review("bob", decision["id"])["sha256"], material["sha256"])
+        self.assertEqual(self.service.inspect_review("manager", review["id"])["sha256"], material["sha256"])
         with self.assertRaises(HTTPException):
             self.service.require_materials_current({"materialRefs": [ref(material)]})
         with self.assertRaises(HTTPException):
@@ -230,26 +265,30 @@ class MaterialGovernanceTests(unittest.TestCase):
         self.assertEqual(fresh["version"], 2)
         self.assertEqual(self.store.raw(material), before)
 
-    def test_scope_author_lineage_and_current_revocation(self):
-        material = self.service.create_draft("fixture-editor", definition(), "editor-draft")
-        review = self.service.request_publication("fixture-editor", material["id"], 1, "editor-review")
-        self.assertEqual(len(self.service.list_reviews("fixture-editor")), 1)
-        for action in [lambda: self.service.inspect_review("alice", review["id"]),
-                       lambda: self.service.inspect_version("alice", material["id"], 1),
-                       lambda: self.service.list_reviews("fixture-editor", all_authors=True),
-                       lambda: self.service.create_draft("alice", definition(), "user-draft"),
-                       lambda: self.service.withdraw("fixture-editor", material["id"], 1, "editor-withdraw")]:
+    def test_owner_scope_has_no_administrator_override_for_drafts_or_shared_versions(self):
+        material = self.service.create_draft("alice", definition(), "member-draft")
+        for actor in ("manager", "bob"):
             with self.assertRaises(HTTPException):
-                action()
-        self.auth.authorization.define_role("second-editor-role", ["components:read", "components:write"])
-        self.auth.directory.upsert("second-editor", name="Owned second editor")
-        self.auth.authorization.assign("second-editor", "second-editor-role")
-        with self.assertRaises(HTTPException):
-            self.service.create_draft("second-editor", definition(id=material["id"]), "overwrite-author")
-        self.auth.directory.set_disabled("bob", True)
-        with self.assertRaises(HTTPException):
-            self.service.decide_publication("bob", review["id"], True, "revoked-admin")
-        self.assertFalse(self.store.raw(material)["published"])
+                self.service.inspect_version(actor, material["id"], 1)
+        self.service.publish("alice", material["id"], 1, "publish")
+        for actor in ("manager", "bob"):
+            self.assertEqual(self.service.inspect_version(actor, material["id"], 1)["material"]["sha256"], material["sha256"])
+            for action in (lambda: self.service.create_draft(actor, definition(id=material["id"]), "takeover"),
+                           lambda: self.service.publish(actor, material["id"], 1, "republish"),
+                           lambda: self.service.withdraw(actor, material["id"], 1, "withdraw"),
+                           lambda: self.service.archive(actor, material["id"], 1, "archive")):
+                with self.assertRaises(HTTPException):
+                    action()
+        copied = self.service.create_draft("bob", definition(), "copy-public-material")
+        self.assertNotEqual(copied["id"], material["id"])
+        self.assertEqual(self.service.inspect_version("bob", copied["id"], 1)["governance"]["author_id"], "bob")
+        self.service.publish("bob", copied["id"], 1, "publish-copy")
+        self.assertEqual(self.service.inspect_version("alice", material["id"], 1)["material"]["sha256"], material["sha256"])
+        revised = self.service.create_draft("alice", definition(id=material["id"]), "revision")
+        self.assertEqual(revised["version"], 2)
+        self.service.withdraw("alice", material["id"], 1, "owner-withdraw")
+        self.service.archive("alice", material["id"], 1, "owner-archive")
+
 
     def test_semantic_keys_conflict_deduplicate_and_replay_cannot_reactivate(self):
         material = self.service.create_draft("manager", definition(id="semantic-material"), "draft-key")
@@ -258,49 +297,45 @@ class MaterialGovernanceTests(unittest.TestCase):
             self.service.create_draft("manager", definition(id="semantic-material", name="Changed"), "draft-key")
         with self.assertRaises(HTTPException):
             self.service.archive("manager", material["id"], 1, "draft-key")
-        review = self.service.request_publication("manager", material["id"], 1, "review-key")
-        self.assertEqual(review, self.service.request_publication("manager", material["id"], 1, "review-key"))
-        decision = self.service.decide_publication("bob", review["id"], True, "decision-key")
-        self.assertEqual(decision, self.service.decide_publication("bob", review["id"], True, "decision-key"))
-        with self.assertRaises(HTTPException):
-            self.service.decide_publication("bob", review["id"], False, "decision-key")
-        self.service.withdraw("bob", material["id"], 1, "withdraw-key")
-        self.assertEqual(decision, self.service.decide_publication("bob", review["id"], True, "decision-key"))
-        self.assertEqual(self.service.inspect_version("bob", material["id"], 1)["governance"]["state"], "withdrawn")
-        restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+        published = self.service.publish("manager", material["id"], 1, "publish-key")
+        self.assertEqual(published, self.service.publish("manager", material["id"], 1, "publish-key"))
+        self.service.withdraw("manager", material["id"], 1, "withdraw-key")
+        self.assertEqual(published, self.service.publish("manager", material["id"], 1, "publish-key"))
+        self.assertEqual(self.service.inspect_version("manager", material["id"], 1)["governance"]["state"], "withdrawn")
+        restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
         self.assertEqual(restarted.create_draft("manager", definition(id="semantic-material"), "draft-key"), material)
         with self.assertRaises(HTTPException):
             restarted.require_materials_current({"materialRefs": [ref(material)]})
 
-    def test_policy_revision_cannot_rebind_or_approve_stale_review(self):
+
+    def test_policy_revision_preserves_read_only_history_and_current_publication(self):
         material = self.draft()
-        review = self.service.request_publication("manager", material["id"], 1, "previous-policy-review")
+        review = self.historical_review(material)
+        self.service.publish("manager", material["id"], 1, "publish")
         with self.assertRaises(ValueError):
             self.service.replace_configuration(GovernanceConfig(review_mode="demo-self-review", revision="material-governance-v1"), expected_revision="material-governance-v1")
-        config = GovernanceConfig(review_mode="separate-admin", revision="governance-v2")
+        config = GovernanceConfig(review_mode="member-self-service", revision="governance-v2")
         self.service.replace_configuration(config, expected_revision="material-governance-v1")
-        with self.assertRaises(HTTPException):
-            self.service.decide_publication("bob", review["id"], True, "stale-decision")
         self.assertFalse(self.service.inspect_review("manager", review["id"])["currentPolicy"])
-        with self.assertRaises(ValueError):
-            MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+        self.assertTrue(self.service.inspect_review("manager", review["id"])["readOnly"])
+        self.assertEqual(self.service.list_reviews("bob", all_authors=True), [])
+        self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
+        restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
+        self.assertEqual(restarted.current()["revision"], "material-governance-v1")
         self.assertEqual(MaterialGovernance(self.store, self.auth, config, seed_materials=SEEDS).current()["revision"], "governance-v2")
 
-    def test_explicit_demo_compatibility_never_authorizes_production(self):
+
+    def test_review_modes_are_removed_and_direct_publication_works_in_production(self):
         material = self.draft()
-        with self.assertRaises(HTTPException):
-            self.service.publish_demo_compatibility("manager", material["id"], 1, "demo-publish")
-        config = GovernanceConfig(review_mode="demo-self-review", revision="explicit-demo")
-        self.service.replace_configuration(config, expected_revision="material-governance-v1")
-        result = self.service.publish_demo_compatibility("manager", material["id"], 1, "demo-publish")
-        self.assertTrue(result["demoCompatibility"])
-        self.assertEqual(result["authorId"], result["reviewerId"])
-        self.service.replace_configuration(GovernanceConfig(review_mode="separate-admin", revision="strict-again"), expected_revision="explicit-demo")
-        with self.assertRaises(HTTPException):
-            self.service.require_materials_current({"materialRefs": [ref(material)]})
+        for mode in ("separate-admin", "demo-self-review"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                GovernanceConfig(review_mode=mode, revision="retired-mode")
+        with self.assertRaises(HTTPException) as retired:
+            self.service.publish_demo_compatibility("manager", material["id"], 1, "old-demo")
+        self.assertEqual(retired.exception.status_code, 410)
         self.settings.demo = False
-        with self.assertRaises(ValueError):
-            self.service.replace_configuration(config, expected_revision="strict-again")
+        self.service.publish("manager", material["id"], 1, "publish-in-production")
+        self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
         with self.assertRaises(ValueError):
             self.service.adopt_demo_bootstrap()
 
@@ -317,8 +352,10 @@ class MaterialGovernanceTests(unittest.TestCase):
             conn.execute(self.store.audit.insert().values(actor_id="demo-bootstrap", action="material.seed", target_id="checksum-tool",
                 body={"version": 1, "sha256": checksum["sha256"]}, created_at=now()))
         self.assertEqual(len(self.service.adopt_demo_bootstrap()["adopted"]), 9)
-        self.service.withdraw("bob", "checksum-tool", 1, "seed-withdraw")
-        self.assertEqual(MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS).adopt_demo_bootstrap()["adopted"], [])
+        with self.store.engine.begin() as conn:
+            conn.execute(self.service.versions.update().where(self.service.versions.c.material_id == "checksum-tool").values(author_id="manager"))
+        self.service.withdraw("manager", "checksum-tool", 1, "seed-withdraw")
+        self.assertEqual(MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS).adopt_demo_bootstrap()["adopted"], [])
         with self.assertRaises(HTTPException):
             self.service.require_materials_current({"materialRefs": [ref(checksum)]})
 
@@ -332,29 +369,32 @@ class MaterialGovernanceTests(unittest.TestCase):
             self.service.require_materials_current({"materialRefs": [ref(material)]})
         self.assertEqual(self.service.filter_active([material]), [])
 
-    def test_native_router_rejects_body_identity_and_untyped_decisions(self):
+    def test_native_router_rejects_body_identity_and_retired_review_actions(self):
         native = AgentOS(id="material-router-fixture", agents=[Agent(id="factory-executor", db=self.db, model=DemoModel(), telemetry=False)],
                          db=self.db, **self.auth.agentos_kwargs(), mcp=False, scheduler=False, telemetry=False).get_app()
         native.include_router(material_governance_router(self.auth, self.service))
         with TestClient(native) as client:
+            alice = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
             manager = {"Authorization": "Bearer " + self.auth.issue_demo_token("manager")}
-            bob = {"Authorization": "Bearer " + self.auth.issue_demo_token("bob")}
-            self.assertEqual(client.get("/api/factory/material-governance/policy").status_code, 401)
+            prefix = "/api/factory/material-governance"
+            self.assertEqual(client.get(prefix + "/policy").status_code, 401)
             body = {"definition": definition(), "requestId": "route-draft"}
-            self.assertEqual(client.post("/api/factory/material-governance/drafts", json={**body, "authorId": "bob"}, headers=manager).status_code, 422)
-            created = client.post("/api/factory/material-governance/drafts", json=body, headers=manager)
+            self.assertEqual(client.post(prefix + "/drafts", json={**body, "authorId": "manager"}, headers=alice).status_code, 422)
+            created = client.post(prefix + "/drafts", json=body, headers=alice)
             self.assertEqual(created.status_code, 201, created.text)
             material = created.json()
-            response = client.post("/api/factory/material-governance/reviews", json={"materialId": material["id"], "version": 1, "requestId": "route-review"}, headers=manager)
-            self.assertEqual(response.status_code, 201, response.text)
-            review = response.json()
-            self.assertEqual(review["authorId"], "manager")
-            path = "/api/factory/material-governance/reviews/" + review["id"] + "/decision"
-            self.assertEqual(client.post(path, json={"approved": "yes", "requestId": "untyped"}, headers=bob).status_code, 422)
-            self.assertEqual(client.post(path, json={"approved": True, "requestId": "self"}, headers=manager).status_code, 403)
-            result = client.post(path, json={"approved": True, "requestId": "native-admin"}, headers=bob)
+            retired = client.post(prefix + "/reviews", json={"materialId": material["id"], "version": 1, "requestId": "old-review"}, headers=alice)
+            self.assertEqual(retired.status_code, 410, retired.text)
+            path = prefix + "/reviews/historical/decision"
+            self.assertEqual(client.post(path, json={"approved": "yes", "requestId": "untyped"}, headers=manager).status_code, 422)
+            self.assertEqual(client.post(path, json={"approved": True, "requestId": "old-decision"}, headers=manager).status_code, 410)
+            result = client.post(prefix + f'/versions/{material["id"]}/1/publish', json={"requestId": "publish"}, headers=alice)
             self.assertEqual(result.status_code, 200, result.text)
-            self.assertEqual(result.json()["reviewerId"], "bob")
+            self.assertTrue(result.json()["published"])
+            for action in ("publish", "archive", "withdraw"):
+                denied = client.post(prefix + f'/versions/{material["id"]}/1/' + action, json={"requestId": "admin-" + action}, headers=manager)
+                self.assertEqual(denied.status_code, 404, denied.text)
+
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated PostgreSQL acceptance")
@@ -362,14 +402,18 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
     def setUp(self):
         self.database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
         self.directory = TemporaryDirectory()
-        self.app = create_app(Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
-            material_review_mode="separate-admin", material_policy_revision="material-governance-v1"))
+        self.settings = Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1,
+            material_review_mode="member-self-service", material_policy_revision="material-governance-v1")
+        self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
-        self.auth.authorization.unassign("bob", "factory-user")
-        self.auth.authorization.assign("bob", "factory-manager")
-        self.service = self.state.get("material_governance") or MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1"), seed_materials=SEEDS)
+        self.auth.account_roles.unassign("bob", "factory-user")
+        self.auth.account_roles.assign("bob", "factory-manager")
+        self.service = self.state.get("material_governance") or MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
         self.service.adopt_demo_bootstrap()
+        # This disposable fixture explicitly gives the test member ownership.
+        with self.store.engine.begin() as conn:
+            conn.execute(self.service.versions.update().values(author_id="manager"))
         if not self.state.get("material_governance"):
             self.app.app.include_router(material_governance_router(self.auth, self.service))
             # Explicit owned integration fixture until the root wires production.
@@ -451,6 +495,75 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         self.assertEqual([event for event in stopped["events"] if event["type"] in evidence],
                          [event for event in baseline["events"] if event["type"] in evidence])
 
+    def test_old_configuration_and_reviews_survive_actual_restart_and_member_publication(self):
+        material = self.service.create_draft("alice", definition(id="historical-member-material"), "old-material-draft")
+        self.service.publish("alice", material["id"], 1, "old-material-publish")
+        applications = self.state["applications"]
+        source = applications.list_active("alice")[0]
+        app_definition = {key: value for key, value in source.items()
+                          if key not in {"id", "version", "createdAt", "schema", "origin", "sha256"}}
+        app = applications.create_draft("alice", {**app_definition, "id": "historical-member-app"}, "old-app-draft")
+        applications.publish("alice", app["id"], 1, "old-app-publish")
+        legacy_config = {"review_mode": "separate-admin", "revision": "old-separate-review",
+                         "tool_contract": "legacy-v1", "source_synthesis_enabled": False}
+        review = {"id": "old-material-review", "material_id": material["id"], "version": 1,
+                  "author_id": "alice", "material_sha": material["sha256"],
+                  "immutable_digest": self.service._immutable(material), "policy_revision": legacy_config["revision"],
+                  "policy_hash": "old-material-policy-hash", "requested_by": "alice", "created_at": now(),
+                  "decision": "approved", "reviewer_id": "manager", "decided_at": now()}
+        app_review = {"id": "old-application-review", "application_id": app["id"], "version": 1,
+                      "author_id": "alice", "sha": app["sha256"], "policy_hash": "old-application-policy-hash",
+                      "decision": "approved", "reviewer_id": "manager", "created_at": now(), "decided_at": now()}
+        with self.store.engine.begin() as conn:
+            conn.execute(self.service.configs.insert().values(revision=legacy_config["revision"], hash="original-old-hash", body=legacy_config))
+            conn.execute(self.service.current_config.insert().values(id="current", revision=legacy_config["revision"]))
+            conn.execute(self.service.reviews.insert().values(**review))
+            conn.execute(self.service.versions.update().where(self.service.versions.c.material_id == material["id"]).values(review_id=review["id"]))
+            conn.execute(applications.reviews.insert().values(**app_review))
+            conn.execute(applications.states.update().where(applications.states.c.id == app["id"]).values(review_id=app_review["id"]))
+            original_config = dict(conn.execute(select(self.service.configs)).mappings().one())
+            original_review = dict(conn.execute(select(self.service.reviews)).mappings().one())
+            original_app_review = dict(conn.execute(select(applications.reviews)).mappings().one())
+        self.client.__exit__(None, None, None)
+        self.store.engine.dispose()
+        self.store.native_db.db_engine.dispose()
+        self.app = create_app(self.settings)
+        self.state = self.app.app.state.factory
+        self.store, self.auth = self.state["store"], self.state["auth"]
+        self.service = self.state["material_governance"]
+        applications = self.state["applications"]
+        self.client = TestClient(self.app).__enter__()
+        self.login("alice")
+        material_path = "/api/factory/material-governance"
+        self.assertEqual(self.client.get(material_path + "/reviews/old-material-review").json()["decision"], "approved")
+        self.assertTrue(self.client.get("/api/factory/applications/reviews/old-application-review").json()["readOnly"])
+        self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
+        self.assertEqual(applications.require_current(ref(app)), app)
+        self.assertEqual(self.client.post(material_path + "/reviews", json={"materialId": material["id"], "version": 1, "requestId": "retired-request"}).status_code, 410)
+        self.assertEqual(self.client.post(material_path + "/reviews/old-material-review/decision", json={"approved": True, "requestId": "retired-decision"}).status_code, 410)
+        self.assertEqual(self.client.post(f'/api/factory/applications/{app["id"]}/versions/1/review', json={"requestId": "retired-app-request"}).status_code, 410)
+        self.assertEqual(self.client.post("/api/factory/applications/reviews/old-application-review/decision", json={"approved": True, "requestId": "retired-app-decision"}).status_code, 410)
+        fresh = self.client.post(material_path + "/drafts", json={"definition": definition(), "requestId": "new-member-material"})
+        self.assertEqual(fresh.status_code, 201, fresh.text)
+        published = self.client.post(f'{material_path}/versions/{fresh.json()["id"]}/1/publish', json={"requestId": "new-material-publish"})
+        self.assertEqual(published.status_code, 200, published.text)
+        revised = self.client.post(f'/api/factory/applications/{app["id"]}/versions/1/revise', json={"definition": {**app_definition, "id": app["id"]}, "requestId": "new-member-app"})
+        self.assertEqual(revised.status_code, 201, revised.text)
+        published_app = self.client.post(f'/api/factory/applications/{app["id"]}/versions/{revised.json()["version"]}/publish', json={"requestId": "new-app-publish"})
+        self.assertEqual(published_app.status_code, 200, published_app.text)
+        self.login("manager")
+        self.assertEqual(self.client.get(material_path + "/reviews/old-material-review").status_code, 404)
+        self.assertEqual(self.client.get("/api/factory/applications/reviews/old-application-review").status_code, 404)
+        self.assertEqual(self.client.get(material_path + "/reviews?allAuthors=true").json(), [])
+        self.assertEqual(self.client.get("/api/factory/applications/reviews?allAuthors=true").json(), [])
+        with self.store.engine.connect() as conn:
+            self.assertEqual(dict(conn.execute(select(self.service.configs)).mappings().one()), original_config)
+            self.assertEqual(dict(conn.execute(select(self.service.reviews)).mappings().one()), original_review)
+            self.assertEqual(dict(conn.execute(select(applications.reviews)).mappings().one()), original_app_review)
+            self.assertEqual(conn.execute(select(self.service.current_config.c.revision)).scalar_one(), legacy_config["revision"])
+        self.assertEqual(self.service.inspect_version("alice", material["id"], 1)["material"]["sha256"], material["sha256"])
+        self.assertEqual(applications.inspect("alice", app["id"], 1)["application"], app)
+
     def test_postgres_concurrent_semantic_commands_and_restart_use_one_connection(self):
         original = self.store.engine
         bounded = create_engine(self.database.url, pool_size=1, max_overflow=0, pool_timeout=2)
@@ -461,11 +574,8 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
             self.assertEqual(results[0], results[1])
             material = results[0]
             with ThreadPoolExecutor(max_workers=2) as pool:
-                reviews = list(pool.map(lambda _: self.service.request_publication("manager", material["id"], 1, "same-review"), range(2)))
-            self.assertEqual(reviews[0], reviews[1])
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                decisions = list(pool.map(lambda _: self.service.decide_publication("bob", reviews[0]["id"], True, "same-decision"), range(2)))
-            self.assertEqual(decisions[0], decisions[1])
+                publications = list(pool.map(lambda _: self.service.publish("manager", material["id"], 1, "same-publish"), range(2)))
+            self.assertEqual(publications[0], publications[1])
             current = self.service.current()
             restarted = MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode=current["review_mode"], revision=current["revision"]), seed_materials=SEEDS)
             self.assertEqual(restarted.create_draft("manager", definition(id="concurrent-governance"), "same-draft"), material)
@@ -474,7 +584,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
             self.store.engine = original
             bounded.dispose()
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_materials WHERE id='concurrent-governance'")[0]["n"], 1)
-        self.assertEqual(len(self.service.list_reviews("manager")), 1)
+        self.assertEqual(len(self.service.list_reviews("manager")), 0)
 
     def test_postgres_http_import_publication_archive_preserves_original_body(self):
         self.login("manager")
@@ -482,13 +592,8 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         material = response.json()["materials"][0]
         before = self.store.sql("SELECT body FROM af_materials WHERE id='http-import' AND version=1")[0]["body"]
-        review = self.client.post("/api/factory/material-governance/reviews", json={"materialId": material["id"], "version": 1, "requestId": "http-review"})
-        self.assertEqual(review.status_code, 201, review.text)
-        self.login("bob")
-        decision = self.client.post("/api/factory/material-governance/reviews/" + review.json()["id"] + "/decision", json={"approved": True, "requestId": "http-decision"})
-        self.assertEqual(decision.status_code, 200, decision.text)
-        self.assertEqual(decision.json()["reviewerId"], "bob")
-        self.login("manager")
+        publication = self.client.post("/api/factory/material-governance/versions/http-import/1/publish", json={"requestId": "http-publish"})
+        self.assertEqual(publication.status_code, 200, publication.text)
         archived = self.client.post("/api/factory/material-governance/versions/http-import/1/archive", json={"requestId": "http-archive", "reason": "Superseded fixture"})
         self.assertEqual(archived.status_code, 200, archived.text)
         self.assertEqual(self.store.sql("SELECT body FROM af_materials WHERE id='http-import' AND version=1")[0]["body"], before)

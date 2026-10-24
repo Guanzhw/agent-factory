@@ -36,11 +36,12 @@ class ByokModelTests(unittest.TestCase):
                 OwnerChatModel({**config,'thinkingMode':'disabled',**change},
                     lambda: self.fail('Unsupported options must not resolve a credential'))
 
-    def test_official_go_base_url_without_general_path_expansion(self):
+    def test_member_base_urls_preserve_custom_api_paths(self):
         self.assertEqual(base_url('https://opencode.ai/zen/go/v1'), 'https://opencode.ai/zen/go/v1')
-        for url in ('https://other.example.com/zen/go/v1', 'https://opencode.ai/zen/v1',
-                    'https://opencode.ai/zen/go/v1?key=fixture', 'https://opencode.ai.evil.example/zen/go/v1'):
-            with self.subTest(url=url), self.assertRaises(ValueError): base_url(url)
+        for url in ('https://other.example.com/zen/go/v1', 'http://localhost:8000/api',
+                    'https://127.0.0.1:9000/v2', 'http://[::1]:8888', 'https://opencode.ai.evil.example/zen/go/v1'):
+            with self.subTest(url=url): self.assertEqual(base_url(url), url)
+        with self.assertRaises(ValueError): base_url('https://opencode.ai/zen/go/v1?key=fixture')
 
     def test_go_agent_headers_and_tools_use_the_selected_model_without_retries(self):
         requests = []
@@ -81,7 +82,8 @@ class ByokModelTests(unittest.TestCase):
                             'https://other.example.com/zen/go/v1/chat/completions'):
                     with self.assertRaises(ValueError): await transport.handle_async_request(httpx.Request('POST', url))
             finally: await transport.aclose()
-            with self.assertRaises(ValueError): PinnedChatTransport('https://other.example.com', base_path='/zen/go/v1')
+            other = PinnedChatTransport('https://other.example.com', base_path='/zen/go/v1')
+            await other.aclose()
         asyncio.run(run())
 
     def model(self, handler, credential=None):
@@ -129,8 +131,7 @@ class ByokModelTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_unsupported_protocols_urls_redirects_and_multimodal(self):
-        for url in ('http://models.example.com/v1', 'https://127.0.0.1/v1',
-            'https://models.example.com/v2', 'https://user:pass@models.example.com/v1',
+        for url in ('ftp://models.example.com/v1', 'https://user:pass@models.example.com/v1',
             'https://models.example.com/v1?api_key=synthetic', 'https://models.example.com/v1/../../'):
             with self.subTest(url=url), self.assertRaises(ValueError): base_url(url)
         model = self.model(lambda request: httpx.Response(302, headers={'location': 'https://other.example.com'}))

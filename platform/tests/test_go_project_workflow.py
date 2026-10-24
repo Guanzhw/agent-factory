@@ -27,6 +27,19 @@ class GoProjectWorkflowTests(unittest.TestCase):
         return argparse.Namespace(model="deepseek-flash", campaign="existing-only", evidence_directory=root,
                                   database_url="not-read-by-offline-contract")
 
+    def test_member_settings_reach_local_app_boundary_without_provider_access(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(runner, 'create_app', side_effect=RuntimeError('local-boundary')) as app, \
+             patch.object(runner, 'credential', side_effect=AssertionError) as credential:
+            with self.assertRaisesRegex(RuntimeError, 'local-boundary'):
+                runner.execute_product(None, self.args(directory))
+        app.assert_called_once()
+        settings = app.call_args.args[0]
+        self.assertEqual(settings.temporary_policy, 'member-self-service')
+        self.assertEqual(settings.max_tool_calls, 1)
+        self.assertEqual(settings.usage_policy.task_token_limit, 500_000)
+        credential.assert_not_called()
+
     def test_only_current_exact_settled_smoke_allows_product(self):
         runner.check_smoke(self.proof(), "deepseek-flash")
         for change in ({"ordinal": 3}, {"state": "UNKNOWN"}, {"error_code": "PROTOCOL"},

@@ -122,6 +122,8 @@ class ConnectionService:
             Column("result_ref", String, nullable=False), Column("created_at", String, nullable=False))
         self.audit = Table("af_audit", MetaData(), autoload_with=store.engine)
         metadata.create_all(store.engine)
+        from .resource_sharing import ResourceSharing
+        self.sharing = ResourceSharing(store, auth)
         from .personal_connections import PersonalRemoteConnections
         self.personal = PersonalRemoteConnections(self, personal_providers if personal_providers is not None else {})
         with store.engine.begin() as conn:
@@ -302,16 +304,11 @@ class ConnectionService:
             "allowedActions": ["inspect"] + (["revoke"] if row["state"] != "REVOKED" else [])}
 
     def _can_bind(self, owner):
-        try:
-            self.auth.require(owner, "run")
-            return True
-        except HTTPException as error:
-            if error.status_code != 403:
-                raise
-            return False
+        self.auth.require_member(owner)
+        return True
 
     def registrations(self, owner):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         can_bind = self._can_bind(owner)
         values = []
         with self._read() as conn:
@@ -352,23 +349,31 @@ class ConnectionService:
                     'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
                 )} | {'status': 'available' if available else 'unavailable', 'available': available,
                     'allowedActions': ['inspect'] + (['bind'] if available and can_bind else [])})
+        if self.owner_models is not None:
+            from .byok_model import CAPABILITY
+            for item in self.owner_models.list(owner):
+                available = item['available'] is True
+                values.append({'registrationRef': item['reference'], 'kind': 'model',
+                    'revision': item['revision'], 'capabilities': [CAPABILITY], 'expiresAt': None,
+                    'status': 'available' if available else 'unavailable', 'available': available,
+                    'allowedActions': ['inspect'] + (['bind'] if available and can_bind else [])})
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         self._key(reference)
         with self._read() as conn:
             return self._project(conn, owner, self._row(conn, owner, reference))
 
     def list(self, owner):
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         with self._read() as conn:
             rows = conn.execute(select(self.references.c.ref).where(self.references.c.owner_id == owner)
                 .order_by(self.references.c.created_at.desc(), self.references.c.ref).limit(100)).scalars()
             return [self._project(conn, owner, self._row(conn, owner, reference)) for reference in rows]
 
     def request_result(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         self._key(request_id)
         with self._read() as conn:
             command = conn.execute(select(self.commands).where(self.commands.c.owner_id == owner,
@@ -387,7 +392,7 @@ class ConnectionService:
 
     def bind(self, owner, registration_ref, request_id, *, capabilities=None, task_id=None,
              expected_trusted_revision=None, expected_trusted_fingerprint=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         self._key(registration_ref)
         self._key(request_id)
         requested = self._caps(capabilities) if capabilities is not None else None
@@ -438,7 +443,7 @@ class ConnectionService:
 
     def revoke(self, owner, reference, request_id):
         # Evidence read/cleanup remains possible after the run grant is removed.
-        self.auth.require(owner, "read")
+        self.auth.require_member(owner)
         self._key(reference)
         self._key(request_id)
         fingerprint = digest({"operation": "revoke", "ref": reference})
@@ -478,7 +483,7 @@ class ConnectionService:
     def preflight(self, owner, reference, expected_kind, *, expected_revision=None,
                   expected_fingerprint=None, expected_version=None, expected_adapter_ref=None,
                   required_capabilities=(), task_id=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         with self._read() as conn:
             row, _trusted = self._check(conn, owner, reference, expected_kind,
                 expected_revision=expected_revision, expected_fingerprint=expected_fingerprint,
@@ -492,7 +497,7 @@ class ConnectionService:
     def resolve(self, owner, reference, expected_kind, *, expected_revision=None,
                 expected_fingerprint=None, expected_version=None, expected_adapter_ref=None,
                 required_capabilities=(), task_id=None):
-        self.auth.require(owner, "run")
+        self.auth.require_member(owner)
         with self._read() as conn:
             _row, trusted = self._check(conn, owner, reference, expected_kind,
                 expected_revision=expected_revision, expected_fingerprint=expected_fingerprint,

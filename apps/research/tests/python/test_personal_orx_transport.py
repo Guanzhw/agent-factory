@@ -329,5 +329,20 @@ class PersonalOrxTests(unittest.TestCase):
         self.wire.public = True
         with self.assertRaises(RemoteConnectionError): self.provider.verify('alice', self.config)
         with self.assertRaises(RemoteConnectionError): self.provider.verify('bob', self.config)
-        for changes in ({'authMode': 'implicit'}, {'origin': 'http://localhost'}, {'arbitraryModelKey': 'blocked'}):
+        for changes in ({'authMode': 'implicit'}, {'origin': 'ftp://localhost'}, {'arbitraryModelKey': 'blocked'}):
             with self.assertRaises(RemoteConnectionError): self.provider.configure({**self.config, **changes})
+
+    def test_provider_accepts_member_service_addresses_without_weakening_authentication(self):
+        for address in ('http://localhost', 'http://127.0.0.1:8080',
+                'https://[::1]:8443', 'https://192.168.1.25:9443', 'https://internal.example:8443'):
+            with self.subTest(address=address):
+                configured = self.provider.configure({**self.config, 'origin': address})
+                self.assertEqual(configured['origin'], address)
+                self.assertEqual(configured['authMode'], 'bearer')
+                self.assertEqual(configured['credentialRef'], self.config['credentialRef'])
+                self.assertEqual(configured['credentialRevision'], self.config['credentialRevision'])
+        for changes in ({'credentialRef': ''}, {'credentialRevision': ''}, {'origin': 'https://user:secret@localhost'},
+                {'origin': 'https://localhost?token=secret'}, {'origin': 'https://localhost/api'},
+                {'origin': 'https://localhost:65536'}):
+            with self.subTest(changes=changes), self.assertRaises(RemoteConnectionError):
+                self.provider.configure({**self.config, **changes})

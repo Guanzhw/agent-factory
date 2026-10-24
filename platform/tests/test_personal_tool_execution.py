@@ -77,6 +77,7 @@ class Adapter:
 class Handle:
     def __init__(self, owner, adapter, service):
         self.owner, self.adapter, self.service = owner, adapter, service
+        self.requesting_actor = owner
         self.configuration = {'registrationRef': 'registration-' + owner, 'revision': 'registration-v1'}
         self.valid = True
         self.resolutions = 0

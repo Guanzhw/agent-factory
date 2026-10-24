@@ -1,6 +1,6 @@
 """Controlled HTTPS mock-login schedule-management browser acceptance.
 
-Use only an isolated synthetic Factory. Plans are reviewed independently;
+Use only an isolated synthetic Factory. Members submit their own plans directly;
 creation defaults to paused and cron dates are far from the fixture clock.
 Native occurrences are triggered explicitly by the existing API in the test
 fixture, never by a production timer or external provider. UI wiring is finalized
@@ -20,7 +20,6 @@ from playwright.sync_api import expect, sync_playwright
 
 from accept_app_recovery_browser import capture, json_get, login, lost_reply, origin
 from accept_material_template_browser import mutation
-from accept_synthesis_journey_browser import approve_plan
 
 PREFIX = '/api/factory'
 CREATE_CRON = '0 0 1 1 *'
@@ -28,26 +27,24 @@ EDIT_CRON = '0 0 2 1 *'
 TIMEZONE = 'Etc/UTC'
 
 
-def approved_plan(owner_page, reviewer_page, label):
-    """A manager-owned immutable synthetic plan; another manager approves it."""
-    owner_page.get_by_label('已批准的应用', exact=True).select_option('research')
+def prepared_plan(owner_page, label):
+    """Create an owner-scoped immutable synthetic plan."""
+    owner_page.get_by_label('1. 选择应用', exact=True).select_option('research')
     owner_page.get_by_label('应用执行方式', exact=True).select_option('literature')
     goal = '计划任务合成文献验收 ' + label + ' ' + uuid4().hex[:10]
-    owner_page.get_by_label('任务目标', exact=True).fill(goal)
+    owner_page.get_by_label('2. 描述任务', exact=True).fill(goal)
     proposal = mutation(owner_page, '/compositions/proposals',
-                        owner_page.get_by_role('button', name='生成装配提案', exact=True).click)
+                        owner_page.get_by_role('button', name='预览任务方案', exact=True).click)
     assert proposal['candidate']['syntheticFixture'] is True
     plan = mutation(owner_page, '/compositions/proposals/' + proposal['id'] + '/accept',
-                    owner_page.get_by_role('button', name='接受提案并固定方案', exact=True).click)
-    mutation(owner_page, '/plan-reviews', owner_page.get_by_role('button', name='提交方案审查', exact=True).click)
-    approve_plan(reviewer_page, owner_page, goal)
+                    owner_page.get_by_role('button', name='确认范围并保存方案', exact=True).click)
     return plan, goal
 
 
 def contexts_for(browser, base, viewport):
     contexts = []
     try:
-        for persona in ('manager', 'manager2', 'bob'):
+        for persona in ('manager', 'bob'):
             context = browser.new_context(ignore_https_errors=True, viewport=viewport, accept_downloads=True)
             contexts.append(context)
             page = context.new_page()
@@ -128,12 +125,12 @@ def manual_occurrence(page, schedule_id):
 
 def scenario(browser, base, output, name, viewport):
     contexts = contexts_for(browser, base, viewport)
-    owner, reviewer, foreign = contexts
-    manager, manager2, bob = [context.pages[0] for context in contexts]
+    owner, foreign = contexts
+    manager, bob = [context.pages[0] for context in contexts]
     counts = mutations(manager)
     stage = 'approved-plan'
     page_errors, console_errors = [], []
-    for page in (manager, manager2, bob):
+    for page in (manager, bob):
         page.on('pageerror', lambda _error: page_errors.append('PAGE_ERROR'))
         def console(message):
             if message.type != 'error':
@@ -146,8 +143,8 @@ def scenario(browser, base, output, name, viewport):
             console_errors.append('CONSOLE_ERROR')
         page.on('console', console)
     try:
-        plan, goal = approved_plan(manager, manager2, name)
-        manager.get_by_role('button', name='用此已批准方案设置计划任务', exact=True).click()
+        plan, goal = prepared_plan(manager, name)
+        manager.get_by_role('button', name='用此方案设置计划任务', exact=True).click()
         panel = manager.get_by_role('region', name='计划任务', exact=True)
         expect(panel).to_be_visible()
         schedule_name = '合成计划管理 ' + name + ' ' + uuid4().hex[:10]

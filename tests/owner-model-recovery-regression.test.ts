@@ -18,7 +18,7 @@ const credential = {
   providerId: 'byok-chat-v1', destination: 'https://models.example', status: 'active',
 };
 const model: OwnerModel = {
-  reference: 'recovery-fixture-model', revision: 'model-r1', connectionRef: 'connection-r1', ownerId: owner,
+  reference: 'recovery-fixture-model', revision: 'model-r1', connectionRef: 'connection-r1', ownerId: owner, visibility: 'personal', isOwner: true,
   provider: 'openai-compatible', baseURL: 'https://models.example/v1', model: 'fixture-model',
   credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision,
   updatedAt: '2026-10-13T00:00:00Z', status: 'configured', available: true, isDefault: false,

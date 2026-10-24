@@ -145,7 +145,7 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
         self.assertEqual(len(self.store.tasks('alice')), 3)
         self.assertEqual(len(self.store.sql('SELECT id FROM af_process_allocations')), 1)
 
-    def test_bootstrap_replay_retains_original_versions_revocations_and_native_roles(self):
+    def test_bootstrap_replay_retains_original_versions_revocations_and_member_state(self):
         before_apps = {row['id']: (row['version'], row['sha256']) for row in self.state['applications'].list_active('alice')}
         before_connections = self.state['connections'].list('alice')
         selected = self.connection('source')
@@ -154,14 +154,14 @@ class DevelopmentWorkflowsPostgresTests(unittest.TestCase):
         self.assertEqual(len(self.state['connections'].list('alice')), len(before_connections))
         self.assertEqual(self.connection('source')['ref'], selected['ref'])
         self.assertEqual(self.connection('source')['status'], 'revoked')
-        self.auth.authorization.unassign('bob', 'factory-user')
+        self.auth.directory.set_disabled('bob', True)
         self.stop()
         self.start()
         self.assertEqual({row['id']: (row['version'], row['sha256']) for row in self.state['applications'].list_active('alice')}, before_apps)
         self.assertEqual(self.connection('source')['ref'], selected['ref'])
         self.assertEqual(self.connection('source')['status'], 'revoked')
         with self.assertRaises(HTTPException):
-            self.auth.require('bob', 'run')
+            self.auth.require_member('bob')
         self.assertEqual(self.store.tasks('alice'), [])
         self.assertEqual(self.store.sql('SELECT id FROM af_process_allocations'), [])
 

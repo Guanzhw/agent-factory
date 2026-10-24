@@ -39,8 +39,9 @@ export interface Plan {
 }
 export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
-export type FactoryJob = Omit<Job, 'input'> & {
+export type FactoryJob = Omit<Job, 'input' | 'status'> & {
   input: Omit<Job['input'], 'mode'> & { mode: string };
+  status: Job['status'] | 'unknown';
   planId?: string;
   executionPlacement?: { kind: string; targetRef: string; originTaskId: string; remoteTaskId?: string; remoteRootTaskId?: string; remoteRunId?: string | null; state: string };
   allowedActions?: string[];

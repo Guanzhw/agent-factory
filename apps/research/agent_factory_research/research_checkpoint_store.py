@@ -29,7 +29,7 @@ class ResearchCheckpointStore:
         self.store, self.auth, self.resources, self.storage = store, auth, resources, storage
 
     def _original(self, owner, lease_id, *, stopped):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         runtime = self.resources.execution_runtime('research-process-run-v1')
         lease, target, task, _ = runtime._custody(lease_id)
         _require(lease['ownerId'] == owner and task['owner_id'] == owner and not task['cancel_requested'])
@@ -61,7 +61,7 @@ class ResearchCheckpointStore:
         _require(type(disk_bytes) is int and 1024 <= disk_bytes <= 8 * 1024**4)
         owner, task_id = binding['ownerId'], binding['taskId']
         def current_authority():
-            self.auth.require(owner, 'run')
+            self.auth.require_member(owner)
             task = self.store.task(task_id, owner)
             plan = self.store.plan(binding['planId'], owner)
             _require(task['run_id'] == binding['nativeRunId'] and task['plan_id'] == binding['planId']

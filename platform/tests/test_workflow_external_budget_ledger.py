@@ -33,7 +33,6 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
                 parameters.update(zip(names, identifiers))
             return original_sql(query, **parameters)
         self.store.sql = sql
-        self.store.require_current_policy = Mock()
         self.store.has_failures = lambda task: False
         self.store.material_governance = None
         self.native['queue'].update(session_id='task', user_id='alice', component_type='workflow', component_id='controlled-workflow')

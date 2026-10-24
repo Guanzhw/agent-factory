@@ -1,4 +1,4 @@
-"""Public native endpoints cannot bypass Factory's approved envelope."""
+"""Factory-bound executors require plans; other native components remain available."""
 import unittest
 from unittest.mock import AsyncMock
 
@@ -7,13 +7,13 @@ from agent_factory.native_bridge import INTERNAL_NATIVE
 
 
 class NativeIngressTests(unittest.IsolatedAsyncioTestCase):
-    async def test_http_and_websocket_reject_direct_workflow_execution(self):
+    async def test_factory_bound_executors_require_plan_context(self):
         for kind in ('http', 'websocket'):
             for path in ('/workflows/example/runs', '/workflows/example/runs/original/continue',
-                         '/workflows/ws', '/agents/factory-executor/runs', '/schedules/create'):
+                         '/agents/factory-executor/runs'):
                 with self.subTest(kind=kind, path=path):
                     app, send = AsyncMock(), AsyncMock()
-                    await NativeIngress(app)({'type': kind, 'path': path, 'method': 'POST'}, AsyncMock(), send)
+                    await NativeIngress(app, workflow_ids=('example',))({'type': kind, 'path': path, 'method': 'POST'}, AsyncMock(), send)
                     app.assert_not_awaited()
                     sent = send.await_args_list[0].args[0]
                     self.assertEqual(sent.get('status') if kind == 'http' else sent.get('code'),
@@ -21,7 +21,7 @@ class NativeIngressTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_trusted_context_only_opens_internal_call(self):
         app = AsyncMock()
-        middleware = NativeIngress(app)
+        middleware = NativeIngress(app, workflow_ids=('example',))
         scope = {'type': 'http', 'path': '/workflows/example/runs', 'method': 'POST',
                  'headers': [(b'internal-native', b'true')]}
         await middleware(scope, AsyncMock(), AsyncMock())
@@ -32,3 +32,11 @@ class NativeIngressTests(unittest.IsolatedAsyncioTestCase):
         finally:
             INTERNAL_NATIVE.reset(token)
         app.assert_awaited_once()
+
+    async def test_other_native_components_reach_native_member_authorization(self):
+        for path in ('/agents/member-agent/runs', '/workflows/member-workflow/runs', '/schedules/create'):
+            with self.subTest(path=path):
+                app = AsyncMock()
+                await NativeIngress(app, workflow_ids=('example',))(
+                    {'type': 'http', 'path': path, 'method': 'POST'}, AsyncMock(), AsyncMock())
+                app.assert_awaited_once()

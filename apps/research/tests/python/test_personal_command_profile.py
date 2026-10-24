@@ -12,7 +12,7 @@ from agno.run import RunContext
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.input_schema import validate_input_schema, validate_input_values
 from agent_factory_research.personal_command_api import PrepareCommand, deny_direct_admission
-from agent_factory_research.personal_command_profile import (APPLICATION_ID, CONTRACT, TOOL_NAME, PersonalCommandModel,
+from agent_factory_research.personal_command_profile import (APPLICATION_ID, CONTRACT, PERMISSION, TOOL_NAME, PersonalCommandModel,
     admission_for, command_scope, input_schema, pricing, registrations, reconcile_command, EFFECT)
 from agent_factory.store import canonical, digest
 
@@ -73,10 +73,11 @@ class PersonalCommandProfileTests(unittest.TestCase):
         with self.assertRaises(HTTPException): deny_direct_admission('alice', intent)
         with self.assertRaises(ValueError): PrepareCommand(requestId='request-original', action='interrupt', sessionId='session', text='hidden prompt')
 
-    def test_no_provider_model_and_opt_in_registered_policy(self):
+    def test_no_provider_model_and_opt_in_registered_adapter(self):
         settings = Settings(db_url='postgresql://unused', personal_agent_commands_enabled=True)
         self.assertEqual(len(settings.runtime_adapters), 3)
-        self.assertFalse(settings.tool_policies[0].read_only)
+        tool = next(entry for entry in settings.runtime_adapters if entry.kind == 'tool')
+        self.assertEqual((tool.tool_name, tool.permissions), (TOOL_NAME, (PERMISSION,)))
         self.assertIs(pricing().local_model_type, PersonalCommandModel)
         self.assertEqual(pricing().body['usageContract'], 'local-no-provider-v1')
         model = PersonalCommandModel()
@@ -132,7 +133,7 @@ class PersonalCommandProfileTests(unittest.TestCase):
             'taskId': 'task-original', 'nativeRunId': 'run-original'}
         row = {'intent': intent, 'identity': identity, 'state': 'result_observed',
             'result': {'nativeMessageId': intent['nativeMessageId']}}
-        service = SimpleNamespace(auth=SimpleNamespace(require=Mock()), _command=Mock(return_value=row),
+        service = SimpleNamespace(auth=SimpleNamespace(require_member=Mock()), _command=Mock(return_value=row),
             request_result=Mock(return_value={'factoryIdentity': identity, 'state': 'result_observed'}))
         store = SimpleNamespace(task=Mock(return_value={'id': 'task-original', 'owner_id': 'alice',
             'plan_id': 'plan-original', 'run_id': 'run-original'}), plan=Mock(return_value=ctx.plan),
@@ -147,7 +148,7 @@ class PersonalCommandProfileTests(unittest.TestCase):
         self.assertEqual(args[:2], ('run-original', EFFECT))
         self.assertFalse(args[2]['remoteStopVerified'])
         self.assertNotIn('allStopped', args[2])
-        self.assertEqual(service.auth.require.call_args.args, ('alice', 'read'))
+        service.auth.require_member.assert_called_once_with('alice')
         # Idempotent already settled observation does not modify the effect again.
         store.sql.return_value[0]['status'] = 'DONE'
         reconcile_command(store, service, 'alice', 'request-original')

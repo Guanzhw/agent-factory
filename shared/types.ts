@@ -7,6 +7,7 @@ export interface Material {
   content: string; sha256: string; license: string; origin: string;
   dependencies: MaterialReference[]; compatibility: string[]; permissions: string[];
   inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
+  runtimeBinding?: { adapterId: string; revision: string; config: Record<string, unknown> };
   archived: boolean; createdAt: string;
 }
 export interface CompositionDraft { name: string; materials: MaterialReference[]; scenario: string }

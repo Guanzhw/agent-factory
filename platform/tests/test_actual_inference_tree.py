@@ -145,7 +145,7 @@ class TreeFixture(unittest.TestCase):
         application=None
         for config in configs:
             server=Service(config,self.root);self.services.append(server);self.addCleanup(server.close)
-            state=server.state;state['auth'].authorization.unassign('bob','factory-user');state['auth'].authorization.assign('bob','factory-manager')
+            state=server.state;state['auth'].account_roles.assign('bob','factory-manager')
             parent_gate=None
             if self.fault_scope=='parent':
                 governance=state['material_governance']
@@ -154,10 +154,9 @@ class TreeFixture(unittest.TestCase):
                     'content':'ask_scope','license':'MIT','compatibility':['agno:3.1.0'],'dependencies':[],
                     'permissions':['question:ask'],'runtimeBinding':{'adapterId':'native-ask-scope-v1','revision':'1','config':{}},
                     'provenance':{'kind':'original','notice':'Synthetic test coordination only'}},'at10-parent-scope-draft')
-                review=governance.request_publication('manager',parent_gate['id'],parent_gate['version'],'at10-parent-scope-review')
-                governance.decide_publication('bob',review['id'],True,'at10-parent-scope-approve')
+                governance.publish('manager',parent_gate['id'],parent_gate['version'],'at10-parent-scope-publish')
             first_application=application is None
-            application=publish_local_orx_application(state,author='manager',reviewer='bob',contract_revision='2',source_application=application)
+            application=publish_local_orx_application(state,author='manager',contract_revision='2',source_application=application)
             if parent_gate and first_application:
                 from agent_factory.applications import ApplicationDefinition
                 definition={k:copy.deepcopy(application[k]) for k in ApplicationDefinition.model_fields if k in application}
@@ -167,8 +166,7 @@ class TreeFixture(unittest.TestCase):
                     mode['toolOrder'].append('ask_scope');mode['capabilities'].append('question:ask')
                 applications=state['applications']
                 application=applications.create_draft('manager',definition,'at10-parent-app-draft')
-                review=applications.request_publication('manager',application['id'],application['version'],'at10-parent-app-review')
-                applications.decide_publication('bob',review['id'],True,'at10-parent-app-approve')
+                applications.publish('manager',application['id'],application['version'],'at10-parent-app-publish')
             server.pins={n:state['connections'].bind('alice',REGISTRATION_REF,config['role']+'-'+n,capabilities=[cap])
                 for n,cap in (('localExperimentRead','research:read'),('localExperimentRun','compute:local'))}
         self.application=application;self.origin=self.services[0];self.receiver=self.services[-1]

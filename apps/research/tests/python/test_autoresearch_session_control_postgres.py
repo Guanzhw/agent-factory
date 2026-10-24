@@ -100,7 +100,7 @@ class ExternalSessionPostgresTests(unittest.TestCase):
             instructions='Controlled synthetic queue only', manifest={'schema': 1, 'evidenceMode': 'controlled-fixture'},
             limits={'totalSeconds': 120, 'experimentSeconds': 30, 'maxExperiments': 1, 'toolCalls': 32, 'outputBytes': 65536},
             runtime_factory=runtime_factory, context_reader=lambda: {}, candidate_validator=lambda _: {},
-            experiment=forbidden, review_owner='manager', external_session=True)
+            experiment=forbidden, external_session=True)
         self.settings = bootstrap.settings(db_url=database.url, workspace=workspace, preset=preset)
         # Explicit legacy accounting fixture; all model/provider IO remains controlled.
         self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
@@ -116,9 +116,7 @@ class ExternalSessionPostgresTests(unittest.TestCase):
                     adapter = BoundedProcessAdapter(path)
                     self.assertTrue(adapter.wait(owner_id=row['owner_id'])['stoppedProof'])
         self.addCleanup(cleanup)
-        auth = self.state['auth']
-        auth.authorization.unassign('bob', 'factory-user'); auth.authorization.assign('bob', 'factory-manager')
-        preset = bootstrap.publish_application(self.state, preset, author='manager', reviewer='bob')
+        preset = bootstrap.publish_application(self.state, preset, author='alice')
         self.settings.autoresearch_presets[preset.id] = preset
         services_for(self.store).autoresearch.presets[preset.id] = preset
         manifest = example_manifest()

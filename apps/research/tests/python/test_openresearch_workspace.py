@@ -103,11 +103,11 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.detail, 'OPENRESEARCH_WORKLOAD_CONNECTION_MISMATCH')
         self.research.start.assert_not_awaited()
 
-    async def test_current_permission_checked_and_capabilities_honest(self):
+    async def test_current_membership_checked_and_capabilities_honest(self):
         capabilities = self.service.capabilities('alice')
         for name in ('upstreamProjectCreation', 'arbitraryModelSelection', 'arbitraryHarnessSelection', 'upstreamWorktrees', 'liveEndToEndVerified'):
             self.assertFalse(capabilities[name])
-        self.auth.require.side_effect = HTTPException(403, 'permission revoked')
+        self.auth.require_member.side_effect = HTTPException(403, 'member disabled')
         with self.assertRaises(HTTPException):
             await self.service.create_session('alice', self.project['id'], self.body)
         self.research.start.assert_not_awaited()

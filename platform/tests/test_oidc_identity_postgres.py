@@ -1,7 +1,7 @@
 """Production ASGI identity boundary with synthetic RSA subjects and isolated PG.
 
-Task/artifact fixtures below exercise persisted owner isolation, not execution or
-an actual identity provider. No discovery, provider calls, or real identities.
+Metadata fixtures exercise persisted owner isolation. The checksum case executes
+the real native queue with a local model; no external identity/model service runs.
 """
 from dataclasses import dataclass
 import hashlib
@@ -36,15 +36,13 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         workspace = TemporaryDirectory(prefix="factory-oidc-synthetic-")
         self.addCleanup(workspace.cleanup)
-        settings = Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", temporary_policy="admin-review",
+        settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", temporary_policy="member-self-service",
             db_url=database.url, workspace=Path(workspace.name), demo=False,
             fee_management_enabled=True,
             jwt_key="synthetic-oidc-native-signing-key-at-least-32-bytes",
             oidc_identity=self.config(subject_owners={
                 (ISSUER, "subject-123"): "alice", (ISSUER, "subject-bob"): "bob",
                 (ISSUER, "subject-unprovisioned"): "unprovisioned",
-                (ISSUER, "subject-author"): "fixture-author",
-                (ISSUER, "subject-reviewer"): "fixture-reviewer",
             }), runtime_adapters=[AdapterRegistration("model", "oidc-native-local-fixture-v1", "1",
                 lambda _: OIDCLocalFixtureModel(), demo_only=False)],
             usage_pricing=(PricingRevision("oidc-native-local-fixture-v1", "1", "oidc-local-fixture",
@@ -59,13 +57,8 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         # Production startup does not provision users. Only this fixture does so.
         self.assertIsNone(self.auth.directory.get("alice"))
         self.assertIsNone(self.auth.directory.get("manager"))
-        self.auth.authorization.define_role("oidc-fixture-user", [
-            "agents:factory-executor:read", "agents:factory-executor:run",
-            "components:read", "registry:read", "sessions:read", "filesystem:read",
-        ])
         for owner in ("alice", "bob"):
             self.auth.directory.upsert(owner, name="Synthetic " + owner)
-            self.auth.authorization.assign(owner, "oidc-fixture-user")
         self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 
@@ -89,22 +82,27 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         self.assertTrue(self.auth.directory.get("alice")["disabled"])
         self.assertIsNone(self.auth.directory.get("manager"))
 
-    def test_sql_revocation_and_external_internal_token_boundary(self):
+    def test_account_disablement_and_external_internal_token_boundary(self):
         bearer = self.bearer(scope="agent_os:admin", scopes=["agent_os:admin"], roles=["manager"])
         allowed = self.client.get("/api/factory/materials", headers=bearer)
         self.assertEqual(allowed.status_code, 200, allowed.text)
-        forbidden = self.client.post("/components", headers=bearer,
-                                     json={"name": "Must not publish", "component_type": "agent"})
-        self.assertEqual(forbidden.status_code, 403, forbidden.text)
+        component = self.client.post("/components", headers=bearer,
+                                     json={"name": "Member OIDC component", "component_type": "agent"})
+        self.assertEqual(component.status_code, 201, component.text)
+        self.assertEqual(self.client.get("/api/factory/accounts", headers=bearer).status_code, 403)
+        self.assertEqual(self.client.get("/users", headers=bearer).status_code, 403)
         internal = self.auth._issue_native_token("alice")
         rejected = self.client.get("/api/factory/session", headers={"Authorization": "Bearer " + internal})
         self.assertEqual(rejected.status_code, 401, rejected.text)
-        self.auth.authorization.unassign("alice", "oidc-fixture-user")
-        self.assertEqual(self.auth.authorization.roles_of("alice"), [])
+        self.auth.directory.set_disabled("alice", True)
         revoked = self.client.get("/api/factory/materials", headers=bearer)
-        self.assertEqual(revoked.status_code, 403, revoked.text)
-        # Reusing the same verified external token cannot restore SQL grants.
-        self.assertEqual(self.auth.authorization.roles_of("alice"), [])
+        # The external bridge refuses the disabled identity before minting a
+        # native token, using its same invalid-credential response as sign-in.
+        self.assertEqual(revoked.status_code, 401, revoked.text)
+        self.assertEqual(revoked.json(), {"detail": "OIDC_ACCESS_TOKEN_INVALID"})
+        self.assertEqual(revoked.headers["WWW-Authenticate"], 'Bearer error="invalid_token"')
+        # Reusing the same verified external token cannot restore membership.
+        self.assertTrue(self.auth.directory.get("alice")["disabled"])
         self.assertEqual(self.client.get("/api/factory/materials", headers=self.bearer("subject-bob")).status_code, 200)
 
     def test_owner_scoped_task_receipt_and_artifact_download(self):
@@ -136,10 +134,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
 
     def test_external_rsa_to_governed_native_queue_checksum_receipt_and_ledger(self):
         state = self.app.app.state.factory
-        self.auth.authorization.define_role("oidc-fixture-admin", ["agent_os:admin"])
-        for owner in ("fixture-author", "fixture-reviewer"):
-            self.auth.directory.upsert(owner, name="Synthetic publication administrator")
-            self.auth.authorization.assign(owner, "oidc-fixture-admin")
+        self.auth.directory.upsert("fixture-author", name="Synthetic member author")
         governance, applications = state["material_governance"], state["applications"]
         refs = []
         for kind, adapter, permission in (
@@ -156,8 +151,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
                 "permissions": permission, "runtimeBinding": {"adapterId": adapter, "revision": "1", "config": {}},
                 "provenance": {"kind": "original", "notice": "Synthetic test fixture, not a production provider."},
             }, str(uuid4()))
-            review = governance.request_publication("fixture-author", identifier, item["version"], str(uuid4()))
-            governance.decide_publication("fixture-reviewer", review["id"], True, str(uuid4()))
+            governance.publish("fixture-author", identifier, item["version"], str(uuid4()))
             refs.append({key: item[key] for key in ("id", "version", "sha256")})
         app = applications.create_draft("fixture-author", {
             "id": "oidc-native-checksum", "name": "Synthetic OIDC checksum", "description": "Local acceptance fixture",
@@ -166,8 +160,7 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
                 "config": {}, "connectionRequirements": [],
                 "budget": {"toolCalls": 1, "maxDepth": 1, "maxChildren": 1,
                            "experimentSeconds": 8, "outputBytes": 65536}}}}, str(uuid4()))
-        review = applications.request_publication("fixture-author", app["id"], app["version"], str(uuid4()))
-        applications.decide_publication("fixture-reviewer", review["id"], True, str(uuid4()))
+        applications.publish("fixture-author", app["id"], app["version"], str(uuid4()))
 
         def post(path, body, subject="subject-123"):
             response = self.client.post("/api/factory" + path, headers=self.bearer(subject),
@@ -178,8 +171,6 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
             "mode": "checksum", "applicationRef": {key: app[key] for key in ("id", "version", "sha256")}})
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal)
         plan = post("/compositions/proposals/" + proposal["id"] + "/accept", {})
-        review = post("/plan-reviews", {"planId": plan["id"]})
-        post("/plan-reviews/" + review["id"] + "/decision", {"approved": True}, "subject-reviewer")
         request_id = str(uuid4())
         task = post("/instances", {"planId": plan["id"], "requestId": request_id})
         deadline = time.monotonic() + 30

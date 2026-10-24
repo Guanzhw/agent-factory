@@ -18,10 +18,8 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 
 from .input_schema import validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
-from .plan_policy import application_tool_catalog
 from .store import canonical, digest, now
 
-APPLICATION_POLICY = digest({"schema": 1, "separateAdministrator": True, "taskApprovalSeparate": True})
 MATERIAL_KINDS = {"skill", "tool", "prompt", "knowledge", "model", "environment"}
 
 
@@ -118,27 +116,16 @@ class ApplicationService:
     def pin(body):
         return {key: body[key] for key in ("id", "version", "sha256")}
 
-    def _member_publication(self):
-        governance = getattr(self.store, "material_governance", None)
-        return governance is not None and governance.member_publication()
-
     def _require_read(self, actor):
-        self.auth.require(actor, "run" if self._member_publication() else "components:read")
+        self.auth.require_member(actor)
 
     def _require_write(self, actor):
-        if self._member_publication():
-            self.auth.require(actor, "run")
-        else:
-            self.auth.require(actor, "components:write")
+        self.auth.require_member(actor)
 
-    def _admin(self, actor):
-        try:
-            self.auth.require(actor, "agent_os:admin")
-            return True
-        except HTTPException as error:
-            if error.status_code != 403:
-                raise
-            return False
+    def _owner(self, actor, state):
+        self._require_write(actor)
+        if actor != state["author_id"]:
+            raise HTTPException(404, "Scoped application version not found")
 
     def _row(self, conn, identifier, version):
         row = conn.execute(select(self.versions).where(self.versions.c.id == identifier, self.versions.c.version == version)).mappings().first()
@@ -153,7 +140,7 @@ class ApplicationService:
 
     def _scoped(self, actor, state):
         self._require_read(actor)
-        if state["state"] != "published" and actor != state["author_id"] and not self._admin(actor):
+        if state["state"] != "published" and actor != state["author_id"]:
             raise HTTPException(404, "Scoped application version not found")
 
     def _active(self, conn, body, state):
@@ -162,10 +149,6 @@ class ApplicationService:
         if state["bootstrap"]:
             if not self.store.settings.demo:
                 raise HTTPException(409, "Demo application approval cannot authorize production")
-        elif not (self._member_publication() and state["review_id"] is None):
-            review = conn.execute(select(self.reviews).where(self.reviews.c.id == state["review_id"])).mappings().first()
-            if not review or review["decision"] != "approved" or review["sha"] != body["sha256"] or review["policy_hash"] != APPLICATION_POLICY or review["reviewer_id"] == state["author_id"]:
-                raise HTTPException(409, "Application lacks exact separate administrator publication review")
 
     def closure(self, refs):
         governance = getattr(self.store, "material_governance", None)
@@ -222,7 +205,6 @@ class ApplicationService:
         return refs
 
     def validate_definition(self, definition, *, check_materials=True):
-        known_tools = application_tool_catalog(self.store)
         MaterialGovernance._safe_data(definition)
         try:
             body = definition_model(definition).model_validate(definition).model_dump(exclude_none=True)
@@ -235,8 +217,6 @@ class ApplicationService:
         for name, mode in body["modes"].items():
             if not name or len(name) > 100 or not all(char.isascii() and (char.isalnum() or char in "_.:-") for char in name):
                 raise HTTPException(422, "Application mode must be a bounded identifier")
-            if not set(mode["capabilities"]) <= set(known_tools.values()):
-                raise HTTPException(422, "Application requests authority outside registered capabilities")
             native = mode.get("nativeComponent")
             if native is not None:
                 workflows = getattr(self.store, "native_workflows", None)
@@ -261,7 +241,7 @@ class ApplicationService:
             materials = self.closure(mode["materialRefs"])
             caps = {cap for item in materials for cap in item["permissions"]}
             tools = [item["content"] for item in materials if item["kind"] == "tool"]
-            if not tools or caps - set(mode["capabilities"]) or any(tool not in known_tools for tool in tools):
+            if not tools or caps - set(mode["capabilities"]):
                 raise HTTPException(422, "Application material/tool closure exceeds its approved capability scope")
             if mode["toolOrder"] and (len(set(mode["toolOrder"])) != len(mode["toolOrder"]) or set(mode["toolOrder"]) != set(tools)):
                 raise HTTPException(422, "Application tool order must exactly match approved tools")
@@ -283,10 +263,8 @@ class ApplicationService:
             latest = conn.execute(select(func.max(self.versions.c.version)).where(self.versions.c.id == identifier)).scalar() or 0
             if latest:
                 _, previous = self._row(conn, identifier, latest)
-                shared = self._member_publication() and conn.execute(select(self.states.c.id).where(
-                    self.states.c.id == identifier, self.states.c.state == "published").limit(1)).first() is not None
-                if not shared and previous["author_id"] != actor and not self._admin(actor):
-                    raise HTTPException(403, "A private application lineage belongs to its author")
+                if previous["author_id"] != actor:
+                    raise HTTPException(403, "An application lineage belongs to its author; copy it to a new application")
             value = {**body, "id": identifier, "version": latest + 1, "createdAt": now(), "schema": 1, "origin": "manager-authored"}
             value["sha256"] = digest(value)
             self._require_write(actor)
@@ -301,7 +279,6 @@ class ApplicationService:
         are deliberately absent from the snapshot schema; importing does not
         authorize execution or register runtime adapters.
         """
-        self.auth.require(actor, "agent_os:admin")
         self._require_write(actor)
         MaterialGovernance._safe_data(snapshot)
         try:
@@ -346,17 +323,20 @@ class ApplicationService:
             existing = conn.execute(select(self.versions).where(
                 self.versions.c.id == value["id"], self.versions.c.version == value["version"])).mappings().first()
             if existing:
-                body, _ = self._row(conn, value["id"], value["version"])
+                body, state = self._row(conn, value["id"], value["version"])
+                self._owner(actor, state)
                 if canonical(body) != canonical_snapshot:
                     raise HTTPException(409, "Immutable application version conflicts with the imported snapshot")
             else:
                 latest = conn.execute(select(func.max(self.versions.c.version)).where(self.versions.c.id == value["id"])).scalar() or 0
+                if latest:
+                    _, previous = self._row(conn, value["id"], latest)
+                    self._owner(actor, previous)
                 if value["version"] <= latest:
                     raise HTTPException(409, "Application snapshot cannot insert an older immutable version")
             # Local material approval, bindings and dependency hashes are never
             # inherited from a source Factory's publication decision.
             self.validate_definition(normalized)
-            self.auth.require(actor, "agent_os:admin")
             self._require_write(actor)
             if not existing:
                 conn.execute(self.versions.insert().values(id=value["id"], version=value["version"], body=value, sha=value["sha256"]))
@@ -370,20 +350,17 @@ class ApplicationService:
         self._require_write(actor)
         with self.db.read() as conn:
             parent, state = self._row(conn, identifier, version)
-            if not (self._member_publication() and state["state"] == "published"):
-                self._scoped(actor, {**state, "state": "draft"})
+            self._owner(actor, state)
         if definition.get("id", identifier) != identifier:
             raise HTTPException(422, "Application revision cannot change its lineage")
         # Versioned drafts retain all previous immutable bodies and review facts.
         return self.create_draft(actor, {**definition, "id": identifier}, request_id, parent_ref=self.pin(parent))
 
     def publish(self, actor, identifier, version, request_id):
-        self.auth.require(actor, "run")
+        self.auth.require_member(actor)
         with self.db.write() as conn:
-            if not self._member_publication():
-                raise HTTPException(409, "Direct publication requires member self-service mode")
             body, state = self._row(conn, identifier, version)
-            self._scoped(actor, state)
+            self._owner(actor, state)
             fingerprint = digest({"action": "publish", "ref": self.pin(body)})
             old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
             if old is not None:
@@ -392,32 +369,14 @@ class ApplicationService:
                 raise HTTPException(409, "Inactive application versions require a new draft")
             self.validate_definition({key: value for key, value in body.items()
                 if key not in {"schema", "version", "createdAt", "sha256", "origin"}})
-            self.auth.require(actor, "run")
+            self.auth.require_member(actor)
             conn.execute(self.states.update().where(self.states.c.id == identifier,
                 self.states.c.version == version).values(state="published", updated_at=now()))
             return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.publish", body)
 
     def request_publication(self, actor, identifier, version, request_id):
         self._require_write(actor)
-        if self._member_publication():
-            raise HTTPException(410, "Publication reviews are read-only; publish the exact version directly")
-        with self.db.write() as conn:
-            body, state = self._row(conn, identifier, version)
-            if actor != state["author_id"] and not self._admin(actor):
-                raise HTTPException(404, "Scoped application review not found")
-            fingerprint = digest({"action": "review", "ref": self.pin(body), "policy": APPLICATION_POLICY})
-            old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
-            if old is not None:
-                return old
-            if state["state"] in {"archived", "withdrawn"}:
-                raise HTTPException(409, "Inactive application versions require a new draft")
-            self.validate_definition({key: value for key, value in body.items() if key not in {"schema", "version", "createdAt", "sha256", "origin"}})
-            row = {"id": str(uuid4()), "application_id": identifier, "version": version, "author_id": state["author_id"],
-                   "sha": body["sha256"], "policy_hash": APPLICATION_POLICY, "decision": "pending", "created_at": now()}
-            self._require_write(actor)
-            conn.execute(self.reviews.insert().values(**row))
-            result = self._review(conn, row)
-            return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.review", result)
+        raise HTTPException(410, "Publication reviews are read-only; publish the exact version directly")
 
     def _review(self, conn, row):
         # These flags describe the historical review, not today's publication workflow.
@@ -426,37 +385,11 @@ class ApplicationService:
                 "decision": row["decision"], "reviewerId": row.get("reviewer_id"), "createdAt": row["created_at"],
                 "decidedAt": row.get("decided_at"), "policyHash": row["policy_hash"], "state": state["state"],
                 "application": body, "separateAdministratorRequired": True,
-                "taskApprovalSeparate": True, "readOnly": self._member_publication()}
+                "taskApprovalSeparate": True, "readOnly": True}
 
     def decide_publication(self, actor, review_id, approved, request_id):
-        if self._member_publication():
-            self.auth.require(actor, "run")
-            raise HTTPException(410, "Historical publication reviews are read-only")
-        self.auth.require(actor, "agent_os:admin")
-        if type(approved) is not bool:
-            raise HTTPException(422, "A typed publication decision is required")
-        with self.db.write() as conn:
-            row = conn.execute(select(self.reviews).where(self.reviews.c.id == review_id)).mappings().first()
-            if not row:
-                raise HTTPException(404, "Application publication review not found")
-            row = dict(row)
-            fingerprint = digest({"action": "decision", "reviewId": review_id, "approved": approved, "sha": row["sha"]})
-            old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
-            if old is not None:
-                return old
-            body, state = self._row(conn, row["application_id"], row["version"])
-            if actor == row["author_id"]:
-                raise HTTPException(403, "A separate current native administrator must review the application")
-            if row["decision"] != "pending" or row["policy_hash"] != APPLICATION_POLICY or row["sha"] != body["sha256"] or state["state"] in {"archived", "withdrawn"}:
-                raise HTTPException(409, "Application review is stale, decided or inactive")
-            if approved:
-                self.validate_definition({key: value for key, value in body.items() if key not in {"schema", "version", "createdAt", "sha256", "origin"}})
-            self.auth.require(actor, "agent_os:admin")
-            row.update(decision="approved" if approved else "denied", reviewer_id=actor, decided_at=now())
-            conn.execute(self.reviews.update().where(self.reviews.c.id == review_id).values(decision=row["decision"], reviewer_id=actor, decided_at=row["decided_at"]))
-            if approved:
-                conn.execute(self.states.update().where(self.states.c.id == body["id"], self.states.c.version == body["version"]).values(state="published", review_id=review_id, updated_at=now()))
-            return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.decision", self._review(conn, row))
+        self._require_write(actor)
+        raise HTTPException(410, "Historical publication reviews are read-only")
 
     def require_current(self, application_ref):
         try:
@@ -608,33 +541,23 @@ class ApplicationService:
                 raise HTTPException(404, "Application review not found")
             _, state = self._row(conn, row["application_id"], row["version"])
             self._require_read(actor)
-            if actor != state["author_id"] and not self._admin(actor):
+            if actor != state["author_id"]:
                 raise HTTPException(404, "Scoped application review not found")
             return self._review(conn, dict(row))
 
     def list_reviews(self, actor, *, all_authors=False):
-        if all_authors:
-            self.auth.require(actor, "agent_os:admin")
-        else:
-            self._require_read(actor)
+        self._require_read(actor)
         with self.db.read() as conn:
-            query = select(self.reviews).order_by(self.reviews.c.created_at.desc()).limit(100)
-            if not all_authors:
-                query = query.where(self.reviews.c.author_id == actor)
+            query = (select(self.reviews).where(self.reviews.c.author_id == actor)
+                     .order_by(self.reviews.c.created_at.desc()).limit(100))
             return [self._review(conn, dict(row)) for row in conn.execute(query).mappings()]
 
     def list_definitions(self, actor, *, all_authors=False):
-        member_mode = self._member_publication()
-        if member_mode:
-            self.auth.require(actor, "run")
-        else:
-            self.auth.require(actor, "agent_os:admin" if all_authors else "components:read")
+        self._require_read(actor)
         with self.db.read() as conn:
-            query = select(self.states).order_by(self.states.c.id, self.states.c.version.desc()).limit(100)
-            if member_mode and not self._admin(actor):
-                query = query.where((self.states.c.author_id == actor) | (self.states.c.state == "published"))
-            elif not all_authors:
-                query = query.where(self.states.c.author_id == actor)
+            query = (select(self.states).where((self.states.c.author_id == actor) |
+                     (self.states.c.state == "published"))
+                     .order_by(self.states.c.id, self.states.c.version.desc()).limit(100))
             return [{"application": self._row(conn, row["id"], row["version"])[0], "governance": dict(row), "immutableBodyPreserved": True}
                     for row in conn.execute(query).mappings()]
 
@@ -653,26 +576,18 @@ class ApplicationService:
         return result
 
     def _deactivate(self, actor, identifier, version, request_id, reason, state):
-        self.auth.require(actor, "run")
+        self.auth.require_member(actor)
         if not isinstance(reason, str) or len(reason) > 2000:
             raise HTTPException(422, "Bounded application status reason required")
         MaterialGovernance._safe_data(reason)
         with self.db.write() as conn:
             body, current = self._row(conn, identifier, version)
-            # An archived public version is still public history. The existing
-            # publication receipt distinguishes it from an archived private draft.
-            private_draft = (current["state"] in {"draft", "archived"} and not current["bootstrap"]
-                and current["review_id"] is None and conn.execute(select(self.commands.c.request_id).where(
-                    self.commands.c.action == "application.publish",
-                    self.commands.c.fingerprint == digest({"action": "publish", "ref": self.pin(body)})
-                ).limit(1)).first() is None)
-            permission = "run" if state == "archived" and private_draft and current["author_id"] == actor else "agent_os:admin"
-            self.auth.require(actor, permission)
+            self._owner(actor, current)
             fingerprint = digest({"action": state, "ref": self.pin(body), "reason": reason})
             old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
             if old is not None:
                 return old
-            self.auth.require(actor, permission)
+            self._require_write(actor)
             conn.execute(self.states.update().where(self.states.c.id == identifier, self.states.c.version == version).values(state=state, reason=reason, updated_at=now()))
             return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application." + state,
                                   {"applicationRef": self.pin(body), "state": state, "reason": reason, "immutableBodyPreserved": True})

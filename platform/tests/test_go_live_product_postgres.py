@@ -90,10 +90,10 @@ class GoLiveProductPostgresTests(unittest.TestCase):
         handle = GoDevelopmentHandle(mode="subscription", credential=self.credential,
             live_campaign=self.campaign, wire_stream=True, native_retries=0)
         self.assertIsNone(handle.async_transport)
-        self.settings = Settings(material_review_mode="separate-admin", fee_management_enabled=True, platform_paid_models_enabled=True,
+        self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
             db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
             development_profile="opencode-go", development_live_validation=True, max_workers=1, max_tool_calls=1,
-            temporary_policy="read-only-auto", policy_revision="go-live-mock-policy-v1",
+            temporary_policy="member-self-service", policy_revision="go-live-mock-policy-v1",
             material_policy_revision="go-live-mock-material-v1", runtime_tool_contract="registered-runtime-v1",
             usage_policy=UsagePolicy(revision="go-live-mock-usage-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
@@ -105,10 +105,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
             return GoDevelopmentModel(**kwargs, async_transport=self.peer.transport)
         self.enterContext(mock.patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model))
         self.open_application()
-        auth = self.state["auth"]
-        auth.authorization.unassign("bob", "factory-user")
-        auth.authorization.assign("bob", "factory-manager")
-        models = publish_go_development_models(self.state, author="manager", reviewer="bob")
+        models = publish_go_development_models(self.state, author="manager")
         seeds = self.store.materials(published_only=True)
         checksum = next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum")
         environment = next(row for row in seeds if row["id"] == "local-environment")
@@ -117,11 +114,8 @@ class GoLiveProductPostgresTests(unittest.TestCase):
             mode["budget"]["toolCalls"] = 1
         self.login("bob")
         application = self.post("/api/factory/applications/drafts", {"definition": definition, "requestId": str(uuid4())}, 201)
-        review = self.post(f"/api/factory/applications/{application['id']}/versions/{application['version']}/review",
-                           {"requestId": str(uuid4())}, 201)
-        self.login("manager")
-        self.post(f"/api/factory/applications/reviews/{review['id']}/decision",
-                  {"approved": True, "requestId": str(uuid4())}, 200)
+        self.post(f"/api/factory/applications/{application['id']}/versions/{application['version']}/publish",
+                  {"requestId": str(uuid4())}, 200)
         self.app_ref = {key: application[key] for key in ("id", "version", "sha256")}
         self.connection = self.state["connections"].bind("alice", REGISTRATION_REF, str(uuid4()), capabilities=[CAPABILITY])
         self.login("alice")

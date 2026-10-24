@@ -95,50 +95,27 @@ class WorkspacePreDispatchRejectionTests(unittest.IsolatedAsyncioTestCase):
             return [{'task_id': task_id}]
         raise AssertionError('Unexpected SQL in the admission-only fixture: ' + sql)
 
-    async def _reject_before_reservation(self):
-        with self.assertRaises(HTTPException) as caught:
-            await self.workspace.create_session('alice', self.project['id'], self.body)
-        self.assertEqual(caught.exception.status_code, 409)
-        self.assertEqual(caught.exception.detail, 'RESEARCH_PLAN_REVIEW_REQUIRED')
-        self.store.composition.propose.assert_called_once()
-        self.store.composition.accept.assert_called_once()
-        self.store.plan_policy.status.assert_called_once_with('alice', self.plan)
-        self.research.start.assert_awaited_once()
-        self.store.require_plan_execution.assert_not_called()
-        self.store.reserve_task.assert_not_called()
-        self.store.admission_unknown.assert_not_called()
-        self.bridge.submit.assert_not_awaited()
+    async def test_member_submits_directly_without_consulting_historical_review_policy(self):
+        result = await self.workspace.create_session('alice', self.project['id'], self.body)
+        self.assertEqual(result['taskId'], self.task['id'])
+        self.store.require_plan_execution.assert_called_once_with('alice', self.plan)
+        self.store.plan_policy.status.assert_not_called()
+        self.store.reserve_task.assert_called_once()
+        self.bridge.submit.assert_awaited_once()
         self.runtime.assert_not_called()
-        self.assertEqual(self.store.research_rows, {})
 
-    async def test_review_rejection_before_reservation_is_not_an_unknown_dispatch(self):
-        await self._reject_before_reservation()
-        recovered = self.workspace.request_result('alice', self.body.requestId)['session']
-        self.assertIsNone(recovered['taskId'])
-        # No particular replacement status is prescribed: this must simply not
-        # claim uncertain dispatch when the real service refused before reserve.
-        self.assertNotEqual(recovered['state'], 'unknown',
-            'RESEARCH_PLAN_REVIEW_REQUIRED occurred before task reservation or bridge submission')
-
-    async def test_explicit_same_request_can_proceed_after_original_plan_review(self):
-        await self._reject_before_reservation()
-        original = self.workspace.request_result('alice', self.body.requestId)['session']
-        self.store.plan_policy.status.return_value = {'executionAllowed': True}
-        # This is an explicit resubmission after a proven pre-dispatch rejection,
-        # never an automatic retry of an uncertain original dispatch.
+    async def test_same_member_request_reuses_original_native_task(self):
+        original = await self.workspace.create_session('alice', self.project['id'], self.body)
         result = await self.workspace.create_session('alice', self.project['id'], self.body)
         self.assertEqual(result['id'], original['id'])
-        self.assertEqual(self.store.reserve_task.call_count, 1,
-            f"Explicit same-request submit remained {result['state']!r}; the original plan never reached reservation")
-        self.research.start.assert_awaited()
-        self.assertEqual(self.research.start.await_count, 2)
         self.assertEqual(result['taskId'], self.task['id'])
+        self.store.reserve_task.assert_called_once()
+        self.research.start.assert_awaited_once()
         self.bridge.submit.assert_awaited_once()
         self.assertEqual(self.bridge.submit.await_args.args[2], original['nativeRequestId'])
         self.runtime.assert_not_called()
 
     async def test_timeout_after_real_start_attempt_keeps_unknown_and_never_redispatches(self):
-        self.store.plan_policy.status.return_value = {'executionAllowed': True}
         self.bridge.submit.side_effect = TimeoutError('Synthetic lost native admission acknowledgement')
         with self.assertRaises(TimeoutError):
             await self.workspace.create_session('alice', self.project['id'], self.body)
@@ -158,9 +135,8 @@ class WorkspacePreDispatchRejectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.research_rows, original_rows)
         self.runtime.assert_not_called()
 
-    async def test_dispatch_http_error_with_review_text_does_not_authorize_replay(self):
-        self.store.plan_policy.status.return_value = {'executionAllowed': True}
-        self.bridge.submit.side_effect = HTTPException(409, 'RESEARCH_PLAN_REVIEW_REQUIRED')
+    async def test_dispatch_http_error_keeps_original_unknown_and_does_not_authorize_replay(self):
+        self.bridge.submit.side_effect = HTTPException(409, 'synthetic dispatch error')
         with self.assertRaises(HTTPException):
             await self.workspace.create_session('alice', self.project['id'], self.body)
         recovered = await self.workspace.create_session('alice', self.project['id'], self.body)

@@ -63,7 +63,7 @@ class DelegationPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/factory/demo/login", json={"persona": "alice"}).status_code, 200)
 
     def tearDown(self):
-        self.auth.authorization.assign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", False)
         for root in self.roots:
             self.call(self.service.cascade_cancel, "alice", root)
             self.wait_group(root)
@@ -181,14 +181,14 @@ class DelegationPostgresTests(unittest.TestCase):
                 self.service.authorize_child(SimpleNamespace(run_id=orphan["id"], session_id=orphan["id"], user_id="alice"))
         finally:
             self.store.admission_failed(orphan["id"], "Controlled unlinked adapter fixture; never queued")
-        self.auth.authorization.unassign("alice", "factory-user")
+        self.auth.directory.set_disabled("alice", True)
         try:
             self.assertFalse(self.service.delegation_scope("alice", root["id"])["allowed"])
             self.denied(403, self.service.create, "alice", root["id"], "sort", "literature", str(uuid4()))
             with self.assertRaises(PermissionError):
                 self.service.authorize_child(SimpleNamespace(run_id=child["run_id"], session_id=child["id"], user_id="alice"))
         finally:
-            self.auth.authorization.assign("alice", "factory-user")
+            self.auth.directory.set_disabled("alice", False)
         self.assertTrue(any(event["type"] == "protected_denied" for event in self.store.events(child["id"])))
 
     def test_04_existing_store_user_and_global_quota(self):
@@ -438,7 +438,7 @@ class DelegationPostgresTests(unittest.TestCase):
         self.assertFalse(group["allStopped"])
 
     def test_13_native_approved_experiment_current_authority_policy_and_unknown_stop_before_process(self):
-        for scenario in ("revoked", "policy-unset", "unknown"):
+        for scenario in ("revoked", "unknown"):
             with self.subTest(scenario=scenario):
                 response = self.client.post("/api/factory/plans", json={"topic": "Evaluate synthetic candidate", "mode": "experiment", "requestId": str(uuid4())})
                 self.assertEqual(response.status_code, 201, response.text)
@@ -466,9 +466,7 @@ class DelegationPostgresTests(unittest.TestCase):
                     if name == "run_experiment" and not changed:
                         changed.append(name)
                         if scenario == "revoked":
-                            self.auth.authorization.unassign("alice", "factory-user")
-                        elif scenario == "policy-unset":
-                            self.settings.temporary_policy = "unset"
+                            self.auth.directory.set_disabled("alice", True)
                     return original(ctx, name)
                 with mock.patch("agent_factory_research.tools.subprocess.Popen", side_effect=AssertionError("Denied native experiment attempted compute")) as start_process:
                     try:
@@ -489,8 +487,7 @@ class DelegationPostgresTests(unittest.TestCase):
                         self.assertEqual(self.store.artifacts(task["id"]), artifacts_before)
                         self.assertFalse(any(event["type"] == "compute_started" for event in self.store.events(task["id"])))
                     finally:
-                        self.auth.authorization.assign("alice", "factory-user")
-                        self.settings.temporary_policy = "bounded-synthetic"
+                        self.auth.directory.set_disabled("alice", False)
                 response = self.client.get("/api/factory/jobs/" + task["id"])
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()["job"]["status"], "unknown" if scenario == "unknown" else "failed")

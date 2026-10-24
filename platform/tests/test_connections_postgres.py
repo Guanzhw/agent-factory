@@ -20,7 +20,6 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
-from agent_factory.auth import EXECUTOR_ID
 from agent_factory.catalog import create_plan
 from agent_factory_research.config import ResearchSettings as Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding, connection_router
@@ -247,25 +246,19 @@ class ConnectionPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.service.preflight("alice", second_ref["ref"], "model", task_id=second["id"])
 
-    def test_09_current_sql_authority_denies_resolution_but_allows_revoke(self):
+    def test_09_current_account_disablement_denies_connection_operations(self):
         bound = self.bind()
-        self.auth.authorization.define_role("inert-fixture-reader", [f"agents:{EXECUTOR_ID}:read", "components:read", "sessions:read"])
-        # Native assign() is create-if-absent bootstrap; set_role() changes
-        # CURRENT SQL grants for an already assigned controlled fixture owner.
-        self.auth.authorization.set_role("alice", "inert-fixture-reader")
-        self.assertEqual(self.service.inspect("alice", bound["ref"])["ref"], bound["ref"])
-        for registration in self.service.registrations("alice"):
-            self.assertEqual(registration["allowedActions"], ["inspect"])
+        self.auth.directory.set_disabled("alice", True)
         for operation in (lambda: self.service.resolve("alice", bound["ref"], "model"),
-                          lambda: self.service.preflight("alice", bound["ref"], "model"), lambda: self.bind()):
+                          lambda: self.service.preflight("alice", bound["ref"], "model"), lambda: self.bind(),
+                          lambda: self.service.inspect("alice", bound["ref"]),
+                          lambda: self.service.registrations("alice"),
+                          lambda: self.service.revoke("alice", bound["ref"], uuid4().hex)):
             with self.assertRaises(HTTPException) as denied:
                 operation()
             self.assertEqual(denied.exception.status_code, 403)
+        self.auth.directory.set_disabled("alice", False)
         self.assertEqual(self.service.revoke("alice", bound["ref"], uuid4().hex)["status"], "revoked")
-        self.auth.directory.set_disabled("alice", True)
-        with self.assertRaises(HTTPException) as disabled:
-            self.service.inspect("alice", bound["ref"])
-        self.assertEqual(disabled.exception.status_code, 403)
 
     def test_10_immutable_metadata_tamper_fails_before_handle(self):
         bound = self.bind()

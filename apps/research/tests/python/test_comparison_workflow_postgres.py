@@ -58,7 +58,7 @@ class ComparisonWorkflowFixture:
                 self.providers[reference] = provider
             self.settings = Settings(db_url=database.url, workspace=self.root, demo=True, max_workers=1,
                 development_mock_login=public_origin is not None, development_public_origin=public_origin,
-                max_tool_calls=1, temporary_policy='admin-review', material_review_mode='separate-admin', runtime_tool_contract='bounded-process-v1',
+                max_tool_calls=1, runtime_tool_contract='bounded-process-v1',
                 policy_revision=APPLICATION_ID, material_policy_revision=APPLICATION_ID,
                 remote_targets=targets, runtime_adapters=registrations(), usage_pricing=(pricing_registration(),))
             self.app = create_app(self.settings)
@@ -66,11 +66,7 @@ class ComparisonWorkflowFixture:
             self.store, self.auth = self.state['store'], self.state['auth']
             self.stack.callback(self.store.engine.dispose)
             self.stack.callback(self.store.native_db.db_engine.dispose)
-            reviewer = 'manager2' if public_origin is not None else 'bob'
-            if public_origin is None:
-                self.auth.authorization.unassign('bob', 'factory-user')
-                self.auth.authorization.assign('bob', 'factory-manager')
-            self.application = publish_comparison_application(self.state, choices, author='manager', reviewer=reviewer)
+            self.application = publish_comparison_application(self.state, choices, author='manager')
             if start_client:
                 self.client = self.stack.enter_context(TestClient(self.app))  # pyright: ignore[reportArgumentType]
             self.stack.callback(self.cleanup_processes)
@@ -115,9 +111,6 @@ class ComparisonWorkflowFixture:
         proposal = self.post('/compositions/proposals', {'goal': 'Compare fixed synthetic paired predictors',
             'mode': choice, 'applicationRef': {key: self.application[key] for key in ('id', 'version', 'sha256')}})
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept')
-        review = self.post('/plan-reviews', {'planId': plan['id']})
-        self.request('POST', '/plan-reviews/' + review['id'] + '/decision',
-            {'requestId': str(uuid4()), 'approved': True}, owner='manager')
         return plan
 
     def submit(self, plan):
@@ -239,14 +232,14 @@ class ComparisonWorkflowPostgresTests(unittest.TestCase):
             task, _ = f.submit(f.plan())
             try:
                 self.assertTrue(entered.wait(10))
-                f.auth.authorization.unassign('alice', 'factory-user')
+                f.auth.directory.set_disabled('alice', True, actor='manager')
                 release.set()
                 f.until(lambda: f.store.native_db.get_job(f.store.task(task['id'])['run_id'])['status'] in {'failed', 'cancelled', 'completed'})
                 spawn.assert_not_called()
                 self.assertFalse(any(row['name'].startswith('comparison-') for row in f.store.artifacts(task['id'])))
             finally:
                 release.set()
-                f.auth.authorization.assign('alice', 'factory-user')
+                f.auth.directory.set_disabled('alice', False, actor='manager')
 
     def test_lost_launch_ack_recovers_original_identity_without_relaunch(self):
         f = self.fixture
@@ -297,11 +290,11 @@ class ComparisonWorkflowPostgresTests(unittest.TestCase):
             task, _ = f.submit(f.plan())
             try:
                 self.assertTrue(entered.wait(10))
-                f.auth.authorization.unassign('alice', 'factory-user')
+                f.auth.directory.set_disabled('alice', True, actor='manager')
                 release.set()
                 f.until(lambda: f.store.native_db.get_job(f.store.task(task['id'])['run_id'])['status'] in {'failed', 'cancelled', 'completed'})
                 self.assertFalse(any(row['name'].startswith('comparison-') for row in f.store.artifacts(task['id'])))
                 self.assertEqual(len(f.store.sql('SELECT id FROM af_process_allocations')), 1)
             finally:
                 release.set()
-                f.auth.authorization.assign('alice', 'factory-user')
+                f.auth.directory.set_disabled('alice', False, actor='manager')

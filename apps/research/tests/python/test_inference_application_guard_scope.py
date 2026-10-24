@@ -57,7 +57,7 @@ class InferenceApplicationGuardScopeTests(unittest.TestCase):
         self.assertEqual(calls, [TOOL_NAMES[1]])
 
 
-    def test_guard_restored_after_policy_check_was_not_already_checked(self):
+    def test_guard_restored_after_membership_check_was_not_already_checked(self):
         store, calls = GuardStore(tools=TOOL_NAMES), []
         def denied(owner, plan, ctx, tool):
             calls.append('denied')
@@ -66,7 +66,7 @@ class InferenceApplicationGuardScopeTests(unittest.TestCase):
             calls.append('intermediate')
             store.register_execution_guard('guard', denied, tool_independent=True)
         store.register_execution_guard('guard', denied, tool_independent=True)
-        store.require_current_policy = lambda: store.register_execution_guard('guard', intermediate)
+        store.auth.require_member = lambda owner: store.register_execution_guard('guard', intermediate)
         with self.assertRaises(PermissionError):
             current(store, store.task())
         self.assertEqual(calls, ['intermediate', 'denied'])

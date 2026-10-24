@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { publicationApi } from './publicationApi.js';
 import { api } from './api.js';
+import { personalToolConnectionApi, type PersonalToolDescriptor } from './personalToolConnectionApi.js';
 import { kindNames, materialKey } from './models.js';
 import type { FactoryMaterial, MaterialDraft, MaterialReview, User } from './models.js';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 type Provenance = { kind: 'original' | 'upstream'; source?: string | null; revision?: string | null; notice: string };
-type Draft = MaterialDraft & { license: string; provenance: Provenance; compatibility: string[]; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
+type Draft = MaterialDraft & { runtimeBinding?: FactoryMaterial['runtimeBinding']; license: string; provenance: Provenance; compatibility: string[]; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type StatusIntent = { material: FactoryMaterial; action: 'archive' | 'withdraw'; reason: string };
 const licenses = ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0', 'CC-BY-4.0'];
-const tools: Record<string, string> = { literature_search: 'research:read', ask_scope: 'question:ask', checksum: 'checksum:read', run_experiment: 'experiment:synthetic' };
+const builtInTools: Record<string, string> = { literature_search: 'research:read', ask_scope: 'question:ask', checksum: 'checksum:read', run_experiment: 'experiment:synthetic' };
 const stateNames: Record<string, string> = { draft: '草稿', published: '已发布', withdrawn: '已撤回', archived: '已归档' };
 const decisionNames: Record<string, string> = { pending: '等待审核', approved: '已同意', denied: '已拒绝' };
 const describe = (error: unknown) => error instanceof Error ? error.message : '素材治理状态无法确认，请刷新后重试。';
@@ -74,6 +75,7 @@ function MaterialContent({ material }: { material: FactoryMaterial }) {
   const provenance = material.provenance;
   return <dl className="plan-details">
     <dt>完整内容{material.kind === 'tool' ? ' / 注册工具绑定' : ''}</dt><dd><pre>{material.content}</pre></dd>
+    {material.runtimeBinding && <><dt>组件运行声明</dt><dd><pre>{JSON.stringify(material.runtimeBinding, null, 2)}</pre></dd></>}
     <dt>声明权限</dt><dd>{material.permissions.length ? material.permissions.join('、') : '未请求额外权限'}</dd>
     <dt>固定依赖版本</dt><dd>{material.dependencies.length ? <pre>{JSON.stringify(material.dependencies, null, 2)}</pre> : '无依赖'}</dd>
     <dt>许可证</dt><dd>{material.license || '未提供'}</dd>
@@ -88,10 +90,9 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   const [filter, setFilter] = useState('all');
   const [reviews, setReviews] = useState<MaterialReview[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const isAdmin = user.role === 'manager';
-  const ownDraft = (material: FactoryMaterial) => stateOf(material) === 'draft' && !material.published && material.governance?.authorId === user.id;
-  const canArchive = (material: FactoryMaterial) => stateOf(material) !== 'archived' && (isAdmin || ownDraft(material));
-  const canChangeStatus = (material: FactoryMaterial, action: StatusIntent['action']) => action === 'archive' ? canArchive(material) : isAdmin && stateOf(material) === 'published';
+  const isOwner = (material: FactoryMaterial) => material.governance?.authorId === user.id;
+  const canArchive = (material: FactoryMaterial) => stateOf(material) !== 'archived' && isOwner(material);
+  const canChangeStatus = (material: FactoryMaterial, action: StatusIntent['action']) => action === 'archive' ? canArchive(material) : isOwner(material) && stateOf(material) === 'published';
   const currentOwner = useRef(user.id); currentOwner.current = user.id;
   const [authorityCurrent, setAuthorityCurrent] = useState(false);
   const [pollError, setPollError] = useState('');
@@ -99,6 +100,8 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft>(freshDraft);
   const [permissionText, setPermissionText] = useState('');
+  const [toolDeclarations, setToolDeclarations] = useState<PersonalToolDescriptor[]>([]);
+  const [toolError, setToolError] = useState('');
   const [inputSchema, setInputSchema] = useState('{}');
   const [outputSchema, setOutputSchema] = useState('{}');
   const [importing, setImporting] = useState(false);
@@ -108,7 +111,8 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   const currentIntentMaterial = statusIntent && materials.find(material => materialKey(material) === materialKey(statusIntent.material) && material.sha256 === statusIntent.material.sha256);
   const commands = useCommands(user.id);
   const disabled = !!busy || !authorityCurrent;
-  const visible = materials.filter(material => (isAdmin || stateOf(material) !== 'draft' || material.governance?.authorId === user.id) && (filter === 'all' || material.kind === filter));
+  const visible = materials.filter(material => (stateOf(material) === 'published' || isOwner(material)) && (filter === 'all' || material.kind === filter));
+  const tools = { ...builtInTools, ...Object.fromEntries(materials.filter(material => material.kind === 'tool').map(material => [material.content, material.permissions[0] ?? ''])) };
   const dependencies = materials.filter(material => active(material) && material.id !== draft.id);
   const unavailable = draft.dependencies.filter(ref => !dependencies.some(material => materialKey(material) === materialKey(ref) && material.sha256 === ref.sha256));
 
@@ -125,15 +129,34 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
     void check(); return () => controller.abort();
   }, [user.id, refresh]);
 
-  async function verifyActor(adminOnly = false) {
+  useEffect(() => {
+    if (!editing || draft.kind !== 'tool') return;
+    const controller = new AbortController();
+    setToolDeclarations([]); setToolError('');
+    void personalToolConnectionApi.descriptors(user.id, controller.signal).then(declarations => {
+      if (!controller.signal.aborted) setToolDeclarations(declarations);
+    }).catch(error => { if (!controller.signal.aborted) setToolError(describe(error)); });
+    return () => controller.abort();
+  }, [editing, draft.kind, user.id, refresh]);
+
+  function selectTool(value: string) {
+    const declaration = toolDeclarations.find(item => `${item.adapterId}@${item.revision}` === value);
+    if (!declaration) return;
+    setDraft(current => ({ ...current, content: declaration.toolName, permissions: [declaration.permission],
+      inputSchema: declaration.inputSchema, runtimeBinding: { adapterId: declaration.adapterId,
+        revision: declaration.revision, config: { connectionName: 'toolConnection' } } }));
+    setPermissionText(declaration.permission); setInputSchema(JSON.stringify(declaration.inputSchema, null, 2));
+  }
+
+  async function verifyActor() {
     const currentUser = await api.session();
-    if (currentUser.id !== user.id || adminOnly && currentUser.role !== 'manager') throw new Error('当前身份或操作权限无法核对。');
+    if (currentUser.id !== user.id) throw new Error('当前身份或操作权限无法核对。');
   }
   async function readHistory() {
     await act('material-publication-history', async () => {
       await verifyActor();
-      const records = await api.materialReviews(isAdmin);
-      if (!Array.isArray(records) || records.length > 100 || !records.every(isReview) || !isAdmin && records.some(item => item.authorId !== user.id)) throw new Error('历史发布记录无法核对。');
+      const records = await api.materialReviews(false);
+      if (!Array.isArray(records) || records.length > 100 || !records.every(isReview) || records.some(item => item.authorId !== user.id)) throw new Error('历史发布记录无法核对。');
       if (currentOwner.current !== user.id) return;
       setReviews(records); setHistoryLoaded(true);
     });
@@ -141,10 +164,11 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
 
   function edit(material?: FactoryMaterial) {
     const next: Draft = material ? {
-      id: material.id, name: material.name, kind: material.kind, description: material.description, content: material.content,
+      ...(isOwner(material) ? { id: material.id } : {}), name: material.name, kind: material.kind, description: material.description, content: material.content,
       dependencies: material.dependencies, permissions: material.permissions, license: material.license || 'MIT',
       provenance: material.provenance ?? { kind: 'original', notice: 'Original member-authored material.' },
       compatibility: material.compatibility, inputSchema: material.inputSchema, outputSchema: material.outputSchema,
+      ...(material.runtimeBinding ? { runtimeBinding: material.runtimeBinding } : {}),
     } : freshDraft();
     setDraft(next); setPermissionText(next.permissions.join('\n')); setInputSchema(JSON.stringify(next.inputSchema, null, 2));
     setOutputSchema(JSON.stringify(next.outputSchema, null, 2)); setEditing(true); setImporting(false);
@@ -161,7 +185,7 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
     await act('governance-draft', async () => {
       await verifyActor();
       const definition: Record<string, unknown> = { ...draft, name: draft.name.trim(), description: draft.description.trim(),
-        permissions: draft.kind === 'tool' ? [tools[draft.content]] : [...new Set(permissionText.split('\n').map(value => value.trim()).filter(Boolean))],
+        permissions: [...new Set(permissionText.split('\n').map(value => value.trim()).filter(Boolean))],
         inputSchema: objectSchema(inputSchema, '输入结构'), outputSchema: objectSchema(outputSchema, '输出结构') };
       const command = await commands.key('draft', definition);
       const saved = await api.governanceDraft(definition, command.requestId);
@@ -197,7 +221,7 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
     if (!statusIntent || !currentIntentMaterial || !canChangeStatus(currentIntentMaterial, statusIntent.action)) return;
     const intent = { ...statusIntent, material: currentIntentMaterial };
     await act(`material-${intent.action}`, async () => {
-      await verifyActor(intent.action !== 'archive' || !ownDraft(intent.material));
+      await verifyActor();
       const reason = intent.reason.trim();
       if (!reason) throw new Error('请填写撤回或归档原因。');
       const command = await commands.key(`${intent.action}:${materialKey(intent.material)}`, { sha256: intent.material.sha256, reason });
@@ -210,27 +234,28 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
 
   return <section className="materials-page">
     <div className="page-heading"><div><h1>构建材料管理</h1><p>成员可创建、修订和发布部门共享材料。</p></div><div className="button-row"><button className="secondary" disabled={disabled} onClick={() => { setImporting(true); setEditing(false); }}>导入定义</button><button className="primary" disabled={disabled} onClick={() => edit()}>新建材料</button></div></div>
-    <div className="state-note" role="status">编辑会保存为新版本。已有任务与个人绑定保留原固定版本；新版本不会替换他人的连接。自己的私人草稿可归档；公共版本的撤回和归档由管理员操作，历史保留。</div>
+    <div className="state-note" role="status">编辑会保存为新版本。已有任务与个人绑定保留原固定版本；新版本不会替换他人的连接。作者可修订、撤回和归档自己的版本，历史保留。</div>
 
     {pollError && <div className="error-message" role="alert"><span>{pollError} 写操作暂时暂停。</span><button className="text-button" disabled={!!busy} onClick={() => setRefresh(value => value + 1)}>重新核对</button></div>}
     {editing && <section className="material-editor" aria-label="材料版本草稿"><div className="section-heading"><h2>{draft.id ? '编辑下一版本草稿' : '新建版本草稿'}</h2><button className="text-button" disabled={!!busy} onClick={() => setEditing(false)}>关闭编辑</button></div><form onSubmit={event => { event.preventDefault(); if (!disabled) void saveDraft(); }}>
       <div className="editor-grid"><label>名称<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required maxLength={120} disabled={disabled}/></label><label>类型<select value={draft.kind} onChange={event => chooseKind(event.target.value as Draft['kind'])} disabled={disabled || !!draft.id}>{Object.entries(kindNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div>
       <label>用途说明<input value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} maxLength={2000} disabled={disabled}/></label>
-      {draft.kind === 'tool' ? <label>注册工具<select value={draft.content} required disabled={disabled} onChange={event => { const content = event.target.value; setDraft({ ...draft, content, permissions: [tools[content]] }); setPermissionText(tools[content]); }}><option value="" disabled>选择已有工具</option>{Object.keys(tools).map(name => <option key={name} value={name}>{name}</option>)}</select></label> : <label>材料内容<textarea value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} rows={6} required maxLength={16000} disabled={disabled}/></label>}
-      <label>声明权限（每行一项）<textarea value={permissionText} onChange={event => setPermissionText(event.target.value)} rows={2} disabled={disabled || draft.kind === 'tool'} placeholder="research:read"/></label><p className="quiet">可用权限：{Object.values(tools).join('、')}。连接凭据应通过受信连接提供。</p>
+      {draft.kind === 'tool' ? <><label>选择已接入工具<select aria-label="选择已接入工具" value={toolDeclarations.some(item => item.adapterId === draft.runtimeBinding?.adapterId && item.revision === draft.runtimeBinding?.revision) ? `${draft.runtimeBinding!.adapterId}@${draft.runtimeBinding!.revision}` : ''} disabled={disabled} onChange={event => selectTool(event.target.value)}><option value="">手动填写或保留原声明</option>{toolDeclarations.map(item => <option key={`${item.adapterId}@${item.revision}`} value={`${item.adapterId}@${item.revision}`}>{item.toolName} · {item.transport.toUpperCase()} · {item.adapterId}</option>)}</select></label>{toolError && <p role="alert" className="error-message">工具声明读取失败：{toolError}</p>}<label>注册工具名称<input list="material-registered-tools" value={draft.content} required maxLength={16000} disabled={disabled} onChange={event => { const content = event.target.value; setDraft(current => ({ ...current, content, ...(content !== current.content ? { runtimeBinding: undefined } : {}) })); if (tools[content]) setPermissionText(tools[content]); }}/></label><datalist id="material-registered-tools">{Object.keys(tools).map(name => <option key={name} value={name}/>)}</datalist>{draft.runtimeBinding && ('connectionName' in draft.runtimeBinding.config || toolDeclarations.some(item => item.adapterId === draft.runtimeBinding?.adapterId && item.revision === draft.runtimeBinding?.revision)) && <label>应用中的工具连接名称<input aria-label="应用中的工具连接名称" value={String(draft.runtimeBinding.config.connectionName ?? '')} required pattern="[A-Za-z][A-Za-z0-9_-]{0,99}" disabled={disabled} onChange={event => setDraft(current => ({ ...current, runtimeBinding: current.runtimeBinding ? { ...current.runtimeBinding, config: { ...current.runtimeBinding.config, connectionName: event.target.value } } : undefined }))}/><span className="quiet">应用装配时，用此名称选择个人或团队工具连接。</span></label>}</> : <label>材料内容<textarea value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} rows={6} required maxLength={16000} disabled={disabled}/></label>}
+      <label>声明能力（每行一项）<textarea value={permissionText} onChange={event => setPermissionText(event.target.value)} rows={2} disabled={disabled} placeholder="research:read"/></label><p className="quiet">填写注册工具声明的能力，服务端会核对当前注册信息。连接凭据由资源连接提供。</p>
       <div className="editor-grid"><label>许可证<select value={draft.license} disabled={disabled} onChange={event => setDraft({ ...draft, license: event.target.value })}>{licenses.map(license => <option key={license}>{license}</option>)}</select></label><label>来源类型<select value={draft.provenance.kind} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, kind: event.target.value as Provenance['kind'] } })}><option value="original">作者原创</option><option value="upstream">上游引用</option></select></label></div>
       {draft.provenance.kind === 'upstream' && <><label>上游来源（HTTPS）<input type="url" value={draft.provenance.source ?? ''} required maxLength={1000} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, source: event.target.value } })}/></label><label>固定修订版本<input value={draft.provenance.revision ?? ''} required maxLength={200} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, revision: event.target.value } })}/></label></>}
       <label>来源及版权声明<textarea value={draft.provenance.notice} required maxLength={4000} rows={3} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, notice: event.target.value } })}/></label>
       <fieldset className="dependency-picker" disabled={disabled}><legend>依赖的已发布版本</legend>{dependencies.map(material => <label key={materialKey(material)}><input type="checkbox" checked={draft.dependencies.some(ref => materialKey(ref) === materialKey(material) && ref.sha256 === material.sha256)} onChange={event => dependency(material, event.target.checked)}/>{material.name} <small>v{material.version}</small></label>)}{!dependencies.length && <p className="quiet">暂无当前可用的已发布依赖。</p>}</fieldset>
       {!!unavailable.length && <div className="state-note">当前依赖中有 {unavailable.length} 个版本不可用，请核对后移除或重新选择。<button type="button" className="text-button" disabled={disabled} onClick={() => setDraft({ ...draft, dependencies: draft.dependencies.filter(ref => !unavailable.includes(ref)) })}>移除不可用依赖</button></div>}
       <details className="technical-detail"><summary>输入、输出与固定版本</summary><span>{draft.id ? `材料系列 ${draft.id}` : '保存时创建新的材料系列'} · 兼容性 {draft.compatibility.join('、')}</span><label>输入结构 JSON<textarea rows={3} value={inputSchema} maxLength={16000} disabled={disabled} onChange={event => setInputSchema(event.target.value)}/></label><label>输出结构 JSON<textarea rows={3} value={outputSchema} maxLength={16000} disabled={disabled} onChange={event => setOutputSchema(event.target.value)}/></label></details>
+      {draft.runtimeBinding && <details className="technical-detail"><summary>保留的组件运行声明</summary><pre>{JSON.stringify(draft.runtimeBinding, null, 2)}</pre></details>}
       <button className="primary" disabled={disabled}>保存版本草稿</button><p className="quiet">提交结果不明确时，保留内容并重试；相同内容会使用原请求标识核对。</p>
     </form></section>}
     {importing && <section className="material-editor" aria-label="导入结构化材料"><div className="section-heading"><h2>导入定义草稿</h2><button className="text-button" disabled={!!busy} onClick={() => setImporting(false)}>关闭导入</button></div><form onSubmit={event => { event.preventDefault(); if (!disabled) void importDefinitions(); }}><label>JSON 定义数组<textarea rows={12} value={importText} maxLength={262144} required disabled={disabled} onChange={event => setImportText(event.target.value)} placeholder={'[{"kind":"prompt","name":"研究提示词","content":"记录来源、方法与局限。","license":"MIT","provenance":{"kind":"original","notice":"Original member-authored material."}}]'}/></label><p className="quiet">每次 1 至 30 个定义。须明确许可证和来源；上游引用须保留版权声明及固定修订。导入只保存定义，工具需绑定已注册工具。</p><button className="primary" disabled={disabled}>登记导入草稿</button></form></section>}
     <div className="catalog-tabs" role="group" aria-label="材料类型"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部</button>{Object.entries(kindNames).map(([id, name]) => <button key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{name}</button>)}</div>
     <div className="material-catalog">{visible.length ? visible.map(material => {
       const state = stateOf(material);
-      return <article className="material-row" key={materialKey(material)}><div className="material-kind">{kindNames[material.kind]}</div><div className="material-info"><div className="material-title"><h3>{material.name}</h3><span className="version">v{material.version}</span><span className={`badge ${state === 'published' ? 'status-published' : 'status-draft'}`}>{stateNames[state] ?? '状态待核对'}</span></div><p>{material.description}</p><div className="material-meta"><span>作者 {material.governance?.authorId ?? '原始记录'}</span><span>许可证 {material.license}</span><span>依赖 {material.dependencies.length} 项</span></div>{material.governance?.reason && <p>状态原因：{material.governance.reason}</p>}<details className="technical-detail"><summary>查看完整版本内容</summary><MaterialContent material={material}/></details></div><div className="material-actions"><button className="secondary" disabled={disabled} onClick={() => edit(material)}>新版本</button>{state === 'draft' && material.governance?.authorId === user.id && <button className="primary" disabled={disabled} onClick={() => void publish(material)}>发布此版本</button>}{isAdmin && state === 'published' && <button className="secondary danger" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'withdraw', reason: '' })}>撤回此版本</button>}{canArchive(material) && <button className="text-button" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'archive', reason: '' })}>归档此版本</button>}</div></article>;
+      return <article className="material-row" key={materialKey(material)}><div className="material-kind">{kindNames[material.kind]}</div><div className="material-info"><div className="material-title"><h3>{material.name}</h3><span className="version">v{material.version}</span><span className={`badge ${state === 'published' ? 'status-published' : 'status-draft'}`}>{stateNames[state] ?? '状态待核对'}</span></div><p>{material.description}</p><div className="material-meta"><span>作者 {material.governance?.authorId ?? '原始记录'}</span><span>许可证 {material.license}</span><span>依赖 {material.dependencies.length} 项</span></div>{material.governance?.reason && <p>状态原因：{material.governance.reason}</p>}<details className="technical-detail"><summary>查看完整版本内容</summary><MaterialContent material={material}/></details></div><div className="material-actions"><button className="secondary" disabled={disabled} onClick={() => edit(material)}>{isOwner(material) ? '新版本' : '复制为新材料'}</button>{state === 'draft' && material.governance?.authorId === user.id && <button className="primary" disabled={disabled} onClick={() => void publish(material)}>发布此版本</button>}{isOwner(material) && state === 'published' && <button className="secondary danger" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'withdraw', reason: '' })}>撤回此版本</button>}{canArchive(material) && <button className="text-button" disabled={disabled} onClick={() => setStatusIntent({ material, action: 'archive', reason: '' })}>归档此版本</button>}</div></article>;
     }) : <p className="list-empty">此分类暂无可见材料。</p>}</div>
     {statusIntent && currentIntentMaterial && canChangeStatus(currentIntentMaterial, statusIntent.action) && <section className="material-editor" aria-label="确认材料状态变更" style={{ marginTop: 24 }}><h2>{statusIntent.action === 'archive' ? '归档' : '撤回'} {statusIntent.material.name} v{statusIntent.material.version}</h2><p>此版本将无法用于后续执行。版本内容、摘要和历史证据继续保留。</p><form onSubmit={event => { event.preventDefault(); if (!disabled) void changeStatus(); }}><label>原因<textarea value={statusIntent.reason} rows={3} required maxLength={2000} disabled={disabled} onChange={event => setStatusIntent({ ...statusIntent, reason: event.target.value })}/></label><div className="button-row"><button className="secondary danger" disabled={disabled}>确认{statusIntent.action === 'archive' ? '归档' : '撤回'}此版本</button><button type="button" className="secondary" disabled={!!busy} onClick={() => setStatusIntent(undefined)}>取消</button></div><details className="technical-detail"><summary>查看固定版本摘要</summary><span>{materialKey(statusIntent.material)}</span><span>{statusIntent.material.sha256}</span></details></form></section>}
     <details className="technical-detail" style={{ marginTop: 30 }}><summary>历史发布审查（只读）</summary><p>原申请和决定保留，不会自动发布任何版本。</p><button className="secondary" disabled={disabled} onClick={() => void readHistory()}>读取历史记录</button>{reviews.map(review => {

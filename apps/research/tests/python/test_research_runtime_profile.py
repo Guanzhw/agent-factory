@@ -149,44 +149,39 @@ class ResearchRuntimeProfileTests(unittest.TestCase):
                 operation(target_ref='research-target', comparison_manifest=oversized)
 
     def test_member_publication_uses_exact_versions_without_admin(self):
-        governance = SimpleNamespace(member_publication=Mock(return_value=True),
+        governance = SimpleNamespace(
             create_draft=Mock(side_effect=lambda owner, definition, key:
                 definition | {'version': 1, 'sha256': digest(definition)}),
-            publish=Mock(), request_publication=Mock(), decide_publication=Mock())
+            publish=Mock())
         state = {'auth': Mock(), 'material_governance': governance, 'applications': governance}
         result = profile.publish_research_application(state, target_ref='research-target',
             comparison_manifest=self.manifest, author='alice')
         self.assertEqual(result['id'], profile.APPLICATION_ID)
-        state['auth'].require.assert_called_once_with('alice', 'run')
+        state['auth'].require_member.assert_called_once_with('alice')
         self.assertEqual(governance.publish.call_count, 6)
         for draft, published in zip(governance.create_draft.call_args_list, governance.publish.call_args_list, strict=True):
             self.assertEqual(published.args[:3], ('alice', draft.args[1]['id'], 1))
             self.assertEqual(published.args[3], draft.args[2].removesuffix(':draft') + ':publish')
-        governance.request_publication.assert_not_called()
-        governance.decide_publication.assert_not_called()
-
-    def test_explicit_legacy_settings_and_scope_remain_available(self):
+    def test_settings_default_to_member_self_service(self):
         settings = profile.research_settings(db_url='postgresql+psycopg://fixture@localhost/fixture',
             workspace=Path('/synthetic/workspace'), target_ref='research-target',
-            remote_targets={'research-target': object()}, comparison_manifest=self.manifest,
-            temporary_policy='admin-review', material_review_mode='separate-admin')
-        self.assertEqual(settings.temporary_policy, 'admin-review')
-        self.assertEqual(settings.material_review_mode, 'separate-admin')
-        self.assertEqual(settings.policy_revision, profile.APPLICATION_ID)
+            remote_targets={'research-target': object()}, comparison_manifest=self.manifest)
+        self.assertEqual(settings.temporary_policy, 'member-self-service')
+        self.assertEqual(settings.material_review_mode, 'member-self-service')
+        self.assertEqual(settings.policy_revision, profile.APPLICATION_ID + "-department-v1")
         self.ctx.settings.temporary_policy = settings.temporary_policy
         self.assertIsInstance(self.entry('model').factory(self.ctx), profile.ResearchProcessFixtureModel)
 
-    def test_legacy_publication_is_explicit_and_requires_distinct_reviewers(self):
-        governance = SimpleNamespace(member_publication=Mock(return_value=False), publish=Mock(), create_draft=Mock(side_effect=lambda owner, definition, key: definition | {'version': 1, 'sha256': digest(definition)}),
-            request_publication=Mock(return_value={'id': 'review'}), decide_publication=Mock())
+    def test_account_admin_publishes_its_own_research_resources_directly(self):
+        governance = SimpleNamespace(publish=Mock(), create_draft=Mock(side_effect=lambda owner, definition, key:
+            definition | {'version': 1, 'sha256': digest(definition)}))
         state = {'auth': Mock(), 'material_governance': governance, 'applications': governance}
-        args = dict(target_ref='research-target', comparison_manifest=self.manifest, author='manager', reviewer='manager2')
+        args = dict(target_ref='research-target', comparison_manifest=self.manifest, author='manager')
         result = profile.publish_research_application(state, **args)
         self.assertEqual(result['id'], profile.APPLICATION_ID)
-        self.assertEqual(governance.decide_publication.call_count, 6)
-        self.assertTrue(all(call.args[0] == 'manager2' for call in governance.decide_publication.call_args_list))
-        with self.assertRaises(ValueError):
-            profile.publish_research_application(state, **(args | {'reviewer': 'manager'}))
+        state['auth'].require_member.assert_called_once_with('manager')
+        self.assertEqual(governance.publish.call_count, 6)
+        self.assertTrue(all(call.args[0] == 'manager' for call in governance.publish.call_args_list))
 
 
     def test_distinct_evaluator_adapter_namespace_keeps_original_target_frozen(self):

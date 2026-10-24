@@ -4,11 +4,11 @@ import { RemoteRequestError, definitivelyRejected } from './personalRemoteApi.js
 export interface SSHIdentityInput { name: string; address: string; port: number; username: string; hostKey: string; allowedRoot: string; }
 export interface SSHIdentity { address: string; port: number; username: string; hostKey: string; hostFingerprint: string; origin: string; }
 export interface PersonalSSHServer extends SSHIdentityInput { reference: string; hostFingerprint: string; defaultDirectory: string;
-  status: string; enabled: boolean; diagnostic: string | null; lastCheckRequestId: string | null; credentialRef: string; credentialRevision: string; }
-export type SSHAction = 'configure' | 'verify' | 'bind' | 'revoke';
+  status: string; enabled: boolean; diagnostic: string | null; lastCheckRequestId: string | null; credentialRef?: string; credentialRevision?: string; ownerId?: string; visibility?: 'personal' | 'team'; isOwner?: boolean; }
+export type SSHAction = 'configure' | 'verify' | 'bind' | 'revoke' | 'sharing';
 export const sshMessages: Record<string, string> = {
-  SSH_INPUT_INVALID: '请核对服务器名称、IP、端口、非 root 账户、Ed25519 主机公钥和私有目录。',
-  SSH_IDENTITY_INVALID: '服务器身份或目录格式不适用。请使用允许访问的 IP、非 root 账户、完整 Ed25519 主机公钥和较短的私有目录。',
+  SSH_INPUT_INVALID: '请核对服务器名称、地址、端口、账户、主机公钥和私有目录。',
+  SSH_IDENTITY_INVALID: '服务器身份或目录格式不适用。请核对服务器地址、SSH 账户、完整主机公钥和绝对路径目录。',
   SSH_LINUX_ARCH_REQUIRED: '服务器需要 Linux x86-64。请选用符合要求的服务器。',
   SSH_NON_ROOT_REQUIRED: '请使用自己的非 root SSH 账户，并为该账户准备 Docker 权限。',
   SSH_PYTHON_MISSING: '未找到 python3。请先在服务器准备 Python 3.12+，再重新检查。',
@@ -33,6 +33,7 @@ export const personalSSHApi = {
   identity: (owner: string, input: SSHIdentityInput) => call<SSHIdentity>(owner, '/identity', 'POST', input),
   configure: (owner: string, input: SSHIdentityInput & { credentialRef: string; credentialRevision: string; confirmedHostKey: true; requestId: string }, reference?: string) => call<PersonalSSHServer>(owner, reference ? `/${ref(reference)}/configure` : '', 'POST', input),
   inspect: (owner: string, reference: string) => call<PersonalSSHServer>(owner, `/${ref(reference)}`),
-  command: (owner: string, server: string, action: Exclude<SSHAction, 'configure'>, requestId: string) => call<PersonalSSHServer>(owner, `/${ref(server)}/${action}`, 'POST', { requestId }),
+  command: (owner: string, server: string, action: Exclude<SSHAction, 'configure' | 'sharing'>, requestId: string) => call<PersonalSSHServer>(owner, `/${ref(server)}/${action}`, 'POST', { requestId }),
+  share: (owner: string, reference: string, visibility: 'personal' | 'team', requestId: string) => call<PersonalSSHServer>(owner, `/${ref(reference)}/sharing`, 'POST', { visibility, requestId }),
   recover: (owner: string, requestId: string, action: SSHAction) => call<{ requestId: string; action: SSHAction; server: PersonalSSHServer }>(owner, `/requests/${ref(requestId)}?action=${action}`),
 };

@@ -27,7 +27,7 @@ from agent_factory.personal_models import PersonalModels, personal_model_router
 
 class FixtureAuth:
     def __init__(self):
-        self.denied = set()
+        self.disabled = set()
 
     def user(self, request):
         owner = request.headers.get('x-fixture-owner')
@@ -35,9 +35,9 @@ class FixtureAuth:
             raise HTTPException(401, 'SYNTHETIC_OWNER_REQUIRED')
         return {'id': owner}
 
-    def require(self, owner, action):
-        if owner not in {'alice', 'bob'} or (owner, action) in self.denied:
-            raise HTTPException(403, 'SYNTHETIC_PERMISSION_DENIED')
+    def require_member(self, owner):
+        if owner not in {'alice', 'bob'} or owner in self.disabled:
+            raise HTTPException(403, 'SYNTHETIC_MEMBER_DISABLED')
 
 
 class MetadataOnlyVault:
@@ -88,7 +88,8 @@ class ModelCommandRecoveryTests(unittest.TestCase):
         self.models = PersonalModels(store, self.auth, self.connections, self.vault,
             transport_factory=self.forbid_transport)
         self.connections.owner_models = self.models
-        self.tables = (self.models.models, self.models.defaults, self.models.commands,
+        self.tables = (self.models.models, self.models.defaults, self.models.shared_defaults, self.models.commands,
+            self.connections.sharing.resources,
             self.connections.references, self.connections.versions, self.connections.commands, self.audit)
         app = FastAPI()
         app.include_router(personal_model_router(self.auth, self.models))
@@ -320,23 +321,23 @@ class ModelCommandRecoveryTests(unittest.TestCase):
             self.assertEqual(recovered['result'], original)
         self.assert_unchanged(before)
 
-    def test_recovery_requires_current_read_permission_but_not_run_permission(self):
+    def test_recovery_requires_current_member_but_not_available_credential(self):
         original = self.configure('fixture-readable', request_id='readable-configure-command')
-        self.auth.denied.add(('alice', 'run'))
+        self.vault.unavailable.add('alice')
         before = self.snapshot()
         self.mutations.clear()
         self.assertEqual(self.get('/requests/readable-configure-command')['result'], original)
-        self.auth.denied.add(('alice', 'read'))
+        self.auth.disabled.add('alice')
         failure = self.get('/requests/readable-configure-command', expected=403)
-        self.assertEqual(failure, {'detail': 'SYNTHETIC_PERMISSION_DENIED'})
+        self.assertEqual(failure, {'detail': 'SYNTHETIC_MEMBER_DISABLED'})
         self.assert_unchanged(before)
 
-    def test_initial_permission_or_credential_denial_has_no_command_receipt_or_writes(self):
-        for denial in ('permission', 'credential'):
+    def test_initial_disabled_member_or_credential_denial_has_no_command_receipt_or_writes(self):
+        for denial in ('disabled-member', 'credential'):
             with self.subTest(denial=denial):
                 request_id = 'initial-denied-' + denial
-                if denial == 'permission':
-                    self.auth.denied.add(('alice', 'run'))
+                if denial == 'disabled-member':
+                    self.auth.disabled.add('alice')
                 else:
                     self.vault.unavailable.add('alice')
                 before = self.snapshot()
@@ -346,13 +347,13 @@ class ModelCommandRecoveryTests(unittest.TestCase):
                     self.assertIsNone(self.receipt('alice', request_id))
                     self.assert_unchanged(before)
                 finally:
-                    self.auth.denied.clear()
+                    self.auth.disabled.clear()
                     self.vault.unavailable.clear()
 
     def test_initial_schema_or_destination_rejection_has_no_command_receipt_or_writes(self):
         for name, changes in (
             ('schema', {'unexpectedOption': True}),
-            ('destination', {'baseURL': 'https://models.example.com/unapproved-path'}),
+            ('destination', {'baseURL': 'https://models.example.com/v1?api_key=synthetic-invalid'}),
         ):
             with self.subTest(rejection=name):
                 request_id = 'initial-invalid-' + name
@@ -361,6 +362,17 @@ class ModelCommandRecoveryTests(unittest.TestCase):
                 self.post('', self.configuration() | changes | {'requestId': request_id}, expected=422)
                 self.assertIsNone(self.receipt('alice', request_id))
                 self.assert_unchanged(before)
+
+    def test_custom_base_path_preserves_command_receipt_without_duplicate_writes(self):
+        values = self.configuration() | {'baseURL': 'https://models.example.com/custom/api',
+            'requestId': 'custom-base-path-command'}
+        original = self.post('', values, expected=201)
+        self.assertEqual(original['baseURL'], values['baseURL'])
+        before = self.snapshot()
+        self.mutations.clear()
+        self.assertEqual(self.post('', values, expected=201), original)
+        self.assertEqual(self.get('/requests/custom-base-path-command')['result'], original)
+        self.assert_unchanged(before)
 
     def test_configure_replay_403_does_not_mean_the_original_command_never_committed(self):
         request_id = 'configure-before-credential-change'

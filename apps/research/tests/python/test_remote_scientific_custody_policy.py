@@ -1,6 +1,5 @@
-"""Readonly terminal custody versus execution; real SQLite approval, mocked peers."""
+"""Readonly terminal custody versus execution; real SQLite member execution, mocked peers."""
 from agent_factory_research.services import services_for
-from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -23,17 +22,16 @@ class OriginCustodyPolicyTests(unittest.TestCase):
         f.link['plan_id'] = f.child_plan['id']
         f.store.execution_bindings = SimpleNamespace(recheck=Mock())
         f.store.material_governance = SimpleNamespace(require_materials_current=Mock())
-        f.approve()
 
     def read(self):
         return self.f.policy.require_scientific_custody('alice', self.f.child_plan, scientific_child_id='child')
 
-    def test_terminal_read_is_not_execution_approval_and_current_review_remains_required(self):
+    def test_terminal_read_is_not_execution_and_current_member_remains_required(self):
         result = self.read()
         self.assertIs(result['custodyReadable'], True)
         self.assertNotIn('allowed', result)
         with self.assertRaises(HTTPException): self.f.execute()
-        self.f.policy.clock = lambda: datetime(2026, 10, 9, tzinfo=timezone.utc)
+        self.f.auth.require_member.side_effect = HTTPException(403, 'CURRENT_MEMBER_DISABLED')
         with self.assertRaises(HTTPException): self.read()
 
     def test_all_installed_guards_bindings_and_material_currency_still_deny(self):

@@ -42,7 +42,7 @@ class SynthesisSourceService:
         metadata.create_all(store.engine)
 
     def preview(self, owner, source_task_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         _require(type(source_task_id) is str and 1 <= len(source_task_id) <= 128, status=422)
         # Task ownership precedes every artifact read, even unavailable evidence.
         task = self.store.task(source_task_id, owner)
@@ -68,7 +68,7 @@ class SynthesisSourceService:
                  'sourcePlanId': plan['id'],
                  'sourcePlanFingerprint': plan['fingerprint'], 'sourcePlanHash': digest(plan),
                  'artifacts': pins, 'projection': deepcopy(projection)}
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return {**value, 'fingerprint': digest(value)}
 
     def _row(self, conn, owner, identifier):
@@ -89,14 +89,14 @@ class SynthesisSourceService:
         return deepcopy(value)
 
     def read(self, owner, identifier):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             value = self._row(conn, owner, identifier)
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return value
 
     def list(self, owner, *, source_task_id=None, after_id=None, limit=20):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         _require(type(limit) is int and 1 <= limit <= 50, status=422)
         created = self.snapshots.c.body['createdAt'].as_string()
         with self.db.read() as conn:
@@ -111,12 +111,12 @@ class SynthesisSourceService:
                     and_(created == anchor['createdAt'], self.snapshots.c.id < anchor['id'])))
             ids = conn.execute(query.order_by(created.desc(), self.snapshots.c.id.desc()).limit(limit + 1)).scalars().all()
             rows = [self._row(conn, owner, identifier) for identifier in ids[:limit]]
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return {'schema': 1, 'ownerId': owner, 'items': rows,
                 'nextCursor': rows[-1]['id'] if len(ids) > limit else None, 'snapshot': False}
 
     def create(self, owner, *, source_task_id, source_ids, question, expected_fingerprint, request_id):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         _require(type(question) is str and 1 <= len(question.strip()) <= 1000, status=422)
         question = question.strip()
         _require(type(source_ids) is list and 1 <= len(source_ids) <= 3
@@ -148,14 +148,14 @@ class SynthesisSourceService:
             value['fingerprint'] = digest(value)
             # Recheck current authority and artifact bytes immediately before persistence.
             _require(self.preview(owner, source_task_id)['fingerprint'] == preview['fingerprint'], 'SYNTHESIS_SOURCE_STALE')
-            self.auth.require(owner, 'run')
+            self.auth.require_member(owner)
             conn.execute(self.snapshots.insert().values(id=value['id'], owner_id=owner, body=value, sha=digest(value)))
             self.db.record(conn, self.commands, owner, request_id, command, 'synthesis-source-create',
                            {'id': value['id'], 'fingerprint': value['fingerprint']})
             return deepcopy(value)
 
     def revalidate(self, owner, identifier, *, expected_fingerprint=None):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         value = self.read(owner, identifier)
         if expected_fingerprint is not None:
             _require(_hash(expected_fingerprint) and value['fingerprint'] == expected_fingerprint, 'SYNTHESIS_SOURCE_STALE')
@@ -169,5 +169,5 @@ class SynthesisSourceService:
         _require(projection == value['projection'], 'SYNTHESIS_SOURCE_STALE')
         context = build_source_context(value['question'], projection)
         _require(context.provenance['snapshotSha256'] == value['contextFingerprint'])
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         return value

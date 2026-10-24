@@ -97,7 +97,7 @@ class ResearchPreparedHandoffService(PreparedHandoffService):
     def _routes(self):
         def owner(request, execution=False):
             user = self.auth.user(request)
-            self.auth.require(user['id'], 'run' if execution else 'read')
+            self.auth.require_member(user['id'])
             return user['id']
 
         @self.router.get('/scientific-projects/{project_id}/baseline')

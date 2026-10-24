@@ -25,7 +25,7 @@ class NativeStopTests(unittest.IsolatedAsyncioTestCase):
         self.store = SimpleNamespace(task=Mock(return_value=self.task), plan=Mock(return_value=self.plan),
             sql=Mock(return_value=[{'count': 0}]), native_db=Mock(),
             lifecycle_observer=SimpleNamespace(_binding=Mock(side_effect=[self.before, self.after])))
-        self.state = {'store': self.store, 'auth': SimpleNamespace(require=Mock())}
+        self.state = {'store': self.store, 'auth': SimpleNamespace(require_member=Mock())}
         self.worker = Mock(acancel_queued=AsyncMock(return_value=True), start=AsyncMock())
         self.addCleanup(patch.stopall)
         self.worker_class = patch.object(subject, 'QueueWorker', return_value=self.worker).start()

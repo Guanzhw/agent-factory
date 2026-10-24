@@ -1,0 +1,19 @@
+schema: spec-driven
+
+context: |
+  Language: zh-CN
+  All artifacts must be written in zh-CN.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+  Agent Factory 面向可信小团队。用户已确认管理员只管理账号，成员可调用工作流和组件，资源由成员自行接入。
+  核心是 platform/agent_factory；科研应用是 apps/research/agent_factory_research；deployment 为显式装配入口。
+  保留 Agno 3.1.0 原生执行生命周期、PostgreSQL 持久队列、资源所有权、凭据隔离、运行预算、取消和效果幂等。
+  在真实输入和持久化边界完成校验，同进程内部复用既有契约；删除无消费者的审批与重复证明链。
+  当前变更从 origin/main 0fac6de 创建隔离分支；既有原始工作区与数据库必须保持原状。
+  验证必须区分静态检查、便携测试、真实 PostgreSQL、浏览器与外部服务；未取得的证据不记为通过。
+operations:
+  apply:
+    guidance:
+      - 采用 coordinator 分工：主代理拥有规范、任务状态、交叉集成判断和最终验收；子代理按任务编号拥有明确的代码范围。
+      - 派发时写明目标、前置依赖、文件所有权、验收检查；实施者和独立审查者使用分开的上下文。
+      - 只有主代理核对最终源码与验证回执后才能勾选任务；遇到设计缺口先更新规范和任务，再派发实现。
+      - 记录失败尝试与尚未验证的边界，保留历史数据和原始执行身份；不以静默回退恢复已删除的审批模式。

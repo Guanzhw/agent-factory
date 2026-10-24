@@ -52,8 +52,50 @@ it('expired or revoked metadata cannot bind even with stale available/action fla
   const remote = { available: true, status: 'verified', allowedActions: ['bind'], expiresAt: new Date(Date.now() + 60_000).toISOString() } as PersonalRemote;
   expect(remoteCanBind(remote)).toBe(true); expect(remoteCanBind({ ...remote, status: 'revoked' })).toBe(false); expect(remoteCanBind({ ...remote, expiresAt: new Date(0).toISOString() })).toBe(false); expect(remoteCanBind({ ...remote, expiresAt: null })).toBe(false);
 });
+
+it('saves an unauthenticated HTTP remote without storing a placeholder credential', async () => {
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId: credential.providerId, kind: 'environment', capabilities: [] }]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: false, providerIds: [] });
+  const configure = vi.spyOn(personalRemoteApi, 'configure').mockResolvedValue({} as PersonalRemote);
+  const saveCredential = vi.spyOn(personalRemoteApi, 'saveCredential');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  await act(async () => {
+    const provider = host.querySelector<HTMLSelectElement>('[aria-label="远程提供方"]')!;
+    provider.value = credential.providerId; provider.dispatchEvent(new Event('change', { bubbles: true }));
+    for (const [label, value] of [['服务地址', 'http://127.0.0.1:7123'], ['预期项目 ID', 'public-project']]) {
+      const field = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    host.querySelector<HTMLInputElement>('[aria-label="远程服务无需认证"]')!.click();
+  });
+  await act(async () => button('确认保存配置').click());
+  await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+  expect(configure.mock.calls[0][0]).toEqual({ providerId: credential.providerId, origin: 'http://127.0.0.1:7123', projectId: 'public-project', requestId: expect.any(String) });
+  expect(saveCredential).not.toHaveBeenCalled();
+});
+
+it('lets a team member bind without offering owner controls or owner credentials', async () => {
+  const remote: PersonalRemote = { registrationRef: 'shared-remote', ownerId: 'another-member', visibility: 'team',
+    isOwner: false, providerId: credential.providerId, configRevision: 'r1', revision: 'v1', status: 'verified', available: true,
+    origin: credential.destination, projectId: 'team-project', capabilities: ['runtime:health'],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), allowedActions: ['inspect', 'bind'] };
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([remote]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: false, providerIds: [] });
+  const bind = vi.spyOn(api, 'bindConnection').mockResolvedValue({ ownerId: owner.id } as Awaited<ReturnType<typeof api.bindConnection>>);
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  expect(button('验证远程服务')).toBeUndefined(); expect(button('重新配置')).toBeUndefined();
+  expect(button('撤销远程访问')).toBeUndefined(); expect(button('共享给团队')).toBeUndefined();
+  await act(async () => button('确认绑定只读连接').click());
+  await vi.waitFor(() => expect(bind).toHaveBeenCalledTimes(1));
+  expect(bind.mock.calls[0][0]).toBe('shared-remote');
+});
 it('keeps verify and bind separate and reconciles an unknown verify without replay', async () => {
-  const remote = { registrationRef: 'remote-fixture', providerId: credential.providerId, configRevision: 'r1', revision: 'r1', status: 'configured', available: false, origin: credential.destination, projectId: 'fixture-project', capabilities: [], expiresAt: null, allowedActions: ['inspect', 'verify', 'configure', 'revoke'] } satisfies PersonalRemote;
+  const remote = { registrationRef: 'remote-fixture', ownerId: owner.id, visibility: 'personal' as const, isOwner: true, providerId: credential.providerId, configRevision: 'r1', revision: 'r1', status: 'configured', available: false, origin: credential.destination, projectId: 'fixture-project', capabilities: [], expiresAt: null, allowedActions: ['inspect', 'verify', 'configure', 'revoke'] } satisfies PersonalRemote;
   vi.spyOn(api, 'session').mockResolvedValue(owner); const bind = vi.spyOn(api, 'bindConnection');
   vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId: credential.providerId, kind: 'environment', capabilities: ['runtime:health'] }]); vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([remote]); vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([]); vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [credential.providerId] });
   const command = vi.spyOn(personalRemoteApi, 'command').mockRejectedValue(new Error('untrusted provider detail'));
@@ -103,7 +145,7 @@ it('explicitly configures a creation-only ORX connection without requiring an ex
   const command = vi.spyOn(personalRemoteApi, 'command'); const bind = vi.spyOn(api, 'bindConnection');
   await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
   async function change(label: string, value: string) { await act(async () => { const field = host.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`)!; const select = field.tagName === 'SELECT'; Object.getOwnPropertyDescriptor(select ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event(select ? 'change' : 'input', { bubbles: true })); }); }
-  await change('远程提供方', providerId); await change('HTTPS 服务源', origin); await change('OpenResearch 认证方式', 'bearer');
+  await change('远程提供方', providerId); await change('服务地址', origin); await change('OpenResearch 认证方式', 'bearer');
   await act(async () => host.querySelector<HTMLInputElement>('[aria-label="用于创建新项目"]')!.click());
   expect(host.querySelector('[aria-label="预期项目 ID"]')).toBeNull();
   await change('已有此目标的凭据', credential.credentialRef); await act(async () => button('确认保存配置').click());
@@ -126,7 +168,7 @@ it('requires explicit ORX auth mode and carries an optional existing session tem
   const configure = vi.spyOn(personalRemoteApi, 'configure').mockResolvedValue({ registrationRef: 'orx-configured' } as PersonalRemote);
   await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
   async function field(label: string, value: string) { await act(async () => { const el = host.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`)!; Object.getOwnPropertyDescriptor(el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); }); }
-  await field('远程提供方', providerId); await field('HTTPS 服务源', stored.destination); await field('预期项目 ID', 'native-project');
+  await field('远程提供方', providerId); await field('服务地址', stored.destination); await field('预期项目 ID', 'native-project');
   expect(button('输入并保存个人凭据').disabled).toBe(true); await field('OpenResearch 认证方式', 'bearer'); expect(button('输入并保存个人凭据').disabled).toBe(false);
   await field('新会话模板 ID（可选）', 'existing-session-template'); await field('已有此目标的凭据', stored.credentialRef); await act(async () => button('确认保存配置').click());
   await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1)); expect(configure).toHaveBeenCalledWith(expect.objectContaining({ authMode: 'bearer', sessionTemplateId: 'existing-session-template', projectId: 'native-project', credentialRef: stored.credentialRef }), undefined); expect(JSON.stringify(localStorage)).not.toContain('existing-session-template');

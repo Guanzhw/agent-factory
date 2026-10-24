@@ -56,7 +56,7 @@ def _manifest(choice):
 def _scope(ctx, *, choice, target_ref):
     _config({'choice': choice, 'targetRef': target_ref})
     owner = getattr(ctx.run_context, 'user_id', None)
-    _require(ctx.settings.demo is True and ctx.settings.temporary_policy in {'member-self-service', 'admin-review'}
+    _require(ctx.settings.demo is True and ctx.settings.temporary_policy == 'member-self-service'
              and type(owner) is str and bool(owner) and ctx.plan.get('ownerId') == owner
              and ctx.plan.get('application') == APPLICATION_ID
              and (ctx.plan.get('applicationRef') or {}).get('id') == APPLICATION_ID
@@ -166,15 +166,11 @@ def application_definition(materials_by_choice: dict[str, list[dict[str, Any]]])
             'discoveryKeywords': ['受控比较', '基线候选'], 'modes': modes}
 
 
-def publish_comparison_application(state, targets_by_choice, *, author, reviewer=None):
+def publish_comparison_application(state, targets_by_choice, *, author):
     _require(type(targets_by_choice) is dict and bool(targets_by_choice)
              and set(targets_by_choice) <= set(CHOICES))
     governance, applications = state['material_governance'], state['applications']
-    member_publication = governance.member_publication()
-    state['auth'].require(author, 'run' if member_publication else 'components:write')
-    if not member_publication:
-        _require(type(reviewer) is str and bool(reviewer) and author != reviewer)
-        state['auth'].require(reviewer, 'agent_os:admin')
+    state['auth'].require_member(author)
     selected = {}
     for choice in CHOICES:
         if choice not in targets_by_choice:
@@ -183,18 +179,10 @@ def publish_comparison_application(state, targets_by_choice, *, author, reviewer
         for definition in material_drafts(choice, targets_by_choice[choice]):
             key = 'comparison-material:' + digest(definition)
             value = governance.create_draft(author, definition, key + ':draft')
-            if member_publication:
-                governance.publish(author, value['id'], value['version'], key + ':publish')
-            else:
-                review = governance.request_publication(author, value['id'], value['version'], key + ':review')
-                governance.decide_publication(reviewer, review['id'], True, key + ':approve')
+            governance.publish(author, value['id'], value['version'], key + ':publish')
             selected[choice].append(value)
     definition = application_definition(selected)
     key = 'comparison-app:' + digest(definition)
     app = applications.create_draft(author, definition, key + ':draft')
-    if member_publication:
-        applications.publish(author, app['id'], app['version'], key + ':publish')
-    else:
-        review = applications.request_publication(author, app['id'], app['version'], key + ':review')
-        applications.decide_publication(reviewer, review['id'], True, key + ':approve')
+    applications.publish(author, app['id'], app['version'], key + ':publish')
     return app

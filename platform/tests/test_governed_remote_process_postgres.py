@@ -25,7 +25,7 @@ import httpx
 
 from pg_fixture import IsolatedPostgres
 from controlled_remote_worker import (MANAGER, MODEL_RECEIVER, MODEL_SOURCE, ORIGIN_OWNER, OTHER_OWNER,
-    RECEIVER_OWNER, REVIEWER, TARGET_REF, token)
+    RECEIVER_OWNER, TARGET_REF, token)
 from agent_factory.store import digest
 from agent_factory_research.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
 
@@ -185,6 +185,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
             server.control("role-restore")
             server.control("connection-restore")
         self.receiver.control("mapping-restore")
+        self.origin.control('dispatch-release')
 
     def tearDown(self):
         for server in (self.origin, self.receiver):
@@ -211,32 +212,27 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         plan = self.call(self.origin, "POST", f"/compositions/proposals/{proposal['id']}/accept", expected=201,
             json={"requestId": uuid4().hex}).json()
         self.assertFalse(plan["syntheticFixture"])
-        self.assertEqual(plan["policy"], "admin-review")
-        self.approve(self.origin, plan["id"])
+        self.assertEqual(plan["policy"], "member-self-service")
         return plan
 
-    def approve(self, server, plan_id):
-        review = self.call(server, "POST", "/plan-reviews", expected=201, json={"planId": plan_id, "requestId": uuid4().hex}).json()
-        self.call(server, "POST", f"/plan-reviews/{review['id']}/decision", actor=REVIEWER,
-            json={"approved": True, "requestId": uuid4().hex})
-
     def prepare(self, plan):
+        self.origin.control('dispatch-hold')
         body = {"planId": plan["id"], "requestId": uuid4().hex, "executionTargetRef": TARGET_REF}
         initial = self.call(self.origin, "POST", "/instances", expected=202, json=body).json()
         task = initial["id"]
         self.tasks.append(task)
-        self.assertEqual(initial["status"], "waiting_approval", initial)
-        detail = self.call(self.origin, "GET", "/jobs/" + task).json()
-        receipt = detail["snapshot"]["remoteHandoff"]
-        self.assertTrue(detail["snapshot"]["receiverReviewRequired"])
-        self.assertIsNone(receipt["remoteTaskId"])
+        placement = next(row for row in self.origin.facts()['placements'] if row['task_id'] == task)
+        receipt_id = placement['body']['receipt']['id']
+        receipt = self.call(self.receiver, 'GET', '/remote-handoffs/' + receipt_id).json()
+        self.assertEqual(receipt['state'], 'PREPARED')
+        self.assertIsNotNone(receipt["remoteTaskId"])
         self.assertIsNone(receipt["remoteRunId"])
         return task, body, receipt
 
     def execute(self, mode="direct"):
         plan = self.plan(mode)
         task, body, receipt = self.prepare(plan)
-        self.approve(self.receiver, receipt["remotePlanId"])
+        self.origin.control('dispatch-release')
         job = self.call(self.origin, "POST", "/instances", expected=202, json=body).json()
         self.assertEqual(job["id"], task)
         return plan, task, body, receipt
@@ -307,7 +303,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         self.assertEqual(self.origin.facts(origin_task)["nativeTickets"], 0)
         self.assertEqual(self.receiver.facts()["nativeTickets"], before_receiver)
 
-    def test_01_real_tcp_governed_mapping_review_single_admission_and_artifact_integrity(self):
+    def test_01_real_tcp_member_mapping_staging_single_admission_and_artifact_integrity(self):
         source, receiver = self.origin.facts(), self.receiver.facts()
         self.assertNotEqual(source["pid"], receiver["pid"])
         self.assertNotEqual(source["workspace"], receiver["workspace"])
@@ -330,7 +326,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         self.assertEqual(mapped["sourceSpec"]["connection"], source["connection"])
         self.assertEqual(mapped["effectiveSpec"]["connection"], receiver["connection"])
         self.assertNotEqual(mapped["sourceSpec"]["adapterId"], mapped["effectiveSpec"]["adapterId"])
-        self.approve(self.receiver, pending["remotePlanId"])
+        self.origin.control('dispatch-release')
         for _ in range(2):
             self.assertEqual(self.call(self.origin, "POST", "/instances", expected=202, json=body).json()["id"], task)
         completed = self.wait(self.origin, task, {"completed"})
@@ -363,13 +359,13 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
                 self.assert_no_ticket(lookup["taskId"], before)
                 self.receiver.control("mapping-restore")
 
-    def test_03_mapping_and_receiver_connection_rotation_block_reviewed_dispatch(self):
+    def test_03_mapping_and_receiver_connection_rotation_block_prepared_dispatch(self):
         for operation in ("mapping-rotate", "connection-rotate"):
             with self.subTest(operation=operation):
                 self.receiver.control("mapping-restore"); self.receiver.control("connection-restore")
                 before = self.receiver.facts()["nativeTickets"]
                 task, body, receipt = self.prepare(self.plan())
-                self.approve(self.receiver, receipt["remotePlanId"])
+                self.origin.control('dispatch-release')
                 self.receiver.control(operation)
                 self.call(self.origin, "POST", "/instances", expected=409, json=body)
                 self.assert_no_ticket(task, before)
@@ -377,7 +373,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
                 self.assertEqual(evidence["receiverBindingProof"], receipt["receiverBindingProof"])
                 self.receiver.control("mapping-restore"); self.receiver.control("connection-restore")
 
-    def test_04_both_current_role_revocations_stop_paused_native_work_without_checksum(self):
+    def test_04_both_current_account_disables_stop_paused_native_work_without_checksum(self):
         for revoked in (self.origin, self.receiver):
             with self.subTest(role=revoked.configuration["role"]):
                 try:
@@ -385,6 +381,20 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
                     paused = self.wait(self.origin, task, {"waiting_input"})
                     remote = paused["snapshot"]["remoteHandoff"]["remoteTaskId"]
                     revoked.control("role-revoke")
+                    if revoked is self.receiver:
+                        self.call(self.receiver, 'GET', '/jobs/' + remote, expected=403)
+                        deadline = time.monotonic() + 12
+                        while time.monotonic() < deadline:
+                            facts = self.receiver.facts(remote)
+                            if facts['nativeStatus'] in {'failed', 'cancelled', 'error'}:
+                                break
+                            time.sleep(.04)
+                        else:
+                            self.fail('Disabled receiver did not terminate its original native ticket')
+                        self.assertEqual(facts['artifacts'], [])
+                        self.assertFalse(any(event['type'] == 'checksum_completed' for event in facts['events']))
+                        # Restore read access only after the native stop proof.
+                        revoked.control('role-restore')
                     failed = self.stopped(self.receiver, remote, "failed")
                     self.assertTrue(failed["snapshot"]["delegation"]["allStopped"])
                     self.assertEqual(failed["artifacts"], [])
@@ -476,14 +486,14 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         self.assertTrue(canceled["snapshot"]["remoteHandoff"]["allStopped"])
         self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
 
-    def test_08_cancel_before_receiver_review_has_positive_no_dispatch_proof_and_releases_only_owned_hold(self):
+    def test_08_cancel_before_receiver_dispatch_has_positive_no_dispatch_proof_and_releases_only_owned_hold(self):
         before = self.receiver.facts()["nativeTickets"]
         task, _, receipt = self.prepare(self.plan())
         canceled = self.call(self.origin, "POST", "/jobs/" + task + "/cancel").json()
         self.assertEqual(canceled["status"], "canceled")
         command = canceled["commandReceipt"]
         self.assertEqual(command["state"], "STOP_CONFIRMED")
-        self.assertEqual(command["evidence"]["kind"], "receiver-handoff-cancel")
+        self.assertEqual(command["evidence"]["kind"], "receiver-command")
         recovered = self.call(self.origin, "GET", f'/jobs/{task}/commands/{command["commandId"]}').json()
         self.assertEqual(recovered["fingerprint"], command["fingerprint"])
         self.assertTrue(recovered["stopConfirmed"])
@@ -491,7 +501,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
             evidence = self.call(self.receiver, "GET", "/remote-handoffs/" + receipt["id"]).json()
             self.assertEqual(evidence["state"], "CANCELLED_NO_DISPATCH")
             self.assertTrue(evidence["allStopped"])
-            self.assertIsNone(evidence["remoteTaskId"])
+            self.assertEqual(evidence["remoteTaskId"], receipt["remoteTaskId"])
             self.assertIsNone(evidence["remoteRunId"])
             self.assertEqual(evidence["receiverBindingProof"], receipt["receiverBindingProof"])
         self.assert_no_ticket(task, before)
@@ -533,7 +543,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
     def test_07_lost_dispatch_ack_receiver_restart_reconciles_one_original_native_ticket(self):
         plan = self.plan("paused")
         task, body, receipt = self.prepare(plan)
-        self.approve(self.receiver, receipt["remotePlanId"])
+        self.origin.control('dispatch-release')
         previous_pid = self.receiver.process.pid
         self.receiver.control("fault", fault="exit_after_dispatch")
         uncertain = self.call(self.origin, "POST", "/instances", expected=202, json=body).json()

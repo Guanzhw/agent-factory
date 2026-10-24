@@ -123,7 +123,7 @@ seeds identities, publishes material, opens a lifespan or dispatches a process.
     db = database_url if database_url is not None else read_database_url(original['databaseUrlFile'])
     workspace = Path(original['workspace'])
     basic = development_settings(Settings(db_url=db, workspace=workspace, max_workers=1,
-                                           temporary_policy='admin-review'))
+                                           temporary_policy='member-self-service'))
     with open_state(basic) as provider_state:
         targets = {stage: reconstruct_research_target(provider_state, original, snapshot,
                    candidate=False)['target'] for stage, snapshot in captured['snapshots'].items()}

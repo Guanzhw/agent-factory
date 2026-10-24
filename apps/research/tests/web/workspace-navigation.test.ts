@@ -22,6 +22,10 @@ describe('Factory application workspace navigation', () => {
       expect(read(`?tab=${tab}`, true).tab).toBe(tab);
     }
   });
+  it('reserves account management for account administrators', () => {
+    expect(read('?tab=accounts').tab).toBe('catalog');
+    expect(read('?tab=accounts', true).tab).toBe('accounts');
+  });
   it('rejects malformed pointers and compares navigation without execution state', () => {
     for (const value of ['../secret', 'a/b', 'a b', '<script>', 'a'.repeat(201)]) expect(read(`?task=${encodeURIComponent(value)}&run=${encodeURIComponent(value)}`)).toEqual(read(''));
     expect(sameWorkspaceRoute(read('?task=one'), read('?task=one'))).toBe(true);

@@ -1,4 +1,4 @@
-"""Compatibility pins calculated from git baseline d4f5e6c, not current code."""
+"""Member configuration fingerprints and application synthesis enablement."""
 from dataclasses import replace
 import unittest
 from typing import Any
@@ -10,19 +10,19 @@ from agent_factory_research.policy_compatibility import ResearchPlanPolicyServic
 
 
 class SynthesisConfigurationTests(unittest.TestCase):
-    def test_disabled_preserves_exact_legacy_policy_and_governance_hashes(self):
-        self.assertEqual(PlanPolicyConfig(name="admin-review", revision="plan-policy-v1", source_synthesis_enabled=False).fingerprint,
-                         'b03c7ab3571b7a01236685a940580a67197e4e91b236952bfb7a496b711fae72')
-        self.assertEqual(GovernanceConfig(review_mode="separate-admin", revision="material-governance-v1", source_synthesis_enabled=False).fingerprint,
-                         '84a5dd82dea562781e732c0884ed870971ddb4f8fb1257d3b75907f1411d283e')
+    def test_disabled_member_legacy_tool_contract_fingerprints(self):
+        self.assertEqual(PlanPolicyConfig(name="member-self-service", revision="plan-policy-v1", source_synthesis_enabled=False).fingerprint,
+                         '7e823c25a80082cefc9f45207b1ce078cd97bfbe96159ac98624a0ba8010e289')
+        self.assertEqual(GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1", source_synthesis_enabled=False).fingerprint,
+                         '443c7229370d2ccee312096554b0f202a808bd1b68115c9687529e18ccbb3bbd')
 
-    def test_disabled_preserves_exact_nonlegacy_policy_and_governance_hashes(self):
-        self.assertEqual(PlanPolicyConfig(name='admin-review', tool_contract='orx-evidence-v2',
+    def test_disabled_member_evidence_tool_contract_fingerprints(self):
+        self.assertEqual(PlanPolicyConfig(name='member-self-service', tool_contract='orx-evidence-v2',
             revision='synthesis-compat-evidence-v2', source_synthesis_enabled=False).fingerprint,
-            '223c551c6afa8d42e6f143e214a17f8ed10bb61d91504da15aae28dcc7dc64e9')
-        self.assertEqual(GovernanceConfig(review_mode='separate-admin', tool_contract='orx-evidence-v2',
+            '2e2f9e55353cbe90c031b7b32c3f6f139d09795336f1b1514d8317ae666db151')
+        self.assertEqual(GovernanceConfig(review_mode='member-self-service', tool_contract='orx-evidence-v2',
             revision='synthesis-compat-evidence-v2', source_synthesis_enabled=False).fingerprint,
-            '42d679f63c37f3601b773253a6042b0376d207af9e13c5da4fc5673657e20501')
+            '71ee9addd9564a22cfc5ea7680f785eb6629b37d073bc542c7252887a070373a')
 
     def test_enabled_changes_each_fingerprint_and_only_adds_scoped_saver(self):
         for original in (PlanPolicyConfig(), GovernanceConfig(),
@@ -31,9 +31,10 @@ class SynthesisConfigurationTests(unittest.TestCase):
             with self.subTest(config=type(original).__name__, contract=original.tool_contract):
                 enabled = replace(original, source_synthesis_enabled=True)
                 self.assertNotEqual(enabled.fingerprint, original.fingerprint)
-                self.assertEqual(enabled.known_tools, {**original.known_tools, 'save_literature_synthesis': 'research:read'})
-                if isinstance(original, PlanPolicyConfig) and isinstance(enabled, PlanPolicyConfig):
-                    self.assertEqual(enabled.read_only_tools, original.read_only_tools | {'save_literature_synthesis'})
+                if isinstance(original, GovernanceConfig):
+                    self.assertEqual(enabled.known_tools, {**original.known_tools, 'save_literature_synthesis': 'research:read'})
+                else:
+                    self.assertEqual(enabled.known_tools, original.known_tools)
 
     def test_application_catalog_addition_is_opt_in_and_exact(self):
         from types import SimpleNamespace
@@ -58,12 +59,12 @@ class SynthesisConfigurationTests(unittest.TestCase):
         store.plan_policy = PlanPolicyService.__new__(PlanPolicyService)
         self.assertEqual(application_tool_catalog(store), baseline)
 
-    def test_settings_reject_production_missing_or_nonreview_policy_and_nonboolean(self):
-        base: dict[str, Any] = {'db_url': 'sqlite://', 'demo': True, 'temporary_policy': 'admin-review',
+    def test_settings_require_demo_member_policy_and_explicit_boolean(self):
+        base: dict[str, Any] = {'db_url': 'sqlite://', 'demo': True, 'temporary_policy': 'member-self-service',
                                 'source_synthesis_enabled': True}
         settings = Settings(**base)
         self.assertTrue(settings.source_synthesis_enabled)
-        for changes in ({'demo': False}, {'temporary_policy': None}, {'temporary_policy': 'bounded-synthetic'},
+        for changes in ({'demo': False}, {'temporary_policy': None}, {'temporary_policy': 'admin-review'}, {'temporary_policy': 'bounded-synthetic'},
                         {'temporary_policy': 'read-only-auto'}, {'temporary_policy': 'unset'},
                         {'source_synthesis_enabled': 1}, {'source_synthesis_enabled': 0},
                         {'source_synthesis_enabled': 'true'}, {'source_synthesis_enabled': None}):

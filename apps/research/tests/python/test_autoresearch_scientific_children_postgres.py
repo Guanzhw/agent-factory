@@ -269,7 +269,7 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
             instructions='Controlled fixture decisions; not real science', manifest=example_manifest(),
             limits={'totalSeconds': 900, 'experimentSeconds': 600, 'maxExperiments': 1, 'toolCalls': 32, 'outputBytes': 65536},
             runtime_factory=runtime_factory, context_reader=lambda: {}, candidate_validator=lambda _: {'controlledFixture': True},
-            experiment=experiment, review_owner='manager', external_session=True)
+            experiment=experiment, external_session=True)
         self.settings = bootstrap.settings(db_url=database.url, workspace=root, preset=preset)
         # Explicit legacy accounting fixture; all model/provider IO remains controlled.
         self.settings.fee_management_enabled = self.settings.platform_paid_models_enabled = True
@@ -281,11 +281,10 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
         self.open_application()
         self.addCleanup(self.store.dispose_root_locks)
         self.auth = self.state['auth']
-        self.auth.authorization.unassign('bob', 'factory-user'); self.auth.authorization.assign('bob', 'factory-manager')
         self.preparation = ResearchPreparationStore(self.store, self.auth, self.state['resources'], self.store.storage,
             preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint)
         self.application = process_runtime_profile.publish_process_application(self.state,
-            target_ref='original-preparation', author='manager', reviewer='bob')
+            target_ref='original-preparation', author='alice')
         providers = [prep_provider]
         def cleanup():
             for row in self.store.sql('SELECT id,owner_id FROM af_process_allocations'):
@@ -346,7 +345,7 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
             phase_config=make_assembler(), preparation=self.preparation, checkpoints=checkpoints)
         services_for(self.store).autoresearch_children = self.children
         preset = replace(preset, manifest=manifest)
-        preset = bootstrap.publish_application(self.state, preset, author='manager', reviewer='bob')
+        preset = bootstrap.publish_application(self.state, preset, author='alice')
         self.settings.autoresearch_presets[preset.id] = preset; services_for(self.store).autoresearch.presets[preset.id] = preset
         self.login('alice')
         request_id = str(uuid4())

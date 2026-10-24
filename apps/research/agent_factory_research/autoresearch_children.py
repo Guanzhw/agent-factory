@@ -118,7 +118,7 @@ class AutoResearchChildren:
             return self.store.process_runtime.resources._authorize(owner, pin['targetRef'])
         # The original producer can belong to a separate legacy control plane.
         # Resolve only its verified readonly reference, never register its provider.
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         target = self.phase_config.phase_target(phase, deepcopy(pin))
         require(not inspect.isawaitable(target) and owner in target.owners)
         return target
@@ -202,7 +202,7 @@ class AutoResearchChildren:
     def _require_child(self, ctx, phase, *, custody):
         require(phase in PHASES)
         run = ctx.run_context
-        self.auth.require(run.user_id, 'run')
+        self.auth.require_member(run.user_id)
         child = self.store.task(run.session_id, run.user_id)
         ticket = self.store.lifecycle_observer._binding(child) if custody else None
         completed = ticket and ticket['status'] == ticket['persistedRunStatus'] == 'completed'

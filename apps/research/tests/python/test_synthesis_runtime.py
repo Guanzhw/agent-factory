@@ -133,8 +133,8 @@ class SynthesisRuntimeTests(unittest.TestCase):
                 entry.validator({'scope': SCOPE, 'sourceSnapshotRef': {'id': 'unsafe'}})
         self.assertIs(pricing_registration().local_model_type, ScientificFixtureModel)
 
-    def test_guard_revalidates_exact_plan_binding_goal_and_review_policy(self):
-        settings = SimpleNamespace(demo=True, source_synthesis_enabled=True, temporary_policy='admin-review')
+    def test_guard_revalidates_exact_plan_binding_goal_and_fixture_enablement(self):
+        settings = SimpleNamespace(demo=True, source_synthesis_enabled=True, temporary_policy='member-self-service')
         self.ctx.store.settings = settings
         ref = self.ctx.plan['sourceSnapshotRef']
         self.ctx.plan.update(normalizedGoal='Question?', bindingManifest={'sourceSnapshotRef': deepcopy(ref)},
@@ -151,7 +151,11 @@ class SynthesisRuntimeTests(unittest.TestCase):
             mutation(plan)
             with self.assertRaises(ValueError):
                 validate_plan_source(self.ctx.store, plan)
-        settings.temporary_policy = 'read-only-auto'
+        settings.source_synthesis_enabled = False
+        with self.assertRaises(ValueError):
+            validate_plan_source(self.ctx.store, self.ctx.plan)
+        settings.source_synthesis_enabled = True
+        settings.demo = False
         with self.assertRaises(ValueError):
             validate_plan_source(self.ctx.store, self.ctx.plan)
         validate_plan_source(SimpleNamespace(), {'executionBindings': {}})

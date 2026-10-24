@@ -84,7 +84,7 @@ class ScheduleDiagnostics:
             return
 
     def catalog(self, owner, after=None):
-        self.service.auth.require(owner, "read")
+        self.service.auth.require_member(owner)
         if after and not self.store.sql("""SELECT schedule_id FROM af_schedule_bindings
                 WHERE owner_id=:owner AND schedule_id=:after""", owner=owner, after=after):
             raise HTTPException(404, "Diagnostic schedule cursor not found")
@@ -96,7 +96,7 @@ class ScheduleDiagnostics:
             "nextCursor": rows[PAGE_SIZE - 1]["schedule_id"] if len(rows) > PAGE_SIZE else None}
 
     def page(self, owner, schedule_id, after=None):
-        self.service.auth.require(owner, "read")
+        self.service.auth.require_member(owner)
         self.service._history_binding(schedule_id, owner)
         cutoff = self._cutoff()
         if after and not self.store.sql("""SELECT id FROM af_schedule_diagnostics

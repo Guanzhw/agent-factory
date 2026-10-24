@@ -1,21 +1,17 @@
 # Ordinary personal commands through native Factory tasks
 
-An operator can install the personal command capability with
-`Settings(personal_agent_commands_enabled=True)` and explicitly install the distinct
-`opencode-personal-session-v1` provider. Existing verification-only provider registrations
-are never upgraded. `publish_application(state, author=..., reviewer=...)` in
-`personal_command_profile` follows the active governance policy. Under the normal
-`member-self-service` mode, an author publishes their own materials/application directly;
-an explicitly configured legacy or `separate-admin` policy may require an independent
-reviewer. It does not create a remote connection, accept a secret, start a session, or
-authorize spending. Owner connections remain self-service.
+The research application installs the personal command capability with
+`ResearchSettings(db_url=..., personal_agent_commands_enabled=True)` and an
+explicit `opencode-personal-session-v1` provider. Existing verification-only
+providers remain distinct. Call `publish_application(state, author=...)` from
+`personal_command_profile` to publish the member's materials and application directly. Members
+configure their own connections; remote model credentials remain on their
+OpenCode installation.
 
-Temporary-plan admission follows the active Factory policy. Normal `Settings.from_env()`
-and `ResearchSettings.from_env()` entrypoints use `member-self-service`, so ordinary
-commands need no plan-review step. An explicitly configured legacy or `admin-review`
-policy may require review; personal mode does not add an approval step. The capability
-response reports current policy, and preparation reports exact-plan authorization. This
-tool is never classified as read-only, and no endpoint silently approves a plan.
+Commands use `member-self-service` and the ordinary native task admission path.
+Preparation reports the exact plan's current execution status. Current membership,
+connection/project/session identity, cancellation and budgets remain checked.
+Native project-creation consent is scoped to the owner's requested operation.
 
 ## API
 
@@ -48,7 +44,8 @@ All routes require the authenticated owner and use `/api/factory/personal-agent`
   `connectionRef`, `nativeProjectId`, optional `title`. For `prompt`, specify `sessionId`,
   `text`, optional `agent`. For `interrupt`, specify only `sessionId` besides request/action.
   Returns `{plan, authorization, executionContract, commandSuccessMeans, ...}`.
-- Normal Factory `/plan-reviews` endpoints handle review when required by current policy.
+- `POST /commands/submit`: the same body as preparation; prepares and submits the
+  original member command in one request.
 - `POST /commands/start`: `{planId}`. Uses shared `FactoryAPI.instantiate` with the
   deterministic original task request `personal:{planId}`. Returns the normal Factory job.
 - `GET /commands/requests/{requestId}`: read-only lost-ack recovery with
@@ -87,9 +84,9 @@ providers retain their actual native project/session IDs.
 ## Verification
 
 `test_personal_command_profile.py` covers exact intent/context rejection, independent
-registration, strict schema and current permission rechecks. `test_personal_command_postgres.py`
+registration, strict schema and current member/resource checks. `test_personal_command_postgres.py`
 uses real PostgreSQL, the native Agno queue and a controlled local HTTP wire for create,
 conversation prompt, unknown acknowledgement recovery and best-effort interrupt. This
-fixture must run in the required PostgreSQL CI suite without skips. Local PostgreSQL is
-not available in the development workspace; live external OpenCode compatibility remains
-unverified. These fixtures are not evidence of real model billing or remote process stop.
+fixture must run in the required PostgreSQL CI suite without skips. Its controlled
+transport does not establish live external OpenCode compatibility, real model
+billing or remote process stop.

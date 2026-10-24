@@ -20,7 +20,7 @@ def context(phase):
     manifest = example_manifest()
     pin = {'targetRef': 'original-' + phase, 'comparisonManifest': manifest,
         'comparisonManifestSha256': manifest_fingerprint(manifest), 'variantSha256': 'b'*64}
-    return BindingContext(SimpleNamespace(demo=True, temporary_policy='admin-review'),
+    return BindingContext(SimpleNamespace(demo=True, temporary_policy='member-self-service'),
         with_research_services(SimpleNamespace(authorize_tool=Mock(), process_runtime=SimpleNamespace(run=AsyncMock(return_value={'originalLeaseId': 'lease'}))), autoresearch_children=SimpleNamespace(require_child=Mock(return_value=pin), verify_preparation=AsyncMock(return_value={'execution': {'taskId': 'original-producer'}, 'artifact': {'id': 'retained'}}))),
         {'ownerId': 'alice', 'application': profile.APPLICATION_ID, 'applicationRef': {'id': profile.APPLICATION_ID},
          'mode': profile.MODE_NAMES[phase], 'tools': [profile.TOOLS[phase]], 'capabilities': [profile.CAPABILITIES[phase]],

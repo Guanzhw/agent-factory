@@ -39,8 +39,8 @@ class ResearchEvaluationService:
             self._targets[fingerprint] = (reference, resources._target_fingerprint(target))
 
     def _execution(self, owner, execution, manifest, *, training=False):
-        self.auth.require(owner, 'read')
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
+        self.auth.require_member(owner)
         rows = self.store.sql('SELECT * FROM af_process_runs WHERE task_id=:task AND lease_id=:lease',
                               task=execution['taskId'], lease=execution['leaseId'])
         _require(len(rows) == 1)

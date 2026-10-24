@@ -133,7 +133,6 @@ class CandidateRunnerTests(unittest.TestCase):
         from research_candidate_recovery import CandidateJournal
         from agent_factory import process_runtime_profile
         from agent_factory_research import research_bootstrap_controller
-        bootstrap = importlib.import_module('bootstrap_research_control')
         workspace = Path(self.config['workspace']); workspace.mkdir(mode=0o700)
         store = Mock()
         store.task.return_value = {'id': 'original-task', 'owner_id': 'alice', 'plan_id': 'original-plan'}
@@ -148,8 +147,6 @@ class CandidateRunnerTests(unittest.TestCase):
             calls.append((method, path))
             if path.endswith('/proposals'): return {'id': 'proposal'}
             if path.endswith('/accept'): return {'id': 'original-plan'}
-            if path.endswith('/plan-reviews'): return {'id': 'review'}
-            if path.endswith('/decision'): return {}
             if path.endswith('/instances'):
                 expired = True
                 raise TimeoutError('synthetic lost acknowledgement')
@@ -163,7 +160,6 @@ class CandidateRunnerTests(unittest.TestCase):
             journal.begin_stage('preparation')
             progress = runner.Progress(workspace, journal)
             with patch.object(journal, 'remaining', side_effect=remaining), \
-                 patch.object(bootstrap, 'ensure_task_development_reviewer', return_value='reviewer'), \
                  patch.object(process_runtime_profile, 'publish_process_application',
                     return_value={'id': 'app', 'version': 1, 'sha256': 'a' * 64}), \
                  patch.object(runner, 'request_client', return_value=request), \
@@ -171,7 +167,7 @@ class CandidateRunnerTests(unittest.TestCase):
                     return_value={'cleanupConfirmed': True}) as cleanup:
                 with self.assertRaises(TimeoutError):
                     runner.preparation_phase({'state': {'store': store,
-                        'settings': SimpleNamespace(temporary_policy='admin-review')}}, Mock(),
+                        'settings': SimpleNamespace(temporary_policy='member-self-service')}}, Mock(),
                         'candidate-attempt', progress, journal)
             cleanup.assert_called_once()
             self.assertEqual(journal.snapshot()['stages']['preparation']['progress']['taskId'], 'original-task')

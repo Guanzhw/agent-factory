@@ -42,8 +42,7 @@ def require_original_custody(store, owner, plan, context, *, stopped):
         # The distinct source custody proof replaces only the remote execution
         # guard. Local review, bindings, material currency and every other guard
         # remain mandatory. No native admission or tool call consumes this path.
-        store.require_current_policy()
-        store.auth.require(owner, 'run')
+        store.auth.require_member(owner)
         store.plan_policy.require_execution(owner, plan, run_context=context)
         store.execution_bindings.recheck(plan, context)
         if store.material_governance is not None:

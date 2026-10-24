@@ -124,7 +124,7 @@ class PersonalOrxProjects:
     def _command(self, owner, request_id): return self.sessions._command(owner, request_id)
 
     def bundle(self, owner, reference, values):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         handle, pin = self.sessions._handle(owner, reference=reference, capability='project:create')
         if handle.namespace != 'native-openresearch' or not handle.configuration.get('projectCreation'):
             raise HTTPException(409, 'PERSONAL_ORX_CREATION_CONNECTION_REQUIRED')
@@ -155,7 +155,7 @@ class PersonalOrxProjects:
         return self.consent(owner, request_id)
 
     def consent(self, owner, request_id):
-        self.auth.require(owner, 'read'); self.connections._key(request_id)
+        self.auth.require_member(owner); self.connections._key(request_id)
         with self.store.engine.connect() as conn:
             row = conn.execute(select(self.consents).where(self.consents.c.owner_id == owner,
                 self.consents.c.request_id == request_id)).mappings().first()
@@ -179,7 +179,7 @@ class PersonalOrxProjects:
         return dict(row)
 
     def decide(self, owner, request_id, preview_hash, approved):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         row = self.consent(owner, request_id)
         if row['bundle']['previewHash'] != preview_hash: raise HTTPException(409, 'PERSONAL_PROJECT_PREVIEW_CHANGED')
         if row.get('_unrecorded'):
@@ -197,7 +197,7 @@ class PersonalOrxProjects:
         return self.consent(owner, request_id)
 
     def require_approval(self, owner, request_id, plan_id, bundle):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         row = self.consent(owner, request_id)
         if row['state'] not in {'approved', 'dispatch_started'} or row['plan_id'] != plan_id or row['bundle'] != bundle:
             raise HTTPException(409, 'PERSONAL_PROJECT_EXPLICIT_APPROVAL_REQUIRED')
@@ -266,7 +266,7 @@ class PersonalOrxProjects:
             'liveEndToEndVerified': False}
 
     def connect(self, owner, request_id, *, harness, model):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         result = self.request_result(owner, request_id)
         if result['state'] != 'acknowledged': raise HTTPException(409, 'PERSONAL_PROJECT_ACK_UNKNOWN')
         row = self.consent(owner, request_id)
@@ -280,14 +280,14 @@ class PersonalOrxProjects:
         return self.connections.bind(owner, remote['registrationRef'], 'created-bind:' + suffix)
 
     def existing_projects(self, owner, reference):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         handle, _ = self.sessions._handle(owner, reference=reference, capability='project:read')
         return handle.creation_projects()
 
     def select_existing(self, owner, reference, project_id, request_id):
         # A receipt before validation distinguishes terminal failures from a
         # lost response. Reserving the key never admits research/model IO.
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         fingerprint = digest({'connectionRef': reference, 'nativeProjectId': project_id})
         with self.connections._write() as conn:
@@ -320,7 +320,7 @@ class PersonalOrxProjects:
                 self.selections.c.request_id == request_id).values(state=state, failure_status=failure_status))
 
     def selection_status(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         suffix = digest({'request': request_id})[:40]
         keys = ['research-' + stage + ':' + suffix for stage in
@@ -349,7 +349,7 @@ class PersonalOrxProjects:
         new-session template. No invented harness/model or Factory BYOK forwarding.
         All intermediate commands use the existing owner-scoped receipt stores.
         """
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         handle, source_pin = self.sessions._handle(owner, reference=reference, capability='project:read')
         # Shared/task grants keep their existing admission policy; they cannot

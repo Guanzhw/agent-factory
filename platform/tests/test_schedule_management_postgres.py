@@ -25,7 +25,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         workspace = tempfile.TemporaryDirectory(prefix='schedule-management-')
         self.addCleanup(workspace.cleanup)
         self.settings = Settings(db_url=self.database.url, workspace=Path(workspace.name),
-            max_workers=1, max_user_tasks=1, temporary_policy='admin-review')
+            max_workers=1, max_user_tasks=1)
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store = self.state['store']
@@ -37,8 +37,9 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         self.addCleanup(self.client.__exit__, None, None, None)
         assert self.client.portal is not None
         self.portal = self.client.portal
-        self.auth.authorization.unassign('bob', 'factory-user')
-        self.auth.authorization.assign('bob', 'factory-manager')
+        self.auth.account_roles.unassign('manager', 'factory-manager')
+        self.assertEqual(self.auth.identity('manager')['role'], 'user')
+        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('manager', 'bob')}
         # Future fixed preview avoids native due runs entirely; explicit trigger
         # still uses the real existing admission/native executor path.
         clock = patch('agent_factory.schedule_management.preview_schedule',
@@ -46,15 +47,13 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         clock.start(); self.addCleanup(clock.stop)
         self.plan = self.post('/plans', {'topic': 'Scheduled original checksum fixture',
             'application': 'checksum', 'mode': 'literature', 'requestId': str(uuid4())}, status=201)
-        review = self.post('/plan-reviews', self.command(planId=self.plan['id']), status=201)
-        self.post('/plan-reviews/' + review['id'] + '/decision', self.command(approved=True), owner='bob')
 
     def command(self, **body):
         return {'requestId': str(uuid4()), **body}
 
     def request(self, method, path, body=None, *, owner='manager', status=200):
         response = self.client.request(method, '/api/factory' + path, json=body,
-            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner)})
+            headers={'Authorization': 'Bearer ' + self.tokens[owner]})
         self.assertEqual(response.status_code, status, response.text)
         return response.json()
 
@@ -206,19 +205,17 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
             rejected = self.post(path, self.command(), status=202)
             self.assertEqual(rejected['status'], 'rejected')
             self.assertEqual(unknown.calls, 1)
-            self.auth.authorization.unassign('manager', 'factory-manager')
+            self.auth.directory.set_disabled('manager', True)
             try:
                 self.post(path, self.command(), status=403)
             finally:
-                self.auth.authorization.assign('manager', 'factory-manager')
+                self.auth.directory.set_disabled('manager', False)
         finally:
             self.service.bridge = real
 
     def test_pending_editor_does_not_block_original_paused_occurrence_history_or_cancel(self):
         self.plan = self.post('/plans', {'topic': 'sort', 'application': 'research',
             'mode': 'literature', 'requestId': str(uuid4())}, status=201)
-        review = self.post('/plan-reviews', self.command(planId=self.plan['id']), status=201)
-        self.post('/plan-reviews/' + review['id'] + '/decision', self.command(approved=True), owner='bob')
         schedule, _ = self.create()
         schedule = self.enabled(schedule, True)
         accepted = self.post('/schedules/' + schedule['id'] + '/trigger', self.command(), status=202)

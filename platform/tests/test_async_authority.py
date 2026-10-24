@@ -242,9 +242,8 @@ class AsyncAuthorityTests(unittest.IsolatedAsyncioTestCase):
                 gate, calls = Gate(self, denied=not cancel), []
                 context = SimpleNamespace(user_id="synthetic", session_id="task", run_id="run")
                 binding = SimpleNamespace(run_context=context, plan={}, spec={"toolName": "synthetic"})
-                services = SimpleNamespace(store=SimpleNamespace(require_plan_execution=gate,
-                    authorize_tool=lambda *args: None, cancellation_requested=lambda *args: False,
-                    has_failures=lambda *args: False), recheck=lambda *args: None)
+                services = SimpleNamespace(store=SimpleNamespace(authorize_tool=gate,
+                    cancellation_requested=lambda *args: False, event=lambda *args: None))
 
                 async def tool():
                     calls.append(True)
@@ -302,9 +301,8 @@ class AsyncAuthorityTests(unittest.IsolatedAsyncioTestCase):
             gate, calls, cancelled = Gate(self), [], []
             context = SimpleNamespace(user_id="synthetic", session_id="task", run_id="run")
             binding = SimpleNamespace(run_context=context, plan={}, spec={"toolName": "synthetic"})
-            services = SimpleNamespace(store=SimpleNamespace(require_plan_execution=gate,
-                authorize_tool=lambda *args: None, cancellation_requested=lambda *args: bool(cancelled),
-                has_failures=lambda *args: False), recheck=lambda *args: None)
+            services = SimpleNamespace(store=SimpleNamespace(authorize_tool=gate,
+                cancellation_requested=lambda *args: bool(cancelled), event=lambda *args: None))
 
             async def tool():
                 calls.append(True)

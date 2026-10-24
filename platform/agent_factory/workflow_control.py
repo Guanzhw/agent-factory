@@ -69,7 +69,7 @@ class WorkflowControl:
         return [self.service.read(task['owner_id'], row['id']) for row in rows]
 
     async def _native(self, owner, task_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
         plan = self.store.plan(task['plan_id'], owner)
         if plan.get('nativeComponent', {}).get('kind') != 'workflow':
@@ -210,7 +210,7 @@ class WorkflowControl:
         else:
             require(prior['intent'] == intent)
             return await self.receipt(owner, task_id, command.commandId)
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         view = self._view(task, plan, native)
         if command.action != 'cancel':
             require(command.version == view['version'])

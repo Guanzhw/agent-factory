@@ -25,7 +25,7 @@ PREFIX = '/api/factory'
 def contexts_for(browser, base, viewport):
     contexts = []
     try:
-        for persona in ('alice', 'manager2', 'bob'):
+        for persona in ('alice', 'bob'):
             context = browser.new_context(ignore_https_errors=True, viewport=viewport, accept_downloads=True)
             contexts.append(context)
             page = context.new_page()
@@ -47,7 +47,6 @@ def observe_mutations(page):
         for pattern, category in (
             (r'/api/factory/compositions/proposals', 'proposal'),
             (r'/api/factory/compositions/proposals/[^/]+/accept', 'accept'),
-            (r'/api/factory/plan-reviews', 'review'),
             (r'/api/factory/instances', 'instance'),
         ):
             if re.fullmatch(pattern, path):
@@ -56,22 +55,15 @@ def observe_mutations(page):
     return counts
 
 
-def reviewed_plan(page, reviewer, context, base, goal):
-    """Lose proposal ACK, recover it read-only, then review its immutable plan."""
+def prepared_plan(page, context, base, goal):
+    """Lose proposal ACK, recover it read-only, then save its immutable plan."""
     proposal = lost_reply(page, base, '/compositions/proposals',
-                          page.get_by_role('button', name='生成装配提案', exact=True).dblclick)
+                          page.get_by_role('button', name='预览任务方案', exact=True).dblclick)
     restore(page, goal)
     original = json_get(context, base, '/compositions/proposals/' + proposal['id'] + '/recovery')
     assert original['proposal']['id'] == proposal['id'] and original['plan'] is None
     plan = mutation(page, '/compositions/proposals/' + proposal['id'] + '/accept',
-                    page.get_by_role('button', name='接受提案并固定方案', exact=True).click)
-    mutation(page, '/plan-reviews', page.get_by_role('button', name='提交方案审查', exact=True).click)
-    reviewer.get_by_role('button', name='方案审查', exact=True).click()
-    row = reviewer.locator('article').filter(has_text=plan['id'])
-    row.get_by_role('button', name='同意方案', exact=True).click()
-    expect(row).to_contain_text('已同意')
-    page.get_by_role('button', name='刷新授权与审查状态', exact=True).click()
-    expect(page.get_by_role('button', name='确认方案并创建任务', exact=True)).to_be_enabled()
+                    page.get_by_role('button', name='确认范围并保存方案', exact=True).click)
     return plan
 
 
@@ -107,12 +99,12 @@ def original_task_after_refresh(page, goal):
 
 def scenario(browser, base, output, name, viewport, *, choice='linear-v1', original_check=None):
     contexts = contexts_for(browser, base, viewport)
-    owner, reviewer, foreign = contexts
-    alice, manager, bob = [context.pages[0] for context in contexts]
+    owner, foreign = contexts
+    alice, bob = [context.pages[0] for context in contexts]
     counts = observe_mutations(alice)
     stage = 'fixed-selection'
     page_errors, console_errors = [], []
-    for page in (alice, manager, bob):
+    for page in (alice, bob):
         page.on('pageerror', lambda _error: page_errors.append('PAGE_ERROR'))
         def console(message):
             if message.type != 'error':
@@ -136,14 +128,14 @@ def scenario(browser, base, output, name, viewport, *, choice='linear-v1', origi
             expect(panel).to_contain_text(text)
         capture(alice, output, name + '-fixed-inputs')
         panel.get_by_role('button', name='用此比较准备方案', exact=True).click()
-        goal = alice.get_by_label('任务目标', exact=True).input_value()
+        goal = alice.get_by_label('2. 描述任务', exact=True).input_value()
         assert goal == item['goal']
-        expect(alice.get_by_label('任务目标', exact=True)).to_be_disabled()
-        stage = 'proposal-and-independent-review'
-        plan = reviewed_plan(alice, manager, owner, base, goal)
+        expect(alice.get_by_label('2. 描述任务', exact=True)).to_be_disabled()
+        stage = 'proposal-and-direct-admission'
+        plan = prepared_plan(alice, owner, base, goal)
         assert plan['applicationRef'] == ref and plan['mode'] == choice
         stage = 'native-instance'
-        create = alice.get_by_role('button', name='确认方案并创建任务', exact=True)
+        create = alice.get_by_role('button', name='开始任务', exact=True)
         # Existing instantiate recovery reads /requests/<original key>; no second POST.
         task = lost_reply(alice, base, '/instances', create.dblclick)
         expect(alice.get_by_role('region', name='任务详情', exact=True)).to_contain_text(task['id'])
@@ -189,7 +181,7 @@ def scenario(browser, base, output, name, viewport, *, choice='linear-v1', origi
         current = json_get(owner, base, '/jobs/' + task['id'])
         assert current['comparisonEvidence'] == evidence
         cross_owner_denied(foreign, base, task['id'], artifact_ids)
-        assert counts == {'proposal': 1, 'accept': 1, 'review': 1, 'instance': 1}
+        assert counts == {'proposal': 1, 'accept': 1, 'instance': 1}
         assert not page_errors and not console_errors
         return {'scenario': name, 'choice': choice, 'evidenceMode': 'controlled-fixture',
                 'taskId': task['id'], 'planId': plan['id'], 'nativeRunId': evidence['nativeRunId'],

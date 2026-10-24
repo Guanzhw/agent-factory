@@ -1,8 +1,8 @@
 # Verified source to controlled synthesis
 
 This milestone extends the existing AutoResearch journey from an owner's completed,
-verified literature task to an immutable source snapshot, an independently reviewed
-plan, one native execution, and downloadable JSON/Markdown output. It builds on
+verified literature task to an immutable source snapshot, a member-submitted plan,
+one native execution, and downloadable JSON/Markdown output. It builds on
 accepted draft PR30 (`d4f5e6c0f64cc49e44561629ba6dc1e909661387`).
 
 ## Implemented boundary
@@ -14,9 +14,9 @@ accepted draft PR30 (`d4f5e6c0f64cc49e44561629ba6dc1e909661387`).
    Snapshot history and command receipts permit recovery after a lost response.
 3. The snapshot seeds the existing application composer. Its question and exact
    snapshot reference are pinned into the proposal, binding manifest and plan.
-   Existing application publication, independent temporary-plan approval and
-   native task admission remain authoritative; there is no new execution API.
-4. Static approved adapters resolve the plan snapshot at execution. Current source
+   Members publish the synthesis application and submit their own ready plan
+   through the existing native task admission API.
+4. Installed adapters resolve the plan snapshot at execution. Current source
    access, integrity and plan authority are rechecked before and after inference
    and at report effect boundaries. Cancellation or connection revocation after
    inference cannot publish a report; observed model usage is still settled.
@@ -26,11 +26,11 @@ accepted draft PR30 (`d4f5e6c0f64cc49e44561629ba6dc1e909661387`).
    `sourceCurrent` state reports that change rather than erasing history.
 
 The feature is disabled by default. Enabling `FACTORY_SOURCE_SYNTHESIS_ENABLED=true`
-requires explicit demo mode and `admin-review` temporary-plan policy. It registers
-adapters, not published materials, applications, user connections or permissions.
-Managers still use the existing separate publication review. Disabling the flag
-preserves existing policy fingerprints. Remote handoff and delegation are rejected
-for this bounded source-snapshot runtime.
+requires explicit demo mode; both plan and publication settings remain
+`member-self-service`. It registers the installed synthesis adapters. Members
+publish the required materials/application and bind their own connections.
+The flag is part of runtime configuration. Remote handoff and delegation are
+rejected for this bounded source-snapshot runtime.
 
 ## Recovery and failure handling
 
@@ -46,9 +46,9 @@ stale or cross-owner evidence fails closed. Unsupported source-context bounds ar
 rejected explicitly, never silently truncated or reclassified.
 
 Original source application withdrawal does not erase already verified historical
-research evidence. Current read authority, source integrity and the new synthesis
-application/plan permissions are still required. Unknown report effects are not
-replayed as if they had failed.
+research evidence. Current membership, source integrity, synthesis plan readiness
+and available application/resources remain required. Unknown report effects are
+not replayed as if they had failed.
 
 ## Evidence and limits
 
@@ -71,8 +71,7 @@ artifact integrity do not verify scientific conclusions; domain review is requir
 Production IdP, a real scientific provider, licensed full text, target-host isolation
 and sustained target-capacity acceptance remain separate missing inputs/validation.
 
-A complete baseline/candidate change-evaluation workflow remains code work: it
-needs an explicit dataset, evaluator, approved change and persisted native review
-contract. A pure comparison validator would not close that workflow. Schedule
-management UI and scheduler replica safety also remain subsequent work. This
-milestone adds no production recurring jobs, provisioning, merge or deployment.
+Dataset-bound comparison needs its own dataset, evaluator, bounded change,
+original native execution and result lineage. A source-synthesis report alone
+does not establish those facts. Scheduling behavior and current limitations are
+documented in [SCHEDULING.md](SCHEDULING.md).

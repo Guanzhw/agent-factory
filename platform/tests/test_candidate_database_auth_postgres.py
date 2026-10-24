@@ -70,7 +70,7 @@ class CandidateDatabaseAuthPostgresTests(unittest.TestCase):
         training = self.run_stage(imported, released)
         self.training_contract = training['imported']
         self.application = publish_research_application(self.state, target_ref='evaluator',
-            comparison_manifest=self.manifest, author='manager', reviewer='bob', adapter_suffix='-evaluator')
+            comparison_manifest=self.manifest, author='manager', adapter_suffix='-evaluator')
         service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
             {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
         evaluation = self.run_stage(lambda owner, task, lease:

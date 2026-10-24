@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import httpx
 
-from controlled_remote_worker import OTHER_OWNER, RECEIVER_OWNER, REVIEWER, TARGET_REF
+from controlled_remote_worker import OTHER_OWNER, RECEIVER_OWNER, TARGET_REF
 from pg_fixture import IsolatedPostgres
 from test_governed_remote_process_postgres import OwnedServer, loopback_port, PROJECT
 
@@ -131,12 +131,6 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text + "\n" + server.log_tail())
         return response.json()
 
-    def approve(self, server, plan_id):
-        review = self.call(server, "POST", "/plan-reviews", expected=201,
-            json={"planId": plan_id, "requestId": uuid4().hex})
-        self.call(server, "POST", "/plan-reviews/" + review["id"] + "/decision", actor=REVIEWER,
-            json={"approved": True, "requestId": uuid4().hex})
-
     def prepare(self):
         proposal = self.call(self.origin, "POST", "/compositions/proposals", expected=201, json={
             "goal": "Execute the fixed receiver cooperative process", "mode": "controlled-fixture",
@@ -144,13 +138,16 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal)
         plan = self.call(self.origin, "POST", "/compositions/proposals/" + proposal["id"] + "/accept", expected=201,
             json={"requestId": uuid4().hex})
-        self.approve(self.origin, plan["id"])
+        self.origin.control('dispatch-hold')
         request = {"planId": plan["id"], "requestId": uuid4().hex, "executionTargetRef": TARGET_REF}
         task = self.call(self.origin, "POST", "/instances", expected=202, json=request)
-        self.assertEqual(task["status"], "waiting_approval", task)
-        receipt = self.detail(task["id"])["snapshot"]["remoteHandoff"]
-        self.assertIsNone(receipt["remoteTaskId"])
-        self.approve(self.receiver, receipt["remotePlanId"])
+        placement = next(row for row in self.origin.facts()['placements'] if row['task_id'] == task['id'])
+        receipt = self.call(self.receiver, 'GET', '/remote-handoffs/' + placement['body']['receipt']['id'])
+        self.assertEqual(receipt['state'], 'PREPARED')
+        self.assertIsNotNone(receipt['remoteTaskId'])
+        self.assertIsNone(receipt['remoteRunId'])
+        self.assertEqual(self.receiver.facts(receipt['remoteTaskId'])['nativeTickets'], 0)
+        self.origin.control('dispatch-release')
         return plan, task["id"], request
 
     def detail(self, task):

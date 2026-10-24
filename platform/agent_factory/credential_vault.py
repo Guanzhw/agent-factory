@@ -331,7 +331,7 @@ def credential_vault_router(auth, vault: CredentialVault):
         try:
             try:
                 owner = auth.user(request)["id"]
-                auth.require(owner, "read" if operation == "revoke" else "run")
+                auth.require_member(owner)
             except HTTPException as error:
                 return JSONResponse({"detail": error.detail if isinstance(error.detail, dict) and error.detail.get("code") == "EXPECTED_OWNER_MISMATCH" else "CREDENTIAL_REQUEST_REJECTED"}, status_code=
                     error.status_code if error.status_code in {401, 403} else 503,
@@ -361,7 +361,7 @@ def credential_vault_router(auth, vault: CredentialVault):
         try:
             try:
                 owner = auth.user(request)["id"]
-                auth.require(owner, "read")
+                auth.require_member(owner)
             except HTTPException as error:
                 return JSONResponse({"detail": error.detail if isinstance(error.detail, dict) and error.detail.get("code") == "EXPECTED_OWNER_MISMATCH" else "CREDENTIAL_REQUEST_REJECTED"}, status_code=
                     error.status_code if error.status_code in {401, 403} else 503,

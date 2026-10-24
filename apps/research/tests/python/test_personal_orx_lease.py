@@ -145,20 +145,16 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(renewed['capabilities'], ['project:read', 'session:read'])
         self.assertEqual(self.posts(), [])
 
-    def test_owner_grant_revoke_and_stale_fingerprint_fail_before_probe(self):
+    def test_owner_member_disabled_revoke_and_stale_fingerprint_fail_before_probe(self):
         self.advance()
         count = len(self.fx.wire.calls)
         with self.assertRaises(HTTPException):
             self.lease.refresh('bob', self.fx.bound['ref'], self.fx.bound['fingerprint'])
         with self.assertRaises(HTTPException):
             self.lease.refresh('alice', self.fx.bound['ref'], '0' * 64)
-        original_require = self.fx.auth.require
-        def denied(owner, action):
-            if action == 'run': raise HTTPException(403, 'grant revoked')
-            return original_require(owner, action)
-        self.fx.auth.require = denied
+        self.fx.auth.enabled = False
         with self.assertRaises(HTTPException): self.refresh()
-        self.fx.auth.require = original_require
+        self.fx.auth.enabled = True
         self.connections.revoke('alice', self.fx.bound['ref'], 'revoke-original')
         with self.assertRaises(HTTPException): self.refresh()
         self.assertEqual(len(self.fx.wire.calls), count)

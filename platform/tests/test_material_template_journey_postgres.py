@@ -23,17 +23,13 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         workspace = tempfile.TemporaryDirectory(prefix='material-template-journey-')
         self.addCleanup(workspace.cleanup)
-        self.app = create_app(Settings(material_review_mode="separate-admin", material_policy_revision="material-governance-v1", db_url=database.url, workspace=Path(workspace.name),
-            max_workers=1, temporary_policy='admin-review'))
+        self.app = create_app(Settings(db_url=database.url, workspace=Path(workspace.name), max_workers=1))
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(self.app).__enter__()  # pyright: ignore[reportArgumentType]
         self.addCleanup(self.client.__exit__, None, None, None)
-        # Existing synthetic persona serves as the distinct second administrator.
-        self.auth.authorization.unassign('bob', 'factory-user')
-        self.auth.authorization.assign('bob', 'factory-manager')
 
     def login(self, actor):
         self.client.cookies.clear()
@@ -68,15 +64,15 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         draft = self.post('/applications/drafts', self.command(definition=definition))
         self.assertEqual(draft['modes']['literature']['materialRefs'], pinned)
         self.assertNotEqual(draft['id'], source['id'])
-        review = self.post(f"/applications/{draft['id']}/versions/{draft['version']}/review", self.command())
-        return draft, review, definition
+        return draft, definition
 
     def publish(self):
-        draft, review, definition = self.draft()
-        route = '/applications/reviews/' + review['id'] + '/decision'
-        self.post(route, self.command(approved=True), 403)
+        draft, definition = self.draft()
+        route = f"/applications/{draft['id']}/versions/{draft['version']}/publish"
         self.login('bob')
-        self.post(route, self.command(approved=True), 200)
+        self.post(route, self.command(), 404)
+        self.login('manager')
+        self.post(route, self.command(), 200)
         return draft, definition
 
     def accept(self, application):
@@ -88,15 +84,9 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.assertEqual(proposal['candidate']['applicationRef']['id'], application['id'])
         plan = self.post('/compositions/proposals/' + proposal['id'] + '/accept', self.command())
         self.assertEqual(plan['application'], application['id'])
-        review = self.post('/plan-reviews', self.command(planId=plan['id']))
-        self.post('/instances', self.command(planId=plan['id']), 409)
-        self.login('manager')
-        decision = self.post('/plan-reviews/' + review['id'] + '/decision', self.command(approved=True), 200)
-        self.assertTrue(decision['approvalEffective'])
-        self.login('alice')
         return plan
 
-    def test_copied_six_kind_template_publication_plan_review_native_artifact_and_withdrawal(self):
+    def test_copied_six_kind_template_direct_publication_native_artifact_and_withdrawal(self):
         application, definition = self.publish()
         plan = self.accept(application)
         original_plan = deepcopy(self.store.plan(plan['id'], 'alice'))
@@ -128,23 +118,24 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.assertIn(self.client.get(path).status_code, {403, 404})
         self.assertIn(self.client.get('/api/factory/jobs/' + task['id']).status_code, {403, 404})
         self.post(f"/applications/{application['id']}/versions/{application['version']}/withdraw",
+            self.command(reason='Foreign withdrawal'), 404)
+        self.login('manager')
+        self.post(f"/applications/{application['id']}/versions/{application['version']}/withdraw",
             self.command(reason='Synthetic withdrawal'), 200)
         self.login('alice')
         self.post('/instances', self.command(planId=plan['id']), 409)
         self.assertEqual(self.client.get(path).status_code, 200)
 
-    def test_publication_rechecks_current_reviewer_role_and_exact_material_pin(self):
-        draft, review, definition = self.draft()
+    def test_publication_rechecks_current_member_ownership_and_exact_material_pin(self):
+        draft, definition = self.draft()
         self.login('bob')
-        self.auth.authorization.unassign('bob', 'factory-manager')
-        self.auth.authorization.assign('bob', 'factory-user')
-        try:
-            self.post('/applications/reviews/' + review['id'] + '/decision', self.command(approved=True), 403)
-        finally:
-            self.auth.authorization.unassign('bob', 'factory-user')
-            self.auth.authorization.assign('bob', 'factory-manager')
-        self.post('/applications/reviews/' + review['id'] + '/decision', self.command(approved=True), 200)
+        route = f"/applications/{draft['id']}/versions/{draft['version']}/publish"
+        self.post(route, self.command(), 404)
         self.login('manager')
+        self.auth.directory.set_disabled('manager', True)
+        self.post(route, self.command(), 403)
+        self.auth.directory.set_disabled('manager', False)
+        self.post(route, self.command(), 200)
         invalid = deepcopy(definition)
         invalid['id'] = 'missing-exact-' + uuid4().hex[:8]
         invalid['modes']['literature']['materialRefs'][0]['sha256'] = 'f' * 64

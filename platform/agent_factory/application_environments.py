@@ -51,7 +51,7 @@ class ApplicationEnvironments:
         metadata.create_all(store.engine)
 
     def capabilities(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return {'locations': sorted({key.split(':', 1)[1] if ':' in key else 'platform' for key in self.packages}),
             'applications': sorted({key.split(':', 1)[0] for key in self.packages}),
             'modelSetup': '/api/factory/personal-models', 'preparationSubmitsResearch': False,
@@ -59,11 +59,11 @@ class ApplicationEnvironments:
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False}
 
     def servers(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         return self.server_catalog(owner) if self.server_catalog is not None else []
 
     def list(self, owner):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             identifiers = conn.execute(select(self.environments.c.id).where(self.environments.c.owner_id == owner)
                 .order_by(self.environments.c.updated_at.desc()).limit(100)).scalars().all()
@@ -117,7 +117,7 @@ class ApplicationEnvironments:
             **({'runtimeLimits': policy()} if callable(policy) else {})}
 
     def inspect(self, owner, identifier):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn: row = self._row(conn, owner, identifier)
         result = self._public(row)
         package = self._package(row['application_id'], row['body'])
@@ -131,7 +131,7 @@ class ApplicationEnvironments:
         return result
 
     def request(self, owner, request_id):
-        self.auth.require(owner, 'read')
+        self.auth.require_member(owner)
         with self.db.read() as conn:
             row = conn.execute(select(self.requests).where(self.requests.c.owner_id == owner,
                 self.requests.c.request_id == request_id)).mappings().first()
@@ -153,7 +153,7 @@ class ApplicationEnvironments:
 
     def prepare(self, owner, application, request_id, *, location='platform', server_ref=None, directory=None,
                 new_environment=False, environment_id=None):
-        self.auth.require(owner, 'run')
+        self.auth.require_member(owner)
         self.connections._key(request_id)
         if new_environment and environment_id is not None:
             raise HTTPException(422, 'ENVIRONMENT_INTENT_INVALID')
@@ -274,7 +274,7 @@ class ApplicationEnvironments:
             return self.request(owner, request_id)
 
     def stop(self, owner, identifier, request_id):
-        self.auth.require(owner, 'run'); self.connections._key(request_id)
+        self.auth.require_member(owner); self.connections._key(request_id)
         with self._fence(identifier):
             with self.db.write() as conn:
                 row = self._row(conn, owner, identifier)

@@ -28,12 +28,12 @@ function specification(value: unknown): value is Record<string, unknown> & { mat
   return object(value) && Object.keys(value).every(key => ['materialRef', 'adapterId', 'revision', 'config', 'connection', 'toolName'].includes(key))
     && pin(value.materialRef) && identifier(value.adapterId) && identifier(value.revision) && object(value.config);
 }
-const unavailable = (): RemoteHandoffState => ({ kind: 'invalid', message: '远端审查或绑定凭据无法核对。请核对执行状态；暂时不能继续或批准工具调用。' });
+const unavailable = (): RemoteHandoffState => ({ kind: 'invalid', message: '远端请求或绑定凭据无法核对。请核对执行状态后再继续。' });
 
 export function remoteHandoffState(detail: JobDetail): RemoteHandoffState {
   const raw = detail.snapshot?.remoteHandoff;
   const placement = detail.job.executionPlacement;
-  const signaled = detail.snapshot?.receiverReviewRequired === true || placement?.state === 'PREPARING' || object(raw) && raw.state === 'PREPARING';
+  const signaled = placement?.state === 'PREPARING' || object(raw) && raw.state === 'PREPARING';
   if (!raw && !signaled && placement?.kind !== 'remote-factory') return { kind: 'none' };
   if (!object(raw) || placement?.kind !== 'remote-factory' || !identifier(placement.targetRef) || !uuid(placement.originTaskId)
       || !(detail.job.id === placement.originTaskId || detail.job.id.startsWith(`${placement.originTaskId}~`))
@@ -61,7 +61,7 @@ export function remoteHandoffState(detail: JobDetail): RemoteHandoffState {
       mappingReference: entry.mappingReference as string | null, mappingRevision: entry.mappingRevision as string | null, mappingSha256: entry.mappingSha256 as string | null });
   }
   if (bindings.filter(item => item.kind === 'model').length !== 1 || bindings.filter(item => item.kind === 'environment').length !== 1) return unavailable();
-  if (signaled && (detail.snapshot?.receiverReviewRequired !== true || raw.state !== 'PREPARING' || detail.job.status !== 'waiting_approval'
+  if (signaled && (raw.state !== 'PREPARING' || detail.job.status !== 'unknown'
       || detail.job.id !== raw.originTaskId || raw.remoteTaskId !== null || raw.remoteRunId !== null || placement.remoteTaskId)) return unavailable();
   return { kind: signaled ? 'pending' : 'execution', evidence: { receiptId: raw.id, originRef: raw.originRef, originTaskId: placement.originTaskId,
     sourceOwner: String(raw.originOwnerId), receiverOwner: raw.remoteOwnerId, sourcePlanId: detail.job.planId, receiverPlanId: raw.remotePlanId,
