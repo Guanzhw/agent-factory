@@ -11,6 +11,7 @@ export interface PersonalToolConnection {
   ownerId: string; registrationRef: string; adapterId: string; revision: string; descriptorRevision: string;
   visibility: 'personal' | 'team'; isOwner: boolean;
   kind: 'tool'; toolName: string; transport: 'cli' | 'mcp'; credentialRef?: string | null; credentialRevision?: string | null;
+  operationRef?: ToolOperationRef;
   runtimeBinding?: { adapterId: string; revision: string; config: Record<string, unknown> };
   status: 'configured' | 'revoked' | 'credential_unavailable' | 'adapter_changed' | 'unavailable';
   available: boolean; capabilities: string[]; createdAt: string; expiresAt: null;
@@ -30,6 +31,19 @@ export interface MemberToolConfiguration {
   url?: string; remoteToolName?: string; executable?: string; arguments?: string[];
   workingDirectory?: string; environment?: Record<string, string>; argumentOptions?: Record<string, string>;
   stdinJson?: boolean; credentialEnvironmentVariable?: string; outputFormat?: 'json' | 'text'; readOnly?: boolean;
+  timeoutSeconds?: number; maxOutputBytes?: number;
+}
+
+export interface ToolOperationRef { id: string; version: number; sha256: string }
+export type PublicToolConfiguration = Omit<MemberToolConfiguration, 'requestId' | 'credentialRef' | 'credentialRevision'>;
+export interface ToolOperation {
+  operationRef: ToolOperationRef; ownerId: string; configuration: PublicToolConfiguration;
+  descriptor: PersonalToolDescriptor;
+  runtimeBinding: { adapterId: string; revision: string; config: { operationSha256: string } };
+}
+export interface CreateToolOperation { configuration: PublicToolConfiguration; requestId: string; operationId?: string }
+export interface CreateToolAccount {
+  version: number; sha256: string; credentialRef?: string; credentialRevision?: string; requestId: string;
 }
 
 export class ToolConnectionError extends Error {
@@ -76,6 +90,56 @@ function descriptor(value: unknown): PersonalToolDescriptor {
     ...(value.maxOutputBytes === undefined ? {} : { maxOutputBytes: value.maxOutputBytes as number }) };
 }
 
+const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+function operationRef(value: unknown): ToolOperationRef {
+  if (!record(value) || !identifier(value.id) || !Number.isSafeInteger(value.version) || Number(value.version) < 1 || !hash(value.sha256)
+      || Object.keys(value).some(key => !['id', 'version', 'sha256'].includes(key))) throw invalid();
+  return { id: value.id, version: value.version as number, sha256: value.sha256 };
+}
+/** Public recipes deliberately exclude account identifiers and private credential values. */
+export function publicToolConfiguration(value: unknown): PublicToolConfiguration {
+  const fields = ['transport', 'toolName', 'description', 'inputSchema', 'readOnly', 'timeoutSeconds', 'maxOutputBytes',
+    'url', 'remoteToolName', 'executable', 'arguments', 'workingDirectory', 'environment', 'argumentOptions',
+    'stdinJson', 'credentialEnvironmentVariable', 'outputFormat'];
+  if (!record(value) || Object.keys(value).some(key => !fields.includes(key)) || !transport(value.transport)
+      || !identifier(value.toolName) || typeof value.description !== 'string' || !record(value.inputSchema)) throw invalid();
+  for (const key of ['url', 'remoteToolName', 'executable', 'workingDirectory', 'credentialEnvironmentVariable']) {
+    if (value[key] !== undefined && value[key] !== null && typeof value[key] !== 'string') throw invalid();
+  }
+  if (value.transport === 'cli' && !value.executable || value.transport === 'mcp' && (!value.url || !value.remoteToolName)) throw invalid();
+  if (value.url) {
+    let url: URL; try { url = new URL(String(value.url)); } catch { throw invalid(); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw invalid();
+  }
+  if (value.arguments !== undefined && (!Array.isArray(value.arguments) || value.arguments.some(item => typeof item !== 'string'))
+      || ['environment', 'argumentOptions'].some(key => value[key] !== undefined && (!record(value[key]) || Object.values(value[key]).some(item => typeof item !== 'string')))
+      || ['readOnly', 'stdinJson'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')
+      || value.outputFormat !== undefined && !['json', 'text'].includes(String(value.outputFormat))
+      || value.timeoutSeconds !== undefined && (typeof value.timeoutSeconds !== 'number' || !Number.isFinite(value.timeoutSeconds) || value.timeoutSeconds <= 0)
+      || value.maxOutputBytes !== undefined && (!Number.isSafeInteger(value.maxOutputBytes) || Number(value.maxOutputBytes) <= 0)) throw invalid();
+  return structuredClone(value) as unknown as PublicToolConfiguration;
+}
+function operation(value: unknown): ToolOperation {
+  if (!record(value) || !identifier(value.ownerId)) throw invalid();
+  const pin = operationRef(value.operationRef), declared = descriptor(value.descriptor);
+  if (!record(value.configuration)) throw invalid();
+  const { credentialProviderId, credentialDestination, permission, capabilities, ...recipe } = value.configuration;
+  const configuration = publicToolConfiguration(recipe), runtime = value.runtimeBinding;
+  // Canonical public recipes include descriptor semantics in their hash. Keep
+  // these visible, while the creation form only accepts resource recipe fields.
+  for (const [key, extra] of Object.entries({ credentialProviderId, credentialDestination, permission, capabilities })) {
+    if (extra !== undefined && JSON.stringify(extra) !== JSON.stringify(declared[key as keyof PersonalToolDescriptor])) throw invalid();
+  }
+  const canonical = { ...configuration, ...(credentialProviderId === undefined ? {} : { credentialProviderId }),
+    ...(credentialDestination === undefined ? {} : { credentialDestination }), ...(permission === undefined ? {} : { permission }),
+    ...(capabilities === undefined ? {} : { capabilities }) };
+  if (!record(runtime) || runtime.adapterId !== declared.adapterId || runtime.revision !== declared.revision
+      || !record(runtime.config) || Object.keys(runtime.config).length !== 1 || runtime.config.operationSha256 !== pin.sha256
+      || configuration.transport !== declared.transport || configuration.toolName !== declared.toolName) throw invalid();
+  return { operationRef: pin, ownerId: value.ownerId, configuration: canonical, descriptor: declared,
+    runtimeBinding: { adapterId: declared.adapterId, revision: declared.revision, config: { operationSha256: pin.sha256 } } };
+}
+
 function connection(value: unknown, owner: string): PersonalToolConnection {
   if (!record(value) || !identifier(value.ownerId) || value.isOwner !== (value.ownerId === owner)
       || !['personal', 'team'].includes(String(value.visibility)) || value.kind !== 'tool'
@@ -90,7 +154,11 @@ function connection(value: unknown, owner: string): PersonalToolConnection {
       || !value.isOwner && value.allowedActions.some(action => action === 'revoke' || action === 'sharing')
       || value.allowedActions.includes('bind') && !value.available
       || value.status === 'revoked' && value.allowedActions.some(action => action !== 'inspect')) throw invalid();
-  return { ownerId: value.ownerId as string, visibility: value.visibility as 'personal' | 'team', isOwner: value.isOwner as boolean,
+  const pin = value.operationRef === undefined ? undefined : operationRef(value.operationRef);
+  if (pin && (!record(value.runtimeBinding) || value.runtimeBinding.adapterId !== value.adapterId
+      || value.runtimeBinding.revision !== value.descriptorRevision || !record(value.runtimeBinding.config)
+      || Object.keys(value.runtimeBinding.config).length !== 1 || value.runtimeBinding.config.operationSha256 !== pin.sha256)) throw invalid();
+  return { ...(pin ? { operationRef: pin } : {}), ownerId: value.ownerId as string, visibility: value.visibility as 'personal' | 'team', isOwner: value.isOwner as boolean,
     registrationRef: value.registrationRef as string, adapterId: value.adapterId as string,
     revision: value.revision as string, descriptorRevision: value.descriptorRevision as string, kind: 'tool',
     toolName: value.toolName as string, transport: value.transport,
@@ -99,7 +167,7 @@ function connection(value: unknown, owner: string): PersonalToolConnection {
     available: value.available, capabilities: [...value.capabilities], createdAt: value.createdAt, expiresAt: null,
     allowedActions: [...value.allowedActions] as PersonalToolConnection['allowedActions'],
     ...(record(value.runtimeBinding) ? { runtimeBinding: { adapterId: value.adapterId as string,
-      revision: value.descriptorRevision as string, config: {} } } : {}) };
+      revision: value.descriptorRevision as string, config: pin ? { operationSha256: pin.sha256 } : {} } } : {}) };
 }
 
 function binding(value: unknown, owner: string): UserConnection {
@@ -119,6 +187,38 @@ function binding(value: unknown, owner: string): UserConnection {
 }
 
 export const personalToolConnectionApi = {
+  operations: async (owner: string, signal?: AbortSignal): Promise<ToolOperation[]> => {
+    const values = await safe('/personal-tools/operations', owner, 'GET', undefined, signal);
+    if (!Array.isArray(values)) throw invalid();
+    return values.map(operation);
+  },
+  operation: async (owner: string, id: string, version: number, signal?: AbortSignal): Promise<ToolOperation> => {
+    const value = operation(await safe(`/personal-tools/operations/${ref(id)}/versions/${version}`, owner, 'GET', undefined, signal));
+    if (value.operationRef.id !== id || value.operationRef.version !== version) throw invalid();
+    return value;
+  },
+  createOperation: async (owner: string, input: CreateToolOperation): Promise<ToolOperation> => {
+    if (!identifier(input.requestId) || input.operationId !== undefined && !identifier(input.operationId)) throw invalid();
+    const configuration = publicToolConfiguration(input.configuration);
+    const value = operation(await safe('/personal-tools/operations', owner, 'POST', {
+      configuration, requestId: input.requestId, ...(input.operationId ? { operationId: input.operationId } : {}),
+    }));
+    if (value.ownerId !== owner || input.operationId !== undefined && value.operationRef.id !== input.operationId) throw invalid();
+    return value;
+  },
+  createOperationAccount: async (owner: string, id: string, input: CreateToolAccount): Promise<PersonalToolConnection> => {
+    const pin = operationRef({ id, version: input.version, sha256: input.sha256 });
+    if (!identifier(input.requestId) || (input.credentialRef === undefined) !== (input.credentialRevision === undefined)
+        || input.credentialRef !== undefined && (!identifier(input.credentialRef) || !identifier(input.credentialRevision))) throw invalid();
+    const value = connection(await safe(`/personal-tools/operations/${ref(id)}/accounts`, owner, 'POST', {
+      version: pin.version, sha256: pin.sha256, requestId: input.requestId,
+      ...(input.credentialRef ? { credentialRef: input.credentialRef, credentialRevision: input.credentialRevision } : {}),
+    }), owner);
+    if (!value.isOwner || value.ownerId !== owner || !value.operationRef || value.operationRef.id !== id
+        || value.operationRef.version !== pin.version || value.operationRef.sha256 !== pin.sha256
+        || (value.credentialRef ?? undefined) !== input.credentialRef || (value.credentialRevision ?? undefined) !== input.credentialRevision) throw invalid();
+    return value;
+  },
   discover: async (owner: string, url: string, credential?: { credentialRef: string; credentialRevision: string }): Promise<{ url: string; tools: DiscoveredTool[] }> => {
     const result = await safe('/personal-tools/discover', owner, 'POST', { url, ...credential });
     if (!record(result) || typeof result.url !== 'string' || !Array.isArray(result.tools)

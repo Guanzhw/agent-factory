@@ -193,3 +193,44 @@ describe('safe tool connection request failures', () => {
     expect(request).not.toHaveBeenCalled();
   });
 });
+
+describe('immutable public operations and independent accounts', () => {
+  const recipe = { transport: 'cli' as const, toolName: descriptor.toolName, description: descriptor.description, inputSchema: descriptor.inputSchema, executable: 'fixture', arguments: ['--public'], environment: { PUBLIC_MODE: 'demo' } };
+  const pin = { id: 'public-lookup', version: 2, sha256: 'b'.repeat(64) };
+  const runtimeBinding = { adapterId: descriptor.adapterId, revision: descriptor.revision, config: { operationSha256: pin.sha256 } };
+  const operation = { operationRef: pin, ownerId: 'bob', configuration: { ...recipe, credentialProviderId: descriptor.credentialProviderId, credentialDestination: descriptor.credentialDestination, permission: descriptor.permission, capabilities: descriptor.capabilities }, descriptor, runtimeBinding };
+  it('loads public recipes and exact versions with owner scope without filtering another author', async () => {
+    const signal = new AbortController().signal; request.mockResolvedValueOnce([operation]);
+    expect(await api.operations('alice', signal)).toEqual([operation]);
+    expect(request).toHaveBeenLastCalledWith('/personal-tools/operations', 'GET', undefined, signal, 'alice');
+    request.mockResolvedValueOnce(operation);
+    expect(await api.operation('alice', pin.id, 2)).toEqual(operation);
+    request.mockResolvedValueOnce({ ...operation, operationRef: { ...pin, version: 3 } });
+    await expect(api.operation('alice', pin.id, 2)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+  it('creates explicit public CLI/MCP recipes while rejecting account/private fields before sending', async () => {
+    request.mockResolvedValueOnce({ ...operation, ownerId: 'alice' });
+    expect(await api.createOperation('alice', { configuration: recipe, requestId: 'create:one' })).toEqual({ ...operation, ownerId: 'alice' });
+    expect(request).toHaveBeenLastCalledWith('/personal-tools/operations', 'POST', { configuration: recipe, requestId: 'create:one' }, undefined, 'alice');
+    request.mockClear();
+    for (const configuration of [{ ...recipe, credentialRef: 'private-ref' }, { ...recipe, requestId: 'nested' }, { ...recipe, transport: 'mcp', remoteToolName: 'lookup', url: 'https://user:pass@example.invalid' }]) {
+      await expect(api.createOperation('alice', { configuration: configuration as typeof recipe, requestId: 'create:two' })).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+    expect(request).not.toHaveBeenCalled();
+    const mcp = { transport: 'mcp' as const, toolName: descriptor.toolName, description: '', inputSchema: {}, url: 'https://example.invalid/mcp', remoteToolName: 'lookup' };
+    request.mockResolvedValueOnce({ ...operation, ownerId: 'alice', configuration: mcp, descriptor: { ...descriptor, transport: 'mcp' } });
+    await api.createOperation('alice', { configuration: mcp, requestId: 'mcp:one', operationId: pin.id });
+    expect(request).toHaveBeenLastCalledWith('/personal-tools/operations', 'POST', { configuration: mcp, requestId: 'mcp:one', operationId: pin.id }, undefined, 'alice');
+  });
+  it('preserves the operation hash through account creation and ordinary list/material binding projection', async () => {
+    const account = { ...tool, operationRef: pin, runtimeBinding };
+    const input = { version: pin.version, sha256: pin.sha256, credentialRef: tool.credentialRef!, credentialRevision: tool.credentialRevision!, requestId: 'account:one' };
+    request.mockResolvedValueOnce(account);
+    expect(await api.createOperationAccount('alice', pin.id, input)).toEqual(account);
+    expect(request).toHaveBeenLastCalledWith(`/personal-tools/operations/${pin.id}/accounts`, 'POST', input, undefined, 'alice');
+    request.mockResolvedValueOnce([account]); expect(await api.list('alice')).toEqual([account]);
+    for (const bad of [{ ...account, operationRef: { ...pin, version: 3 } }, { ...account, credentialRef: 'bob-key' }, { ...account, runtimeBinding: { ...runtimeBinding, config: {} } }]) {
+      request.mockResolvedValueOnce(bad); await expect(api.createOperationAccount('alice', pin.id, input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
+});

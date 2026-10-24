@@ -1864,3 +1864,14 @@ Final no-dispatch acceptance: independent reviewer caught core cancel's delibera
 2026-10-24 additional #101 review: root owns internal original cleanup/core bridge/API; shutdown_design owns cleanup-only driver/provider+pure negatives; shutdown_tests owns distinct OS interruption fixture; backend owns four PG budget boundaries and three retirement PG cases; remote performs independent read-only review. Seven budget/process cases passed60.213s (three actual exit73→newprocess exit0), retirementPG3 passed12.118s with explicit controlled stop seam. Earlier0518fast356Python/75PG zero-skip succeeded. New revocation fix pending actual ORX cleanup/finalCI; no full rerun, no merge/deploy/paid calls. Historical MCP instability remains separate/open.
 
 Final additional acceptance: real pinnedORXcompleted-before-settlement disable+cleanup-only reconstruction1pass60.765s (notlivekill); originalremote test23 joinedbothobservers and retainedfullsnapshots+newwrite-spy1pass18.805s, shared#97commit975488b integrated4301b99. FinaldailyPython381pass0skip,core17.611s,architecture764/0,OpenSpecstrict,Ruff/Pyright0. Originald1full terminalFAIL3316pass1fail68skip; all7requiredpassed. Exact finalsourceCI pending; no historicalMCPclosure claim.
+## 2026-10-24 测试成本与共同MCP故障后续
+
+root唯一集成；backend负责fresh材料JOIN和fixture generation；remote负责scratch时序/GC诊断；reviewer独立验证，重型检查串行。#103原b458028 fast/full成功，云端完整两轮失败仍保留。新增迟到凭据UNKNOWN反例、每次fresh材料读取83/189→55/133 SQL（无单例总耗时收益）、确定fixture LIFO错序修复及诊断去强引用；最终daily Python241/0skip，相关PG、GC前缀12项与同app6任务通过。历史MCP/ORX/remote等待尚未完整归因；不放宽期限、不强制GC、不重复完整本地套件。
+
+#97独立Draft现c1230a9，原full5个旧fixture接口错误已定向修复，fast与新Windows full通过，PG待终态；#98独立Draft5799403，真实35秒进程关闭/原身份恢复验证、fast与Windows full通过，PG待终态。#99–102未扩展，先完成当前精确CI与稳定性判断。禁止合并、部署及付费模型。
+
+## 2026-10-24 #102 reusable member operations
+- Coordinator owns PersonalTools API/account schema/native binding integration; operation helper/registry, frontend, native fixtures and independent review have separate file ownership.
+- Local feature e001326 now stacks on #103 c2033e6 after a reproduced 20s MCP deadline failure showed excessive fresh authority SQL. No timeout changes; no #97/#99 dependency.
+- Passed:23 portable operation/account;58 legacy portable +4 existing skips;705 Web;built Chromium;five native behavior cases across targeted runs (CLI/MCP accounts, shared/material withdrawal, UNKNOWN). Preserved all initial fixture/timeout failures.
+- Passed additionally: normal OS-process replacement (distinct PID/exit0/original UNKNOWN/no replay), independent core install and final merged static checks. Pending: exact Draft CI, crash recovery; supported child-path and production authentication remain unverified. #103 historical intermittent failure diagnosis remains open independently.
