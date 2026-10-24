@@ -36,3 +36,5 @@ root串行实际验收（均exit0，零skip）：
 fast40116000844成功，full40116074034仍在PG阶段；Windowsjob120937537734已失败3318tests，1failure/9error events、1247skip、285.497s。raw `/workspace/scratch/cloud-delivery-20261024/composition-1d2bbb7-windows.log`。错误来自遗漏的旧Mock应用registry、旧static timingwrapper、baseline context state缺graph、runtime构造和AutoResearchService测试子类缺research参数。
 
 六个fixture文件已迁移：使用真实ApplicationRuntimeRegistry和ResearchApplicationHooks，read_wait spy证明实际app观察；graph显式传递；timing诊断fixture保留实例self绑定，实际class(instance,...)/bound-call验证四次成功/领域拒绝事件。原断言不降级。五模块19项通过0.222s，默认sandbox异步Runner阻塞后仅终止本任务PID，授权环境同命令通过。未改生产期限/断言或运行第二份full。
+
+已merge #97 88aacb7，保留双方任务板历史；新增late-authority test改为显式ResearchServices，无重引入global locator。root composition-merged-fixtures六模块22通过2.655s（8.537driver），composition-merged-types零错误/警告22.412s。适配原始实例调用计时包装，未改取消/UNKNOWN断言。旧1d2bbb7 full仍独立保存，不把新fast或targeted成功改写成旧full成功。
