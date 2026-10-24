@@ -274,6 +274,9 @@ class DelegationService:
                 if old[0]["tool_name"] != name or old[0]["root_id"] != root_id:
                     raise PermissionError("Native execution ID conflicts with its persisted budget charge")
                 return {"charged": False, "rootTaskId": root_id}
+            local_scopes = getattr(self.store, 'local_budget_scopes', None)
+            if local_scopes is not None:
+                local_scopes.check_tool_capacity(conn, run_context.user_id, root_id)
             for ancestor in [task, *ancestors]:
                 ids = [ancestor["id"], *(link["child_id"] for link in self._descendants(ancestor["id"]) if link["child_id"])]
                 used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=ANY(:ids)", ids=ids)[0]["n"]

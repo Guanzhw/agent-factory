@@ -1,0 +1,25 @@
+# Cloud verification — 2026-10-24
+
+Implemented on #99's explicit ResearchServices graph, with native Agno tasks and PostgreSQL. This is a bounded reviewed toy preset, not general autonomous/live research. Member total caps authorize strict-improvement continuation, but each native ORX launch still requires its existing human confirmation. The second root uses the first candidate's sealed source bytes, not a fabricated training checkpoint. No external model/credentials/payment, deployment or merge.
+
+## Actual evidence
+
+4 CPU/16 GiB cloud; pinned ORX source f336b121525d99364e2dee4fe90b2784894a54e6 rebuilt using repository script. Binary SHA256 a847d07e8c4c3f2efc47c3549fd27f52c9999b46a21451d4c07ec12de292b8cd. Pinned runtime image python:3.12.14-trixie@sha256:4d1caded1f729ae443eb803f26ffde7b61e696aeaef62f099abb6dd6b14257c7. Original single-round TOY_FILES hashes unchanged.
+
+- `test_research_iterations_postgres`: 2 actual PG/native/ORX cases passed, 240.471s unittest / 247.814s driver, exit0. Independent roots and HITL per round;16→0 then0→0/tie; exact source/artifact/dataset/evaluator/model/material/application/connection pins; concurrent successor uniqueness; cumulative budget; GET/replay no dispatch. Lost native ACK + same-process service reconstruction recovers original task/run through coordinator, with no new submit. This is not OS crash recovery.
+- Portable state/driver/recipe:44 passed0.541s, exit0. Includes no-dispatch cancellation, paused deadline cancellation, definite pre-submit rejection distinct from lost ACK, UNKNOWN hold and exact source proof. HTTP contract8 passed0.873s, exit0; owner isolation, no GET writes and original request recovery. These latest boundary tests were added after the successful actual two-round run; successful native path was unchanged.
+- Core budget PG: initial10 cases7pass3errors; corrected PostgreSQL JSON→JSONB cast, then only3original failed IDs passed. Concurrent full-cap reservations, actual controlled metered attempts, no double hold, deduped original tool calls, UNKNOWN/child/custody hold, immutable binding and pure inspect. No live billing claim.
+- Web:713 tests across62files, lint/type/build passed47.450s driver. Built Chromium synthetic API flow passed5.162s: stable deadline/caps, saved-but-lost reply, reload/lookup without extra POST, original task approval navigation with no auto-approval. Browser evidence is separate from actual native tests.
+- Independent core wheel install/start/clean stop without research source passed15.162s. Architecture753modules/0violations/0gaps; Ruff and Pyright0; strict OpenSpec passed. Daily regression and final CI status recorded below when available.
+
+## Failures retained, not retried blindly
+
+First actual run:1failure/1error (93.422s). New driver incorrectly assumed native ticket status alone, and installer mutated the reusable settings mapping with an old service graph handle. Fixes use exact lifecycle binding and an installation-local trusted mapping. Second run:2failures150.373s. Diagnostic snapshots showed original native completed+terminal and DONE effect, while coordinator raised KeyError. Store.effects returns only effect_key/status/result; a synthetic fixture incorrectly included fingerprint. Deterministic pure reproduction confirmed it; driver now reads exact task/run/effect persisted fingerprint, and fixture uses real shape. Then actual2case run passed. No deadlines/production timeouts or completion assertions were relaxed.
+
+Independent review additionally found un-dispatched cancellation/expiry holds and paused-at-HITL deadline omission. Fixed explicit expiry cancellation and positive definite pre-submit rejection, retaining original UNKNOWN if submit was attempted. Lock review found no concrete reverse lock path; budgets share the existing short accounting lock and native execution remains native.
+
+## Limits
+
+No forced OS-crash points between reservation/binding/submission, full disabled-owner/credential-rotation matrix, actual training checkpoint promotion, remote iterations or production authentication. Core/native existing cancellation/revocation boundaries remain; no new blanket identity exception. Full manual CI cannot run the optional pinned ORX fixture unless explicitly provisioned. Historical #103 MCP instability remains open and is not closed by successful iteration tests. No claim of full suite acceleration.
+
+Raw cloud evidence: `/workspace/scratch/task-history-20261024/iterations-*`, actual artifact/dispatch/failure snapshots `iterations-actual-evidence/`; pinned build `/workspace/scratch/orx-iterations-build-20261024/`; aggregate `/workspace/scratch/cloud-delivery-20261024/REPORT.md`. These are environment evidence paths, not assumed to exist in another container.

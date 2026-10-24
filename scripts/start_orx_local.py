@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--database-url", required=True, help="Authorized existing loopback PostgreSQL base URL")
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--iterations", action="store_true", help="Enable bounded two-round source-baseline activity; native launch approvals remain required")
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--source-archive", type=Path, required=True)
     parser.add_argument("--git-binary", type=Path, required=True)
@@ -59,7 +60,7 @@ def main():
         if workspace.is_symlink() or not marker_path.is_file() or marker_path.is_symlink():
             parser.error("Resume requires an exact existing generated profile marker")
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        if marker.get("schema") != 1 or marker.get("profile") != PROFILE_REVISION or marker.get("endpoint") != endpoint:
+        if marker.get("schema") != 1 or marker.get("profile") != PROFILE_REVISION or marker.get("endpoint") != endpoint or marker.get("iterations", False) != args.iterations:
             parser.error("The existing workspace/database identity differs from this profile")
         name = marker.get("databaseName", "")
         if not re.fullmatch(r"af_orx_demo_[0-9a-f]{32}", name):
@@ -73,13 +74,17 @@ def main():
                 connection.execute(text('CREATE DATABASE "' + name + '"'))
         finally:
             admin.dispose()
-        marker = {"schema": 1, "profile": PROFILE_REVISION, "databaseName": name, "endpoint": endpoint,
+        marker = {"schema": 1, "profile": PROFILE_REVISION, "databaseName": name, "endpoint": endpoint, "iterations": args.iterations,
                   "createdAt": datetime.now(timezone.utc).isoformat()}
         marker_path.write_text(json.dumps(marker, indent=2), encoding="utf-8")
     url = base.set(database=name).render_as_string(hide_password=False)
     provider = TaskLocalORXProvider(binary=args.binary.resolve(), source_archive=args.source_archive.resolve(),
         git_binary=args.git_binary.resolve(), python_binary=args.python_binary.resolve())
-    settings = local_profile_settings(db_url=url, workspace=workspace, provider=provider, port=args.port)
+    profile_settings = local_profile_settings
+    if args.iterations:
+        from agent_factory_research.research_iteration_profile import local_iteration_profile_settings
+        profile_settings = local_iteration_profile_settings
+    settings = profile_settings(db_url=url, workspace=workspace, provider=provider, port=args.port)
     application = create_app(settings)
     state = application.app.state.factory
     auth, store = state["auth"], state["store"]

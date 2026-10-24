@@ -1842,3 +1842,17 @@ root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#
 ## 2026-10-24 #97 late authority follow-up
 
 965350f full失败4/3265，raw evidence已保存。backend仅2fixture同deadline持久barrier，root usage原receipt显式reconcile，remote拥有receiver latehistoryparity与Event测试，takeover独立review。原3PGtargeted通过、原science1通过572.256s；无超时放宽或新派发权限。root集成本次diff。#99 graph新head1d2bbb7 fast成功，fullWindows暴露6旧fixture迁移正在修，PG仍运行。#103c939 fast终态成功，日志完成与GitHub状态延迟约25min，未cancel/retry；原MCP不稳定仍需诊断。#100 independentneutralv2三真实case已有通过记录，cancel首轮fixture失败保留。#102在独立main分支仅开始recipe/helper切片，尚未API/native验收。
+
+## 2026-10-24 #101 implementation and exact CI follow-up
+
+| Work | Owner / exclusive scope | Dependency / acceptance | Remaining limits |
+| --- | --- | --- | --- |
+| #101 shared local allocation | root core/schema/hooks | PG ten cases passed across initial + three SQL-cast fixes; UNKNOWN remains held | Actual paid metering not exercised |
+| #101 activity/driver/recipe | backend state machine; remote reviewed recipe; shutdown_design driver; root API/lifecycle/profile | Real PG/native/pinned ORX two roots16→0→0, original candidate bytes, concurrent successor, ACK loss + same-process service restart passed; 44 pure +8 HTTP passed | OS crash boundary and live research not established |
+| #101 UI | frontend five UI/test files; root integration | Web713/lint/type/build passed, built Chromium lost-ACK/deadline/HITL navigation passed | Browser API is synthetic; separate real native evidence above |
+| Independent review | takeover budget/lifecycle; remote final contract | Fixed no-dispatch cancel, expiry, strict binding, real effects projection; current deadline/preflight branches have pure regression coverage | No broadening of child/depth caps or auto-HITL |
+| #100 | root + remote fixture | f4ce910 fast40122408088 success; originalfull40118326022 failed one prematurefinalizing assertion, targetedfixpassed | No replacementfull pass |
+| #102 | root + backend portable fixtures | ab24b72 fast40122424080 success; originalfull40120435697 Windows fixture failures and PG initial MCP readiness timeout | Windows corrected fixtures not actually rerun; original MCP cause remains open |
+| #103 | root + independent MCP review | e956040 diagnostic/cleanup testfix pushed; exactinitial2s/.5s bounds retained, targetedpass | Historical native and initialprotocol startup failures not closed by one pass |
+
+Workers use mocked credentials only. Heavy checks remain serial. Draft branches only; no merge/deploy/paid external calls. #101 follows #99, with no dependency on #100/#102. Original failures remain in cloud scratch reports.

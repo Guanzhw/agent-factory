@@ -453,6 +453,11 @@ class UsageLedger:
             if price.request_guard is not None:
                 price.request_guard(model, tuple(arguments), keyword_arguments or {}, commitment)
             root, accounts = self._scope_accounts(conn, owner, task)
+            local_scopes = getattr(self.store, 'local_budget_scopes', None)
+            if local_scopes is not None:
+                allocation = local_scopes.attempt_account(conn, owner, root)
+                if allocation is not None:
+                    accounts.append(allocation)
             grant_rows = conn.execute(select(self.grants).where(self.grants.c.task_id == root,
                 self.grants.c.owner_id == owner, self.grants.c.state == "IMPORTED")).mappings().all()
             for grant in grant_rows:

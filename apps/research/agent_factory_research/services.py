@@ -23,6 +23,8 @@ class ResearchServices:
     remote_scientific: Any = None
     remote_scientific_receiver: Any = None
     workspace: Any = None
+    iterations: Any = None
+    iteration_coordinator: Any = None
 
 
     def bind_store(self, store):

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -37,6 +38,23 @@ TOY_FILES = {
 }
 SCENARIOS = frozenset({"success", "evaluator_failure", "long_running"})
 _TERMINAL = frozenset({"done", "failed", "cancelled"})
+
+
+@dataclass(frozen=True)
+class _ReviewedToyRecipe:
+    sources: tuple[tuple[str, str], ...]
+    hashes: tuple[tuple[str, str], ...]
+    commit: str
+    archive_sha256: str
+    baseline_mse: float
+    identity: str | None = None
+
+    def files(self) -> dict[str, str]:
+        return dict(self.hashes)
+
+
+_LEGACY_RECIPE = _ReviewedToyRecipe(tuple((name, name) for name in TOY_FILES),
+    tuple(TOY_FILES.items()), RECIPE_SOURCE_COMMIT, RECIPE_ARCHIVE_SHA256, 16.0)
 
 
 def _sha(path: Path) -> str:
@@ -70,6 +88,7 @@ def _limits(environment: Any) -> dict[str, Any]:
 class TaskLocalORXAdapter(OpenResearchAdapter):
     """One original reviewed evaluator, one task-local project/experiment/launch."""
     transport_kind = "pinned_openresearch_cli_local_toy"
+    _recipe = _LEGACY_RECIPE
 
     def __init__(self, *, source_archive: Path, git_binary: Path, python_binary: Path,
                  environment: Any, scenario: str, cleanup_only: bool = False, **kwargs: Any):
@@ -226,10 +245,16 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             raise OpenResearchError("SCOPE_INVALID", "Invalid task project manifest")
         value = json.loads(self._manifest_path.read_text(encoding="utf-8"))
         if (not isinstance(value, dict) or value.get("schemaVersion") != 1
+                or value.get("recipeIdentity") != self._recipe.identity
                 or (value.get("ownerId"), value.get("taskId"), value.get("scenario"), value.get("limits"))
                 != (self.owner_id, self.task_id, self.scenario, self.limits)
                 or value.get("upstreamRevision") != REVISION or value.get("upstreamSourceArchiveSha256") != SOURCE_ARCHIVE_SHA256):
             raise OpenResearchError("BINDING_MISMATCH", "Task project belongs to another immutable binding")
+        if self._recipe.identity is not None and value.get("phase") == "READY" and (
+                value.get("sourceCommit") != self._recipe.commit
+                or value.get("sourceArchiveSha256") != self._recipe.archive_sha256
+                or value.get("fileSha256") != self._recipe.files()):
+            raise OpenResearchError("BINDING_MISMATCH", "Iteration recipe manifest pins changed")
         self._manifest = value
         return value
 
@@ -266,7 +291,8 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
                 value = {"schemaVersion": 1, "ownerId": self.owner_id, "taskId": self.task_id,
                     "scenario": self.scenario, "limits": self.limits, "projectId": project_id,
                     "upstreamRevision": REVISION, "upstreamSourceArchiveSha256": SOURCE_ARCHIVE_SHA256,
-                    "phase": "ADMITTED"}
+                    "phase": "ADMITTED",
+                    **({"recipeIdentity": self._recipe.identity} if self._recipe.identity is not None else {})}
                 try:
                     with self._manifest_path.open("xb") as stream:
                         stream.write(_canonical(value)); stream.flush(); os.fsync(stream.fileno())
@@ -278,18 +304,18 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
                         raise OpenResearchError("SCOPE_NOT_NEW", "Only a new exclusive task store and repository may be provisioned")
                     await self._command("experiment:inspect", "projects")  # Real CLI owns schema/migrations.
                     self.repo.mkdir()
-                    for name in TOY_FILES:
-                        (self.repo / name).write_bytes((Path(__file__).parent / "orx_toy" / name).read_bytes())
+                    for name, source_name in self._recipe.sources:
+                        (self.repo / name).write_bytes((Path(__file__).parent / "orx_toy" / source_name).read_bytes())
                     self._git("init", "-q", "-b", "main")
                     self.env.update(GIT_AUTHOR_NAME="Factory toy evaluator", GIT_AUTHOR_EMAIL="toy@example.invalid",
                         GIT_COMMITTER_NAME="Factory toy evaluator", GIT_COMMITTER_EMAIL="toy@example.invalid",
                         GIT_AUTHOR_DATE="2000-01-01T00:00:00Z", GIT_COMMITTER_DATE="2000-01-01T00:00:00Z")
-                    self._git("add", "--", *TOY_FILES)
+                    self._git("add", "--", *self._recipe.files())
                     self._git("commit", "-q", "-m", "Reviewed original deterministic toy evaluator")
                     command = self._command_text()
                     value.update(sourceCommit=self._git("rev-parse", "HEAD").decode().strip(),
                         sourceArchiveSha256=hashlib.sha256(self._git("archive", "--format=tar", "HEAD")).hexdigest(),
-                        command=command, commandSha256=hashlib.sha256(command.encode()).hexdigest(), fileSha256=TOY_FILES,
+                        command=command, commandSha256=hashlib.sha256(command.encode()).hexdigest(), fileSha256=self._recipe.files(),
                         pythonSha256=self._python_sha(), gitSha256=_sha(self.git_binary), phase="PROJECT_REGISTERED")
                     with self._db(writable=True) as db:
                         db.execute("BEGIN IMMEDIATE")
@@ -328,14 +354,14 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
         if value is None or value.get("phase") != "READY":
             raise OpenResearchError("UNBOUND_EXPERIMENT", "A reviewed task-owned experiment is required")
         paths = self._git("ls-tree", "-r", "--name-only", value["sourceCommit"]).decode().splitlines()
-        if (value["sourceCommit"] != RECIPE_SOURCE_COMMIT or value["sourceArchiveSha256"] != RECIPE_ARCHIVE_SHA256
-                or sorted(paths) != sorted(TOY_FILES)
+        if (value["sourceCommit"] != self._recipe.commit or value["sourceArchiveSha256"] != self._recipe.archive_sha256
+                or sorted(paths) != sorted(self._recipe.files())
                 or _sha(self.git_binary) != value["gitSha256"] or self._python_sha() != value["pythonSha256"]
                 or self._command_text() != value["command"] or self._git("status", "--porcelain").strip()
                 or self._git("rev-parse", value["branchName"]).decode().strip() != value["sourceCommit"]
                 or hashlib.sha256(self._git("archive", "--format=tar", value["sourceCommit"])).hexdigest() != value["sourceArchiveSha256"]):
             raise OpenResearchError("SOURCE_CHANGED", "Source, reviewed command or toolchain drift was detected")
-        for name, expected in TOY_FILES.items():
+        for name, expected in self._recipe.hashes:
             if _sha(self.repo / name) != expected:
                 raise OpenResearchError("SOURCE_CHANGED", "Task evaluator bytes changed")
         with self._db() as db:
@@ -352,7 +378,7 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
     def source_archive_bytes(self) -> bytes:
         value = self._validate_owned_source()
         paths = self._git("ls-tree", "-r", "--name-only", value["sourceCommit"]).decode().splitlines()
-        if sorted(paths) != sorted(TOY_FILES):
+        if sorted(paths) != sorted(self._recipe.files()):
             raise OpenResearchError("SOURCE_CHANGED", "Only the four original reviewed recipe files may be exported")
         raw = self._git("archive", "--format=tar", value["sourceCommit"])
         if hashlib.sha256(raw).hexdigest() != value["sourceArchiveSha256"]:
@@ -375,7 +401,8 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             "runtimePlatform": "windows" if os.name == "nt" else "linux",
             "runtimeImage": None if os.name == "nt" else RUNTIME_IMAGE,
             "pythonSha256": value["pythonSha256"], "provisioningGitSha256": value["gitSha256"],
-            "zeroModelCalls": True, "githubSyncEnabled": False, "securitySandbox": False}
+            "zeroModelCalls": True, "githubSyncEnabled": False, "securitySandbox": False,
+            **({"recipeIdentity": self._recipe.identity} if self._recipe.identity is not None else {})}
 
     def _native_run(self) -> dict[str, Any] | None:
         value = self._load_manifest() if self._trusted_reclaim else self._validate_owned_source()
@@ -502,13 +529,13 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
             return None
         if path.is_symlink() or path.stat().st_size > self.limits["outputBytes"]:
             raise OpenResearchError("INVALID_OUTPUT", "Evaluator result escaped output bounds")
-        if any(_sha(path.parent / name) != expected for name, expected in TOY_FILES.items()):
+        if any(_sha(path.parent / name) != expected for name, expected in self._recipe.hashes):
             raise OpenResearchError("SOURCE_CHANGED", "Actual evaluator snapshot bytes changed")
         value = json.loads(path.read_text(encoding="utf-8"))
         if (value.get("schemaVersion") != 1 or value.get("taskId") != self.task_id
                 or value.get("ownerSha256") != hashlib.sha256(self.owner_id.encode()).hexdigest()
-                or value.get("scenario") != self.scenario or value.get("fileSha256") != TOY_FILES
-                or value.get("sampleCount") != 7 or value.get("baseline") != {"value": 16.0}
+                or value.get("scenario") != self.scenario or value.get("fileSha256") != self._recipe.files()
+                or value.get("sampleCount") != 7 or value.get("baseline") != {"value": self._recipe.baseline_mse}
                 or value.get("candidate") != {"value": 0.0} or value.get("status") != row["status"]):
             raise OpenResearchError("INVALID_OUTPUT", "Evaluator identity, metrics or source hashes failed validation")
         return {**value, "resultSha256": _sha(path), "runId": row["id"],
@@ -569,6 +596,8 @@ class TaskLocalORXAdapter(OpenResearchAdapter):
 
 class TaskLocalORXProvider:
     """Operator-owned handle; no path/command input is read from a user prompt."""
+    adapter_type = TaskLocalORXAdapter
+
     def __init__(self, *, binary: Path, source_archive: Path, git_binary: Path, python_binary: Path):
         self.binary, self.source_archive = binary, source_archive
         self.git_binary, self.python_binary = git_binary, python_binary
@@ -576,7 +605,7 @@ class TaskLocalORXProvider:
     def create_experiment_adapter(self, *, owner_id: str, task_id: str, scope: Path, authorize: Any,
                                   pin: BinaryPin, max_output_bytes: int, command_timeout: float,
                                   environment: Any, scenario: str, cleanup_only: bool = False) -> TaskLocalORXAdapter:
-        return TaskLocalORXAdapter(binary=self.binary, source_archive=self.source_archive,
+        return self.adapter_type(binary=self.binary, source_archive=self.source_archive,
             git_binary=self.git_binary, python_binary=self.python_binary, scope=scope, owner_id=owner_id, task_id=task_id,
             authorize=authorize, pin=pin, enabled=True, max_output_bytes=max_output_bytes,
             command_timeout=command_timeout, environment=environment, scenario=scenario, cleanup_only=cleanup_only)

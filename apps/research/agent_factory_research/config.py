@@ -10,6 +10,7 @@ class ResearchSettings(Settings):
     source_synthesis_enabled: bool = False
     research_evaluators: dict = field(default_factory=dict)
     autoresearch_presets: dict = field(default_factory=dict)
+    research_iterations_factory: Callable | None = field(default=None, repr=False)
     personal_agent_commands_enabled: bool = False
     managed_orx_profiles_factory: Callable | None = field(default=None, repr=False)
     autoresearch_children_factory: Callable | None = field(default=None, repr=False)
