@@ -541,13 +541,14 @@ class DelegationService:
 
     async def inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
         self.auth.require_member(owner)
+        return await self._inspect_group(owner, parentid)
+
+    async def _inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
+        """Original owner-bound facts for trusted lifecycle cleanup after revocation."""
         parent = self.store.task(parentid, owner)
         children = [await self._linked_facts(owner, link) for link in self._descendants(parent["id"])]
         parent_facts = await self._facts(parent)
         all_stopped = parent_facts["stopped"] and all(child["stopped"] for child in children)
-        root_id, _ = self._ancestry(parent)
-        if parent["id"] == root_id and all_stopped:
-            self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:root", root=root_id)
         return {"parent": parent_facts, "children": children, "pending": any(child["pending"] for child in children),
                 "unknown": parent_facts["unknown"] or any(child["unknown"] for child in children), "allStopped": all_stopped}
 

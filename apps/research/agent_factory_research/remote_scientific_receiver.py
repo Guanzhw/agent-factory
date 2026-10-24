@@ -8,6 +8,7 @@ from __future__ import annotations
 from .services import services_for
 
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, cast
@@ -117,7 +118,7 @@ class RemoteScientificReceiver:
         require(saved['binding'] == binding and saved['candidate'] == candidate and saved['groupKey'] == group)
         return deepcopy(binding)
 
-    def bind_task(self, receipt_id, task):
+    def bind_task(self, receipt_id, task, *, persist=True):
         body = self._read(receipt_id); original = deepcopy(body)
         owner = body['binding']['ownerId']
         current = self.store.task(task['id'], owner)
@@ -139,7 +140,7 @@ class RemoteScientificReceiver:
         if task.get('run_id'):
             require(body.get('nativeRunId', task['run_id']) == task['run_id'])
             body['nativeRunId'] = task['run_id']
-        if body != original:
+        if persist and body != original:
             try:
                 self._save(original, body)
             except ValueError:
@@ -164,14 +165,14 @@ class RemoteScientificReceiver:
             {'config': {'projectId': self._read(plan['remoteHandoff']['receiptId'])['binding']['projectId'],
                         'phase': self._read(plan['remoteHandoff']['receiptId'])['binding']['scope']['phase']}})
 
-    def _bound(self, ctx, *, custody=False):
+    def _bound(self, ctx, *, custody=False, persist=True):
         owner = ctx.run_context.user_id
         task = self.store.task(ctx.run_context.session_id, owner)
         require(task['run_id'] == ctx.run_context.run_id and bool(task['run_id']))
         plan = self.store.plan(task['plan_id'], owner)
         require(ctx.plan['id'] == plan['id'] and ctx.plan['fingerprint'] == plan['fingerprint']
                 and ctx.plan['remoteHandoff'] == plan['remoteHandoff'])
-        body = self.bind_task(plan['remoteHandoff']['receiptId'], task)
+        body = self.bind_task(plan['remoteHandoff']['receiptId'], task, persist=persist)
         task = self.store.task(ctx.run_context.session_id, owner)
         require(body['nativeRunId'] == task['run_id'] == ctx.run_context.run_id
                 and body['receiver']['taskId'] == task['id'] and body['receiver']['planId'] == task['plan_id'])
@@ -382,19 +383,26 @@ class RemoteScientificReceiver:
             self._save(body, updated)
             raise
 
-    async def inspect_phase(self, owner, task_id):
+    async def inspect_phase(self, owner, task_id, *, persist=True):
         ctx = self._context(owner, task_id)
-        body, task, project = self._bound(ctx, custody=True); phase = body['binding']['scope']['phase']
+        body, task, project = self._bound(ctx, custody=True, persist=persist); phase = body['binding']['scope']['phase']
         original = services_for(self.store).research_runtime._original(task_id)
         if original is None:
             return {'state': body['state'], 'lease': None, 'native': self.store.lifecycle_observer._binding(task)}
         require(phase != 'preparation' and body.get('runtimeSnapshot'))
         pin = body['config']; resources = services_for(self.store).research_runtime.resources
         if pin['targetRef'] not in resources.targets:
+            # Restoring a driver registers durable resource metadata. Only the
+            # lifecycle reconciliation path may reconstruct that custody.
+            require(persist)
             target = project.assembler.restore_phase(ctx, phase, body['candidate'], self._prior(body), pin, body['runtimeSnapshot']['body'])
             require(resources._target_fingerprint(target) == body['targetFingerprint'])
         require(original['owner_id'] == owner and original['native_run_id'] == task['run_id'])
-        lease = await services_for(self.store).research_runtime.observe_lease(original['lease_id'])
+        runtime = services_for(self.store).research_runtime
+        # A history read validates the latest durable original custody without
+        # asking the provider to inspect, cancel, reclaim, or journal an effect.
+        lease = (await runtime.observe_lease(original['lease_id']) if persist
+                 else runtime._custody(original['lease_id'])[0])
         return {'state': body['state'], 'lease': lease, 'native': self.store.lifecycle_observer._binding(task)}
 
     def cancel_before_dispatch(self, owner, task_id):
@@ -448,7 +456,7 @@ class RemoteScientificReceiver:
         if body['state'] != 'CANCELLED_NO_DISPATCH':
             return None
         owner = body['binding']['ownerId']; task_id = body['receiver']['taskId']
-        body, task, _ = self._bound(self._context(owner, task_id), custody=True)
+        body, task, _ = self._bound(self._context(owner, task_id), custody=True, persist=False)
         require(receipt['remoteOwnerId'] == owner and receipt['remoteTaskId'] == task_id
                 and receipt['remotePlanId'] == task['plan_id'] and receipt['remoteRunId'] == task['run_id']
                 and receipt['manifestHash'] == body['binding']['scope']['sourceManifestSha256']
@@ -580,25 +588,27 @@ class RemoteScientificReceiver:
                 and set(retained['claims']) == {'launchProof', 'checkpoint', 'evaluation', 'preparation'})
         return deepcopy(retained)
 
-    def _retain_evidence(self, receipt, evidence):
+    def _retain_evidence(self, receipt, evidence, *, persist=True):
         """Merge immutable verified claims in a separate row, never the phase journal."""
         fields = ('launchProof', 'checkpoint', 'evaluation', 'preparation')
         scope = evidence['scope']
         merged = deepcopy(evidence); historical = False
         from .remote_scientific_evidence import validate_scientific_evidence
         validate_scientific_evidence({**receipt, 'scientificEvidence': evidence}, expected_scope=scope)
-        with self.store.transaction():
+        with self.store.transaction() if persist else nullcontext():
             body = self._read(receipt['id'])
             require(body['binding']['scope'] == scope)
             initial = {'scope': deepcopy(scope), 'basis': 'previously-verified-original-claims',
                 'bindingSha256': body['bindingSha256'], 'receiver': deepcopy(body['receiver']),
                 'nativeRunId': body['nativeRunId'], 'claims': {key: None for key in fields}}
-            self.store.sql("""INSERT INTO af_remote_scientific_evidence
-                VALUES(:id,:owner,:scope,:fp,CAST(:body AS JSONB)) ON CONFLICT DO NOTHING""",
-                id=receipt['id'], owner=body['binding']['ownerId'], scope=digest(scope), fp=digest(initial), body=canonical(initial))
-            retained = self._retained(body, locked=True)
-            require(retained is not None)
-            retained = cast(dict, retained)
+            if persist:
+                self.store.sql("""INSERT INTO af_remote_scientific_evidence
+                    VALUES(:id,:owner,:scope,:fp,CAST(:body AS JSONB)) ON CONFLICT DO NOTHING""",
+                    id=receipt['id'], owner=body['binding']['ownerId'], scope=digest(scope), fp=digest(initial), body=canonical(initial))
+            retained = self._retained(body, locked=persist)
+            if retained is None:
+                require(not persist)
+                retained = initial
             changed = deepcopy(retained)
             for key in fields:
                 old, fresh = retained['claims'][key], evidence[key]
@@ -613,7 +623,7 @@ class RemoteScientificReceiver:
                 elif fresh is not None:
                     changed['claims'][key] = deepcopy(fresh)
             validate_scientific_evidence({**receipt, 'scientificEvidence': merged}, expected_scope=scope)
-            if changed != retained:
+            if persist and changed != retained:
                 self.store.sql("""UPDATE af_remote_scientific_evidence SET body=CAST(:body AS JSONB),fingerprint=:fp
                     WHERE receipt_id=:id""", id=receipt['id'], fp=digest(changed), body=canonical(changed))
         receipt['scientificClaimsRetained'] = historical
@@ -630,15 +640,28 @@ class RemoteScientificReceiver:
         receipt['scientificClaimsRetained'] = any(item is not None for item in claims.values())
         return value
 
-    async def project_evidence(self, receipt):
-        """Fresh original-store evidence; an empty projection is never stop proof."""
+    def _contended_claims(self, error, receipt, body, lease=None):
+        """A busy storage fence provides no new claims or stop evidence."""
+        if error.status_code != 409 or error.detail not in (
+                'RETENTION_BUSY: another original fence is active',
+                'RETENTION_BUSY: reconcile the original plan'):
+            raise error
+        fresh = self._read(receipt['id'])
+        require(fresh['bindingSha256'] == body['bindingSha256'] and fresh['binding'] == body['binding']
+                and fresh['receiver'] == body['receiver'] and fresh['nativeRunId'] == body['nativeRunId'])
+        return self._claims_only(receipt, fresh, lease)
+
+    async def project_evidence(self, receipt, *, persist=True):
+        """Validate original evidence; history reads never advance lifecycle custody."""
+        if not persist:
+            receipt['scientificObservation'] = 'persisted-original-custody'
         body = self._read(receipt['id']); owner = body['binding']['ownerId']
         scope = body['binding']['scope']; phase = scope['phase']
         project = self.projects[body['binding']['projectId']]
         if 'receiver' not in body or 'nativeRunId' not in body:
             return project_scientific_evidence(receipt, scope=scope)
         task_id = body['receiver']['taskId']; ctx = self._context(owner, task_id)
-        body, task, _ = self._bound(ctx, custody=True)
+        body, task, _ = self._bound(ctx, custody=True, persist=persist)
         custody_only = task['cancel_requested']
         if not custody_only:
             try:
@@ -650,17 +673,21 @@ class RemoteScientificReceiver:
             except PermissionError:
                 custody_only = True
         if phase == 'preparation':
-            if custody_only:
+            if custody_only or not persist:
                 return self._claims_only(receipt, body)
             prep = None
             if body.get('receipt'):
                 original = project.assembler.preparation_receipt()
                 require(original == body['receipt'])
-                metadata, pin = project.preparation.identity(owner, original['execution']['taskId'], original['artifact']['id'])
+                try:
+                    metadata, pin = project.preparation.identity(owner, original['execution']['taskId'], original['artifact']['id'])
+                except HTTPException as error:
+                    return self._contended_claims(error, receipt, body)
                 require(metadata['id'] == original['artifact']['id'])
                 prep = {'schema': 1, **original['execution'], 'artifactId': metadata['id'], 'artifactSha256': pin['sha256']}
-            return self._retain_evidence(receipt, project_scientific_evidence(receipt, scope=scope, preparation=prep))
-        state = await self.inspect_phase(owner, task_id)
+            return self._retain_evidence(receipt, project_scientific_evidence(receipt, scope=scope, preparation=prep), persist=persist)
+        state = await (self.inspect_phase(owner, task_id) if persist
+                       else self.inspect_phase(owner, task_id, persist=False))
         fresh = self._read(receipt['id'])
         require(fresh['bindingSha256'] == body['bindingSha256'] and fresh['binding'] == body['binding']
                 and fresh['receiver'] == body['receiver'] and fresh['nativeRunId'] == body['nativeRunId'])
@@ -671,7 +698,7 @@ class RemoteScientificReceiver:
             plan = self.store.plan(task['plan_id'], owner)
             lease['planFingerprint'] = plan['fingerprint']
             lease['targetFingerprint'] = body['targetFingerprint']
-            if custody_only:
+            if custody_only or not persist:
                 return self._claims_only(receipt, self._read(receipt['id']), lease)
             if body.get('receipt') and lease['state'] == 'RECLAIMED' and lease.get('executionStatus') == 'COMPLETED':
                 positive_lease(lease, task, gpu=True)
@@ -680,8 +707,11 @@ class RemoteScientificReceiver:
                 launch = resources._provider(target).read_launch_proof(lease['id'], owner)
                 training = body if phase == 'training' else self._prior(body)['training']
                 original = training['receipt']
-                metadata, identity = project.checkpoints.identity(original['execution']['taskId'], original['artifact']['id'],
-                    min(project.manifest['artifactLimits']['checkpointBytes'], 2 * 1024**3))
+                try:
+                    metadata, identity = project.checkpoints.identity(original['execution']['taskId'], original['artifact']['id'],
+                        min(project.manifest['artifactLimits']['checkpointBytes'], 2 * 1024**3))
+                except HTTPException as error:
+                    return self._contended_claims(error, receipt, body, lease)
                 require(metadata['id'] == original['artifact']['id'])
                 checkpoint = {**original['execution'], 'variantSha256': scope['variantSha256'],
                               'checkpoint': {'artifactId': metadata['id'], **identity}}
@@ -689,9 +719,12 @@ class RemoteScientificReceiver:
                     contract = {'schema': 1, 'evidenceKind': 'offline_research_evaluation_contract',
                         'comparisonManifest': deepcopy(project.manifest), 'training': checkpoint,
                         'evaluatorExecution': body['receipt']['execution']}
-                    result = await project.assembler.evaluation_service(body['config']).verify(owner, contract)
+                    try:
+                        result = await project.assembler.evaluation_service(body['config']).verify(owner, contract)
+                    except HTTPException as error:
+                        return self._contended_claims(error, receipt, body, lease)
                     evaluation = {'contract': contract, 'result': result}
-        if custody_only:
+        if custody_only or not persist:
             return self._claims_only(receipt, self._read(receipt['id']), lease)
         return self._retain_evidence(receipt, project_scientific_evidence(receipt, scope=scope, lease=lease,
-            launch_proof=launch, checkpoint=checkpoint, evaluation=evaluation))
+            launch_proof=launch, checkpoint=checkpoint, evaluation=evaluation), persist=persist)

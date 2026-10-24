@@ -41,7 +41,7 @@ export interface PendingQuestion { id: string; version: number; text: string }
 export interface PendingApproval { id: string; version: number; scope: string }
 export type FactoryJob = Omit<Job, 'input' | 'status'> & {
   input: Omit<Job['input'], 'mode'> & { mode: string };
-  status: Job['status'] | 'unknown';
+  status: Job['status'] | 'unknown' | 'finalizing';
   planId?: string;
   executionPlacement?: { kind: string; targetRef: string; originTaskId: string; remoteTaskId?: string; remoteRootTaskId?: string; remoteRunId?: string | null; state: string };
   allowedActions?: string[];
@@ -55,6 +55,10 @@ export type FactoryJob = Omit<Job, 'input' | 'status'> & {
   recoveryDetail?: { approvalCommandId: string; requirementId: string; version: number; runId: string; scope: string };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
+export type JobSummary = Pick<FactoryJob, 'id' | 'ownerId' | 'planId' | 'definitionId' | 'definitionVersion' | 'status' | 'createdAt' | 'updatedAt'> & {
+  input: { topic: string; mode: string; scenario: 'normal' }; observedAt: string | null;
+};
+export interface JobPage { items: JobSummary[]; nextCursor: string | null }
 export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; usageLedger?: unknown; [extension: string]: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;
@@ -121,7 +125,7 @@ export const kindNames: Record<Material['kind'], string> = {
 };
 export const statusNames: Record<string, string> = {
   queued: '排队中', running: '运行中', waiting_input: '等待回答', waiting_approval: '等待审批',
-  canceling: '正在请求取消', canceled: '已取消', completed: '执行完成', failed: '执行失败',
+  finalizing: '资源确认中', canceling: '正在请求取消', canceled: '已取消', completed: '执行完成', failed: '执行失败',
   unknown: '状态待确认', reconciling: '正在核对状态', waiting_children: '等待子任务',
 };
 export const materialKey = (m: { id: string; version: number }) => `${m.id}@${m.version}`;

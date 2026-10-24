@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from .store import canonical, digest
+from .task_status import finalized_status
 
 
 class RemoteExecution:
@@ -52,6 +53,12 @@ class RemoteExecution:
             "remoteRunId": receipt.get("remoteRunId"), "state": receipt["state"]})
         if remote_id == remote_root:
             job["planId"] = task["plan_id"]
+            # Receiver child status already carries its own durable proof. Only
+            # the root also depends on the origin's persisted reconciliation.
+            current = self.store.task(task["id"], task["owner_id"])
+            job["status"] = finalized_status(job["status"], current["terminal"])
+            if job["status"] == "finalizing":
+                job["allowedActions"] = ["inspect", "reconcile"]
         for event in value.get("events", []):
             event["jobId"] = mapped
         for artifact in value.get("artifacts", []):
@@ -119,10 +126,11 @@ class RemoteExecution:
         try:
             if child is None:
                 placement = self.client._row(task["owner_id"], task["id"])
-                if placement["state"] in {"PREPARING", "CANCELLED_NO_DISPATCH"}:
+                if placement["state"] in {"PREPARE_UNKNOWN", "PREPARING", "CANCELLED_NO_DISPATCH"}:
                     receipt = await self.client.receipt(task["owner_id"], task["id"])
                     if receipt["state"] in {"PREPARING", "CANCELLED_NO_DISPATCH"}:
-                        pending = self.unresolved(self.store.task(task["id"], task["owner_id"]), 409)
+                        current = self.store.task(task["id"], task["owner_id"])
+                        pending = self.unresolved(current, 409)
                         cancelled = receipt["state"] == "CANCELLED_NO_DISPATCH"
                         actions = ["inspect", "reconcile"]
                         try:
@@ -132,7 +140,7 @@ class RemoteExecution:
                         except HTTPException as denied:
                             if denied.status_code not in {403, 409, 503}:
                                 raise
-                        pending["job"].update(status="canceled" if cancelled else "unknown",
+                        pending["job"].update(status=finalized_status("canceled", current["terminal"]) if cancelled else "unknown",
                             validationStatus="接收端已确认未开始执行" if cancelled else "接收端准备尚未完成，请核对原请求状态",
                             allowedActions=actions)
                         pending["snapshot"].update(remoteUnavailable=False,
@@ -147,7 +155,7 @@ class RemoteExecution:
 
     async def events(self, task: dict, child: str | None = None, *, cursor=None, limit=100) -> dict:
         value = copy.deepcopy(await self.client.events(task["owner_id"], task["id"], child, cursor=cursor, limit=limit))
-        receipt = self.client._row(task["owner_id"], task["id"])["body"]["receipt"]
+        receipt = await self.client.receipt(task["owner_id"], task["id"])
         remote_root = receipt["remoteTaskId"]
         value["receiverPayloadSha256"] = value["payloadSha256"]
         for event in value["events"]:
@@ -174,7 +182,7 @@ class RemoteExecution:
             if error.status_code < 500:
                 raise
             # The durable client/receiver boundary records uncertainty. Detail
-            # reads recover known work; no second dispatch is issued here.
+            # reads show known work; the observer reconciles the original admission.
         return (await self.detail(self.store.task(task["id"], owner)))["job"]
 
     async def cancel(self, task: dict, child: str | None = None) -> dict:

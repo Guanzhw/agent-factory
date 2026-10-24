@@ -50,7 +50,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2 } as Awaited<ReturnType<typeof api.status>>);
-  vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue([]); vi.mocked(api.executionTargets).mockResolvedValue([]);
+  vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue({ items: [], nextCursor: null }); vi.mocked(api.executionTargets).mockResolvedValue([]);
   vi.mocked(api.session).mockResolvedValue(alice); vi.mocked(api.applications).mockResolvedValue([]); vi.mocked(api.userConnections).mockResolvedValue([]);
   vi.mocked(personalToolConnectionApi.descriptors).mockResolvedValue([]); vi.mocked(personalToolConnectionApi.list).mockResolvedValue([]);
   vi.mocked(personalAgentApi.sessions).mockResolvedValue([]); vi.mocked(personalAgentApi.capabilities).mockResolvedValue({ executionContract: 'personal-external-v1', nativeQueue: true }); vi.mocked(personalRemoteApi.list).mockResolvedValue([]);

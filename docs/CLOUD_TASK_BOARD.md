@@ -1818,3 +1818,18 @@ New exact-head CI is the only final acceptance source.
 root负责core/部署集成；shutdown_design负责研究owner；shutdown_tests负责真实进程fixture，独立review完成。用户明确选择35秒后自行非零退出，UNKNOWN和原身份保留、不重新派发。owner5、真实PG进程3、policy真实子进程2、既有native PG6通过；旧控制器fixture两项错误修正后targeted2通过。Ruff/Pyright/架构/OpenSpec及独立core通过，完整证据见openspec/changes/propagate-research-shutdown-outcomes/verification.md。精确CI待运行，保持Draft。
 
 #103 b458028 fast/full成功，但云端两轮失败仍未关闭；#97 daily PG两项第二任务等待失败仍在共同MCP授权/清理诊断，不以该CI通过掩盖。#99–102暂停扩展以免混淆根因。4 CPU/16 GiB串行重型验证，不合并、部署或付费调用。
+## 2026-10-24 云端连续交付
+
+Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、部署及付费模型。
+
+| 阶段 | owner / 范围 | 依赖与状态 | 验收/限制 |
+| --- | --- | --- | --- |
+| #103 测试成本与MCP callback | root，独立review | Draft，b458028 fast/full CI成功 | 本地完整两轮均失败；局部60.974s少工作，不代表整套加速。偶发根因仍跟进 |
+| #97 历史与读取分离 | backend Store/API；remote receipt；frontend Web；root生命周期集成 | 本分支实现，独立review发现3项已修；验证中 | 205行同fixture store SQL4268→1，native2→0；保留审计与stream元数据写。PG/浏览器及精确CI待最终记录 |
+| #98 科研关闭 | shutdown_design app；shutdown_tests子进程；root core/部署 | 独立shutdown worktree；用户已选35s后非零退出 | 原UNKNOWN/identity不重派发，真实进程验证中，不把异常当退出 |
+
+旧成果与失败日志保留；#99–102尚未在此分支实施。worker测试发现与root实跑结果分别记录。
+
+## 当前 #99 组合阶段
+
+root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#103 `7fe8d90` fast40110354593/full40110374707均成功；历史本地MCP失败仍保留，不能外推已全部根治。#97 新head exact CI正在运行，#99不将其视作已通过。当前开始阶段一精确应用拥有者与单整体关闭预算；graph迁移依赖该阶段。
