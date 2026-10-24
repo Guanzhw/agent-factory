@@ -374,6 +374,9 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
                 self.assertEqual(failed["artifacts"], [])
                 self.assertFalse(any(e["type"] == "checksum_completed" for e in failed["events"]))
                 self.assertEqual(len(self.usage(self.receiver, remote)["attempts"]), 1)
+                # Receiver stop is not an origin-accounting barrier. Settle the
+                # original receipt explicitly; pure GET must not release its hold.
+                self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
                 current = self.call(self.origin, "GET", f"/jobs/{task}").json()
                 statement = current["snapshot"]["remoteHandoff"]["usageStatement"]
                 self.assertTrue(statement["allStopped"])

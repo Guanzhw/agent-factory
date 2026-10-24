@@ -1839,3 +1839,6 @@ root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#
 #99 stage1 b56e6df已Draft；stage2本地迁移完成，root独占API/assembly/生命周期集成；backend profiles、shutdown_design服务、frontend脚本、remote hooks、shutdown_tests实例fixture均freeze；takeover_review独立复核无新增阻断。daily253、实例PG4、退出5、scientific1、baseline2通过；最终core/Web/精确CI待完成。#97 965350f full40112603820仍在PG阶段，不当通过；#103 c939d56 fast40114643214 Python/PG通过、Web待终态，旧7fe full通过不覆盖新head。
 
 #100独立remote-v2 worktree依赖#97，不含#99 graph。history_backend独占remote_handoff/remote_bindings及新portable tests；root独占remote_authority/API/schema并最终集成；shutdown_tests只新增neutral core真实远程fixture/tests，重型运行由root串行；没有混入本#99 diff。#102仅只读契约分析，尚未实现。
+## 2026-10-24 #97 late authority follow-up
+
+965350f full失败4/3265，raw evidence已保存。backend仅2fixture同deadline持久barrier，root usage原receipt显式reconcile，remote拥有receiver latehistoryparity与Event测试，takeover独立review。原3PGtargeted通过、原science1通过572.256s；无超时放宽或新派发权限。root集成本次diff。#99 graph新head1d2bbb7 fast成功，fullWindows暴露6旧fixture迁移正在修，PG仍运行。#103c939 fast终态成功，日志完成与GitHub状态延迟约25min，未cancel/retry；原MCP不稳定仍需诊断。#100 independentneutralv2三真实case已有通过记录，cancel首轮fixture失败保留。#102在独立main分支仅开始recipe/helper切片，尚未API/native验收。
