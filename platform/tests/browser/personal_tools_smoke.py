@@ -14,7 +14,6 @@ import functools
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
-import shutil
 import tempfile
 from threading import Thread
 from urllib.parse import urlsplit
@@ -43,7 +42,9 @@ CONFIGURED = {'ownerId': 'alice', 'registrationRef': 'owner-tool-fixture',
     'transport': DESCRIPTOR['transport'], 'credentialRef': CREDENTIAL['credentialRef'],
     'credentialRevision': CREDENTIAL['credentialRevision'], 'status': 'configured', 'available': True,
     'capabilities': DESCRIPTOR['capabilities'], 'createdAt': '2026-10-13T00:00:00Z', 'expiresAt': None,
-    'allowedActions': ['inspect', 'bind', 'revoke']}
+    'visibility': 'personal', 'isOwner': True,
+    'allowedActions': ['inspect', 'revoke', 'sharing', 'bind'],
+    'runtimeBinding': {'adapterId': DESCRIPTOR['adapterId'], 'revision': DESCRIPTOR['revision'], 'config': {}}}
 BOUND = {'ref': 'bound-tool-fixture', 'ownerId': 'alice', 'version': 1, 'fingerprint': 'a' * 64,
     'kind': 'tool', 'revision': CONFIGURED['revision'], 'capabilities': DESCRIPTOR['capabilities'],
     'taskId': None, 'registrationRef': CONFIGURED['registrationRef'], 'expiresAt': None,
@@ -84,7 +85,7 @@ class SyntheticAPI:
                 'revision': CONFIGURED['revision'], 'capabilities': DESCRIPTOR['capabilities'],
                 'expiresAt': None, 'available': self.configured['available'],
                 'status': 'available' if self.configured['available'] else 'unavailable',
-                'allowedActions': ['bind'] if self.configured['available'] else [],
+                'allowedActions': ['inspect', 'bind'] if self.configured['available'] else ['inspect'],
             }] if own and self.configured else [],
             '/personal-credentials': self.credentials if own else [],
             '/personal-credentials/capabilities': {'enabled': True,
@@ -164,7 +165,7 @@ class SyntheticAPI:
                 # descriptor check, the operator withdraws the installed tool.
                 self.descriptors = []
                 self.configured = {**CONFIGURED, 'status': 'unavailable', 'available': False,
-                                   'allowedActions': ['inspect', 'revoke']}
+                                   'allowedActions': ['inspect', 'revoke', 'sharing']}
         elif path == '/user-connections' and self.configured and body == {
             'registrationRef': CONFIGURED['registrationRef'], 'requestId': request_id,
             'capabilities': DESCRIPTOR['capabilities'],
@@ -173,7 +174,7 @@ class SyntheticAPI:
                 # This is a definitive rejection of this POST, not a missing
                 # receipt or an ambiguous 409. No connection was created.
                 self.configured = {**CONFIGURED, 'status': 'credential_unavailable', 'available': False,
-                                   'allowedActions': ['inspect', 'revoke']}
+                                   'allowedActions': ['inspect', 'revoke', 'sharing']}
                 self.credentials = [{**CREDENTIAL, 'status': 'revoked'}, REPLACEMENT_CREDENTIAL]
                 code = 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'
                 row.update(responseStatus=409, responseCode=code)
@@ -358,7 +359,7 @@ def main():
              ('desktop-bind-credential-rejected', 'bind-credential-rejected', 1440)]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dist', type=Path, default=ROOT / 'dist')
-    parser.add_argument('--browser', default=shutil.which('chromium') or shutil.which('google-chrome'))
+    parser.add_argument('--browser', help='Explicit Chromium executable; defaults to the locked Playwright browser')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--desktop-only', action='store_true',
                         help='Run each flow once at desktop width; preserve the default narrow coverage')
@@ -370,8 +371,8 @@ def main():
     if args.desktop_only:
         modes = dict.fromkeys(mode for _, mode, _ in cases)
         cases = [('desktop-' + mode, mode, 1440) for mode in modes]
-    if not (args.dist / 'index.html').is_file() or not args.browser:
-        parser.error('Requires existing built dist and Chromium; this script does not install either')
+    if not (args.dist / 'index.html').is_file():
+        parser.error('Requires existing built dist/index.html; run npm run build first')
     output = args.output or Path(tempfile.mkdtemp(prefix='af-personal-tool-browser-'))
     output.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(QuietHandler, directory=str(args.dist)))
