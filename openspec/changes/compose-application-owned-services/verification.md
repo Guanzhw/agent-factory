@@ -38,3 +38,11 @@ fast40116000844成功，full40116074034仍在PG阶段；Windowsjob120937537734�
 六个fixture文件已迁移：使用真实ApplicationRuntimeRegistry和ResearchApplicationHooks，read_wait spy证明实际app观察；graph显式传递；timing诊断fixture保留实例self绑定，实际class(instance,...)/bound-call验证四次成功/领域拒绝事件。原断言不降级。五模块19项通过0.222s，默认sandbox异步Runner阻塞后仅终止本任务PID，授权环境同命令通过。未改生产期限/断言或运行第二份full。
 
 已merge #97 88aacb7，保留双方任务板历史；新增late-authority test改为显式ResearchServices，无重引入global locator。root composition-merged-fixtures六模块22通过2.655s（8.537driver），composition-merged-types零错误/警告22.412s。适配原始实例调用计时包装，未改取消/UNKNOWN断言。旧1d2bbb7 full仍独立保存，不把新fast或targeted成功改写成旧full成功。
+
+### Original full CI terminal and remaining fixture migrations
+
+Original exact1d2bbb7 full run40116074034 completed **failed**: PostgreSQL3318 tests/2690.485s, failures3/errors12/skips66; four required groups fully passed and three had a missing passing case. Windows failure remains recorded above. This is not accepted full validation, and no full rerun was requested to chase green.
+
+Current7d0701f already contained six old-constructor/mock migrations and #97 terminal/reconcile barriers that explain the previously identified failures. The remaining PG-only fixture gaps were: evaluation service missing its explicit research graph; workspace fixture had not retained its state; preparation constructor mock omitted its graph. These three fixtures now use the same explicit graph as the application; no production code, assertions or timeouts changed. Preparation4pure tests passed0.087s; actual two original PG failure IDs passed in45.357s driver. All original auth/rotation/wrong-database and unavailable-workload no-dispatch checks remain.
+
+Raw full log: `/workspace/scratch/cloud-delivery-20261024/composition-1d2bbb7-full-pg.log`; targeted evidence: `/workspace/scratch/task-history-20261024/composition-final-pg-fixture-migrations.{json,log}`. Exact7d0701f fast40118071375 succeeded; the new fixture-only head will receive its own fast checks. No whole-suite success is inferred from those results.
