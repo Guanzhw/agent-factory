@@ -49,10 +49,16 @@ def _receipt(receipt):
     raise _unknown()
 
 
-def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistration:
+def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256: str | None = None) -> AdapterRegistration:
     """Describe one operator-installed adapter without resolving owner secrets."""
     descriptor = replace(adapter.descriptor, input_schema=copy.deepcopy(dict(adapter.descriptor.input_schema)))
     fingerprint = digest(asdict(descriptor))
+
+    def configuration(config):
+        if operation_sha256 is None:
+            _configuration(config)
+        elif config != {'operationSha256': operation_sha256}:
+            raise ValueError('PERSONAL_TOOL_CONFIGURATION_INVALID')
 
     def factory(binding: BindingContext):
         store = binding.store
@@ -99,6 +105,8 @@ def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistrat
             request = {'ownerId': expected[0], 'taskId': expected[1], 'planId': binding.plan['id'],
                 'adapterId': descriptor.adapter_id, 'descriptor': fingerprint, 'connection': connection,
                 'callId': call_id, 'arguments': values}
+            if operation_sha256 is not None:
+                request['operationSha256'] = operation_sha256
             try:
                 reservation = await asyncio.to_thread(store.effect_reserve, expected[2], effect_key, request)
             except Exception:
@@ -190,13 +198,16 @@ def personal_tool_registration(adapter: PersonalToolAdapter) -> AdapterRegistrat
     setattr(factory, '_personal_tool_adapter', adapter)
     return AdapterRegistration(kind='tool', adapter_id=descriptor.adapter_id, revision=descriptor.revision,
         factory=factory, tool_name=descriptor.tool_name, connection_kind='tool',
-        required_capabilities=descriptor.capabilities, permissions=(descriptor.permission,), validator=_configuration)
+        required_capabilities=descriptor.capabilities, permissions=(descriptor.permission,), validator=configuration)
 
 
 def register_personal_tools(bindings, service):
     """Explicit assembly helper; Settings can also consume the registrations."""
     for adapter in service.adapters.values():
-        registration = personal_tool_registration(adapter)
+        operations = getattr(service, 'operations', None)
+        operation = operations.by_adapter(adapter.descriptor.adapter_id) if operations is not None else None
+        registration = personal_tool_registration(adapter,
+            operation_sha256=operation['operationRef']['sha256'] if operation else None)
         bindings.register(registration.kind, registration.adapter_id, registration.revision, registration.factory,
             tool_name=registration.tool_name, connection_kind=registration.connection_kind,
             required_capabilities=registration.required_capabilities, permissions=registration.permissions,

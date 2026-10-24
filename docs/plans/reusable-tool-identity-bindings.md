@@ -1,6 +1,8 @@
 # Reusable CLI/MCP identity bindings
 
-Status: planning only. Runtime changes and whole-workflow acceptance remain pending.
+Status: implementation design ready for review; runtime changes and whole-workflow acceptance remain pending.
+Implementation baseline: planning `84c827c` merged with main `9a933aa`; no dependency on #97/#99.
+OpenSpec: [reuse-member-tool-operations](../../openspec/changes/reuse-member-tool-operations/proposal.md).
 Source and bounded probe baseline: `13f36d25fe4c7552c507875dab4a75d566c438ab` (production behavior inherited from PR #95).
 
 ## Product purpose
@@ -37,13 +39,15 @@ Six MCP business calls returned the expected identity across eight cases. Shared
 
 The adapter mismatch is correct under today's contract. The product gap is that a member-authored reusable operation remains coupled to its original resource registration: another member cannot select an independently saved equivalent operation connection while retaining the same material.
 
-## Proposed minimum change, not implemented
+## Minimum implementation contract, not implemented
 
-Define a reusable operation identity separately from its credential-bearing account connection, using the existing material, adapter and connection services. Establish explicit compatibility for protocol, operation, schema, revision and capabilities before allowing a connection to satisfy that operation. First inspect whether the existing narrow `connection_adapter_ref` facility is sufficient for the actual consumers.
+A member explicitly creates a public immutable operation version with a fixed destination. Its hash includes the complete descriptor semantics and dispatch recipe: MCP URL/remoteToolName, or CLI executable, fixed arguments, argument mapping, stdin mode, working directory, non-secret environment, credential injection names and output format. Schema, permissions and limits are included. Descriptor equality alone is insufficient. Private resource configurations are not automatically published; arguments/environment may contain secrets. Public creation shows the complete recipe and keeps credentials in separately selected accounts.
 
-Keep exact owner/revision/task checks and explicit personal-versus-shared selection. Freeze the selected connection at submission and preserve it through supported workflow/child execution and recovery. An unavailable binding must fail explicitly. Preserve current exact adapter checks until their replacement compatibility contract is implemented and verified.
+Keep both exact `connection_adapter_ref` and native adapter object-identity checks. Alice and Bob create independent account resources referencing one operation version, adapterId and process-local adapter instance; their tasks retain the same published material id/version/hash. A second account does not require republishing. Bob can explicitly select Alice's shared account. Revoking Alice's account must not revoke Bob's; material withdrawal still blocks subsequent calls through the fresh material guard.
 
-Credential delivery stays with CLI/MCP adapters and the vault. Specific tools can add their required authentication mechanisms through those contracts when needed; this plan imposes no generic OAuth lifecycle or new connector framework.
+Add an immutable operation table and narrow create/list/read operation APIs plus an account-creation API under the existing personal-tools router. Reuse vault, sharing, material publication and native effects. Restore the operation first, then its accounts; missing or mismatched state fails explicitly. Never select an arbitrary active account to reconstruct the public operation. Existing installed adapters, member resources, plans and effects remain unchanged. Preserve original UNKNOWN identities and never redispatch to resolve uncertainty.
+
+Two stages: (1) core operation/account API, canonical hashing and restore with portable regression tests; (2) UI and real native CLI/MCP two-user PG/restart acceptance. Detailed file ownership and checks are in [tasks.md](../../openspec/changes/reuse-member-tool-operations/tasks.md); architecture and API shape are in [design.md](../../openspec/changes/reuse-member-tool-operations/design.md). No production implementation or acceptance run has occurred for this change.
 
 ## Platform-independent acceptance, pending
 
@@ -55,4 +59,4 @@ Credential delivery stays with CLI/MCP adapters and the vault. Specific tools ca
 - [ ] Lose acknowledgements and restart around each step; completed operations are not replayed, UNKNOWN retains its original identity, and remote counters prove no duplicate effects.
 - [ ] Inspect model-visible content, public projections, errors and logs for synthetic secrets; preserve useful actor/connection/effect provenance and shared credential-reference hiding.
 
-These checks need no named external platform. Keep PR #96 limited to tests/CI. History (#97), shutdown custody (#98), application composition (#99), remote runtime handoff (#100) and research rounds (#101) retain their own scopes; ordinary CLI/MCP integration does not depend on all of them. Any runtime implementation follows a separately agreed scope.
+These checks need no named external platform. Keep PR #96 limited to tests/CI. History (#97), shutdown custody (#98), application composition (#99), remote runtime handoff (#100) and research rounds (#101) retain their own scopes; ordinary CLI/MCP integration does not depend on all of them. Runtime implementation follows the bounded OpenSpec scope above; no additional routine approval gate is introduced.

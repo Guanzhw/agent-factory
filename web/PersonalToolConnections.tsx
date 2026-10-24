@@ -1,3 +1,4 @@
+import { ReusableToolOperations } from './ReusableToolOperations.js';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
@@ -262,6 +263,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
   const canSave = !!descriptor && (source === 'saved' ? !!selected : !!token && consent && providers.includes(descriptor.credentialProviderId));
   return <section aria-labelledby="personal-tools-title"><h2 id="personal-tools-title">我的工具连接</h2>
     <p>连接自己的 MCP 服务或服务器上的 CLI 命令，保存后可用于组件与工作流。</p>
+    <ReusableToolOperations ownerId={ownerId} credentials={credentials} disabled={disabled} onChanged={changed}/>
     <MemberToolSetup ownerId={ownerId} credentials={credentials} providers={providers} disabled={disabled} onChanged={changed}/>
     <button className="secondary" disabled={busy || blocked} onClick={() => setRefresh(n => n + 1)}>重新读取工具连接</button>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}

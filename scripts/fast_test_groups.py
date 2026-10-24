@@ -27,6 +27,11 @@ FAST_PYTHON_TESTS = {
         'test_billing_mode.BillingModeTests',
         'test_schedule_permissions.ScheduleMemberPermissionTests',
     ),
+    'reusable_tool_operations': (
+        'test_tool_operations',
+        'test_member_tool_operations',
+        'test_reusable_tool_accounts',
+    ),
     'personal_tool_connections': (
         'test_personal_tool_adapter_integration',
         'test_personal_tool_contract',
