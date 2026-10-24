@@ -23,4 +23,4 @@
 
 ## Impact
 
-基线：planning `84c827c` + main `9a933aa`。范围为 core personal_tools、原生 personal_tool_execution、材料/连接入口和资源 UI；不依赖 #97/#99。旧 installed adapter、member resource、plan/effect 保持原语义与身份。不新增 OAuth 框架或运行引擎。本变更仅完成设计，生产实现与运行验收尚未开始。
+基线：planning `84c827c` + main `9a933aa`。范围为 core personal_tools、原生 personal_tool_execution、材料/连接入口和资源 UI；不依赖 #97/#99；后续因可复现授权读取开销明确叠加 #103 c2033e6。旧 installed adapter、member resource、plan/effect 保持原语义与身份。不新增 OAuth 框架或运行引擎。生产实现及定向 native/browser 验收已完成，OS 正常进程替换已通过（非崩溃恢复）；未验证边界见计划证据。

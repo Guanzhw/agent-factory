@@ -314,6 +314,8 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
     def assert_run(self, owner, connection, identity, request_id):
         body, started = self.submit(owner, connection, request_id)
         task = self.wait(started, owner)
+        if self.transport == 'mcp':
+            print('MCP_OPERATION_CALLBACK_EVIDENCE ' + json.dumps(self.callback_timings.snapshot(task['run_id']), sort_keys=True))
         plan = self.store.plan(task['plan_id'], owner)
         spec = plan['executionBindings']['tools'][0]
         self.assertEqual(spec['adapterId'], self.operation['runtimeBinding']['adapterId'])

@@ -1,7 +1,7 @@
 # Reusable CLI/MCP identity bindings
 
-Status: implementation design ready for review; runtime changes and whole-workflow acceptance remain pending.
-Implementation baseline: planning `84c827c` merged with main `9a933aa`; no dependency on #97/#99.
+Status: implemented in Draft; focused real native CLI/MCP and built Chromium checks passed. Normal OS-process replacement acceptance passed; child-path and production authentication acceptance remain unverified.
+Implementation baseline: planning `84c827c` + main `9a933aa`, now stacked on test-cost/authority optimization #103 (`c2033e6`). No dependency on #97/#99. Reproducible MCP authorization query cost justified this dependency; see verification below.
 OpenSpec: [reuse-member-tool-operations](../../openspec/changes/reuse-member-tool-operations/proposal.md).
 Source and bounded probe baseline: `13f36d25fe4c7552c507875dab4a75d566c438ab` (production behavior inherited from PR #95).
 
@@ -60,3 +60,22 @@ Two stages: (1) core operation/account API, canonical hashing and restore with p
 - [ ] Inspect model-visible content, public projections, errors and logs for synthetic secrets; preserve useful actor/connection/effect provenance and shared credential-reference hiding.
 
 These checks need no named external platform. Keep PR #96 limited to tests/CI. History (#97), shutdown custody (#98), application composition (#99), remote runtime handoff (#100) and research rounds (#101) retain their own scopes; ordinary CLI/MCP integration does not depend on all of them. Runtime implementation follows the bounded OpenSpec scope above; no additional routine approval gate is introduced.
+
+
+## Cloud implementation evidence (2026-10-24)
+
+Explicit public operations freeze the entire CLI/MCP recipe. Independent owner accounts select a precise id/version/hash and share one native adapter object; old installed and private-resource paths retain their identity. Operation integrity is rechecked with the current connection transaction. A missing CLI path makes that operation unavailable without preventing unrelated services from starting. New effect fingerprints add the operation hash; old fingerprints are unchanged.
+
+- 23 portable operation/account cases passed, including HTTP idempotency, hash rejection, independent secrets, sharing, unavailable-path restart and tamper rejection. Existing tool compatibility: 62 run, 58 passed, 4 existing PG skips.
+- Real PostgreSQL/native CLI: same published material for Alice/Bob/second account/shared account, account revoke isolation and same-process service reconstruction passed. Real CLI lost acknowledgement retains UNKNOWN without replay; material withdrawal and MCP sharing withdrawal prevent the next invocation.
+- Real MCP matrix initially failed its original 20-second native wait twice. Timing showed first-call 41 callbacks/4,298 SQL queries and second-call 22 callbacks/2,258 queries before the deadline; maximum callback queue delay was 16 ms. The executor was executing, not stuck before claim. These are overlapping callback totals, not wall-clock durations.
+- Integrating existing #103 exact-material reads reduced authorization SQL 88→60 and credential SQL 203→147. The unchanged native matrix then passed (82.073 test seconds / 87.434 driver seconds across five tasks). This is one narrow reproduced-cost correction, not proof all historical MCP instability is closed. The bounded callback ring dropped later records after 256 entries; first three task records are complete, later timings are incomplete.
+- Web: 705 tests, lint/type/build passed; built Chromium public preview/consent/account/lost-ack original-request recovery passed. Browser API is synthetic; native evidence is separate. Full and production npm audits: zero vulnerabilities.
+- Ruff, Pyright (zero errors), architecture (722 modules, zero violations/gaps) passed before dependency merge; final merged Ruff/Pyright/architecture checks passed (733 modules, zero violations/gaps); daily selection validates 287 Python cases out of 3,275 discovery cases, without claiming they were all rerun. No paid provider or live external account was used.
+
+Raw commands, exit codes, failure logs and timing JSON are under `/workspace/scratch/task-history-20261024/reusable-*`; aggregate coordination record is `/workspace/scratch/cloud-delivery-20261024/REPORT.md`. Initial fixture failures (vault destination policy and short request IDs) remain preserved. No assertion or production timeout was widened.
+
+
+Actual OS replacement: two sequential worker processes (PIDs77312/77351) exited0 without forced termination; first18.951s, restore9.454s. Second process reads original public operation/accounts and asserts one restored adapter instance before new work. Original completed receipts and UNKNOWN remain unchanged with no extra CLI marker; a new Bob task completes. Test28.619s/driver29.080s. Initial run failed because the fixture sent an internal prefixed request ID to the public receipt API; corrected to the original submitted ID with exact mapping assertions. Raw initial and fixed reports remain saved. This is graceful OS replacement, not crash/kill recovery; new child workflow, actor-disable and credential-rotation-between-steps acceptance remain open.
+
+Standalone core wheel install/start/clean shutdown passed12.745s with application source absent (65 assembled/83 running tables). All processes created by the OS-replacement test exited; the shared isolated PG verification container remains coordinator-owned for ongoing work.
