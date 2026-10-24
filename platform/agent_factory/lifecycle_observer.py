@@ -176,6 +176,9 @@ class FactoryLifecycleObserver:
         # Readers classify cleanup from both the flag and its failure provenance.
         # Publish them together so authority loss cannot look like user cancel.
         with self.store.transaction():
+            registry = getattr(self.store, 'application_runtime', None)
+            if registry is not None:
+                registry.mark_cancel(task)
             changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
                                      id=task["id"], owner=task["owner_id"])
             if changed:
@@ -241,6 +244,9 @@ class FactoryLifecycleObserver:
 
     def _summary_status(self, task, status):
         """Applications may project their persisted wait state for the summary."""
+        registry = getattr(self.store, 'application_runtime', None)
+        if registry is not None:
+            return registry.summary_status(self, task, status)
         return status
 
     def _observe_summaries(self, root, facts):
@@ -263,6 +269,10 @@ class FactoryLifecycleObserver:
 
     async def _observe_application_waits(self, root):
         """Application observers may inspect existing work before core cleanup."""
+        registry = getattr(self.store, 'application_runtime', None)
+        if registry is not None:
+            for task in self._group(root)[0]:
+                await registry.observe_waits(self, task)
 
     async def observe_root(self, identifier: str) -> dict:
         root = self.store.task(identifier)

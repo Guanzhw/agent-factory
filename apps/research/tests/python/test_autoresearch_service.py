@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from agent_factory_research.autoresearch import ACCEPTANCE, AutoResearchService, ResearchPreset
 from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
 from agent_factory.store import digest
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
 
 
 class MemoryService(AutoResearchService):
@@ -53,9 +54,11 @@ class Harness:
             application_ref={'id': 'app'}, runtime_factory=self.factory, context_reader=self.context,
             candidate_validator=self.validator, experiment=self.experiment)
         self.store = Mock()
-        self.store.runtime_effect_held = ResearchRuntimeHooks.effect_held
+        self.store.application_runtime = ApplicationRuntimeRegistry(self.store)
+        self.store.application_runtime.register('research', ResearchRuntimeHooks(), effects=('orx-experiment-launch-v1',))
+        self.store.plan.return_value = {}
         self.store.cancellation_requested.return_value = False
-        self.store.task.return_value = {'id': 'task', 'run_id': 'run', 'owner_id': 'alice'}
+        self.store.task.return_value = {'id': 'task', 'run_id': 'run', 'owner_id': 'alice', 'plan_id': 'plan'}
         self.store.resolve_run.return_value = {'id': 'plan'}
         self.effects = {}
         def reserve(run, key, payload):

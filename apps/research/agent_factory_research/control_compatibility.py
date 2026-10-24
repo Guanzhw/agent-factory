@@ -9,9 +9,9 @@ from agent_factory.store import canonical, digest
 import copy
 
 
-class ResearchControlCommands(ControlCommands):
+class ResearchControlHooks:
     @staticmethod
-    def _approval_payload(task, snapshot, original):
+    def approval_payload(task, snapshot, original):
         """Exact original approval + parked native transcript, never guessed approval."""
         from agent_factory.factory_api import native_requirements, requirement_version
         binding = original["body"]["binding"]
@@ -52,32 +52,33 @@ class ResearchControlCommands(ControlCommands):
         return {"requirements": requirements, "toolsSha256": original["body"]["toolsSha256"],
                 "pausedRequirementsSha256": paused_hash, "originalApprovalProof": expected}
 
-    def _completed_launch(self, task):
+    @staticmethod
+    def completed_launch(commands, task):
         """Current authority + read-only terminal ORX proof; never ensure/wake."""
         from .inference_wait import current, read, execution_owner
         from .orx_experiment_tools import (LAUNCH_EFFECT_KEY, _public_result, _request,
             original_experiment_binding, inspect_orx_experiment)
         if sys.platform != "linux":
             raise HTTPException(409, "APPROVED_RECOVERY_PLATFORM: Linux revision 2 is required")
-        task = self.store.task(task["id"], task["owner_id"])
-        wait = read(self.store, task["id"])
+        task = commands.store.task(task["id"], task["owner_id"])
+        wait = read(commands.store, task["id"])
         if wait and wait["state"] == "STOPPING":
             raise HTTPException(409, "APPROVED_RECOVERY_STOPPING: stop intent cannot be resumed")
-        plan, context = current(self.store, task, wait if wait and wait["state"] in {"WAITING", "RESUMING"} else None)
+        plan, context = current(commands.store, task, wait if wait and wait["state"] in {"WAITING", "RESUMING"} else None)
         from agno.run import RunContext
         ctx = RunContext(user_id=context.user_id, session_id=context.session_id, run_id=context.run_id, session_state=context.session_state)
-        execution_owner(self.store, task)
-        self.store.execution_bindings.recheck(plan, ctx)
-        effects = [item for item in self.store.effects(task["id"])
+        execution_owner(commands.store, task)
+        commands.store.execution_bindings.recheck(plan, ctx)
+        effects = [item for item in commands.store.effects(task["id"])
                    if item["effect_key"] == task["run_id"] + ":" + LAUNCH_EFFECT_KEY]
-        original = original_experiment_binding(self.api.settings, self.store, task["id"])
+        original = original_experiment_binding(commands.api.settings, commands.store, task["id"])
         if len(effects) != 1 or effects[0]["status"] != "DONE" or original is None or original[3].contract_revision != "2":
             raise HTTPException(409, "APPROVED_RECOVERY_EFFECT: original Linux v2 effect must be DONE")
         binding = original[3]
         receipt = binding.adapter.observe_existing()
         result = _public_result(plan, ctx, binding, receipt, digest(_request(plan, ctx, binding)))
         saved = effects[0]["result"]
-        projection = inspect_orx_experiment(self.store, task["owner_id"], task["id"])
+        projection = inspect_orx_experiment(commands.store, task["owner_id"], task["id"])
         keys = ("taskId", "planId", "nativeRunId", "orxRunId", "effectFingerprint", "status")
         if (not isinstance(saved, dict) or not isinstance(projection, dict)
                 or result.get("status") not in {"done", "failed"} or not result.get("orxRunId")
@@ -85,34 +86,36 @@ class ResearchControlCommands(ControlCommands):
                 or saved.get("stopEvidence", {}).get("allStopped") is not True
                 or any(result.get(key) != saved.get(key) or result.get(key) != projection.get(key) for key in keys)):
             raise HTTPException(409, "APPROVED_RECOVERY_STOP: exact terminal experiment and positive stop proof required")
-        current(self.store, self.store.task(task["id"], task["owner_id"]),
+        current(commands.store, commands.store.task(task["id"], task["owner_id"]),
                 wait if wait and wait["state"] in {"WAITING", "RESUMING", "STOPPING"} else None)
-        self.store.execution_bindings.recheck(plan, ctx)
+        commands.store.execution_bindings.recheck(plan, ctx)
         return {key: result[key] for key in keys}
 
-    async def _external_result(self, task, requirement, requirements, decision):
+    @staticmethod
+    async def external_result(commands, task, requirement, requirements, decision):
         tool = requirement.get("tool_execution") or {}
         from .autoresearch_session_control import TOOL as SESSION_TOOL
         if tool.get("tool_name") == SESSION_TOOL:
-            receipt = await services_for(self.store).autoresearch_session_control.completion(task, requirement)
+            receipt = await services_for(commands.store).autoresearch_session_control.completion(task, requirement)
             tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
             return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
         from .research_runtime import TOOL as RESEARCH_TOOL
         if tool.get("tool_name") == RESEARCH_TOOL:
-            receipt = await services_for(self.store).research_runtime.completion(task, requirement)
+            receipt = await services_for(commands.store).research_runtime.completion(task, requirement)
             tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
             return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
         from .inference_wait import CONTROL_NAME, validate_requirement
         if tool.get("tool_name") == CONTROL_NAME:
-            await asyncio.to_thread(validate_requirement, self.store, task, tool)
+            await asyncio.to_thread(validate_requirement, commands.store, task, tool)
             tool["result"] = canonical({"factoryControl": "resume-same-run" if decision["approved"] else "declined"})
             return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements]),
                 "inferenceRecovery": True, "inferenceControlId": tool["tool_call_id"], "inferenceDeclined": not decision["approved"]}
-        return await super()._external_result(task, requirement, requirements, decision)
+        return None
 
-    def _claim_external_result(self, task, prepared):
+    @staticmethod
+    def claim_external_result(commands, task, prepared):
         if prepared.get("inferenceRecovery"):
-            updated = self.store.sql("""UPDATE af_inference_waits SET state=:state
+            updated = commands.store.sql("""UPDATE af_inference_waits SET state=:state
                 WHERE task_id=:task AND state='WAITING' AND body->>'controlId'=:control
                 AND CAST(body->>'deadline' AS TIMESTAMPTZ)>CURRENT_TIMESTAMP RETURNING task_id""",
                 task=task["id"], control=prepared["inferenceControlId"],
@@ -120,4 +123,22 @@ class ResearchControlCommands(ControlCommands):
             if not updated:
                 raise HTTPException(409, "INFERENCE_WAIT_CHANGED: original wait ended before dispatch")
             if prepared["inferenceDeclined"]:
-                self.store.request_cancel(task["id"])
+                commands.store.request_cancel(task["id"])
+
+
+class ResearchControlCommands(ControlCommands):
+    """Legacy standalone entry; production uses registered application hooks."""
+    def _approval_payload(self, task, snapshot, original):
+        return ResearchControlHooks.approval_payload(task, snapshot, original)
+
+    def _completed_launch(self, task):
+        return ResearchControlHooks.completed_launch(self, task)
+
+    async def _external_result(self, task, requirement, requirements, decision):
+        result = await ResearchControlHooks.external_result(self, task, requirement, requirements, decision)
+        if result is not None:
+            return result
+        return await super()._external_result(task, requirement, requirements, decision)
+
+    def _claim_external_result(self, task, prepared, *, tool_name=None):
+        ResearchControlHooks.claim_external_result(self, task, prepared)

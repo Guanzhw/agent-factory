@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from agent_factory.auth import EXECUTOR_ID
 from agent_factory.control_commands import ControlCommand
-from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
+from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands, ResearchControlHooks
 from agent_factory.factory_api import requirement_version
 from agent_factory.native_bridge import NativeBridge
 from agent_factory.store import digest
@@ -49,7 +49,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
     def test_exact_original_approval_accepted_without_mutating_transcript(self):
         task, original, snapshot = fixture()
         before = copy.deepcopy(snapshot)
-        value = ControlCommands._approval_payload(task, snapshot, original)
+        value = ResearchControlHooks.approval_payload(task, snapshot, original)
         self.assertEqual(value["requirements"], original["body"]["requirements"])
         self.assertEqual(snapshot, before)
         self.assertEqual(value["pausedRequirementsSha256"], digest(snapshot["requirements"]))
@@ -65,7 +65,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
             task, original, snapshot = fixture()
             mutate(original, snapshot)
             with self.assertRaises(HTTPException):
-                ControlCommands._approval_payload(task, snapshot, original)
+                ResearchControlHooks.approval_payload(task, snapshot, original)
 
     def test_repair_slot_distinct_from_approval_and_unique_per_original(self):
         self.assertEqual(ControlCommands.repair_slot("t", "a"), ControlCommands.repair_slot("t", "a"))
@@ -122,7 +122,7 @@ class ApprovedRecoveryQueueTests(unittest.TestCase):
         bridge.attach(SimpleNamespace(state=SimpleNamespace(queue_worker=worker)))
         bridge.detail = AsyncMock(return_value=snapshot)
         bridge._request = AsyncMock(side_effect=AssertionError("Detached HTTP fallback is forbidden"))
-        prepared = ControlCommands._approval_payload(task, snapshot, original)
+        prepared = ResearchControlHooks.approval_payload(task, snapshot, original)
         arguments = (task["run_id"], task["id"], task["owner_id"], prepared["requirements"])
         kwargs = {"command_proof": {"commandId": "repair-original", "fingerprint": "repair-fingerprint"},
                   "original_proof": prepared["originalApprovalProof"], "tools_sha256": prepared["toolsSha256"],

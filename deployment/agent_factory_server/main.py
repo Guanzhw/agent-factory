@@ -6,17 +6,17 @@ from typing import cast
 from agent_factory.main import create_app as create_core_app
 from agent_factory.config import Settings
 from .shutdown import shutdown_failed, shutdown_guard
+from .application_composition import (ApplicationAssembly, validate_applications,
+    install_applications, application_lifespan, release_applications)
 from agent_factory.material_governance import GovernanceConfig
 from agent_factory.plan_policy import PlanPolicyConfig, PolicyName, ToolContract
 from agent_factory_research.assembly import (install_research, research_bindings, research_lifespan,
-    research_shutdown, abort_research_install)
+    research_shutdown, abort_research_application)
 from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
 from agent_factory_research.config import ResearchSettings
 from agent_factory_research.connections_compatibility import ResearchConnectionService
 from agent_factory_research.delegation_compatibility import ResearchDelegationService
-from agent_factory_research.factory_compatibility import ResearchFactoryAPI
 from agent_factory_research.handoff_compatibility import ResearchHandoffClient, ResearchPreparedHandoffService
-from agent_factory_research.lifecycle_compatibility import ResearchLifecycleObserver
 from agent_factory_research.model_compatibility import ResearchDelegatingModel
 from agent_factory_research.policy_compatibility import ResearchPlanPolicyService
 from agent_factory_research.storage_compatibility import ResearchStorageGovernance
@@ -30,7 +30,15 @@ def factory_state(app):
     return app.state.factory
 
 
-def create_app(settings=None, *, diagnostics=None):
+def research_application():
+    return ApplicationAssembly('research', install_research, research_lifespan,
+        research_shutdown, abort_research_application, shared_claims=(
+            'application_environments', 'personal_ssh.package', 'personal_ssh.probe_source',
+            'remote_bindings.delegated_root_validator', 'handoff.scientific_service'))
+
+
+def create_app(settings=None, *, diagnostics=None, applications=None):
+    applications = validate_applications((research_application(),) if applications is None else applications)
     settings = settings or ResearchSettings.from_env()
     if not isinstance(settings, ResearchSettings):
         settings = ResearchSettings(**{field.name: getattr(settings, field.name) for field in fields(Settings)})
@@ -57,13 +65,14 @@ def create_app(settings=None, *, diagnostics=None):
         revision=settings.policy_revision,
         tool_contract=cast(ToolContract, settings.runtime_tool_contract),
         source_synthesis_enabled=settings.source_synthesis_enabled)
-    app = create_core_app(settings, diagnostics=diagnostics, factory_api_type=ResearchFactoryAPI,
+    app = create_core_app(settings, diagnostics=diagnostics,
         storage_governance_type=ResearchStorageGovernance,
-        lifecycle_observer_type=ResearchLifecycleObserver, model_dispatch_type=ResearchDelegatingModel,
+        model_dispatch_type=ResearchDelegatingModel,
         handoff_client_type=ResearchHandoffClient, handoff_receiver_type=ResearchPreparedHandoffService,
         bindings_factory=research_bindings, seed_materials=SEEDS, demo_definitions=all_demo_definitions,
         governance_config=governance, policy_config=policy, tool_catalog_factory=build_tools,
-        lifespan_context=research_lifespan, shutdown_callback=research_shutdown, shutdown_guard=shutdown_guard,
+        lifespan_context=application_lifespan(applications),
+        shutdown_callback=lambda state: release_applications(state, applications), shutdown_guard=shutdown_guard,
         plan_policy_type=ResearchPlanPolicyService,
         delegation_service_type=ResearchDelegationService,
         connection_service_type=ResearchConnectionService,
@@ -71,9 +80,17 @@ def create_app(settings=None, *, diagnostics=None):
     state = factory_state(app)
     state.update(shutdown_failed=shutdown_failed)
     try:
-        install_research(state)
+        install_applications(state, applications)
     except BaseException:
-        abort_research_install(state)
+        # Application aborts run first while shared dependencies remain usable.
+        store = state['store']
+        for closer in (getattr(store.personal_ssh, 'close', None),
+                       store.dispose_root_locks, store.engine.dispose):
+            if closer is not None:
+                try:
+                    closer()
+                except Exception:
+                    pass
         raise
     return app
 

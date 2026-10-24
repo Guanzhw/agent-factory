@@ -2,7 +2,7 @@
 
 ## Context
 
-基线 `ab5a98e`，包含 #98 `5799403`；实现尚未开始。动机见 proposal。#97 控制/读取修复待提交后集成，不引用未提交接口。
+基线 `ab5a98e`，包含 #98 `5799403`；阶段一实现已进入定向验收。动机见 proposal。#97 `965350f`已集成，不引用未提交接口。
 
 实际消费者清单：
 
@@ -45,3 +45,12 @@
 ## Migration Plan
 
 阶段一先交付精确注册/派发和显式生命周期组合，通过真实双应用、双安装顺序验收。阶段二迁移 graph 消费者及脚本，删除全局关联，通过同进程双服务器隔离和完整关闭回归。每阶段保留现有 HTTP、原 effect/intent/lease 身份；无计划中的数据库迁移。失败回退代码变更，保留已有原操作记录，不重新派发。未完成静态、真实 PostgreSQL、独立 wheel 验收前不标记完成。
+
+
+## Stage-one implementation
+
+`ApplicationRuntimeRegistry`按精确(kind,adapterId,revision)和原run effect key映射，已知legacy仅在无modern绑定时适用。成员自发发布的applicationRef不需要管理员注册，不引入新的准入门槛。显式声明但hooks缺席保持UNKNOWN/held；所有声明完全丢失的未知历史binding无法凭空推断owner，原未完成effect规则仍保留。空registry不额外读取任务/plan。
+
+`ApplicationAssembly`静态安装、上下文、释放与abort组合，重复owner及独占写入槽位启动前拒绝；普通资源消费者无需claim。应用constructor/abort必须同步、无运行派发、无无界清理；禁止async callable静默漏await。生产原shutdown guard为唯一35s计时，core发布幂等begin_shutdown；组合在部分startup失败的stack退出之前也调用它。关闭顺序保留app→observer/native→共享依赖→graph release。
+
+多个独立app取消即使一个失败也尝试其余原owner后传播；原外层workflow收尾保持成功前置，不以未知app清理当成功继续。没有改动原stop/UNKNOWN释放规则。

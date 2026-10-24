@@ -1,8 +1,8 @@
 # 规划：应用服务组合与明确的生命周期归属
 
-状态：Draft 规划；实现与运行验收尚未开始。当前基线 `ab5a98e`，已包含 #98 关闭实现 `5799403`；原问题分析来自 #95。
+状态：Draft 实施中；阶段一精确派发与双应用/关闭定向验收通过，阶段二graph迁移尚未完成。当前基线 `ab5a98e`，已包含 #98 关闭实现 `5799403`；原问题分析来自 #95。
 OpenSpec change：[compose-application-owned-services](../../openspec/changes/compose-application-owned-services/proposal.md)，[设计与真实消费者](../../openspec/changes/compose-application-owned-services/design.md)，[owner 任务板](../../openspec/changes/compose-application-owned-services/tasks.md)。
-#97 控制/读取改动待提交后集成，不依赖其未提交实现。
+#97 `965350f`已提交并集成；fast成功，full仍待终态。
 
 ## 问题与结果
 
@@ -40,4 +40,4 @@ Agno 继续拥有执行生命周期，应用回调不能绕开准入或释放未
 
 #98 核心外层关闭护栏继续统一覆盖所有应用、observer、native 与共享依赖，只有一个整体 35 秒预算，不逐应用重新计时；超时生产进程非零退出，保留原身份及未确认占用。原事务内取消标记仍保持原子性。
 
-root 拥有 composition/core main、规范和最终集成；core-owner 负责精确派发；research-owner 负责科研接入及 graph；scripts-owner 负责七个调用入口；integration-owner 负责双应用/双实例 PostgreSQL fixture。精确文件边界及每项验收见任务板。所有实现任务均未开始，尚无双应用运行通过证据。
+root 拥有 composition/core main、规范和最终集成；core-owner 负责精确派发；research-owner 负责科研接入及 graph；scripts-owner 负责七个调用入口；integration-owner 负责双应用/双实例 PostgreSQL fixture。精确文件边界及每项验收见任务板。阶段一已有两种安装顺序真实PG/ASGI/Agno通过及原#98退出/重启通过；完整#99尚待graph迁移、双服务器与最终检查。
