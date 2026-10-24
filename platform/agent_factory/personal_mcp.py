@@ -161,16 +161,36 @@ class _InvocationState:
 
     async def checked_callback(self, callback):
         finished = threading.Event()
+        start_lock = threading.Lock()
+        started = False
+        abandoned_before_start = False
         self.callbacks_finished.append(finished)
 
         def call():
+            nonlocal started
+            with start_lock:
+                if abandoned_before_start:
+                    return None
+                started = True
             try:
                 return callback()
             finally:
                 finished.set()
 
-        # Cancelling to_thread's await does not stop the synchronous callback.
-        return await asyncio.to_thread(call)
+        try:
+            return await asyncio.to_thread(call)
+        except BaseException:
+            # Cancellation or submission failure can prevent a queued worker
+            # from entering call(). Close that gate before recording stop, even
+            # if the executor has already dequeued it. A running callback still
+            # owns its completion event until its actual finally executes.
+            with start_lock:
+                never_started = not started
+                if never_started:
+                    abandoned_before_start = True
+            if never_started:
+                finished.set()
+            raise
 
     def stopped_before_dispatch(self) -> bool:
         # Called only after the invocation's operation and monitor have joined.

@@ -3,7 +3,7 @@
 ## 1. 持久归属与预算
 
 - [x] 1.1 coordinator 核对最小 API/schema、锁顺序和文件 ownership，记录与 #102 交界；验收产物为明确分工与无反向锁序的调用图。
-- [ ] 1.2 core owner 实现 local scope/round allocation、root binding 和轮内账户接入；新增便携契约与 PG 测试验证全轮 cap 预留、两轮实际累计、无活动/user 双 hold，并记录账本字段说明。
+- [x] 1.2 core owner 实现 local scope/round allocation、root binding 和轮内账户接入；新增便携契约与 PG 测试验证全轮 cap 预留、两轮实际累计、无活动/user 双 hold，并记录账本字段说明。
 - [ ] 1.3 core owner 实现原证据结算与 UNKNOWN 保留；PG 测试覆盖重复 settlement、冲突证据、用量超预留、撤权后仍记账、无停止证明不退款和只读 inspect。
 - [ ] 1.4 application owner 实现 activity/round 唯一约束及同事务 successor intent/allocation；PG 测试证明并发 continue 只建一轮、预算不足不留 free successor、原 deadline 不重置。
 

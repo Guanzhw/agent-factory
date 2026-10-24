@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
-from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
+from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text, tuple_
 
 from .input_schema import validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
@@ -150,17 +150,34 @@ class ApplicationService:
             if not self.store.settings.demo:
                 raise HTTPException(409, "Demo application approval cannot authorize production")
 
-    def closure(self, refs):
+    def closure(self, refs, *, candidate_refs=None):
         governance = getattr(self.store, "material_governance", None)
         if governance is None:
             raise HTTPException(503, "Material governance is not configured")
         pins = [PinnedRef.model_validate(ref).model_dump() for ref in refs]
-        # Build the candidate graph from published rows, then validate the
-        # entire selected closure below. Checking every unrelated catalog item
-        # here repeats governance work at each execution/remote boundary.
-        # The final current check remains mandatory on every invocation.
+        candidates = None
+        if candidate_refs is None:
+            catalog = self.store.materials(published_only=False)
+        else:
+            # Execution plans already bind the complete closure. Read only
+            # those exact versions, freshly on every check; this is neither a
+            # cached graph nor permission to omit a transitive dependency.
+            if not isinstance(candidate_refs, list) or not 1 <= len(candidate_refs) <= 30:
+                raise HTTPException(409, "Plan must bind a bounded complete material closure")
+            try:
+                candidates = [PinnedRef.model_validate(ref).model_dump() for ref in candidate_refs]
+            except ValidationError as error:
+                raise HTTPException(409, "Plan material references are malformed") from error
+            table = governance.materials
+            keys = {(ref["id"], ref["version"]) for ref in candidates}
+            with self.db.read() as conn:
+                rows = conn.execute(select(table.c.body, table.c.published).where(
+                    tuple_(table.c.id, table.c.version).in_(keys))).mappings()
+                catalog = [{**row["body"], "published": row["published"]} for row in rows]
+        # Build the graph from published rows; the full current governance
+        # check below remains mandatory for both candidate-loading paths.
         known = {(item["id"], item["version"], item["sha256"]): item
-                 for item in self.store.materials(published_only=False) if item.get("published")}
+                 for item in catalog if item.get("published")}
         chosen, visiting = {}, set()
 
         def visit(ref, depth):
@@ -186,6 +203,8 @@ class ApplicationService:
         for pin in pins:
             visit(pin, 1)
         materials = list(chosen.values())
+        if candidates is not None and set(chosen) != {(ref["id"], ref["version"], ref["sha256"]) for ref in candidates}:
+            raise HTTPException(403, "Plan materials exceed or differ from the approved application choices")
         governance.require_materials_current({"materialRefs": [self.pin(item) for item in materials]})
         return materials
 
@@ -451,7 +470,7 @@ class ApplicationService:
             if anchor.get("executionBindingsSha256") != execution.get("sha256"):
                 raise HTTPException(409, "Composition execution binding anchor differs")
             choices = anchor.get("materialChoices", {})
-        materials = self.closure(self.chosen_refs(mode, choices))
+        materials = self.closure(self.chosen_refs(mode, choices), candidate_refs=plan.get("materialRefs", []))
         refs = [self.pin(item) for item in materials]
         if {(item["id"], item["version"], item["sha256"]) for item in refs} != {(item["id"], item["version"], item["sha256"]) for item in plan.get("materialRefs", [])}:
             raise HTTPException(403, "Plan materials exceed or differ from the approved application choices")

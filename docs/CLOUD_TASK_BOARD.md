@@ -1856,3 +1856,5 @@ root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#
 | #103 | root + independent MCP review | e956040 diagnostic/cleanup testfix pushed; exactinitial2s/.5s bounds retained, targetedpass | Historical native and initialprotocol startup failures not closed by one pass |
 
 Workers use mocked credentials only. Heavy checks remain serial. Draft branches only; no merge/deploy/paid external calls. #101 follows #99, with no dependency on #100/#102. Original failures remain in cloud scratch reports.
+
+#101 follow-up dependency: only reviewed #103 callback custody/material-query and native fixture lifecycle/diagnostic files integrated. Initial daily69:67pass2fail0skip, budget10/10; twofailednative IDs then targeted2pass. Final portable356/356, fresh-authority/shutdown11/11. Exact firsthead d1ec7e9 fast40123372975 success; full40123407895 Windowsfound staleLFattribute path4failureevents5errors; actual Git autocrlf reproduction proves old bad/new fixed bytes. FinalfullPG still pending. No timeout/assertion relaxation or fullretry.

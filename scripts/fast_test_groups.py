@@ -6,6 +6,14 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'shared_mcp_authority_regressions': (
+        'test_application_closure_authority.BoundedApplicationClosureTests',
+        'test_personal_mcp_callbacks',
+        'test_mcp_diagnostic_custody',
+        'test_mcp_phase_ring',
+        'test_native_fixture_lifecycle',
+        'test_personal_mcp_teardown_auth',
+    ),
     'bounded_research_iterations': (
         'test_research_iterations',
         'test_research_iteration_driver',
@@ -69,6 +77,9 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'fresh_bounded_material_authority': (
+        'test_material_governance_bulk_postgres',
+    ),
     'shared_local_budget_commitments': (
         'test_local_budget_scopes_postgres',
     ),
