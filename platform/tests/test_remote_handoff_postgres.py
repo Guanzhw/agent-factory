@@ -1030,6 +1030,10 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             return original(owner, placement, execution=execution, native_cancellation=native_cancellation, trusted_cleanup=trusted_cleanup)
 
         self.call_remote(wired.stop)
+        origin_observer = self.origin["lifecycle_observer"]
+        # Both owners may update durable observations independently of GET.
+        # Join both before comparing complete rows to isolate read side effects.
+        self.call(origin_observer.stop)
         try:
             with mock.patch.object(self.handoff, "_target", side_effect=fail_then_cancel_at_second_read), \
                  mock.patch.object(self.remote["bridge"], "continue_run", wraps=self.remote["bridge"].continue_run) as continuation:
@@ -1068,7 +1072,8 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             settled_tasks = (self.remote["store"].task(identifier, "bob"),
                              self.origin["store"].task(row["task_id"], "alice"))
             settled_events = (self.remote["store"].events(identifier), self.origin["store"].events(row["task_id"]))
-            with mock.patch.object(self.remote["store"], "accept", wraps=self.remote["store"].accept) as acceptance:
+            with mock.patch.object(self.remote["store"], "accept", wraps=self.remote["store"].accept) as acceptance, \
+                 mock.patch.object(self.origin["store"], "observed", wraps=self.origin["store"].observed) as origin_observed:
                 for _ in range(3):
                     repeated = self.call(self.handoff.receipt, "alice", row["task_id"])
                     self.assertTrue(repeated["allStopped"])
@@ -1077,6 +1082,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                     self.assertEqual(self.remote["store"].task(identifier, "bob"), settled_tasks[0])
                     self.assertEqual(self.origin["store"].task(row["task_id"], "alice"), settled_tasks[1])
                 acceptance.assert_not_called()
+                origin_observed.assert_not_called()
             self.assertEqual(self.remote["store"].events(identifier), settled_events[0])
             self.assertEqual(self.origin["store"].events(row["task_id"]), settled_events[1])
             actual = self.call_remote(self.remote["bridge"].find_run, identifier, "bob")
@@ -1100,6 +1106,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.assertEqual(self.ticket_count(self.remote), before_tickets)
             self.assertEqual(self.ticket_count(self.origin), 0)
         finally:
+            self.call(origin_observer.start)
             self.call_remote(wired.start)
 
 
