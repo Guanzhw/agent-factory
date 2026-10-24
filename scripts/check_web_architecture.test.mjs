@@ -69,6 +69,8 @@ test('direct app dependency resolves a tsconfig alias and CLI explains the impor
   assert.ok(chains(f.check()).includes('src/web/runtime.ts -> src/apps/alpha/api.ts'));
   const run = spawnSync(process.execPath, [fileURLToPath(new URL('./check_web_architecture.mjs', import.meta.url)),
     '--root', f.root, '--config', path.join(f.root, 'map.json')], { encoding: 'utf8' });
+  assert.equal(run.error, undefined, `Architecture CLI spawn failed: ${run.error?.code ?? run.error?.name ?? 'unknown'}`);
+  assert.equal(run.signal, null, `Architecture CLI terminated by signal: ${run.signal}`);
   assert.equal(run.status, 1, run.stderr);
   assert.match(run.stderr, /src\/web\/runtime\.ts:1 -> src\/apps\/alpha\/api\.ts/);
   assert.match(run.stderr, /Fix: Core reaches application code/);

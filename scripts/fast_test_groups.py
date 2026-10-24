@@ -9,6 +9,7 @@ FAST_PYTHON_TESTS = {
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',
+        'test_profile_tests',
         'test_ci_checks',
     ),
     'owner_model_protocols': (
@@ -33,6 +34,7 @@ FAST_PYTHON_TESTS = {
         'test_personal_cli',
         'test_personal_cli_process',
         'test_personal_mcp',
+        'test_personal_mcp_callbacks',
         'test_personal_tools',
         'test_personal_tool_execution',
         'test_personal_tool_assembly.PersonalToolSettingsTests',
