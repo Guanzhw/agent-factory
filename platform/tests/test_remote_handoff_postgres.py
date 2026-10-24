@@ -7,6 +7,7 @@ import asyncio
 import copy
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -172,13 +173,17 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def wait_native(self, receipt, states):
         deadline = time.monotonic() + 15
         last = {}
+        task = None
         while time.monotonic() < deadline:
             task = self.remote["store"].task(receipt["remoteTaskId"])
             last = self.remote["store"].native_db.get_job(task["run_id"]) if task.get("run_id") else {}
             if last and last["status"] in states:
                 return last
             time.sleep(.03)
-        self.fail(f"Receiver native ticket did not reach {states}: {last}")
+        from native_timeout_diagnostics import snapshot
+        diagnostic = snapshot(self.remote, self.remote_app.app,
+                              observed_task=task, observed_ticket=last)
+        self.fail(f"Receiver native ticket did not reach {states}: {json.dumps(diagnostic, sort_keys=True)}")
 
     def denied(self, status, function, *args):
         with self.assertRaises(HTTPException) as caught:

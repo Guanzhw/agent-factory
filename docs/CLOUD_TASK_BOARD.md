@@ -1818,3 +1818,6 @@ New exact-head CI is the only final acceptance source.
 root唯一集成；backend负责fresh材料JOIN和fixture generation；remote负责scratch时序/GC诊断；reviewer独立验证，重型检查串行。#103原b458028 fast/full成功，云端完整两轮失败仍保留。新增迟到凭据UNKNOWN反例、每次fresh材料读取83/189→55/133 SQL（无单例总耗时收益）、确定fixture LIFO错序修复及诊断去强引用；最终daily Python241/0skip，相关PG、GC前缀12项与同app6任务通过。历史MCP/ORX/remote等待尚未完整归因；不放宽期限、不强制GC、不重复完整本地套件。
 
 #97独立Draft现c1230a9，原full5个旧fixture接口错误已定向修复，fast与新Windows full通过，PG待终态；#98独立Draft5799403，真实35秒进程关闭/原身份恢复验证、fast与Windows full通过，PG待终态。#99–102未扩展，先完成当前精确CI与稳定性判断。禁止合并、部署及付费模型。
+
+## 2026-10-24 final stability / combined validation
+Root owns diagnosis integration, validation-only union branch and serialized heavy runs. history_remote owns scalar fixed-prefix MCP probe/read-only causal review; shutdown_tests owns ORX gate+predecessor probe and remote-parent evidence review; history_backend owns full-coverage/merge-risk audit. No newfeatures. #103 stability-followup.md records distinct failures, predeclared predictions and final full gap; only#98 currenthead has full success. Validation union retains seven independent Drafts, no mainmerge/deploy/paid calls. Initial native claim diagnostic worker_id→locked_by calibration failed as expected, corrected6pass. One ORX six-case experiment running; MCP13case preparation, complete union PG/Windows deferred until targeted experiment/fix point is frozen.

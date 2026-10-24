@@ -1,0 +1,1568 @@
+{
+  "result": {
+    "testsRun": 13,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "success": true,
+    "plannedCount": 13,
+    "failedIds": [],
+    "observerOverhead": true,
+    "retryCount": 0,
+    "eventsDropped": 0
+  },
+  "cases": [
+    {
+      "id": "test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests.test_http_authentication_rejection_releases_capacity_without_tool_dispatch",
+      "runs": [
+        {
+          "runId": "899f629b-8dab-46ae-96b1-e30209318a17",
+          "taskId": "caff966a-aa03-48e0-a7ea-2a6435d33011",
+          "workerIds": [
+            "worker-da5d7729"
+          ],
+          "claims": [
+            {
+              "attempt": 1,
+              "at": 77.162787,
+              "lockedBy": "worker-da5d7729"
+            },
+            {
+              "attempt": 2,
+              "at": 79.365027,
+              "lockedBy": "worker-da5d7729"
+            }
+          ],
+          "claimExits": [
+            79.275938,
+            79.651299
+          ],
+          "claimSpanSeconds": 2.488512,
+          "slotWaitMs": [
+            0.217044,
+            0.139436
+          ],
+          "slotExits": [
+            79.275876,
+            79.651221
+          ],
+          "invocations": [
+            {
+              "callId": "native-inventory-1",
+              "start": 77.789199,
+              "end": 79.053908,
+              "seconds": 1.264709,
+              "outcome": "failed",
+              "stopped": true
+            }
+          ]
+        },
+        {
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "taskId": "1ca6ba36-946d-4e79-95ad-416913e427ed",
+          "workerIds": [
+            "worker-1d72a54d"
+          ],
+          "claims": [
+            {
+              "attempt": 1,
+              "at": 85.562505,
+              "lockedBy": "worker-1d72a54d"
+            }
+          ],
+          "claimExits": [
+            100.483215
+          ],
+          "claimSpanSeconds": 14.920711,
+          "slotWaitMs": [
+            0.805498
+          ],
+          "slotExits": [
+            100.483142
+          ],
+          "invocations": [
+            {
+              "callId": "native-inventory-1",
+              "start": 86.264186,
+              "end": 92.718879,
+              "seconds": 6.454693,
+              "outcome": "completed",
+              "stopped": null
+            },
+            {
+              "callId": "native-inventory-2",
+              "start": 93.113533,
+              "end": 100.229378,
+              "seconds": 7.115846,
+              "outcome": "completed",
+              "stopped": null
+            }
+          ]
+        }
+      ],
+      "callbackCount": 82,
+      "callbackMaxima": {
+        "queueMs": {
+          "callback": 62,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-2",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 95.604693,
+          "end": 96.024538,
+          "wallMs": 419.915879,
+          "threadCpuMs": 128.738307,
+          "sqlMs": 174.491382,
+          "sqlMaxMs": 18.142247,
+          "poolMs": 0.267754,
+          "poolMaxMs": 0.017883,
+          "queueMs": 12.498825
+        },
+        "wallMs": {
+          "callback": 24,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.571014,
+          "end": 89.277386,
+          "wallMs": 706.368213,
+          "threadCpuMs": 80.341272,
+          "sqlMs": 539.750057,
+          "sqlMaxMs": 394.896821,
+          "poolMs": 16.758489,
+          "poolMaxMs": 16.504493,
+          "queueMs": 3.956174
+        },
+        "threadCpuMs": {
+          "callback": 23,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.562126,
+          "end": 89.228834,
+          "wallMs": 666.708286,
+          "threadCpuMs": 268.28833,
+          "sqlMs": 128.256319,
+          "sqlMaxMs": 10.023242,
+          "poolMs": 0.285679,
+          "poolMaxMs": 0.035311,
+          "queueMs": 0.161506
+        },
+        "sqlMs": {
+          "callback": 24,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.571014,
+          "end": 89.277386,
+          "wallMs": 706.368213,
+          "threadCpuMs": 80.341272,
+          "sqlMs": 539.750057,
+          "sqlMaxMs": 394.896821,
+          "poolMs": 16.758489,
+          "poolMaxMs": 16.504493,
+          "queueMs": 3.956174
+        },
+        "sqlMaxMs": {
+          "callback": 24,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.571014,
+          "end": 89.277386,
+          "wallMs": 706.368213,
+          "threadCpuMs": 80.341272,
+          "sqlMs": 539.750057,
+          "sqlMaxMs": 394.896821,
+          "poolMs": 16.758489,
+          "poolMaxMs": 16.504493,
+          "queueMs": 3.956174
+        },
+        "poolMs": {
+          "callback": 25,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 89.014023,
+          "end": 89.328759,
+          "wallMs": 314.737751,
+          "threadCpuMs": 91.585419,
+          "sqlMs": 155.203599,
+          "sqlMaxMs": 8.145318,
+          "poolMs": 20.535608,
+          "poolMaxMs": 20.284104,
+          "queueMs": 2.925376
+        },
+        "poolMaxMs": {
+          "callback": 25,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 89.014023,
+          "end": 89.328759,
+          "wallMs": 314.737751,
+          "threadCpuMs": 91.585419,
+          "sqlMs": 155.203599,
+          "sqlMaxMs": 8.145318,
+          "poolMs": 20.535608,
+          "poolMaxMs": 20.284104,
+          "queueMs": 2.925376
+        }
+      },
+      "callbacksOver500ms": [
+        {
+          "callback": 14,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 86.975754,
+          "end": 87.507321,
+          "wallMs": 531.565054,
+          "threadCpuMs": 170.273572,
+          "sqlMs": 269.861788,
+          "sqlMaxMs": 13.307496,
+          "poolMs": 0.623015,
+          "poolMaxMs": 0.081762,
+          "queueMs": 0.908273
+        },
+        {
+          "callback": 20,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 88.018292,
+          "end": 88.560726,
+          "wallMs": 542.432032,
+          "threadCpuMs": 208.660086,
+          "sqlMs": 260.63224,
+          "sqlMaxMs": 16.315488,
+          "poolMs": 0.79841,
+          "poolMaxMs": 0.221904,
+          "queueMs": 0.338061
+        },
+        {
+          "callback": 21,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 88.037779,
+          "end": 88.565143,
+          "wallMs": 527.360159,
+          "threadCpuMs": 165.933169,
+          "sqlMs": 259.706491,
+          "sqlMaxMs": 9.892917,
+          "poolMs": 0.860483,
+          "poolMaxMs": 0.177821,
+          "queueMs": 1.856526
+        },
+        {
+          "callback": 23,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.562126,
+          "end": 89.228834,
+          "wallMs": 666.708286,
+          "threadCpuMs": 268.28833,
+          "sqlMs": 128.256319,
+          "sqlMaxMs": 10.023242,
+          "poolMs": 0.285679,
+          "poolMaxMs": 0.035311,
+          "queueMs": 0.161506
+        },
+        {
+          "callback": 24,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 88.571014,
+          "end": 89.277386,
+          "wallMs": 706.368213,
+          "threadCpuMs": 80.341272,
+          "sqlMs": 539.750057,
+          "sqlMaxMs": 394.896821,
+          "poolMs": 16.758489,
+          "poolMaxMs": 16.504493,
+          "queueMs": 3.956174
+        },
+        {
+          "callback": 32,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 90.165463,
+          "end": 90.681822,
+          "wallMs": 516.358516,
+          "threadCpuMs": 190.579474,
+          "sqlMs": 202.742836,
+          "sqlMaxMs": 13.72034,
+          "poolMs": 0.782124,
+          "poolMaxMs": 0.199669,
+          "queueMs": 0.161807
+        },
+        {
+          "callback": 57,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-2",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 94.860736,
+          "end": 95.495818,
+          "wallMs": 635.074691,
+          "threadCpuMs": 203.186564,
+          "sqlMs": 304.530434,
+          "sqlMaxMs": 11.391569,
+          "poolMs": 0.854221,
+          "poolMaxMs": 0.179077,
+          "queueMs": 0.163736
+        },
+        {
+          "callback": 58,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-2",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 94.869347,
+          "end": 95.55492,
+          "wallMs": 685.566556,
+          "threadCpuMs": 180.634252,
+          "sqlMs": 343.007923,
+          "sqlMaxMs": 12.15521,
+          "poolMs": 0.698703,
+          "poolMaxMs": 0.114357,
+          "queueMs": 0.117835
+        },
+        {
+          "callback": 64,
+          "kind": "credential",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-2",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 96.172356,
+          "end": 96.746567,
+          "wallMs": 574.205882,
+          "threadCpuMs": 255.130501,
+          "sqlMs": 248.36925,
+          "sqlMaxMs": 12.114911,
+          "poolMs": 0.90286,
+          "poolMaxMs": 0.168208,
+          "queueMs": 0.28324
+        },
+        {
+          "callback": 82,
+          "kind": "authorize",
+          "runId": "101a76cf-36e0-4a61-9961-d1095590738a",
+          "callId": "native-inventory-2",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 99.379203,
+          "end": 100.003707,
+          "wallMs": 624.496715,
+          "threadCpuMs": 110.686229,
+          "sqlMs": 472.99521,
+          "sqlMaxMs": 174.183434,
+          "poolMs": 0.34902,
+          "poolMaxMs": 0.085175,
+          "queueMs": 0.167292
+        }
+      ],
+      "callbackAwaitOutcomes": {
+        "returned": 81,
+        "CancelledError": 1
+      },
+      "gcByGeneration": {
+        "0": {
+          "count": 821,
+          "max": {
+            "generation": 0,
+            "thread": 140503899150016,
+            "start": 94.324379,
+            "end": 94.351952,
+            "wallMs": 27.573512,
+            "cpuMs": 27.224469,
+            "collected": 868
+          }
+        },
+        "1": {
+          "count": 75,
+          "max": {
+            "generation": 1,
+            "thread": 140505014810432,
+            "start": 83.380757,
+            "end": 83.391728,
+            "wallMs": 10.970793,
+            "cpuMs": 10.972869,
+            "collected": 0
+          }
+        },
+        "2": {
+          "count": 1,
+          "max": {
+            "generation": 2,
+            "thread": 140505014810432,
+            "start": 81.042498,
+            "end": 82.976354,
+            "wallMs": 1933.855314,
+            "cpuMs": 1933.363028,
+            "collected": 5492
+          }
+        }
+      },
+      "loopMaxima": {
+        "140504278388800": {
+          "scheduled": 78.87354,
+          "arrived": 78.874516,
+          "lagMs": 0.975463
+        },
+        "140504238009920": {
+          "scheduled": 98.215375,
+          "arrived": 98.219556,
+          "lagMs": 4.180966
+        }
+      },
+      "lifecycle": [
+        {
+          "event": "generation_start_begin",
+          "generation": 1,
+          "objectId": 140504930286192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 74.272999
+        },
+        {
+          "event": "generation_start_end",
+          "generation": 1,
+          "objectId": 140504930286192,
+          "storeId": 140504262934304,
+          "engineId": 140504264943248,
+          "appId": 140504278386592,
+          "at": 76.248051
+        },
+        {
+          "event": "generation_stop_begin",
+          "generation": null,
+          "objectId": 140504930286192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.515779
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504262926000,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.517294
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504223135744,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.51831
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504223134784,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.518533
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504250101312,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.518722
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504262926000,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.53387
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504264943248,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.534218
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504250101312,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.534633
+        },
+        {
+          "event": "generation_stop_end",
+          "generation": null,
+          "objectId": 140504930286192,
+          "storeId": 140504262934304,
+          "engineId": 140504264943248,
+          "appId": 140504278386592,
+          "at": 80.534799
+        },
+        {
+          "event": "generation_start_begin",
+          "generation": 9,
+          "objectId": 140504930286192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 80.534829
+        },
+        {
+          "event": "generation_start_end",
+          "generation": 9,
+          "objectId": 140504930286192,
+          "storeId": 140504249054944,
+          "engineId": 140504249932192,
+          "appId": 140504238329344,
+          "at": 84.64623
+        },
+        {
+          "event": "generation_stop_begin",
+          "generation": null,
+          "objectId": 140504930286192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 100.992354
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504250095888,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 100.994355
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504246106784,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 100.995757
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504246105728,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 100.99592
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504235686272,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 100.996407
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504250095888,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 101.012567
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504249932192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 101.013192
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504235686272,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 101.014768
+        },
+        {
+          "event": "generation_stop_end",
+          "generation": null,
+          "objectId": 140504930286192,
+          "storeId": 140504249054944,
+          "engineId": 140504249932192,
+          "appId": 140504238329344,
+          "at": 101.015275
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504488401888,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 101.244185
+        }
+      ],
+      "throttling": [],
+      "transportConstructMs": [
+        1.478214,
+        0.807188,
+        1.049818
+      ]
+    },
+    {
+      "id": "test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests.test_slow_delete_releases_predispatch_failure_after_local_cleanup",
+      "runs": [
+        {
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "taskId": "c206ba4f-d264-4ced-8135-a7b7c49c2b25",
+          "workerIds": [
+            "worker-7e0cc3ef"
+          ],
+          "claims": [
+            {
+              "attempt": 1,
+              "at": 140.33042,
+              "lockedBy": "worker-7e0cc3ef"
+            },
+            {
+              "attempt": 2,
+              "at": 146.017898,
+              "lockedBy": "worker-7e0cc3ef"
+            }
+          ],
+          "claimExits": [
+            145.854679,
+            146.209566
+          ],
+          "claimSpanSeconds": 5.879146,
+          "slotWaitMs": [
+            0.135224,
+            0.147189
+          ],
+          "slotExits": [
+            145.854625,
+            146.20952
+          ],
+          "invocations": [
+            {
+              "callId": "native-inventory-1",
+              "start": 140.880595,
+              "end": 145.68146,
+              "seconds": 4.800865,
+              "outcome": "failed",
+              "stopped": true
+            }
+          ]
+        },
+        {
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "taskId": "bac78530-9f27-4891-9142-c244b686f917",
+          "workerIds": [
+            "worker-037e0b19"
+          ],
+          "claims": [
+            {
+              "attempt": 1,
+              "at": 148.764797,
+              "lockedBy": "worker-037e0b19"
+            }
+          ],
+          "claimExits": [
+            162.440729
+          ],
+          "claimSpanSeconds": 13.675932,
+          "slotWaitMs": [
+            0.163552
+          ],
+          "slotExits": [
+            162.440503
+          ],
+          "invocations": [
+            {
+              "callId": "native-inventory-1",
+              "start": 149.690241,
+              "end": 156.209971,
+              "seconds": 6.51973,
+              "outcome": "completed",
+              "stopped": null
+            },
+            {
+              "callId": "native-inventory-2",
+              "start": 156.847419,
+              "end": 162.246109,
+              "seconds": 5.39869,
+              "outcome": "completed",
+              "stopped": null
+            }
+          ]
+        }
+      ],
+      "callbackCount": 100,
+      "callbackMaxima": {
+        "queueMs": {
+          "callback": 124,
+          "kind": "authorize",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 151.051811,
+          "end": 151.355674,
+          "wallMs": 307.086384,
+          "threadCpuMs": 68.14746,
+          "sqlMs": 137.92301,
+          "sqlMaxMs": 14.552658,
+          "poolMs": 0.243843,
+          "poolMaxMs": 0.011227,
+          "queueMs": 4.404012
+        },
+        "wallMs": {
+          "callback": 97,
+          "kind": "credential",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 142.048518,
+          "end": 142.759948,
+          "wallMs": 711.428033,
+          "threadCpuMs": 266.821903,
+          "sqlMs": 330.109915,
+          "sqlMaxMs": 12.169394,
+          "poolMs": 1.037341,
+          "poolMaxMs": 0.207017,
+          "queueMs": 1.545202
+        },
+        "threadCpuMs": {
+          "callback": 97,
+          "kind": "credential",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 142.048518,
+          "end": 142.759948,
+          "wallMs": 711.428033,
+          "threadCpuMs": 266.821903,
+          "sqlMs": 330.109915,
+          "sqlMaxMs": 12.169394,
+          "poolMs": 1.037341,
+          "poolMaxMs": 0.207017,
+          "queueMs": 1.545202
+        },
+        "sqlMs": {
+          "callback": 133,
+          "kind": "authorize",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 152.837953,
+          "end": 153.39068,
+          "wallMs": 552.737455,
+          "threadCpuMs": 121.244334,
+          "sqlMs": 369.375391,
+          "sqlMaxMs": 174.703536,
+          "poolMs": 1.937685,
+          "poolMaxMs": 1.497133,
+          "queueMs": 4.140185
+        },
+        "sqlMaxMs": {
+          "callback": 133,
+          "kind": "authorize",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 152.837953,
+          "end": 153.39068,
+          "wallMs": 552.737455,
+          "threadCpuMs": 121.244334,
+          "sqlMs": 369.375391,
+          "sqlMaxMs": 174.703536,
+          "poolMs": 1.937685,
+          "poolMaxMs": 1.497133,
+          "queueMs": 4.140185
+        },
+        "poolMs": {
+          "callback": 95,
+          "kind": "authorize",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 141.998537,
+          "end": 142.442232,
+          "wallMs": 443.609726,
+          "threadCpuMs": 130.038285,
+          "sqlMs": 214.200859,
+          "sqlMaxMs": 18.27994,
+          "poolMs": 30.4794,
+          "poolMaxMs": 30.199038,
+          "queueMs": 1.336159
+        },
+        "poolMaxMs": {
+          "callback": 95,
+          "kind": "authorize",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 141.998537,
+          "end": 142.442232,
+          "wallMs": 443.609726,
+          "threadCpuMs": 130.038285,
+          "sqlMs": 214.200859,
+          "sqlMaxMs": 18.27994,
+          "poolMs": 30.4794,
+          "poolMaxMs": 30.199038,
+          "queueMs": 1.336159
+        }
+      },
+      "callbacksOver500ms": [
+        {
+          "callback": 96,
+          "kind": "credential",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 142.042519,
+          "end": 142.727624,
+          "wallMs": 685.106712,
+          "threadCpuMs": 193.970663,
+          "sqlMs": 351.431798,
+          "sqlMaxMs": 20.114776,
+          "poolMs": 0.773297,
+          "poolMaxMs": 0.1365,
+          "queueMs": 0.349614
+        },
+        {
+          "callback": 97,
+          "kind": "credential",
+          "runId": "c5deaa98-f212-4865-b68b-ab514724f925",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 142.048518,
+          "end": 142.759948,
+          "wallMs": 711.428033,
+          "threadCpuMs": 266.821903,
+          "sqlMs": 330.109915,
+          "sqlMaxMs": 12.169394,
+          "poolMs": 1.037341,
+          "poolMaxMs": 0.207017,
+          "queueMs": 1.545202
+        },
+        {
+          "callback": 126,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 151.362094,
+          "end": 151.971145,
+          "wallMs": 609.046913,
+          "threadCpuMs": 167.075419,
+          "sqlMs": 347.1868,
+          "sqlMaxMs": 52.404251,
+          "poolMs": 0.983493,
+          "poolMaxMs": 0.393073,
+          "queueMs": 0.866772
+        },
+        {
+          "callback": 125,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 151.356609,
+          "end": 152.018654,
+          "wallMs": 662.038892,
+          "threadCpuMs": 231.586278,
+          "sqlMs": 312.137177,
+          "sqlMaxMs": 13.427408,
+          "poolMs": 0.703084,
+          "poolMaxMs": 0.087755,
+          "queueMs": 0.231432
+        },
+        {
+          "callback": 132,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 152.523468,
+          "end": 153.052256,
+          "wallMs": 528.782685,
+          "threadCpuMs": 235.549898,
+          "sqlMs": 224.662312,
+          "sqlMaxMs": 13.844746,
+          "poolMs": 0.801756,
+          "poolMaxMs": 0.121092,
+          "queueMs": 1.357604
+        },
+        {
+          "callback": 133,
+          "kind": "authorize",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 55,
+          "poolCount": 36,
+          "start": 152.837953,
+          "end": 153.39068,
+          "wallMs": 552.737455,
+          "threadCpuMs": 121.244334,
+          "sqlMs": 369.375391,
+          "sqlMaxMs": 174.703536,
+          "poolMs": 1.937685,
+          "poolMaxMs": 1.497133,
+          "queueMs": 4.140185
+        },
+        {
+          "callback": 136,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 153.605802,
+          "end": 154.151479,
+          "wallMs": 545.671145,
+          "threadCpuMs": 247.239203,
+          "sqlMs": 233.118531,
+          "sqlMaxMs": 40.66201,
+          "poolMs": 0.593194,
+          "poolMaxMs": 0.025355,
+          "queueMs": 0.175312
+        },
+        {
+          "callback": 141,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-1",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 154.495798,
+          "end": 155.001579,
+          "wallMs": 505.78097,
+          "threadCpuMs": 177.944633,
+          "sqlMs": 228.115997,
+          "sqlMaxMs": 8.793287,
+          "poolMs": 0.994649,
+          "poolMaxMs": 0.397937,
+          "queueMs": 0.180014
+        },
+        {
+          "callback": 161,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-2",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 158.536998,
+          "end": 159.139061,
+          "wallMs": 602.058524,
+          "threadCpuMs": 202.280138,
+          "sqlMs": 296.614157,
+          "sqlMaxMs": 7.353807,
+          "poolMs": 0.997513,
+          "poolMaxMs": 0.319271,
+          "queueMs": 0.822137
+        },
+        {
+          "callback": 162,
+          "kind": "credential",
+          "runId": "6c6267ba-8374-4b26-92d9-3d0d729ad59a",
+          "callId": "native-inventory-2",
+          "sqlCount": 133,
+          "poolCount": 85,
+          "start": 158.591827,
+          "end": 159.143126,
+          "wallMs": 551.299572,
+          "threadCpuMs": 167.026735,
+          "sqlMs": 274.796608,
+          "sqlMaxMs": 10.215714,
+          "poolMs": 0.788144,
+          "poolMaxMs": 0.102486,
+          "queueMs": 1.527327
+        }
+      ],
+      "callbackAwaitOutcomes": {
+        "returned": 99,
+        "CancelledError": 1
+      },
+      "gcByGeneration": {
+        "0": {
+          "count": 912,
+          "max": {
+            "generation": 0,
+            "thread": 140503603472064,
+            "start": 158.3312,
+            "end": 158.338039,
+            "wallMs": 6.838726,
+            "cpuMs": 2.491541,
+            "collected": 734
+          }
+        },
+        "1": {
+          "count": 82,
+          "max": {
+            "generation": 1,
+            "thread": 140503552067264,
+            "start": 161.951746,
+            "end": 161.962766,
+            "wallMs": 11.019769,
+            "cpuMs": 2.729196,
+            "collected": 1501
+          }
+        },
+        "2": {
+          "count": 1,
+          "max": {
+            "generation": 2,
+            "thread": 140505014810432,
+            "start": 136.871075,
+            "end": 138.314546,
+            "wallMs": 1443.471196,
+            "cpuMs": 1442.758849,
+            "collected": 8638
+          }
+        }
+      },
+      "loopMaxima": {
+        "140503910190448": {
+          "scheduled": 146.369114,
+          "arrived": 146.381158,
+          "lagMs": 12.044455
+        },
+        "140503929369712": {
+          "scheduled": 148.899737,
+          "arrived": 148.99851,
+          "lagMs": 98.772656
+        }
+      },
+      "lifecycle": [
+        {
+          "event": "generation_start_begin",
+          "generation": 85,
+          "objectId": 140504917790688,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 136.033958
+        },
+        {
+          "event": "generation_start_end",
+          "generation": 85,
+          "objectId": 140504917790688,
+          "storeId": 140503895946736,
+          "engineId": 140503893073392,
+          "appId": 140503910188144,
+          "at": 139.410369
+        },
+        {
+          "event": "generation_stop_begin",
+          "generation": null,
+          "objectId": 140504917790688,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.483475
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504535394368,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.484906
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503915586544,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.485786
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503915585632,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.485997
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503907949008,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.486191
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504535394368,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.491918
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503893073392,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.492168
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503907949008,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.492346
+        },
+        {
+          "event": "generation_stop_end",
+          "generation": null,
+          "objectId": 140504917790688,
+          "storeId": 140503895946736,
+          "engineId": 140503893073392,
+          "appId": 140503910188144,
+          "at": 146.492447
+        },
+        {
+          "event": "generation_start_begin",
+          "generation": 114,
+          "objectId": 140504917790688,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 146.492473
+        },
+        {
+          "event": "generation_start_end",
+          "generation": 114,
+          "objectId": 140504917790688,
+          "storeId": 140503907818416,
+          "engineId": 140503910188192,
+          "appId": 140503926003840,
+          "at": 147.775582
+        },
+        {
+          "event": "generation_stop_begin",
+          "generation": null,
+          "objectId": 140504917790688,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.736313
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503604718496,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.739342
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503931781728,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.740372
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503933499680,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.740615
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503902497696,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.740891
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503604718496,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.750552
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503910188192,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.75128
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140503902497696,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.751523
+        },
+        {
+          "event": "generation_stop_end",
+          "generation": null,
+          "objectId": 140504917790688,
+          "storeId": 140503907818416,
+          "engineId": 140503910188192,
+          "appId": 140503926003840,
+          "at": 162.751845
+        },
+        {
+          "event": "engine_dispose_begin",
+          "generation": null,
+          "objectId": 140504227100480,
+          "storeId": null,
+          "engineId": null,
+          "appId": null,
+          "at": 162.905606
+        }
+      ],
+      "throttling": [],
+      "transportConstructMs": [
+        0.781787,
+        3.931361,
+        1.004495
+      ]
+    },
+    {
+      "id": "test_personal_mcp.PersonalMCPTests.test_slow_delete_cannot_extend_cancellation_teardown_indefinitely",
+      "runs": [],
+      "callbackCount": 28,
+      "callbackMaxima": {
+        "queueMs": {
+          "callback": 203,
+          "kind": "authorize",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 163.025646,
+          "end": 163.02575,
+          "wallMs": 0.13504,
+          "threadCpuMs": 0.134413,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.823038
+        },
+        "wallMs": {
+          "callback": 212,
+          "kind": "credential",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 163.054119,
+          "end": 163.204446,
+          "wallMs": 150.320752,
+          "threadCpuMs": 0.091447,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.132045
+        },
+        "threadCpuMs": {
+          "callback": 195,
+          "kind": "credential",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 162.986578,
+          "end": 162.98725,
+          "wallMs": 0.669626,
+          "threadCpuMs": 0.374543,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.711307
+        },
+        "sqlMs": {
+          "callback": 187,
+          "kind": "authorize",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 162.930057,
+          "end": 162.930123,
+          "wallMs": 0.072258,
+          "threadCpuMs": 0.071523,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.396867
+        },
+        "sqlMaxMs": {
+          "callback": 187,
+          "kind": "authorize",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 162.930057,
+          "end": 162.930123,
+          "wallMs": 0.072258,
+          "threadCpuMs": 0.071523,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.396867
+        },
+        "poolMs": {
+          "callback": 187,
+          "kind": "authorize",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 162.930057,
+          "end": 162.930123,
+          "wallMs": 0.072258,
+          "threadCpuMs": 0.071523,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.396867
+        },
+        "poolMaxMs": {
+          "callback": 187,
+          "kind": "authorize",
+          "runId": null,
+          "callId": "synthetic-call-alice-connection-v1",
+          "sqlCount": 0,
+          "poolCount": 0,
+          "start": 162.930057,
+          "end": 162.930123,
+          "wallMs": 0.072258,
+          "threadCpuMs": 0.071523,
+          "sqlMs": 0.0,
+          "sqlMaxMs": 0.0,
+          "poolMs": 0.0,
+          "poolMaxMs": 0.0,
+          "queueMs": 0.396867
+        }
+      },
+      "callbacksOver500ms": [],
+      "callbackAwaitOutcomes": {
+        "returned": 28
+      },
+      "gcByGeneration": {
+        "0": {
+          "count": 13,
+          "max": {
+            "generation": 0,
+            "thread": 140505014810432,
+            "start": 163.047143,
+            "end": 163.048202,
+            "wallMs": 1.058704,
+            "cpuMs": 0.886936,
+            "collected": 0
+          }
+        },
+        "1": {
+          "count": 2,
+          "max": {
+            "generation": 1,
+            "thread": 140505014810432,
+            "start": 163.039021,
+            "end": 163.040608,
+            "wallMs": 1.586559,
+            "cpuMs": 1.586028,
+            "collected": 401
+          }
+        }
+      },
+      "loopMaxima": {
+        "140504930286864": {
+          "scheduled": 163.048123,
+          "arrived": 163.048574,
+          "lagMs": 0.450881
+        }
+      },
+      "lifecycle": [],
+      "throttling": [],
+      "transportConstructMs": [
+        11.169832
+      ],
+      "pureTimeline": [
+        {
+          "event": "transport_construct_begin",
+          "method": null,
+          "relativeMs": 4.042908,
+          "durationMs": 0.0
+        },
+        {
+          "event": "transport_construct_end",
+          "method": null,
+          "relativeMs": 15.219505,
+          "durationMs": 11.169832
+        },
+        {
+          "event": "_call_enter",
+          "method": null,
+          "relativeMs": 21.079311,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "POST",
+          "relativeMs": 29.050864,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "POST",
+          "relativeMs": 60.598506,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "GET",
+          "relativeMs": 62.291244,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "POST",
+          "relativeMs": 82.569965,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "POST",
+          "relativeMs": 105.007822,
+          "durationMs": 0.0
+        },
+        {
+          "event": "_call_exit",
+          "method": null,
+          "relativeMs": 119.208121,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "POST",
+          "relativeMs": 274.344115,
+          "durationMs": 0.0
+        },
+        {
+          "event": "http_method_enter",
+          "method": "DELETE",
+          "relativeMs": 278.442904,
+          "durationMs": 0.0
+        },
+        {
+          "event": "invocation_exit",
+          "method": null,
+          "relativeMs": 629.330386,
+          "durationMs": 0.0
+        }
+      ]
+    }
+  ],
+  "units": {
+    "timestamps": "seconds since probe start",
+    "durations": "milliseconds unless explicitly seconds",
+    "sqlBoundary": "successful cursor executions; wall time includes scheduling",
+    "poolBoundary": "QueuePool._do_get only, excludes ping/full checkout"
+  }
+}
