@@ -338,6 +338,15 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             if native.get('status') in {'completed', 'failed'}: break
             time.sleep(.05)
         self.assertEqual(native.get('status'), 'completed', native)
+        # Native completion can precede durable accounting/stop observation.
+        # Keep the same deadline; GET must not perform that finalization.
+        while time.monotonic() < deadline:
+            task = self.store.task_for_request('legacy-byok-read', 'alice')
+            if task['terminal'] and task['body']['lastStatus'] == 'completed':
+                break
+            time.sleep(.05)
+        self.assertTrue(task['terminal'], 'Observer must finalize before completed history is asserted')
+        self.assertEqual(task['body']['lastStatus'], 'completed')
         detail = self.request('GET', '/jobs/' + task['id'])
         self.assertEqual(detail['job']['status'], 'completed')
         self.assertIsNone(detail['usageLedger'])
