@@ -47,7 +47,7 @@ containers/volumes removed; no live owned fixture server found by scoped scan.
 - [x] 捕获第二task DELETE原credential迟到时序，新增三分支UNKNOWN反例。
 - [x] fresh bounded材料批量读取；5PG+1DFS、原相关30项与12项GC诊断均通过。
 - [x] 受控源hash与SQL对照；首交错污染基线保留并排除。
-- [ ] 新head精确CI与资源清理。
+- [x] 新head精确fast CI与资源清理；最终代码组合full40129163038通过，范围见stability-followup.md。
 - [ ] 历史第二任务、ORX gate和remote parent偶发失败的完整共同归因；GC本轮关联不能替代历史根因证据。
 
 ## Guardian 回收后续
@@ -56,4 +56,11 @@ containers/volumes removed; no live owned fixture server found by scoped scan.
 - [x] history_backend：原Popen独立wait责任与三项纯失败路径验证；只改process_enforcement及专用回归。
 - [x] coordinator：串行运行真实guardian回收和既有enforcement验证；原20项中19通过，错误夹具修正后剩余1通过，保留失败。
 - [x] history_remote：独立复核退出/UNKNOWN/线程资源边界；补线程启动后中断窗口测试。
-- [ ] coordinator：扫描并提交新head，记录精确CI与清理。
+- [x] coordinator：扫描并提交源码0d157ff，精确fast40129100361通过；组合8de058a full40129163038通过，已停止本轮PG。
+
+## Final bounded diagnosis and combined coverage
+- [x] One fixed ORX6case and MCP13case experiment; preserve non-reproduction and causal limits.
+- [x] Deterministic ORX assertion-failure cleanup before/after; original assertion remains a failure.
+- [x] Bounded memory-only native diagnostics and exact claim owner calibration; independent review.
+- [x] Frozen union full Linux/PG, Windows, Web, browser, core, static and audit acceptance.
+- [ ] Historical intermittent root causes: missing original thread/connection/cleanup timelines cannot be replaced by a passing repeat.

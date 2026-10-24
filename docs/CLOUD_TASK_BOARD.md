@@ -1821,3 +1821,9 @@ root唯一集成；backend负责fresh材料JOIN和fixture generation；remote负
 
 ## 2026-10-24 final stability / combined validation
 Root owns diagnosis integration, validation-only union branch and serialized heavy runs. history_remote owns scalar fixed-prefix MCP probe/read-only causal review; shutdown_tests owns ORX gate+predecessor probe and remote-parent evidence review; history_backend owns full-coverage/merge-risk audit. No newfeatures. #103 stability-followup.md records distinct failures, predeclared predictions and final full gap; only#98 currenthead has full success. Validation union retains seven independent Drafts, no mainmerge/deploy/paid calls. Initial native claim diagnostic worker_id→locked_by calibration failed as expected, corrected6pass. One ORX six-case experiment running; MCP13case preparation, complete union PG/Windows deferred until targeted experiment/fix point is frozen.
+
+## 2026-10-24 final stability investigation and union acceptance
+
+Root integrated the ORX failure-path gate cleanup and exact locked_by diagnostics in #103 source0d157ff; independent reviewers approved assertion preservation and memory-only failure snapshots. One6case ORX prefix and one13case MCP prefix passed without retries; historical root cause remains open. Existing trace shows substantial fresh authority/credential cost, not a proven removable guard.
+
+Validation-only8de058a includes current#97–103 and passed full40129163038:PG3446pass/71skip,Windows2228pass/1289skip,bothWeb728pass,sevenrequiredgroupszero skips,Chromium/core/static/auditspassed. This is union coverage, not seven independent full certifications or proof of suite acceleration. #1030d157fffast40129100361also passed. OwnedPG stopped. CLI watch401credential error is separate from CI success; no new authentication attempted. Public evidence: openspec/changes/profile-and-simplify-test-cost/stability-followup.md and experiments/final-validation-summary.json. No newfeatures/mainmerge/deploy/paidcalls.
