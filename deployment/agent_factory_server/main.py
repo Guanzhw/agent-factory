@@ -5,6 +5,7 @@ from typing import cast
 
 from agent_factory.main import create_app as create_core_app
 from agent_factory.config import Settings
+from .shutdown import shutdown_failed, shutdown_guard
 from agent_factory.material_governance import GovernanceConfig
 from agent_factory.plan_policy import PlanPolicyConfig, PolicyName, ToolContract
 from agent_factory_research.assembly import (install_research, research_bindings, research_lifespan,
@@ -62,12 +63,13 @@ def create_app(settings=None, *, diagnostics=None):
         handoff_client_type=ResearchHandoffClient, handoff_receiver_type=ResearchPreparedHandoffService,
         bindings_factory=research_bindings, seed_materials=SEEDS, demo_definitions=all_demo_definitions,
         governance_config=governance, policy_config=policy, tool_catalog_factory=build_tools,
-        lifespan_context=research_lifespan, shutdown_callback=research_shutdown,
+        lifespan_context=research_lifespan, shutdown_callback=research_shutdown, shutdown_guard=shutdown_guard,
         plan_policy_type=ResearchPlanPolicyService,
         delegation_service_type=ResearchDelegationService,
         connection_service_type=ResearchConnectionService,
         queue_max_attempts=1 if settings.development_live_validation or settings.runtime_tool_contract == 'autoresearch-session-v1' else 2)
     state = factory_state(app)
+    state.update(shutdown_failed=shutdown_failed)
     try:
         install_research(state)
     except BaseException:

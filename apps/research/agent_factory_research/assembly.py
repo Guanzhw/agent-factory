@@ -1,4 +1,5 @@
 """Explicit installation of the single research application into this deployment."""
+import asyncio
 from contextlib import asynccontextmanager
 
 from agent_factory.resources import PersistentResourceService
@@ -141,18 +142,51 @@ def install_research(state):
         research_evaluation=research.research_evaluation)
 
 
+def _shutdown_pending(research):
+    groups = (
+        ('receiver', research.remote_scientific_receiver, '_drives'),
+        ('controllers', research.autoresearch_session_control, 'active'),
+        ('controllerCleanup', research.autoresearch_session_control, 'failures'),
+        ('researchExecutions', research.autoresearch, 'executions'),
+        ('researchCleanup', research.autoresearch, 'cleanups'),
+    )
+    return {name: sorted(key for key, task in getattr(service, attribute, {}).items() if not task.done())
+            for name, service, attribute in groups}
+
+
 @asynccontextmanager
 async def research_lifespan(app):
     state = app.state.factory
+    fatal = state.get('shutdown_failed')
+    if not callable(fatal):
+        raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_REQUIRED')
     try:
         yield
     finally:
         store = state['store']
         research = services_for(store)
-        if research.remote_scientific_receiver is not None:
-            await research.remote_scientific_receiver.close()
-        if research.autoresearch_session_control is not None:
-            await research.autoresearch_session_control.close()
+        deadline = asyncio.get_running_loop().time() + 35
+        # Each owner closes admission and cancels only its original controller.
+        # Shared cleanup tasks keep their graph/native dependencies until all
+        # owners finish, or the composition's non-returning process policy runs.
+        failed = False
+        try:
+            closers = [asyncio.create_task(service.close(deadline=deadline)) for service in
+                       (research.remote_scientific_receiver, research.autoresearch_session_control, research.autoresearch)
+                       if service is not None]
+            if closers:
+                done, pending = await asyncio.wait(closers, timeout=max(0, deadline - asyncio.get_running_loop().time()))
+                failed = bool(pending)
+                for task in done:
+                    if task.cancelled() or task.exception() is not None or task.result() is not True:
+                        failed = True
+        except BaseException:
+            fatal({'application': 'research', 'reason': 'interrupted', 'pending': _shutdown_pending(research)})
+            raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_RETURNED')
+        pending = _shutdown_pending(research)
+        if failed or any(pending.values()):
+            fatal({'application': 'research', 'reason': 'incomplete', 'pending': pending})
+            raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_RETURNED')
         if store.application_environments is not None:
             store.application_environments.close()
 

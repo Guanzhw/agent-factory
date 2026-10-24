@@ -290,18 +290,23 @@ class AutoResearchSessionControl:
         pending.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         return pending
 
-    async def close(self):
+    async def close(self, *, deadline=None):
         self.closed = True
-        end = asyncio.get_running_loop().time() + 35
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 35 if deadline is None else deadline
         pending = [task for task in self.active.values() if not task.done()]
         for task in pending:
             task.cancel()
-        if pending:
-            await asyncio.wait(pending, timeout=max(.01, end - asyncio.get_running_loop().time()))
-        # A bounded failed controller may have left original cleanup in progress.
-        # Do not cancel or forget that work, and do not claim shutdown completed.
-        remaining = [task for task in (*self.active.values(), *self.failures.values()) if not task.done()]
-        if remaining:
-            _, unresolved = await asyncio.wait(remaining, timeout=max(.01, end - asyncio.get_running_loop().time()))
-            return not unresolved
-        return True
+        # Cancellation can create original failure/research cleanup tasks. Recheck
+        # after each generation completes; never cancel or replace those tasks.
+        while True:
+            research = services_for(self.store).autoresearch
+            cleanups = getattr(research, 'cleanups', {})
+            remaining = {task for task in (*self.active.values(), *self.failures.values(), *cleanups.values())
+                         if not task.done()}
+            if not remaining:
+                return True
+            timeout = end - loop.time()
+            if timeout <= 0:
+                return False
+            await asyncio.wait(remaining, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)

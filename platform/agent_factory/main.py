@@ -1,5 +1,5 @@
 import os
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import ExitStack, asynccontextmanager, nullcontext
 from typing import cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
@@ -67,7 +67,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                demo_definitions=None, governance_config=None, policy_config=None,
                queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
                plan_policy_type=None, shutdown_callback=None, delegation_service_type=None,
-               connection_service_type=None):
+               connection_service_type=None, shutdown_guard=None):
     """Build the application-neutral Factory; deployment code selects trusted implementations.
 
     These are ordinary constructor arguments, never request-driven discovery or
@@ -311,20 +311,27 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
 
     @asynccontextmanager
     async def observed_lifespan(app: FastAPI):
-        try:
-            async with native_lifespan(app) as state:
-                async with observer.lifespan(app):
-                    async with lifespan_context(app) if lifespan_context else nullcontext():
-                        yield state or {}
-        finally:
-            # Observer and native worker finish before their shared lock pool.
+        # Arm a deployment-selected process policy only when shutdown begins,
+        # before any application/native context exits; keep it through cleanup.
+        with ExitStack() as shutdown:
             try:
-                store.dispose_root_locks()
+                async with native_lifespan(app) as state:
+                    async with observer.lifespan(app):
+                        async with lifespan_context(app) if lifespan_context else nullcontext():
+                            try:
+                                yield state or {}
+                            finally:
+                                if shutdown_guard is not None:
+                                    shutdown.enter_context(shutdown_guard())
             finally:
-                if store.personal_ssh is not None:
-                    store.personal_ssh.close()
-                if shutdown_callback is not None:
-                    shutdown_callback(native.state.factory)
+                # Observer and native worker finish before their shared lock pool.
+                try:
+                    store.dispose_root_locks()
+                finally:
+                    if store.personal_ssh is not None:
+                        store.personal_ssh.close()
+                    if shutdown_callback is not None:
+                        shutdown_callback(native.state.factory)
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}

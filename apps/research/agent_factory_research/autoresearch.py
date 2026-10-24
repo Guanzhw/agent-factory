@@ -69,6 +69,8 @@ class AutoResearchService:
         self.commands = commands
         self.active: dict[str, Any] = {}
         self.cleanups: dict[str, asyncio.Task] = {}
+        self.executions: dict[str, asyncio.Task] = {}
+        self.closed = False
         store.sql('''CREATE TABLE IF NOT EXISTS af_autoresearch_runs (
             task_id TEXT PRIMARY KEY REFERENCES af_tasks(id), owner_id TEXT NOT NULL,
             request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, body JSONB NOT NULL,
@@ -239,6 +241,35 @@ class AutoResearchService:
         self.change(run.user_id, run.session_id, update)
 
     async def execute(self, ctx):
+        if self.closed:
+            raise ValueError('RESEARCH_SERVICE_CLOSED')
+        task_id = ctx.run_context.session_id
+        task = asyncio.current_task()
+        if task is None or task_id in self.executions:
+            raise ValueError('RESEARCH_ORIGINAL_SESSION_REQUIRES_RECONCILIATION')
+        self.executions[task_id] = task
+        try:
+            return await self._execute(ctx)
+        finally:
+            self.executions.pop(task_id, None)
+
+    async def close(self, *, deadline=None):
+        self.closed = True
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 35 if deadline is None else deadline
+        for task in tuple(self.executions.values()):
+            if not task.done():
+                task.cancel()
+        while True:
+            pending = {task for task in (*self.executions.values(), *self.cleanups.values()) if not task.done()}
+            if not pending:
+                return True
+            timeout = end - loop.time()
+            if timeout <= 0:
+                return False
+            await asyncio.wait(pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+
+    async def _execute(self, ctx):
         preset = self.current(ctx)
         run = ctx.run_context
         effect = self.store.effect_reserve(run.run_id, 'autoresearch-session-v1', {'preset': preset.fingerprint})
