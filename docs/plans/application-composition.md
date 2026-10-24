@@ -1,7 +1,8 @@
 # 规划：应用服务组合与明确的生命周期归属
 
-状态：Draft 规划；实现与运行验收尚未开始。基于可信团队重构 PR #95 的合并提交 `246f06541b21915392a77555e24f3f617d34de9f`。
-建议 OpenSpec change：`compose-application-owned-services`。
+状态：Draft 规划；实现与运行验收尚未开始。当前基线 `ab5a98e`，已包含 #98 关闭实现 `5799403`；原问题分析来自 #95。
+OpenSpec change：[compose-application-owned-services](../../openspec/changes/compose-application-owned-services/proposal.md)，[设计与真实消费者](../../openspec/changes/compose-application-owned-services/design.md)，[owner 任务板](../../openspec/changes/compose-application-owned-services/tasks.md)。
+#97 控制/读取改动待提交后集成，不依赖其未提交实现。
 
 ## 问题与结果
 
@@ -31,6 +32,12 @@
 
 Agno 继续拥有执行生命周期，应用回调不能绕开准入或释放未确认资源。本项不引入插件市场、动态热加载、通用依赖注入框架或重写全部 adapter。
 
-## 顺序与待定项
+## 实施阶段与归属
 
-先确定关闭生命周期草案的结果与释放契约，再逐步迁移。核心待定问题是：哪些 hook 需要精确派发，哪些需要合并证据，以及现有 binding factory 是否已经足够承载接入；以双应用真实运行验收决定接口数量。
+第一阶段只组合实际多应用消费者：任务投影/控制、运行证据、取消标记与生命周期。按原持久化 plan/adapter/runtime/effect 身份派发；重复归属启动拒绝，缺失或歧义保持 UNKNOWN，不默认交给科研。同任务多个运行资源分别核对，任一未确认仍保留占用。通过真实同服务器双应用任务、交换安装顺序与单项取消验收后，才算第一阶段完成。
+
+第二阶段让科研实例直接持有 graph，通过构造参数与已有 binding factory 闭包传递，迁移全部 19 个 app 文件（含 services 定义）及 7 个脚本后移除进程级关联。不得改成 Store 任意服务字典或另一隐式定位器。通过同进程双服务器隔离、独立核心 wheel 和完整回归后才完成 #99。
+
+#98 核心外层关闭护栏继续统一覆盖所有应用、observer、native 与共享依赖，只有一个整体 35 秒预算，不逐应用重新计时；超时生产进程非零退出，保留原身份及未确认占用。原事务内取消标记仍保持原子性。
+
+root 拥有 composition/core main、规范和最终集成；core-owner 负责精确派发；research-owner 负责科研接入及 graph；scripts-owner 负责七个调用入口；integration-owner 负责双应用/双实例 PostgreSQL fixture。精确文件边界及每项验收见任务板。所有实现任务均未开始，尚无双应用运行通过证据。
