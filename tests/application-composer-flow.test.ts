@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApplicationComposer } from '../web/ApplicationComposer.js';
+import { ApplicationComposer, ComposerProposalScope } from '../web/ApplicationComposer.js';
 import { api } from '../web/api.js';
 import type { AssemblyCandidate, AssemblyProposal, FactoryApplication, FactoryMaterial, Plan, PlanAuthorization, UserConnection } from '../web/models.js';
 
@@ -72,6 +72,59 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('mounted task creation flow', () => {
+  it('offers a labeled fresh task before folded history and explains the four steps', async () => {
+    await mount();
+    const history = [...host.querySelectorAll('details')].find(item => item.querySelector('summary')?.textContent === '继续之前的任务 · 提案与方案历史')!;
+    const form = host.querySelector('form')!;
+    expect(history.open).toBe(false);
+    expect(form.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const goal = host.querySelector<HTMLTextAreaElement>('#research-topic')!;
+    expect(host.querySelector('label[for="research-topic"]')?.textContent).toBe('2. 描述任务');
+    expect(goal.value).toBe(''); expect(goal.disabled).toBe(false); expect(goal.required).toBe(true);
+    expect(button('预览任务方案').disabled).toBe(true);
+    const steps = host.querySelector('[aria-label="新建任务步骤"]')!;
+    expect([...steps.querySelectorAll('li')].map(item => item.textContent?.replace(/^\d/, ''))).toEqual(['选择应用', '描述任务', '核对方案', '开始任务']);
+    expect(steps.querySelector('[aria-current="step"]')?.textContent).toContain('选择应用');
+    expect(form.textContent).toContain('不会开始执行');
+    expect(api.propose).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
+  });
+  it.each(['malformed', 'unavailable'])('keeps fresh task entry usable when recovery storage is %s', async condition => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem');
+    if (condition === 'malformed') getItem.mockReturnValue('../foreign-record');
+    else getItem.mockImplementation(() => { throw new Error('storage unavailable'); });
+    await mount();
+    expect(host.textContent).not.toContain('继续上次保存的任务');
+    expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.disabled).toBe(false);
+    await fillTask();
+    expect(button('预览任务方案').disabled).toBe(false);
+    expect(api.recoverProposal).not.toHaveBeenCalled(); expect(api.propose).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
+  });
+  it('shows tools, capabilities, budgets, missing requirements and external inputs before technical disclosure', async () => {
+    const external = '<script>example</script>';
+    const value: AssemblyCandidate = { ...candidate, status: 'blocked', missing: ['请选择必需的模型连接'],
+      config: { internalOption: 'fixture-only' }, executionBindings: { model: { adapterId: 'fixture-model', revision: 'r1' } },
+      inputSchema: { type: 'object', properties: { topic: { type: 'string', title: '比较范围', maxLength: 100 } }, additionalProperties: false },
+      inputValues: { topic: external } };
+    await act(async () => { root.render(createElement(ComposerProposalScope, { candidate: value })); });
+    const details = [...host.querySelectorAll('details')].find(item => item.querySelector('summary')?.textContent === '查看材料、适配器与固定配置')!;
+    expect(details.open).toBe(false);
+    for (const label of ['使用的工具', '能力与权限边界', '固定预算上限', '比较范围']) {
+      const term = [...host.querySelectorAll('dt')].find(item => item.textContent === label)!;
+      expect(term, label).toBeDefined(); expect(term.closest('details'), label).toBeNull();
+    }
+    for (const text of ['read_source', 'read:public', '工具调用 8', external]) {
+      const entry = [...host.querySelectorAll('dd')].find(item => item.textContent?.includes(text))!;
+      expect(entry, text).toBeDefined(); expect(entry.closest('details'), text).toBeNull();
+    }
+    const missing = host.querySelector('[aria-label="开始前需要补充"]')!;
+    expect(missing.textContent).toContain('请选择必需的模型连接'); expect(missing.closest('details')).toBeNull();
+    const fixtureNotice = [...host.querySelectorAll('div')].find(item => item.textContent?.includes('不会调用付费模型'))!;
+    expect(fixtureNotice.closest('details')).toBeNull();
+    expect(host.querySelector('script')).toBeNull();
+    expect(host.querySelector('[aria-label="提案固定输入"]')?.textContent).toContain(external);
+    details.open = true;
+    for (const text of ['六类固定材料', 'fixture-model@r1', 'internalOption', 'fixture-only']) expect(details.textContent).toContain(text);
+  });
   it('starts an ordinary application after explicit owner confirmation without administrator decisions', async () => {
     await mount(); expect(api.recoverProposal).not.toHaveBeenCalled();
     await fillTask();
@@ -106,13 +159,15 @@ describe('mounted task creation flow', () => {
     window.sessionStorage.setItem('factory-proposal-v1:alice', proposalId);
     vi.mocked(api.recoverProposal).mockResolvedValue({ proposal: { id: proposalId, ownerId: 'bob' } as AssemblyProposal, plan });
     await mount(); await fillTask(); expect(api.recoverProposal).not.toHaveBeenCalled();
-    expect(host.querySelector<HTMLDetailsElement>('.composer-history')?.open).toBe(false);
-    await act(async () => { host.querySelector<HTMLDetailsElement>('.composer-history')!.open = true; });
+    const history = button('继续上次保存的任务').closest('details')!;
+    expect(history.open).toBe(false);
+    await act(async () => { history.open = true; });
     await click('继续上次保存的任务'); await settle(() => expect(host.textContent).toContain('提案归属或修订范围无法核对'));
     expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.value).toBe(candidate.normalizedGoal);
     expect(host.querySelector('[aria-label="任务提交检查"]')).toBeNull();
     expect(window.sessionStorage.getItem('factory-proposal-v1:alice')).toBe(proposalId);
-    expect(api.acceptProposal).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
+    expect(api.recoverProposal).toHaveBeenCalledExactlyOnceWith(proposalId);
+    expect(api.propose).not.toHaveBeenCalled(); expect(api.acceptProposal).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
   });
   it('locks an uncertain proposal request and retries with the same input and idempotency key', async () => {
     vi.mocked(api.propose).mockRejectedValueOnce(new Error('Synthetic lost acknowledgement'));
