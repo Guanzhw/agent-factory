@@ -56,4 +56,3 @@ Credential delivery stays with CLI/MCP adapters and the vault. Specific tools ca
 - [ ] Inspect model-visible content, public projections, errors and logs for synthetic secrets; preserve useful actor/connection/effect provenance and shared credential-reference hiding.
 
 These checks need no named external platform. Keep PR #96 limited to tests/CI. History (#97), shutdown custody (#98), application composition (#99), remote runtime handoff (#100) and research rounds (#101) retain their own scopes; ordinary CLI/MCP integration does not depend on all of them. Any runtime implementation follows a separately agreed scope.
-
