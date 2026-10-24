@@ -20,7 +20,7 @@ class WorkspacePostgresTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.app = create_app(Settings(db_url=self.database.url, workspace=Path(self.directory.name), max_workers=1))
-        state = self.app.app.state.factory
+        state = self.state = self.app.app.state.factory
         self.store = state['store']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
