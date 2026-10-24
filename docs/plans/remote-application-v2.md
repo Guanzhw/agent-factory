@@ -1,7 +1,7 @@
 # 规划：通用 v2 应用的远程执行契约
 
-状态：Draft 规划；实现与运行验收尚未开始。基于可信团队重构 PR #95 的合并提交 `246f06541b21915392a77555e24f3f617d34de9f`。
-建议 OpenSpec change：`support-v2-remote-application-handoff`。
+状态：Draft 实现；确定性两进程/PG协议验收已运行，本地静态/Web/原v1回归已完成，精确CI待提交。原规划基于 PR #95 `246f06541b21915392a77555e24f3f617d34de9f`；本次设计基线为独立工作树 `b50d196`，已包含 #97 `965350f`，不包含 #99 服务图重构。
+OpenSpec change：[support-v2-remote-application-handoff](../../openspec/changes/support-v2-remote-application-handoff/proposal.md)，实施与所有权见 [tasks](../../openspec/changes/support-v2-remote-application-handoff/tasks.md)。
 
 ## 问题与结果
 
@@ -21,14 +21,20 @@
 
 ## 验收
 
-- [ ] 两个真实服务进程与独立 PostgreSQL：发布一个 v2 应用，准备、派发一次，通过 native receiver 完成并读取状态、事件及准确产物字节。
-- [ ] 丢失 prepare/dispatch 回执、并发重复派发、receiver 重启和取消前后，都保持原身份且不额外启动效果。
-- [ ] 执行 adapter 收到准确 v2 配置和时间上限；混合版本预算、错误 schema/input、未知版本在新效果之前拒绝。
-- [ ] 原 v1 handoff 与恢复回归继续通过；构建后的浏览器展示目标支持/拒绝状态。
-- [ ] 发布实际支持矩阵，将本地确定性协议验收与外部服务兼容性分别记录。
+- [x] 两个真实服务进程与独立 PostgreSQL：发布一个 v2 应用，准备、派发一次，通过 native receiver 完成并读取状态、事件及准确产物字节。
+- [x] 丢失 prepare/dispatch 回执、并发重复派发、receiver 重启和取消前后，都保持原身份且不额外启动效果。
+- [x] 执行 adapter 收到准确 v2 配置和时间上限；混合版本预算、错误 schema/input、未知版本在新效果之前拒绝。
+- [x] 原 v1 handoff 与恢复回归继续通过；构建后的浏览器展示目标支持/拒绝状态。
+- [x] 发布实际支持矩阵，将本地确定性协议验收与外部服务兼容性分别记录。
 
 旧 v1 定义与 hash 不改写，版本不自动降级，UNKNOWN 不重放。本项不扩展集群调度或承诺任意第三方 receiver 兼容。
 
-## 顺序与待定项
+## 已选择的协议与支持边界
 
-可独立于多应用装配实施。先选择一个 v2 应用和 receiver/runtime，确定支持声明位于目标描述还是 prepare 响应，并决定 receiver 接收完整 schema 还是受校验的不可变定义引用。第一版支持 root handoff 即可，未支持的嵌套 placement 保持明确拒绝。
+可独立于多应用装配实施。选现有 checksum-neutral 与 local-synthetic-model-v1/native-checksum-v1，在测试装配层使用确定性 native runtime；发布含非空 configSchema/config 与 inputSchema/inputValues 的测试变体，验证准确传输及 operationSeconds。首版仅 root native agent handoff，拒绝 workflow、scientific、delegation、已有远程 handoff 与嵌套 placement。
+
+v1 保持 `{plan, sha256}`。v2 使用准确字段 `{wireVersion: 2, plan, applicationDefinition, sha256}`，wireVersion 与 plan.contractVersion 严格为整数 2。sha256 仍为 digest(plan)，不是 envelope hash；完整应用定义通过既有应用版本摘要算法核对 plan.applicationRef.sha256，间接绑定完整 schema/config。验证定义、mode、输入、配置、材料和绑定与计划一致，额外字段及混合预算拒绝。
+
+目标 supportedApplicationContracts 默认仅 v1，v2 显式 opt-in；目标页面展示声明，receiver prepare 自行验证实际支持范围，无自动降级。默认 v1 target fingerprint 不变，仅 v2 opt-in 纳入新能力配置。authority 的预算模型、回调与恢复根据原计划版本选择严格分支，不改变 manifestHash/sourcePlanSha256、usage grant 或 binding proof 的既有含义。
+
+详细调用边界与取舍见 [design](../../openspec/changes/support-v2-remote-application-handoff/design.md)。生产编辑与重型测试由 coordinator 分配和串行安排；实际分层结果和首轮失败见OpenSpec verification.md，不外推真实供应商兼容。

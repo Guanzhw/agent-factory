@@ -222,7 +222,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertNotEqual(self.origin_db.name, self.receiver_db.name)
         targets = self.request("GET", "/execution-targets").json()
         self.assertEqual(targets, [{"id": self.target.reference, "name": self.target.reference,
-                                   "kind": "remote-factory", "connectivityVerified": False}])
+                                   "kind": "remote-factory", "connectivityVerified": False, "supportedApplicationContracts": [1]}])
         self.assertNotIn(self.target.base_url, str(targets))
         self.assertEqual(self.request("GET", "/execution-targets", owner="bob").json(), [])
         plan = self.plan()

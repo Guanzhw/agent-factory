@@ -20,6 +20,7 @@ export interface MaterialReview {
 }
 export type FactoryStatus = PlatformInfo;
 export interface Plan {
+  contractVersion?: 1 | 2;
   inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   inputValues?: import('./applicationInputState.js').ApplicationInputValues;
   id: string;
@@ -177,7 +178,7 @@ export interface PlanReview {
     capabilities?: string[]; budget?: Record<string, unknown>; materialRefs?: MaterialReference[]; usageBudget?: unknown; config?: Record<string, unknown>; [extension: string]: unknown };
 }
 
-export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean }
+export interface ExecutionTarget { id: string; name: string; kind: "remote-factory"; connectivityVerified: boolean; supportedApplicationContracts?: number[] }
 
 export interface EventPage {
   events: (JobEvent & { sequence: number; payloadSha256: string; receiverPayloadSha256?: string })[];
