@@ -1,9 +1,11 @@
 """MCP pre-dispatch stop evidence through real PG/native task capacity."""
 
 import asyncio
+from collections import deque
 from concurrent.futures import Future
 import json
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -16,12 +18,80 @@ from mcp import ClientSession
 from agent_factory.config import Settings
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
-from agent_factory.personal_mcp import MCPToolAdapter
+from agent_factory.personal_mcp import MCPToolAdapter, _InvocationState
 from agent_factory.personal_remote_provider import SecretLease, origin
 from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocationError
 from mcp_protocol_fixture import MCPProtocolServer
 from pg_fixture import IsolatedPostgres
 import test_personal_tool_native_postgres as native_fixture
+
+
+class MCPPhaseRing:
+    """Bounded locations/timestamps only; retains no callbacks or app objects."""
+    def __init__(self, limit=512):
+        self.events = deque(maxlen=limit)
+        self.lock = threading.Lock()
+        self.started = time.monotonic()
+        self.sequence = 0
+        self.callback_sequence = 0
+
+    def record(self, phase, *, run_id=None, call_id=None, callback=None, kind=None,
+               status=None, attempt=None, worker_id=None, frames=None):
+        with self.lock:
+            self.sequence += 1
+            self.events.append({'sequence': self.sequence, 'seconds': round(time.monotonic() - self.started, 6),
+                'phase': phase, 'runId': run_id, 'callId': call_id, 'callback': callback,
+                'kind': kind, 'status': status, 'attempt': attempt, 'workerId': worker_id, 'frames': frames})
+
+    def snapshot(self):
+        with self.lock:
+            return {'eventsSeen': self.sequence, 'eventsRetained': len(self.events), 'events': list(self.events)}
+
+    async def checked(self, original, state, callback):
+        with self.lock:
+            self.callback_sequence += 1
+            number = self.callback_sequence
+        identity = {'run_id': state.invocation.run_context.run_id, 'call_id': state.invocation.call_id,
+                    'callback': number, 'kind': 'authorize' if callback is state.invocation.check_authorized else 'credential'}
+        self.record('callback_schedule', **identity)
+
+        def observed():
+            self.record('callback_thread_enter', **identity)
+            try:
+                return callback()
+            finally:
+                self.record('callback_thread_exit', **identity)
+
+        outcome = 'returned'
+        try:
+            return await original(state, observed)
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            raise
+        except BaseException:
+            outcome = 'raised'
+            raise
+        finally:
+            self.record('callback_await_exit', status=outcome, **identity)
+
+    def worker(self, worker):
+        # Called from the existing polling thread; no coroutine locals or task
+        # reprs. Await-chain locations distinguish idle queue from active work.
+        active = tuple(getattr(worker, '_in_flight', {}).items())
+        for run_id, task in active:
+            frames, awaitable = [], task.get_coro()
+            for _ in range(12):
+                frame = getattr(awaitable, 'cr_frame', None) or getattr(awaitable, 'gi_frame', None)
+                if frame is not None:
+                    frames.append({'file': Path(frame.f_code.co_filename).name,
+                                   'function': frame.f_code.co_name, 'line': frame.f_lineno})
+                awaitable = getattr(awaitable, 'cr_await', None) or getattr(awaitable, 'gi_yieldfrom', None)
+                if awaitable is None:
+                    break
+            self.record('worker_active', run_id=run_id, worker_id=worker.worker_id,
+                        status='done' if task.done() else 'pending', frames=frames)
+        if not active:
+            self.record('worker_idle', worker_id=getattr(worker, 'worker_id', None))
 
 
 class EchoModel(native_fixture.InventoryModel):
@@ -41,6 +111,7 @@ class ObservedMCPAdapter(MCPToolAdapter):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.observations = {}
+        self.phase_ring = None
 
     def observation(self, invocation):
         key = (invocation.run_context.run_id, invocation.call_id)
@@ -49,6 +120,10 @@ class ObservedMCPAdapter(MCPToolAdapter):
     async def invoke(self, invocation):
         observation = self.observation(invocation)
         started = time.monotonic()
+        ring = self.phase_ring
+        identity = {"run_id": invocation.run_context.run_id, "call_id": invocation.call_id}
+        if ring is not None:
+            ring.record("invocation_begin", **identity)
         try:
             result = await super().invoke(invocation)
             observation['outcome'] = 'completed'
@@ -57,14 +132,29 @@ class ObservedMCPAdapter(MCPToolAdapter):
             observation.update(code=error.code, outcome=error.outcome, stopped=error.stopped)
             raise
         finally:
+            if ring is not None:
+                ring.record('invocation_end', **identity)
             observation['elapsedSeconds'] = round(time.monotonic() - started, 3)
+            state = observation.pop('state', None)
+            if state is not None:
+                # invoke has joined its SDK/monitor tasks. Keep diagnostic facts
+                # and live completion Events, not callbacks retaining the old app.
+                observation.update(dispatched=state.dispatched, authorizationRejected=state.authorization_rejected,
+                    sdkClosed=state.sdk_closed, transportClosed=state.transport_closed,
+                    callbacks=tuple(state.callbacks_finished))
 
     async def _run(self, state, arguments):
         observation = self.observation(state.invocation)
         observation['state'] = state
+        ring = self.phase_ring
+        identity = {'run_id': state.invocation.run_context.run_id, 'call_id': state.invocation.call_id}
+        if ring is not None:
+            ring.record('sdk_begin', **identity)
         try:
             return await super()._run(state, arguments)
         finally:
+            if ring is not None:
+                ring.record('sdk_exit', **identity)
             if 'bodyEnded' in observation:
                 observation['closeSeconds'] = round(time.monotonic() - observation['bodyEnded'], 3)
 
@@ -74,19 +164,23 @@ class ObservedMCPAdapter(MCPToolAdapter):
         try:
             return await super()._call(session, state, arguments)
         finally:
+            if self.phase_ring is not None:
+                self.phase_ring.record('sdk_body_exit', run_id=state.invocation.run_context.run_id, call_id=state.invocation.call_id)
             observation['bodyEnded'] = time.monotonic()
             observation['bodySeconds'] = round(time.monotonic() - started, 3)
 
     def diagnostics(self):
         result = []
         for observation in self.observations.values():
-            item = {key: value for key, value in observation.items() if key not in {'state', 'bodyEnded'}}
+            item = {key: value for key, value in observation.items() if key not in {'state', 'bodyEnded', 'callbacks'}}
             state = observation.get('state')
+            callbacks = observation.get('callbacks', ())
             if state is not None:
                 item.update(dispatched=state.dispatched, authorizationRejected=state.authorization_rejected,
-                            sdkClosed=state.sdk_closed, transportClosed=state.transport_closed,
-                            callbacksTotal=len(state.callbacks_finished),
-                            callbacksDone=sum(event.is_set() for event in state.callbacks_finished))
+                            sdkClosed=state.sdk_closed, transportClosed=state.transport_closed)
+                callbacks = state.callbacks_finished
+            if state is not None or 'callbacks' in observation:
+                item.update(callbacksTotal=len(callbacks), callbacksDone=sum(event.is_set() for event in callbacks))
             result.append(item)
         return result
 
@@ -101,7 +195,34 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
     publish = native_fixture.PersonalToolNativePostgresTests.publish
     configure = native_fixture.PersonalToolNativePostgresTests.configure
     submit = native_fixture.PersonalToolNativePostgresTests.submit
-    wait = native_fixture.PersonalToolNativePostgresTests.wait
+    def wait(self, started, owner, *, expected='completed'):
+        try:
+            return native_fixture.PersonalToolNativePostgresTests.wait(self, started, owner, expected=expected)
+        except AssertionError as error:
+            # Capture before teardown, only after the unchanged wait failed.
+            # Frames contain locations only, never locals/credentials/messages.
+            task = self.store.task(started['job']['id'], owner)
+            native = self.store.native_db.get_job(task['run_id']) or {}
+            stacks = []
+            for frame in sys._current_frames().values():
+                stack = []
+                while frame is not None and len(stack) < 16:
+                    stack.append({'file': Path(frame.f_code.co_filename).name,
+                                  'function': frame.f_code.co_name, 'line': frame.f_lineno})
+                    frame = frame.f_back
+                stacks.append(stack)
+            effects = [{'key': effect['effect_key'], 'status': effect['status'],
+                        'result': {key: effect['result'][key] for key in ('outcome', 'stopped', 'cancelled')
+                                   if key in effect['result']} if isinstance(effect.get('result'), dict) else None}
+                       for effect in self.store.effects(task['id'])]
+            diagnostic = {'taskId': task['id'], 'runId': task['run_id'], 'requestId': task['request_id'],
+                'terminal': task['terminal'], 'cancelRequested': task['cancel_requested'],
+                'native': {key: native.get(key) for key in ('status', 'attempts', 'worker_id', 'created_at', 'updated_at')},
+                'effects': effects, 'adapter': self.adapter.diagnostics(), 'toolCallCount': len(self.mcp.calls),
+                'observerError': self.store.lifecycle_observer.last_error_type, 'threads': stacks,
+                'secondTaskPhases': self.adapter.phase_ring.snapshot() if self.adapter.phase_ring is not None else None}
+            raise self.failureException(str(error) + '\nMCP_NATIVE_FAILURE: ' +
+                json.dumps(diagnostic, sort_keys=True, default=str)) from error
 
     def setUp(self):
         database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()
@@ -160,7 +281,6 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         )
         self.client = None
         self.start()
-        self.addCleanup(self.stop)
         self.publish()
 
     def stop_server(self):
@@ -201,6 +321,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
             'observerTaskDone': observer._task.done() if observer._task is not None else None,
             'observerGroups': observer.last_result.get('groups', []),
             'observerErrors': observer.last_result.get('errors', []),
+            'secondTaskPhases': self.adapter.phase_ring.snapshot() if self.adapter.phase_ring is not None else None,
         }
         self.fail('Native task capacity must be released: ' + json.dumps(diagnostics, sort_keys=True))
 
@@ -231,10 +352,39 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.mcp.delete_status = None
         self.mcp.delete_drip_interval = None
         self.server_loop.call_soon_threadsafe(self.mcp.delete_release.set)
-        next_run = self.request('POST', '/application-interface/v1/starts',
-                                {**body, 'requestId': 'after-known-mcp-failure'}, expected=202)
-        self.assertNotEqual(next_run['job']['id'], task['id'])
-        next_task = self.wait(next_run, 'alice')
+        ring = MCPPhaseRing()
+        self.adapter.phase_ring = ring
+        original_callback = _InvocationState.checked_callback
+        original_get_job = self.store.native_db.get_job
+        last_native, last_worker_sample = None, 0.0
+
+        async def checked(state, callback):
+            return await ring.checked(original_callback, state, callback)
+
+        def get_job(*args, **kwargs):
+            nonlocal last_native, last_worker_sample
+            value = original_get_job(*args, **kwargs)
+            if value:
+                identity = (value.get('run_id'), value.get('status'), value.get('attempts'), value.get('worker_id'))
+                if identity != last_native:
+                    ring.record('native_observed', run_id=identity[0], status=identity[1], attempt=identity[2], worker_id=identity[3])
+                    last_native = identity
+                current = time.monotonic()
+                if current - last_worker_sample >= 1:
+                    ring.worker(getattr(self.app.app.state, 'queue_worker', None))
+                    last_worker_sample = current
+            return value
+
+        # Only the replacement task is traced. Delegating to the original
+        # checked_callback preserves its cancellation gate and completion proof.
+        with patch.object(_InvocationState, 'checked_callback', new=checked), \
+                patch.object(self.store.native_db, 'get_job', new=get_job):
+            ring.record('second_submit_begin')
+            next_run = self.request('POST', '/application-interface/v1/starts',
+                                    {**body, 'requestId': 'after-known-mcp-failure'}, expected=202)
+            ring.record('second_submit_return')
+            self.assertNotEqual(next_run['job']['id'], task['id'])
+            next_task = self.wait(next_run, 'alice')
         self.wait_terminal(next_task)
         self.assertEqual(self.mcp.calls, [('echo', 'alice'), ('echo', 'alice')])
         next_effects = self.store.effects(next_task['id'])

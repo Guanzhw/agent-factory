@@ -9,6 +9,7 @@ FAST_PYTHON_TESTS = {
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',
+        'test_profile_tests',
         'test_ci_checks',
     ),
     'owner_model_protocols': (
@@ -18,6 +19,7 @@ FAST_PYTHON_TESTS = {
         'test_trusted_model_proxy.TrustedModelProxyTests.test_legacy_grant_does_not_authorize_new_protocol_or_prefix',
     ),
     'selected_model_and_current_authority': (
+        'test_application_closure_authority.BoundedApplicationClosureTests',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_concurrent_native_runs_keep_models_knowledge_and_owner_context_separate',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_each_provider_turn_rechecks_current_authority_after_actual_native_tool',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_unavailable_forged_and_unadopted_bindings_have_no_demo_fallback',
@@ -38,6 +40,12 @@ FAST_PYTHON_TESTS = {
         'test_personal_cli',
         'test_personal_cli_process',
         'test_personal_mcp',
+        'test_mcp_phase_ring',
+        'test_personal_mcp_callbacks',
+        'test_personal_mcp_teardown_auth',
+        'test_mcp_diagnostic_custody',
+        'test_native_fixture_lifecycle',
+        'test_material_governance_bulk_postgres.MaterialDependencyTraversalTests',
         'test_personal_tools',
         'test_personal_tool_execution',
         'test_personal_tool_assembly.PersonalToolSettingsTests',
@@ -45,6 +53,7 @@ FAST_PYTHON_TESTS = {
     'original_receipt_and_stop': (
         'test_process_receipt_validation.ProcessReceiptValidation',
         'test_research_candidate_native_stop.NativeStopTests',
+        'test_guardian_reaping',
     ),
     'research_input_contracts': (
         'test_research_package_paths.RelativePackagePathTests',
@@ -68,6 +77,7 @@ FAST_POSTGRES_TESTS = {
         'test_trusted_model_proxy_postgres.TrustedModelProxyPostgresTests.test_generic_protocols_complete_native_task_with_existing_owner_vault',
     ),
     'member_self_service': (
+        'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests.test_thirty_pins_use_one_join_and_next_call_observes_withdrawal',
         'test_scheduling_member_postgres.MemberSchedulingPostgresTests',
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_single_submit_native_queue_no_billing_no_admin_and_replay',
         'test_department_admission_postgres.DepartmentAdmissionPostgresTests.test_member_runs_multiple_applications_and_workflow_without_admin_decision',

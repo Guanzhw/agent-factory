@@ -14,11 +14,13 @@ import hashlib
 import inspect
 import os
 from pathlib import Path
+from queue import Queue
 import re
 import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from uuid import uuid4
 from typing import cast
@@ -26,6 +28,29 @@ from typing import cast
 
 class ProcessEnforcementError(RuntimeError):
     pass
+
+
+def _start_guardian(path):
+    # Own the original Popen until wait has reaped it, even when callers reopen
+    # custody through a different adapter. Start the waiter before spawning so a
+    # thread-start failure cannot leave an unowned child. Daemon status preserves
+    # the detached guardian's ability to outlive a terminating service process.
+    pending: Queue[subprocess.Popen | None] = Queue(maxsize=1)
+
+    def reap():
+        process = pending.get()
+        if process is not None:
+            process.wait()
+
+    process = None
+    try:
+        threading.Thread(target=reap, name="factory-guardian-reaper", daemon=True).start()
+        process = subprocess.Popen([sys.executable, "-I", "-B", str(Path(__file__).with_name("process_enforcement_guardian.py")), str(path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True, start_new_session=True, cwd=path.parent, env={"LANG": "C.UTF-8"})
+        return process
+    finally:
+        pending.put(process)
 
 
 def _deny():
@@ -558,9 +583,7 @@ class BoundedProcessAdapter:
             _write(conn, body)
         self._launch_owner = False
         try:
-            self._process = subprocess.Popen([sys.executable, "-I", "-B", str(Path(__file__).with_name("process_enforcement_guardian.py")), str(self.path)],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                close_fds=True, start_new_session=True, cwd=self.path.parent, env={"LANG": "C.UTF-8"})
+            self._process = _start_guardian(self.path)
         except Exception:
             with _open_journal(self.path) as conn:
                 conn.execute("BEGIN IMMEDIATE")

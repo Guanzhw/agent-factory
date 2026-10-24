@@ -224,7 +224,7 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         return value
 
     def test_01_governed_remote_process_original_identity_receipt_and_owner_isolation(self):
-        plan, task, _, receipt = self.execute()
+        plan, task, request, receipt = self.execute()
         lease = self.wait_lease(receipt["remoteTaskId"], {"RECLAIMED"})
         self.assertEqual(lease["executionStatus"], "COMPLETED")
         self.assertEqual(self.assert_single(task, receipt)["id"], lease["id"])
@@ -243,14 +243,12 @@ class RemoteProcessRuntimePostgresTests(unittest.TestCase):
         denied = self.origin.request("GET", f"/api/factory/jobs/{task}/artifacts/{artifact['id']}", actor=OTHER_OWNER)
         self.assertEqual(denied.status_code, 404)
 
-    def test_02_completed_request_replay_preserves_released_process_identity(self):
-        _, task, request, receipt = self.execute()
-        first = self.wait_lease(receipt["remoteTaskId"], {"RECLAIMED"})
+        # Replay the same completed request without another process fixture.
         repeated = self.call(self.origin, "POST", "/instances", expected=202, json=request)
         self.assertEqual(repeated["id"], task)
         current = self.assert_single(task, receipt)
         for key in ("id", "providerJobId", "nativeRunId", "localTaskId", "planId"):
-            self.assertEqual(current[key], first[key])
+            self.assertEqual(current[key], lease[key])
 
     def test_03_receiver_exit_after_actual_dispatch_recovers_original_custody(self):
         self.receiver_exit_after_actual_dispatch()
