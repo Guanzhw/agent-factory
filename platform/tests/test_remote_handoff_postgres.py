@@ -646,6 +646,12 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.assertEqual(stale.exception.status_code, 409)
             self.call(self.handoff.answer, "alice", row["task_id"], body, remote_id)
             self.wait_native({"remoteTaskId": remote_id or receipt["remoteTaskId"]}, {"completed"})
+            # Native completion is not the background owner's durable stop
+            # commit. Wait for that independent phase without a write-on-GET.
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and not self.remote["store"].task(remote_id or receipt["remoteTaskId"])["terminal"]:
+                time.sleep(.03)
+            self.assertTrue(self.remote["store"].task(remote_id or receipt["remoteTaskId"])["terminal"])
             completed = self.call(self.handoff.detail, "alice", row["task_id"], remote_id)
             self.assertEqual(completed["job"]["status"], "completed")
             artifact = completed["artifacts"][0]

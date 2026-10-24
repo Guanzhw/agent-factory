@@ -92,6 +92,9 @@ class DirectMemberTransport(httpx.AsyncBaseTransport):
             self.drive_posts.append(request.url.path)
         response = await self.inner.handle_async_request(request)
         await response.aread()
+        if response.status_code >= 400:
+            self.errors.append(f'{request.method} {request.url.path}: {response.status_code} {response.text[:2000]}')
+            self.errors[:] = self.errors[-3:]
         if request.method == 'POST' and request.url.path.endswith('/prepare') and response.status_code < 300:
             body = response.json()
             if body['state'] != 'PREPARED' or 'receiverReviewRequired' in body:
@@ -303,6 +306,16 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                     evidence['receiverDriveTracebacks'][:] = evidence['receiverDriveTracebacks'][-3:]
                     raise
             stack.enter_context(patch.object(service, 'drive_phase', side_effect=observed_drive_phase))
+            original_receipt = remote_receiver._receipt
+            async def observed_receipt(*args, **kwargs):
+                try:
+                    return await original_receipt(*args, **kwargs)
+                except Exception:
+                    evidence.setdefault('receiverReceiptTracebacks', []).append(
+                        traceback.format_exc(limit=-30)[-16000:])
+                    evidence['receiverReceiptTracebacks'][:] = evidence['receiverReceiptTracebacks'][-3:]
+                    raise
+            stack.enter_context(patch.object(remote_receiver, '_receipt', side_effect=observed_receipt))
             def stop_original_processes():
                 for row in remote['store'].sql('SELECT id,owner_id FROM af_process_allocations'):
                     for registered in remote['resources'].targets.values():
@@ -329,8 +342,25 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 diagnostics = {'runtimeTraceback': evidence.get('runtimeTraceback'),
                     'transportTracebacks': transport.errors,
                     'receiverDriveTracebacks': evidence.get('receiverDriveTracebacks', []),
+                    'receiverReceiptTracebacks': evidence.get('receiverReceiptTracebacks', []),
                     'receiverDriveUnknown': evidence.get('receiverDriveUnknown'), 'actualParentStatus': final['status']}
                 for side, state in (('origin', origin), ('receiver', remote), ('baseline', baseline)):
+                    diagnostics[side + ':observer'] = {
+                        'lastResult': state['lifecycle_observer'].last_result,
+                        'lastErrorType': state['lifecycle_observer'].last_error_type}
+                    # Keep the decisive phase/claim identities outside the
+                    # large manifest dumps, whose bounded prefix may omit the
+                    # final evaluation entirely.
+                    for table in ('af_remote_scientific_phases', 'af_remote_scientific_evidence'):
+                        if state['store'].sql('SELECT to_regclass(:name) AS present', name=table)[0]['present']:
+                            diagnostics[side + ':' + table + ':summary'] = [
+                                {'receiptId': row.get('receipt_id'), 'phase': row.get('phase'),
+                                 'state': row['body'].get('state'),
+                                 'nativeRunId': row['body'].get('nativeRunId'),
+                                 'driveStatus': (row['body'].get('driveRequest') or {}).get('status'),
+                                 'claims': {name: claim is not None for name, claim in
+                                            row['body'].get('claims', {}).items()}}
+                                for row in state['store'].sql('SELECT * FROM ' + table)]
                     for table in ('af_events', 'af_tasks', 'af_delegation_links',
                                   'af_remote_scientific_origins', 'af_remote_scientific_phases',
                                   'af_remote_scientific_drive_intents', 'af_leases'):

@@ -34,6 +34,7 @@ def now():
 
 # Compatibility exports: custody/evidence semantics belong to trusted adapters.
 from .runtime_hooks import effect_unresolved, runtime_custody_held
+from .task_status import finalized_status
 
 
 class Store:
@@ -345,7 +346,7 @@ class Store:
             except (ValueError, TypeError, UnicodeError, binascii.Error, RecursionError):
                 raise HTTPException(400, "Invalid owner-scoped history cursor") from None
         where = "AND (t.body->>'createdAt',t.id)<(:created,:after)" if boundary else ""
-        rows = self.sql(f"""SELECT t.id,t.owner_id,t.plan_id,t.admission,t.body->>'createdAt' AS created,
+        rows = self.sql(f"""SELECT t.id,t.owner_id,t.plan_id,t.admission,t.terminal,t.body->>'createdAt' AS created,
             t.body->>'updatedAt' AS updated,t.body->>'observedAt' AS observed,t.body->>'lastStatus' AS status,
             p.body->>'application' AS application,p.body->'applicationRef' AS application_ref,
             p.body->>'normalizedGoal' AS topic,p.body->>'mode' AS mode
@@ -361,6 +362,7 @@ class Store:
                 status = "failed"
             elif row["admission"] in {"reserved", "unknown"}:
                 status = "unknown"
+            status = finalized_status(status, row["terminal"])
             items.append({"id": row["id"], "ownerId": row["owner_id"], "planId": row["plan_id"],
                 "definitionId": ref["id"], "definitionVersion": ref["version"],
                 "input": {"topic": row["topic"], "mode": row["mode"], "scenario": "normal"},

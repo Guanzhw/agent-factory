@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Workspace, type WorkspaceContext } from '../web/App.js';
-import { TaskWorkspace } from '../web/TaskWorkspace.js';
+import { TaskDetail, TaskWorkspace } from '../web/TaskWorkspace.js';
 import { api } from '../web/api.js';
 import { mergeJobHistory } from '../web/jobHistory.js';
 import type { JobDetail, JobPage, JobSummary } from '../web/models.js';
@@ -192,4 +193,38 @@ it('retries the missing bridge after failure instead of advancing past unseen in
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
   expect(context.jobs.map(value => value.id)).toEqual(['newest', 'newer', 'new']);
   expect(context.jobsError).toBe('');
+});
+
+
+it('labels finalizing as unconfirmed resource cleanup without completed actions or implicit authority', () => {
+  const detail = { job: { ...job('finishing'), status: 'finalizing', allowedActions: ['reconcile'] },
+    snapshot: { status: 'completed', delegationScope: { allowed: true, modes: ['fixture'] } },
+    events: [], artifacts: [] } as unknown as JobDetail;
+  host.innerHTML = renderToStaticMarkup(createElement(TaskDetail, {
+    ownerId: 'member', detail, busy: '', act: async (_name, work) => work(),
+    onNotice: () => {}, onSelect: () => {}, jobs: [], drafts: new Map(),
+    completedNotice: createElement('button', null, 'Use completed material'),
+  }));
+  expect(host.querySelector('.badge')?.textContent).toBe('资源确认中');
+  expect(host.textContent).toContain('资源停止与任务收尾仍待服务端确认');
+  expect(host.textContent).not.toContain('Use completed material');
+  const button = (text: string) => [...host.querySelectorAll('button')].find(value => value.textContent === text)!;
+  expect(button('请求取消').disabled).toBe(true);
+  expect(button('核对执行状态').disabled).toBe(false);
+  expect(button('确认创建子任务').disabled).toBe(true);
+});
+
+it('continues polling finalizing details until the durable completed state arrives', async () => {
+  const finishing = { job: { ...job('finishing'), status: 'finalizing' }, events: [], artifacts: [] } as unknown as JobDetail;
+  vi.mocked(api.detail).mockResolvedValue(finishing);
+  await render();
+  await act(async () => context.onTask('finishing'));
+  expect(context.detail?.job.status).toBe('finalizing');
+  await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+  expect(api.detail).toHaveBeenCalledTimes(2);
+  expect(context.detail?.job.status).toBe('finalizing');
+  vi.mocked(api.detail).mockResolvedValue({ ...finishing, job: { ...finishing.job, status: 'completed' } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+  expect(api.detail).toHaveBeenCalledTimes(3);
+  expect(context.detail?.job.status).toBe('completed');
 });

@@ -595,7 +595,8 @@ class PreparedHandoffService:
             if fenced:
                 self.store.admission_failed(task["id"], "Receiver canceled before its durable dispatch boundary; no native execution")
 
-    async def _receipt(self, remote_owner: str, identifier: str, *, reconcile: bool, trusted_cleanup: bool = False) -> dict[str, Any]:
+    async def _receipt(self, remote_owner: str, identifier: str, *, reconcile: bool,
+                       trusted_cleanup: bool = False, refresh_closed: bool = True) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner, execution=False, trusted_cleanup=trusted_cleanup)
         if not row["body"].get("remoteTaskId"):
@@ -665,6 +666,15 @@ class PreparedHandoffService:
             if reconcile:
                 result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
                     all_stopped=result["allStopped"])
+                if result["usageStatement"].get("allStopped") is True and not result["allStopped"]:
+                    # An awaited evidence read can be overtaken by another
+                    # observer closing this original grant. Accounting is not
+                    # stop proof: refresh the original observation once, never
+                    # replay admission/dispatch or promote a stale snapshot.
+                    if not refresh_closed:
+                        raise HTTPException(409, "USAGE_REMOTE_STATEMENT_STOP: current original stop evidence is unavailable")
+                    return await self._receipt(remote_owner, identifier, reconcile=True,
+                        trusted_cleanup=trusted_cleanup, refresh_closed=False)
             else:
                 statements = self.store.sql("SELECT statement FROM af_usage_remote_grants WHERE id=:id AND owner_id=:owner AND task_id=:task",
                     id=identifier, owner=remote_owner, task=task["id"])
@@ -1269,6 +1279,8 @@ class TrustedHandoffClient:
                     raise HTTPException(409, "USAGE_REMOTE_STATEMENT_STALE: cached cumulative accounting cannot regress")
                 if statement.get("allStopped") is True and receipt.get("allStopped") is not True:
                     raise HTTPException(409, "USAGE_REMOTE_STATEMENT_STOP: accounting requires positive native/effect/tree stop")
+            if previous and previous.get("allStopped") is True and receipt.get("allStopped") is not True:
+                raise HTTPException(409, "REMOTE_OBSERVATION_STALE: original stop proof cannot regress")
             body = {**current["body"], "receipt": dict(receipt)}
             local_state = receipt.get("state", "UNKNOWN")
             if body.get("dispatchAttempted") and local_state in {"PREPARING", "PREPARED"}:

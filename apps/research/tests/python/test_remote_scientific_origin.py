@@ -165,7 +165,7 @@ class Fixture:
         self.child['cancel_requested'] = True
         self.cancelled.append((owner, child, expected_scope)); return {'cleanupRequested': True}
 
-    async def cleanup_receipt(self, owner, child, *, expected_scope):
+    async def cleanup_receipt(self, owner, child, *, expected_scope, reconcile=False):
         assert self.child['cancel_requested'] is True and expected_scope == self.envelope['scope']
         return await self.receipt(owner, child)
 
@@ -355,9 +355,9 @@ class RemoteScientificOriginTests(unittest.IsolatedAsyncioTestCase):
             f.handoff_row['body']['receipt'] = deepcopy(latest)
             f.origins[f.child['id']]['receipt'] = deepcopy(latest)
             return stale
-        f.handoff.receipt = overlapping
-        first = await f.service.origin_phase('alice', f.child['id'])
-        second = await f.service.origin_phase('alice', f.child['id'])
+        f.handoff.reconcile = overlapping
+        first = await f.service.reconcile_phase('alice', f.child['id'])
+        second = await f.service.reconcile_phase('alice', f.child['id'])
         self.assertEqual(first, second)
         self.assertEqual(first['status'], 'completed')
         self.assertTrue(first['allStopped'])

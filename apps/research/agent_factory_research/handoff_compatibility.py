@@ -69,9 +69,17 @@ class ResearchPreparedHandoffService(PreparedHandoffService):
         scope = envelope['scope']
         if row['state'] != 'CANCELLED_NO_DISPATCH' and not scientific_native_stopped(result):
             return False
-        if (raw == 'completed' and not task['cancel_requested']
-                and service._read(row['id'])['state'] != 'COMPLETED'):
-            return False
+        if raw == 'completed' and not task['cancel_requested']:
+            if service._read(row['id'])['state'] != 'COMPLETED':
+                return False
+            # Keep original observation authority until successful phase claims
+            # are verified. Physical stop alone can precede an artifact fence;
+            # closing the origin then would strand the missing result forever.
+            evidence = validate_scientific_evidence(result, expected_scope=scope)
+            claim = {'preparation': 'preparation', 'training': 'checkpoint',
+                     'evaluation': 'evaluation'}[scope['phase']]
+            if evidence[claim] is None:
+                return False
         if scope['phase'] != 'preparation' and row['state'] != 'CANCELLED_NO_DISPATCH':
             return scientific_stopped(result, expected_scope=scope)
         return True
@@ -190,7 +198,7 @@ class ResearchHandoffClient(TrustedHandoffClient):
             raise HTTPException(409, 'Original scientific cleanup target changed')
         return row, target
 
-    async def scientific_cleanup_receipt(self, owner, task_id, *, expected_scope):
+    async def scientific_cleanup_receipt(self, owner, task_id, *, expected_scope, reconcile=False):
         row, target = self._scientific_cleanup_target(owner, task_id, expected_scope)
         previous = row['body'].get('receipt')
         if previous:
@@ -198,7 +206,13 @@ class ResearchHandoffClient(TrustedHandoffClient):
         else:
             receipt = await self._request(owner, target, 'GET', '/api/factory/remote-handoffs/receipts/by-request',
                 params={'originRef': target.origin_ref, 'originOwnerId': owner, 'requestId': row['request_id']})
-        return self._save_receipt(row, target, receipt)
+        if reconcile:
+            # Validate the lookup against the original scope before allowing a
+            # write at the returned identifier, not merely after that write.
+            receipt = self._save_receipt(row, target, receipt, persist=False)
+            receipt = await self._request(owner, target, 'POST',
+                '/api/factory/remote-handoffs/' + quote(receipt['id'], safe='') + '/reconcile')
+        return self._save_receipt(self._row(owner, task_id), target, receipt, persist=reconcile)
 
     async def cancel_scientific_original(self, owner, task_id, *, expected_scope):
         row = self._row(owner, task_id)

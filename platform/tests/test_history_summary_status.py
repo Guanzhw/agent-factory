@@ -4,9 +4,18 @@ from unittest.mock import Mock
 
 from agent_factory.factory_api import status_of
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
+from agent_factory.task_status import finalized_status
 
 
 class HistorySummaryStatusTests(unittest.TestCase):
+    def test_finalization_is_display_only_and_preserves_unknown_and_failure(self):
+        self.assertEqual(finalized_status('completed', False), 'finalizing')
+        self.assertEqual(finalized_status('canceled', False), 'canceling')
+        for status in ('unknown', 'failed', 'waiting_children', 'running'):
+            self.assertEqual(finalized_status(status, False), status)
+        for status in ('completed', 'canceled', 'failed'):
+            self.assertEqual(finalized_status(status, True), status)
+
     def setUp(self):
         self.store = Mock()
         self.observer = FactoryLifecycleObserver(self.store, Mock(), Mock(), lambda: None)

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest import mock
 from uuid import uuid4
@@ -111,3 +112,42 @@ class TaskHistoryPostgresTests(unittest.TestCase):
             self.assertIsNotNone(current['body']['observedAt'])
         finally:
             self.store.sql('UPDATE af_tasks SET terminal=TRUE,body=CAST(:body AS JSONB) WHERE id=:id', id=task['id'], body=canonical(before))
+
+    def test_z_native_completion_waits_for_background_finalization_without_read_side_effects(self):
+        plan = self.client.post('/api/factory/plans', headers=self.headers(), json={
+            'topic': 'Actual checksum finalization fixture', 'mode': 'literature',
+            'application': 'checksum', 'requestId': str(uuid4())}).json()
+        response = self.client.post('/api/factory/instances', headers=self.headers(), json={
+            'planId': plan['id'], 'requestId': str(uuid4())})
+        self.assertEqual(response.status_code, 202, response.text)
+        identifier = response.json()['id']
+        task = self.store.task(identifier)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            native = self.store.native_db.get_job(task['run_id'])
+            if native['status'] == 'completed':
+                break
+            time.sleep(.05)
+        self.assertEqual(native['status'], 'completed', native)
+        self.assertFalse(self.store.task(identifier)['terminal'])
+        # A display-only observation may know native completion without owning
+        # the durable stop proof. Neither list nor detail may release its hold.
+        self.store.observe_summary(task, 'completed')
+        before = self.store.task(identifier)
+        detail = self.client.get('/api/factory/jobs/' + identifier, headers=self.headers()).json()
+        self.assertEqual(detail['job']['status'], 'finalizing')
+        self.assertEqual(next(item for item in self.get()['items'] if item['id'] == identifier)['status'], 'finalizing')
+        self.assertEqual(self.store.task(identifier), before)
+        observer = self.state['lifecycle_observer']
+        self.client.portal.call(observer.start)
+        try:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and not self.store.task(identifier)['terminal']:
+                time.sleep(.05)  # No detail or explicit reconcile drives this.
+            current = self.store.task(identifier)
+            self.assertTrue(current['terminal'], observer.last_result)
+            self.assertEqual(current['body']['lastStatus'], 'completed')
+            self.assertEqual(self.client.get('/api/factory/jobs/' + identifier, headers=self.headers()).json()['job']['status'], 'completed')
+            self.assertEqual(next(item for item in self.get()['items'] if item['id'] == identifier)['status'], 'completed')
+        finally:
+            self.client.portal.call(observer.stop)

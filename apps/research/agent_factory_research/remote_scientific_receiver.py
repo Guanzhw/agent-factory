@@ -634,6 +634,17 @@ class RemoteScientificReceiver:
         receipt['scientificClaimsRetained'] = any(item is not None for item in claims.values())
         return value
 
+    def _contended_claims(self, error, receipt, body, lease=None):
+        """A busy storage fence provides no new claims or stop evidence."""
+        if error.status_code != 409 or error.detail not in (
+                'RETENTION_BUSY: another original fence is active',
+                'RETENTION_BUSY: reconcile the original plan'):
+            raise error
+        fresh = self._read(receipt['id'])
+        require(fresh['bindingSha256'] == body['bindingSha256'] and fresh['binding'] == body['binding']
+                and fresh['receiver'] == body['receiver'] and fresh['nativeRunId'] == body['nativeRunId'])
+        return self._claims_only(receipt, fresh, lease)
+
     async def project_evidence(self, receipt, *, persist=True):
         """Validate original evidence; history reads never advance lifecycle custody."""
         if not persist:
@@ -662,7 +673,10 @@ class RemoteScientificReceiver:
             if body.get('receipt'):
                 original = project.assembler.preparation_receipt()
                 require(original == body['receipt'])
-                metadata, pin = project.preparation.identity(owner, original['execution']['taskId'], original['artifact']['id'])
+                try:
+                    metadata, pin = project.preparation.identity(owner, original['execution']['taskId'], original['artifact']['id'])
+                except HTTPException as error:
+                    return self._contended_claims(error, receipt, body)
                 require(metadata['id'] == original['artifact']['id'])
                 prep = {'schema': 1, **original['execution'], 'artifactId': metadata['id'], 'artifactSha256': pin['sha256']}
             return self._retain_evidence(receipt, project_scientific_evidence(receipt, scope=scope, preparation=prep), persist=persist)
@@ -687,8 +701,11 @@ class RemoteScientificReceiver:
                 launch = resources._provider(target).read_launch_proof(lease['id'], owner)
                 training = body if phase == 'training' else self._prior(body)['training']
                 original = training['receipt']
-                metadata, identity = project.checkpoints.identity(original['execution']['taskId'], original['artifact']['id'],
-                    min(project.manifest['artifactLimits']['checkpointBytes'], 2 * 1024**3))
+                try:
+                    metadata, identity = project.checkpoints.identity(original['execution']['taskId'], original['artifact']['id'],
+                        min(project.manifest['artifactLimits']['checkpointBytes'], 2 * 1024**3))
+                except HTTPException as error:
+                    return self._contended_claims(error, receipt, body, lease)
                 require(metadata['id'] == original['artifact']['id'])
                 checkpoint = {**original['execution'], 'variantSha256': scope['variantSha256'],
                               'checkpoint': {'artifactId': metadata['id'], **identity}}
@@ -696,7 +713,10 @@ class RemoteScientificReceiver:
                     contract = {'schema': 1, 'evidenceKind': 'offline_research_evaluation_contract',
                         'comparisonManifest': deepcopy(project.manifest), 'training': checkpoint,
                         'evaluatorExecution': body['receipt']['execution']}
-                    result = await project.assembler.evaluation_service(body['config']).verify(owner, contract)
+                    try:
+                        result = await project.assembler.evaluation_service(body['config']).verify(owner, contract)
+                    except HTTPException as error:
+                        return self._contended_claims(error, receipt, body, lease)
                     evaluation = {'contract': contract, 'result': result}
         if custody_only or not persist:
             return self._claims_only(receipt, self._read(receipt['id']), lease)

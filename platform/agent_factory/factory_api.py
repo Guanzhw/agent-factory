@@ -11,6 +11,7 @@ from .remote_handoff import FactoryPublicRoute
 from .store import effect_unresolved, canonical
 from .billing_mode import ledger_for_plan
 from .runtime_hooks import execution_classification
+from .task_status import finalized_status
 
 
 class Body(BaseModel):
@@ -202,6 +203,7 @@ class FactoryAPI:
                 status = "waiting_approval"
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
+        status = finalized_status(status, task["terminal"])
         model_binding = (plan.get("executionBindings") or {}).get("model", {})
         selected_model = next((event["data"] for event in reversed(events) if event["type"] == "model_binding_selected"), {})
         definition = {"id": application_ref["id"], "version": application_ref["version"], "name": plan["application"],
@@ -216,7 +218,7 @@ class FactoryAPI:
             actions.append("delegate")
         if status in {"queued", "running", "waiting_input", "waiting_approval", "unknown", "canceling", "waiting_children"}:
             actions.append("cancel")
-        if status == "unknown":
+        if status in {"unknown", "finalizing"}:
             actions.append("reconcile")
         job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": definition["version"],
             "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
