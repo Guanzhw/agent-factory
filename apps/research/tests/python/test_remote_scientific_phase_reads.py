@@ -1,10 +1,11 @@
 """Pure phase projection/control routing; no PostgreSQL or live provider proof."""
 from copy import deepcopy
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 from types import SimpleNamespace
 
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.autoresearch_remote_children import AutoResearchRemoteChildren
 
 from test_remote_scientific_origin import Fixture
@@ -77,10 +78,9 @@ class RemoteScientificPhaseReadTests(unittest.IsolatedAsyncioTestCase):
         result = {'scope': self.f.envelope['scope'], 'receipt': self.fresh,
                   'status': 'completed', 'allStopped': True}
         science = SimpleNamespace(reconcile_phase=AsyncMock(return_value=result))
-        with patch('agent_factory_research.autoresearch_remote_children.services_for',
-                   return_value=SimpleNamespace(remote_scientific=science)):
-            await controller._observe(body, 'preparation')
-            await controller._observe(body, 'preparation', cleanup=True)
+        controller.research = ResearchServices(self.f.store, installed=True, remote_scientific=science)
+        await controller._observe(body, 'preparation')
+        await controller._observe(body, 'preparation', cleanup=True)
         self.assertEqual(science.reconcile_phase.await_count, 2)
         self.assertEqual([c.kwargs for c in science.reconcile_phase.await_args_list],
                          [{'cleanup': False}, {'cleanup': True}])

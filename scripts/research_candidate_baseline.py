@@ -140,9 +140,9 @@ seeds identities, publishes material, opens a lifespan or dispatches a process.
                 *(replace(price, adapter_id=price.adapter_id + '-evaluation') for price in settings.usage_pricing))))
         with open_state(settings, full_verification=True) as state:
             checkpoints = ResearchCheckpointStore(state['store'], state['auth'], state['resources'],
-                                                   state['store'].storage)
+                                                   state['store'].storage, research=state['research'])
             service = ResearchEvaluationService(state['store'], state['auth'], state['resources'],
-                {digest(manifest['evaluator']): 'evaluation'}, checkpoint_reader=checkpoints.identity)
+                {digest(manifest['evaluator']): 'evaluation'}, checkpoint_reader=checkpoints.identity, research=state['research'])
             observed = asyncio.run(verify_retained_baseline(service=service, owner='alice',
                 contract=captured['contract'], retained_receipt=captured['receipt'],
                 expected_manifest_sha256=inputs['manifestSha256']))

@@ -59,7 +59,7 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
         self.application = publish_research_application(self.state, target_ref='evaluator',
             comparison_manifest=self.manifest, author='manager', adapter_suffix='-evaluator')
         original_service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
-            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
+            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity, research=self.state['research'])
         evaluation = self.run_stage(lambda owner, task, lease:
             self.portal.call(original_service.verify, owner, self.evaluation_contract))
         self.assertTrue(training['progress']['cleanupConfirmed'])
@@ -73,9 +73,9 @@ class CandidateBaselinePostgresTests(unittest.TestCase):
         with reopen.open_state(self.state['settings'], full_verification=True) as state:
             self.assertEqual(set(state['store'].execution_guards), set(self.store.execution_guards))
             checkpoints = ResearchCheckpointStore(state['store'], state['auth'], state['resources'],
-                                                   state['store'].storage)
+                                                   state['store'].storage, research=state['research'])
             service = ResearchEvaluationService(state['store'], state['auth'], state['resources'],
-                {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=checkpoints.identity)
+                {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=checkpoints.identity, research=state['research'])
             with patch.object(self.provider, 'read_completed_output', side_effect=AssertionError('NO_TRAINING_STDOUT')):
                 verified = self.portal.call(service.verify, 'alice', self.evaluation_contract)
             self.assertEqual(verified, evaluation['imported'])

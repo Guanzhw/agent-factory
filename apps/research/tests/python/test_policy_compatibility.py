@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_factory.plan_policy import PlanPolicyConfig
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.policy_compatibility import ResearchPlanPolicyService
 import test_plan_policy as policy_fixture
 
@@ -13,7 +14,7 @@ class ResearchPolicyCompatibilityTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.tearDown)
         self.service = ResearchPlanPolicyService(self.fixture.store, self.fixture.auth,
-            PlanPolicyConfig(), clock=lambda: self.fixture.at)
+            PlanPolicyConfig(), research=ResearchServices(self.fixture.store, installed=True), clock=lambda: self.fixture.at)
         self.plan = self.fixture.store.add(application='personal-orx-project-create-v1',
             normalizedGoal='Retain the original project disclosure')
 

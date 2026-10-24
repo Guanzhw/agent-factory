@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false
 """Synthetic receiver store seams; no PostgreSQL, GPU, network or provider execution."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
@@ -19,6 +19,7 @@ import test_remote_scientific_evidence as peer
 
 class Store:
     def __init__(self):
+        self.research = ResearchServices(self, installed=True)
         self.rows = {}; self.tasks = {}; self.plans = {}; self.handoffs = {}; self.leases = []; self.evidence = {}
         self.remote_bindings = SimpleNamespace()
         self.event = Mock()
@@ -28,7 +29,7 @@ class Store:
             _origin=Mock(return_value=SimpleNamespace(authorize=SimpleNamespace(consume_scientific_tool=Mock(return_value={'callProofSha256': 'a'*64})))))
         self.process_runtime = SimpleNamespace(_context=lambda task: SimpleNamespace(user_id=task['owner_id'],
             session_id=task['id'], run_id=task['run_id']))
-        services_for(self).research_runtime = SimpleNamespace(_original=Mock(return_value=None), submit=AsyncMock(), inspect_task=AsyncMock(),
+        self.research.research_runtime = SimpleNamespace(_original=Mock(return_value=None), submit=AsyncMock(), inspect_task=AsyncMock(),
             _paused=Mock(return_value={'toolCallId': call_id('training'), 'id': 'requirement', 'version': 1}),
             resources=SimpleNamespace(targets={}, _authorize=Mock(), _target_fingerprint=Mock(return_value='f'*64)))
     @contextmanager
@@ -71,7 +72,7 @@ class Store:
 
 class ReceiverTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(); self.candidate = {'trainPy': '# synthetic changed source'}
+        self.store = Store(); self.research = self.store.research; self.candidate = {'trainPy': '# synthetic changed source'}
         self.manifest = peer.contract()['comparisonManifest']
         self.assembler = Mock(store=self.store, owner='receiver-alice', manifest=self.manifest, committed_entry_reader=None)
         self.assembler._candidate.return_value = ({}, 'b'*64)
@@ -82,7 +83,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.reader = AsyncMock(return_value=self.baseline)
         self.project = RemoteScientificProject('receiver-alice', '4'*64, self.assembler, Mock(), Mock(), self.manifest, self.reader)
         self.service = RemoteScientificReceiver(self.store, SimpleNamespace(require_member=Mock()), {'project': self.project}, SimpleNamespace(submit=AsyncMock()),
-                                                poll_seconds=.01, max_polls=1)
+                                                research=self.research, poll_seconds=.01, max_polls=1)
         self.source = {'id': 'origin-plan'}
 
     def prepare(self, phase='preparation', rid=None):
@@ -115,7 +116,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
     def test_prepare_inert_exact_replay_and_conflict_denied(self):
         rid, envelope = self.prepare()
         self.service.prepare_binding(rid, self.source, envelope, 'receiver-alice')
-        self.assembler.register_phase.assert_not_called(); services_for(self.store).research_runtime.submit.assert_not_called()
+        self.assembler.register_phase.assert_not_called(); self.research.research_runtime.submit.assert_not_called()
         for changes in ({'schema': True}, {'candidate': {'trainPy': 'different'}}, {'projectId': 'missing'}):
             with self.assertRaises((ValueError, KeyError)):
                 self.service.prepare_binding(rid, self.source, envelope | changes, 'receiver-alice')
@@ -184,7 +185,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.store.lifecycle_observer._binding.return_value = {'status': 'completed', 'persistedRunStatus': 'completed'}
         self.store.tasks['task-preparation']['terminal'] = True
         self.assertEqual(await self.service.drive_phase('receiver-alice', 'task-preparation'), original)
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
 
     def test_lost_debit_ack_cannot_reconsume_or_allocate(self):
         ctx = self.bind()
@@ -192,7 +193,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         debit.side_effect = ConnectionError('synthetic lost ack')
         with self.assertRaises(ConnectionError): self.service.consume_tool(ctx, 'preparation', call_id('preparation'))
         with self.assertRaises(ValueError): self.service.consume_tool(ctx, 'preparation', call_id('preparation'))
-        self.assertEqual(debit.call_count, 1); services_for(self.store).research_runtime.submit.assert_not_called()
+        self.assertEqual(debit.call_count, 1); self.research.research_runtime.submit.assert_not_called()
 
     async def test_registration_unknown_preserves_snapshot_and_never_replays(self):
         self.completed_prep(); ctx = self.bind('training')
@@ -205,7 +206,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         body = self.service._read('receipt-training')
         self.assertEqual(body['state'], 'UNKNOWN'); self.assertEqual(body['runtimeSnapshot']['body'], {'schema': 1, 'synthetic': True})
         with self.assertRaises(ValueError): await self.service.drive_phase('receiver-alice', 'task-training')
-        self.assertEqual(self.assembler.register_phase.call_count, 1); services_for(self.store).research_runtime.submit.assert_not_called()
+        self.assertEqual(self.assembler.register_phase.call_count, 1); self.research.research_runtime.submit.assert_not_called()
         row = self.service.committed_entry(ctx, 'training', self.candidate, body['config'])
         self.assertEqual(row['parent_task_id'], 'task-training'); self.assertEqual(row['parent_run_id'], 'run-training')
         self.assertNotIn('cloud-parent', self.store.tasks)
@@ -215,14 +216,14 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.bind()
         result = await self.service.inspect_phase('receiver-alice', 'task-preparation')
         self.assertIsNone(result['lease']); self.assembler.register_phase.assert_not_called()
-        self.assembler.restore_phase.assert_not_called(); services_for(self.store).research_runtime.submit.assert_not_called()
+        self.assembler.restore_phase.assert_not_called(); self.research.research_runtime.submit.assert_not_called()
 
     async def test_fresh_training_snapshot_precedes_allocate_and_original_approval(self):
         self.completed_prep(); self.bind('training')
         def register(ctx, phase, candidate, prior, pin, *, persist_snapshot):
             self.assertEqual(prior['preparation']['receipt']['execution']['taskId'], 'original-preparation')
             persist_snapshot({'schema': 1, 'synthetic': True})
-            services_for(self.store).research_runtime.resources.targets[pin['targetRef']] = object()
+            self.research.research_runtime.resources.targets[pin['targetRef']] = object()
         self.assembler.register_phase.side_effect = register
         lease = peer.lease(released=True) | {'localTaskId': 'task-training', 'nativeRunId': 'run-training', 'planId': 'plan-training'}
         async def submit(owner, task_id):
@@ -231,7 +232,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body['debitState'], 'CONFIRMED')
             self.assertEqual(body['state'], 'DISPATCH_UNKNOWN')
             return lease
-        services_for(self.store).research_runtime.submit.side_effect = submit
+        self.research.research_runtime.submit.side_effect = submit
         self.project.checkpoints.import_completed.return_value = {'id': 'original-checkpoint'}
         result = await self.service.drive_phase('receiver-alice', 'task-training')
         self.assertEqual(result['artifact'], {'id': 'original-checkpoint'})
@@ -241,9 +242,9 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[:2], ('receiver-alice', 'task-training'))
         self.assertEqual(args[2].requirementId, 'requirement')
         self.assertEqual(args[2].version, 1)
-        self.assertEqual(services_for(self.store).research_runtime.submit.await_count, 1)
+        self.assertEqual(self.research.research_runtime.submit.await_count, 1)
         with self.assertRaises(ValueError): await self.service.drive_phase('receiver-alice', 'task-training')
-        self.assertEqual(services_for(self.store).research_runtime.submit.await_count, 1)
+        self.assertEqual(self.research.research_runtime.submit.await_count, 1)
 
     async def test_internal_custody_inspect_survives_member_disable_without_dispatch(self):
         self.completed_prep(); ctx = self.bind('training')
@@ -251,17 +252,17 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         body = self.store.rows['receipt-training']['body']
         body.update(state='UNKNOWN', targetFingerprint='f'*64,
                     runtimeSnapshot={'body': {'synthetic': True}, 'sha256': digest({'synthetic': True})})
-        services_for(self.store).research_runtime._original.return_value = {'owner_id': 'receiver-alice', 'native_run_id': 'run-training', 'lease_id': 'original-lease'}
-        services_for(self.store).research_runtime.observe_lease = AsyncMock(return_value={'id': 'original-lease', 'state': 'UNKNOWN'})
+        self.research.research_runtime._original.return_value = {'owner_id': 'receiver-alice', 'native_run_id': 'run-training', 'lease_id': 'original-lease'}
+        self.research.research_runtime.observe_lease = AsyncMock(return_value={'id': 'original-lease', 'state': 'UNKNOWN'})
         self.service.auth.require_member.side_effect = PermissionError('member disabled')
         result = await self.service.inspect_phase('receiver-alice', 'task-training')
         self.assertEqual(result['lease']['id'], 'original-lease')
         self.assembler.restore_phase.assert_called_once()
-        services_for(self.store).research_runtime.observe_lease.assert_awaited_once_with('original-lease')
+        self.research.research_runtime.observe_lease.assert_awaited_once_with('original-lease')
         self.service.auth.require_member.assert_not_called()
         with self.assertRaises(PermissionError):
             await self.service.drive_phase('receiver-alice', 'task-training')
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
 
     async def test_prepared_projection_is_empty_not_a_stop_claim(self):
         rid, envelope = self.prepare()
@@ -272,7 +273,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         for key in ('lease', 'launchProof', 'checkpoint', 'evaluation', 'preparation'):
             self.assertIsNone(value[key])
         self.assembler.register_phase.assert_not_called()
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
 
     async def test_preparation_projection_keeps_original_producer_not_receiver_child(self):
         ctx = self.bind(); self.service.require_phase(ctx, 'preparation')
@@ -366,10 +367,10 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         await self.service.close()
         self.assertEqual(self.service._read('receipt-training')['state'], 'CANCELLED_NO_DISPATCH')
         self.assertEqual(self.service._read('receipt-training')['driveRequest']['status'], 'CANCELLED_NO_DISPATCH')
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
         self.assertEqual(self.service.cancel_before_dispatch('receiver-alice', 'task-training'), proof)
         with self.assertRaises(ValueError): await self.service.drive_phase('receiver-alice', 'task-training')
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
 
     async def test_no_dispatch_requires_cas_not_just_absent_lease(self):
         self.completed_prep(); self.bind('training')
@@ -377,9 +378,9 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.service.cancel_before_dispatch('receiver-alice', 'task-training'))
         row['state'] = 'PREPARED'; self.store.leases = [{'id': 'uncatalogued-original'}]
         with self.assertRaises(ValueError): self.service.cancel_before_dispatch('receiver-alice', 'task-training')
-        self.store.leases = []; services_for(self.store).research_runtime._original.return_value = {'lease_id': 'original'}
+        self.store.leases = []; self.research.research_runtime._original.return_value = {'lease_id': 'original'}
         with self.assertRaises(ValueError): self.service.cancel_before_dispatch('receiver-alice', 'task-training')
-        services_for(self.store).research_runtime._original.return_value = None
+        self.research.research_runtime._original.return_value = None
         save = self.service._save
         def lose_cas(original, body):
             self.store.rows['receipt-training']['body']['state'] = 'DISPATCH_UNKNOWN'
@@ -414,7 +415,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
             'artifact': {'id': 'original-checkpoint'}}
         self.service.inspect_phase = AsyncMock(return_value={'lease': value})
         provider = Mock(); provider.read_launch_proof.return_value = peer.launch()
-        services_for(self.store).research_runtime.resources._provider = Mock(return_value=provider)
+        self.research.research_runtime.resources._provider = Mock(return_value=provider)
         self.project.checkpoints.identity.return_value = ({'id': 'original-checkpoint'}, {'sha256': 'a'*64, 'sizeBytes': 16})
         receipt = peer.shell() | {'id': 'receipt-training', 'remoteTaskId': 'task-training',
             'remotePlanId': 'plan-training', 'remoteRunId': 'run-training', 'manifestHash': digest(self.source)}
@@ -529,8 +530,8 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         lease = getattr(self.service.inspect_phase, 'return_value')['lease']
         lease.update(connectionRef=body['config']['targetRef'], targetFingerprint='f'*64)
         ticket = {'id': task['run_id'], 'status': 'completed', 'persistedRunStatus': 'completed'}
-        services_for(self.store).research_runtime._original.return_value = {'lease_id': lease['id'], 'owner_id': 'receiver-alice', 'native_run_id': task['run_id']}
-        services_for(self.store).research_runtime._custody = Mock(side_effect=lambda _: (lease, object(), deepcopy(task), ticket))
+        self.research.research_runtime._original.return_value = {'lease_id': lease['id'], 'owner_id': 'receiver-alice', 'native_run_id': task['run_id']}
+        self.research.research_runtime._custody = Mock(side_effect=lambda _: (lease, object(), deepcopy(task), ticket))
         origin = self.store.handoff_receiver._origin.return_value
         origin.configuration_revision, origin.fingerprint = '2', 'd'*64
         reply = {'schema': 1, 'tool': None, 'outcome': 'custody-readable', 'originRef': 'cloud', 'originOwner': 'alice',
@@ -554,7 +555,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
             phase_scope_sha256=digest(self.service._read('receipt-training')['binding']['scope']), lease_id=lease['id'])
         self.store.handoff_receiver.authorize.assert_not_called()
         self.project.checkpoints.identity.assert_not_called()
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
         self.assertFalse(self.store.evidence)
 
     def test_completed_custody_denies_changed_original_and_nonpositive_stop(self):
@@ -578,7 +579,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException): self.service.require_completed_custody('receiver-alice', ctx.plan, ctx.run_context)
         check.side_effect = lambda *args, **kwargs: self.store.tasks['task-training'].update(cancel_requested=True) or check.return_value
         with self.assertRaises(ValueError): self.service.require_completed_custody('receiver-alice', ctx.plan, ctx.run_context)
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()
 
     async def test_baseline_fresh_identity_check_and_no_effects(self):
         expected = {'schema': 1, 'projectId': 'project', 'projectPin': '4'*64, 'observation': self.baseline}
@@ -588,4 +589,4 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): await self.service.project_baseline('receiver-alice', 'project', '5'*64)
         self.reader.return_value = self.baseline | {'variantSha256': 'b'*64}
         with self.assertRaises(ValueError): await self.service.project_baseline('receiver-alice', 'project', '4'*64)
-        services_for(self.store).research_runtime.submit.assert_not_called()
+        self.research.research_runtime.submit.assert_not_called()

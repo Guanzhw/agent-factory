@@ -1,6 +1,6 @@
 # Tasks
 
-状态：阶段一已实现并定向验证，阶段二待继续。root 维护规范、接口集成与验收勾选；实施与独立审查使用不同上下文。重型测试和 PostgreSQL 由 root 串行运行。文件分组是后续派发约定，不表示人员已开始实现。
+状态：阶段一和阶段二已实现并定向验证，核心安装/Web已通过，精确CI验收待提交。root 维护规范、接口集成与验收勾选；实施与独立审查使用不同上下文。重型测试和 PostgreSQL 由 root 串行运行。文件分组是后续派发约定，不表示人员已开始实现。
 
 ## 1. 第一阶段：明确归属和双应用组合
 
@@ -12,15 +12,15 @@
 
 ## 2. 第二阶段：应用实例拥有服务图
 
-- [ ] 2.1 research-owner（依赖阶段一）：由科研实例持有 graph，通过构造参数和绑定工厂闭包传递，迁移下列 app 消费者；逐批补直接注入与原任务身份回归，验证安装前不得执行半初始化服务，更新装配说明。
-- [ ] 2.2 scripts-owner（依赖 2.1）：迁移下列七个脚本使用显式应用实例或返回的 graph；运行对应合成 assembly/preset 检查并记录入口调用方式，不运行真实模型。
-- [ ] 2.3 research-owner（依赖 2.2）：删除 `_services`、`services_for`、`release_services` 及剩余生产桥接；用源码搜索和实例隔离测试验证没有改成另一个隐式服务定位器。
-- [ ] 2.4 integration-owner（依赖 2.3）：新增同进程双服务器真实生命周期测试，关闭一个后另一实例继续控制原任务；同时验证构造失败清理与 #98 pending cleanup 依赖归属，记录实测结果。
+- [x] 2.1 research-owner（依赖阶段一）：由科研实例持有 graph，通过构造参数和绑定工厂闭包传递，迁移下列 app 消费者；逐批补直接注入与原任务身份回归，验证安装前不得执行半初始化服务，更新装配说明。
+- [x] 2.2 scripts-owner（依赖 2.1）：迁移下列七个脚本使用显式应用实例或返回的 graph；运行对应合成 assembly/preset 检查并记录入口调用方式，不运行真实模型。
+- [x] 2.3 research-owner（依赖 2.2）：删除 `_services`、`services_for`、`release_services` 及剩余生产桥接；用源码搜索和实例隔离测试验证没有改成另一个隐式服务定位器。
+- [x] 2.4 integration-owner（依赖 2.3）：新增同进程双服务器真实生命周期测试，关闭一个后另一实例继续控制原任务；同时验证构造失败清理与 #98 pending cleanup 依赖归属，记录实测结果。
 
 ## 3. 集成验收
 
-- [ ] 3.1 root：构建核心 wheel，在无科研源码的新环境连接 PostgreSQL 启动、健康检查并关闭；运行架构直接/间接违规夹具、`npm run check` 和相关依赖审计，记录实际结果。
-- [ ] 3.2 independent-reviewer：只读复核精确派发、双实例隔离、UNKNOWN 不重放、单整体期限与文件边界；root 复跑受影响 native、科研恢复、远程收尾、#97 读取与 #98 退出回归后勾选，未验证外部服务继续明确标注。
+- [x] 3.1 root：构建核心 wheel，在无科研源码的新环境连接 PostgreSQL 启动、健康检查并关闭；运行架构直接/间接违规夹具、`npm run check` 和相关依赖审计，记录实际结果。
+- [x] 3.2 independent-reviewer：只读复核精确派发、双实例隔离、UNKNOWN 不重放、单整体期限与文件边界；root 复跑受影响 native、科研恢复、远程收尾、#97 读取与 #98 退出回归后勾选，未验证外部服务继续明确标注。
 
 ## Ownership
 
@@ -42,3 +42,5 @@ app graph 文件均位于 `apps/research/agent_factory_research/`：`assembly.py
 ## Workflow follow-up
 
 - root 在实现及验证完成后更新 Draft PR；禁止自动合并、部署、付费或真实模型调用。
+
+实际graph迁移另覆盖 research_preparation_store.py、research_checkpoint_store.py、research_evaluation_service.py、research_runtime.py、autoresearch_runtime.py、synthetic_runtime.py；脚本额外覆盖 research_candidate_baseline.py、autoresearch_baseline_context.py、research_candidate_reopen.py。新增实例隔离测试 test_application_instance_postgres.py。root集成，workers按消费者文件分组，最终review只读。

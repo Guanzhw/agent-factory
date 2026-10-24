@@ -4,7 +4,7 @@ ORX owns research decisions. This service owns admission, original identities,
 durable effects, evidence and current authority; it never invents a candidate.
 """
 from __future__ import annotations
-from .services import services_for
+from .services import ResearchFactory, bind_preset
 
 import asyncio
 from copy import deepcopy
@@ -64,8 +64,10 @@ class ResearchPreset:
 
 
 class AutoResearchService:
-    def __init__(self, store, auth, bridge, presets, *, commands=None):
-        self.store, self.auth, self.bridge, self.presets = store, auth, bridge, presets
+    def __init__(self, store, auth, bridge, presets, *, research, commands=None):
+        self.research = research.require_store(store)
+        self.store, self.auth, self.bridge = store, auth, bridge
+        self.presets = {key: bind_preset(value, self.research) for key, value in presets.items()}
         self.commands = commands
         self.active: dict[str, Any] = {}
         self.cleanups: dict[str, asyncio.Task] = {}
@@ -80,11 +82,11 @@ class AutoResearchService:
         value = self.presets.get(identifier)
         if type(value) is not ResearchPreset or value.owner_id != owner:
             raise HTTPException(404, 'RESEARCH_PRESET_NOT_FOUND')
-        return value
+        return bind_preset(value, self.research)
 
     def unavailable(self, preset):
         blockers = preset.unavailable()
-        if preset.external_session and getattr(services_for(self.store), 'autoresearch_children', None) is None:
+        if preset.external_session and getattr(self.research, 'autoresearch_children', None) is None:
             blockers.append('原父任务下的科研资源与子阶段尚未配置。')
         return blockers
 
@@ -185,7 +187,7 @@ class AutoResearchService:
                 self.change(owner, task['id'], lambda b: b.update(status='unknown'))
                 raise
             if preset.external_session:
-                control = getattr(services_for(self.store), 'autoresearch_session_control', None)
+                control = getattr(self.research, 'autoresearch_session_control', None)
                 if control is None:
                     raise HTTPException(409, 'RESEARCH_SESSION_CONTROL_UNAVAILABLE')
                 control.start(owner, task['id'])
@@ -304,7 +306,7 @@ class AutoResearchService:
                 try:
                     runtime_stopped = await cast(Any, runtime).stop() is True
                 finally:
-                    children = getattr(services_for(self.store), 'autoresearch_children', None)
+                    children = getattr(self.research, 'autoresearch_children', None)
                     has_experiment = self.row(run.user_id, run.session_id)['body']['experimentCount'] > 0
                     children_stopped = (not preset.external_session or not has_experiment)
                     if preset.external_session and has_experiment and children is not None:
@@ -353,7 +355,7 @@ class AutoResearchService:
             raise failure
         return saved
 
-    def _tool_preflight(self, preset, body, name, payload):
+    def _tool_preflight(self, ctx, preset, body, name, payload):
         """Pure admission checks before a new effect; never rerun on old effects."""
         if len(body['steps']) >= 256:
             raise ValueError('RESEARCH_EVIDENCE_LIMIT')
@@ -369,13 +371,19 @@ class AutoResearchService:
             if 'changes' in payload:
                 if not callable(preset.candidate_builder) or type(payload['changes']) is not dict:
                     raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
-                train_py = preset.candidate_builder(deepcopy(payload['changes']))
+                changes = deepcopy(payload['changes'])
+                train_py = (preset.candidate_builder(ctx, changes)
+                            if isinstance(preset.candidate_builder, ResearchFactory)
+                            else preset.candidate_builder(changes))
             else:
                 train_py = payload['trainPy']
             if (preset.candidate_validator is None or type(train_py) is not str
                     or len(train_py.encode()) > 256 * 1024):
                 raise ValueError('RESEARCH_CANDIDATE_UNAVAILABLE')
-            return {'trainPy': train_py, 'validated': preset.candidate_validator(train_py)}
+            validated = (preset.candidate_validator(ctx, train_py)
+                         if isinstance(preset.candidate_validator, ResearchFactory)
+                         else preset.candidate_validator(train_py))
+            return {'trainPy': train_py, 'validated': validated}
         elif name in {'research_experiment', 'research_result'}:
             if (set(payload) != {'candidateId'} or type(payload['candidateId']) is not str
                     or not 1 <= len(payload['candidateId']) <= 200):
@@ -420,7 +428,7 @@ class AutoResearchService:
                     if effect['effect_key'] == run.run_id + ':' + effect_key]
         validated = None
         if not existing:
-            validated = self._tool_preflight(preset, self.row(run.user_id, run.session_id)['body'], name, payload)
+            validated = self._tool_preflight(ctx, preset, self.row(run.user_id, run.session_id)['body'], name, payload)
             self.current(ctx)
         # The original effect still owns conflict detection and replay. In particular,
         # a completed experiment may be replayed after its lifetime budget is spent.
@@ -434,7 +442,7 @@ class AutoResearchService:
                 raise ValueError('RESEARCH_TOOL_PAYLOAD')
             if preset.context_reader is None:
                 raise ValueError('RESEARCH_CONTEXT_UNAVAILABLE')
-            result = preset.context_reader()
+            result = preset.context_reader(ctx) if isinstance(preset.context_reader, ResearchFactory) else preset.context_reader()
             if inspect.isawaitable(result):
                 result = await result
             self.record(ctx, 'model-instructions', '研究 agent 读取了经审批的项目说明与上下文。', accepted='instructionsRead')

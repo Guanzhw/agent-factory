@@ -1833,3 +1833,9 @@ Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、
 ## 当前 #99 组合阶段
 
 root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#103 `7fe8d90` fast40110354593/full40110374707均成功；历史本地MCP失败仍保留，不能外推已全部根治。#97 新head exact CI正在运行，#99不将其视作已通过。当前开始阶段一精确应用拥有者与单整体关闭预算；graph迁移依赖该阶段。
+
+## 2026-10-24 #99 显式graph与后续owner
+
+#99 stage1 b56e6df已Draft；stage2本地迁移完成，root独占API/assembly/生命周期集成；backend profiles、shutdown_design服务、frontend脚本、remote hooks、shutdown_tests实例fixture均freeze；takeover_review独立复核无新增阻断。daily253、实例PG4、退出5、scientific1、baseline2通过；最终core/Web/精确CI待完成。#97 965350f full40112603820仍在PG阶段，不当通过；#103 c939d56 fast40114643214 Python/PG通过、Web待终态，旧7fe full通过不覆盖新head。
+
+#100独立remote-v2 worktree依赖#97，不含#99 graph。history_backend独占remote_handoff/remote_bindings及新portable tests；root独占remote_authority/API/schema并最终集成；shutdown_tests只新增neutral core真实远程fixture/tests，重型运行由root串行；没有混入本#99 diff。#102仅只读契约分析，尚未实现。

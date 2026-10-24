@@ -13,3 +13,20 @@
 证据目录/workspace/scratch/task-history-20261024，各label有command、UTC、exitCode与log。所有输入合成/loopback，无paid/live模型。阶段二graph全局桥接仍未迁移，不能声明#99完成。
 
 最终stage1 Pyright零错误/警告，Ruff通过、架构739modules零violations/coverage gaps。取消顺序修正后33项通过（24.319s，runner27.161s）；旧131中的其余129已有通过记录，未机械重复所有131。新step1.5额外model计数还需固定源码复验，原验收语义已有两真实case通过。独立审查未发现新的确定阻断；全然丢失声明的未知历史binding不能自动识别为缺owner，声明缺席owner则保持UNKNOWN/held，此限制保留。
+
+## 阶段二：显式实例graph（2026-10-24）
+
+ResearchApplicationAssembly拥有ResearchServices，构造参数和ResearchFactory传递。删除全局_services/services_for/release_services。重复使用原settings/registration会重新绑定当前实例；原生第三方普通factory保持原契约，任意外部自定义closure不保证可自动重绑定。关闭/错Store/未安装graph拒绝调用。
+
+root串行实际验收（均exit0，零skip）：
+- composition-graph-fast：253 daily Python通过，39.299s（driver46.953s）。stage1 exactfast40113849544的两项旧Mock store fixture错误已保留并修复为真实空registry，不放宽生产分支。
+- composition-graph-instances：4项真实PG/ASGI/Agno，42.063s（46.946s）。包含两安装顺序、新model构造断言、同进程双服务器复用registration/settings，关闭A后B原任务继续与原A factory拒绝。
+- composition-graph-remaining-pure：82通过，1.402s（3.709s）。worker默认sandbox异步runner清理挂起记录保留；root实际授权环境运行原断言通过，没有修改超时。
+- composition-graph-shutdown：5项真实进程与装配通过，101.263s（104.987s），原35s期限/非零退出/持久UNKNOWN/重启原身份保留。进程证据composition-graph-shutdown-evidence。
+- composition-graph-scientific：原远程三阶段科研1项通过，418.204s（424.891s）。原receipt/共享预算/native身份实际运行，不是新简化fixture。
+- 独立review发现5处脚本构造缺research参数，全部修正；AST复扫317生产文件/25相关调用无遗漏。随后composition-graph-baselines原2项PG通过32.146s（36.509s），验证实际candidate baseline与execute训练/评估/receipt脚本路径。
+- composition-graph-static-final：Pyright零错误/警告。第二轮独立只读review未发现新增阻断，确认无隐藏Store locator、graph在app/observer/native清理后release。
+
+上列PG输出仍含旧guardian Popen ResourceWarning；本分支未包含#103后续guardian修复，不能宣称清理警告消失或历史MCP偶发已根治。只验证确定性公开/合成与loopback，不代表真实供应商验收。其余最终检查另录，不把阶段结果当full CI成功。
+
+最终本地门禁：独立core wheel实际安装/PG启动/cleanShutdown通过17.111s；npm run check exit0，707项通过/0skip，lint/typecheck/build完成70.025s；production/full npm audit各0 vulnerabilities，exit0。最终Ruff通过，architecture739 modules/0 violations/0 gaps。OpenSpec strict通过。新增daily ownership selection的原17项通过0.035s，collection验证full3318、dailyPython270、PG59，无重复lane；已有daily253加这17，无需重复整套。一个误用host Python运行check_python.py --help的检查实际进入collection且缺Agno/SQLAlchemy，未运行用例；该脚本没有help模式。随后仅通过锁定venv的inventory接口验证选择，不把host失败记为产品测试结果。最终full CI尚未运行。

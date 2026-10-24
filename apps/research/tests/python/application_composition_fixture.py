@@ -219,7 +219,7 @@ class SecondApplication:
         applications.publish('alice', draft['id'], draft['version'], APPLICATION + '-publish')
 
 
-def research_settings(database_url, workspace, runtime, second):
+def research_settings(database_url, workspace, runtime, second=None):
     source = Path(__file__).resolve().parents[4] / 'scripts/bootstrap_autoresearch.py'
     spec = importlib.util.spec_from_file_location('composition_autoresearch_bootstrap', source)
     assert spec and spec.loader
@@ -244,9 +244,10 @@ def research_settings(database_url, workspace, runtime, second):
     settings.max_workers = settings.max_user_tasks = settings.max_total_tasks = 2
     settings.storage_low_water_bytes = 1
     settings.fee_management_enabled = settings.platform_paid_models_enabled = True
-    settings.runtime_adapters = (*settings.runtime_adapters, *second.registrations())
-    settings.usage_pricing = (*settings.usage_pricing, PricingRevision(MODEL, '1', PROVIDER, MODEL,
-        'composition-zero-local-v1', local_model_type=SecondModel))
+    if second is not None:
+        settings.runtime_adapters = (*settings.runtime_adapters, *second.registrations())
+        settings.usage_pricing = (*settings.usage_pricing, PricingRevision(MODEL, '1', PROVIDER, MODEL,
+            'composition-zero-local-v1', local_model_type=SecondModel))
     settings.usage_policy = UsagePolicy(revision='composition-zero-local-v1', task_amount_micros=1_000_000,
         user_amount_micros=4_000_000, task_token_limit=1_000_000, user_token_limit=4_000_000)
     return settings, preset, bootstrap

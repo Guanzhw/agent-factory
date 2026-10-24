@@ -100,7 +100,7 @@ def reconstruct_research_target(state, config, snapshot, *, candidate=True, owne
     observer = ResearchEnvironmentObserver(environment['environment-inventory'], environment['environment-kernel'],
         bounds_profile=snap['boundsProfile'])
     store, auth, resources = state['store'], state['auth'], state['resources']
-    checkpoints = ResearchCheckpointStore(store, auth, resources, store.storage)
+    checkpoints = ResearchCheckpointStore(store, auth, resources, store.storage, research=state['research'])
     pending = {'state': state, 'checkpoints': checkpoints}
     resolver = _Evaluation(pending, checkpoints, training, manifest, manifest['artifactLimits']['checkpointBytes']) if training else None
     reservation = None if training else _Reservation(pending, limits.disk_bytes)

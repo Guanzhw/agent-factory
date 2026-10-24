@@ -11,6 +11,7 @@ from agent_factory.runtime_hooks import (
 )
 from agent_factory.store import Store
 from agent_factory.application_runtime import ApplicationRuntimeRegistry
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.runtime_registration import ResearchApplicationHooks
 from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
 
@@ -23,7 +24,7 @@ def install_runtime(store, task=None):
     store.task = Mock(return_value=original)
     store.plan = Mock(return_value={'application': 'research'})
     store.application_runtime = ApplicationRuntimeRegistry(store)
-    store.application_runtime.register('research', ResearchApplicationHooks(), legacy_applications=('research',),
+    store.application_runtime.register('research', ResearchApplicationHooks(ResearchServices(store, installed=True)), legacy_applications=('research',),
                                        effects=('orx-experiment-launch-v1',))
 
 
@@ -139,7 +140,7 @@ class RuntimeHookTests(unittest.TestCase):
              patch("agent_factory_research.synthesis_runtime.inspect_synthesis_evidence", return_value=None):
             for demo in (True, False):
                 job = {"deploymentMode": "demo" if demo else "production", "verificationStatus": "unverified"}
-                result, evaluation = project_runtime_evidence(SimpleNamespace(demo=demo), store, task, {}, [], job)
+                result, evaluation = project_runtime_evidence(SimpleNamespace(demo=demo), store, task, {}, [], job, research=ResearchServices(store, installed=True))
                 self.assertEqual(result["orxExperiment"], experiment)
                 self.assertIsNone(evaluation)
                 self.assertEqual(job["evidenceKind"], "toy_local_evaluation")

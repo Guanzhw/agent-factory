@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 from agent_factory.config import Settings
 from agent_factory_research.assembly import abort_research_install, research_shutdown
-from agent_factory_research.services import services_for, release_services
+from agent_factory_research.services import ResearchServices
 
 
 class ApplicationAssemblyTests(unittest.TestCase):
@@ -14,22 +14,31 @@ class ApplicationAssemblyTests(unittest.TestCase):
         store = SimpleNamespace(application_environments=Mock(), personal_ssh=Mock(),
             dispose_root_locks=Mock(), engine=Mock())
         store.application_environments.close.side_effect = ValueError('synthetic close failure')
-        original = services_for(store)
-        abort_research_install({'store': store})
+        original = ResearchServices(store, installed=True)
+        other_store = SimpleNamespace()
+        other = ResearchServices(other_store, installed=True)
+        abort_research_install({'store': store, 'research': original})
         store.application_environments.close.assert_called_once_with()
         store.personal_ssh.close.assert_called_once_with()
         store.engine.dispose.assert_called_once_with()
-        self.assertIsNot(services_for(store), original)
-        release_services(store)
+        store.dispose_root_locks.assert_called_once_with()
+        self.assertTrue(original.closed)
+        self.assertFalse(original.installed)
+        self.assertIs(other.require_store(other_store, ready=True), other)
 
     def test_graph_is_retained_until_explicit_native_shutdown_completion(self):
         store = SimpleNamespace()
-        original = services_for(store)
+        original = ResearchServices(store, installed=True)
+        other_store = SimpleNamespace()
+        other = ResearchServices(other_store, installed=True)
         original.research_runtime = object()
-        self.assertIs(services_for(store), original)
-        research_shutdown({'store': store})
-        self.assertIsNot(services_for(store), original)
-        release_services(store)
+        self.assertIs(original.require_store(store, ready=True), original)
+        research_shutdown({'store': store, 'research': original})
+        self.assertTrue(original.closed)
+        self.assertFalse(original.installed)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            original.require_store(store, ready=True)
+        self.assertIs(other.require_store(other_store, ready=True), other)
 
     def test_production_and_normal_environment_defaults_are_member_self_service(self):
         settings = Settings(db_url='postgresql://unused', demo=False, jwt_key='synthetic-key-' * 4)

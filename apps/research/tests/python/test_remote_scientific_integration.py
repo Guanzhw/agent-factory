@@ -12,7 +12,6 @@ Origin and receiver use member execution; all three phases prepare directly
 without creating plan-review rows.
 No GPU, upstream training, live model, TLS or scientific acceptance is claimed.
 """
-from agent_factory_research.services import services_for
 import asyncio
 from contextlib import ExitStack
 from dataclasses import replace
@@ -166,7 +165,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                 target_ref='original-preparation', remote_targets={'original-preparation': target})
             _, baseline, producer = self._app(prep_settings, stack)
             preparation = ResearchPreparationStore(baseline['store'], baseline['auth'], baseline['resources'], baseline['store'].storage,
-                preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint)
+                preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint, research=baseline['research'])
             holder['preparation'] = preparation
             producer.application = process_runtime_profile.publish_process_application(baseline,
                 target_ref='original-preparation', author='alice')
@@ -184,7 +183,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             stages = {phase: receiver.stage(assembly, receiver_root, phase) for phase in ('training','evaluation')}
             limits = ResearchProcessLimits(cpu_seconds=5, address_space_mb=128, file_size_bytes=65536,
                 disk_bytes=135168, output_bytes=4096, wall_seconds=manifest['protocol']['totalWallSeconds'])
-            checkpoints = ResearchCheckpointStore(remote['store'], remote['auth'], remote['resources'], remote['store'].storage)
+            checkpoints = ResearchCheckpointStore(remote['store'], remote['auth'], remote['resources'], remote['store'].storage, research=remote['research'])
             def fresh_assembler():
                 return assembly.ScientificPhaseAssembler(remote, owner='alice', upstream_files={'train.py': b'original'},
                 captured_inputs={'comparisonManifest': manifest, 'manifestSha256': manifest_fingerprint(manifest), 'operatorInputs': inputs},
@@ -245,12 +244,12 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             origin_settings.autoresearch_presets = {project_id:preset}
             origin_settings.handoff_targets = {'receiver':handoff_target}
             variant = derive_local_identities({}, {}, microbatch=1)['identities']['candidate']['sha256']
-            def origin_factory(store, auth, resources, client, receiver, commands):
+            def origin_factory(store, auth, resources, client, receiver, commands, *, research):
                 return RemoteScientificOrigin(store, auth, handoff_client=client,
-                    project_validator=lambda *args: variant)
-            def children_factory(store, auth, service, resources):
+                    project_validator=lambda *args: variant, research=research)
+            def children_factory(store, auth, service, resources, *, research):
                 result = AutoResearchRemoteChildren(store, auth, service, target_ref='receiver',
-                    project_id=project_id, project_pin='b'*64, manifest=manifest)
+                    project_id=project_id, project_pin='b'*64, manifest=manifest, research=research)
                 holder['children'] = result; return result
             origin_settings.remote_scientific_factory = origin_factory
             origin_settings.autoresearch_children_factory = children_factory
@@ -273,10 +272,10 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
                         'receiverIdentity': 'alice', 'targetRevision': handoff_target.configuration_revision,
                         'targetFingerprint': handoff_target.fingerprint, 'receiverTaskId': receiver_task_id,
                         'nativeRunId': native_run_id, 'phaseScopeSha256': phase_scope_sha256, 'leaseId': lease_id})
-                    proof = services_for(origin['store']).remote_scientific.authorize_completed_custody(request.model_dump())
+                    proof = origin['research'].remote_scientific.authorize_completed_custody(request.model_dump())
                     return ScientificCustodyReply(**request.model_dump(), outcome='custody-readable', **proof).model_dump()
                 def consume_scientific_tool(self, owner, task_id, manifest_hash, tool, **kw):
-                    return services_for(origin['store']).remote_scientific.consume_remote_tool({'schema':1,
+                    return origin['research'].remote_scientific.consume_remote_tool({'schema':1,
                         'originRef':'origin','targetRef':'receiver','originOwner':owner,'originTaskId':task_id,
                         'manifestSha256':manifest_hash,'tool':tool,'receiverIdentity':'alice',
                         'targetRevision':handoff_target.configuration_revision,'targetFingerprint':handoff_target.fingerprint,
@@ -293,9 +292,9 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             remote_app.app.include_router(remote_receiver.router)
             project = RemoteScientificProject('alice','b'*64,assembler,preparation,checkpoints,manifest,
                 lambda: (_ for _ in ()).throw(AssertionError('baseline not called by fixture')))
-            service = RemoteScientificReceiver(remote['store'],remote['auth'],{project_id:project},services_for(remote['store']).autoresearch.commands)
+            service = RemoteScientificReceiver(remote['store'],remote['auth'],{project_id:project},remote['research'].autoresearch.commands, research=remote['research'])
             remote_receiver.scientific_service = service
-            self.assertIs(services_for(remote['store']).remote_scientific_receiver,service)
+            self.assertIs(remote['research'].remote_scientific_receiver,service)
             original_drive_phase = service.drive_phase
             async def observed_drive_phase(*args, **kwargs):
                 try:
@@ -329,7 +328,7 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             request_id = str(uuid4())
             parent = actor.request('POST','/autoresearch/runs',{'presetId':project_id,'requestId':request_id})
             def terminal_or_receiver_failure():
-                row = services_for(origin['store']).autoresearch.row('alice', parent['id'])['body']
+                row = origin['research'].autoresearch.row('alice', parent['id'])['body']
                 failed = remote['store'].sql("SELECT receipt_id,phase FROM af_remote_scientific_phases "
                     "WHERE body->'driveRequest'->>'status'='UNKNOWN' LIMIT 1")
                 if failed:
@@ -405,11 +404,11 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             allocations = remote['store'].sql('SELECT id,owner_id FROM af_process_allocations ORDER BY id')
             debits = origin['store'].sql('SELECT * FROM af_remote_scientific_calls ORDER BY child_id')
             async def original_custody():
-                return [await services_for(origin['store']).remote_scientific.origin_phase('alice', row['child_id']) for row in links]
+                return [await origin['research'].remote_scientific.origin_phase('alice', row['child_id']) for row in links]
             before = actor.client.portal.call(original_custody)
             actor.client.portal.call(service.close)
             reconstructed = RemoteScientificReceiver(remote['store'], remote['auth'],
-                {project_id: replace(project, assembler=fresh_assembler())}, services_for(remote['store']).autoresearch.commands)
+                {project_id: replace(project, assembler=fresh_assembler())}, remote['research'].autoresearch.commands, research=remote['research'])
             remote_receiver.scientific_service = reconstructed
             after = actor.client.portal.call(original_custody)
             for old, current in zip(before, after, strict=True):
@@ -421,8 +420,8 @@ class RemoteScientificIntegrationTests(unittest.TestCase):
             # Completed-original cleanup only; no claim of in-flight cancellation.
             async def completed_cleanup():
                 for row in links:
-                    await services_for(origin['store']).remote_scientific.cancel_original('alice', row['child_id'])
-                    observed = await services_for(origin['store']).remote_scientific.cleanup_phase('alice', row['child_id'])
+                    await origin['research'].remote_scientific.cancel_original('alice', row['child_id'])
+                    observed = await origin['research'].remote_scientific.cleanup_phase('alice', row['child_id'])
                     self.assertTrue(observed['allStopped'])
                 await reconstructed.close()
             actor.client.portal.call(completed_cleanup)

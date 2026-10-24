@@ -15,7 +15,6 @@ from agent_factory.personal_ssh import SSHEnrollmentConfig
 from agent_factory.ssh_credentials import PROVIDER_ID as SSH_CREDENTIAL_PROVIDER_ID
 from agent_factory_research.config import ResearchSettings
 from agent_factory_research.platform_openresearch import PlatformOpenResearchConfig
-from agent_factory_research.services import services_for, release_services
 from agent_factory_research.ssh_openresearch import SSHOpenResearchConfig, SSHOpenResearchPackage, SSHOrxProvider, SSHServer
 from agent_factory_server.main import create_app, factory_state
 
@@ -87,14 +86,19 @@ class ApplicationAssemblyPostgresTests(unittest.TestCase):
                 temporary_policy='member-self-service', storage_low_water_bytes=1, max_workers=1)
             adapters, prices = list(settings.runtime_adapters), settings.usage_pricing
             original = None
+            previous_graph = None
             for restart in range(2):
                 app = create_app(settings)
                 state = factory_state(app)
                 store = state['store']
+                graph = state['research']
+                if previous_graph is not None:
+                    self.assertTrue(previous_graph.closed)
+                    self.assertIsNot(graph, previous_graph)
                 original_stop = state['lifecycle_observer'].stop
 
                 async def observe_stop():
-                    self.assertIs(services_for(store), state['research'])
+                    self.assertIs(graph.require_store(store, ready=True), graph)
                     await original_stop()
 
                 state['lifecycle_observer'].stop = observe_stop
@@ -122,8 +126,9 @@ class ApplicationAssemblyPostgresTests(unittest.TestCase):
                             response = client.get('/api/factory/openresearch/projects/' + original['id'])
                             self.assertEqual(response.status_code, 200, response.text)
                             self.assertEqual(response.json(), original)
-                    self.assertIsNot(services_for(store), state['research'])
-                    release_services(store)
+                    self.assertTrue(graph.closed)
+                    self.assertFalse(graph.installed)
+                    previous_graph = graph
                 finally:
                     store.engine.dispose()
                     store.native_db.db_engine.dispose()

@@ -1,4 +1,5 @@
 """Legacy research response projection over the unchanged Factory task API."""
+from functools import partial
 from agent_factory.factory_api import FactoryAPI, native_requirements, requirement_version
 from .control_compatibility import ResearchControlCommands
 from .research_runtime_hooks import ResearchRuntimeHooks
@@ -20,7 +21,8 @@ class ResearchTaskProjection:
         return inference_wait, waiting_inference
 
     @staticmethod
-    async def project_detail(api, task, plan, snapshot, events, job, control_wait):
+    async def project_detail(api, task, plan, snapshot, events, job, control_wait, *, research):
+        research.require_store(api.store, ready=True)
         from .inference_wait import CONTROL_NAME
         job["definition"]["runtimePolicy"].update(ResearchRuntimeHooks.policy_projection(plan))
         inference_wait = control_wait
@@ -37,19 +39,23 @@ class ResearchTaskProjection:
                 if status == "waiting_approval":
                     actions.append("approve")
             else:
-                await ResearchRuntimeHooks.requirement(api.store, task, requirement, version, status, job, actions)
+                await ResearchRuntimeHooks.requirement(api.store, task, requirement, version, status, job, actions, research=research)
         await ResearchRuntimeHooks.recovery(api.commands, task, snapshot, native_requirements(snapshot), job, actions)
         actions[:] = dict.fromkeys(actions)
-        evidence, evaluation = ResearchRuntimeHooks.project(api.settings, api.store, task, plan, events, job)
+        evidence, evaluation = ResearchRuntimeHooks.project(api.settings, api.store, task, plan, events, job, research=research)
         return {**evidence, "inferenceWait": inference_wait}, evaluation
 
 
 class ResearchFactoryAPI(FactoryAPI):
     """Legacy standalone entry; production uses registered application hooks."""
-    command_type = ResearchControlCommands
+    def __init__(self, settings, store, auth, bridge, *, research):
+        research.require_store(store)
+        self.research = research
+        self.command_type = partial(ResearchControlCommands, research=research)
+        super().__init__(settings, store, auth, bridge)
 
     def _waiting_control(self, task, snapshot):
         return ResearchTaskProjection.waiting_control(self, task, snapshot)
 
     async def _project_detail(self, task, plan, snapshot, events, job, control_wait):
-        return await ResearchTaskProjection.project_detail(self, task, plan, snapshot, events, job, control_wait)
+        return await ResearchTaskProjection.project_detail(self, task, plan, snapshot, events, job, control_wait, research=self.research)

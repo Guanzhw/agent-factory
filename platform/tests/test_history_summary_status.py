@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import Mock
 
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
 from agent_factory.factory_api import status_of
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory.task_status import finalized_status
@@ -18,6 +19,7 @@ class HistorySummaryStatusTests(unittest.TestCase):
 
     def setUp(self):
         self.store = Mock()
+        self.store.application_runtime = ApplicationRuntimeRegistry(self.store)
         self.observer = FactoryLifecycleObserver(self.store, Mock(), Mock(), lambda: None)
         self.task = {'id': 'root', 'owner_id': 'alice', 'admission': 'accepted',
                      'run_id': 'run', 'cancel_requested': False}

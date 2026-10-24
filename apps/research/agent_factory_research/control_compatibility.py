@@ -1,7 +1,6 @@
 """Research-only compatibility for existing recorded native decisions."""
 import sys
 import asyncio
-from .services import services_for
 from fastapi import HTTPException
 from agent_factory.auth import EXECUTOR_ID
 from agent_factory.control_commands import ControlCommands
@@ -92,16 +91,17 @@ class ResearchControlHooks:
         return {key: result[key] for key in keys}
 
     @staticmethod
-    async def external_result(commands, task, requirement, requirements, decision):
+    async def external_result(commands, task, requirement, requirements, decision, *, research):
+        research.require_store(commands.store, ready=True)
         tool = requirement.get("tool_execution") or {}
         from .autoresearch_session_control import TOOL as SESSION_TOOL
         if tool.get("tool_name") == SESSION_TOOL:
-            receipt = await services_for(commands.store).autoresearch_session_control.completion(task, requirement)
+            receipt = await research.autoresearch_session_control.completion(task, requirement)
             tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
             return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
         from .research_runtime import TOOL as RESEARCH_TOOL
         if tool.get("tool_name") == RESEARCH_TOOL:
-            receipt = await services_for(commands.store).research_runtime.completion(task, requirement)
+            receipt = await research.research_runtime.completion(task, requirement)
             tool["result"] = canonical({**receipt, "accepted": decision["approved"]})
             return {"requirements": requirements, "toolsSha256": digest([r.get("tool_execution", r) for r in requirements])}
         from .inference_wait import CONTROL_NAME, validate_requirement
@@ -128,6 +128,11 @@ class ResearchControlHooks:
 
 class ResearchControlCommands(ControlCommands):
     """Legacy standalone entry; production uses registered application hooks."""
+    def __init__(self, api, *, research):
+        research.require_store(api.store)
+        self.research = research
+        super().__init__(api)
+
     def _approval_payload(self, task, snapshot, original):
         return ResearchControlHooks.approval_payload(task, snapshot, original)
 
@@ -135,7 +140,7 @@ class ResearchControlCommands(ControlCommands):
         return ResearchControlHooks.completed_launch(self, task)
 
     async def _external_result(self, task, requirement, requirements, decision):
-        result = await ResearchControlHooks.external_result(self, task, requirement, requirements, decision)
+        result = await ResearchControlHooks.external_result(self, task, requirement, requirements, decision, research=self.research)
         if result is not None:
             return result
         return await super()._external_result(task, requirement, requirements, decision)

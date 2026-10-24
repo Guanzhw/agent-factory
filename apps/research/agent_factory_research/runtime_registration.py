@@ -4,6 +4,7 @@ These hooks carry behavior, not service lookup. Native core services select the
 original owner before calling them. Member-published application ids are not an
 installation/authorization gate, and shared core adapters are never claimed.
 """
+from .services import ResearchFactory
 from .control_compatibility import ResearchControlHooks
 from .factory_compatibility import ResearchTaskProjection
 from .lifecycle_compatibility import ResearchObservation
@@ -47,19 +48,28 @@ def research_binding_keys(bindings):
     """Read the installed trusted records, never classify a request's id string."""
     return tuple(sorted(key for key, entry in bindings._adapters.items()
                         if key in _RESEARCH_SYNTHETIC_TOOLS
-                        or getattr(entry.factory, '__module__', None) in _RESEARCH_FACTORIES))
+                        or getattr(entry.factory.builder if isinstance(entry.factory, ResearchFactory) else entry.factory, '__module__', None) in _RESEARCH_FACTORIES))
 
 
 class ResearchApplicationHooks:
+    def __init__(self, research):
+        self.research = research
+
+    async def project_detail(self, api, task, plan, snapshot, events, job, control_wait):
+        return await ResearchTaskProjection.project_detail(
+            api, task, plan, snapshot, events, job, control_wait, research=self.research)
+
+    async def external_result(self, commands, task, requirement, requirements, decision):
+        return await ResearchControlHooks.external_result(
+            commands, task, requirement, requirements, decision, research=self.research)
+
     waiting_control = staticmethod(ResearchTaskProjection.waiting_control)
-    project_detail = staticmethod(ResearchTaskProjection.project_detail)
     summary_status = staticmethod(ResearchObservation.summary_status)
     observe_waits = staticmethod(ResearchObservation.observe_waits)
     effect_held = staticmethod(ResearchRuntimeHooks.effect_held)
     ended_reason = staticmethod(ResearchRuntimeHooks.ended_reason)
     cancel = staticmethod(ResearchRuntimeHooks.cancel)
     completed_launch = staticmethod(ResearchControlHooks.completed_launch)
-    external_result = staticmethod(ResearchControlHooks.external_result)
     claim_external_result = staticmethod(ResearchControlHooks.claim_external_result)
 
     @staticmethod
@@ -71,9 +81,10 @@ class ResearchApplicationHooks:
         ResearchObservation.mark_cancel(store, task_id)
 
 
-def register_research_runtime(store, *, hooks=None):
+def register_research_runtime(store, *, research, hooks=None):
     """Install once; duplicate owners and selector claims fail at registration."""
-    return store.application_runtime.register('research', hooks if hooks is not None else ResearchApplicationHooks(),
+    research.require_store(store)
+    return store.application_runtime.register('research', hooks if hooks is not None else ResearchApplicationHooks(research),
         bindings=research_binding_keys(store.execution_bindings), legacy_applications=_LEGACY_APPLICATIONS,
         effects=('orx-experiment-launch-v1', 'autoresearch-session-v1',
                  'research-process-run-v1', 'comparison-report-v1'))

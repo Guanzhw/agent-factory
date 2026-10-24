@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false
 """Controlled custody/state tests only; no native queue/process/scientific proof."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -22,6 +22,7 @@ def pin():
 
 class MemoryStore:
     def __init__(self):
+        self.research = ResearchServices(self, installed=True)
         self.row = None
         self.task_value = {'id': 'parent', 'owner_id': 'alice', 'run_id': 'native-parent',
             'plan_id': 'parent-plan', 'terminal': False, 'cancel_requested': False}
@@ -29,7 +30,7 @@ class MemoryStore:
         self.lifecycle_observer = SimpleNamespace(_binding=Mock(return_value={'status': 'paused', 'persistedRunStatus': 'paused'}))
         self.delegation = SimpleNamespace(create=AsyncMock(side_effect=ConnectionError('controlled lost acknowledgment')))
         self.process_runtime = SimpleNamespace(resources=SimpleNamespace(targets={'operator-target': 'target'}, _authorize=Mock(return_value='target'), _target_fingerprint=Mock(return_value='3' * 64)))
-        services_for(self).research_runtime = self.process_runtime
+        self.research.research_runtime = self.process_runtime
     def task(self, identifier, owner):
         if identifier != self.task_value['id'] or owner != self.task_value['owner_id']:
             raise PermissionError('controlled owner denial')
@@ -59,9 +60,10 @@ class MemoryStore:
 class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = MemoryStore()
+        self.research = self.store.research
         self.candidate = {'hypothesis': 'synthetic hypothesis', 'trainPy': '# bounded synthetic source\n', 'validated': {'manifest': '4' * 64}}
         self.preset = SimpleNamespace(fingerprint='5' * 64, limits={'maxExperiments': 1}, manifest=example_manifest())
-        self.service = SimpleNamespace(current=Mock(return_value=self.preset),
+        self.service = SimpleNamespace(research=self.research, current=Mock(return_value=self.preset),
             row=Mock(return_value={'body': {'candidates': {'candidate': self.candidate}}}))
         self.ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='parent', run_id='native-parent'))
         self.config = Mock(return_value=pin())
@@ -79,7 +81,7 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
             _paused=Mock(return_value={'id': 'requirement', 'version': 1}),
             submit=AsyncMock(return_value={**finished, 'state': 'UNKNOWN', 'executionStatus': 'DISPATCHING', 'capacityHeld': True}),
             inspect_task=AsyncMock(return_value=finished))
-        services_for(self.store).research_runtime = runtime
+        self.research.research_runtime = runtime
         self.store.plan = Mock(return_value={'id': 'child-plan'})
         self.children._bound = Mock()
         self.children._child = Mock(return_value=child)
@@ -300,7 +302,7 @@ class ScientificCustodyTests(unittest.IsolatedAsyncioTestCase):
         resources = self.store.process_runtime.resources
         resources.inspect = Mock(side_effect=lambda owner, lease: deepcopy(leases[lease]))
         self.store.process_runtime._original = Mock(side_effect=lambda child: None if child == 'preparation' else {'lease_id': 'lease-' + child})
-        services_for(self.store).research_runtime = self.store.process_runtime
+        self.research.research_runtime = self.store.process_runtime
         self.children.checkpoints.identity.return_value = ({'id': 'artifact-training'}, {'sha256': '7' * 64, 'sizeBytes': 100})
         from agent_factory_research.research_evaluation_service import ResearchEvaluationService
         verifier = object.__new__(ResearchEvaluationService)

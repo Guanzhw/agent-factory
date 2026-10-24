@@ -11,7 +11,6 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from agent_factory_research.services import services_for
 from agent_factory_server.main import create_app, factory_state, research_application
 from application_composition_fixture import (APPLICATION, EFFECT, SecondApplication,
     ResearchRuntime, research_settings)
@@ -51,7 +50,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                 self.assertEqual(runtime.counters(), (0, 0, 0))
                 preset = bootstrap.publish_application(state, preset, author='alice')
                 state['settings'].autoresearch_presets[preset.id] = preset
-                services_for(store).autoresearch.presets[preset.id] = preset
+                state['research'].autoresearch.presets[preset.id] = preset
                 second.publish(state)
                 self.assertEqual(second.model_builds, 0)
                 self.assertEqual(second.calls, [])
@@ -147,7 +146,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                         self.assertEqual(research_cancels, [])
                         self.assertEqual(runtime.counters(), (1, 0, 0))
                         runtime.finish.set()
-                        self.wait_for(lambda: services_for(store).autoresearch.row('alice', research_id)['body']['status'] == 'completed')
+                        self.wait_for(lambda: state['research'].autoresearch.row('alice', research_id)['body']['status'] == 'completed')
                         self.assertEqual(runtime.counters(), (1, 1, 0))
                         self.assertEqual(len(second.calls), 1)
                     finally:

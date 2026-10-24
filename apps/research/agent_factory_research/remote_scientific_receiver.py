@@ -5,7 +5,6 @@ local provider and allocate, after the original native external-execution pause.
 Unknown acknowledgements are retained and never grant another dispatch.
 """
 from __future__ import annotations
-from .services import services_for
 
 import asyncio
 from contextlib import nullcontext
@@ -42,10 +41,11 @@ class RemoteScientificProject:
 
 
 class RemoteScientificReceiver:
-    def __init__(self, store, auth, projects, commands, *, poll_seconds=.1, max_polls=36000, max_drives=1):
+    def __init__(self, store, auth, projects, commands, *, research, poll_seconds=.1, max_polls=36000, max_drives=1):
         require(type(projects) is dict and bool(projects) and .01 <= poll_seconds <= 1
                 and type(max_polls) is int and 1 <= max_polls <= 36000
                 and type(max_drives) is int and 1 <= max_drives <= 4)
+        self.research = research.require_store(store)
         self.store, self.auth, self.projects, self.commands = store, auth, dict(projects), commands
         self.poll_seconds, self.max_polls = poll_seconds, max_polls
         self.max_drives, self._drives, self._closing = max_drives, {}, False
@@ -64,7 +64,7 @@ class RemoteScientificReceiver:
         store.sql('''CREATE TABLE IF NOT EXISTS af_remote_scientific_evidence (
             receipt_id TEXT PRIMARY KEY REFERENCES af_remote_scientific_phases(receipt_id),
             owner_id TEXT NOT NULL, scope_hash TEXT NOT NULL, fingerprint TEXT NOT NULL, body JSONB NOT NULL)''')
-        services_for(store).remote_scientific_receiver = self
+        self.research.remote_scientific_receiver = self
 
     def _read(self, receipt_id):
         rows = self.store.sql('SELECT * FROM af_remote_scientific_phases WHERE receipt_id=:id', id=receipt_id)
@@ -213,7 +213,7 @@ class RemoteScientificReceiver:
             updated = deepcopy(body); updated.update(config=pin, configSha256=digest(pin))
             self._save(body, updated)
         if body.get('targetFingerprint'):
-            resources = services_for(self.store).research_runtime.resources
+            resources = self.research.research_runtime.resources
             target = resources.targets.get(pin['targetRef'])
             require(target is not None and resources._target_fingerprint(target) == body['targetFingerprint'])
             project.assembler.verify_authority(phase, body['candidate'], prior, pin, target)
@@ -261,7 +261,7 @@ class RemoteScientificReceiver:
                 and not task['cancel_requested'] and task['run_id'] == context.run_id
                 and type(body.get('receipt')) is dict and type(body['receipt'].get('artifact')) is dict
                 and type(body['receipt']['artifact'].get('id')) is str and bool(body['receipt']['artifact']['id']))
-        runtime = services_for(self.store).research_runtime
+        runtime = self.research.research_runtime
         original = runtime._original(task['id'])
         require(original is not None and original['owner_id'] == owner and original['native_run_id'] == task['run_id'])
         lease, target, actual, ticket = runtime._custody(original['lease_id'])
@@ -336,7 +336,7 @@ class RemoteScientificReceiver:
             return deepcopy(body['receipt'])
         pin = self.require_phase(ctx, phase); body, task, project = self._bound(ctx)
         require(body['state'] == 'PREPARED')
-        runtime = services_for(self.store).research_runtime
+        runtime = self.research.research_runtime
         requirement = runtime._paused(task, pin['comparisonManifest'], pin['variantSha256'])
         self.consume_tool(ctx, phase, requirement['toolCallId'])
         body, task, project = self._bound(ctx)
@@ -386,11 +386,11 @@ class RemoteScientificReceiver:
     async def inspect_phase(self, owner, task_id, *, persist=True):
         ctx = self._context(owner, task_id)
         body, task, project = self._bound(ctx, custody=True, persist=persist); phase = body['binding']['scope']['phase']
-        original = services_for(self.store).research_runtime._original(task_id)
+        original = self.research.research_runtime._original(task_id)
         if original is None:
             return {'state': body['state'], 'lease': None, 'native': self.store.lifecycle_observer._binding(task)}
         require(phase != 'preparation' and body.get('runtimeSnapshot'))
-        pin = body['config']; resources = services_for(self.store).research_runtime.resources
+        pin = body['config']; resources = self.research.research_runtime.resources
         if pin['targetRef'] not in resources.targets:
             # Restoring a driver registers durable resource metadata. Only the
             # lifecycle reconciliation path may reconstruct that custody.
@@ -398,7 +398,7 @@ class RemoteScientificReceiver:
             target = project.assembler.restore_phase(ctx, phase, body['candidate'], self._prior(body), pin, body['runtimeSnapshot']['body'])
             require(resources._target_fingerprint(target) == body['targetFingerprint'])
         require(original['owner_id'] == owner and original['native_run_id'] == task['run_id'])
-        runtime = services_for(self.store).research_runtime
+        runtime = self.research.research_runtime
         # A history read validates the latest durable original custody without
         # asking the provider to inspect, cancel, reclaim, or journal an effect.
         lease = (await runtime.observe_lease(original['lease_id']) if persist
@@ -436,7 +436,7 @@ class RemoteScientificReceiver:
         return self._no_dispatch_body(updated, task)
 
     def _no_process(self, task):
-        require(services_for(self.store).research_runtime._original(task['id']) is None)
+        require(self.research.research_runtime._original(task['id']) is None)
         require(not self.store.sql('SELECT task_id FROM af_process_runs WHERE task_id=:task', task=task['id']))
         rows = self.store.sql("SELECT id FROM af_leases WHERE owner_id=:owner AND body->>'localTaskId'=:task",
                               owner=task['owner_id'], task=task['id'])
@@ -702,7 +702,7 @@ class RemoteScientificReceiver:
                 return self._claims_only(receipt, self._read(receipt['id']), lease)
             if body.get('receipt') and lease['state'] == 'RECLAIMED' and lease.get('executionStatus') == 'COMPLETED':
                 positive_lease(lease, task, gpu=True)
-                resources = services_for(self.store).research_runtime.resources
+                resources = self.research.research_runtime.resources
                 target = resources._authorize(owner, body['config']['targetRef'])
                 launch = resources._provider(target).read_launch_proof(lease['id'], owner)
                 training = body if phase == 'training' else self._prior(body)['training']
