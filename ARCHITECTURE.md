@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Factory serves a small departmental team on Agno AgentOS 3.1.0 and PostgreSQL. Its reusable core manages scoped execution; applications deliver research and other user workflows. Prefer removing unnecessary steps and duplicated responsibilities before introducing new abstractions.
+Agent Factory aims to provide reusable identity, tool and workflow execution foundations for a trusted departmental team on Agno AgentOS 3.1.0 and PostgreSQL. Members should be able to use their preferred Agent/client to compose CLI tools, MCP tools and skill materials with explicitly selected personal or shared resource connections. The core owns scoped execution, credential custody and binding continuity; applications package research and other workflows on top. Current identity-binding evidence and remaining acceptance are recorded in the [foundation plan](docs/plans/reusable-tool-identity-bindings.md). Prefer removing unnecessary steps and duplicated responsibilities before introducing new abstractions.
 
 | Responsibility | Owns | Dependency direction |
 | --- | --- | --- |
