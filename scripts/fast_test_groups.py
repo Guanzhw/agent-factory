@@ -27,6 +27,11 @@ FAST_PYTHON_TESTS = {
         'test_application_runtime.ApplicationRuntimeTests',
         'test_application_assembly.ApplicationAssemblyTests',
     ),
+    'remote_v2_contract': (
+        'test_remote_v2_manifest',
+        'test_remote_v2_bindings',
+        'test_remote_v2_authority',
+    ),
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',
@@ -95,7 +100,7 @@ FAST_PYTHON_TESTS = {
 
 FAST_POSTGRES_TESTS = {
     'fresh_bounded_material_authority': (
-        'test_material_governance_bulk_postgres',
+        'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests',
     ),
     'shared_local_budget_commitments': (
         'test_local_budget_scopes_postgres',

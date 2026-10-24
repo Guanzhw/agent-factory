@@ -24,6 +24,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
+from .application_schema import ApplicationDefinitionV2, budget_limits
 from .control_commands import ControlCommand
 from .store import effect_unresolved, canonical, digest, now, runtime_custody_held
 from .native_bridge import INTERNAL_NATIVE
@@ -31,6 +32,7 @@ from .plan_policy import ToolContract, tools_for_contract
 
 KNOWN_TOOLS = {"ask_scope": "question:ask", "literature_search": "research:read",
                "run_experiment": "experiment:synthetic", "checksum": "checksum:read"}
+V2_BUDGET_KEYS = {"toolCalls", "maxDepth", "maxChildren", "operationSeconds", "outputBytes"}
 BUDGET_KEYS = {"toolCalls", "maxDepth", "maxChildren", "experimentSeconds", "outputBytes"}
 PLAN_KEYS = {"id", "ownerId", "normalizedGoal", "mode", "application", "instructions", "tools", "config",
              "materialRefs", "materials", "capabilities", "missing", "status", "createdAt", "policy", "budget",
@@ -109,6 +111,7 @@ class HandoffAuthority:
     target_revision: str | None = None
     target_fingerprint: str | None = None
     usage_grant_sha256: str | None = None
+    contract_version: int = 1
 
 
 @dataclass(frozen=True)
@@ -123,11 +126,20 @@ class TrustedOrigin:
         "toolCalls": 8, "maxDepth": 2, "maxChildren": 4, "experimentSeconds": 8, "outputBytes": 65536})
     configuration_revision: str = "1"
     tool_contract: ToolContract = "legacy-v1"
+    supported_application_contracts: tuple[int, ...] = (1,)
+    v2_budget: Mapping[str, int] | None = None
 
     def __post_init__(self):
         if not self.reference or not self.identity_map or not callable(self.authorize):
             raise ValueError("A trusted origin requires explicit identities and a current-authority callback")
+        _contracts(self.supported_application_contracts)
         _check_budget(self.budget)
+        if 2 in self.supported_application_contracts:
+            if self.v2_budget is None:
+                raise ValueError("V2 requires explicit receiver operation budget ceilings")
+            _check_budget(self.v2_budget, contract_version=2)
+        elif self.v2_budget is not None:
+            raise ValueError("V2 budget requires explicit v2 support")
         registered = tools_for_contract(self.tool_contract)
         if self.tool_contract != "legacy-v1" and self.configuration_revision == "1":
             raise ValueError("Extended remote tool contracts require a distinct operator revision")
@@ -141,6 +153,9 @@ class TrustedOrigin:
                 "budget": dict(self.budget), "revision": self.configuration_revision}
         if self.tool_contract != "legacy-v1":
             body["toolContract"] = self.tool_contract
+        if self.supported_application_contracts != (1,):
+            body["supportedApplicationContracts"] = list(self.supported_application_contracts)
+            body["v2Budget"] = dict(self.v2_budget) if self.v2_budget is not None else None
         transport_hash = getattr(self.authorize, "fingerprint", None)
         if transport_hash is not None:
             if not isinstance(transport_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", transport_hash):
@@ -149,25 +164,81 @@ class TrustedOrigin:
         return digest(body)
 
 
-def _check_budget(budget: Mapping[str, Any]) -> None:
-    if set(budget) != BUDGET_KEYS or any(type(value) is not int or value < 1 for value in budget.values()):
+def _contracts(versions: tuple[int, ...]) -> None:
+    if (not isinstance(versions, tuple) or not versions
+            or any(type(value) is not int or value not in (1, 2) for value in versions)
+            or tuple(sorted(set(versions))) != versions):
+        raise ValueError("Explicit sorted unique application contracts 1/2 are required")
+
+
+def _contract_version(plan: Mapping[str, Any]) -> int:
+    if "contractVersion" not in plan:
+        return 1
+    if type(plan["contractVersion"]) is not int or plan["contractVersion"] != 2:
+        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: unknown application contract")
+    return 2
+
+
+def _check_budget(budget: Mapping[str, Any], *, contract_version: int = 1) -> None:
+    keys = V2_BUDGET_KEYS if contract_version == 2 else BUDGET_KEYS
+    if set(budget) != keys or any(type(value) is not int or value < 1 for value in budget.values()):
         raise HTTPException(422, "Remote budget must contain the exact positive integer ceilings")
 
 
-def plan_manifest(plan: Mapping[str, Any]) -> dict[str, Any]:
-    """Exact immutable source snapshot, not a newly generated remote goal/plan."""
+def plan_manifest(plan: Mapping[str, Any], *, application_definition: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Exact source snapshot; v2 definition is bound indirectly by its app pin."""
     body = copy.deepcopy(dict(plan))
-    return {"plan": body, "sha256": digest(body)}
+    result = {"plan": body, "sha256": digest(body)}
+    if _contract_version(body) == 2:
+        if application_definition is None:
+            raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: v2 requires the complete application definition")
+        result.update(wireVersion=2, applicationDefinition=copy.deepcopy(dict(application_definition)))
+    elif application_definition is not None:
+        raise HTTPException(422, "V1 manifest cannot carry a v2 definition")
+    return result
+
+
+def _v2_definition(manifest, applications, plan):
+    value = manifest.get("applicationDefinition")
+    fields = set(ApplicationDefinitionV2.model_fields)
+    if not isinstance(value, dict) or set(value) != fields | {"schema", "version", "createdAt", "origin", "sha256"}:
+        raise HTTPException(422, "V2 requires a complete immutable application snapshot")
+    if type(value.get("contractVersion")) is not int or value["contractVersion"] != 2:
+        raise HTTPException(422, "V2 application definition contract differs")
+    if (value.get("sha256") != digest({key: item for key, item in value.items() if key != "sha256"})
+            or {key: value.get(key) for key in ("id", "version", "sha256")} != plan.get("applicationRef")):
+        raise HTTPException(409, "V2 application definition differs from the immutable plan pin")
+    normalized = applications.validate_definition({key: value[key] for key in fields}, check_materials=False)
+    if canonical(normalized) != canonical({key: value[key] for key in fields}):
+        raise HTTPException(422, "V2 application definition must be complete and canonical")
+    # One owning service checks mode, closure, config/schema, inputs, budget and
+    # binding anchor against the currently published exact local application.
+    current = applications.require_plan_current(plan)
+    if canonical(current) != canonical(value):
+        raise HTTPException(409, "Receiver application snapshot differs from the original definition")
+    if current["modes"][plan["mode"]].get("nativeComponent") is not None:
+        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: v2 workflow placement is unavailable")
 
 
 def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: bool = False,
               scientific_envelope: dict | None = None,
-              placement_validator: Callable[[dict, dict], None] | None = None) -> dict[str, Any]:
-    if set(manifest) != {"plan", "sha256"} or not isinstance(manifest.get("plan"), dict):
+              placement_validator: Callable[[dict, dict], None] | None = None,
+              supported_application_contracts: tuple[int, ...] = (1,)) -> dict[str, Any]:
+    if not isinstance(manifest, Mapping) or not isinstance(manifest.get("plan"), dict):
         raise HTTPException(422, "An exact immutable plan manifest is required")
     plan = copy.deepcopy(manifest["plan"])
-    if plan.get("contractVersion", 1) != 1:
-        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: neutral v2 plans require a versioned receiver contract")
+    version = _contract_version(plan)
+    expected = {"plan", "sha256"} | ({"wireVersion", "applicationDefinition"} if version == 2 else set())
+    if version not in supported_application_contracts:
+        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: receiver has not enabled this application contract")
+    if set(manifest) != expected or (version == 2 and (type(manifest["wireVersion"]) is not int or manifest["wireVersion"] != 2)):
+        raise HTTPException(422, "An exact versioned immutable plan manifest is required")
+    if version == 2 and not isinstance(plan.get("bindingManifest"), dict):
+        raise HTTPException(422, "V2 requires an exact composition binding manifest")
+    if version == 2 and (scientific_envelope is not None or any(key in plan for key in
+            ("delegation", "remoteHandoff", "nativeComponent", "scientificEnvelope", "sourceSnapshotRef"))
+            or plan.get("bindingManifest", {}).get("nativeComponent") is not None):
+        raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: v2 supports only root native agent placement")
     if len(canonical(manifest).encode()) > 524288 or digest(plan) != manifest.get("sha256"):
         raise HTTPException(409, "Immutable manifest integrity mismatch")
     scientific = scientific_envelope is not None
@@ -175,7 +246,9 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         if placement_validator is None:
             raise HTTPException(409, 'Remote placement validator is unavailable')
         placement_validator(copy.deepcopy(plan), copy.deepcopy(scientific_envelope))
-    optional = {'usageBudget'} | ({'delegation'} if scientific else set())
+    optional = {'usageBudget'} | ({'delegation'} if scientific else set()) | ({'contractVersion'} if version == 2 else set())
+    if version == 2 and not ASSEMBLY_KEYS.issubset(plan):
+        raise HTTPException(409, 'V2 requires complete governed assembly')
     if 'inputSchema' in plan or 'inputValues' in plan:
         if not {'inputSchema', 'inputValues', *ASSEMBLY_KEYS}.issubset(plan):
             raise HTTPException(409, 'Remote application inputs require complete governed assembly')
@@ -196,20 +269,22 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         raise HTTPException(422, "Manifest tool names are invalid")
     if not isinstance(caps, list) or any(type(cap) is not str for cap in caps):
         raise HTTPException(422, "Manifest capabilities are invalid")
-    if not isinstance(budget, dict) or set(budget) != BUDGET_KEYS | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != (1 if scientific else 0):
+    budget_keys = V2_BUDGET_KEYS if version == 2 else BUDGET_KEYS
+    if not isinstance(budget, dict) or set(budget) != budget_keys | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != (1 if scientific else 0):
         raise HTTPException(422, "Only a root delegation tree may select an execution server")
-    _check_budget({key: budget[key] for key in BUDGET_KEYS})
+    _check_budget({key: budget[key] for key in budget_keys}, contract_version=version)
     if not isinstance(plan.get("instructions"), list) or any(type(item) is not str or len(item) > 16000 for item in plan["instructions"]):
         raise HTTPException(422, "Bounded immutable instructions are required")
-    config = plan.get("config")
-    if not isinstance(config, dict) or set(config) not in ({"askScope", "sample", "experimentDurationSeconds"}, {"askScope", "sample", "experimentDurationSeconds", "toolOrder"}):
-        raise HTTPException(422, "Unsupported remote executor configuration")
-    if type(config["askScope"]) is not bool or type(config["sample"]) is not str or not 2 <= len(config["sample"]) <= 2000:
-        raise HTTPException(422, "Remote executor input is invalid")
-    if type(config["experimentDurationSeconds"]) is not int or not 0 < config["experimentDurationSeconds"] <= budget["experimentSeconds"]:
-        raise HTTPException(422, "Remote experiment duration exceeds the immutable budget")
-    if "toolOrder" in config and (not isinstance(config["toolOrder"], list) or config["toolOrder"] != tools):
-        raise HTTPException(422, "Remote tool order differs from the immutable tool scope")
+    if version == 1:
+        config = plan.get("config")
+        if not isinstance(config, dict) or set(config) not in ({"askScope", "sample", "experimentDurationSeconds"}, {"askScope", "sample", "experimentDurationSeconds", "toolOrder"}):
+            raise HTTPException(422, "Unsupported remote executor configuration")
+        if type(config["askScope"]) is not bool or type(config["sample"]) is not str or not 2 <= len(config["sample"]) <= 2000:
+            raise HTTPException(422, "Remote executor input is invalid")
+        if type(config["experimentDurationSeconds"]) is not int or not 0 < config["experimentDurationSeconds"] <= budget["experimentSeconds"]:
+            raise HTTPException(422, "Remote experiment duration exceeds the immutable budget")
+        if "toolOrder" in config and (not isinstance(config["toolOrder"], list) or config["toolOrder"] != tools):
+            raise HTTPException(422, "Remote tool order differs from the immutable tool scope")
     if "usageBudget" in plan:
         _usage_commitment(plan["usageBudget"], bindings=plan.get("executionBindings"))
     if set(plan) - optional == PLAN_KEYS | ASSEMBLY_KEYS:
@@ -217,7 +292,10 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
         bindings = getattr(store, "execution_bindings", None)
         if applications is None or bindings is None:
             raise HTTPException(409, "Receiver governed assembly bindings are unavailable")
-        applications.require_plan_current(plan)
+        if version == 2:
+            _v2_definition(manifest, applications, plan)
+        else:
+            applications.require_plan_current(plan)
         if receiver:
             service = getattr(store, "remote_bindings", None)
             if service is None:
@@ -366,14 +444,18 @@ class PreparedHandoffService:
             current = origin.authorize(owner, task_id, manifest_hash, tool)
             if not isinstance(current, HandoffAuthority):
                 raise PermissionError("Origin did not return its current trusted authority")
-            _check_budget(current.budget)
+            version = _contract_version(plan)
+            if version not in origin.supported_application_contracts or type(current.contract_version) is not int or current.contract_version != version:
+                raise PermissionError("Current authority contract differs from the original plan")
+            _check_budget(current.budget, contract_version=version)
             if not set(plan["tools"]) <= origin.tools & current.tools or not set(plan["capabilities"]) <= origin.capabilities & current.capabilities:
                 raise PermissionError("Current origin/receiver capability intersection denies the manifest")
-            for name in BUDGET_KEYS:
-                receiver = {"toolCalls": self.store.settings.max_tool_calls, "maxDepth": 2, "maxChildren": 4,
-                            "experimentSeconds": self.store.settings.experiment_timeout_seconds,
-                            "outputBytes": self.store.settings.experiment_output_bytes}
-                if plan["budget"][name] > min(origin.budget[name], current.budget[name], receiver[name]):
+            receiver = budget_limits(self.store.settings, version)
+            ceilings = origin.v2_budget if version == 2 else origin.budget
+            if ceilings is None:
+                raise PermissionError("Receiver has no explicit v2 budget")
+            for name in receiver:
+                if plan["budget"][name] > min(ceilings[name], current.budget[name], receiver[name]):
                     raise PermissionError("Current origin/receiver budget intersection denies the manifest")
             if tool is not None and tool not in current.tools & origin.tools:
                 raise PermissionError("Current origin denies this protected tool")
@@ -447,7 +529,8 @@ class PreparedHandoffService:
     def prepare(self, remote_owner: str, body: PrepareBody) -> dict[str, Any]:
         origin = self._origin(remote_owner, body.originRef, body.originOwnerId)
         source = _manifest(body.manifest, self.store, body.originOwnerId, receiver=True,
-            scientific_envelope=body.scientificEnvelope, placement_validator=self._validate_placement)
+            scientific_envelope=body.scientificEnvelope, placement_validator=self._validate_placement,
+            supported_application_contracts=origin.supported_application_contracts)
         origin_task = str(body.originTaskId)
         key = digest({"origin": body.originRef, "owner": body.originOwnerId, "request": body.requestId})
         task_key = digest({"origin": body.originRef, "task": origin_task})
@@ -989,8 +1072,10 @@ class HandoffTarget:
     headers: Callable[[str], Mapping[str, str]] = field(repr=False)
     transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
     configuration_revision: str = "1"
+    supported_application_contracts: tuple[int, ...] = (1,)
 
     def __post_init__(self):
+        _contracts(self.supported_application_contracts)
         value = urlsplit(self.base_url)
         if value.scheme not in {"http", "https"} or not value.hostname or value.username or value.password or value.query or value.fragment or not self.identity_map or not callable(self.headers):
             raise ValueError("Target requires an operator HTTP origin, identity mapping and trusted credential callback")
@@ -1003,8 +1088,11 @@ class HandoffTarget:
 
     @property
     def fingerprint(self):
-        return digest({"reference": self.reference, "origin": self.origin_ref, "url": self.base_url,
-                       "mapping": dict(self.identity_map), "revision": self.configuration_revision})
+        body = {"reference": self.reference, "origin": self.origin_ref, "url": self.base_url,
+                "mapping": dict(self.identity_map), "revision": self.configuration_revision}
+        if self.supported_application_contracts != (1,):
+            body["supportedApplicationContracts"] = list(self.supported_application_contracts)
+        return digest(body)
 
 
 class TrustedHandoffClient:
@@ -1071,8 +1159,13 @@ class TrustedHandoffClient:
         if not REQUEST.fullmatch(request_id):
             raise HTTPException(422, "A bounded stable remote request key is required")
         plan = self.store.plan(plan_id, owner)
-        _manifest(plan_manifest(plan), self.store, owner, scientific_envelope=scientific_envelope,
-            placement_validator=self._validate_placement)
+        version = _contract_version(plan)
+        if version not in target.supported_application_contracts:
+            raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: target has not enabled this application contract")
+        definition = self.store.applications.require_current(plan.get("applicationRef")) if version == 2 else None
+        manifest = plan_manifest(plan, application_definition=definition)
+        _manifest(manifest, self.store, owner, scientific_envelope=scientific_envelope,
+            placement_validator=self._validate_placement, supported_application_contracts=target.supported_application_contracts)
         expected_task = self._placement_admission(owner, plan, scientific_envelope)
         # Child placement is deliberately unsupported: its root-selected server
         # owns the whole shared-budget/authority tree until cross-server fencing.
@@ -1083,7 +1176,6 @@ class TrustedHandoffClient:
             raise HTTPException(409, "A locally executing task cannot switch execution servers")
         if expected_task is not None and task['id'] != expected_task:
             raise HTTPException(409, 'Remote placement must retain original child reservation')
-        manifest = plan_manifest(plan)
         saved = {"manifest": manifest, "receipt": None, "dispatchAttempted": False, "createdAt": now()}
         if scientific_envelope is not None:
             saved['scientificEnvelope'] = copy.deepcopy(scientific_envelope)
@@ -1126,6 +1218,8 @@ class TrustedHandoffClient:
                 raise HandoffCancellationRequested(owner, task["id"], row["manifest_hash"])
             raise HTTPException(409, "Origin task/manifest authority is unavailable")
         if execution:
+            if _contract_version(plan) not in target.supported_application_contracts:
+                raise HTTPException(422, "REMOTE_CONTRACT_UNSUPPORTED: target contract is unavailable")
             self._placement_admission(owner, plan, row['body'].get('scientificEnvelope'), task_id=row['task_id'])
         return target
 
@@ -1528,7 +1622,8 @@ class TrustedHandoffClient:
             raise PermissionError("Origin plan denies this protected tool")
         target = self.targets[row["target_ref"]]
         return HandoffAuthority(frozenset(plan["capabilities"]), frozenset(plan["tools"]),
-                                {key: plan["budget"][key] for key in BUDGET_KEYS},
+                                {key: plan["budget"][key] for key in (V2_BUDGET_KEYS if _contract_version(plan) == 2 else BUDGET_KEYS)},
+                                contract_version=_contract_version(plan),
                                 origin_ref=target.origin_ref, target_ref=target.reference,
                                 receiver_identity=target.identity_map[owner],
                                 target_revision=target.configuration_revision, target_fingerprint=target.fingerprint,

@@ -374,7 +374,8 @@ class FactoryAPI:
         @router.get("/execution-targets")
         def execution_targets(request: Request):
             user = self.user(request)
-            return [{"id": ref, "name": ref, "kind": "remote-factory", "connectivityVerified": False}
+            return [{"id": ref, "name": ref, "kind": "remote-factory", "connectivityVerified": False,
+                     "supportedApplicationContracts": list(target.supported_application_contracts)}
                     for ref, target in self.remote.client.targets.items() if user["id"] in target.identity_map] if self.remote else []
 
         @router.post("/plans", status_code=201)
