@@ -33,6 +33,13 @@ class IterationCoordinator:
         return rows
 
     async def _one(self, owner, activity_id):
+        try:
+            self.service.auth.require_member(owner)
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+            await self.service._retire_unavailable(owner, activity_id)
+            return
         value = await self.service.reconcile(owner, activity_id)
         if value['activity']['status'] == 'ready' and self.service.accepting:
             previous = value['rounds'][-1]['id']

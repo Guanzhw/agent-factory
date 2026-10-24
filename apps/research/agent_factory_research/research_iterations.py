@@ -32,6 +32,7 @@ class RoundDriver(Protocol):
     def reserve(self, owner, activity, round) -> dict[str, Any]: ...
     async def dispatch(self, owner, round) -> Any: ...
     async def observe(self, owner, round) -> dict[str, Any]: ...
+    async def observe_original(self, owner, round) -> dict[str, Any]: ...
     async def cancel(self, owner, round) -> Any: ...
 
 
@@ -101,6 +102,10 @@ class ResearchIterations:
 
     def inspect(self, owner, activity_id):
         self._member(owner)
+        return self._inspect(owner, activity_id)
+
+    def _inspect(self, owner, activity_id):
+        self.research.require_store(self.store, ready=True)
         with self.store.transaction(read_only=True) as conn:
             activity = self._activity(conn, owner, activity_id)
             rounds = conn.execute(select(self.rounds.c.body).where(self.rounds.c.activity_id == activity_id)
@@ -111,6 +116,10 @@ class ResearchIterations:
     def round_for_task(self, owner, task_id):
         """Resolve only a persisted original root; never create an activity."""
         self._member(owner)
+        return self._round_for_task(owner, task_id)
+
+    def _round_for_task(self, owner, task_id):
+        self.research.require_store(self.store, ready=True)
         with self.store.transaction(read_only=True) as conn:
             row = conn.execute(select(self.rounds.c.body).join(
                 self.activities, self.activities.c.id == self.rounds.c.activity_id).where(
@@ -338,6 +347,51 @@ class ResearchIterations:
 
     async def cancel(self, owner, activity_id):
         return await self._cancel(owner, activity_id, reason='cancelled')
+
+    async def _retire_unavailable(self, owner, activity_id):
+        """Internal original-operation cleanup after confirmed membership loss."""
+        self.research.require_store(self.store, ready=True)
+        try:
+            self.auth.require_member(owner)
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+        else:
+            raise HTTPException(409, 'ITERATION_OWNER_AVAILABLE')
+        with self.store.transaction() as conn:
+            self.scopes.lock(conn)
+            activity = self._activity(conn, owner, activity_id, lock=True)
+            round = self._round(conn, activity['currentRoundId'])
+            self.scopes.cancel(owner, activity['scopeId'])
+            if round['state'] != 'SETTLED' and not round['dispatchAttempted']:
+                self._reject_unsubmitted(owner, round)
+            activity.update(cancelRequested=True, stopReason='owner_unavailable',
+                            status='stopped' if round['state'] == 'SETTLED' else 'canceling')
+            self._save(conn, activity, round)
+        if round['state'] == 'SETTLED':
+            return self._inspect(owner, activity_id)
+        observed = await self.driver.observe_original(owner, deepcopy(round))
+        _require(isinstance(observed, dict) and observed.get('taskId') == round['taskId']
+                 and observed.get('state') in {'pending', 'unknown', 'stopped'}, 'ITERATION_OBSERVATION_IDENTITY')
+        settlement = self.scopes.settle(owner, round['allocationId']) if observed['state'] == 'stopped' else None
+        with self.store.transaction() as conn:
+            self.scopes.lock(conn)
+            activity = self._activity(conn, owner, activity_id, lock=True)
+            current = self._round(conn, round['id'])
+            _require(activity['currentRoundId'] == current['id'] and current['taskId'] == observed['taskId']
+                     and (current['runId'] is None or current['runId'] == observed.get('runId')),
+                     'ITERATION_RUN_IDENTITY')
+            if current['state'] == 'SETTLED':
+                return self._inspect(owner, activity_id)
+            current.update(runId=observed.get('runId'), observation=deepcopy(observed))
+            if settlement is not None and settlement['state'] == 'SETTLED':
+                _require(settlement['allocationId'] == current['allocationId'], 'ITERATION_ALLOCATION_IDENTITY')
+                current.update(state='SETTLED', settlement=deepcopy(settlement), decision='owner_unavailable')
+                activity['status'] = 'stopped'
+            else:
+                current['state'] = 'UNKNOWN' if observed['state'] != 'pending' else 'RUNNING'
+            self._save(conn, activity, current)
+        return self._inspect(owner, activity_id)
 
     async def _cancel(self, owner, activity_id, *, reason):
         self._member(owner)

@@ -198,12 +198,14 @@ class ActualORXRoundDriver:
                                'baselineSourceSha256': sha(files['baseline.py']),
                                'candidateSourceSha256': sha(files['candidate.py'])}}
 
-    def _observe(self, owner, round):
+    def _observe(self, owner, round, *, original=False):
         task, _ = self._bound(owner, round)
         reply = {'taskId': task['id'], 'runId': task['run_id'], 'state': 'unknown'}
         if task['run_id'] is None:
             # A stale observation from before the dispatch fence is not proof.
-            persisted = self.research.iterations.round_for_task(owner, task['id'])
+            lookup = (self.research.iterations._round_for_task if original
+                      else self.research.iterations.round_for_task)
+            persisted = lookup(owner, task['id'])
             require(persisted['id'] == round['id'])
             task, _ = self._bound(owner, persisted)
             reply['runId'] = task['run_id']
@@ -218,6 +220,8 @@ class ActualORXRoundDriver:
             return reply
         require(native['id'] == task['run_id'] and native['session_id'] == task['id'] and native['user_id'] == owner)
         if native['status'] not in ('completed', 'failed', 'cancelled'):
+            if original:
+                return reply
             return {**reply, 'state': 'pending', 'approvalRequired': native['status'] == 'paused'}
         effects = self.store.effects(task['id'])
         if (not task['terminal'] or runtime_custody_held(self.store, task['id'])
@@ -227,7 +231,7 @@ class ActualORXRoundDriver:
         if launch and (len(launch) != 1 or not isinstance(launch[0].get('result'), dict)
                        or launch[0]['result'].get('stopEvidence', {}).get('allStopped') is not True):
             return reply
-        if native['status'] != 'completed' or task['cancel_requested']:
+        if original or native['status'] != 'completed' or task['cancel_requested']:
             return {**reply, 'state': 'stopped', 'failed': True}
         return {**reply, 'state': 'stopped', **self.verified_evaluation(owner, round)}
 
@@ -243,6 +247,22 @@ class ActualORXRoundDriver:
         if observer is not None:
             await observer.observe_root(task['id'])
         return await asyncio.to_thread(self._observe, owner, round)
+
+    async def observe_original(self, owner, round):
+        """Internal original-operation cleanup; never promotes a result."""
+        task, _ = self._bound(owner, round)
+        persisted = self.research.iterations._round_for_task(owner, task['id'])
+        require(persisted['id'] == round['id'])
+        task, _ = self._bound(owner, persisted)
+        if persisted.get('dispatchAttempted') is True and task['run_id'] is None:
+            finder = getattr(self.bridge, 'find_original_run', None)
+            receipt = await finder(task['id'], owner) if finder else None
+            if receipt:
+                self.store.accept(task['id'], receipt['run_id'])
+        observer = getattr(self.store, 'lifecycle_observer', None)
+        if observer is not None:
+            await observer.observe_root(task['id'])
+        return await asyncio.to_thread(self._observe, owner, persisted, original=True)
 
     async def cancel(self, owner, round):
         self.auth.require_member(owner)
@@ -261,12 +281,14 @@ class IterationRoundProvider(TaskLocalORXProvider):
 
     def create_experiment_adapter(self, *, owner_id, task_id, **kwargs):
         self.research.require_store(self.driver.store, ready=True)
-        round = self.research.iterations.round_for_task(owner_id, task_id)
+        lookup = (self.research.iterations._round_for_task if kwargs.get('cleanup_only') is True
+                  else self.research.iterations.round_for_task)
+        round = lookup(owner_id, task_id)
         self.driver._bound(owner_id, round)
         recipe = recipe_for(round)
         if round['baselineSource']['kind'] == 'sourceArtifact':
             baseline = round['baselineSource']
-            previous = self.research.iterations.round_for_task(owner_id, baseline['taskId'])
+            previous = lookup(owner_id, baseline['taskId'])
             require(previous['id'] == round['previousRoundId'] and previous['activityId'] == round['activityId']
                     and previous['ordinal'] + 1 == round['ordinal'] and previous['pins'] == round['pins'])
             verified = self.driver.verified_evaluation(owner_id, previous)

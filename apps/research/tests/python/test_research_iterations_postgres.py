@@ -429,5 +429,117 @@ class ResearchIterationsPostgresTests(unittest.TestCase):
         self.assertEqual(final['budget']['heldToolCalls'], 0)
 
 
+    def test_actual_disabled_owner_reconstructs_cleanup_after_completion_before_settlement(self):
+        """Real completed ORX custody, not a claim of interrupting a live process."""
+        from agent_factory_research.research_iteration_driver import IterationRoundProvider
+
+        coordinator = self.research.iteration_coordinator
+        real_create = IterationRoundProvider.create_experiment_adapter
+        cleanup_adapters = []
+
+        def observed_create(provider, **kwargs):
+            adapter = real_create(provider, **kwargs)
+            if kwargs.get('cleanup_only') is True:
+                # Observe the actual reconstructed adapter; never replace its
+                # reclaim, custody, process or source verification behavior.
+                self.assertTrue(adapter.cleanup_only)
+                cleanup_adapters.append({'owner': kwargs['owner_id'], 'taskId': kwargs['task_id'],
+                    'scope': str(kwargs['scope']), 'recipeIdentity': adapter._recipe.identity})
+            return adapter
+
+        async def defer_activity_observation(owner, identifier):
+            # Only hold application settlement/advance. Real native execution,
+            # approvals, ORX, lifecycle observation and artifacts remain active.
+            return None
+
+        disabled = False
+        with patch.object(IterationRoundProvider, 'create_experiment_adapter', observed_create):
+            try:
+                with patch.object(coordinator, '_one', defer_activity_observation):
+                    initial = self.request('POST', '/research-iterations', 201,
+                        self.start_body('actual-disabled-after-launch-before-settlement', rounds=2))
+                    activity = initial['activity']['id']
+                    first = initial['rounds'][0]
+                    self.approve_round(first)
+                    stopped_deadline = time.monotonic() + 15
+                    task = self.store.task(first['taskId'], 'alice')
+                    while not task['terminal'] and time.monotonic() < stopped_deadline:
+                        time.sleep(.05)
+                        task = self.store.task(first['taskId'], 'alice')
+                    self.assertTrue(task['terminal'], 'Real lifecycle must positively stop the completed original')
+                    self.assertTrue(task['run_id'])
+                    # This verifies the actual native ORX row, pinned binary,
+                    # original source archive and sealed evaluation artifacts.
+                    self.assert_round_evidence({**first, 'runId': task['run_id']}, 16.0, SEED_IDENTITY)
+                    before = self.service._inspect('alice', activity)
+                    self.assertNotEqual(before['rounds'][0]['state'], 'SETTLED')
+                    self.assertEqual(before['budget']['heldToolCalls'], 8)
+                    self.assertEqual(len(before['rounds']), 1)
+                    original_dispatches = deepcopy(self.dispatches)
+                    self.assertEqual(len(original_dispatches), 1)
+                    original_effect = deepcopy(self.store.effects(task['id'])[0])
+                    self.assertEqual(original_effect['status'], 'DONE')
+                    self.assertTrue(original_effect['result']['stopEvidence']['allStopped'])
+                    self.snapshots.append(deepcopy(before))
+
+                    self.auth.directory.set_disabled('alice', True)
+                    disabled = True
+                    # A trusted original-operation cancellation intent makes
+                    # core exercise actual adapter reconstruction even though
+                    # this fast toy already completed before revocation.
+                    self.store.request_cancel(task['id'])
+                    self.assertEqual(self.service._inspect('alice', activity)['budget']['heldToolCalls'], 8)
+
+                deadline = time.monotonic() + 30
+                final = None
+                while time.monotonic() < deadline:
+                    # Execute the real coordinator's disabled-owner branch on
+                    # its owning event loop; no public member bypass is added.
+                    self.client.portal.call(coordinator._one, 'alice', activity)
+                    final = self.service._inspect('alice', activity)
+                    if final['activity']['status'] == 'stopped' and cleanup_adapters:
+                        break
+                    time.sleep(.05)
+                self.assertIsNotNone(final)
+                self.snapshots.append(deepcopy(final))
+                self.assertEqual(final['activity']['status'], 'stopped', self.failure_diagnostics(final))
+                self.assertEqual(final['activity']['stopReason'], 'owner_unavailable')
+                self.assertEqual(len(final['rounds']), 1)
+                current = final['rounds'][0]
+                self.assertEqual(current['decision'], 'owner_unavailable')
+                self.assertEqual(current['state'], 'SETTLED')
+                self.assertEqual(current['observation']['state'], 'stopped')
+                self.assertNotIn('sourcePin', current['observation'])
+                self.assertNotIn('evaluation', current['observation'])
+                self.assertEqual(final['activity']['baselineSource'], initial['activity']['baselineSource'])
+                for key in ('id', 'taskId', 'planId', 'planSha256', 'requestId', 'allocationId', 'intentSha256', 'pins'):
+                    self.assertEqual(current[key], first[key])
+                self.assertEqual(current['runId'], task['run_id'])
+                self.assertTrue(cleanup_adapters, 'Must reconstruct actual cleanup_only adapter after disable')
+                self.assertTrue(all(item['owner'] == 'alice' and item['taskId'] == task['id']
+                    and item['recipeIdentity'] == SEED_IDENTITY for item in cleanup_adapters))
+                latest = self.store.task(task['id'], 'alice')
+                self.assertTrue(latest['terminal'])
+                effect = self.store.effects(task['id'])[0]
+                self.assertEqual(effect['effect_key'], original_effect['effect_key'])
+                self.assertEqual(effect['result']['orxRunId'], original_effect['result']['orxRunId'])
+                self.assertTrue(effect['result']['stopEvidence']['allStopped'])
+                self.assertEqual(final['budget']['heldToolCalls'], 0)
+                self.assertEqual(final['budget']['allocatedRounds'], 1)
+                self.assertEqual(final['budget']['settledToolCalls'], current['settlement']['toolCalls'])
+                self.assertEqual(self.dispatches, original_dispatches)
+                _, rows = self.native_rows()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['id'], original_effect['result']['orxRunId'])
+                self.failure_snapshots.append({'case': 'disabled-after-real-completion-before-round-settlement',
+                    'cleanupAdapters': deepcopy(cleanup_adapters), 'liveProcessInterruptionVerified': False,
+                    'originalEffectKey': effect['effect_key'], 'stopEvidence': deepcopy(effect['result']['stopEvidence'])})
+            finally:
+                # Restore fixture administration only after assertions/cleanup
+                # attempt so ordinary fixture teardown can read/cancel leftovers.
+                if disabled:
+                    self.auth.directory.set_disabled('alice', False)
+
+
 if __name__ == '__main__':
     unittest.main()

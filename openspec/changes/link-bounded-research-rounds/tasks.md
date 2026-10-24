@@ -4,8 +4,8 @@
 
 - [x] 1.1 coordinator 核对最小 API/schema、锁顺序和文件 ownership，记录与 #102 交界；验收产物为明确分工与无反向锁序的调用图。
 - [x] 1.2 core owner 实现 local scope/round allocation、root binding 和轮内账户接入；新增便携契约与 PG 测试验证全轮 cap 预留、两轮实际累计、无活动/user 双 hold，并记录账本字段说明。
-- [ ] 1.3 core owner 实现原证据结算与 UNKNOWN 保留；PG 测试覆盖重复 settlement、冲突证据、用量超预留、撤权后仍记账、无停止证明不退款和只读 inspect。
-- [ ] 1.4 application owner 实现 activity/round 唯一约束及同事务 successor intent/allocation；PG 测试证明并发 continue 只建一轮、预算不足不留 free successor、原 deadline 不重置。
+- [x] 1.3 core owner 实现原证据结算与 UNKNOWN 保留；PG 测试覆盖重复 settlement、冲突证据、用量超预留、撤权后仍记账、无停止证明不退款和只读 inspect。
+- [x] 1.4 application owner 实现 activity/round 唯一约束及同事务 successor intent/allocation；PG 测试证明并发 continue 只建一轮、预算不足不留 free successor、原 deadline 不重置。
 
 ## 2. 本地 toy 与基线承接
 
@@ -15,9 +15,9 @@
 
 ## 3. 原生恢复与应用生命周期
 
-- [ ] 3.1 application owner 将持久 round intent 接到原 composition/Store reservation/NativeBridge.submit，保持原 request/native 身份；新增 PG/native 测试覆盖预留后、task 绑定后、回执前崩溃，记录不可重派状态。
-- [ ] 3.2 lifecycle owner 经 ResearchServices 显式安装有界 pending-intent 扫描与关闭；验证无 GET 仍能推进已批准意图、shutdown 先停后继准入、取消/撤权/deadline 阻止新效果且原 UNKNOWN 仍占用。
-- [ ] 3.3 coordinator 串行验证真实两轮 ORX/native/PG，保留旧单轮、scientific 三阶段和 shutdown 回归；报告三阶段 val_bpb fixture 与 toy MSE 的不同证据范围。
+- [x] 3.1 application owner 将持久 round intent 接到原 composition/Store reservation/NativeBridge.submit，保持原 request/native 身份；新增 PG/native 测试覆盖预留后、task 绑定后、回执前崩溃，记录不可重派状态。
+- [x] 3.2 lifecycle owner 经 ResearchServices 显式安装有界 pending-intent 扫描与关闭；验证无 GET 仍能推进已批准意图、shutdown 先停后继准入、取消/撤权/deadline 阻止新效果且原 UNKNOWN 仍占用。
+- [x] 3.3 coordinator 串行验证真实两轮 ORX/native/PG，保留旧单轮、scientific 三阶段和 shutdown 回归；报告三阶段 val_bpb fixture 与 toy MSE 的不同证据范围。
 
 ## 4. 可观察性与集成
 
