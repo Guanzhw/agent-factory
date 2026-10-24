@@ -1811,3 +1811,16 @@ immediately and enters original cleanup instead of waiting the3600s lease.
 release proofs retaining cleanupConfirmed:false. Superseded3fa4ec43 CI had
 8successful jobs; both remaining PG workflows cancelled before final push.
 New exact-head CI is the only final acceptance source.
+
+
+## 2026-10-24 云端连续交付
+
+Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、部署及付费模型。
+
+| 阶段 | owner / 范围 | 依赖与状态 | 验收/限制 |
+| --- | --- | --- | --- |
+| #103 测试成本与MCP callback | root，独立review | Draft，b458028 fast/full CI成功 | 本地完整两轮均失败；局部60.974s少工作，不代表整套加速。偶发根因仍跟进 |
+| #97 历史与读取分离 | backend Store/API；remote receipt；frontend Web；root生命周期集成 | 本分支实现，独立review发现3项已修；验证中 | 205行同fixture store SQL4268→1，native2→0；保留审计与stream元数据写。PG/浏览器及精确CI待最终记录 |
+| #98 科研关闭 | shutdown_design app；shutdown_tests子进程；root core/部署 | 独立shutdown worktree；用户已选35s后非零退出 | 原UNKNOWN/identity不重派发，真实进程验证中，不把异常当退出 |
+
+旧成果与失败日志保留；#99–102尚未在此分支实施。worker测试发现与root实跑结果分别记录。

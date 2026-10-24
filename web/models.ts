@@ -55,6 +55,10 @@ export type FactoryJob = Omit<Job, 'input' | 'status'> & {
   recoveryDetail?: { approvalCommandId: string; requirementId: string; version: number; runId: string; scope: string };
   approvalDetail?: PendingApproval & { toolName?: string; arguments?: Record<string, unknown> };
 };
+export type JobSummary = Pick<FactoryJob, 'id' | 'ownerId' | 'planId' | 'definitionId' | 'definitionVersion' | 'status' | 'createdAt' | 'updatedAt'> & {
+  input: { topic: string; mode: string; scenario: 'normal' }; observedAt: string | null;
+};
+export interface JobPage { items: JobSummary[]; nextCursor: string | null }
 export interface JobDetail { job: FactoryJob; events: JobEvent[]; artifacts: Artifact[]; snapshot?: Record<string, unknown>; usageLedger?: unknown; [extension: string]: unknown }
 export interface DelegationFact {
   taskId: string | null; nativeStatus: string | null; unknown: boolean;

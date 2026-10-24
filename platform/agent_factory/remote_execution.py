@@ -147,7 +147,7 @@ class RemoteExecution:
 
     async def events(self, task: dict, child: str | None = None, *, cursor=None, limit=100) -> dict:
         value = copy.deepcopy(await self.client.events(task["owner_id"], task["id"], child, cursor=cursor, limit=limit))
-        receipt = self.client._row(task["owner_id"], task["id"])["body"]["receipt"]
+        receipt = await self.client.receipt(task["owner_id"], task["id"])
         remote_root = receipt["remoteTaskId"]
         value["receiverPayloadSha256"] = value["payloadSha256"]
         for event in value["events"]:
@@ -174,7 +174,7 @@ class RemoteExecution:
             if error.status_code < 500:
                 raise
             # The durable client/receiver boundary records uncertainty. Detail
-            # reads recover known work; no second dispatch is issued here.
+            # reads show known work; the observer reconciles the original admission.
         return (await self.detail(self.store.task(task["id"], owner)))["job"]
 
     async def cancel(self, task: dict, child: str | None = None) -> dict:

@@ -1,6 +1,6 @@
 import type { FactoryJob } from '../../../web/models.js';
 /** Display labels only; never change the immutable job, plan, or request. */
-export function jobDisplayTitle(job: FactoryJob): string {
+export function jobDisplayTitle(job: Pick<FactoryJob, 'id' | 'input'>): string {
   if (job.input.mode !== 'personal-command') return job.input.topic;
   const names: Record<string, string> = {
     'Personal remote agent prompt': '原生会话研究消息',

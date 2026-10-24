@@ -50,12 +50,13 @@ class ResearchPreparedHandoffService(PreparedHandoffService):
         self._science()
         return {'scientificEvidence': project_scientific_evidence(result, scope=envelope['scope'])}
 
-    async def _refresh_placement_evidence(self, row, task, result):
+    async def _refresh_placement_evidence(self, row, task, result, *, reconcile=False):
         if row['body'].get('scientificEnvelope') is None:
             return
         service = self._science()
-        service.bind_task(row['id'], task)
-        result['scientificEvidence'] = await service.project_evidence(result)
+        if reconcile:
+            service.bind_task(row['id'], task)
+        result['scientificEvidence'] = await service.project_evidence(result, persist=reconcile)
         no_dispatch = service.no_dispatch_proof(result)
         if no_dispatch is not None:
             result['scientificNoDispatch'] = no_dispatch
@@ -114,7 +115,7 @@ class ResearchPreparedHandoffService(PreparedHandoffService):
             if row['body'].get('scientificEnvelope') is None:
                 raise HTTPException(409, 'Scientific placement is unavailable')
             await self._science().start_drive(identity, self._task(row)['id'])
-            return await self.receipt(identity, identifier)
+            return await self.reconcile(identity, identifier)
 
         super()._routes()
 

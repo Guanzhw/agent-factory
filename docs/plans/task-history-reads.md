@@ -1,6 +1,6 @@
 # 规划：任务历史分页与读取、执行收尾分离
 
-状态：Draft 规划；实现与运行验收尚未开始。基于可信团队重构 PR #95 的合并提交 `246f06541b21915392a77555e24f3f617d34de9f`。
+状态：Draft 实现与本地验收进行中，见 [执行记录](../../openspec/changes/paginate-task-history-and-separate-observation/verification.md)。基于可信团队重构 PR #95 的合并提交 `246f06541b21915392a77555e24f3f617d34de9f`。
 建议 OpenSpec change：`paginate-task-history-and-separate-observation`。
 
 ## 问题与结果

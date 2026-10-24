@@ -288,6 +288,35 @@ class PreparedHandoffService:
         self.initialize()
         self._routes()
 
+    async def observe_pending(self, *, limit: int = 50) -> dict[str, Any]:
+        """Bounded fair scan, including terminal rows with unsettled accounting."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Remote observation batch must be between 1 and 100")
+        settled = "FALSE"
+        if getattr(self.store, "usage_ledger", None) is not None:
+            settled = """(t.terminal AND EXISTS (SELECT 1 FROM af_usage_remote_grants g
+                WHERE g.id=h.id AND g.owner_id=h.remote_owner AND g.task_id=t.id
+                AND g.state='CLOSED' AND g.statement->>'allStopped'='true'
+                AND g.statement->>'heldTokens'='0' AND g.statement->>'heldAmountMicros'='0'))"""
+        rows = self.store.sql("""SELECT h.id,h.remote_owner FROM af_remote_handoffs h
+            LEFT JOIN af_tasks t ON t.id=h.body->>'remoteTaskId' AND t.owner_id=h.remote_owner
+            WHERE h.id>:cursor AND NOT (h.state='CANCELLED_NO_DISPATCH'
+                AND (t.id IS NULL OR (t.terminal AND t.run_id IS NULL AND NOT (h.body ? 'usageGrant'))))
+                AND NOT (""" + settled + ") ORDER BY h.id LIMIT :limit",
+            cursor=getattr(self, "_observation_cursor", ""), limit=limit)
+        if not rows:
+            self._observation_cursor = ""
+            return {"checked": 0, "reconciled": 0, "errors": []}
+        result = {"checked": len(rows), "reconciled": 0, "errors": []}
+        for row in rows:
+            self._observation_cursor = row["id"]
+            try:
+                await self._receipt(row["remote_owner"], row["id"], reconcile=True, trusted_cleanup=True)
+                result["reconciled"] += 1
+            except Exception as error:
+                result["errors"].append({"id": row["id"], "errorType": type(error).__name__})
+        return result
+
     def _validate_placement(self, plan, envelope):
         raise HTTPException(409, 'Remote placement validator is unavailable')
 
@@ -303,8 +332,9 @@ class PreparedHandoffService:
             raise HTTPException(409, 'Remote placement evidence is unavailable')
         return {}
 
-    async def _refresh_placement_evidence(self, row, task, result):
-        self._bind_placement(row, task)
+    async def _refresh_placement_evidence(self, row, task, result, *, reconcile=False):
+        if reconcile:
+            self._bind_placement(row, task)
 
     def _placement_stopped(self, row, task, result, raw):
         if row['body'].get('scientificEnvelope') is not None:
@@ -322,8 +352,9 @@ class PreparedHandoffService:
             manifest_hash TEXT NOT NULL, configuration_hash TEXT NOT NULL, state TEXT NOT NULL,
             body JSONB NOT NULL, UNIQUE(origin_ref,origin_owner,request_id), UNIQUE(origin_ref,origin_task))""")
 
-    def _origin(self, remote_owner: str, origin_ref: str, origin_owner: str, *, execution: bool = True) -> TrustedOrigin:
-        self.auth.require_member(remote_owner)
+    def _origin(self, remote_owner: str, origin_ref: str, origin_owner: str, *, execution: bool = True, trusted_cleanup: bool = False) -> TrustedOrigin:
+        if not trusted_cleanup:
+            self.auth.require_member(remote_owner)
         origin = self.origins.get(origin_ref)
         if origin is None or origin.identity_map.get(origin_owner) != remote_owner:
             raise HTTPException(404, "Trusted origin identity mapping not found")
@@ -386,8 +417,10 @@ class PreparedHandoffService:
         return rows[0]
 
     def _check_row(self, row: Mapping[str, Any], owner: str, *, tool: str | None = None,
-                   execution: bool = True, native: bool = False) -> dict[str, Any]:
-        origin = self._origin(owner, row["origin_ref"], row["origin_owner"], execution=execution)
+                   execution: bool = True, native: bool = False, trusted_cleanup: bool = False) -> dict[str, Any]:
+        if trusted_cleanup and execution:
+            raise ValueError("Trusted cleanup cannot authorize execution")
+        origin = self._origin(owner, row["origin_ref"], row["origin_owner"], execution=execution, trusted_cleanup=trusted_cleanup)
         if row["configuration_hash"] != origin.fingerprint:
             raise HTTPException(409, "Trusted origin configuration changed; handoff cannot be replayed")
         source = row["body"]["manifest"]["plan"]
@@ -532,23 +565,58 @@ class PreparedHandoffService:
         return result
 
     async def receipt(self, remote_owner: str, identifier: str) -> dict[str, Any]:
+        return await self._receipt(remote_owner, identifier, reconcile=False)
+
+    async def reconcile(self, remote_owner: str, identifier: str) -> dict[str, Any]:
+        """Recover only the original admission and settle fresh stop evidence."""
+        return await self._receipt(remote_owner, identifier, reconcile=True)
+
+    def _fence_cancelled_preparation(self, row, task):
+        """Only the original pre-dispatch CAS proves there was no native work."""
+        if row["state"] not in {"PREPARING", "PREPARED"} or not task["cancel_requested"]:
+            return
+        key = digest({"origin": row["origin_ref"], "owner": row["origin_owner"], "request": row["request_id"]})
+        task_key = digest({"origin": row["origin_ref"], "task": row["origin_task"]})
+        with self._locked(key, task_key):
+            current = self._row(row["id"], row["remote_owner"])
+            if (current["body"].get("remoteTaskId") != task["id"]
+                    or any(current[key] != row[key] for key in
+                           ("origin_ref", "origin_owner", "origin_task", "request_id", "manifest_hash", "configuration_hash"))):
+                raise HTTPException(409, "Receiver cancellation differs from original prepared binding")
+            original = self.store.task(task["id"], row["remote_owner"])
+            if current["state"] not in {"PREPARING", "PREPARED"} or not original["cancel_requested"]:
+                return
+            if original["plan_id"] != current["body"]["remotePlan"]["id"]:
+                raise HTTPException(409, "Receiver cancellation differs from original prepared plan")
+            if original.get("run_id"):
+                raise HTTPException(409, "Prepared cancellation cannot replace an original native ticket")
+            fenced = self.store.sql("""UPDATE af_remote_handoffs SET state='CANCELLED_NO_DISPATCH'
+                WHERE id=:id AND state IN ('PREPARING','PREPARED') RETURNING id""", id=row["id"])
+            if fenced:
+                self.store.admission_failed(task["id"], "Receiver canceled before its durable dispatch boundary; no native execution")
+
+    async def _receipt(self, remote_owner: str, identifier: str, *, reconcile: bool, trusted_cleanup: bool = False) -> dict[str, Any]:
         row = self._row(identifier, remote_owner)
-        self._check_row(row, remote_owner, execution=False)
+        self._check_row(row, remote_owner, execution=False, trusted_cleanup=trusted_cleanup)
         if not row["body"].get("remoteTaskId"):
             return {**self._public(row), "allStopped": row["state"] == "CANCELLED_NO_DISPATCH",
                     "applicationStatus": "canceled" if row["state"] == "CANCELLED_NO_DISPATCH" else "unknown"}
         task = self.store.task(row["body"]["remoteTaskId"], remote_owner)
+        if reconcile:
+            self._fence_cancelled_preparation(row, task)
+            row = self._row(identifier, remote_owner)
+            task = self.store.task(task["id"], remote_owner)
         native = None
         if row["state"] in {"UNKNOWN", "ACCEPTED"}:
             native = await self.bridge.find_run(task["id"], remote_owner)
             if native:
-                if not task.get("run_id"):
+                if not task.get("run_id") and reconcile:
                     self.store.accept(task["id"], native["run_id"])
-                elif task["run_id"] != native["run_id"]:
+                elif task.get("run_id") and task["run_id"] != native["run_id"]:
                     raise HTTPException(409, "Receiver native ticket differs from the original task binding")
-                # Read recovery of an already-bound ticket must preserve its
-                # observed terminal state and any rejected-admission cause.
-                self.store.sql("UPDATE af_remote_handoffs SET state='ACCEPTED' WHERE id=:id AND state IN ('UNKNOWN','ACCEPTED')", id=identifier)
+                # Recovery preserves terminal state and rejected-admission cause.
+                if reconcile:
+                    self.store.sql("UPDATE af_remote_handoffs SET state='ACCEPTED' WHERE id=:id AND state IN ('UNKNOWN','ACCEPTED')", id=identifier)
                 try:
                     native = await self.bridge.detail(native["run_id"], task["id"], remote_owner)
                 except HTTPException as error:
@@ -563,7 +631,11 @@ class PreparedHandoffService:
         task = self.store.task(task["id"], remote_owner)
         result = self._public(self._row(identifier, remote_owner), native)
         effects = self.store.effects(task["id"])
-        group = await self.store.delegation.inspect_group(remote_owner, task["id"]) if getattr(self.store, "delegation", None) and native else None
+        delegation = getattr(self.store, "delegation", None)
+        group = None
+        if delegation and native:
+            inspect_group = delegation._inspect_group if trusted_cleanup else delegation.inspect_group
+            group = await inspect_group(remote_owner, task["id"])
         raw = str(((native or {}).get("queue") or {}).get("status") or (native or {}).get("status", "")).lower()
         from .factory_api import status_of
         from .delegation import application_group_status
@@ -576,7 +648,7 @@ class PreparedHandoffService:
                 # facts when trusted cleanup follows an earlier failure.
                 failed = group["parent"]["failed"] or any(child["failed"] for child in group["children"])
                 application_status = ("failed" if failed else "canceled") if group["allStopped"] else "unknown" if group["unknown"] else "canceling"
-        await self._refresh_placement_evidence(row, task, result)
+        await self._refresh_placement_evidence(row, task, result, reconcile=reconcile)
         result.update(effects=effects, artifacts=self.store.artifacts(task["id"]), group=group,
                       applicationStatus=application_status,
                       allStopped=bool(row["state"] == "CANCELLED_NO_DISPATCH" or native and raw in {"completed", "failed", "cancelled", "error"}
@@ -590,8 +662,15 @@ class PreparedHandoffService:
         if result['allStopped']:
             result['allStopped'] = self._placement_stopped(row, task, result, raw) is True
         if row["body"].get("usageGrant") is not None:
-            result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
-                all_stopped=result["allStopped"])
+            if reconcile:
+                result["usageStatement"] = self.store.usage_ledger.remote_statement(remote_owner, task["id"], identifier,
+                    all_stopped=result["allStopped"])
+            else:
+                statements = self.store.sql("SELECT statement FROM af_usage_remote_grants WHERE id=:id AND owner_id=:owner AND task_id=:task",
+                    id=identifier, owner=remote_owner, task=task["id"])
+                statement = statements[0]["statement"] if statements else None
+                if statement and (not statement.get("allStopped") or result["allStopped"]):
+                    result["usageStatement"] = statement
         return result
 
     async def by_request(self, remote_owner: str, origin_ref: str, origin_owner: str, request_id: str) -> dict[str, Any]:
@@ -645,14 +724,14 @@ class PreparedHandoffService:
                     self.store.request_cancel(task["id"])
                     self.store.admission_failed(task["id"], "Receiver canceled before its durable dispatch boundary; no native execution")
             if no_dispatch:
-                return {"receipt": await self.receipt(remote_owner, identifier), "group": None}
+                return {"receipt": await self.reconcile(remote_owner, identifier), "group": None}
         task = self._task(row, remote_task_id)
         delegation = getattr(self.store, "delegation", None)
         if delegation is None:
             raise HTTPException(503, "Receiver descendant/experiment cancellation service is unavailable")
         self._cancel_placement(row, task)
         group = await delegation.cascade_cancel(remote_owner, task["id"])
-        return {**group, "receipt": await self.receipt(remote_owner, identifier)}
+        return {**group, "receipt": await self.reconcile(remote_owner, identifier)}
 
     async def _factory_action(self, remote_owner: str, identifier: str, action: str, body: dict[str, Any],
                               remote_task_id: str | None = None) -> dict[str, Any]:
@@ -721,7 +800,7 @@ class PreparedHandoffService:
         row = self._row(identifier, remote_owner)
         self._check_row(row, remote_owner)
         if row["state"] in {"UNKNOWN", "ACCEPTED"}:
-            return await self.receipt(remote_owner, identifier)
+            return await self.reconcile(remote_owner, identifier)
         plan = self.store.plan(row["body"]["remotePlan"]["id"], remote_owner)
         if plan != row["body"]["remotePlan"]:
             raise HTTPException(409, "Receiver immutable prepared plan changed")
@@ -762,7 +841,7 @@ class PreparedHandoffService:
         if not changed:
             if self._row(identifier, remote_owner)["state"] not in {"UNKNOWN", "ACCEPTED"}:
                 raise HTTPException(409, "Remote handoff is not dispatchable")
-            return await self.receipt(remote_owner, identifier)
+            return await self.reconcile(remote_owner, identifier)
         self.store.admission_unknown(task["id"])
         self.store.event(task["id"], "remote_dispatch_boundary", "One native submission attempt begun; uncertain results retain capacity", {"receiptId": identifier})
         try:
@@ -774,8 +853,8 @@ class PreparedHandoffService:
             self.store.sql("UPDATE af_remote_handoffs SET state='ACCEPTED' WHERE id=:id", id=identifier)
         except Exception as error:
             # Even a lost worker/HTTP reply after commit cannot authorize replay.
-            raise HTTPException(503, "REMOTE_DISPATCH_UNKNOWN: recover by owner-bound receipt read; do not replay") from error
-        return await self.receipt(remote_owner, identifier)
+            raise HTTPException(503, "REMOTE_DISPATCH_UNKNOWN: reconcile the owner-bound original receipt; do not replay") from error
+        return await self.reconcile(remote_owner, identifier)
 
     def authorize(self, context: Any, tool: str | None = None) -> None:
         """Synchronous guard called by native bind AND every direct tool entrypoint."""
@@ -804,6 +883,7 @@ class PreparedHandoffService:
         self._check_row(row, context.user_id, tool=tool, native=True)
 
     def install_guard(self) -> None:
+        self.store.handoff_receiver = self
         if self._installed:
             return
         def guard(owner, plan, context, name):
@@ -835,6 +915,10 @@ class PreparedHandoffService:
         @self.router.get("/{identifier}")
         async def receipt(identifier: str, request: Request):
             return await self.receipt(owner(request), identifier)
+
+        @self.router.post("/{identifier}/reconcile")
+        async def reconcile(identifier: str, request: Request):
+            return await self.reconcile(owner(request), identifier)
 
         @self.router.post("/{identifier}/dispatch", status_code=202)
         async def dispatch(identifier: str, request: Request, body: DispatchBody | None = None):
@@ -925,6 +1009,34 @@ class TrustedHandoffClient:
             request_id TEXT NOT NULL, manifest_hash TEXT NOT NULL, configuration_hash TEXT NOT NULL,
             state TEXT NOT NULL, body JSONB NOT NULL, UNIQUE(owner_id,request_id))""")
 
+    async def observe_pending(self, *, limit: int = 50) -> dict[str, Any]:
+        """Bounded fair scan, including terminal rows with unsettled accounting."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Remote observation batch must be between 1 and 100")
+        # A terminal task alone cannot prove remote accounting has settled.
+        unsettled_grant = ""
+        if getattr(self.store, "usage_ledger", None) is not None:
+            unsettled_grant = """ OR (p.body ? 'usageGrant' AND NOT EXISTS (
+                SELECT 1 FROM af_usage_remote_grants g WHERE g.id=p.body->'usageGrant'->>'id'
+                AND g.owner_id=p.owner_id AND g.task_id=p.task_id AND g.state='SETTLED'))"""
+        rows = self.store.sql("""SELECT p.task_id,p.owner_id FROM af_remote_placements p
+            JOIN af_tasks t ON t.id=p.task_id AND t.owner_id=p.owner_id
+            WHERE p.task_id>:cursor AND (NOT t.terminal
+                OR (p.body->'receipt'->>'allStopped') IS DISTINCT FROM 'true'""" + unsettled_grant + ") ORDER BY p.task_id LIMIT :limit",
+            cursor=getattr(self, "_observation_cursor", ""), limit=limit)
+        if not rows:
+            self._observation_cursor = ""
+            return {"checked": 0, "reconciled": 0, "errors": []}
+        result = {"checked": len(rows), "reconciled": 0, "errors": []}
+        for row in rows:
+            self._observation_cursor = row["task_id"]
+            try:
+                await self._reconcile(row["owner_id"], row["task_id"], trusted_cleanup=True)
+                result["reconciled"] += 1
+            except Exception as error:
+                result["errors"].append({"id": row["task_id"], "errorType": type(error).__name__})
+        return result
+
     def _validate_placement(self, plan, envelope):
         raise HTTPException(409, 'Remote placement validator is unavailable')
 
@@ -984,8 +1096,11 @@ class TrustedHandoffClient:
         return rows[0]
 
     def _target(self, owner: str, row: Mapping[str, Any], *, execution: bool = True,
-                native_cancellation: bool = False) -> HandoffTarget:
-        self.auth.require_member(owner)
+                native_cancellation: bool = False, trusted_cleanup: bool = False) -> HandoffTarget:
+        if trusted_cleanup and execution:
+            raise ValueError("Trusted cleanup cannot authorize execution")
+        if not trusted_cleanup:
+            self.auth.require_member(owner)
         target = self.targets.get(row["target_ref"])
         if target is None or owner not in target.identity_map or target.fingerprint != row["configuration_hash"]:
             raise HTTPException(409, "Trusted target identity/configuration is no longer valid")
@@ -1070,7 +1185,7 @@ class TrustedHandoffClient:
             raise HTTPException(502, "Remote response must be a bounded object or list")
         return body
 
-    def _save_receipt(self, row: Mapping[str, Any], target: HandoffTarget, receipt: Mapping[str, Any]) -> dict[str, Any]:
+    def _save_receipt(self, row: Mapping[str, Any], target: HandoffTarget, receipt: Mapping[str, Any], *, persist: bool = True) -> dict[str, Any]:
         if not isinstance(receipt, dict):
             raise HTTPException(502, "Remote receipt must be an object")
         for key, expected in {"originRef": target.origin_ref, "originOwnerId": row["owner_id"], "originTaskId": row["task_id"],
@@ -1114,7 +1229,7 @@ class TrustedHandoffClient:
             effective["sha256"] = digest(effective)
             _usage_commitment(quote, bindings=effective)
         with self.store.transaction() as connection:
-            current = connection.execute(text("SELECT * FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner FOR UPDATE"),
+            current = connection.execute(text("SELECT * FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner" + (" FOR UPDATE" if persist else "")),
                                          {"id": row["task_id"], "owner": row["owner_id"]}).mappings().first()
             if current is None:
                 raise HTTPException(404, "Owner-bound remote placement disappeared")
@@ -1158,6 +1273,18 @@ class TrustedHandoffClient:
             local_state = receipt.get("state", "UNKNOWN")
             if body.get("dispatchAttempted") and local_state in {"PREPARING", "PREPARED"}:
                 local_state = "DISPATCH_UNKNOWN"
+            if not persist:
+                if statement is not None:
+                    ledger = getattr(self.store, "usage_ledger", None)
+                    if ledger is None:
+                        raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: origin validation unavailable")
+                    ledger.apply_remote_statement(row["owner_id"], row["task_id"], statement, persist=False)
+                elif receipt.get("state") == "CANCELLED_NO_DISPATCH" and grant is not None:
+                    ledger = getattr(self.store, "usage_ledger", None)
+                    if ledger is None:
+                        raise HTTPException(409, "USAGE_REMOTE_LEDGER_REQUIRED: origin validation unavailable")
+                    ledger.reclaim_remote_no_dispatch(row["owner_id"], row["task_id"], receipt["id"], dict(receipt), persist=False)
+                return {**receipt, "originDispatchState": local_state}
             connection.execute(text("UPDATE af_remote_placements SET state=:state,body=CAST(:body AS JSONB) WHERE task_id=:id"),
                                {"id": row["task_id"], "state": local_state, "body": canonical(body)})
         if receipt.get("usageStatement") is not None:
@@ -1182,7 +1309,7 @@ class TrustedHandoffClient:
         row = self._row(owner, task_id)
         target = self._target(owner, row)
         if row["body"].get("dispatchAttempted") or row["state"] not in {"RESERVED", "PREPARE_UNKNOWN", "PREPARING"}:
-            return await self.receipt(owner, task_id)
+            return await self.reconcile(owner, task_id)
         self.store.sql("UPDATE af_remote_placements SET state='PREPARE_UNKNOWN' WHERE task_id=:id", id=task_id)
         receipt = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/prepare", json={
             "originRef": target.origin_ref, "originOwnerId": owner, "originTaskId": task_id,
@@ -1191,8 +1318,11 @@ class TrustedHandoffClient:
         return self._save_receipt(row, target, receipt)
 
     async def receipt(self, owner: str, task_id: str) -> dict[str, Any]:
+        return await self._receipt(owner, task_id)
+
+    async def _receipt(self, owner: str, task_id: str, *, trusted_cleanup: bool = False) -> dict[str, Any]:
         row = self._row(owner, task_id)
-        target = self._target(owner, row, execution=False)
+        target = self._target(owner, row, execution=False, trusted_cleanup=trusted_cleanup)
         previous = row["body"].get("receipt")
         if previous:
             path = "/api/factory/remote-handoffs/" + quote(previous["id"], safe="")
@@ -1200,14 +1330,25 @@ class TrustedHandoffClient:
         else:
             receipt = await self._request(owner, target, "GET", "/api/factory/remote-handoffs/receipts/by-request",
                                           params={"originRef": target.origin_ref, "originOwnerId": owner, "requestId": row["request_id"]})
-        return self._save_receipt(row, target, receipt)
+        return self._save_receipt(row, target, receipt, persist=False)
+
+    async def reconcile(self, owner: str, task_id: str) -> dict[str, Any]:
+        return await self._reconcile(owner, task_id)
+
+    async def _reconcile(self, owner: str, task_id: str, *, trusted_cleanup: bool = False) -> dict[str, Any]:
+        # Internal observation can settle an original binding after membership
+        # revocation. It cannot dispatch, resume, change targets or bypass the
+        # receiver's authenticated HTTP ingress or full receipt validation.
+        row, target, identifier = await self._binding(owner, task_id, execution=False, trusted_cleanup=trusted_cleanup)
+        receipt = await self._request(owner, target, "POST", "/api/factory/remote-handoffs/" + identifier + "/reconcile")
+        return self._save_receipt(self._row(owner, task_id), target, receipt)
 
     async def dispatch(self, owner: str, task_id: str) -> dict[str, Any]:
         row = self._row(owner, task_id)
         target = self._target(owner, row)
         previous = row["body"].get("receipt")
         if row["body"].get("dispatchAttempted") or not previous or row["state"] in {"UNKNOWN", "DISPATCH_UNKNOWN", "ACCEPTED"}:
-            return await self.receipt(owner, task_id)
+            return await self.reconcile(owner, task_id)
         ledger = getattr(self.store, "usage_ledger", None)
         grant = None
         if ledger is not None:
@@ -1234,16 +1375,16 @@ class TrustedHandoffClient:
                                     params={"remoteTaskId": remote_task_id} if remote_task_id else {})
         if not isinstance(value, dict) or not isinstance(value.get("handoff"), dict):
             raise HTTPException(502, "Remote detail has no owner-bound handoff receipt")
-        self._save_receipt(row, target, value["handoff"])
+        self._save_receipt(row, target, value["handoff"], persist=False)
         return value
 
-    async def _binding(self, owner: str, task_id: str, *, execution: bool) -> tuple[dict[str, Any], HandoffTarget, str]:
+    async def _binding(self, owner: str, task_id: str, *, execution: bool, trusted_cleanup: bool = False) -> tuple[dict[str, Any], HandoffTarget, str]:
         row = self._row(owner, task_id)
-        target = self._target(owner, row, execution=execution)
+        target = self._target(owner, row, execution=execution, trusted_cleanup=trusted_cleanup)
         receipt = row["body"].get("receipt")
         if not receipt:
-            receipt = await self.receipt(owner, task_id)
-            row = self._row(owner, task_id)
+            receipt = await self._receipt(owner, task_id, trusted_cleanup=trusted_cleanup)
+            row = {**row, "body": {**row["body"], "receipt": receipt}}
         return row, target, quote(receipt["id"], safe="")
 
     async def cancel(self, owner: str, task_id: str, remote_task_id: str | None = None) -> dict[str, Any]:
@@ -1382,6 +1523,7 @@ class TrustedHandoffClient:
                                 usage_grant_sha256=row["body"].get("usageGrant", {}).get("sha256"))
 
     def install_guard(self) -> None:
+        self.store.handoff_client = self
         if self._installed:
             return
         def deny_local(owner, plan, context, name):

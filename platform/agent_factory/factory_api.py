@@ -189,15 +189,6 @@ class FactoryAPI:
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
-            if status in {"failed", "canceled"} and not group["allStopped"]:
-                try:
-                    self.auth.require_member(task["owner_id"])
-                except HTTPException as error:
-                    if error.status_code != 403:
-                        raise
-                else:
-                    group = (await self.delegation.cascade_cancel(task["owner_id"], task["id"]))["group"]
-                    task = self.store.task(task["id"], task["owner_id"])
             # Native/group reads can await a concurrent trusted cleanup. Its
             # cancellation flag and failure provenance commit together; never
             # overwrite that cause using the caller's pre-await task snapshot.
@@ -209,7 +200,6 @@ class FactoryAPI:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
             elif waiting_inference and not self.store.has_failures(task["id"]):
                 status = "waiting_approval"
-        self.store.observed(task, status, status in {"completed", "failed", "canceled"} and (group is None or group["allStopped"]))
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
         model_binding = (plan.get("executionBindings") or {}).get("model", {})
@@ -405,10 +395,10 @@ class FactoryAPI:
                     "outcomeSource": "persisted_factory_intent"}
 
         @router.get("/jobs")
-        async def jobs(request: Request):
+        def jobs(request: Request, limit: int = Query(default=50, ge=1, le=100),
+                 cursor: str | None = Query(default=None, max_length=2048)):
             user = self.user(request)
-            details = await asyncio.gather(*(self.detail(task) for task in self.store.tasks(user["id"])))
-            return [detail["job"] for detail in details]
+            return self.store.task_history(user["id"], limit=limit, cursor=cursor)
 
         @router.get("/jobs/{task_id}")
         async def task_detail(task_id: str, request: Request):
@@ -508,6 +498,7 @@ class FactoryAPI:
             user = self.user(request)
             task, child = self.scoped_task(task_id, user["id"])
             if self.remote and self.remote.placed(task):
+                await self.remote.client.reconcile(user["id"], task["id"])
                 return (await self.remote.detail(task, child))["job"]
             # Snapshot/receipt lookup only; no replay and no timeout-based capacity release.
             if not task.get("run_id"):
@@ -516,6 +507,9 @@ class FactoryAPI:
                 if receipt:
                     self.store.accept(task_id, receipt["run_id"])
             self.store.event(task_id, "reconciliation", "Queried native state; unresolved effects remain UNKNOWN", {})
+            observer = getattr(self.store, "lifecycle_observer", None)
+            if observer is not None:
+                await observer.observe_root(self.delegation._ancestry(task)[0] if self.delegation else task["id"])
             return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
 
         @router.get("/jobs/{task_id}/artifacts/{artifact_id}")

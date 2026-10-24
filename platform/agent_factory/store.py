@@ -3,6 +3,8 @@
 Immutable snapshots and admission fingerprints close native assembly gaps. This
 store is not a second job scheduler. Uncertain admissions/effects retain capacity.
 """
+import base64
+import binascii
 import hashlib
 import json
 from threading import Lock
@@ -115,13 +117,15 @@ class Store:
                 self._retention_lock_engine.dispose()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, read_only=False):
         """Share admission transactions with nested metadata/descendant reads."""
         borrowed = self._connection.get()
         if borrowed is not None:
             yield borrowed
             return
         with self.engine.begin() as conn:
+            if read_only and self.engine.dialect.name == "postgresql":
+                conn.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             token = self._connection.set(conn)
             try:
                 yield conn
@@ -156,6 +160,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_plans (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL, hash TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
+            "CREATE INDEX IF NOT EXISTS af_tasks_owner_history ON af_tasks(owner_id,(body->>'createdAt') DESC,id DESC)",
             "CREATE TABLE IF NOT EXISTS af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_control_commands (owner_id TEXT NOT NULL, command_id TEXT NOT NULL, task_ref TEXT NOT NULL, root_task_id TEXT NOT NULL REFERENCES af_tasks(id), action TEXT NOT NULL, fingerprint TEXT NOT NULL, requirement_slot TEXT, state TEXT NOT NULL, body JSONB NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner_id,command_id), UNIQUE(owner_id,requirement_slot))",
             "CREATE INDEX IF NOT EXISTS af_control_commands_owner_task ON af_control_commands(owner_id,task_ref)",
@@ -319,6 +324,54 @@ class Store:
     def tasks(self, owner):
         return self.sql("SELECT * FROM af_tasks WHERE owner_id=:owner ORDER BY body->>'createdAt' DESC LIMIT 100", owner=owner)
 
+    def task_history(self, owner, *, limit=50, cursor=None):
+        """Owner-scoped keyset projection; never reads execution details."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise HTTPException(422, "History limit must be between 1 and 100")
+        boundary = None
+        if cursor is not None:
+            try:
+                if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+                    raise ValueError()
+                boundary = json.loads(base64.b64decode(cursor + '=' * (-len(cursor) % 4), altchars=b'-_', validate=True))
+                if (not isinstance(boundary, dict) or set(boundary) != {"v", "owner", "createdAt", "id"}
+                        or type(boundary["v"]) is not int or boundary["v"] != 1 or boundary["owner"] != owner
+                        or any(not isinstance(boundary[key], str) or not 1 <= len(boundary[key]) <= 100
+                               for key in ("createdAt", "id"))):
+                    raise ValueError()
+                if not self.sql("SELECT id FROM af_tasks WHERE owner_id=:owner AND id=:id AND body->>'createdAt'=:created",
+                                owner=owner, id=boundary["id"], created=boundary["createdAt"]):
+                    raise ValueError()
+            except (ValueError, TypeError, UnicodeError, binascii.Error, RecursionError):
+                raise HTTPException(400, "Invalid owner-scoped history cursor") from None
+        where = "AND (t.body->>'createdAt',t.id)<(:created,:after)" if boundary else ""
+        rows = self.sql(f"""SELECT t.id,t.owner_id,t.plan_id,t.admission,t.body->>'createdAt' AS created,
+            t.body->>'updatedAt' AS updated,t.body->>'observedAt' AS observed,t.body->>'lastStatus' AS status,
+            p.body->>'application' AS application,p.body->'applicationRef' AS application_ref,
+            p.body->>'normalizedGoal' AS topic,p.body->>'mode' AS mode
+            FROM af_tasks t JOIN af_plans p ON p.id=t.plan_id AND p.owner_id=t.owner_id
+            WHERE t.owner_id=:owner {where} ORDER BY t.body->>'createdAt' DESC,t.id DESC LIMIT :count""",
+            owner=owner, count=limit + 1, created=boundary["createdAt"] if boundary else None,
+            after=boundary["id"] if boundary else None)
+        items = []
+        for row in rows[:limit]:
+            ref = row["application_ref"] or {"id": row["application"], "version": 1}
+            status = row["status"] or "unknown"
+            if row["admission"] == "rejected":
+                status = "failed"
+            elif row["admission"] in {"reserved", "unknown"}:
+                status = "unknown"
+            items.append({"id": row["id"], "ownerId": row["owner_id"], "planId": row["plan_id"],
+                "definitionId": ref["id"], "definitionVersion": ref["version"],
+                "input": {"topic": row["topic"], "mode": row["mode"], "scenario": "normal"},
+                "status": status, "createdAt": row["created"], "updatedAt": row["updated"], "observedAt": row["observed"]})
+        next_cursor = None
+        if len(rows) > limit:
+            last = rows[limit - 1]
+            next_cursor = base64.urlsafe_b64encode(canonical({"v": 1, "owner": owner,
+                "createdAt": last["created"], "id": last["id"]}).encode()).decode().rstrip('=')
+        return {"items": items, "nextCursor": next_cursor}
+
     def accept(self, task_id, run_id):
         # A repeated exact acknowledgment cannot renew admission or re-hold a
         # positively stopped task. A first late binding still records native
@@ -422,17 +475,32 @@ class Store:
                 return
             self._observed_locked(rows[0], status, terminal)
 
+    def observe_summary(self, task, status):
+        """A display observation cannot release custody or undo terminal proof."""
+        with self.transaction():
+            rows = self.sql("SELECT * FROM af_tasks WHERE id=:id AND owner_id=:owner FOR UPDATE",
+                            id=task["id"], owner=task["owner_id"])
+            if rows and not rows[0]["terminal"]:
+                self._summary_locked(rows[0], status)
+
+    def _summary_locked(self, task, status):
+        stamp = now()
+        changed = task["body"].get("lastStatus") != status
+        body = {**task["body"], "lastStatus": status, "observedAt": stamp}
+        if changed:
+            body["updatedAt"] = stamp
+        self.sql("UPDATE af_tasks SET body=CAST(:body AS JSONB) WHERE id=:id", id=task["id"], body=canonical(body))
+        if changed:
+            self.event(task["id"], "lifecycle", status, {"status": status})
+
     def _observed_locked(self, task, status, terminal):
         if terminal and (runtime_custody_held(self, task["id"])
                          or any(effect_unresolved(effect, self) for effect in self.effects(task["id"]))):
             terminal = False
         if terminal and self.storage is not None:
             self.storage.release(task["id"])
-        if task["body"].get("lastStatus") != status:
-            body = {**task["body"], "lastStatus": status, "updatedAt": now()}
-            self.sql("UPDATE af_tasks SET body=CAST(:body AS JSONB),terminal=:terminal WHERE id=:id", id=task["id"], body=canonical(body), terminal=terminal)
-            self.event(task["id"], "lifecycle", status, {"status": status})
-        elif task["terminal"] != terminal:
+        self._summary_locked(task, status)
+        if task["terminal"] != terminal:
             self.sql("UPDATE af_tasks SET terminal=:terminal WHERE id=:id", id=task["id"], terminal=terminal)
 
     def request_cancel(self, task_id):

@@ -11,21 +11,21 @@ import { nativeInteractionAvailable, remoteHandoffState } from './remoteHandoffS
 import { ArtifactDownload } from './VerifiedArtifactDownload.js';
 import { UsageLedgerPanel } from './UsageLedger.js';
 import { Badge, ErrorMessage, time } from './workspaceUI.js';
-import { pendingApproval, pendingQuestion, statusNames, type Artifact, type FactoryJob, type JobDetail, type DelegationGroup, type DelegationScope } from './models.js';
+import { pendingApproval, pendingQuestion, statusNames, type Artifact, type FactoryJob, type JobSummary, type JobDetail, type DelegationGroup, type DelegationScope } from './models.js';
 import type { ComposerSeed } from './ApplicationComposer.js';
 import type { WorkspaceContext } from './App.js';
 
 export function TaskWorkspace({ context, Detail = TaskDetail, title, modeLabels = {}, emptyContent }: {
   context: WorkspaceContext; Detail?: ComponentType<TaskDetailProps>;
-  title?: (job: FactoryJob) => string; modeLabels?: Readonly<Record<string, string>>; emptyContent?: ReactNode;
+  title?: (job: JobSummary) => string; modeLabels?: Readonly<Record<string, string>>; emptyContent?: ReactNode;
 }) {
-  const { user, route, jobs, status, detail, detailError, busy, act, notice: onNotice, onTask, syncedAt, retry, drafts, onCompose } = context;
+  const { user, route, jobs, status, detail, detailError, busy, act, notice: onNotice, onTask, jobsLoaded, jobsError, historyError, historyLoading, nextCursor, loadEarlier, retry, drafts, onCompose } = context;
   const selected = route.task;
   const panel = useRef<HTMLElement>(null);
   useEffect(() => { if (selected) panel.current?.focus(); }, [selected]);
   return <><ControlRecovery ownerId={user.id} onSelect={onTask} busy={busy} act={act}/>
     <div className="page-heading"><div><h1>任务与证据</h1><p>查看原任务、审批、执行进度与证据。</p></div><div className="worker-metrics"><span><b>{status?.activeWorkers ?? '—'}</b>执行中</span><span><b>{status?.queuedJobs ?? '—'}</b>排队</span><span><b>{status?.maxWorkers ?? '—'}</b>执行上限</span></div></div>
-    <div className={`research-grid ${selected ? 'has-task' : 'new-task-layout'}`}><div className="research-left"><TaskList jobs={jobs} selected={selected} select={onTask} loading={!syncedAt} title={title} modeLabels={modeLabels}/></div>
+    <div className={`research-grid ${selected ? 'has-task' : 'new-task-layout'}`}><div className="research-left"><TaskList jobs={jobs} selected={selected} select={onTask} loading={!jobsLoaded} title={title} modeLabels={modeLabels}/><ErrorMessage message={jobsError && `任务列表更新失败：${jobsError}`} retry={retry}/><ErrorMessage message={historyError && `更早任务读取失败：${historyError}`} retry={loadEarlier}/>{nextCursor && <button className="secondary" disabled={historyLoading} onClick={loadEarlier}>{historyLoading ? '正在读取更早任务…' : '加载更早任务'}</button>}</div>
     <section className="task-panel" aria-label="任务详情" id="task-detail" ref={panel} tabIndex={-1}>
       {selected ? detail?.job.id === selected ? <Detail key={detail.job.id} detail={detail} busy={busy} act={act} onNotice={onNotice} onSelect={onTask} jobs={jobs} drafts={drafts} ownerId={user.id} onCompose={onCompose} modeLabels={modeLabels}/>
         : <div className="empty-state"><h2>{detailError ? '暂时无法读取任务' : '正在读取任务'}</h2><p>{detailError || '获取执行记录、事件与证据。'}</p><button className="secondary" onClick={retry}>重试</button></div>
@@ -33,11 +33,11 @@ export function TaskWorkspace({ context, Detail = TaskDetail, title, modeLabels 
       {detailError && detail && <ErrorMessage message={`记录更新失败：${detailError}`} retry={retry}/>}</section></div></>;
 }
 
-function TaskList({ jobs, selected, select, loading, title = job => job.input.topic, modeLabels = {} }: { jobs: FactoryJob[]; selected: string; select: (id: string) => void; loading: boolean; title?: (job: FactoryJob) => string; modeLabels?: Readonly<Record<string, string>> }) {
-  return <section className="task-list" aria-labelledby="task-list-title"><div className="section-heading"><h2 id="task-list-title">我的任务</h2><span className="quiet">{jobs.length} 项</span></div>{jobs.length ? <div className="task-list-items">{jobs.map(job => <button className={`task-row ${selected === job.id ? 'selected' : ''}`} key={job.id} onClick={() => select(job.id)} aria-pressed={selected === job.id}><div><strong>{title(job)}</strong><small>{time(job.createdAt)} · {(modeLabels[job.input.mode] ?? job.input.mode)}</small></div><Badge value={job.status} label={job.executionPlacement?.state === 'PREPARING' ? '接收端准备待核对' : undefined}/></button>)}</div> : <p className="list-empty">{loading ? '正在读取任务…' : '尚无任务。在应用中提交目标后，在此查看进度与结果。'}</p>}</section>;
+function TaskList({ jobs, selected, select, loading, title = job => job.input.topic, modeLabels = {} }: { jobs: JobSummary[]; selected: string; select: (id: string) => void; loading: boolean; title?: (job: JobSummary) => string; modeLabels?: Readonly<Record<string, string>> }) {
+  return <section className="task-list" aria-labelledby="task-list-title"><div className="section-heading"><h2 id="task-list-title">我的任务</h2><span className="quiet">已加载 {jobs.length} 项</span></div><p className="quiet">列表展示已保存的状态；执行与停止确认请查看任务详情。</p>{jobs.length ? <div className="task-list-items">{jobs.map(job => <button className={`task-row ${selected === job.id ? 'selected' : ''}`} key={job.id} onClick={() => select(job.id)} aria-pressed={selected === job.id}><div><strong>{title(job)}</strong><small>{time(job.createdAt)} · {(modeLabels[job.input.mode] ?? job.input.mode)}</small><small>{job.observedAt ? `状态记录于 ${time(job.observedAt)}` : '尚无执行观察记录'}</small></div><Badge value={job.status} /></button>)}</div> : <p className="list-empty">{loading ? '正在读取任务…' : '尚无任务。在应用中提交目标后，在此查看进度与结果。'}</p>}</section>;
 }
 
-function DelegationPanel({ detail, busy, act, onNotice, onSelect, jobs, drafts, modeLabels }: { modeLabels: Readonly<Record<string, string>>; detail: JobDetail; busy: string; act: (name: string, work: () => Promise<void>) => Promise<void>; onNotice: (message: string) => void; onSelect: (id: string) => void; jobs: FactoryJob[]; drafts: Map<string, ChildDraft> }) {
+function DelegationPanel({ detail, busy, act, onNotice, onSelect, jobs, drafts, modeLabels }: { modeLabels: Readonly<Record<string, string>>; detail: JobDetail; busy: string; act: (name: string, work: () => Promise<void>) => Promise<void>; onNotice: (message: string) => void; onSelect: (id: string) => void; jobs: JobSummary[]; drafts: Map<string, ChildDraft> }) {
   const id = detail.job.id;
   const [draft, setDraft] = useState<ChildDraft>(() => drafts.get(id) ?? { goal: '', mode: '', requestId: '' });
   const rawGroup = detail.snapshot?.delegation;
@@ -78,7 +78,7 @@ export interface TaskDetailProps {
   ownerId: string; detail: JobDetail; busy: string;
   act: (name: string, work: () => Promise<void>) => Promise<void>;
   onNotice: (message: string) => void; onSelect: (id: string) => void;
-  jobs: FactoryJob[]; drafts: Map<string, ChildDraft>;
+  jobs: JobSummary[]; drafts: Map<string, ChildDraft>;
   onCompose?: (seed: ComposerSeed, notice: string) => void;
   modeLabels?: Readonly<Record<string, string>>; title?: string; source?: string; artifacts?: Artifact[];
   evidenceBefore?: ReactNode; evidenceAfter?: ReactNode;
