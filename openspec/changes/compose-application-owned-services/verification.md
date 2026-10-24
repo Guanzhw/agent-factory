@@ -30,3 +30,9 @@ root串行实际验收（均exit0，零skip）：
 上列PG输出仍含旧guardian Popen ResourceWarning；本分支未包含#103后续guardian修复，不能宣称清理警告消失或历史MCP偶发已根治。只验证确定性公开/合成与loopback，不代表真实供应商验收。其余最终检查另录，不把阶段结果当full CI成功。
 
 最终本地门禁：独立core wheel实际安装/PG启动/cleanShutdown通过17.111s；npm run check exit0，707项通过/0skip，lint/typecheck/build完成70.025s；production/full npm audit各0 vulnerabilities，exit0。最终Ruff通过，architecture739 modules/0 violations/0 gaps。OpenSpec strict通过。新增daily ownership selection的原17项通过0.035s，collection验证full3318、dailyPython270、PG59，无重复lane；已有daily253加这17，无需重复整套。一个误用host Python运行check_python.py --help的检查实际进入collection且缺Agno/SQLAlchemy，未运行用例；该脚本没有help模式。随后仅通过锁定venv的inventory接口验证选择，不把host失败记为产品测试结果。最终full CI尚未运行。
+
+## 精确1d2bbb7 full Windows fixture失败
+
+fast40116000844成功，full40116074034仍在PG阶段；Windowsjob120937537734已失败3318tests，1failure/9error events、1247skip、285.497s。raw `/workspace/scratch/cloud-delivery-20261024/composition-1d2bbb7-windows.log`。错误来自遗漏的旧Mock应用registry、旧static timingwrapper、baseline context state缺graph、runtime构造和AutoResearchService测试子类缺research参数。
+
+六个fixture文件已迁移：使用真实ApplicationRuntimeRegistry和ResearchApplicationHooks，read_wait spy证明实际app观察；graph显式传递；timing诊断fixture保留实例self绑定，实际class(instance,...)/bound-call验证四次成功/领域拒绝事件。原断言不降级。五模块19项通过0.222s，默认sandbox异步Runner阻塞后仅终止本任务PID，授权环境同命令通过。未改生产期限/断言或运行第二份full。

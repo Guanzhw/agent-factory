@@ -133,30 +133,35 @@ class RecoveryTimingTests(unittest.TestCase):
         self.assertEqual([event['stage'] for event in json.loads(self.path.read_text())['events']],
                          ['root-lock-wait', 'root-lock-held'])
 
-    def test_real_static_approval_payload_retains_class_and_instance_signature(self):
+    def test_real_approval_payload_retains_class_and_instance_signature(self):
         from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
         from agent_factory.delegation import DelegationService
         # Real implementation must reach its domain proof rejection, not fail on
         # an injected instance argument. No database or native fixture is needed.
-        original_descriptor = ControlCommands.__dict__['_approval_payload']
-        original = original_descriptor.__func__
+        from types import SimpleNamespace
+        from agent_factory_research.services import ResearchServices
+        store = object()
+        instance = ControlCommands(SimpleNamespace(store=store, auth=object(), bridge=object()),
+            research=ResearchServices(store, installed=True))
+        original = ControlCommands._approval_payload
         task, snapshot = {'id': 'synthetic'}, {}
         receipt = {'body': {'binding': {}, 'decision': {}}, 'command_id': 'synthetic',
                    'fingerprint': 'synthetic', 'action': 'cancel'}
         with self.assertRaises(HTTPException) as expected:
-            original(task, snapshot, receipt)
+            original(instance, task, snapshot, receipt)
         with patch.object(ControlCommands, 'approved_recovery'), \
-             patch.object(ControlCommands, '_approval_payload', original_descriptor), \
+             patch.object(ControlCommands, '_approval_payload', original), \
              patch.object(ControlCommands, '_completed_launch'), \
              patch.object(DelegationService, '_root_lock'):
             install_recovery_timing(self.path)
-            instance = object.__new__(ControlCommands)
             from test_approved_recovery import fixture
             valid_task, valid_receipt, valid_snapshot = fixture()
-            expected_success = original(valid_task, valid_snapshot, valid_receipt)
-            for method in (ControlCommands._approval_payload, instance._approval_payload):
+            expected_success = original(instance, valid_task, valid_snapshot, valid_receipt)
+            methods = (lambda *args: ControlCommands._approval_payload(instance, *args),
+                       instance._approval_payload)
+            for method in methods:
                 self.assertEqual(method(valid_task, valid_snapshot, valid_receipt), expected_success)
-            for method in (ControlCommands._approval_payload, instance._approval_payload):
+            for method in methods:
                 with self.assertRaises(HTTPException) as actual:
                     method(task, snapshot, receipt)
                 self.assertEqual(actual.exception.detail, expected.exception.detail)
