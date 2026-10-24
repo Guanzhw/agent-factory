@@ -1824,3 +1824,7 @@ Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、
 | #98 科研关闭 | shutdown_design app；shutdown_tests子进程；root core/部署 | 独立shutdown worktree；用户已选35s后非零退出 | 原UNKNOWN/identity不重派发，真实进程验证中，不把异常当退出 |
 
 旧成果与失败日志保留；#99–102尚未在此分支实施。worker测试发现与root实跑结果分别记录。
+
+## 2026-10-24 #97 late authority follow-up
+
+965350f full失败4/3265，raw evidence已保存。backend仅2fixture同deadline持久barrier，root usage原receipt显式reconcile，remote拥有receiver latehistoryparity与Event测试，takeover独立review。原3PGtargeted通过、原science1通过572.256s；无超时放宽或新派发权限。root集成本次diff。#99 graph新head1d2bbb7 fast成功，fullWindows暴露6旧fixture迁移正在修，PG仍运行。#103c939 fast终态成功，日志完成与GitHub状态延迟约25min，未cancel/retry；原MCP不稳定仍需诊断。#100 independentneutralv2三真实case已有通过记录，cancel首轮fixture失败保留。#102在独立main分支仅开始recipe/helper切片，尚未API/native验收。

@@ -104,3 +104,15 @@ Further original-case results remain failures: `history-scientific-contention-fi
 Final targeted integration: `history-scientific-coherent-receipt` passed the original complete three-phase process/PG case, zero skips, 485.217s unittest /489.750s driver. Original identities, shared budget, dispatch counts, assertions and deadline remain intact. The three most affected usage/origin-interruption regressions then passed, zero skips, 68.030s unittest /70.964s driver (`history-coherence-usage-regressions`). This is one passing scientific run after preserved failures, not proof that all historical MCP timing failures are resolved.
 
 Latest receipt interleaving/disconnect checks: seven passed/zero skips; Ruff, Pyright (zero errors/warnings) and OpenSpec strict passed. Final fast Python collection validates253 selected cases (not an execution claim); earlier231 execution and each newly selected targeted test are recorded separately. Independent review found no new identity, stop-proof or accounting bypass; persistent contention can still conservatively reject rather than fabricate completion. Exact final-head CI is pending publication. All fixtures are synthetic/local; no paid or live external model was called.
+
+## 精确965350f full失败与定向收敛（2026-10-24）
+
+full40112603820（PGjob120927320891）终态失败：3265项，3195通过、4失败、66skip，2531.997s；5/7required groups通过，owner_byok与autoresearch各1未通过。Windows/Web/browser/static通过。raw `/workspace/scratch/cloud-delivery-20261024/history-965350f-full-pg.log`。
+
+前三项失败为native/receiver结束早于origin持久收尾：legacy BYOK read得到finalizing；restoredmember handoff17 origin terminal仍false；usage08 origin statement.allStopped仍false。前两fixture改为原30/15sdeadline内读取Store等待后台terminal，保留原GET和身份/效果断言。第三项按既有usage01契约显式POST reconcile原回执再断言origin ledger；它不是后台自动收敛证明。`history-full-barrier-fixes` 3项通过（59.341s driver），没有延长期限或修改生产超时。
+
+第四项科学失败trace为project_evidence初次authorize成功后，并发observer结束原source evaluation child，随后evaluation.verify再次请求执行授权被拒；晚到拒绝与初次就已拒绝的历史读取路径行为不一致。原日志有完整三phase已完成、retained evaluation claims和精确receiverReceiptTracebacks，不归为timeout或无害flaky。
+
+修复仅处理两种精确晚到origin拒绝（直接409/真实transport403），重新授权仍须拒绝，再只读核对原binding/native/正向已释放lease与完整retained claims。仍授权、身份变化、缺claims、held custody或其他evaluator异常保持原失败。不证明source正常完成、当前credential或artifact保留期仍有效，不新读artifact、不执行、不写journal；与初次custody_only历史证据语义保持一致。独立review无具体阻断；真实凭据轮换/保留期到期未由新mock单元测试覆盖。
+
+新增Event确定性交错3项含两error形态及负例；combined16纯测试通过。原`history-late-authority-scientific`实际三阶段通过572.256s（driver576.205s）。旧guardian ResourceWarnings保留。不是全部full通过，也不能关闭历史MCP第二任务等待问题。未重新启动整套追绿；后续以修复提交的fastCI和本定向证据报告。

@@ -645,6 +645,51 @@ class RemoteScientificReceiver:
                 and fresh['receiver'] == body['receiver'] and fresh['nativeRunId'] == body['nativeRunId'])
         return self._claims_only(receipt, fresh, lease)
 
+    async def _ended_evaluation_claims(self, error, receipt, body, lease):
+        """Match the initial historical-read boundary after a late authority denial.
+
+        This proves no renewed authority or successful source completion. Only
+        already verified claims may survive; current original custody is read
+        again without dispatch, artifact reads, or journal writes.
+        """
+        if (error.status_code, error.detail) not in (
+                (409, 'REMOTE_SCIENTIFIC_ORIGIN_DENIED'),
+                (403, 'ORIGIN_AUTHORITY_DENIED: origin did not return current verified authority')):
+            raise error
+        try:
+            owner = body['binding']['ownerId']
+            ctx = self._context(owner, body['receiver']['taskId'])
+            fresh, task, _ = self._bound(ctx, custody=True, persist=False)
+            require(fresh['binding']['scope']['phase'] == 'evaluation' and fresh['state'] == 'COMPLETED'
+                    and all(fresh[key] == body[key] for key in
+                            ('bindingSha256', 'binding', 'receiver', 'nativeRunId')))
+            try:
+                self.store.handoff_receiver.authorize(ctx.run_context, TOOLS['evaluation'])
+            except HTTPException as denied:
+                if denied.status_code not in {403, 404, 409}:
+                    raise error
+            except PermissionError:
+                pass
+            else:
+                raise error
+            state = await self.inspect_phase(owner, task['id'], persist=False)
+            current = deepcopy(state['lease'])
+            require(all(current[key] == lease[key] for key in
+                        ('id', 'ownerId', 'localTaskId', 'nativeRunId', 'planId', 'providerJobId', 'targetFingerprint')))
+            positive_lease(current, task, gpu=True)
+            latest, actual, _ = self._bound(ctx, custody=True, persist=False)
+            require(latest == fresh and all(actual[key] == task[key] for key in
+                    ('id', 'owner_id', 'plan_id', 'run_id')))
+            retained = self._retained(latest)
+            require(retained is not None and all(retained['claims'][key] is not None
+                    for key in ('launchProof', 'checkpoint', 'evaluation')))
+            current['planFingerprint'] = self.store.plan(task['plan_id'], owner)['fingerprint']
+            current['targetFingerprint'] = latest['targetFingerprint']
+            return self._claims_only(receipt, latest, current)
+        except Exception:
+            # A failed recheck must preserve the original unknown outcome.
+            raise error
+
     async def project_evidence(self, receipt, *, persist=True):
         """Validate original evidence; history reads never advance lifecycle custody."""
         if not persist:
@@ -716,6 +761,10 @@ class RemoteScientificReceiver:
                     try:
                         result = await project.assembler.evaluation_service(body['config']).verify(owner, contract)
                     except HTTPException as error:
+                        if (error.status_code, error.detail) in (
+                                (409, 'REMOTE_SCIENTIFIC_ORIGIN_DENIED'),
+                                (403, 'ORIGIN_AUTHORITY_DENIED: origin did not return current verified authority')):
+                            return await self._ended_evaluation_claims(error, receipt, body, lease)
                         return self._contended_claims(error, receipt, body, lease)
                     evaluation = {'contract': contract, 'result': result}
         if custody_only or not persist:

@@ -775,6 +775,15 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.assertTrue(self.remote['store'].has_failures(task['id']))
         finally:
             self.remote['auth'].directory.set_disabled('bob', False)
+        # Receiver stop and origin settlement are separate observer commits.
+        # Restored-member GETs below must only inspect the settled operation;
+        # wait for origin persistence within the existing failure deadline.
+        while time.monotonic() < deadline:
+            origin_task = self.origin['store'].task(row['task_id'], 'alice')
+            if origin_task['terminal']:
+                break
+            time.sleep(.03)
+        self.assertTrue(self.origin['store'].task(row['task_id'], 'alice')['terminal'])
         observed = self.call(self.handoff.receipt, 'alice', row['task_id'])
         detail = self.call(self.handoff.detail, 'alice', row['task_id'])
         self.assertEqual(observed['remoteRunId'], receipt['remoteRunId'])

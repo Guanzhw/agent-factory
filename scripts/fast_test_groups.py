@@ -49,6 +49,7 @@ FAST_PYTHON_TESTS = {
         'test_history_summary_status.HistorySummaryStatusTests',
         'test_remote_scientific_phase_reads.RemoteScientificPhaseReadTests',
         'test_remote_scientific_evidence_contention',
+        'test_remote_scientific_late_authority',
         'test_scientific_completion_claims',
         'test_remote_receipt_snapshot',
         'test_autoresearch_remote_children.RemoteChildrenTests.test_lost_drive_ack_observes_original_only_after_validated_intent',
