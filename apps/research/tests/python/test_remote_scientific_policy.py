@@ -1,5 +1,5 @@
 """Real SQLite member policy; synthetic remote journal/link, no native launch."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,9 +22,10 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         self.db = SqliteDb(db_file=str(Path(self.temp.name) / 'metadata.sqlite'))
         self.settings = SimpleNamespace(demo=True, temporary_policy='member-self-service')
         self.store = MetadataFixture(self.db, self.settings)
+        self.research = ResearchServices(self.store, installed=True)
         self.auth = SimpleNamespace(require_member=Mock())
         self.policy = PlanPolicyService(self.store, self.auth,
-            PlanPolicyConfig(revision='member-policy-v1'),
+            PlanPolicyConfig(revision='member-policy-v1'), research=self.research,
             clock=lambda: datetime(2026, 10, 7, tzinfo=timezone.utc))
         self.parent_plan = self.store.add()
         self.child_plan = self.store.add(delegation={'parentTaskId': 'parent', 'rootTaskId': 'parent', 'depth': 1})
@@ -44,7 +45,7 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         self.store.delegation = SimpleNamespace(_link=Mock(side_effect=lambda _: deepcopy(self.link)),
             _mandate=Mock(return_value=('parent', [self.parent_plan])))
         self.envelope = {'fixedSyntheticEnvelope': True}
-        services_for(self.store).remote_scientific = SimpleNamespace(
+        self.research.remote_scientific = SimpleNamespace(
             _row=Mock(return_value={'parent_id': 'parent', 'body': {'envelope': self.envelope}}),
             validate_source=Mock())
         self.store.auth = self.auth
@@ -64,7 +65,7 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         self.assertEqual(result['source'], 'member-self-service')
         self.assertIsNone(result['reviewId'])
         self.assertEqual(result['planId'], self.child_plan['id'])
-        services_for(self.store).remote_scientific.validate_source.assert_called_with(self.child_plan, self.envelope)
+        self.research.remote_scientific.validate_source.assert_called_with(self.child_plan, self.envelope)
         self.store.delegation._mandate.assert_called_with('alice', self.parent)
 
     def test_missing_or_changed_journal_link_and_child_native_identity_deny(self):
@@ -78,7 +79,7 @@ class RemoteScientificPolicyTests(unittest.TestCase):
             old = self.link[key]; self.link[key] = 'changed'
             with self.subTest(key=key), self.assertRaises(HTTPException): self.execute()
             self.link[key] = old
-        services_for(self.store).remote_scientific.validate_source.side_effect = HTTPException(409, 'JOURNAL_CHANGED')
+        self.research.remote_scientific.validate_source.side_effect = HTTPException(409, 'JOURNAL_CHANGED')
         with self.assertRaises(HTTPException): self.execute()
 
     def test_current_child_cancel_terminal_failure_and_boolean_depth_deny(self):
@@ -120,14 +121,14 @@ class RemoteScientificPolicyTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             self.policy.require_execution('alice', self.parent_plan, scientific_child_id='child')
         self.assertEqual(raised.exception.status_code, 409)
-        services_for(self.store).remote_scientific._row.assert_not_called()
+        self.research.remote_scientific._row.assert_not_called()
         self.store.delegation._mandate.assert_not_called()
 
     def test_missing_journal_service_or_link_denies_before_execution(self):
-        service = services_for(self.store).remote_scientific
-        services_for(self.store).remote_scientific = None
+        service = self.research.remote_scientific
+        self.research.remote_scientific = None
         with self.assertRaises(HTTPException): self.execute()
-        services_for(self.store).remote_scientific = service
+        self.research.remote_scientific = service
         service._row.side_effect = HTTPException(404, 'ORIGINAL_JOURNAL_MISSING')
         with self.assertRaises(HTTPException): self.execute()
         service._row.side_effect = None

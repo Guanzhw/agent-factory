@@ -99,11 +99,36 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         self.client.post('/api/factory/demo/login', json={'persona':'alice'}).raise_for_status()
 
     def tearDown(self):
-        # All jobs belong to this generated database and synthetic test identity.
-        for job in self.client.get('/api/factory/jobs').json():
+        # Enumerate every page before cleanup. A small page also exercises older
+        # tasks as this class accumulates history in its shared disposable DB.
+        jobs, cursor, seen = [], None, set()
+        while True:
+            response = self.client.get('/api/factory/jobs', params={
+                'limit': 2, **({'cursor': cursor} if cursor else {})})
+            response.raise_for_status()
+            page = response.json()
+            jobs.extend(page['items'])
+            cursor = page['nextCursor']
+            if cursor is None:
+                break
+            self.assertNotIn(cursor, seen, 'History pagination repeated a cursor')
+            seen.add(cursor)
+        # Summaries may lag native completion. Read current detail before deciding
+        # whether to cancel; neither GET is responsible for releasing capacity.
+        for summary in jobs:
+            response = self.client.get('/api/factory/jobs/' + summary['id'])
+            response.raise_for_status()
+            job = response.json()['job']
             if job['status'] not in {'completed', 'canceled', 'failed'}:
                 self.client.post(f"/api/factory/jobs/{job['id']}/cancel").raise_for_status()
                 self.wait_status(job['id'], 'canceled')
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                task = self.rows('SELECT terminal FROM af_tasks WHERE id=:id', id=job['id'])[0]
+                if task['terminal']:
+                    break
+                time.sleep(.1)
+            self.assertTrue(task['terminal'], 'Observer must release stopped fixture capacity before the next case')
 
     def rows(self, statement, **params):
         with self.engine.connect() as connection:

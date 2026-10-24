@@ -1,6 +1,5 @@
 """Native ORX profile boundaries with inert services; no ORX/provider/DB execution."""
-from research_services_fixture import with_research_services
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices, bind_registrations
 from dataclasses import dataclass, replace
 import json
 from types import SimpleNamespace
@@ -34,17 +33,55 @@ class Preset:
 
 def context():
     preset = Preset()
-    store = with_research_services(SimpleNamespace(authorize_tool=Mock(), usage_ledger=Mock()), autoresearch=SimpleNamespace(execute=AsyncMock(return_value={'status': 'reported', 'originalSessionId': 'original-session'}), tool=AsyncMock(return_value={'status': 'original-evidence'})))
-    return BindingContext(SimpleNamespace(demo=True, autoresearch_presets={preset.id: preset}), store,
+    store = SimpleNamespace(authorize_tool=Mock(), usage_ledger=Mock())
+    research = ResearchServices(factory_store=store, installed=True, autoresearch=SimpleNamespace(execute=AsyncMock(return_value={'status': 'reported', 'originalSessionId': 'original-session'}), tool=AsyncMock(return_value={'status': 'original-evidence'})))
+    ctx = BindingContext(SimpleNamespace(demo=True, autoresearch_presets={preset.id: preset}), store,
         {'ownerId': 'alice', 'application': profile.APPLICATION_ID, 'applicationRef': {'id': profile.APPLICATION_ID},
          'mode': 'research', 'tools': list(profile.TOOL_NAMES), 'capabilities': list(profile.PERMISSIONS)},
         RunContext(user_id='alice', session_id='original-task', run_id='original-run'),
         {'adapterId': profile.MODEL_ADAPTER_ID, 'revision': '1', 'config': {'presetId': preset.id}})
+    return ctx, research
 
 
 class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rebound_factories_and_created_models_keep_their_own_graph(self):
+        first, first_graph = context()
+        second, second_graph = context()
+        entries = profile.registrations()
+        installed = bind_registrations(entries, first_graph)
+        rebound = bind_registrations(installed, second_graph)
+        first_model = next(row for row in installed if row.kind == 'model').factory(first)
+        second_model = next(row for row in rebound if row.kind == 'model').factory(second)
+        first_tool = next(row for row in installed if row.tool_name == 'research_context').factory(first)
+        await first_model.aresponse([])
+        first_graph.autoresearch.execute.assert_awaited_once_with(first)
+        second_graph.autoresearch.execute.assert_not_awaited()
+        first_graph.release()
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            await first_model.aresponse([])
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            await first_tool.entrypoint(run_context=first.run_context, payload={})
+        first_graph.autoresearch.tool.assert_not_awaited()
+        await second_model.aresponse([])
+        second_graph.autoresearch.execute.assert_awaited_once_with(second)
+
+    def test_graph_factory_rejects_unbound_unready_and_foreign_store(self):
+        ctx, research = context()
+        entry = next(row for row in profile.registrations() if row.kind == 'model')
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_SERVICES_NOT_READY'):
+            entry.factory(ctx)
+        research.installed = False
+        bound = bind_registrations([entry], research)[0]
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_SERVICES_NOT_READY'):
+            bound.factory(ctx)
+        research.installed = True
+        foreign, _ = context()
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            bound.factory(foreign)
+        research.autoresearch.execute.assert_not_awaited()
+
     async def test_entire_native_response_delegates_once_appends_terminal_message_no_provider_or_ledger(self):
-        ctx = context(); model = profile.ORXResearchModel(ctx)
+        ctx, research = context(); model = profile.ORXResearchModel(ctx, research=research)
         messages = [Message(role='user', content='Research the approved goal')]
         model.invoke = Mock(side_effect=AssertionError('No provider'))
         model.ainvoke = AsyncMock(side_effect=AssertionError('No provider'))
@@ -52,7 +89,7 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         ledger, current = ctx.store.usage_ledger, Mock()
         DelegatingModel._guard_provider_calls(model, current, ledger=ledger, plan=ctx.plan, context=ctx.run_context)
         result = await model.aresponse(messages, tools=[{'unused': 'ORX owns tool loop'}])
-        services_for(ctx.store).autoresearch.execute.assert_awaited_once_with(ctx)
+        research.autoresearch.execute.assert_awaited_once_with(ctx)
         self.assertEqual(json.loads(cast(str, result.content))['originalSessionId'], 'original-session')
         self.assertEqual(messages[-1].role, 'assistant'); self.assertEqual(messages[-1].content, result.content)
         self.assertFalse(result.tool_calls); self.assertIsNone(result.response_usage)
@@ -60,49 +97,49 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ledger.mock_calls, []); current.assert_not_called()
 
     async def test_stream_emits_one_terminal_response_and_executes_only_once(self):
-        ctx = context(); model = profile.ORXResearchModel(ctx); messages = []
+        ctx, research = context(); model = profile.ORXResearchModel(ctx, research=research); messages = []
         result = [item async for item in model.aresponse_stream(messages=messages)]
         self.assertEqual(len(result), 1); self.assertEqual(len(messages), 1)
-        services_for(ctx.store).autoresearch.execute.assert_awaited_once_with(ctx)
+        research.autoresearch.execute.assert_awaited_once_with(ctx)
 
     async def test_cancellation_and_unknown_are_preserved_without_retry_or_assistant_success(self):
         for error in (RunCancelledException('synthetic cancel'), ValueError('AUTORESEARCH_UNKNOWN')):
-            ctx = context(); services_for(ctx.store).autoresearch.execute.side_effect = error
-            model = profile.ORXResearchModel(ctx); messages = []
+            ctx, research = context(); research.autoresearch.execute.side_effect = error
+            model = profile.ORXResearchModel(ctx, research=research); messages = []
             with self.assertRaises(type(error)) as caught: await model.aresponse(messages)
             self.assertIs(caught.exception, error)
-            services_for(ctx.store).autoresearch.execute.assert_awaited_once(); self.assertEqual(messages, [])
+            research.autoresearch.execute.assert_awaited_once(); self.assertEqual(messages, [])
 
     async def test_all_nonresponse_paths_fail_closed_without_service_execution(self):
-        ctx = context(); model = profile.ORXResearchModel(ctx)
+        ctx, research = context(); model = profile.ORXResearchModel(ctx, research=research)
         for call in (lambda: model.response([]), lambda: list(model.response_stream([])),
                      lambda: model.invoke([]), lambda: list(model.invoke_stream([])),
                      lambda: model._parse_provider_response({}), lambda: model._parse_provider_response_delta({})):
             with self.assertRaises(ValueError): call()
         with self.assertRaises(ValueError): await model.ainvoke([])
         with self.assertRaises(ValueError): _ = [item async for item in model.ainvoke_stream([])]
-        services_for(ctx.store).autoresearch.execute.assert_not_awaited()
+        research.autoresearch.execute.assert_not_awaited()
 
     async def test_current_preset_owner_scope_checked_again_before_execute(self):
-        ctx = context(); model = profile.ORXResearchModel(ctx)
+        ctx, research = context(); model = profile.ORXResearchModel(ctx, research=research)
         ctx.settings.autoresearch_presets['approved-project'].owner_id = 'bob'
         with self.assertRaises(ValueError): await model.aresponse([])
-        services_for(ctx.store).autoresearch.execute.assert_not_awaited()
+        research.autoresearch.execute.assert_not_awaited()
         for change in ({'application': 'other'}, {'mode': 'other'}, {'ownerId': 'bob'},
                        {'delegation': {'parent': 'x'}}, {'tools': ['research_context']}):
-            fresh = context()
+            fresh, research = context()
             with self.subTest(change=change), self.assertRaises(ValueError):
-                profile.ORXResearchModel(replace(fresh, plan={**fresh.plan, **change}))
+                profile.ORXResearchModel(replace(fresh, plan={**fresh.plan, **change}), research=research)
 
     async def test_catalog_tools_route_exact_original_context_and_name(self):
-        ctx = context()
+        ctx, research = context()
         for entry in profile.registrations():
             if entry.kind != 'tool': continue
-            services_for(ctx.store).autoresearch.tool.reset_mock(); ctx.store.authorize_tool.reset_mock()
-            function = entry.factory(ctx)
+            research.autoresearch.tool.reset_mock(); ctx.store.authorize_tool.reset_mock()
+            function = bind_registrations([entry], research)[0].factory(ctx)
             payload = {'requestId': 'original-tool-call', 'hypothesis': 'inert synthetic hypothesis'}
             result = await function.entrypoint(run_context=ctx.run_context, payload=payload)
-            services_for(ctx.store).autoresearch.tool.assert_awaited_once_with(ctx, entry.tool_name, payload)
+            research.autoresearch.tool.assert_awaited_once_with(ctx, entry.tool_name, payload)
             self.assertEqual(json.loads(result)['status'], 'original-evidence')
             self.assertEqual(ctx.store.authorize_tool.call_count, 2)
             with self.assertRaises(ValueError):
@@ -119,9 +156,9 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         limits['toolCalls'] = 1
         self.assertEqual(definition['modes']['research']['budget']['toolCalls'], 32)
         entries = {entry.kind: entry for entry in profile.registrations() if entry.kind != 'tool'}
-        knowledge = entries['knowledge'].factory(context())
+        knowledge = entries['knowledge'].factory(context()[0])
         self.assertEqual(json.loads(knowledge.content)['instructions'], Preset().instructions)
-        self.assertEqual(entries['environment'].factory(context()).runtime_id, profile.RUNTIME_ID)
+        self.assertEqual(entries['environment'].factory(context()[0]).runtime_id, profile.RUNTIME_ID)
         for bad in ({'presetId': 'x', 'command': 'x'}, {'presetId': '../x'}, {'presetId': True}):
             with self.assertRaises(ValueError): profile._config(bad)
 
@@ -155,19 +192,19 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
     async def test_all_development_registrations_reject_production_context(self):
         entries = profile.registrations()
         self.assertTrue(all(entry.demo_only is True for entry in entries))
-        ctx = context(); ctx.settings.demo = False
+        ctx, research = context(); ctx.settings.demo = False
         for entry in entries:
-            with self.subTest(kind=entry.kind), self.assertRaises(ValueError): entry.factory(ctx)
-        ctx = context(); model = profile.ORXResearchModel(ctx)
+            with self.subTest(kind=entry.kind), self.assertRaises(ValueError): bind_registrations([entry], research)[0].factory(ctx)
+        ctx, research = context(); model = profile.ORXResearchModel(ctx, research=research)
         ctx.settings.demo = False
         with self.assertRaises(ValueError): await model.aresponse([])
-        services_for(ctx.store).autoresearch.execute.assert_not_awaited()
+        research.autoresearch.execute.assert_not_awaited()
 
     def test_session_resource_contract_is_explicit_and_reviewable(self):
         self.assertEqual(dict(profile.SESSION_RESOURCE_LIMITS),
             {'cpus': 1, 'memoryMb': 1024, 'pids': 64, 'maxSessionSeconds': 3600})
         registration = next(row for row in profile.registrations() if row.kind == 'environment')
-        limits = registration.factory(context())
+        limits = registration.factory(context()[0])
         self.assertEqual((limits.memory_bytes, limits.process_limit, limits.cpu_percent), (1024**3, 64, 100))
         self.assertEqual((limits.timeout_seconds, limits.output_bytes), (30, 65536))
         material = next(row for row in profile.material_drafts('approved-project') if row['kind'] == 'environment')
@@ -179,21 +216,21 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         MaterialDefinition.model_validate(material)
 
     async def test_scientific_opt_in_has_closed_child_authority_and_same_go_tariff(self):
-        ctx = context()
+        ctx, research = context()
         ctx.settings.autoresearch_presets['approved-project'].external_session = True
         cast(dict, ctx.plan)['tools'] = list(profile.SCIENTIFIC_TOOLS)
         entries = profile.registrations(external_session=True)
         for entry in entries:
             if entry.tool_name in profile.SCIENTIFIC_AUTHORITY_TOOLS:
-                fn = entry.factory(ctx)
+                fn = bind_registrations([entry], research)[0].factory(ctx)
                 with self.assertRaisesRegex(ValueError, 'AUTORESEARCH_CHILD_EXECUTION_ONLY'): fn.entrypoint()
-        services_for(ctx.store).autoresearch.tool.assert_not_awaited()
+        research.autoresearch.tool.assert_not_awaited()
         with patch('agent_factory_research.autoresearch_session_control.model_factory', return_value='original-pause') as factory:
-            model = next(e for e in entries if e.kind == 'model').factory(ctx)
-            self.assertEqual(model, 'original-pause'); factory.assert_called_once_with(ctx)
+            model = bind_registrations([next(e for e in entries if e.kind == 'model')], research)[0].factory(ctx)
+            self.assertEqual(model, 'original-pause'); factory.assert_called_once_with(ctx, research=research)
         with self.assertRaises(ValueError):
-            next(e for e in profile.registrations() if e.kind == 'model').factory(ctx)
-        broker_model = profile.ORXResearchModel(ctx)
+            bind_registrations([next(e for e in profile.registrations() if e.kind == 'model')], research)[0].factory(ctx)
+        broker_model = profile.ORXResearchModel(ctx, research=research)
         price = profile.pricing_registration()
         self.assertIsNone(price.local_model_type); self.assertEqual(broker_model.provider, price.provider)
         self.assertEqual(broker_model.id, price.model)
@@ -215,7 +252,8 @@ class AutoResearchProfileTests(unittest.IsolatedAsyncioTestCase):
         price = profile.pricing_registration()
         self.assertIsNone(price.local_model_type); self.assertIsNot(price.usage_reader, zero_local_usage)
         self.assertIsNone(price.usage_reader({'arbitrary': 'usage'}))
-        model = profile.ORXResearchModel(context())
+        ctx, research = context()
+        model = profile.ORXResearchModel(ctx, research=research)
         body = {'model': 'deepseek-flash', 'stream': True, 'messages': [{'role': 'user', 'content': 'inert'}], 'max_tokens': 32}
         profile.request_guard(model, (body,), {}, price.body)
         for change in ({'model': 'alias'}, {'stream': False}, {'messages': []}, {'max_tokens': True},

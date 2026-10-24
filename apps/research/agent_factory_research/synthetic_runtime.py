@@ -6,11 +6,17 @@ from agent_factory.usage_ledger import PricingRevision
 from .bootstrap_catalog import SEEDS, LEGACY_DEMO
 
 class ResearchExecutionBindings(ExecutionBindings):
+    def __init__(self, *args, research=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.research = research
+        if research is not None:
+            research.require_store(self.store)
+
     def recheck(self, plan, context=None):
         manifest = super().recheck(plan, context)
         from .synthesis_runtime import validate_plan_source
         from .comparison_workflow import validate_plan
-        validate_plan_source(self.store, plan)
+        validate_plan_source(self.store, plan, research=self.research)
         validate_plan(self.store, plan)
         if is_go_plan(plan):
             from agent_factory.go_development import preflight_plan
@@ -18,10 +24,10 @@ class ResearchExecutionBindings(ExecutionBindings):
         return manifest
 
 
-def default_bindings(settings: Any, store: Any, connections: Any = None) -> ExecutionBindings:
+def default_bindings(settings: Any, store: Any, connections: Any = None, *, research=None) -> ExecutionBindings:
     from .demo_model import DemoModel
     from .tools import build_tools
-    registry = ResearchExecutionBindings(settings, store, connections, legacy_materials=SEEDS, legacy_bindings=LEGACY_DEMO)
+    registry = ResearchExecutionBindings(settings, store, connections, research=research, legacy_materials=SEEDS, legacy_bindings=LEGACY_DEMO)
     def empty(config):
         if config:
             raise ValueError("Adapter accepts no material configuration")

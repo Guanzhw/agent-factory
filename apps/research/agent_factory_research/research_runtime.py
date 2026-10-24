@@ -23,6 +23,10 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
     tool_name = TOOL
     effect_key = EFFECT
 
+    def __init__(self, store, auth, resources, *, research):
+        self.research = research.require_store(store)
+        super().__init__(store, auth, resources)
+
     def _config(self, task, plan):
         bindings = self.store.execution_bindings
         _require(bindings is not None)
@@ -36,7 +40,7 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
             from agent_factory.execution_bindings import BindingContext
             try:
                 pin = child_pin(BindingContext(self.store.settings, self.store, plan,
-                    self._context(task), selected[0]), scientific_phase, custody=True)
+                    self._context(task), selected[0]), scientific_phase, custody=True, research=self.research)
             except ValueError:
                 raise PermissionError('AUTORESEARCH_CHILD_AUTHORITY_ENDED') from None
             return pin['targetRef'], pin['comparisonManifest'], pin['variantSha256']
@@ -46,7 +50,7 @@ class ResearchProcessRuntimeService(ProcessRuntimeService):
         if remote_phase is not None:
             from agent_factory.execution_bindings import BindingContext
             pin = remote_phase_pin(BindingContext(self.store.settings, self.store, plan,
-                self._context(task), selected[0]), remote_phase, custody=True)
+                self._context(task), selected[0]), remote_phase, custody=True, research=self.research)
             return pin['targetRef'], pin['comparisonManifest'], pin['variantSha256']
         config = selected[0].get("config")
         _require(type(config) is dict and set(config) == {"targetRef", "comparisonManifestSha256", "variantSha256"})

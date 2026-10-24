@@ -1,5 +1,4 @@
 """Read original stopped scientific artifacts without renewing child execution."""
-from .services import services_for
 from fastapi import HTTPException
 
 from .autoresearch_profile import APPLICATION_ID
@@ -8,7 +7,8 @@ from agent_factory.execution_bindings import BindingContext
 from agent_factory.plan_policy import NativeMandateCompleted
 
 
-def require_original_custody(store, owner, plan, context, *, stopped):
+def require_original_custody(store, owner, plan, context, *, stopped, research):
+    research.require_store(store, ready=True)
     try:
         store.require_plan_execution(owner, plan, run_context=context)
         return
@@ -25,7 +25,7 @@ def require_original_custody(store, owner, plan, context, *, stopped):
         selected = [spec for spec in manifest['tools'] if spec['adapterId'] == adapter_id(phase, 'tool')]
         if len(selected) != 1:
             raise PermissionError('AUTORESEARCH_CUSTODY_BINDING_INVALID') from None
-        child_pin(BindingContext(store.settings, store, plan, context, selected[0]), phase, custody=True)
+        child_pin(BindingContext(store.settings, store, plan, context, selected[0]), phase, custody=True, research=research)
         if store.material_governance is not None:
             store.material_governance.require_materials_current(plan)
         for guard in tuple(store.execution_guards.values()):
@@ -35,7 +35,7 @@ def require_original_custody(store, owner, plan, context, *, stopped):
                 or plan.get('application') != APPLICATION_ID
                 or isinstance(error, HTTPException) and error.status_code not in {403, 404, 409}):
             raise
-        receiver = getattr(services_for(store), 'remote_scientific_receiver', None)
+        receiver = getattr(research, 'remote_scientific_receiver', None)
         if receiver is None:
             raise PermissionError('AUTORESEARCH_CUSTODY_BINDING_INVALID')
         receiver.require_completed_custody(owner, plan, context)

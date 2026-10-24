@@ -1,6 +1,5 @@
 # pyright: reportMissingImports=false
 """Durable coordinator seams with real pure evidence validators; no peer execution."""
-from agent_factory_research.services import services_for
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -34,18 +33,23 @@ class Store(local_fixture.MemoryStore):
 
 class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(); self.candidate = {'hypothesis': 'synthetic', 'trainPy': '# original candidate', 'validated': {}}
+        self.store = Store(); self.research = self.store.research; self.candidate = {'hypothesis': 'synthetic', 'trainPy': '# original candidate', 'validated': {}}
         self.preset = SimpleNamespace(fingerprint='5'*64, limits={'maxExperiments': 1},
             manifest=peer.contract()['comparisonManifest'])
-        self.service = SimpleNamespace(current=Mock(return_value=self.preset),
+        self.service = SimpleNamespace(research=self.research, current=Mock(return_value=self.preset),
             row=Mock(return_value={'body': {'candidates': {'id': self.candidate}}}))
         self.ctx = SimpleNamespace(run_context=SimpleNamespace(user_id='alice', session_id='parent', run_id='native-parent'))
         self.children = AutoResearchRemoteChildren(self.store, Mock(), self.service,
             target_ref='one-receiver', project_id='original-project', project_pin='4'*64,
             manifest=self.preset.manifest, poll_seconds=.01)
-        services_for(self.store).remote_scientific = SimpleNamespace(drive_outcome=Mock(return_value=None), start_phase=AsyncMock(), origin_phase=AsyncMock(side_effect=self.observe),
+        self.research.remote_scientific = SimpleNamespace(drive_outcome=Mock(return_value=None), start_phase=AsyncMock(), origin_phase=AsyncMock(side_effect=self.observe),
             cleanup_phase=AsyncMock(side_effect=self.observe),
             cancel_original=AsyncMock())
+        async def reconcile(owner, child, *, cleanup=False):
+            science = self.research.remote_scientific
+            reader = science.cleanup_phase if cleanup else science.origin_phase
+            return await reader(owner, child)
+        self.research.remote_scientific.reconcile_phase = AsyncMock(side_effect=reconcile)
         self.store.delegation.create = AsyncMock(side_effect=self.create)
         self.observed = {}; self.lost_ack = False
 
@@ -97,9 +101,9 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
                 value['status'] = 'pending'
                 value['allStopped'] = False
             return value
-        services_for(self.store).remote_scientific.origin_phase.side_effect = observe
+        self.research.remote_scientific.origin_phase.side_effect = observe
         await self.children.experiment(self.ctx, self.candidate, 'original-call')
-        calls = services_for(self.store).remote_scientific.start_phase.await_args_list
+        calls = self.research.remote_scientific.start_phase.await_args_list
         self.assertEqual(len(calls), 4)
         self.assertEqual(calls[0], calls[1])
         self.assertEqual(self.store.delegation.create.await_count, 3)
@@ -113,35 +117,57 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
                 first = False
                 value.update(status='unknown', allStopped=False)
             return value
-        services_for(self.store).remote_scientific.origin_phase.side_effect = observe
+        self.research.remote_scientific.origin_phase.side_effect = observe
         await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.assertEqual(self.store.delegation.create.await_count, 3)
-        calls = services_for(self.store).remote_scientific.start_phase.await_args_list
+        calls = self.research.remote_scientific.start_phase.await_args_list
         self.assertEqual(calls[0], calls[1])
 
     async def test_lost_drive_ack_observes_original_only_after_validated_intent(self):
-        services_for(self.store).remote_scientific.drive_outcome.return_value = {'driveRequested': True}
-        services_for(self.store).remote_scientific.start_phase.side_effect = [HTTPException(503,
+        self.research.remote_scientific.drive_outcome.side_effect = [None, {'driveRequested': True}, None, None]
+        self.research.remote_scientific.start_phase.side_effect = [HTTPException(503,
             'REMOTE_ACK_UNKNOWN: read the original owner-bound receipt'), None, None]
         result = await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.assertTrue(result['independentResult'])
-        services_for(self.store).remote_scientific.drive_outcome.assert_called_once_with('alice', 'child-preparation')
+        self.assertEqual(self.research.remote_scientific.drive_outcome.call_count, 4)
+        self.assertEqual(self.research.remote_scientific.start_phase.await_count, 3)
         self.assertEqual(self.store.delegation.create.await_count, 3)
 
     async def test_503_without_original_drive_intent_is_not_swallowed(self):
-        services_for(self.store).remote_scientific.start_phase.side_effect = HTTPException(503,
+        self.research.remote_scientific.start_phase.side_effect = HTTPException(503,
             'REMOTE_ACK_UNKNOWN: read the original owner-bound receipt')
         with self.assertRaises(HTTPException):
             await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.assertEqual(self.store.delegation.create.await_count, 1)
-        self.assertEqual(services_for(self.store).remote_scientific.origin_phase.await_count, 0)
+        self.assertEqual(self.research.remote_scientific.origin_phase.await_count, 0)
 
-    async def test_unrelated_503_is_not_swallowed_even_with_intent(self):
-        services_for(self.store).remote_scientific.drive_outcome.return_value = {'driveRequested': True}
-        services_for(self.store).remote_scientific.start_phase.side_effect = HTTPException(503, 'different failure')
+    async def test_unrelated_503_is_not_swallowed(self):
+        self.research.remote_scientific.start_phase.side_effect = HTTPException(503, 'different failure')
         with self.assertRaises(HTTPException):
             await self.children.experiment(self.ctx, self.candidate, 'original-call')
-        services_for(self.store).remote_scientific.drive_outcome.assert_not_called()
+        self.research.remote_scientific.drive_outcome.assert_called_once_with('alice', 'child-preparation')
+
+    async def test_terminal_child_with_validated_drive_intent_only_observes_original(self):
+        science = self.research.remote_scientific
+        async def create(*args, **kwargs):
+            result = await self.create(*args, **kwargs)
+            child = 'child-' + kwargs['scientific_placement']['phase']
+            self.store.children[child]['terminal'] = True
+            return result
+        self.store.delegation.create.side_effect = create
+        def intent(owner, child):
+            self.assertTrue(self.store.children[child]['terminal'])
+            return {'driveRequested': True}
+        science.drive_outcome.side_effect = intent
+        science.start_phase.side_effect = AssertionError('terminal child cannot be dispatched again')
+        result = await self.children.experiment(self.ctx, self.candidate, 'original-call')
+        self.assertTrue(result['independentResult'])
+        self.assertEqual(self.store.row['body']['state'], 'DONE')
+        science.start_phase.assert_not_awaited()
+        self.assertEqual(self.store.delegation.create.await_count, 3)
+        self.assertEqual(science.drive_outcome.call_count, 3)
+        self.assertEqual({c.args[1] for c in science.reconcile_phase.await_args_list},
+                         {'child-preparation', 'child-training', 'child-evaluation'})
 
     async def test_lost_reply_original_identity_is_not_redispatched(self):
         self.lost_ack = True
@@ -157,7 +183,7 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
             value = await self.observe(owner, child)
             value['scope']['originParentRunId'] = 'another-parent'
             return value
-        services_for(self.store).remote_scientific.origin_phase.side_effect = corrupted
+        self.research.remote_scientific.origin_phase.side_effect = corrupted
         with self.assertRaises(ValueError): await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.assertEqual(self.store.delegation.create.await_count, 1)
 
@@ -167,7 +193,7 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
             result = await original(owner, child)
             self.store.task_value['cancel_requested'] = True
             return result
-        services_for(self.store).remote_scientific.origin_phase.side_effect = revoke
+        self.research.remote_scientific.origin_phase.side_effect = revoke
         with self.assertRaises(ValueError): await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.assertEqual(self.store.delegation.create.await_count, 1)
 
@@ -191,14 +217,14 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConnectionError): await self.children.experiment(self.ctx, self.candidate, 'original-call')
         self.store.task_value['cancel_requested'] = True
         self.service.current.side_effect = PermissionError('revoked')
-        services_for(self.store).remote_scientific.origin_phase.side_effect = PermissionError('public read revoked')
+        self.research.remote_scientific.origin_phase.side_effect = PermissionError('public read revoked')
         self.observed['child-preparation'].update(status='running', allStopped=False)
         async def cancel(owner, child):
             self.assertEqual((owner, child), ('alice', 'child-preparation'))
             self.observed[child].update(status='cancelled', allStopped=True)
-        services_for(self.store).remote_scientific.cancel_original.side_effect = cancel
+        self.research.remote_scientific.cancel_original.side_effect = cancel
         self.assertTrue(await self.children.cleanup(self.ctx))
-        services_for(self.store).remote_scientific.cancel_original.assert_awaited_once()
+        self.research.remote_scientific.cancel_original.assert_awaited_once()
         self.assertEqual(self.store.delegation.create.await_count, 1)
 
     async def _training_dispatch_unknown(self, *, never_dispatched):
@@ -236,9 +262,9 @@ class RemoteChildrenTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancel_lost_ack_does_not_claim_cleanup_or_retry_dispatch(self):
         self.lost_ack = True
         with self.assertRaises(ConnectionError): await self.children.experiment(self.ctx, self.candidate, 'original-call')
-        services_for(self.store).remote_scientific.cancel_original.side_effect = ConnectionError('cancel reply lost')
+        self.research.remote_scientific.cancel_original.side_effect = ConnectionError('cancel reply lost')
         self.assertFalse(await self.children.cleanup(self.ctx))
-        services_for(self.store).remote_scientific.cleanup_phase.assert_not_awaited()
+        self.research.remote_scientific.cleanup_phase.assert_not_awaited()
         self.assertEqual(self.store.delegation.create.await_count, 1)
 
     async def test_missing_original_link_cleanup_remains_unknown(self):

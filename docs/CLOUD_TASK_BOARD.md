@@ -1811,3 +1811,34 @@ immediately and enters original cleanup instead of waiting the3600s lease.
 release proofs retaining cleanupConfirmed:false. Superseded3fa4ec43 CI had
 8successful jobs; both remaining PG workflows cancelled before final push.
 New exact-head CI is the only final acceptance source.
+
+
+## 2026-10-24 #98 独立关闭交付
+
+root负责core/部署集成；shutdown_design负责研究owner；shutdown_tests负责真实进程fixture，独立review完成。用户明确选择35秒后自行非零退出，UNKNOWN和原身份保留、不重新派发。owner5、真实PG进程3、policy真实子进程2、既有native PG6通过；旧控制器fixture两项错误修正后targeted2通过。Ruff/Pyright/架构/OpenSpec及独立core通过，完整证据见openspec/changes/propagate-research-shutdown-outcomes/verification.md。精确CI待运行，保持Draft。
+
+#103 b458028 fast/full成功，但云端两轮失败仍未关闭；#97 daily PG两项第二任务等待失败仍在共同MCP授权/清理诊断，不以该CI通过掩盖。#99–102暂停扩展以免混淆根因。4 CPU/16 GiB串行重型验证，不合并、部署或付费调用。
+## 2026-10-24 云端连续交付
+
+Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、部署及付费模型。
+
+| 阶段 | owner / 范围 | 依赖与状态 | 验收/限制 |
+| --- | --- | --- | --- |
+| #103 测试成本与MCP callback | root，独立review | Draft，b458028 fast/full CI成功 | 本地完整两轮均失败；局部60.974s少工作，不代表整套加速。偶发根因仍跟进 |
+| #97 历史与读取分离 | backend Store/API；remote receipt；frontend Web；root生命周期集成 | 本分支实现，独立review发现3项已修；验证中 | 205行同fixture store SQL4268→1，native2→0；保留审计与stream元数据写。PG/浏览器及精确CI待最终记录 |
+| #98 科研关闭 | shutdown_design app；shutdown_tests子进程；root core/部署 | 独立shutdown worktree；用户已选35s后非零退出 | 原UNKNOWN/identity不重派发，真实进程验证中，不把异常当退出 |
+
+旧成果与失败日志保留；#99–102尚未在此分支实施。worker测试发现与root实跑结果分别记录。
+
+## 当前 #99 组合阶段
+
+root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#103 `7fe8d90` fast40110354593/full40110374707均成功；历史本地MCP失败仍保留，不能外推已全部根治。#97 新head exact CI正在运行，#99不将其视作已通过。当前开始阶段一精确应用拥有者与单整体关闭预算；graph迁移依赖该阶段。
+
+## 2026-10-24 #99 显式graph与后续owner
+
+#99 stage1 b56e6df已Draft；stage2本地迁移完成，root独占API/assembly/生命周期集成；backend profiles、shutdown_design服务、frontend脚本、remote hooks、shutdown_tests实例fixture均freeze；takeover_review独立复核无新增阻断。daily253、实例PG4、退出5、scientific1、baseline2通过；最终core/Web/精确CI待完成。#97 965350f full40112603820仍在PG阶段，不当通过；#103 c939d56 fast40114643214 Python/PG通过、Web待终态，旧7fe full通过不覆盖新head。
+
+#100独立remote-v2 worktree依赖#97，不含#99 graph。history_backend独占remote_handoff/remote_bindings及新portable tests；root独占remote_authority/API/schema并最终集成；shutdown_tests只新增neutral core真实远程fixture/tests，重型运行由root串行；没有混入本#99 diff。#102仅只读契约分析，尚未实现。
+## 2026-10-24 #97 late authority follow-up
+
+965350f full失败4/3265，raw evidence已保存。backend仅2fixture同deadline持久barrier，root usage原receipt显式reconcile，remote拥有receiver latehistoryparity与Event测试，takeover独立review。原3PGtargeted通过、原science1通过572.256s；无超时放宽或新派发权限。root集成本次diff。#99 graph新head1d2bbb7 fast成功，fullWindows暴露6旧fixture迁移正在修，PG仍运行。#103c939 fast终态成功，日志完成与GitHub状态延迟约25min，未cancel/retry；原MCP不稳定仍需诊断。#100 independentneutralv2三真实case已有通过记录，cancel首轮fixture失败保留。#102在独立main分支仅开始recipe/helper切片，尚未API/native验收。

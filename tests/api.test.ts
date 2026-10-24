@@ -4,6 +4,13 @@ import { api, ApiError } from '../web/api.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('factory HTTP boundary', () => {
+  it('requests bounded job pages and encodes the opaque cursor', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [], nextCursor: null }))));
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+    await expect(api.jobs(controller.signal, 'opaque+/=')).resolves.toEqual({ items: [], nextCursor: null });
+    expect(fetch).toHaveBeenCalledWith('/api/factory/jobs?limit=50&cursor=opaque%2B%2F%3D', expect.objectContaining({ signal: controller.signal, method: 'GET' }));
+  });
   it('preserves the same admission key when a caller retries', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: 'task', planId: 'immutable-plan' }), { status: 202 })));
     vi.stubGlobal('fetch', fetch);

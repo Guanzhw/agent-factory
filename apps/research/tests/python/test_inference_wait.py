@@ -310,14 +310,16 @@ class RecoveredChildCancellationTests(unittest.IsolatedAsyncioTestCase):
         from agent_factory_research.lifecycle_compatibility import ResearchLifecycleObserver
         from agent_factory.remote_handoff import HandoffCancellationRequested
         root={'id':'root','owner_id':'owner','cancel_requested':False}
-        store=SimpleNamespace(task=lambda *args:root,event=Mock(),
+        store=SimpleNamespace(task=lambda *args:root,event=Mock(),observe_summary=Mock(),
             delegation=SimpleNamespace(_root_lock=lambda _:nullcontext()))
         observer=ResearchLifecycleObserver(store,None,None,lambda:None)
         observer._group=Mock(return_value=([root],[]));observer._binding=Mock(return_value={})
-        observer._reason=Mock(return_value=None);observer._facts=Mock(return_value={'stopped':False})
+        observer._reason=Mock(return_value=None)
+        observer._facts=Mock(return_value={'stopped':False,'unknown':False,'displayStatus':'running'})
         for error in (RunCancelledException('child cancelled'),HandoffCancellationRequested('owner','root','manifest')):
             with patch.object(wait,'read',return_value={'state':'RECOVERED','controlId':'original'}), \
                     patch.object(wait,'reconcile_recovered_children',side_effect=error) as reconcile:
                 await observer.observe_root('root')
             reconcile.assert_called_once()
             store.event.assert_not_called()
+            store.observe_summary.assert_called_with(root, 'running')

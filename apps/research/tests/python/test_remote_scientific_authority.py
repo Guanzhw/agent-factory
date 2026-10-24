@@ -1,6 +1,5 @@
 """Scientific debit wire tests; no sockets, database or model execution."""
-from research_services_fixture import with_research_services
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 import json
 from types import SimpleNamespace
 import unittest
@@ -41,12 +40,14 @@ class RouteFixture:
         self.row = {"target_ref": "fixture-target", "manifest_hash": "a" * 64, "configuration_hash": "b" * 64}
         self.handoff = SimpleNamespace(targets={"fixture-target": self.target}, _row=lambda *_: self.row,
             _target=lambda *_, **__: None, authority_callback=self.authority,
-            store=with_research_services(SimpleNamespace(), remote_scientific=SimpleNamespace(consume_remote_tool=self.consume)))
+            store=SimpleNamespace())
+        self.research = ResearchServices(self.handoff.store, installed=True,
+            remote_scientific=SimpleNamespace(consume_remote_tool=self.consume))
         auth = SimpleNamespace(user=lambda _: {"id": self.actor}, require_member=self.require_member)
         app = FastAPI()
         app.include_router(origin_authority_router(auth, self.handoff,
-            scientific_call=lambda body: services_for(self.handoff.store).remote_scientific.consume_remote_tool(body),
-            scientific_custody=lambda body: services_for(self.handoff.store).remote_scientific.authorize_completed_custody(body)))
+            scientific_call=lambda body: self.research.remote_scientific.consume_remote_tool(body),
+            scientific_custody=lambda body: self.research.remote_scientific.authorize_completed_custody(body)))
         self.client = TestClient(app)
 
     def require_member(self, actor):
@@ -147,7 +148,7 @@ class ScientificAuthorityRouteTests(unittest.TestCase):
         def unavailable(body):
             calls.append(body)
             raise RuntimeError("private-database-details")
-        services_for(f.handoff.store).remote_scientific.consume_remote_tool = unavailable
+        f.research.remote_scientific.consume_remote_tool = unavailable
         response = f.client.post(SCIENTIFIC_CALL_PATH, json=f.body)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private-database-details", response.text)
@@ -220,7 +221,7 @@ class ScientificCustodyWireTests(unittest.TestCase):
         def custody(value):
             seen.append(value)
             return {'custodyProofSha256': digest(value)}
-        services_for(f.handoff.store).remote_scientific.authorize_completed_custody = custody
+        f.research.remote_scientific.authorize_completed_custody = custody
         response = f.client.post(SCIENTIFIC_CUSTODY_PATH, json=body)
         self.assertEqual(response.status_code, 200)
         reply = ScientificCustodyReply.model_validate(response.json())

@@ -1,6 +1,5 @@
 # pyright: reportMissingImports=false
 """Real native pause/continuation; inert controlled driver, never GPU execution proof."""
-from agent_factory_research.services import services_for
 import asyncio
 import hashlib
 from contextlib import ExitStack
@@ -57,7 +56,7 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         self.app = create_app(settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
-        self.runtime = services_for(self.store).research_runtime
+        self.runtime = self.state['research'].research_runtime
         self.requirements = {}
         self.stack.callback(self.store.engine.dispose)
         self.stack.callback(self.store.native_db.db_engine.dispose)
@@ -143,7 +142,7 @@ class ResearchRuntimePostgresTests(unittest.TestCase):
         self.portal.call(self.store.lifecycle_observer.tick)
         self.assertLessEqual(self.store.native_db.get_job(native)['created_at'], int(time.time()) - 60)
         self.assertFalse(self.store.task(task['id'])['cancel_requested'])
-        restarted = ResearchProcessRuntimeService(self.store, self.auth, self.runtime.resources)
+        restarted = ResearchProcessRuntimeService(self.store, self.auth, self.runtime.resources, research=self.state['research'])
         self.assertEqual(self.portal.call(restarted.submit, 'alice', task['id'])['id'], lease['id'])
         self.assertEqual(self.store.native_db.get_job(native)['status'], 'paused')
         self.driver.complete(lease['id'], 'alice', b'Synthetic process output, not a validation metric')

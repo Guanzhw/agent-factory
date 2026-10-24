@@ -4,7 +4,6 @@ No scheduler scans or restarts sessions. A durable unknown controller intent is
 never resubmitted. Only native external-execution continuation consumes results.
 """
 from __future__ import annotations
-from .services import services_for
 
 import asyncio
 from copy import deepcopy
@@ -35,8 +34,9 @@ def _require(value):
 
 
 class SessionControlModel(Model):
-    def __init__(self, ctx):
+    def __init__(self, ctx, *, research):
         super().__init__(id=MODEL_ID, provider=PROVIDER_ID, name='Original session pause controller', retries=0)
+        self.research = research.require_store(ctx.store, ready=True)
         self._ctx = ctx
 
     async def aresponse(self, *args, **kwargs):
@@ -46,7 +46,7 @@ class SessionControlModel(Model):
         yield self._response(args, kwargs, streaming=True)
 
     def _response(self, args, kwargs, *, streaming):
-        _scope(self._ctx)
+        _scope(self._ctx, research=self.research)
         messages = args[0] if args else kwargs.get('messages')
         _require(type(messages) is list)
         results = [item for item in messages if item.role == 'tool' and item.tool_name == TOOL]
@@ -57,7 +57,7 @@ class SessionControlModel(Model):
             _require(type(result) is dict and result.get('allStopped') is True
                      and result.get('scientificConclusionVerified') is False)
             run = self._ctx.run_context
-            _require(not services_for(self._ctx.store).autoresearch._unresolved_tools(run.session_id))
+            _require(not self.research.autoresearch._unresolved_tools(run.session_id))
             effects = [item for item in self._ctx.store.effects(run.session_id)
                        if item['effect_key'] == run.run_id + ':' + EFFECT]
             original_result = {key: value for key, value in result.items() if key != 'accepted'}
@@ -94,19 +94,20 @@ class SessionControlModel(Model):
     def _parse_provider_response_delta(self, response): return response
 
 
-def _scope(ctx):
-    preset = services_for(ctx.store).autoresearch.current(ctx)
+def _scope(ctx, *, research):
+    research.require_store(ctx.store, ready=True)
+    preset = research.autoresearch.current(ctx)
     _require(getattr(preset, 'external_session', False) is True
              and ctx.settings.demo is True and TOOL in ctx.plan['tools'])
 
 
-def model_factory(ctx):
-    _scope(ctx)
-    return SessionControlModel(ctx)
+def model_factory(ctx, *, research):
+    _scope(ctx, research=research)
+    return SessionControlModel(ctx, research=research)
 
 
-def tool_factory(ctx):
-    _scope(ctx)
+def tool_factory(ctx, *, research):
+    _scope(ctx, research=research)
     @tool(external_execution=True)
     def autoresearch_session_run() -> str:
         """Wait for the original authorized research session controller."""
@@ -115,7 +116,8 @@ def tool_factory(ctx):
 
 
 class AutoResearchSessionControl:
-    def __init__(self, store, auth, *, complete=None):
+    def __init__(self, store, auth, *, research, complete=None):
+        self.research = research.require_store(store)
         self.store, self.auth, self.complete = store, auth, complete
         self.active: dict[str, asyncio.Task] = {}
         self.closed = False
@@ -130,7 +132,7 @@ class AutoResearchSessionControl:
         manifest = self.store.execution_bindings.recheck(plan, run)
         _require(type(manifest.get('model')) is dict)
         ctx = BindingContext(self.store.settings, self.store, plan, run, manifest['model'])
-        _scope(ctx)
+        _scope(ctx, research=self.research)
         self.store.authorize_tool(run, TOOL)
         return ctx
 
@@ -184,7 +186,7 @@ class AutoResearchSessionControl:
                         tasks.append(child)
                 # Failure diagnostics must never block original cancellation.
                 try:
-                    services_for(self.store).autoresearch.change(owner, task_id, mark)
+                    self.research.autoresearch.change(owner, task_id, mark)
                 except Exception:
                     pass
                 # No authorization-to-create check: these are original stop-only
@@ -214,12 +216,12 @@ class AutoResearchSessionControl:
         def admit(body):
             _require(body.get('sessionControl') is None)
             body['sessionControl'] = pin
-        services_for(self.store).autoresearch.change(owner, task_id, admit)
+        self.research.autoresearch.change(owner, task_id, admit)
         try:
             _require(self.paused(self.store.task(task_id, owner))[1] == pin)
             ctx = self._context(task)
             self.store.delegation.consume_tool_budget(ctx.run_context, CALL_ID, TOOL)
-            await services_for(self.store).autoresearch.execute(ctx)
+            await self.research.autoresearch.execute(ctx)
             return await self.completion(task, self.paused(self.store.task(task_id, owner))[0])
         except BaseException as error:
             await self._failed(task, error)
@@ -230,11 +232,11 @@ class AutoResearchSessionControl:
         fresh = self.store.task(task['id'], task['owner_id'])
         _require(all(fresh[key] == task[key] for key in ('id', 'owner_id', 'run_id', 'plan_id')))
         original, pin = self.paused(fresh)
-        body = services_for(self.store).autoresearch.row(task['owner_id'], task['id'])['body']
+        body = self.research.autoresearch.row(task['owner_id'], task['id'])['body']
         _require(body.get('sessionControl') == pin and body['status'] in {'awaiting-continuation', 'completed'}
                  and requirement.get('id') == original['id']
                  and requirement_version(requirement) == pin['version'])
-        _require(not services_for(self.store).autoresearch._unresolved_tools(task['id']))
+        _require(not self.research.autoresearch._unresolved_tools(task['id']))
         effects = [item for item in self.store.effects(task['id']) if item['effect_key'] == task['run_id'] + ':' + EFFECT]
         _require(len(effects) == 1 and effects[0]['status'] == 'DONE')
         result = effects[0]['result']
@@ -250,7 +252,7 @@ class AutoResearchSessionControl:
         _require(bool(identity['run_id']))
         if task_id in self.active:
             return self.active[task_id]
-        body = services_for(self.store).autoresearch.row(owner, task_id)['body']
+        body = self.research.autoresearch.row(owner, task_id)['body']
         _require(body.get('sessionControl') is None)
         async def drive():
             try:
@@ -268,7 +270,7 @@ class AutoResearchSessionControl:
                 if self.complete is not None:
                     requirement, _ = self.paused(self.store.task(task_id, owner))
                     await self.complete(task, requirement)
-                    deadline = services_for(self.store).autoresearch.row(owner, task_id)['body']['deadline']
+                    deadline = self.research.autoresearch.row(owner, task_id)['body']['deadline']
                     while True:
                         fresh = self.store.task(task_id, owner)
                         _require(all(fresh[key] == value for key, value in identity.items())
@@ -276,7 +278,7 @@ class AutoResearchSessionControl:
                         ticket = self.store.lifecycle_observer._binding(fresh)
                         _require(ticket is not None and ticket['id'] == identity['run_id'])
                         if ticket['status'] == ticket.get('persistedRunStatus') == 'completed':
-                            services_for(self.store).autoresearch.change(owner, task_id, lambda body: body.update(status='completed'))
+                            self.research.autoresearch.change(owner, task_id, lambda body: body.update(status='completed'))
                             break
                         _require(time.time() < deadline and ticket['status'] in {'paused', 'pending', 'queued', 'running'})
                         await asyncio.sleep(.05)
@@ -290,18 +292,23 @@ class AutoResearchSessionControl:
         pending.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         return pending
 
-    async def close(self):
+    async def close(self, *, deadline=None):
         self.closed = True
-        end = asyncio.get_running_loop().time() + 35
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 35 if deadline is None else deadline
         pending = [task for task in self.active.values() if not task.done()]
         for task in pending:
             task.cancel()
-        if pending:
-            await asyncio.wait(pending, timeout=max(.01, end - asyncio.get_running_loop().time()))
-        # A bounded failed controller may have left original cleanup in progress.
-        # Do not cancel or forget that work, and do not claim shutdown completed.
-        remaining = [task for task in (*self.active.values(), *self.failures.values()) if not task.done()]
-        if remaining:
-            _, unresolved = await asyncio.wait(remaining, timeout=max(.01, end - asyncio.get_running_loop().time()))
-            return not unresolved
-        return True
+        # Cancellation can create original failure/research cleanup tasks. Recheck
+        # after each generation completes; never cancel or replace those tasks.
+        while True:
+            research = self.research.autoresearch
+            cleanups = getattr(research, 'cleanups', {})
+            remaining = {task for task in (*self.active.values(), *self.failures.values(), *cleanups.values())
+                         if not task.done()}
+            if not remaining:
+                return True
+            timeout = end - loop.time()
+            if timeout <= 0:
+                return False
+            await asyncio.wait(remaining, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)

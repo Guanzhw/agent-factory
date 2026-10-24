@@ -7,11 +7,14 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
+from agent_factory_research.runtime_registration import ResearchApplicationHooks
+from agent_factory_research.services import ResearchServices
 
 
 class ObserverResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     def fixture(self):
-        task = {'id': 'synthetic-root', 'owner_id': 'alice', 'cancel_requested': False}
+        task = {'id': 'synthetic-root', 'owner_id': 'alice', 'plan_id': 'synthetic-plan', 'cancel_requested': False}
         lock_threads = []
 
         @contextmanager
@@ -24,6 +27,11 @@ class ObserverResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(threading.get_ident(), entered, 'Root lock must release on its owning thread')
 
         store = Mock()
+        store.application_runtime = ApplicationRuntimeRegistry(store)
+        store.plan.return_value = {'application': 'research'}
+        store.application_runtime.register('research',
+            ResearchApplicationHooks(ResearchServices(store, installed=True)),
+            legacy_applications=('research',))
         store.task.side_effect = lambda *_: task.copy()
         store.delegation = SimpleNamespace(_root_lock=root_lock)
         store.bridge = SimpleNamespace(submit=AsyncMock(), continue_run=AsyncMock())
@@ -55,10 +63,12 @@ class ObserverResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             heartbeat.set()
 
         pulse_task = asyncio.create_task(pulse())
-        with patch('agent_factory_research.inference_wait.read', return_value=None):
+        with patch('agent_factory_research.inference_wait.read', return_value=None) as read_wait:
             first = await observer.observe_root(task['id'])
             second = await observer.observe_root(task['id'])
         await pulse_task
+        self.assertGreaterEqual(read_wait.call_count, 2)
+        read_wait.assert_any_call(store, task['id'])
         self.assertEqual(first['errors'], [], 'Authority heartbeat or binding check failed')
         self.assertEqual(second['errors'], [])
         self.assertEqual(first['requested'], [])

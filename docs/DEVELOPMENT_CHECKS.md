@@ -13,10 +13,12 @@ the browser application itself does not require it.
 | Mode | Trigger | Work performed |
 | --- | --- | --- |
 | `docs` | PR or `main` push changing only recognized documentation | Routing self-tests, whitespace check and the stable `CI summary` result |
-| `fast` | Other PRs and `main` pushes | Ubuntu frontend checks, Python static/boundary checks, explicit Python and PostgreSQL regressions, and independent core installation/startup |
-| `full` | Manual `workflow_dispatch` for a major release | Complete Python discovery on Linux and Windows, frontend checks on both, and complete PostgreSQL discovery with required acceptance |
+| `fast` | Other PRs and `main` pushes | Ubuntu frontend checks, official dependency audits and short Chromium smoke; Python static/boundary checks, explicit Python/PostgreSQL regressions and independent core installation/startup |
+| `full` | Manual `workflow_dispatch` for a major release | Complete Linux discovery once in the PostgreSQL job, complete Windows Python discovery, frontend checks on both, Ubuntu audits/browser smoke and independent core installation |
 
-There is no schedule or feature-branch push trigger. To request full verification, open **Actions → Project checks → Run workflow**, select the release branch/ref, and run it. Fast success is daily feedback, not full release acceptance. Full runners and their required acceptance selectors remain unchanged.
+There is no schedule or feature-branch push trigger. To request full verification, open **Actions → Project checks → Run workflow**, select the release branch/ref, and run it. Fast success is daily feedback, not full release acceptance. Full PostgreSQL discovery and required selectors retain the complete Linux behavior checks; the separate Linux Python job performs static and architecture checks without repeating that full execution.
+
+The Ubuntu frontend job runs `npm audit --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org` and the corresponding full audit without `--omit=dev`. Both service errors and moderate-or-higher vulnerabilities fail the step. Production and development dependency results stay separate.
 
 Run the daily selections locally with:
 
@@ -41,7 +43,7 @@ uv run python scripts/check_postgres.py
 
 This uses the same discovery as the ordinary Python entrypoint, covering `platform/tests` and `apps/research/tests/python`. It rejects ambiguous module names, duplicate full test IDs and import errors in either tree, executes each discovered ID once and releases completed test instances. Fixture subprocesses receive the same core/app/deployment import roots. [Required selectors](../scripts/postgres_requirements.py) preserve the five former acceptance groups, add the department self-service classes and pin model/permission/UNKNOWN behavior anchors. Each selector must find tests in discovery; every required ID must actually succeed. A skipped test, skipped class/module, skipped subtest or expected failure cannot satisfy required acceptance. All ordinary failures/errors still fail the run. Other platform skips remain visible and allowed. Counts are diagnostic, never a fixed historical target.
 
-The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Windows/Linux compatibility jobs remain separate environments in manual full verification. Run `uv run python scripts/check_python.py` for complete local Python discovery.
+The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Manual full verification retains a separate Windows compatibility environment; Linux ordinary and database tests execute together in the PostgreSQL job. Its complete log retains case results and skip reasons. Run `uv run python scripts/check_python.py` for complete local Python discovery without a database.
 
 ## Personal CLI and MCP verification
 
@@ -123,11 +125,14 @@ synthetic state:
 
 ```sh
 npm run build
-python platform/tests/browser/personal_tools_smoke.py --desktop-only --output /tmp/personal-tool-browser
+uv sync --frozen --group browser
+uv run --group browser python -m playwright install chromium
+uv run --group browser python platform/tests/browser/personal_tools_smoke.py --desktop-only --output /tmp/personal-tool-browser
 ```
 
-It requires an already installed Python Playwright and Chromium and has no install
-or network fallback; they are not default core dependencies. It follows the real
+The optional `browser` dependency group pins Playwright; its install command gets
+the matching Chromium. The smoke itself requires those installed tools and an
+existing build. It follows the real
 Resources → connections → personal-tools entry, covering saved-credential setup,
 configuration/binding lost-ack recovery, a revoked receipt and an owner change.
 It also checks ending a demonstrably unsent binding after descriptor withdrawal,
@@ -136,6 +141,12 @@ The real core/research HTTP tests verify the same structured error codes; browse
 fixtures must preserve those actual envelopes. A missing recovery receipt remains
 unknown and cannot enable a replacement POST. `--scenario` selects a named flow;
 omitting `--desktop-only` retains the optional narrow-viewport cases.
+CI runs only `--desktop-only --scenario configured --scenario bind-loss` after
+the existing frontend build. It installs just the locked browser group with
+`uv sync --frozen --only-group browser`, then uses `uv run --no-sync` for browser
+installation and execution. Missing dependencies/browser/build and invalid scene
+arguments fail. Other flows remain available through the full command above.
+For a locally installed Chromium, pass its path with `--browser` explicitly.
 Viewports check horizontal overflow, page errors and unexpected
 console errors; deliberately aborted synthetic acknowledgements are recorded
 separately. Requests outside the static app and explicitly intercepted APIs,
@@ -173,7 +184,7 @@ Both checker CLIs require an explicit map; there is intentionally no passing def
 
 The checker parses Python imports, relative imports, package initializers and literal `importlib.import_module`/`__import__` calls without executing code. Recognized but unresolved dynamic imports in owned modules or their reachable helpers fail with a coverage diagnostic; unrelated tests do not acquire this restriction. It does not prove arbitrary reflective loading, runtime permissions, frontend dependencies or package installability; these are not silently reported as verified. Public API calls may encapsulate their app's internals; core traversal never treats app APIs as an exemption. API modules are also checked as origins.
 
-The frontend checker uses the TypeScript parser and module resolver with one `tsconfig` (default `tsconfig.json`). Its map uses project-relative paths: `core` and `source_roots` are directories; each app has `path` and exact `public` files; `composition_roots` are exact files. Import/export, type dependencies, literal dynamic imports, `require`, path aliases and re-exports form edges. Unresolved imports and local source outside the indexed roots report coverage gaps in protected/reachable code. It does not expand third-party internals, custom loader aliases, `eval` or bundler-generated dependencies. Both checkers have legal, direct, indirect and composition-bypass fixtures. Exact startup entries may call other exact composition files, as the browser mount calls component assembly. Ordinary core/app callers and similarly named siblings remain protected; startup ownership never extends to them.
+The frontend checker uses the TypeScript parser and module resolver with one `tsconfig` (default `tsconfig.json`). Its map uses project-relative paths: `core` and `source_roots` are directories; each app has `path` and exact `public` files; `composition_roots` are exact files. Import/export, type dependencies, literal dynamic imports, `require`, path aliases and re-exports form edges. Unresolved imports and local source outside the indexed roots report coverage gaps in protected/reachable code. `import.meta.glob` discovery is also an explicit coverage gap; application registration uses explicit imports. The checker does not expand third-party internals, custom loader aliases or `eval`. Both checkers have legal, direct, indirect and composition-bypass fixtures. Exact startup entries may call other exact composition files, as the browser mount calls component assembly. Ordinary core/app callers and similarly named siblings remain protected; startup ownership never extends to them.
 
 ## Independent core lifecycle
 

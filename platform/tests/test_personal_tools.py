@@ -42,8 +42,9 @@ def adapter(**changes):
 
 
 class PersonalToolTests(unittest.TestCase):
-    def setUp(self):
-        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
+    def setUp(self, *, engine=None):
+        self.engine = engine if engine is not None else create_engine(
+            'sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
         self.addCleanup(self.engine.dispose)
         metadata = MetaData()
         Table('af_audit', metadata, Column('id', Integer, primary_key=True), Column('actor_id', String),

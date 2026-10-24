@@ -243,7 +243,7 @@ def install_recovery_timing(path):
     def proof(*args, **kwargs):
         with recorder.measure('proof'):
             return original_proof(*args, **kwargs)
-    ControlCommands._approval_payload = staticmethod(proof)
+    ControlCommands._approval_payload = proof
     original_completed = ControlCommands._completed_launch
     def completed(self, *args, **kwargs):
         with recorder.measure('completed-launch'):

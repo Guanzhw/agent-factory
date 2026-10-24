@@ -5,7 +5,7 @@ preparation tool verifies retained original preparation evidence; training/evalu
 external-execution requirements and ResearchProcessRuntimeService admission.
 Deterministic models select a single control action, never scientific decisions.
 """
-from .services import services_for
+from .services import ResearchFactory
 from copy import deepcopy
 import json
 from typing import Any, cast
@@ -38,7 +38,8 @@ def adapter_id(phase, kind):
     return 'autoresearch-child-' + phase + '-' + kind + '-v1'
 
 
-def child_pin(ctx, phase, *, custody=False):
+def child_pin(ctx, phase, *, research, custody=False):
+    research.require_store(ctx.store, ready=True)
     _require(phase in PHASES and ctx.settings.demo is True and ctx.settings.temporary_policy == 'member-self-service')
     config = ctx.spec['config']
     _require(type(config) is dict and set(config) == {'presetId', 'phase'} and config['phase'] == phase)
@@ -54,8 +55,8 @@ def child_pin(ctx, phase, *, custody=False):
         and ctx.plan.get('tools') == [TOOLS[phase]] and ctx.plan.get('capabilities') == [CAPABILITIES[phase]])
     # The service verifies persisted ancestry, parent/preset/candidate fingerprints,
     # phase and exact original child identity, plus current authority. Never cache.
-    resolve = (services_for(ctx.store).autoresearch_children.require_child_custody if custody
-               else services_for(ctx.store).autoresearch_children.require_child)
+    resolve = (research.autoresearch_children.require_child_custody if custody
+               else research.autoresearch_children.require_child)
     pin = resolve(ctx, phase)
     _require(type(pin) is dict and set(pin) == {'targetRef', 'comparisonManifestSha256', 'variantSha256', 'comparisonManifest'})
     pin = cast(dict[str, Any], pin)
@@ -68,13 +69,15 @@ def child_pin(ctx, phase, *, custody=False):
 
 
 class ScientificChildControlModel(ResearchProcessFixtureModel):
-    def __init__(self, ctx, phase):
+    def __init__(self, ctx, phase, *, research):
+        research.require_store(ctx.store, ready=True)
+        self.research = research
         super().__init__()
         self.id, self.provider = MODEL_ID, PROVIDER_ID
         self._ctx, self._phase = ctx, phase
 
     def _response(self, messages):
-        child_pin(self._ctx, self._phase)
+        child_pin(self._ctx, self._phase, research=self.research)
         name = TOOLS[self._phase]
         results = [m for m in messages if m.role == 'tool' and m.tool_name == name]
         if results:
@@ -92,38 +95,38 @@ def registrations(preset_id):
         expected = {'presetId': preset_id, 'phase': phase}
         def config(value):
             _require(type(value) is dict and value == expected)
-        def checked(ctx):
-            config(ctx.spec['config']); return child_pin(ctx, phase)
-        def model(ctx):
-            checked(ctx); return ScientificChildControlModel(ctx, phase)
-        def environment(ctx):
-            checked(ctx)
+        def checked(ctx, research):
+            config(ctx.spec['config']); return child_pin(ctx, phase, research=research)
+        def model(ctx, research):
+            checked(ctx, research); return ScientificChildControlModel(ctx, phase, research=research)
+        def environment(ctx, research):
+            checked(ctx, research)
             return EnvironmentLimits(runtime_id='research-process-v1' if phase != 'preparation' else 'autoresearch-session-v1',
                 timeout_seconds=30, memory_bytes=128 * 1024**2, output_bytes=1024**2)
-        def knowledge(ctx):
-            pin = checked(ctx)
+        def knowledge(ctx, research):
+            pin = checked(ctx, research)
             return KnowledgeContext(json.dumps(pin['comparisonManifest'], sort_keys=True, separators=(',', ':')),
                 {'evidenceKind': 'offline_research_experiment_manifest'})
-        def runner(ctx):
-            checked(ctx)
+        def runner(ctx, research):
+            checked(ctx, research)
             if phase == 'preparation':
                 @tool
                 async def research_preparation_verify(run_context: RunContext) -> str:
                     _require(all(getattr(run_context, key) == getattr(ctx.run_context, key)
                         for key in ('user_id', 'session_id', 'run_id')))
-                    checked(ctx)
+                    checked(ctx, research)
                     ctx.store.authorize_tool(run_context, 'research_preparation_verify')
-                    result = await services_for(ctx.store).autoresearch_children.verify_preparation(ctx)
-                    checked(ctx)
+                    result = await research.autoresearch_children.verify_preparation(ctx)
+                    checked(ctx, research)
                     return json.dumps(result, sort_keys=True, allow_nan=False)
                 return research_preparation_verify
             @tool(external_execution=True)
             def research_process_run(run_context: RunContext) -> str:
-                checked(ctx)
+                checked(ctx, research)
                 raise ValueError('RESEARCH_EXTERNAL_EXECUTION_REQUIRED')
             return research_process_run
         for kind, factory in (('model', model), ('environment', environment), ('knowledge', knowledge), ('tool', runner)):
-            entries.append(AdapterRegistration(kind, adapter_id(phase, kind), '1', factory, validator=config,
+            entries.append(AdapterRegistration(kind, adapter_id(phase, kind), '1', ResearchFactory(factory), validator=config,
                 demo_only=True, **({'tool_name': TOOLS[phase], 'permissions': (CAPABILITIES[phase],)} if kind == 'tool' else {})))
     for phase in PHASES: phase_entries(phase)
     return entries

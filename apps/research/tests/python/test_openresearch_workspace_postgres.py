@@ -1,5 +1,4 @@
 """Real PostgreSQL/native-auth HTTP workspace metadata; no live ORX/provider."""
-from agent_factory_research.services import services_for
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -59,13 +58,13 @@ class WorkspacePostgresTests(unittest.TestCase):
     def test_unavailable_workload_never_dispatches_or_claims_upstream_creation(self):
         self.login('alice')
         project = self.client.post(self.root + '/projects', json={'requestId': 'project-request', 'name': 'A'}).json()
-        original = services_for(self.store).autoresearch.start
-        services_for(self.store).autoresearch.start = AsyncMock()
-        self.addCleanup(setattr, services_for(self.store).autoresearch, 'start', original)
+        original = self.state['research'].autoresearch.start
+        self.state['research'].autoresearch.start = AsyncMock()
+        self.addCleanup(setattr, self.state['research'].autoresearch, 'start', original)
         response = self.client.post(self.root + '/projects/' + project['id'] + '/sessions', json={
             'requestId': 'session-request', 'workloadPresetId': 'uninstalled', 'goal': 'A question'})
         self.assertEqual(response.status_code, 404, response.text)
-        services_for(self.store).autoresearch.start.assert_not_awaited()
+        self.state['research'].autoresearch.start.assert_not_awaited()
         self.assertEqual(self.store.sql('SELECT id FROM af_openresearch_workspace_sessions'), [])
         self.assertEqual(self.client.post(self.root + '/projects', json={
             'requestId': 'unsafe-request', 'name': 'A', 'password': 'not-a-real-secret'}).status_code, 422)

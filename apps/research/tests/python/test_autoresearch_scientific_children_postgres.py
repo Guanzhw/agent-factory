@@ -10,7 +10,6 @@ ScientificPhaseAssembler, _LocalDriver, providers, preparation/checkpoint stores
 child authorization and independent result verification are never mocked.
 No Torch/GPU/ORX/model service, scientific validation, or upstream training runs.
 """
-from agent_factory_research.services import services_for
 import asyncio
 from contextlib import ExitStack
 from dataclasses import replace
@@ -200,7 +199,7 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
         class Runtime:
             async def run(self):
                 evidence['runtimeCalls'] = evidence.get('runtimeCalls', 0) + 1
-                ctx = evidence['ctx']; service = services_for(outer.store).autoresearch
+                ctx = evidence['ctx']; service = outer.state['research'].autoresearch
                 task = outer.store.task(ctx.run_context.session_id, 'alice')
                 ticket = outer.store.lifecycle_observer._binding(task)
                 outer.assertEqual(ticket['status'], 'paused')
@@ -282,7 +281,7 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
         self.addCleanup(self.store.dispose_root_locks)
         self.auth = self.state['auth']
         self.preparation = ResearchPreparationStore(self.store, self.auth, self.state['resources'], self.store.storage,
-            preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint)
+            preparation_manifest_sha256='b'*64, source_sha256=driver.configuration_fingerprint, research=self.state['research'])
         self.application = process_runtime_profile.publish_process_application(self.state,
             target_ref='original-preparation', author='alice')
         providers = [prep_provider]
@@ -333,7 +332,7 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
         limits = ResearchProcessLimits(cpu_seconds=5, address_space_mb=128, file_size_bytes=65536,
             disk_bytes=135168, output_bytes=4096, wall_seconds=manifest['protocol']['totalWallSeconds'])
         stages = {phase: self.stage(assembly, root, phase) for phase in ('training', 'evaluation')}
-        checkpoints = ResearchCheckpointStore(self.store, self.auth, self.state['resources'], self.store.storage)
+        checkpoints = ResearchCheckpointStore(self.store, self.auth, self.state['resources'], self.store.storage, research=self.state['research'])
         def make_assembler():
             return assembly.ScientificPhaseAssembler(self.state, owner='alice', upstream_files={'train.py': b'original'},
             captured_inputs={'comparisonManifest': manifest, 'manifestSha256': manifest_fingerprint(manifest), 'operatorInputs': inputs},
@@ -341,17 +340,17 @@ class ScientificChildrenPostgresTests(unittest.TestCase):
             device_observer=MockDeviceObserver(), preparation=self.preparation, checkpoints=checkpoints,
             preparation_target_ref='original-preparation', preparation_reference={'taskId': prep_task['id'], 'artifactId': prepared['id']},
             microbatch=1)
-        self.children = AutoResearchChildren(self.store, self.auth, services_for(self.store).autoresearch,
-            phase_config=make_assembler(), preparation=self.preparation, checkpoints=checkpoints)
-        services_for(self.store).autoresearch_children = self.children
+        self.children = AutoResearchChildren(self.store, self.auth, self.state['research'].autoresearch,
+            phase_config=make_assembler(), preparation=self.preparation, checkpoints=checkpoints, research=self.state['research'])
+        self.state['research'].autoresearch_children = self.children
         preset = replace(preset, manifest=manifest)
         preset = bootstrap.publish_application(self.state, preset, author='alice')
-        self.settings.autoresearch_presets[preset.id] = preset; services_for(self.store).autoresearch.presets[preset.id] = preset
+        self.settings.autoresearch_presets[preset.id] = preset; self.state['research'].autoresearch.presets[preset.id] = preset
         self.login('alice')
         request_id = str(uuid4())
         result = self.post('/api/factory/autoresearch/runs', {'presetId': preset.id, 'requestId': request_id}, 202)
         def finished():
-            row = services_for(self.store).autoresearch.row('alice', result['id'])['body']
+            row = self.state['research'].autoresearch.row('alice', result['id'])['body']
             providers[:] = [t.provider for t in self.state['resources'].targets.values() if t.provider is not None]
             return row if row['status'] in {'completed', 'failed', 'unknown'} else None
         # Synthetic envelope covers the frozen 600-second protocol and custody

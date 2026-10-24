@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.research_checkpoint import write_checkpoint
 from agent_factory_research.research_preparation_store import ResearchPreparationStore
 from agent_factory.store import digest
@@ -74,7 +75,8 @@ class ResearchPreparationStoreTests(unittest.TestCase):
         self.store.artifacts.side_effect = lambda task: deepcopy(self.artifacts)
         self.store.artifact.side_effect = lambda task, artifact: (deepcopy(self.artifacts[0]), self.contents[artifact])
         self.store.artifact_write.side_effect = self.write_artifact
-        self.service = ResearchPreparationStore(self.store, self.auth, self.resources, self.storage,
+        self.research = ResearchServices(self.store, installed=True)
+        self.service = ResearchPreparationStore(self.store, self.auth, self.resources, self.storage, research=self.research,
             preparation_manifest_sha256='c'*64, source_sha256='e'*64)
 
     def sql(self, statement, **params):

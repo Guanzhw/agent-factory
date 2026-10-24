@@ -85,11 +85,18 @@ class ControlCommands:
     def repair_slot(task_id, approval_id):
         return digest({"task": task_id, "approvedRecovery": approval_id})
 
-    @staticmethod
-    def _approval_payload(task, snapshot, original):
+    def _approval_payload(self, task, snapshot, original):
+        registry = getattr(self.store, 'application_runtime', None)
+        callback = registry.control(task, 'approval_payload') if registry is not None else None
+        if callback is not None:
+            return callback(self, task, snapshot, original)
         raise HTTPException(409, "APPROVED_RECOVERY_UNAVAILABLE: no original-work recovery adapter is installed")
 
     def _completed_launch(self, task):
+        registry = getattr(self.store, 'application_runtime', None)
+        callback = registry.control(task, 'completed_launch') if registry is not None else None
+        if callback is not None:
+            return callback(self, task)
         raise HTTPException(409, "APPROVED_RECOVERY_UNAVAILABLE: no original-work recovery adapter is installed")
 
     async def approved_recovery(self, task, snapshot, *, approval_id=None, repair_id=None):
@@ -121,6 +128,12 @@ class ControlCommands:
 
     async def _external_result(self, task, requirement, requirements, decision):
         tool = requirement.get("tool_execution") or {}
+        registry = getattr(self.store, 'application_runtime', None)
+        callback = registry.control(task, 'external_result', tool_name=tool.get('tool_name')) if registry is not None else None
+        if callback is not None:
+            result = await callback(self, task, requirement, requirements, decision)
+            if result is not None:
+                return result
         handler = getattr(self.store, 'external_execution_handlers', {}).get(tool.get('tool_name'))
         if handler is not None:
             if decision['approved'] is not True:
@@ -255,8 +268,14 @@ class ControlCommands:
                      "requirementId": saved["decision"].get("requirementId"), "version": saved["decision"].get("version"),
                      "approved": saved["decision"].get("approved"), "evidenceKind": evidence["kind"]})
 
-    def _claim_external_result(self, task, prepared):
+    def _claim_external_result(self, task, prepared, *, tool_name=None):
         """Claim adapter-owned continuation metadata inside the command transaction."""
+        if tool_name is None:
+            return
+        registry = getattr(self.store, 'application_runtime', None)
+        callback = registry.control(task, 'claim_external_result', tool_name=tool_name) if registry is not None else None
+        if callback is not None:
+            callback(self, task, prepared)
 
     async def dispatch(self, owner, task_id, command_id):
         self.auth.require_member(owner)
@@ -294,7 +313,10 @@ class ControlCommands:
                     {"commandId": command_id, "fingerprint": row["fingerprint"], "taskRef": task_id})
                 if row["action"] == "cancel" and child is None and not prepared.get("alreadyStopped"):
                     self.store.request_cancel(task["id"])
-                self._claim_external_result(task, prepared)
+                requirement = next((item for item in prepared.get('requirements', [])
+                                    if item.get('id') == row['body']['decision'].get('requirementId')), {})
+                self._claim_external_result(task, prepared,
+                    tool_name=(requirement.get('tool_execution') or {}).get('tool_name'))
         if not claimed:
             return await self.recover(owner, task_id, command_id)
         try:

@@ -4,7 +4,7 @@ Only deterministic local scientific workflow fixtures are supported. Creating
 these declarations neither publishes materials nor grants any connection.
 """
 from __future__ import annotations
-from .services import services_for
+from .services import ResearchFactory
 
 import re
 from typing import Any
@@ -45,14 +45,15 @@ def _scope(ctx):
     return owner
 
 
-def resolve_context(ctx):
+def resolve_context(ctx, *, research):
     """Resolve only a server-created reference inside the immutable native plan."""
+    research.require_store(ctx.store, ready=True)
     owner = _scope(ctx)
     ref = ctx.plan.get("sourceSnapshotRef")
     _require(type(ref) is dict and set(ref) == {"id", "fingerprint"}
              and type(ref["id"]) is str and 1 <= len(ref["id"]) <= 128
              and type(ref["fingerprint"]) is str and re.fullmatch(r"[a-f0-9]{64}", ref["fingerprint"]))
-    snapshot = services_for(ctx.store).synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
+    snapshot = research.synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
     _require(type(snapshot) is dict and snapshot.get("fingerprint") == ref["fingerprint"])
     context = build_source_context(snapshot["question"], snapshot["projection"])
     _require(context.provenance["snapshotSha256"] == snapshot.get("contextFingerprint"))
@@ -60,37 +61,37 @@ def resolve_context(ctx):
 
 
 def registrations():
-    def knowledge(ctx):
-        return resolve_context(ctx)
+    def knowledge(ctx, research):
+        return resolve_context(ctx, research=research)
 
-    def model(ctx):
-        context = resolve_context(ctx)
+    def model(ctx, research):
+        context = resolve_context(ctx, research=research)
         _require(type(ctx.connection) is ControlledScientificFixture and ctx.connection.revision == "1")
         return ScientificFixtureModel(context)
 
-    def environment(ctx):
-        resolve_context(ctx)
+    def environment(ctx, research):
+        resolve_context(ctx, research=research)
         return EnvironmentLimits()
 
-    def saver(ctx):
+    def saver(ctx, research):
         # Shared implementation owns citation validation, bounded artifacts and
         # durable effects; no second saver or orchestration is introduced here.
         from .literature_synthesis_profile import make_synthesis_saver
-        context = resolve_context(ctx)
+        context = resolve_context(ctx, research=research)
 
         def revalidate():
-            current = resolve_context(ctx)
+            current = resolve_context(ctx, research=research)
             _require(current == context)
 
         return make_synthesis_saver(ctx, context, revalidate=revalidate)
 
-    return [AdapterRegistration("knowledge", KNOWLEDGE_ID, REVISION, knowledge, validator=_config, demo_only=True),
-        AdapterRegistration("model", MODEL_ID, REVISION, model, connection_kind="model",
+    return [AdapterRegistration("knowledge", KNOWLEDGE_ID, REVISION, ResearchFactory(knowledge), validator=_config, demo_only=True),
+        AdapterRegistration("model", MODEL_ID, REVISION, ResearchFactory(model), connection_kind="model",
             required_capabilities=(SCIENTIFIC_CAPABILITY,), connection_adapter_ref=FIXTURE_PROVIDER,
             validator=_config, demo_only=True),
-        AdapterRegistration("tool", TOOL_ID, REVISION, saver, tool_name=TOOL_NAME,
+        AdapterRegistration("tool", TOOL_ID, REVISION, ResearchFactory(saver), tool_name=TOOL_NAME,
             permissions=(PERMISSION,), validator=_config, demo_only=True),
-        AdapterRegistration("environment", ENVIRONMENT_ID, REVISION, environment, validator=_config, demo_only=True)]
+        AdapterRegistration("environment", ENVIRONMENT_ID, REVISION, ResearchFactory(environment), validator=_config, demo_only=True)]
 
 
 def material_drafts():
@@ -138,8 +139,9 @@ def pricing_registration():
         per_attempt_input_tokens=32768, per_attempt_output_tokens=4096)
 
 
-def inspect_synthesis_evidence(store, owner, task_id):
+def inspect_synthesis_evidence(store, owner, task_id, *, research):
     """Verify historical artifacts independently of stored success flags."""
+    research.require_store(store, ready=True)
     import hashlib
     import json
     from fastapi import HTTPException
@@ -156,7 +158,7 @@ def inspect_synthesis_evidence(store, owner, task_id):
              "semanticReview": "required", "scientificConclusionVerified": False, "artifactIds": None}
     try:
         _require(type(ref) is dict and set(ref) == {"id", "fingerprint"})
-        snapshot = services_for(store).synthesis_sources.read(owner, ref["id"])
+        snapshot = research.require_store(store, ready=True).synthesis_sources.read(owner, ref["id"])
         _require(snapshot["fingerprint"] == ref["fingerprint"])
         context = build_source_context(snapshot["question"], snapshot["projection"])
         fingerprint = context.provenance["snapshotSha256"]
@@ -208,7 +210,7 @@ def inspect_synthesis_evidence(store, owner, task_id):
             "citationIntegrityVerified": True, "semanticReview": "required"})
         source_current = True
         try:
-            current = services_for(store).synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
+            current = research.require_store(store, ready=True).synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
             _require(current == snapshot)
         except (ValueError, TypeError, KeyError, AttributeError, OSError, HTTPException, RuntimeError):
             source_current = False
@@ -220,7 +222,7 @@ def inspect_synthesis_evidence(store, owner, task_id):
         return {**empty, "status": "invalid"}
 
 
-def validate_plan_source(store, plan):
+def validate_plan_source(store, plan, *, research):
     """Fresh source custody check used by native execution guards, never grants."""
     execution = plan.get("executionBindings") or {}
     items = [execution.get("model", {}), execution.get("environment", {}),
@@ -229,6 +231,7 @@ def validate_plan_source(store, plan):
         row.get("adapterId") in {MODEL_ID, TOOL_ID, KNOWLEDGE_ID, ENVIRONMENT_ID} for row in items)
     if not related:
         return
+    research.require_store(store, ready=True)
     settings = store.settings
     _require(settings.demo is True and getattr(settings, "source_synthesis_enabled", False) is True
              and settings.temporary_policy == "member-self-service")
@@ -250,7 +253,7 @@ def validate_plan_source(store, plan):
     _require((plan.get("bindingManifest") or {}).get("sourceSnapshotRef") == ref)
     owner = plan.get("ownerId")
     _require(type(owner) is str and bool(owner))
-    snapshot = services_for(store).synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
+    snapshot = research.require_store(store, ready=True).synthesis_sources.revalidate(owner, ref["id"], expected_fingerprint=ref["fingerprint"])
     _require(snapshot["fingerprint"] == ref["fingerprint"] and snapshot["question"] == plan.get("normalizedGoal"))
     context = build_source_context(snapshot["question"], snapshot["projection"])
     _require(context.provenance["snapshotSha256"] == snapshot["contextFingerprint"])

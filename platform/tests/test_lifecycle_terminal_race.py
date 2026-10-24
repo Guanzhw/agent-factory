@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from fastapi import HTTPException
 
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory.plan_policy import NativeMandateCompleted
 
@@ -20,10 +21,7 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         store = Mock()
         store.process_runtime = None
         store.workflow = None
-        store.runtime_effect_held = None
-        store.runtime_ended_reason = None
-        store.runtime_cancel_owned = None
-        store.runtime_mark_cancel_requested = None
+        store.application_runtime = ApplicationRuntimeRegistry(store)
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []
@@ -152,8 +150,9 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
                 observer, store, task, failure, _ = self.fixture()
                 if fault == 'unresolved':
                     from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
-                    store.runtime_effect_held = ResearchRuntimeHooks.effect_held
-                    store.runtime_ended_reason = lambda current: ResearchRuntimeHooks.ended_reason(store, current)
+                    store.application_runtime.register('research-fixture', SimpleNamespace(
+                        effect_held=ResearchRuntimeHooks.effect_held, ended_reason=ResearchRuntimeHooks.ended_reason),
+                        effects=('orx-experiment-launch-v1',))
                 observer._binding.side_effect = [{'status': 'running'}, {'status': 'completed'}]
                 def deny(*args, **kwargs):
                     if fault == 'failure': failure['present'] = True

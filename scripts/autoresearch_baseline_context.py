@@ -92,6 +92,6 @@ attestation; original retained rows are independently checked on every entry.
                       for price in settings.usage_pricing))))
             with open_state(settings, full_verification=True) as state:
                 checkpoints = ResearchCheckpointStore(state['store'], state['auth'],
-                    state['resources'], state['store'].storage)
+                    state['resources'], state['store'].storage, research=state['research'])
                 yield ResearchEvaluationService(state['store'], state['auth'], state['resources'],
-                    {digest(manifest['evaluator']): 'evaluation'}, checkpoint_reader=checkpoints.identity)
+                    {digest(manifest['evaluator']): 'evaluation'}, checkpoint_reader=checkpoints.identity, research=state['research'])
