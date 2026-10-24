@@ -1,6 +1,8 @@
 """Real SQLite/services/HTTP operation accounts; no tool or remote dispatch."""
 from copy import deepcopy
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
@@ -114,8 +116,12 @@ class ReusableToolAccountTests(unittest.TestCase):
         self.assertEqual(self.service.list('bob'), [])
 
     def test_unavailable_saved_operation_does_not_block_healthy_restore(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        missing = Path(directory.name).resolve() / 'synthetic-only-cli'
+        self.assertFalse(missing.exists())
         unavailable = self.service.operations.create('alice', self.configuration |
-            {'executable': '/nonexistent/synthetic-only-cli'}, 'unavailable')
+            {'executable': str(missing)}, 'unavailable')
         healthy = self.operation()
         alice, bob = self.account(healthy), self.account(healthy, 'bob')
         restarted = PersonalTools(self.fixture.connections, self.service.vault, ())

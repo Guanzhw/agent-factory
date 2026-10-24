@@ -2,6 +2,8 @@
 from copy import deepcopy
 import json
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from agent_factory.tool_operations import (
@@ -33,11 +35,14 @@ class ToolOperationsTests(unittest.TestCase):
         self.assertEqual(normalized['permission'], 'tool:invoke')
 
     def test_each_dispatch_semantic_changes_hash(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name).resolve()
         changes = {'toolName': 'another', 'description': 'Public operation',
             'inputSchema': {'type': 'object', 'properties': {'n': {'type': 'number'}}},
             'readOnly': True, 'timeoutSeconds': 20, 'maxOutputBytes': 2048,
-            'executable': '/other/public/executable', 'arguments': ['--fixed'],
-            'workingDirectory': '/tmp', 'environment': {'PUBLIC_OPTION': 'value'},
+            'executable': str(root / 'another-executable'), 'arguments': ['--fixed'],
+            'workingDirectory': str(root), 'environment': {'PUBLIC_OPTION': 'value'},
             'argumentOptions': {'n': '--number'}, 'stdinJson': False,
             'credentialEnvironmentVariable': 'MEMBER_TOKEN', 'outputFormat': 'text'}
         baseline = operation_hash(self.cli())
@@ -98,6 +103,10 @@ class ToolOperationsTests(unittest.TestCase):
         self.assertEqual(recipe['environment'], {'PUBLIC_SETTING': 'arbitrary'})
 
     def test_unavailable_executable_has_redacted_restore_error(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        missing = Path(directory.name).resolve() / 'synthetic-command'
+        self.assertFalse(missing.exists())
         with self.assertRaisesRegex(ValueError, '^TOOL_OPERATION_ADAPTER_UNAVAILABLE$'):
-            instantiate_operation_adapter(self.cli() | {'executable': '/nonexistent/synthetic-command'},
+            instantiate_operation_adapter(self.cli() | {'executable': str(missing)},
                                           'public-cli', '1')
