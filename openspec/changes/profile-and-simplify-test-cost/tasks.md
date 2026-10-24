@@ -20,7 +20,7 @@
 - [x] 4.1 串行运行同条件最终完整适用套件和相关静态/Web/核心检查，保存前后比较及剩余失败限制。
 - [x] 4.2 独立审查最终diff/覆盖映射与证据，清理自己启动的临时资源，先保留可审阅改动，完成当前阶段结果。
 
-- [ ] 4.3 根据补充授权将本阶段独立变更发布为Draft PR并核对精确提交CI；不合并或部署。
+- [x] 4.3 根据补充授权将本阶段独立变更发布为Draft PR并核对精确提交CI；不合并或部署。
 
 ## Workflow follow-up
 
@@ -40,3 +40,12 @@ Heavy-test ownership remains coordinator-only. Complete before/after both failed
 remote handoff baseline, after MCP queue wait and ORX pre-POST wait, and historical
 DELETE latency remain explicit limits. No timeout/worker-limit change. Owned PG
 containers/volumes removed; no live owned fixture server found by scoped scan.
+
+## 持续诊断（未宣称闭合）
+
+- [x] 记录b458028 exact fast/full success与本地失败差异。
+- [x] 捕获第二task DELETE原credential迟到时序，新增三分支UNKNOWN反例。
+- [x] fresh bounded材料批量读取；5PG+1DFS、原相关30项与12项GC诊断均通过。
+- [x] 受控源hash与SQL对照；首交错污染基线保留并排除。
+- [ ] 新head精确CI与资源清理。
+- [ ] 历史第二任务、ORX gate和remote parent偶发失败的完整共同归因；GC本轮关联不能替代历史根因证据。

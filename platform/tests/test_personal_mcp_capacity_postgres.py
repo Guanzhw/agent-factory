@@ -58,6 +58,13 @@ class ObservedMCPAdapter(MCPToolAdapter):
             raise
         finally:
             observation['elapsedSeconds'] = round(time.monotonic() - started, 3)
+            state = observation.pop('state', None)
+            if state is not None:
+                # invoke has joined its SDK/monitor tasks. Keep diagnostic facts
+                # and live completion Events, not callbacks retaining the old app.
+                observation.update(dispatched=state.dispatched, authorizationRejected=state.authorization_rejected,
+                    sdkClosed=state.sdk_closed, transportClosed=state.transport_closed,
+                    callbacks=tuple(state.callbacks_finished))
 
     async def _run(self, state, arguments):
         observation = self.observation(state.invocation)
@@ -80,13 +87,15 @@ class ObservedMCPAdapter(MCPToolAdapter):
     def diagnostics(self):
         result = []
         for observation in self.observations.values():
-            item = {key: value for key, value in observation.items() if key not in {'state', 'bodyEnded'}}
+            item = {key: value for key, value in observation.items() if key not in {'state', 'bodyEnded', 'callbacks'}}
             state = observation.get('state')
+            callbacks = observation.get('callbacks', ())
             if state is not None:
                 item.update(dispatched=state.dispatched, authorizationRejected=state.authorization_rejected,
-                            sdkClosed=state.sdk_closed, transportClosed=state.transport_closed,
-                            callbacksTotal=len(state.callbacks_finished),
-                            callbacksDone=sum(event.is_set() for event in state.callbacks_finished))
+                            sdkClosed=state.sdk_closed, transportClosed=state.transport_closed)
+                callbacks = state.callbacks_finished
+            if state is not None or 'callbacks' in observation:
+                item.update(callbacksTotal=len(callbacks), callbacksDone=sum(event.is_set() for event in callbacks))
             result.append(item)
         return result
 
@@ -160,7 +169,6 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         )
         self.client = None
         self.start()
-        self.addCleanup(self.stop)
         self.publish()
 
     def stop_server(self):

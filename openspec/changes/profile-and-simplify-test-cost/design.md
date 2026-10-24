@@ -24,3 +24,11 @@
 - 单次波动 → 报告失败与环境限制，结合定向确定性验证，不用一次时间判断收益。
 - 测试合并隐藏断言 → 保留原行为到新case/子场景对应关系，并独立复审。
 - 完整运行中新发现失败 → 保留证据，定向诊断必要环境/产品问题，不假称最终全绿。
+
+## 授权热路径后续
+
+重复SQL从调用图与实际callback计数定位，不能直接删除None/name两个guard边界。仅把一次require_materials_current内最多30明确pins的材料与治理行改成单LEFT JOIN。依赖必须本已出现在allowed pins内，否则仍先拒绝；局部原始行不跨调用保存，hash/immutable/runtime adapter/DFS验证不减少。单次statement的一致读取并非撤回与工具派发互斥，不额外宣称原子授权。
+
+迟到credential结果仍需完整验证，现UNKNOWN不被清除；新增三个短Event反例加入daily Python。批量查询的30pins/下一fresh撤回用例加入daily PG，独立DFS cycle加入daily Python；其余复杂缺失/深度/完整性/adapter测试留完整套件。每日增加的是边界失效检出，不以测试数量下降为目标。
+
+GC诊断只观察，不改变GC开关/阈值或把collect搬到测试前隐藏停顿。首单例基线源码交错污染后明确废弃，冻结root所有权重新测量；保留原数据及测量顺序。单例总耗时未改善，SQL工作减少不等于MCP稳定性修复。

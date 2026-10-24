@@ -35,6 +35,10 @@ FAST_PYTHON_TESTS = {
         'test_personal_cli_process',
         'test_personal_mcp',
         'test_personal_mcp_callbacks',
+        'test_personal_mcp_teardown_auth',
+        'test_mcp_diagnostic_custody',
+        'test_native_fixture_lifecycle',
+        'test_material_governance_bulk_postgres.MaterialDependencyTraversalTests',
         'test_personal_tools',
         'test_personal_tool_execution',
         'test_personal_tool_assembly.PersonalToolSettingsTests',
@@ -65,6 +69,7 @@ FAST_POSTGRES_TESTS = {
         'test_trusted_model_proxy_postgres.TrustedModelProxyPostgresTests.test_generic_protocols_complete_native_task_with_existing_owner_vault',
     ),
     'member_self_service': (
+        'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests.test_thirty_pins_use_one_join_and_next_call_observes_withdrawal',
         'test_scheduling_member_postgres.MemberSchedulingPostgresTests',
         'test_personal_models_postgres.PersonalModelsPostgresTests.test_single_submit_native_queue_no_billing_no_admin_and_replay',
         'test_department_admission_postgres.DepartmentAdmissionPostgresTests.test_member_runs_multiple_applications_and_workflow_without_admin_decision',
