@@ -19,6 +19,7 @@ FAST_PYTHON_TESTS = {
         'test_trusted_model_proxy.TrustedModelProxyTests.test_legacy_grant_does_not_authorize_new_protocol_or_prefix',
     ),
     'selected_model_and_current_authority': (
+        'test_application_closure_authority.BoundedApplicationClosureTests',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_concurrent_native_runs_keep_models_knowledge_and_owner_context_separate',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_each_provider_turn_rechecks_current_authority_after_actual_native_tool',
         'test_execution_bindings.ExecutionBindingRuntimeTests.test_unavailable_forged_and_unadopted_bindings_have_no_demo_fallback',

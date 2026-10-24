@@ -4,6 +4,7 @@ import asyncio
 from concurrent.futures import Future
 import json
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -110,7 +111,33 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
     publish = native_fixture.PersonalToolNativePostgresTests.publish
     configure = native_fixture.PersonalToolNativePostgresTests.configure
     submit = native_fixture.PersonalToolNativePostgresTests.submit
-    wait = native_fixture.PersonalToolNativePostgresTests.wait
+    def wait(self, started, owner, *, expected='completed'):
+        try:
+            return native_fixture.PersonalToolNativePostgresTests.wait(self, started, owner, expected=expected)
+        except AssertionError as error:
+            # Capture before teardown, only after the unchanged wait failed.
+            # Frames contain locations only, never locals/credentials/messages.
+            task = self.store.task(started['job']['id'], owner)
+            native = self.store.native_db.get_job(task['run_id']) or {}
+            stacks = []
+            for frame in sys._current_frames().values():
+                stack = []
+                while frame is not None and len(stack) < 16:
+                    stack.append({'file': Path(frame.f_code.co_filename).name,
+                                  'function': frame.f_code.co_name, 'line': frame.f_lineno})
+                    frame = frame.f_back
+                stacks.append(stack)
+            effects = [{'key': effect['effect_key'], 'status': effect['status'],
+                        'result': {key: effect['result'][key] for key in ('outcome', 'stopped', 'cancelled')
+                                   if key in effect['result']} if isinstance(effect.get('result'), dict) else None}
+                       for effect in self.store.effects(task['id'])]
+            diagnostic = {'taskId': task['id'], 'runId': task['run_id'], 'requestId': task['request_id'],
+                'terminal': task['terminal'], 'cancelRequested': task['cancel_requested'],
+                'native': {key: native.get(key) for key in ('status', 'attempts', 'worker_id', 'created_at', 'updated_at')},
+                'effects': effects, 'adapter': self.adapter.diagnostics(), 'toolCallCount': len(self.mcp.calls),
+                'observerError': self.store.lifecycle_observer.last_error_type, 'threads': stacks}
+            raise self.failureException(str(error) + '\nMCP_NATIVE_FAILURE: ' +
+                json.dumps(diagnostic, sort_keys=True, default=str)) from error
 
     def setUp(self):
         database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()

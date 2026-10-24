@@ -115,3 +115,14 @@ ObservedMCPAdapter仅在super.invoke完成收尾后的finally将state换成标�
 串行真实guardian/enforcement共20项首次19通过/1失败：新parent-exit夹具误配置wall8s，被既有最大5s合同正确拒绝；未派生该fixture guardian。修正夹具为既有wall5s、要求controller3s内正常退出，单项通过（0.648s driver），因此20个唯一用例均有实际通过记录，未重跑整组追绿。覆盖正常退出、原取消、wall停止、guardian死亡仍UNKNOWN、原身份重开、内核CPU/内存/文件限制。parent-exit测试在独立subreaper中证明原guardian继续RUNNING，同身份重开拒绝dispatch，原cancel取得stop proof并回收原guardian。此subreaper只属于测试进程。
 
 Ruff/Pyright通过；daily新增8项选择校验249项、零缺失/重叠（仅collection，不声称重跑全部249）。日志与命令位于cloud scratch `task-history-20261024/audit-guardian-*`。保留初次错误夹具的原失败日志。新增head的精确CI另行记录。
+
+
+## 后续 exact-pin 读取与保留的新失败
+
+7fe8d9092d515c442406cc9745b793aa2b370486 的fast40110354593/full40110374707均success；full PG3231=3165通过/66跳过，1493.654s，七组required全部通过。此结果仍不关闭本地历史问题。
+
+独立审查发现require_plan_current的closure每次全读素材目录，即使plan已经绑定完整闭包。仅此调用现在用一次fresh tuple-IN读取已绑定≤30 exact版本；依赖DFS、depth/count/cycle、digest、发布/归档、完整集合与最后fresh governance原校验保留，无跨回调缓存。其它仅已知root pins的closure调用不变。SQLite实际返回行数在0/100/1000无关版本时由3/103/1003变为3/3/3；20 focused tests通过，不能解释为SQL次数下降或MCP根因已证明。独立review无阻断。
+
+原PG撤回重启、legacy执行、两个原MCP失败案例按序定向运行：`closure-pg-mcp-regressions`4项中3通过/1失败、零skip，84.657s测试/96.429s driver；slow DELETE案例第二任务仍未在原20s内到native terminal。此明确反证不能把读取优化宣称为MCP稳定性修复。加仅失败后、teardown前的原task/run/queue/effect/callback计数/线程位置诊断（不记录locals、凭据、消息）后按同序一次复现：4/4通过，54.216s driver；未再次复现，不能覆盖前次失败。没有延长等待或重复完整套件追绿。两次期间均未并行其它重PG，但轻量静态/便携检查可能共享CPU，不作精确耗时收益比较。
+
+daily Python旧249选择实际通过（37.508s，42.768s driver）；将11个有界闭包快速案例纳入日常选择，原20 focused已执行，不外推新增260为整组本地执行。新增head以fast CI及上述定向PG验证，前一head full结果不外推为新head full。外部模型/供应商仍未验证。
