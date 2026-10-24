@@ -23,6 +23,22 @@ class ProfileTests(unittest.TestCase):
                 {'critical': {case.id()}}, stream=io.StringIO(), resultclass=profiler.result_class())
         return result, summary, [json.loads(line) for line in log.getvalue().splitlines()]
 
+    def test_assertion_traceback_preserves_original_test_frame(self):
+        class Failing(unittest.TestCase):
+            def runTest(self):
+                self.assertEqual(1, 2, 'synthetic user assertion')
+
+        case = Failing()
+        result, summary, records = self.run_profile(case)
+        self.assertFalse(summary['accepted'])
+        self.assertEqual(summary['groups']['critical']['notPassed'], [case.id()])
+        self.assertEqual(len(result.failures), 1)
+        trace = result.failures[0][1]
+        self.assertIn('in runTest', trace)
+        self.assertIn("self.assertEqual(1, 2, 'synthetic user assertion')", trace)
+        self.assertNotIn('return original(test, *args, **kwargs)', trace)
+        self.assertEqual([row['outcome'] for row in records if row['kind'] == 'case'], ['failed'])
+
     def test_nested_runner_keeps_outer_case_and_cleanup_ownership(self):
         events = []
 

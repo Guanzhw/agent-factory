@@ -17,8 +17,8 @@
 
 ## 4. Integration
 
-- [ ] 4.1 串行运行同条件最终完整适用套件和相关静态/Web/核心检查，保存前后比较及剩余失败限制。
-- [ ] 4.2 独立审查最终diff/覆盖映射与证据，清理自己启动的临时资源，先保留可审阅改动，完成当前阶段结果。
+- [x] 4.1 串行运行同条件最终完整适用套件和相关静态/Web/核心检查，保存前后比较及剩余失败限制。
+- [x] 4.2 独立审查最终diff/覆盖映射与证据，清理自己启动的临时资源，先保留可审阅改动，完成当前阶段结果。
 
 - [ ] 4.3 根据补充授权将本阶段独立变更发布为Draft PR并核对精确提交CI；不合并或部署。
 
@@ -30,11 +30,13 @@
 
 | Owner | Scope | Dependency / state |
 |---|---|---|
-| coordinator | Core callback integration, profiler/runner, serialized tests, final evidence/CI | Targeted passed; full after comparison pending |
+| coordinator | Core callback integration, profiler/runner, serialized tests, final evidence/CI | Complete serial comparison recorded (after2fail); final fast231pass; exact CI pending |
 | MCP worker | Scratch deterministic gate regressions and diagnostic design | Integrated by coordinator; historical authorization-budget cause remains limited |
 | suite worker | Three remote/scale/local-driver test files | Implemented; four targeted cases passed |
 | Node worker | CLI error/signal diagnostics; independent profiler review | Ten approved architecture cases passed; environment EPERM retained |
-| independent reviewer | Callback custody, pruning coverage, remote-handoff diagnosis | No blocking code issue; final full evidence pending |
+| independent reviewer | Callback custody, pruning coverage, remote-handoff diagnosis | No blocking source issue; full failures and timing limits reviewed |
 
-Heavy-test ownership remains coordinator-only. Remote handoff baseline failure and
-historical DELETE latency remain explicit limits; no timeout/worker-limit change.
+Heavy-test ownership remains coordinator-only. Complete before/after both failed;
+remote handoff baseline, after MCP queue wait and ORX pre-POST wait, and historical
+DELETE latency remain explicit limits. No timeout/worker-limit change. Owned PG
+containers/volumes removed; no live owned fixture server found by scoped scan.

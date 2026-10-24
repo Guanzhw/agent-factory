@@ -19,6 +19,11 @@ import check_postgres
 from check_python import CollectionError, configure_imports
 
 
+# Treat these wrappers as unittest infrastructure so assertion tracebacks keep
+# the original user frame when unittest removes its own framework frames.
+__unittest = True
+
+
 # Deliberately bounded to owned DB and real HTTP/process lifecycle boundaries.
 # Modules must already have been imported by ordinary discovery.
 FIXTURES = (
