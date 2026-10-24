@@ -30,6 +30,9 @@ agent-factory = "agent_factory_server.main:main"
 packages = ["platform/agent_factory", "apps/research/agent_factory_research", "deployment/agent_factory_server"]
 
 [dependency-groups]
+browser = [
+    "playwright==1.58.0",
+]
 dev = ["ruff==0.15.8", "pyright==1.1.408", "hatchling==1.29.0"]
 
 [tool.ruff]
