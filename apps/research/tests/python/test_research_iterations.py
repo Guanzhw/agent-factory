@@ -19,8 +19,8 @@ BASELINE = dict(kind='reviewedSeed', sha256='a' * 64, datasetSha256='b' * 64,
 
 
 class MemoryStore:
-    def __init__(self):
-        self.engine = create_engine('sqlite://')
+    def __init__(self, engine=None):
+        self.engine = engine if engine is not None else create_engine('sqlite://')
         self.connection = None
         self.tasks = {}
         self.local_budget_scopes = Scopes(self)

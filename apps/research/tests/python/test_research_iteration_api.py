@@ -17,14 +17,12 @@ from sqlalchemy.pool import StaticPool
 from agent_factory_research.research_iteration_api import iteration_router
 from agent_factory_research.research_iterations import IterationPreset, ResearchIterations
 from agent_factory_research.services import ResearchServices
-from test_research_iterations import BASELINE, CAPS, Driver, MemoryStore, Scopes
+from test_research_iterations import BASELINE, CAPS, Driver, MemoryStore
 
 
 class HTTPStore(MemoryStore):
     def __init__(self):
-        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
-        self.connection = None
-        self.local_budget_scopes = Scopes(self)
+        super().__init__(create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool))
 
 
 class ResearchIterationAPITests(unittest.TestCase):
