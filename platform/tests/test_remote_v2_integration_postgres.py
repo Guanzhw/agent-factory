@@ -58,9 +58,21 @@ class RemoteV2IntegrationPostgresTests(unittest.TestCase):
             'originRef': ORIGIN_REF, 'originOwnerId': ORIGIN_OWNER, 'requestId': row['request_id']}).json()
 
     def settled_without_job_get(self, task):
-        # This authenticated fixture query reads PG only. It does not call
-        # handoff reconcile; the production background observer must settle it.
-        self.wait_for(lambda: self.origin.facts(task)['task']['terminal'])
+        # These authenticated fixture queries read PG only. Positive receiver
+        # stop proof can settle the origin before the receiver's local lifecycle
+        # commits terminal; its GET correctly remains finalizing in that gap.
+        # Wait for both original tasks within one existing 25s window, without
+        # GET/reconcile doing the background observer's settlement work.
+        def both_terminal():
+            facts = self.origin.facts(task)
+            if not facts['task']['terminal']:
+                return False
+            placement = next(row for row in facts['placements'] if row['task_id'] == task)
+            receipt = placement['body']['receipt']
+            self.assertEqual(receipt['originTaskId'], task)
+            return self.receiver.facts(receipt['remoteTaskId'])['task']['terminal']
+
+        self.wait_for(both_terminal)
         return self.call(self.origin, 'GET', '/jobs/' + task).json()
 
     def assert_original_once(self, task, receipt):
