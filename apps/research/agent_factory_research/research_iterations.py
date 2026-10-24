@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select
 
 from agent_factory.store import digest
+from agent_factory.runtime_hooks import runtime_custody_held
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,16 @@ class ResearchIterations:
         await self._dispatch(owner, identifier)
         return self.inspect(owner, identifier)
 
+    def _reject_unsubmitted(self, owner, round):
+        # Caller holds the same scope/activity transaction as the dispatch
+        # fence. Absence of a run alone is never evidence of non-submission.
+        _require(round['dispatchAttempted'] is False, 'ITERATION_DISPATCH_IDENTITY')
+        task = self.store.task(round['taskId'], owner)
+        _require(task['run_id'] is None and not self.store.effects(task['id'])
+                 and not runtime_custody_held(self.store, task['id']), 'ITERATION_DISPATCH_IDENTITY')
+        self.store.admission_failed(task['id'], 'Iteration stopped before native submission')
+        round['dispatchRejected'] = True
+
     async def _dispatch(self, owner, activity_id):
         expired = False
         with self.store.transaction() as conn:
@@ -199,6 +210,7 @@ class ResearchIterations:
                 return
             expired = time.time() + activity['roundSeconds'] > activity['deadline']
             if expired:
+                self._reject_unsubmitted(owner, round)
                 self.scopes.cancel(owner, activity['scopeId'])
                 activity.update(cancelRequested=True, status='canceling', stopReason='deadline')
             else:
@@ -334,8 +346,10 @@ class ResearchIterations:
             activity = self._activity(conn, owner, activity_id, lock=True)
             self.scopes.cancel(owner, activity['scopeId'])
             round = self._round(conn, activity['currentRoundId'])
+            if not round['dispatchAttempted']:
+                self._reject_unsubmitted(owner, round)
             activity.update(cancelRequested=True, status='stopped' if round['state'] == 'SETTLED' else 'canceling',
                             stopReason=reason)
-            self._save(conn, activity)
+            self._save(conn, activity, round)
         await self.driver.cancel(owner, deepcopy(round))
         return self.inspect(owner, activity_id)

@@ -22,7 +22,17 @@ class MemoryStore:
     def __init__(self):
         self.engine = create_engine('sqlite://')
         self.connection = None
+        self.tasks = {}
         self.local_budget_scopes = Scopes(self)
+
+    def task(self, identifier, owner=None):
+        return self.tasks[identifier]
+
+    def effects(self, identifier):
+        return []
+
+    def admission_failed(self, identifier, message):
+        self.tasks[identifier].update(admission='rejected', terminal=True)
 
     @contextmanager
     def transaction(self, *, read_only=False):
@@ -96,6 +106,8 @@ class Driver:
     def reserve(self, owner, activity, round):
         assert self.store.connection is not None
         self.reserved.append(round)
+        self.store.tasks['task-' + round['id']] = dict(id='task-' + round['id'], run_id=None,
+                                                       admission='reserved', terminal=False)
         return dict(taskId='task-' + round['id'], planId='plan-' + round['id'], planSha256='d' * 64)
 
     async def dispatch(self, owner, round):

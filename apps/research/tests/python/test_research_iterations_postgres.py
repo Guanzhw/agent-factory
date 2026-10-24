@@ -17,6 +17,10 @@ import tarfile
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from agno.db.base import SessionType
 
 from fastapi.testclient import TestClient
 
@@ -314,6 +318,79 @@ class ResearchIterationsPostgresTests(unittest.TestCase):
         self.request('POST', '/research-iterations/' + activity + '/advance', 409,
             {'previousRoundId': second['id'], 'requestId': 'tie-must-not-continue'})
         self.assertEqual(self.dispatches, before)
+
+    def assert_unsubmitted_boundary_releases_hold(self, reason):
+        from agent_factory_research import research_iterations as iteration_module
+        body = self.start_body('actual-unsubmitted-' + reason, rounds=1)
+        original_dispatch = self.service._dispatch
+        reserved = []
+
+        async def stop_at_dispatch_boundary(owner, activity_id):
+            before = self.service.inspect(owner, activity_id)
+            round = before['rounds'][0]
+            # Start has committed the real task and allocation; no native
+            # submission fence or acknowledgement has happened yet.
+            self.assertEqual(len(before['rounds']), 1)
+            self.assertFalse(round['dispatchAttempted'])
+            self.assertEqual(round['state'], 'RESERVED')
+            self.assertEqual(before['budget']['heldToolCalls'], 8)
+            self.assertIsNone(self.store.task(round['taskId'], owner)['run_id'])
+            reserved.append(deepcopy(before))
+            self.snapshots.append(deepcopy(before))
+            if reason == 'cancelled':
+                await self.service.cancel(owner, activity_id)
+                await original_dispatch(owner, activity_id)
+            else:
+                # Replace only this module's clock object. Authentication,
+                # native runtime and the global time module keep real clocks.
+                with patch.object(iteration_module, 'time', SimpleNamespace(time=lambda: body['deadline'])):
+                    await original_dispatch(owner, activity_id)
+            # The real driver must derive stopped from the persisted rejected
+            # task/fence, not from a fabricated observation or patched driver.
+            await self.service.reconcile(owner, activity_id)
+
+        bridge = self.state['bridge']
+        with patch.object(bridge, 'submit', wraps=bridge.submit) as native_submit, \
+                patch.object(self.service, '_dispatch', stop_at_dispatch_boundary):
+            final = self.request('POST', '/research-iterations', 201, body)
+            native_submit.assert_not_awaited()
+        self.assertEqual(len(reserved), 1)
+        before = reserved[0]
+        round = final['rounds'][0]
+        self.assertEqual(final['activity']['id'], before['activity']['id'])
+        self.assertEqual(final['activity']['status'], 'stopped')
+        self.assertEqual(final['activity']['stopReason'], reason)
+        self.assertEqual(len(final['rounds']), 1)
+        for key in ('id', 'taskId', 'planId', 'planSha256', 'allocationId', 'requestId', 'intentSha256', 'pins'):
+            self.assertEqual(round[key], before['rounds'][0][key])
+        self.assertFalse(round['dispatchAttempted'])
+        self.assertTrue(round['dispatchRejected'])
+        self.assertIsNone(round['runId'])
+        self.assertEqual(round['state'], 'SETTLED')
+        self.assertEqual(round['observation'], {'taskId': round['taskId'], 'runId': None,
+                                               'state': 'stopped', 'failed': True})
+        task = self.store.task(round['taskId'], 'alice')
+        self.assertEqual(task['admission'], 'rejected')
+        self.assertTrue(task['terminal'])
+        self.assertIsNone(task['run_id'])
+        self.assertEqual(self.store.effects(task['id']), [])
+        self.assertIsNone(self.store.native_db.get_session(task['id'], session_type=SessionType.AGENT, user_id='alice'))
+        self.assertEqual(final['budget']['allocatedRounds'], 1)
+        self.assertEqual(final['budget']['heldToolCalls'], 0)
+        self.assertEqual(final['budget']['settledToolCalls'], 0)
+        self.assertEqual(round['settlement']['toolCalls'], 0)
+        self.assertEqual(final['budget']['allocations'][0]['state'], 'SETTLED')
+        self.assertEqual(self.dispatches, [])
+        self.assertEqual(list(self.workspace.rglob('factory-linux-container.json')), [])
+        self.assertEqual(self.request('GET', '/research-iterations/requests/' + body['requestId']), final)
+        self.assertEqual(self.request('POST', '/research-iterations/' + final['activity']['id'] + '/reconcile', body={}), final)
+        self.snapshots.append(deepcopy(final))
+
+    def test_cancel_after_reservation_before_native_submission_releases_real_hold(self):
+        self.assert_unsubmitted_boundary_releases_hold('cancelled')
+
+    def test_expiry_after_reservation_before_native_submission_releases_real_hold(self):
+        self.assert_unsubmitted_boundary_releases_hold('deadline')
 
     def test_lost_native_dispatch_ack_restart_recovers_original_without_relaunch(self):
         body = self.start_body('actual-native-ack-lost', rounds=1)
