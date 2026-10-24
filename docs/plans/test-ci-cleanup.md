@@ -1,9 +1,9 @@
 # 测试清理与 CI 成本收敛
 
-状态：**planning-only Draft；实现与验收待完成**。
+状态：**实施中；最终完整 CI 与合入待完成**。任务和结果见 [OpenSpec](../../openspec/changes/simplify-behavior-tests-and-ci/tasks.md)。
 基线：PR95 合并提交 `246f06541b21915392a77555e24f3f617d34de9f`；实施前重新核对该提交的源码、依赖与 CI。
-建议分支：`chore/behavior-tests-ci-cleanup`。
-建议 OpenSpec change：`simplify-behavior-tests-and-ci`，在实施时建立最小必要规范。
+实施分支：PR96 的 `plan/test-ci-cleanup`。
+OpenSpec change：`simplify-behavior-tests-and-ci`；本次只调整测试和工具，产品行为契约保持不变。
 
 ## 目标与顺序
 

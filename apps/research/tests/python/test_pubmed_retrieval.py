@@ -3,7 +3,6 @@ import asyncio
 import hashlib
 import json
 import unittest
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -78,12 +77,17 @@ class PubMedTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result['sources'][0]['sha256'])
 
     async def test_invalid_config_refused_before_transport(self):
-        handler = AsyncMock()
-        invalid: list[dict[str, Any]] = [{'query_id': 'private-query'}, {'limit': True}, {'limit': 4}, {'transport': httpx.AsyncHTTPTransport()}]
+        handler = AsyncMock(return_value=httpx.Response(200))
+        invalid = [{'query_id': 'private-query'}, {'limit': True}, {'limit': 0}, {'limit': 4}]
         for kwargs in invalid:
-            with self.assertRaisesRegex(module.PubMedRetrievalError, '^CONFIG_INVALID$'):
-                await module.retrieve(**kwargs)
+            with self.subTest(config=kwargs), self.assertRaisesRegex(module.PubMedRetrievalError, '^CONFIG_INVALID$'):
+                await module.retrieve(transport=httpx.MockTransport(handler), **kwargs)
         handler.assert_not_called()
+
+    async def test_non_fixture_transport_is_rejected(self):
+        async with httpx.AsyncHTTPTransport() as transport:
+            with self.assertRaisesRegex(module.PubMedRetrievalError, '^CONFIG_INVALID$'):
+                await module.retrieve(transport=transport)
 
     async def test_search_and_xml_identity_malformed_entities_and_duplicates_fail_closed(self):
         for ids in (('123', '123'), ('../secret',), ('0',), ('123', '456', '789')):

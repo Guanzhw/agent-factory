@@ -15,8 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 APPLICATION_PACKAGES = {'agent_factory_research', 'agent_factory_server'}
 
 IMPORT_CORE = '''
-import importlib, importlib.abc, importlib.util, json, pathlib, sys
-sys.path[:0] = sys.argv[1:3]
+import importlib, importlib.abc, importlib.util, json, pathlib, site, sys
+sys.path.insert(0, sys.argv[1])
+site.addsitedir(sys.argv[2])
 assert all(importlib.util.find_spec(name) is None for name in
     ('agent_factory_research', 'agent_factory_server'))
 attempts = []
@@ -43,8 +44,9 @@ print(json.dumps({'files': {name: str(pathlib.Path(module.__file__).resolve())
 '''
 
 RUN_CORE = '''
-import importlib.abc, importlib.util, json, pathlib, sys
-sys.path[:0] = sys.argv[1:3]
+import importlib.abc, importlib.util, json, pathlib, site, sys
+sys.path.insert(0, sys.argv[1])
+site.addsitedir(sys.argv[2])
 assert all(importlib.util.find_spec(name) is None for name in
     ('agent_factory_research', 'agent_factory_server'))
 class RejectApplication(importlib.abc.MetaPathFinder):
@@ -122,14 +124,16 @@ class CorePackageDistributionTests(unittest.TestCase):
         cls.site = cls.root / 'installed'
         with zipfile.ZipFile(cls.wheel) as archive:
             archive.extractall(cls.site)
-        # Reuse only third-party dependencies. Do not process editable-install
-        # .pth files or expose any source/application package from this checkout.
+        # Reuse only third-party dependencies. pywin32 needs its own .pth to
+        # register module/DLL paths on Windows; editable-install .pth files must
+        # remain excluded so checkout/application packages stay unavailable.
         cls.dependencies = cls.root / 'dependencies'
         cls.dependencies.mkdir()
         for directory in {sysconfig.get_path('purelib'), sysconfig.get_path('platlib')}:
             for source in Path(directory).iterdir():
                 if (source.name.startswith(('agent_factory', 'department_agent_factory'))
-                        or source.suffix == '.pth' or source.name == '__pycache__'):
+                        or (source.suffix == '.pth' and source.name != 'pywin32.pth')
+                        or source.name == '__pycache__'):
                     continue
                 target = cls.dependencies / source.name
                 if not target.exists():
