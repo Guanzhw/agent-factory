@@ -77,6 +77,7 @@ FAST_PYTHON_TESTS = {
         'test_personal_tool_assembly.PersonalToolSettingsTests',
     ),
     'original_receipt_and_stop': (
+        'test_native_timeout_diagnostics',
         'test_process_receipt_validation.ProcessReceiptValidation',
         'test_research_candidate_native_stop.NativeStopTests',
         'test_guardian_reaping',
