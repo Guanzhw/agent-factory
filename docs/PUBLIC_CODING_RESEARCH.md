@@ -1,5 +1,7 @@
 # Public-source coding research development acceptance
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This is an explicit coding-development example, not a production scientific
 question. It reviews how Agent Factory's Go HTTP client retains managed proxy/CA
 support while restricting destinations, redirects and retries.

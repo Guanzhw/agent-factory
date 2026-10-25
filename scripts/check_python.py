@@ -1,4 +1,4 @@
-"""Discover both owned test trees for ordinary and PostgreSQL checks."""
+"""Discover the standalone core test tree for ordinary and PostgreSQL checks."""
 import os
 from pathlib import Path
 import sys
@@ -6,8 +6,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ('platform', 'apps/research', 'deployment', 'platform/tests', 'apps/research/tests/python')
-TEST_DIRECTORIES = (ROOT / 'platform/tests', ROOT / 'apps/research/tests/python')
+SOURCES = ('platform', 'deployment', 'platform/tests')
+TEST_DIRECTORIES = (ROOT / 'platform/tests',)
 
 
 class CollectionError(ValueError):

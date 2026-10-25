@@ -32,11 +32,11 @@ function serverReceipt(value: PersonalSSHServer): PersonalSSHServer {
   return value;
 }
 
-type Props = { ownerId: string; onChanged: () => void; onResearch?: () => void; revision?: number };
+type Props = { ownerId: string; onChanged: () => void; revision?: number };
 export function PersonalSSHServers(props: Props) {
   return <OwnerSSHServers key={props.ownerId} {...props}/>;
 }
-function OwnerSSHServers({ ownerId, onChanged, onResearch, revision = 0 }: Props) {
+function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
   const storage = `factory-personal-ssh:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<Pending | null>(() => { try { return readPending(JSON.parse(localStorage.getItem(storage) ?? 'null'), ownerId); } catch { return null; } });
   const [archived, setArchived] = useState<Pending[]>(() => { try { const a: unknown = JSON.parse(localStorage.getItem(`${storage}:unresolved`) ?? '[]'); return Array.isArray(a) ? a.slice(0, 100).map(v => readPending(v, ownerId)).filter((p): p is Pending => !!p) : []; } catch { return []; } });
@@ -173,7 +173,6 @@ function OwnerSSHServers({ ownerId, onChanged, onResearch, revision = 0 }: Props
     void run(async () => { const next = [...archived, pending]; localStorage.setItem(`${storage}:unresolved`, JSON.stringify(next)); setArchived(next); acknowledge(pending); clearSecret(); setForm(false); setIdentity(undefined); setCredential(undefined); setNotice('已停止等待，原操作仍可核对。它可能已经完成；请先查看最新服务器和已保存身份，再决定新操作。'); changed(); });
   }
   function begin(server?: PersonalSSHServer) { clearSecret(); setCredential(undefined); setIdentity(undefined); setEditing(server?.reference); setInput(server ? { name: server.name, address: server.address, port: server.port, username: server.username, hostKey: server.hostKey, allowedRoot: server.allowedRoot } : empty); setForm(true); setError(''); }
-  function go(server: PersonalSSHServer) { sessionStorage.setItem(`factory-research-server:${encodeURIComponent(ownerId)}`, JSON.stringify({ owner: ownerId, reference: server.reference, directory: server.defaultDirectory })); onResearch?.(); }
   const disabled = busy || blocked || !!pending || !ready;
   return <section className="personal-ssh" aria-labelledby="personal-ssh-title"><h2 id="personal-ssh-title">我的 Linux 服务器</h2><p>登记自己的服务器与 SSH 身份，检查依赖后用于应用。你可以将服务器共享给团队，成员使用时无需读取 SSH 凭据。</p>
     <p className="quiet">连接检查确认 SSH 身份和私有目录；具体应用所需依赖在准备该应用时检查。</p>
@@ -183,7 +182,7 @@ function OwnerSSHServers({ ownerId, onChanged, onResearch, revision = 0 }: Props
     {pending && <div className="state-note"><h3>上次操作待确认</h3><p>私钥输入已清空。核对只读取原结果，不会重发或安装。</p><button disabled={busy || blocked} onClick={() => void recover(pending)}>核对原操作</button><button disabled={busy || blocked || archived.length >= 100} onClick={() => setConfirmStop(true)}>停止等待</button>{confirmStop && <div><p>停止等待不会取消原操作，它仍可能完成。将保留原结果核对入口，任何新操作都需重新确认。</p><button disabled={busy} onClick={stopWaiting}>确认停止等待并保留记录</button><button disabled={busy} onClick={() => setConfirmStop(false)}>继续等待</button></div>}</div>}
     {!!archived.length && <details><summary>未确认的保留操作</summary>{archived.map(p => <p key={p.requestId}>原操作仍可核对。<button disabled={disabled || form} onClick={() => void recover(p, true)}>核对保留结果</button></p>)}</details>}
     {rows.map(server => <article className="model-record" key={server.reference}><h3>{server.name}</h3><p>{server.username}@{server.address}:{server.port} · {server.allowedRoot}</p><p>{server.visibility === 'team' ? '团队共享' : '个人'}{server.isOwner === false ? ` · 所有者 ${server.ownerId}` : ''}</p><p role="status">{server.enabled ? '已启用' : server.status === 'verified' ? '连接已通过，请确认启用' : server.status === 'revoked' ? '连接授权已撤销' : server.status === 'expired' ? '检查授权已到期，请重新检查并启用' : server.status === 'credential_unavailable' ? 'SSH 身份不可用，请更换连接设置' : '需要检查连接与目录'}</p><p className="quiet">检查授权有效 15 分钟。到期后重新检查并启用，原研究数据保留。</p>{server.diagnostic && <p className="error-message">{sshMessages[server.diagnostic] ?? '依赖检查未通过。'}</p>}
-      {server.status !== 'revoked' && <div className="button-row">{server.isOwner !== false && <button disabled={disabled} onClick={() => void command(server, 'verify')}>检查连接与目录</button>}{server.status === 'verified' && !server.enabled && <button disabled={disabled} onClick={() => void command(server, 'bind')}>启用此服务器</button>}{server.enabled && onResearch && <button className="primary" disabled={disabled} onClick={() => go(server)}>去 OpenResearch 准备</button>}{server.isOwner !== false && <><button disabled={disabled} onClick={() => begin(server)}>更换连接设置</button><button disabled={disabled} onClick={() => void share(server)}>{server.visibility === 'team' ? '改为个人服务器' : '共享服务器给团队'}</button><button disabled={disabled} onClick={() => setRevoking(server.reference)}>撤销授权</button></>}</div>}
+      {server.status !== 'revoked' && <div className="button-row">{server.isOwner !== false && <button disabled={disabled} onClick={() => void command(server, 'verify')}>检查连接与目录</button>}{server.status === 'verified' && !server.enabled && <button disabled={disabled} onClick={() => void command(server, 'bind')}>启用此服务器</button>}{server.isOwner !== false && <><button disabled={disabled} onClick={() => begin(server)}>更换连接设置</button><button disabled={disabled} onClick={() => void share(server)}>{server.visibility === 'team' ? '改为个人服务器' : '共享服务器给团队'}</button><button disabled={disabled} onClick={() => setRevoking(server.reference)}>撤销授权</button></>}</div>}
       {revoking === server.reference && <div><p>确认撤销 {server.name} 的后续连接授权？原研究数据保留。</p><button disabled={disabled} onClick={() => void command(server, 'revoke')}>确认撤销服务器授权</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留授权</button></div>}</article>)}
     {ready && enabled && !form && !pending && <><p>{!rows.length && '还没有自己的服务器。先添加并检查，再用于应用。'}</p><button disabled={disabled} onClick={() => begin()}>添加我的服务器</button></>}
     {form && !pending && !blocked && <form className="model-form" aria-label="设置我的服务器" onSubmit={e => { e.preventDefault(); void (identity ? save() : preview()); }}><h3>{identity ? '确认服务器身份与授权' : editing ? '更换服务器连接设置' : '添加我的服务器'}</h3>

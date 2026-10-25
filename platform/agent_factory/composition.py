@@ -346,7 +346,7 @@ class CompositionService:
             conn.execute(self.proposals.update().where(self.proposals.c.id == proposal_id).values(state="accepted", plan_id=plan["id"]))
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, "composition.accept", plan)
 
-    def create_plan(self, owner, goal, mode, application="research", *, application_ref=None, material_choices=None,
+    def create_plan(self, owner, goal, mode, application=None, *, application_ref=None, material_choices=None,
                     connection_refs=None, request_id=None, plan_store=None, input_values=None):
         key = request_id or str(uuid4())
         MaterialGovernance._key(key)

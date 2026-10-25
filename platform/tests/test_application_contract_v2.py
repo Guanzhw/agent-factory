@@ -6,14 +6,15 @@ from uuid import uuid4
 from agent_factory.store import digest
 from fastapi import HTTPException
 from agent_factory.application_schema import ApplicationDefinitionV2, definition_model, time_budget
-from agent_factory_research.bootstrap_catalog import demo_definitions, all_demo_definitions
+from core_native_fixture import governed_fixture_definitions
+from core_native_fixture import fixture_definitions as demo_definitions, all_fixture_definitions as all_demo_definitions
 from agent_factory.remote_handoff import _manifest, plan_manifest
 import test_applications_composition as fixtures
 
 
 class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
     def plan(self):
-        return self.composition.create_plan('alice', 'Checksum neutral controlled evidence', 'execute', 'checksum-neutral')
+        return self.composition.create_plan('alice', 'Checksum neutral controlled evidence', 'execute', 'fixture-checksum-v2')
 
     def test_neutral_configuration_composes_and_rechecks_without_research_fields(self):
         plan = self.plan()
@@ -22,7 +23,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
         self.assertEqual(set(plan['config']), {'sample', 'toolOrder', 'applicationConfig'})
         self.assertEqual(plan['config']['applicationConfig'], {})
         self.assertEqual(plan['mode'], 'execute')
-        self.assertEqual(self.applications.require_plan_current(plan)['id'], 'checksum-neutral')
+        self.assertEqual(self.applications.require_plan_current(plan)['id'], 'fixture-checksum-v2')
         for edit in ({'applicationConfig': {'permissions': ['admin']}}, {'experimentDurationSeconds': 60}):
             changed = copy.deepcopy(plan)
             changed['config'].update(edit)
@@ -36,7 +37,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
         # Native model/tool execution is real; persistence/authority here is an
         # owned fixture, not evidence for PostgreSQL queue durability.
         from test_execution_bindings import MultiPlanStore
-        from agent_factory_research.synthetic_runtime import default_bindings
+        from core_native_fixture import fixture_bindings as default_bindings
         from agent_factory.runtime import build_runtime
         plan = self.plan()
         runtime_store = MultiPlanStore()
@@ -54,17 +55,16 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
         self.assertTrue(any(event['type'] == 'checksum_completed' for event in runtime_store.events))
 
     def test_v1_seed_bodies_and_existing_plan_are_unchanged_after_restart(self):
-        # Captured from clean base f869ab5, not recomputed from migrated schema.
-        hashes = {'research': '8031528d7f3907573fffd7bfa84b993fa19c0b6ca5aa06b7b1069037120f5b0b',
-                  'checksum': 'f32c6e0a187966fd67632cf0b031a2527bcc60906ae6ccdfc93a1e85e3bf85a6'}
+        # Preserve the explicitly installed fixture snapshots across reseeding.
+        hashes = {app['id']: app['sha256'] for app in self.applications.list_active('alice')}
         seeds = {item['id']: item for item in self.store.materials()}
         for expected in demo_definitions(seeds):
             actual = next(app for app in self.applications.list_active('alice') if app['id'] == expected['id'])
             self.assertEqual({key: value for key, value in actual.items() if key not in {'version', 'createdAt', 'schema', 'origin', 'sha256'}}, expected)
             self.assertNotIn('contractVersion', actual)
             self.assertEqual(actual['sha256'], hashes[actual['id']])
-        original = self.composition.create_plan('alice', 'Checksum historical compatibility', 'literature', 'checksum')
-        self.applications.seed_demo(all_demo_definitions)
+        original = self.composition.create_plan('alice', 'Checksum historical compatibility', 'literature', 'fixture-checksum')
+        self.applications.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
         self.assertEqual(self.store.plan(original['id'], 'alice'), original)
         self.assertNotIn('contractVersion', original)
         self.assertIn('experimentSeconds', original['budget'])
@@ -87,7 +87,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
             with self.assertRaises(ValueError): definition_model({'contractVersion': version})
 
     def test_governed_v1_rejects_injected_v2_marker_and_mixed_budget(self):
-        original = self.composition.create_plan('alice', 'Checksum strict historical budget', 'literature', 'checksum')
+        original = self.composition.create_plan('alice', 'Checksum strict historical budget', 'literature', 'fixture-checksum')
         for marker in (2, 1, True, '2', 3, None):
             changed = copy.deepcopy(original)
             changed['contractVersion'] = marker
@@ -128,7 +128,7 @@ class NeutralChecksumNativeTests(fixtures.ApplicationCompositionPostgresTests):
     # Reuse the actual native queue fixture but not its inherited v1 test methods.
     def test_neutral_checksum_native_artifact(self):
         self.login('alice')
-        response = self.client.post('/api/factory/compositions/proposals', json={'goal': 'Checksum neutral original fixture', 'application': 'checksum-neutral', 'requestId': 'neutral-propose'})
+        response = self.client.post('/api/factory/compositions/proposals', json={'goal': 'Checksum neutral original fixture', 'application': 'fixture-checksum-v2', 'requestId': 'neutral-propose'})
         self.assertEqual(response.status_code, 201, response.text)
         accepted = self.client.post('/api/factory/compositions/proposals/' + response.json()['id'] + '/accept', json={'requestId': 'neutral-accept'})
         self.assertEqual(accepted.status_code, 201, accepted.text)

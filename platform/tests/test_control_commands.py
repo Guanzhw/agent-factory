@@ -129,7 +129,7 @@ class ControlCommandPostgresTests(unittest.TestCase):
         self.assertEqual(effects[0]["status"], "CANCELLED")
         self.assertEqual(effects[0]["result"]["dispatchState"], "never-dispatched")
         self.assertTrue(effects[0]["result"]["cleanupComplete"])
-        self.assertFalse(any(event["type"] in {"compute_started", "compute_stopped"} for event in detail["events"]))
+        self.assertFalse(any(event["type"] in {"operation_started", "operation_stopped"} for event in detail["events"]))
 
     def test_cancel_lost_ack_needs_positive_stop_evidence_and_does_not_repeat_dispatch(self):
         task, _ = self.waiting()

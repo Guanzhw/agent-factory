@@ -1,5 +1,7 @@
 # Original research queue closure: read-only root-only gate
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This narrowly scoped audit complements the original custody handoff. It does not
 initialize services, mutate queue state, replay ACKs, reclaim resources, or claim
 successful training. It proves absence of runnable descendants for the fixed

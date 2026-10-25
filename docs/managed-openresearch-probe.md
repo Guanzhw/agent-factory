@@ -1,5 +1,7 @@
 # Managed original OpenResearch attachment: connection probe
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This is a one-turn text-only **connection verification** path, not a native
 research workload. The native multi-step research/tool loop remains unavailable.
 Nothing in these endpoints proves live OpenResearch, provider compatibility,

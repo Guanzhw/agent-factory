@@ -1,5 +1,7 @@
 # Goal-driven AutoResearch session integration
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This checkpoint adds the default AutoResearch screen and a real OpenResearch
 session adapter. It does **not** accept the scientific autonomous application.
 An operator-selected candidate, a deterministic workflow model, an HTTP session,

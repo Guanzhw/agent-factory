@@ -11,8 +11,16 @@ from agent_factory.go_usage import luna_512_pricing
 from agent_factory.opencode_go import GoDevelopmentModel
 from pg_fixture import IsolatedPostgres
 import test_go_project_workflow_postgres as workflow
-from test_public_coding_research_postgres import ResearchPeer
-from test_public_code_knowledge import snapshot
+import json
+from test_go_live_product_postgres import SyntheticCampaignPeer
+
+class CodingPeer(SyntheticCampaignPeer):
+    def __init__(self):
+        super().__init__()
+        self.bodies = []
+    def reply(self, request):
+        self.bodies.append(json.loads(request.content))
+        return super().reply(request)
 
 
 @unittest.skipUnless(os.name == "posix" and os.getenv("FACTORY_TEST_DATABASE_URL"),
@@ -24,7 +32,7 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
 
     def setUp(self):
         workflow.GoProjectWorkflowPostgresTests.setUp(self)
-        self.peer = ResearchPeer()
+        self.peer = CodingPeer()
 
     def test_luna_revision_two_pins_512_wire_cap_material_and_pricing(self):
         captured = {}
@@ -47,11 +55,9 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
                 patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model):
             args = argparse.Namespace(model="gpt-6-luna", database_url=database.url,
                                       evidence_directory=directory, luna_output_revision="2")
-            result = workflow.runner.execute_product(self.campaign, args, research_snapshot=snapshot())
+            result = workflow.runner.execute_product(self.campaign, args)
             self.assertEqual(result["status"], "completed", result)
             self.assertTrue(result["receiptVerified"])
-            self.assertTrue(result["research"]["citationPresenceVerified"])
-            self.assertEqual(result["research"]["sourceEvidenceMode"], "controlled-fixture")
             self.assertEqual(result["nativeAttempts"], 1)
             self.assertEqual(len(self.peer.bodies), 2)
             self.assertEqual([body["max_output_tokens"] for body in self.peer.bodies], [512, 512])

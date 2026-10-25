@@ -1,7 +1,7 @@
 """Real browser acceptance of governed synthetic application templates.
 
 Run only against an isolated loopback development-mock Factory with approved
-synthetic literature materials. All mutations use UI; API reads corroborate
+explicit core native fixture materials. All mutations use UI; API reads corroborate
 immutable records and owner isolation. No services, credentials or live providers
 are configured here. Browser TLS exception applies only to this test context.
 """
@@ -122,7 +122,7 @@ def scenario(browser, base, output, name, viewport):
         stage = 'template'
         governance(manager)
         apps = json_get(author, base, '/applications')
-        source = next(item for item in apps if item['id'] == 'research')
+        source = next(item for item in apps if item['id'] == 'fixture-text')
         reference = f"{source['id']}@{source['version']}:{source['sha256']}"
         manager.get_by_label('复制应用定义', exact=True).select_option(reference)
         editor = manager.get_by_role('region', name='应用模板编辑', exact=True)

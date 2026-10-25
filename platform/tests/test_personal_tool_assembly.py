@@ -3,7 +3,7 @@
 These tests exercise installed routes and native owner authorization. They never
 start a CLI, connect to an MCP server, or call a model.
 """
-from dataclasses import fields, replace
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -20,9 +20,7 @@ from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.main import create_app as create_core_app
 from agent_factory.personal_remote_provider import origin
 from agent_factory.personal_tool_contract import ToolDescriptor
-from agent_factory_research.config import ResearchSettings
-from agent_factory_research.connections_compatibility import ResearchConnectionService
-from agent_factory_server.main import create_app as create_research_app, factory_state
+
 from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
 
 
@@ -43,18 +41,6 @@ class InertAdapter:
 
 
 class PersonalToolSettingsTests(unittest.TestCase):
-    def test_adapter_registration_survives_core_to_research_reconstruction(self):
-        adapter = InertAdapter()
-        settings = Settings(db_url='postgresql://unused', personal_tool_adapters=(adapter,))
-        research = ResearchSettings(**{field.name: getattr(settings, field.name) for field in fields(Settings)})
-        reconstructed = replace(research)
-        for configured in (settings, research, reconstructed):
-            self.assertEqual(len(configured.runtime_adapters), 1)
-            self.assertIs(configured.runtime_adapters[0], settings.runtime_adapters[0])
-            installed = configured.runtime_adapters[0]
-            self.assertEqual((installed.tool_name, installed.permissions),
-                             ('personal_inventory', ('inventory:read',)))
-        self.assertEqual(adapter.calls, [])
 
     def test_existing_operator_registration_is_preserved(self):
         adapter = InertAdapter()
@@ -91,7 +77,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
 
     def app(self, create_app):
         app = create_app(self.settings)
-        state = factory_state(app)
+        state = app.app.state.factory
         self.addCleanup(state['store'].engine.dispose)
         self.addCleanup(state['store'].native_db.db_engine.dispose)
         return app, state
@@ -163,8 +149,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
             public = json.dumps([descriptors, configured, registrations, bound, retained])
             self.assertNotIn('synthetic-assembly-secret', public)
             self.assertEqual(self.adapter.calls, [])
-        # Deployment reconstructs Core Settings as ResearchSettings. Starting
-        # again must preserve the exact registration and existing owner data.
+        # Restarting core must preserve the exact registration and existing owner data.
         restarted, restarted_state = self.app(create_app)
         with TestClient(restarted) as client:
             self.login(client)
@@ -178,8 +163,6 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
     def test_core_lifecycle_owner_registration_and_retained_handle_recheck(self):
         self.exercise(create_core_app, ConnectionService)
 
-    def test_research_override_preserves_core_personal_tool_assembly(self):
-        self.exercise(create_research_app, ResearchConnectionService)
 
     def exercise_binding_error_envelopes(self, create_app):
         configured = {}
@@ -264,6 +247,3 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
 
     def test_core_binding_rejections_keep_fixed_http_codes_and_original_configure_receipts(self):
         self.exercise_binding_error_envelopes(create_core_app)
-
-    def test_research_binding_rejections_keep_fixed_http_codes_and_original_configure_receipts(self):
-        self.exercise_binding_error_envelopes(create_research_app)

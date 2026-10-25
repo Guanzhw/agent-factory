@@ -29,7 +29,7 @@ TIMEZONE = 'Etc/UTC'
 
 def prepared_plan(owner_page, label):
     """Create an owner-scoped immutable synthetic plan."""
-    owner_page.get_by_label('1. 选择应用', exact=True).select_option('research')
+    owner_page.get_by_label('1. 选择应用', exact=True).select_option('fixture-text')
     owner_page.get_by_label('应用执行方式', exact=True).select_option('literature')
     goal = '计划任务合成文献验收 ' + label + ' ' + uuid4().hex[:10]
     owner_page.get_by_label('2. 描述任务', exact=True).fill(goal)

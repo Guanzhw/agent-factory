@@ -10,8 +10,6 @@ import { ConnectionsPanel } from '../web/ConnectionsPanel.js';
 import { credentialDestination, credentialReceipt, SSH_CREDENTIAL_PROVIDER } from '../web/credentialManagement.js';
 import { personalRemoteApi, RemoteRequestError } from '../web/personalRemoteApi.js';
 import { personalSSHApi, type PersonalSSHServer, type SSHIdentityInput } from '../web/personalSSHApi.js';
-import { personalAgentApi } from '../apps/research/web/personalAgentApi.js';
-import { applicationEnvironmentApi } from '../apps/research/web/applicationEnvironmentApi.js';
 import { ownerModelApi } from '../web/ownerModelApi.js';
 import { personalToolConnectionApi } from '../web/personalToolConnectionApi.js';
 
@@ -21,13 +19,13 @@ const input: SSHIdentityInput = { name: '合成本人服务器', address: '127.0
 const identity = { address: input.address, port: input.port, username: input.username, hostKey: publicKey, hostFingerprint: 'SHA256:synthetic-host-fingerprint', origin: destination };
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'r1', providerId: SSH_CREDENTIAL_PROVIDER, destination, status: 'active' };
 const server: PersonalSSHServer = { ...input, reference: 'remote-' + 'a'.repeat(32), hostFingerprint: identity.hostFingerprint,
-  defaultDirectory: input.allowedRoot + '/research', status: 'configured', enabled: false, diagnostic: null, lastCheckRequestId: null,
+  defaultDirectory: input.allowedRoot + '/work', status: 'configured', enabled: false, diagnostic: null, lastCheckRequestId: null,
   credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision };
 const secret = 'SYNTHETIC_PRIVATE_KEY_PLACEHOLDER_NOT_A_VALID_USER_KEY';
 const storage = 'factory-personal-ssh:alice';
-let host: HTMLDivElement; let root: Root; const onResearch = vi.fn();
+let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear(); onResearch.mockReset();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
   vi.spyOn(personalToolConnectionApi, 'descriptors').mockResolvedValue([]);
@@ -44,7 +42,7 @@ beforeEach(() => {
   vi.spyOn(personalRemoteApi, 'saveCredential').mockResolvedValue(credential);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function mount(ownerId = 'alice') { await act(async () => root.render(createElement(PersonalSSHServers, { ownerId, onChanged: vi.fn(), onResearch }))); }
+async function mount(ownerId = 'alice') { await act(async () => root.render(createElement(PersonalSSHServers, { ownerId, onChanged: vi.fn() }))); }
 const button = (label: string) => [...host.querySelectorAll('button')].find(b => b.textContent === label)!;
 async function field(label: string, value: string) {
   await act(async () => {
@@ -63,7 +61,7 @@ async function consent() { await act(async () => host.querySelector<HTMLInputEle
 async function save() { await field('专用 SSH 私钥', secret); await consent(); await act(async () => button('保存身份并登记服务器').click()); }
 async function remount() { await act(async () => root.unmount()); root = createRoot(host); await mount(); }
 
-it('requires explicit fixed-host authority, stores only encrypted-key metadata, then checks and enables before returning to research', async () => {
+it('requires explicit fixed-host authority, stores only encrypted-key metadata, then checks and enables without application-specific navigation', async () => {
   await mount(); await preview(); await field('专用 SSH 私钥', secret);
   expect(button('保存身份并登记服务器').disabled).toBe(true); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
   expect(personalSSHApi.command).not.toHaveBeenCalled(); await consent();
@@ -73,8 +71,6 @@ it('requires explicit fixed-host authority, stores only encrypted-key metadata, 
   expect(JSON.stringify(localStorage)).not.toContain(secret); expect(host.textContent).not.toContain(secret); expect(localStorage.getItem(storage)).toBeNull(); expect(personalSSHApi.command).not.toHaveBeenCalled();
   await act(async () => button('检查连接与目录').click()); expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'verify', expect.any(String));
   await act(async () => button('启用此服务器').click()); expect(personalSSHApi.command).toHaveBeenLastCalledWith('alice', server.reference, 'bind', expect.any(String));
-  await act(async () => button('去 OpenResearch 准备').click()); expect(onResearch).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(sessionStorage.getItem('factory-research-server:alice')!)).toEqual({ owner: 'alice', reference: server.reference, directory: server.defaultDirectory });
   expect(host.textContent).not.toContain('credential-fixture'); expect(host.textContent).not.toContain(server.reference);
 });
 
@@ -95,9 +91,6 @@ it('refreshes SSH identity revisions after rotation in the sibling credentials p
   vi.spyOn(api, 'userConnections').mockResolvedValue([]);
   vi.spyOn(api, 'connectionRegistrations').mockResolvedValue([]);
   vi.spyOn(api, 'resourceLeases').mockResolvedValue({ leases: [], nextCursor: null });
-  vi.spyOn(personalAgentApi, 'capabilities').mockResolvedValue({ executionContract: 'personal-remote-agent-v1', nativeQueue: false });
-  vi.spyOn(personalAgentApi, 'sessions').mockResolvedValue([]);
-  vi.spyOn(applicationEnvironmentApi, 'capabilities').mockResolvedValue({ locations: [], applications: [] });
   vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
   await act(async () => root.render(createElement(ConnectionsPanel, {
     user: { id: 'alice', name: 'Alice', role: 'user' }, jobs: [], busy: '',

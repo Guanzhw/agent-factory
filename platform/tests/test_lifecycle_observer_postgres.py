@@ -19,10 +19,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
-from agent_factory_server.main import create_app
-from agent_factory_research.tools import build_tools
+from core_native_fixture import create_fixture_app as create_app
+from core_native_fixture import build_tools
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -72,7 +72,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text)
         return response.json()
 
-    def task(self, goal="sort", mode="literature", application="research"):
+    def task(self, goal="sort", mode="literature", application="fixture-text"):
         plan = self.request("POST", "/plans", 201,
                             json={"topic": goal, "mode": mode, "application": application, "requestId": str(uuid4())})
         job = self.request("POST", "/instances", 202, json={"planId": plan["id"], "requestId": str(uuid4())})
@@ -151,7 +151,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.wait_native(grandchild, {"paused"})
         original = self.store.authorize_tool
         def deny_root_literature(context, name):
-            if context.session_id == root and name == "literature_search":
+            if context.session_id == root and name == "checksum":
                 raise PermissionError("Controlled protected-tool failure after actual native HITL")
             return original(context, name)
         self.call(self.observer.start)
@@ -241,11 +241,11 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         child = self.child(root)
         self.wait_native(child, {"paused"})
         self.continue_native(root, approved=True)
-        self.wait_condition(lambda: any(event["type"] == "compute_started" for event in self.store.events(root)),
+        self.wait_condition(lambda: any(event["type"] == "operation_started" for event in self.store.events(root)),
                             "Actual owned experiment process did not start")
         self.auth.directory.set_disabled("alice", True)
         self.call(self.observer.start)
-        self.wait_condition(lambda: any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete")
+        self.wait_condition(lambda: any(event["type"] == "operation_stopped" and event["data"].get("cleanupComplete")
                                        for event in self.store.events(root)), "Owned running process did not clean up")
         self.wait_condition(lambda: self.native(child)["status"] == "cancelled", "Paused child was not natively canceled")
         self.wait_condition(lambda: [effect["status"] for effect in self.store.effects(root)] == ["CANCELLED"],
@@ -261,7 +261,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.assertIn(queue_status, {"cancelled", "failed"})
             self.assertTrue(observed["allStopped"], observed)
         self.assertTrue(self.store.task(root)["cancel_requested"])
-        self.assertFalse(any(event["type"] == "experiment_completed" for event in self.store.events(root)))
+        self.assertFalse(any(event["type"] == "operation_completed" for event in self.store.events(root)))
         self.assertTrue(self.auth.directory.get("alice")["disabled"])
         print(f"Native running cleanup evidence: persistedRun=cancelled, effects=CANCELLED, queue={queue_status}, allStopped={observed['allStopped']}")
 
@@ -279,7 +279,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         signal.assert_not_called()
 
     def test_07_settled_unrelated_completed_root_stays_unchanged_and_rejects_new_child(self):
-        root = self.task("Controlled settled checksum evidence", application="checksum")
+        root = self.task("Controlled settled checksum evidence", application="fixture-checksum")
         self.wait_native(root, {"completed"})
         settled = self.call(self.observer.observe_root, root)
         self.assertTrue(settled["allStopped"], settled)
@@ -370,7 +370,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         policy = self.state["plan_policy"]
         try:
             plan = self.request("POST", "/plans", 201,
-                                json={"topic": "sort", "mode": "literature", "requestId": str(uuid4())})
+                                json={"topic": "sort", "mode": "literature", "requestId": str(uuid4()), "application": "fixture-text"})
             job = self.request("POST", "/instances", 202,
                                json={"planId": plan["id"], "requestId": str(uuid4())})
             root = job["id"]
@@ -448,7 +448,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         with self.assertRaisesRegex(InputCheckError, "admission is rejected"):
             self.store.bind_run(context)
         with self.assertRaisesRegex(InputCheckError, "admission is rejected"):
-            build_tools(self.settings, self.store)["literature_search"]("Denied controlled direct research", run_context=context)
+            build_tools(self.settings, self.store)["checksum"]("Denied controlled direct research", run_context=context)
         self.assertEqual(self.native(root)["status"], "paused")
         self.assertEqual(self.native(root)["attempt"], native["attempt"])
         self.assertEqual(self.store.effects(root), before_effects)
@@ -460,7 +460,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.task(root)["admission"], "rejected")
         self.assertEqual(self.store.effects(root), before_effects)
         self.assertEqual(self.store.artifacts(root), before_artifacts)
-        self.assertFalse(any(event["type"] in {"scope_answered", "literature_fixture", "compute_started"}
+        self.assertFalse(any(event["type"] in {"scope_answered", "literature_fixture", "operation_started"}
                              for event in self.store.events(root)))
         self.assertEqual(sum(event["type"] == "plan_bound" for event in self.store.events(root)), before_bound_events)
         observed = self.call(self.observer.observe_root, root)
@@ -480,7 +480,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         self.call(worker.stop)
         try:
             plan = self.request("POST", "/plans", 201,
-                json={"topic": "sort", "mode": "literature", "application": "research", "requestId": str(uuid4())})
+                json={"topic": "sort", "mode": "literature", "application": "fixture-text", "requestId": str(uuid4())})
             request_id = str(uuid4())
             waiting, fresh = self.store.reserve_task(plan, request_id)
             self.assertTrue(fresh)
@@ -512,82 +512,30 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
             self.call(worker.start)
 
 
-    def test_13_terminal_orx_without_stop_proof_holds_every_capacity_projection(self):
-        from agent_factory.factory_api import status_of
-        from agent_factory_research.orx_experiment_tools import LAUNCH_EFFECT_KEY
-        from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
-        from agent_factory.store import canonical
-        root = self.task("Controlled terminal ORX metadata fault", application="checksum")
-        self.wait_native(root, {"completed"})
-        task = self.store.task(root)
-        run_id = task["run_id"]
-        self.store.effect_reserve(run_id, LAUNCH_EFFECT_KEY, {"syntheticFault": True})
-        for state in ("done", "failed", "cancelled"):
-            with self.subTest(state=state):
-                result = {"status": state, "cancelled": state == "cancelled",
-                          "stopEvidence": {"allStopped": False, "activeProcesses": 1}}
-                with self.assertRaisesRegex(ValueError, "positive adapter stop evidence"):
-                    self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY, result)
-                # Reproduce pre-fix persisted DONE, rather than claiming a real
-                # Windows orphan on this portable controlled-metadata fixture.
-                self.store.sql("UPDATE af_effects SET status='DONE',result=CAST(:body AS JSONB) WHERE effect_key=:key",
-                    body=canonical(result), key=run_id + ":" + LAUNCH_EFFECT_KEY)
-                self.store.sql("UPDATE af_tasks SET terminal=TRUE WHERE id=:id", id=root)
-                self.store.initialize()
-                # Research installation re-holds pre-fix terminal capacity after core initialization.
-                ResearchRuntimeHooks.reconcile_capacity(self.store)
-                self.assertFalse(self.store.task(root)["terminal"])
-                self.assertFalse(self.observer._facts(task)["stopped"])
-                self.assertIn("unresolved", self.observer._reason(task, self.observer._binding(task)))
-                group = self.call(self.store.delegation.inspect_group, "alice", root)
-                self.assertFalse(group["allStopped"])
-                self.assertEqual(status_of(task, {"queue": {"status": "completed"}}, self.store.effects(root), [], self.store), "unknown")
-                self.store.reserve_task(self.store.plan(task["plan_id"], "alice"), task["request_id"])
-                self.assertFalse(self.store.task(root)["terminal"])
-        self.store.effect_complete(run_id, LAUNCH_EFFECT_KEY,
-            {"status": "done", "stopEvidence": {"allStopped": True, "activeProcesses": 0}})
-        self.assertTrue(self.observer._facts(task)["stopped"])
-        self.assertTrue(self.call(self.store.delegation.inspect_group, "alice", root)["allStopped"])
-
-    def test_14_revoked_cleanup_checks_actual_persisted_launch_fingerprint(self):
+    def test_13_terminal_effect_requires_registered_positive_stop_proof(self):
         from types import SimpleNamespace
-        from agent_factory.connections import TrustedConnectionBinding
-        from agent_factory_research.connections_compatibility import ResearchConnectionService
-        from agent_factory_research.orx_experiment_tools import ADAPTER_ID, LAUNCH_EFFECT_KEY, initialize_orx_experiments
-        from agent_factory.store import canonical, digest
-        root = self.task("Controlled cleanup-binding admission", application="checksum")
-        self.wait_native(root, {"completed"})
+        from agent_factory.factory_api import status_of
+        key = 'fixture-unconfirmed-operation'
+        self.store.application_runtime.register(key, SimpleNamespace(
+            effect_held=lambda effect: (effect.get('result') or {}).get('allStopped') is not True), effects=(key,))
+        root = self.task('Controlled original operation custody', application='fixture-checksum')
+        self.wait_native(root, {'completed'})
         task = self.store.task(root)
-        handle = SimpleNamespace(create_experiment_adapter=lambda **kwargs: None)
-        registration = "cleanup-fixture-" + uuid4().hex
-        registry = {registration: TrustedConnectionBinding("alice", "orx", ADAPTER_ID,
-            frozenset({"research:read", "compute:local"}), "cleanup-fixture-v1", available=True,
-            opaque_handle=handle, handle_ref="inert-cleanup-handle")}
-        service = ResearchConnectionService(self.store, self.auth, registry)
-        bound = service.bind("alice", registration, uuid4().hex)
-        pin = {key: bound[key] for key in ("ref", "version", "fingerprint", "revision", "capabilities", "taskId")}
-        request = {"ownerId": "alice", "taskId": root, "planId": task["plan_id"],
-                   "nativeRunId": task["run_id"], "connection": pin}
-        binding = {**request, "projectId": "controlled-project", "experimentId": "controlled-experiment"}
-        initialize_orx_experiments(self.store)
-        self.store.sql("INSERT INTO af_orx_task_experiments VALUES(:task,:owner,:plan,:run,CAST(:binding AS JSONB),:hash,CAST(:observation AS JSONB),:ohash)",
-            task=root, owner="alice", plan=task["plan_id"], run=task["run_id"], binding=canonical(binding), hash=digest(binding),
-            observation=canonical({}), ohash=digest({}))
-        self.store.effect_reserve(task["run_id"], LAUNCH_EFFECT_KEY, request)
-        self.assertNotIn("fingerprint", self.store.effects(root)[-1])  # Public projection deliberately omits it.
-        service.revoke("alice", pin["ref"], uuid4().hex)
-        with self.assertRaises(HTTPException):
-            service.resolve("alice", pin["ref"], "orx")
-        self.auth.directory.set_disabled("alice", True)
-        self.assertIs(service.cleanup_handle("alice", pin, adapter_ref=ADAPTER_ID, task_id=root), handle)
-        self.store.sql("UPDATE af_effects SET fingerprint=:hash WHERE effect_key=:key",
-            hash="0" * 64, key=task["run_id"] + ":" + LAUNCH_EFFECT_KEY)
-        with self.assertRaises(HTTPException) as changed:
-            service.cleanup_handle("alice", pin, adapter_ref=ADAPTER_ID, task_id=root)
-        self.assertIn("durable launch intent", str(changed.exception.detail))
-        # Restore only this synthetic fixture so ordinary test teardown can run.
-        self.store.sql("UPDATE af_effects SET fingerprint=:hash WHERE effect_key=:key",
-            hash=digest(request), key=task["run_id"] + ":" + LAUNCH_EFFECT_KEY)
+        self.store.effect_reserve(task['run_id'], key, {'syntheticFault': True})
+        for state in ('done', 'failed', 'cancelled'):
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(ValueError, 'positive adapter stop evidence'):
+                    self.store.effect_complete(task['run_id'], key,
+                        {'status': state, 'cancelled': state == 'cancelled', 'allStopped': False})
+                self.assertFalse(self.observer._facts(task)['stopped'])
+                group = self.call(self.store.delegation.inspect_group, 'alice', root)
+                self.assertFalse(group['allStopped'])
+                self.assertEqual(status_of(task, {'queue': {'status': 'completed'}}, self.store.effects(root), [], self.store), 'unknown')
+        self.store.effect_complete(task['run_id'], key, {'status': 'done', 'allStopped': True})
+        self.assertTrue(self.observer._facts(task)['stopped'])
+        self.assertTrue(self.call(self.store.delegation.inspect_group, 'alice', root)['allStopped'])
+
+
 
 if __name__ == "__main__":
     unittest.main()

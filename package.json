@@ -13,11 +13,11 @@
     "start": "uv run python scripts/dev.py",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint web shared tests \"apps/*/web/**/*.{ts,tsx}\" \"apps/*/tests/web/**/*.{ts,tsx}\" *.ts *.js",
+    "lint": "eslint web shared tests *.ts *.js",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "start:configured": "uv run agent-factory",
-    "check:python": "uv run ruff check platform apps/research deployment scripts && uv run pyright && uv run python scripts/check_python.py"
+    "check:python": "uv run ruff check platform deployment scripts && uv run pyright && uv run python scripts/check_python.py"
   },
   "dependencies": {
     "react": "19.1.1",

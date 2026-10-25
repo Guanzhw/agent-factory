@@ -15,8 +15,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from agent_factory.catalog import create_plan
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
 
@@ -53,7 +53,7 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
                     self.portal.call(self.service.cancel_occurrence, 'manager', identifier, occurrence['id'])
 
     def schedule(self):
-        plan = create_plan(self.store, 'manager', 'diagnostic checksum fixture', 'literature', application='checksum')
+        plan = create_plan(self.store, 'manager', 'diagnostic checksum fixture', 'literature', application='fixture-checksum')
         schedule = self.service.create('manager', plan['id'], 'diagnostic-' + uuid4().hex, '0 0 1 1 *')
         self.ids.append(schedule['id'])
         return schedule

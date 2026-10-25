@@ -21,9 +21,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from agent_factory.catalog import create_plan
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding, connection_router
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import Store
 from pg_fixture import IsolatedPostgres
 
@@ -223,10 +223,10 @@ class ConnectionPostgresTests(unittest.TestCase):
             self.bind(capabilities=["arbitrary:grant"])
 
     def test_08_task_scope_cannot_cross_owner_task_cancel_or_terminal(self):
-        plan = create_plan(self.store, "alice", "owned scope fixture", "literature", "checksum")
+        plan = create_plan(self.store, "alice", "owned scope fixture", "literature", "fixture-checksum")
         first = self.store.reserve_task(plan, uuid4().hex)[0]
         second = self.store.reserve_task(plan, uuid4().hex)[0]
-        bob_plan = create_plan(self.store, "bob", "other owned fixture", "literature", "checksum")
+        bob_plan = create_plan(self.store, "bob", "other owned fixture", "literature", "fixture-checksum")
         bob = self.store.reserve_task(bob_plan, uuid4().hex)[0]
         bound = self.bind(task_id=first["id"])
         self.assertIs(self.service.resolve("alice", bound["ref"], "model", task_id=first["id"], **self.pins(bound)), self.handle)
@@ -278,7 +278,7 @@ class ConnectionPostgresTests(unittest.TestCase):
         service = ConnectionService(bounded, self.auth, self.registry, clock=lambda: self.at)
         bound = service.bind("alice", "alice-model", uuid4().hex, capabilities=["model:synthetic"])
         pins = self.pins(bound) | {"expected_adapter_ref": "inert-model-adapter"}
-        plan = create_plan(self.store, "alice", "single connection task fixture", "literature", "checksum")
+        plan = create_plan(self.store, "alice", "single connection task fixture", "literature", "fixture-checksum")
         task = self.store.reserve_task(plan, uuid4().hex)[0]
         with bounded.engine.connect() as conn:
             transaction = conn.begin()

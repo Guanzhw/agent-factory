@@ -14,6 +14,7 @@ import io
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -21,12 +22,17 @@ from uuid import uuid4
 from agno.models.message import Message
 from fastapi.testclient import TestClient
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
 from agent_factory.go_diagnostics import safe_diagnostic
-from agent_factory_server.main import create_app
+# Explicit acceptance fixtures only; normal deployment remains application-free.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'platform/tests'))
+from core_native_fixture import create_fixture_app
+from agent_factory.go_development import model_registrations, MODEL_ADAPTER_IDS
+from agent_factory.go_usage import pricing_registrations
+from agent_factory_server.shutdown import shutdown_guard
 from agent_factory.opencode_go import GoDevelopmentModel
 from agent_factory.usage_ledger import UsagePolicy
 
@@ -87,11 +93,13 @@ def run(args):
                 development_profile="opencode-go", development_live_validation=True,
                 max_workers=1, max_tool_calls=1, temporary_policy="member-self-service",
                 policy_revision="go-live-policy-v1", material_policy_revision="go-live-material-v1",
-                runtime_tool_contract="registered-runtime-v1",
+                runtime_tool_contract="legacy-v1", fee_management_enabled=True,
                 usage_policy=UsagePolicy(revision="go-live-nominal-v1", task_amount_micros=1_000_000,
                     user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
                 trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
-            application = create_app(settings)
+            settings.runtime_adapters = [*settings.runtime_adapters, *model_registrations()]
+            settings.usage_pricing = (*pricing_registrations(MODEL_ADAPTER_IDS), *settings.usage_pricing)
+            application = create_fixture_app(settings, shutdown_guard=shutdown_guard, queue_max_attempts=1)
             state = application.app.state.factory
             store = state["store"]
             stack.callback(store.engine.dispose)
@@ -111,7 +119,7 @@ def run(args):
             seeds = store.materials(published_only=True)
             definition = application_definition(models,
                 next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum"),
-                next(row for row in seeds if row["id"] == "local-environment"))
+                next(row for row in seeds if row["id"] == "fixture-environment"))
             for mode in definition["modes"].values():
                 mode["budget"]["toolCalls"] = 1
             login("alice")

@@ -303,7 +303,7 @@ class ApplicationEnvironments:
 class PrepareEnvironment(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: str = Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_.:-]+$')
-    applicationId: str = 'openresearch'
+    applicationId: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')
     location: str = 'platform'
     serverRef: str | None = Field(default=None, max_length=80)
     directory: str | None = Field(default=None, max_length=4096)

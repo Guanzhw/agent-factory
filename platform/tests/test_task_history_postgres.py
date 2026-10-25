@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from pg_fixture import IsolatedPostgres
 from agent_factory.store import canonical
-from agent_factory_research.config import ResearchSettings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL')
@@ -25,7 +25,7 @@ class TaskHistoryPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.database.__exit__, None, None, None)
         cls.workspace = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.workspace.cleanup)
-        cls.app = create_app(ResearchSettings(db_url=cls.database.url, workspace=Path(cls.workspace.name)))
+        cls.app = create_app(Settings(db_url=cls.database.url, workspace=Path(cls.workspace.name)))
         cls.state = cls.app.app.state.factory
         cls.store, cls.auth = cls.state['store'], cls.state['auth']
         cls.addClassCleanup(cls.store.engine.dispose)
@@ -34,7 +34,7 @@ class TaskHistoryPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
         cls.client.portal.call(cls.state['lifecycle_observer'].stop)
         cls.plan = cls.client.post('/api/factory/plans', headers=cls.headers(), json={
-            'topic':'Synthetic history', 'mode':'literature', 'requestId':str(uuid4())}).json()
+            'topic':'Synthetic history', 'mode':'literature', 'requestId':str(uuid4()), "application": "fixture-text"}).json()
         cls.identifiers = []
         for i in range(205):
             identifier = str(uuid4())
@@ -116,7 +116,7 @@ class TaskHistoryPostgresTests(unittest.TestCase):
     def test_z_native_completion_waits_for_background_finalization_without_read_side_effects(self):
         plan = self.client.post('/api/factory/plans', headers=self.headers(), json={
             'topic': 'Actual checksum finalization fixture', 'mode': 'literature',
-            'application': 'checksum', 'requestId': str(uuid4())}).json()
+            'application': 'fixture-checksum', 'requestId': str(uuid4())}).json()
         response = self.client.post('/api/factory/instances', headers=self.headers(), json={
             'planId': plan['id'], 'requestId': str(uuid4())})
         self.assertEqual(response.status_code, 202, response.text)

@@ -24,10 +24,10 @@ from agno.run.agent import RunOutput
 from fastapi import HTTPException
 
 from agent_factory.auth import AuthService
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.delegation import DelegationService
-from agent_factory_research.demo_model import DemoModel
-from agent_factory_research.synthetic_runtime import default_bindings, default_zero_prices
+from core_native_fixture import FixtureModel as DemoModel
+from core_native_fixture import fixture_bindings as default_bindings, fixture_zero_prices as default_zero_prices
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.runtime import build_runtime
 from agent_factory.store import Store, canonical, digest, now
@@ -133,7 +133,7 @@ class UsageLedgerPostgresTests(unittest.TestCase):
 
     def plan(self, *, owner="alice", tokens=None, amount=None, extra=None, model_adapter="controlled-ledger-model-v1", legacy=False):
         materials = [self.material("ledger-model", "model", model_adapter),
-            self.material("ledger-environment", "environment", "local-bounded-environment-v1")]
+            self.material("ledger-environment", "environment", "fixture-environment-v1")]
         value = {"id": str(uuid4()), "ownerId": owner, "application": "controlled-ledger-fixture", "mode": "direct",
             "normalizedGoal": "Controlled no-network provider accounting", "instructions": ["Original fixture only"],
             "tools": [], "capabilities": [], "materials": materials, "status": "ready", "syntheticFixture": True,
@@ -319,7 +319,7 @@ class UsageLedgerPostgresTests(unittest.TestCase):
         ledger = UsageLedger(self.store, default_zero_prices(), policy=self.policy)
         self.store.usage_ledger = ledger
         self.ledger = ledger
-        plan = self.plan(model_adapter="local-synthetic-model-v1", legacy=True)
+        plan = self.plan(model_adapter="fixture-model-v1", legacy=True)
         before = self.store.sql("SELECT body,hash FROM af_plans WHERE id=:id", id=plan["id"])[0]
         task, context = self.task(plan)
         self.invoke(self.selected(context))
@@ -662,9 +662,9 @@ class UsageLedgerPostgresTests(unittest.TestCase):
         service = DelegationService(self.settings, self.store, self.auth, None)
         service.initialize()
         self.store.delegation = service
-        root_plan = self.plan(model_adapter='local-synthetic-model-v1', legacy=True)
+        root_plan = self.plan(model_adapter='fixture-model-v1', legacy=True)
         root, _ = self.task(root_plan)
-        child_plan = self.plan(model_adapter='local-synthetic-model-v1', legacy=True,
+        child_plan = self.plan(model_adapter='fixture-model-v1', legacy=True,
             extra={'delegation': {'parentTaskId': root['id'], 'rootTaskId': root['id'], 'depth': 1}})
         child, _ = self.task(child_plan)
         self.store.sql("INSERT INTO af_delegation_links VALUES(:owner,:parent,:request,:root,:depth,:fp,:plan,:child,:at)",

@@ -28,8 +28,8 @@ from sqlalchemy import create_engine, text
 
 from pg_fixture import IsolatedPostgres
 from agent_factory.catalog import create_plan
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -52,7 +52,7 @@ class SchedulingProcessRecoveryTests(unittest.TestCase):
             cls.port = available.getsockname()[1]
         cls.base = f"http://127.0.0.1:{cls.port}"
         cls.env = {name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "LANG", "LC_ALL") if name in os.environ}
-        cls.env.update(PYTHONPATH=os.pathsep.join(str(cls.root / part) for part in ("platform", "apps/research", "deployment", "platform/tests", "apps/research/tests/python")),
+        cls.env.update(PYTHONPATH=os.pathsep.join(str(cls.root / part) for part in ("platform", "deployment", "platform/tests")),
                        PYTHONIOENCODING="utf-8", FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE="demo",
                        FACTORY_JWT_KEY=secrets.token_urlsafe(48), FACTORY_PORT=str(cls.port),
                        FACTORY_WORKSPACE=cls.directory.name, FACTORY_RECOVERY_FIXTURE_DIRECTORY=cls.directory.name,
@@ -125,7 +125,7 @@ class SchedulingProcessRecoveryTests(unittest.TestCase):
             return [dict(row) for row in connection.execute(text(statement), params).mappings()]
 
     def schedule(self):
-        plan = self.client.post("/api/factory/plans", json={"topic": "scope", "mode": "literature", "requestId": str(uuid4())})
+        plan = self.client.post("/api/factory/plans", json={"topic": "scope", "mode": "literature", "requestId": str(uuid4()), "application": "fixture-text"})
         plan.raise_for_status()
         result = self.client.post("/api/factory/schedules", json={"planId": plan.json()["id"], "name": "process-schedule-" + str(uuid4()), "cron": "0 0 1 1 *"})
         result.raise_for_status()
@@ -307,7 +307,7 @@ class SchedulingLeaseRecoveryTests(unittest.TestCase):
         return self.client.portal.call(function, *args)
 
     def schedule(self):
-        plan = create_plan(self.store, "manager", "scope", "literature")
+        plan = create_plan(self.store, "manager", "scope", "literature", application="fixture-text")
         result = self.service.create("manager", plan["id"], "lease-schedule-" + str(uuid4()), "0 0 1 1 *")
         self.ids.append(result["id"])
         return result

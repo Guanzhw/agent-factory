@@ -120,7 +120,7 @@ def scenario(browser, base, output, name, viewport):
         goal = '合成登录身份隔离验收 ' + name + ' ' + uuid4().hex[:12]
         selector = page.get_by_label('已批准的应用', exact=True)
         expect(selector).to_be_enabled()
-        selector.select_option('research')
+        selector.select_option('fixture-text')
         page.get_by_label('任务目标', exact=True).fill(goal)
         with page.expect_response(lambda response: response.request.method == 'POST'
                                   and urlsplit(response.url).path == PREFIX + '/compositions/proposals') as result:

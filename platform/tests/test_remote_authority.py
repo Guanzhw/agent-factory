@@ -25,12 +25,12 @@ import httpx
 from pydantic import ValidationError
 import uvicorn
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.connections import TrustedConnectionBinding
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.usage_ledger import PricingRevision
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_authority import AuthorityCheck, AuthorityReply, OriginAuthorityTransport, PATH
 from agent_factory.remote_handoff import HandoffCancellationRequested, HandoffTarget, TrustedOrigin
 from pg_fixture import IsolatedPostgres
@@ -217,7 +217,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
             # Transport timeout behavior has separate bounded adverse tests.
             timeout_seconds=10,
             credential_provider=lambda _: self.auth._issue_native_token("bob"))
-        self.plan = self.state["composition"].create_plan("alice", "Checksum controlled authority fixture", "literature", "checksum")
+        self.plan = self.state["composition"].create_plan("alice", "Checksum controlled authority fixture", "literature", "fixture-checksum")
         self.placement = self.handoff.reserve("alice", self.plan["id"], self.target.reference, str(uuid4()))
 
     def call(self, tool="checksum"):
@@ -258,7 +258,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.assertEqual(self.post(actor="alice").status_code, 403)
         for fields in ({"originOwner": "bob"}, {"originTaskId": str(uuid4())}, {"targetRef": "not-installed"},
                        {"originRef": "different-origin"}, {"receiverIdentity": "alice"}, {"manifestSha256": "0" * 64},
-                       {"targetFingerprint": "0" * 64}, {"targetRevision": "2"}, {"tool": "run_experiment"}):
+                       {"targetFingerprint": "0" * 64}, {"targetRevision": "2"}, {"tool": "fixture_unselected"}):
             with self.subTest(fields=fields):
                 self.assertIn(self.post(self.body(**fields)).status_code, {403, 404, 409})
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
@@ -363,7 +363,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
 
     def test_current_adapter_withdrawal_denies(self):
         # Each fixture has fresh immutable seed versions; no archive is restored.
-        self.state["execution_bindings"].withdraw("model", "local-synthetic-model-v1", "1")
+        self.state["execution_bindings"].withdraw("model", "fixture-model-v1", "1")
         with self.assertRaises(HTTPException):
             self.call()
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS count FROM af_effects")[0]["count"], 0)
@@ -380,11 +380,11 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
             governance = self.state["material_governance"]
             material = governance.create_draft("alice", {"id": "owned-checksum-tool", "kind": "tool",
                 "name": "Owned native checksum", "content": "checksum", "permissions": ["checksum:read"],
-                "runtimeBinding": {"adapterId": "native-checksum-v1", "revision": "1", "config": {}}}, "owned-tool-draft")
+                "runtimeBinding": {"adapterId": "fixture-checksum-v1", "revision": "1", "config": {}}}, "owned-tool-draft")
             governance.publish("alice", material["id"], 1, "owned-tool-publish")
             for mode in definition["modes"].values():
                 mode["materialRefs"] = [{key: material[key] for key in ("id", "version", "sha256")}
-                    if ref["id"] == "checksum-tool" else ref for ref in mode["materialRefs"]]
+                    if ref["id"] == "fixture-checksum-tool" else ref for ref in mode["materialRefs"]]
         application = applications.create_draft("alice", definition, "owned-app-draft")
         applications.publish("alice", application["id"], 1, "owned-app-publish")
         self.plan = self.state["composition"].create_plan("alice", "Checksum owned withdrawal fixture", "literature",
@@ -422,7 +422,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         definition = __import__("copy").deepcopy(definition)
         definition["id"] = "connected-authority-fixture"
         for mode in definition["modes"].values():
-            mode["materialRefs"] = [{key: model[key] for key in ("id", "version", "sha256")} if ref["id"] == "demo-model" else ref for ref in mode["materialRefs"]]
+            mode["materialRefs"] = [{key: model[key] for key in ("id", "version", "sha256")} if ref["id"] == "fixture-model" else ref for ref in mode["materialRefs"]]
             mode["connectionRequirements"] = [{"name": "source-model", "kind": "model", "requiredCapabilities": []}]
         application = applications.create_draft("alice", definition, "owned-connected-app")
         applications.publish("alice", application["id"], 1, "owned-connected-publish")

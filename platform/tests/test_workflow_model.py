@@ -7,7 +7,7 @@ from agno.exceptions import InputCheckError
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.model_dispatch import DelegatingModel
 from agent_factory.workflow_model import WorkflowDecisionModel
 

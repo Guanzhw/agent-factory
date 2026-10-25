@@ -1,5 +1,7 @@
 # Read-only uv target diagnostics
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 `scripts/probe_research_uv.py` observes the Python process already running it.
 It neither creates an environment nor launches another interpreter. It installs
 nothing, uses no network or credentials, imports no research/ML packages, and

@@ -1,5 +1,7 @@
 # 原适配器 optimizer / compile 有界资源诊断
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 此诊断用于目标机实际测量编译、optimizer 状态分配和短 forward/backward 的资源开销。
 它不创建 Factory 实验、checkpoint 或科研分数，不替代完整环境准入，也不证明 baseline 完成。
 云端只执行 mock/stdlib 测试；实际目标测量尚未运行。

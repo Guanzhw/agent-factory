@@ -37,9 +37,9 @@ export function CredentialForm({ owner, providerId, destination, onSaved, onCanc
   }
   return <form className="material-editor" aria-label="安全保存个人凭据" onSubmit={event => { event.preventDefault(); void save(); }}>
     <h3>保存到服务器凭据保险库</h3><p>提供方 {providerId} · 仅用于 {destination}。凭据由当前登录用户持有；不会作为材料或提示词保存。</p>
-    <p>这里只保存远程服务登录凭据，模型密钥留在远程服务。{serviceToken && '请填写已有 OpenResearch 服务令牌，不要填写模型 API 密钥。'}</p>
+    <p>这里只保存远程服务登录凭据，模型密钥留在远程服务。{serviceToken && '请填写远程服务令牌，不要填写模型 API 密钥。'}</p>
     <fieldset disabled={busy || unknown}>{!serviceToken && <label>服务用户名<input aria-label="服务用户名" value={username} autoComplete="off" onChange={event => setUsername(event.target.value)} /></label>}
-      <label>{serviceToken ? 'OpenResearch 服务令牌' : '服务密码'}<input aria-label={serviceToken ? 'OpenResearch 服务令牌' : '服务密码'} type="password" value={password} autoComplete="new-password" onChange={event => setPassword(event.target.value)} /></label>
+      <label>{serviceToken ? '远程服务令牌' : '服务密码'}<input aria-label={serviceToken ? '远程服务令牌' : '服务密码'} type="password" value={password} autoComplete="new-password" onChange={event => setPassword(event.target.value)} /></label>
       <label><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />我同意将此凭据保存到已部署的服务器保险库，并用于此目标的后续显式验证与已批准会话请求。</label>
     </fieldset>
     {rejected && <p role="alert">请求未保存：服务已拒绝，或浏览器无法持久保存恢复标识。请检查输入、权限和浏览器存储后重新填写。</p>}

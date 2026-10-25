@@ -1,5 +1,7 @@
 # v0.3 final requirement audit
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 ## Subsequent evidence — 2026-10-07
 
 The [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) supersedes this October 4 audit's broad

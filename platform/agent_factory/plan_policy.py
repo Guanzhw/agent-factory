@@ -13,49 +13,17 @@ from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, Uni
 from .store import digest
 
 PolicyName = Literal["member-self-service"]
-LEGACY_TOOLS = {"literature_search": "research:read", "ask_scope": "question:ask",
-               "checksum": "checksum:read", "run_experiment": "experiment:synthetic"}
-REGISTERED_TOOLS = {**LEGACY_TOOLS, "orx_discover": "research:read"}
-ORX_EXPERIMENT_TOOLS = {
-    "orx_experiment_inspect": "research:read",
-    "orx_experiment_run": "compute:local",
-    "orx_experiment_wait": "research:read",
-    "orx_experiment_cancel": "compute:local",
-    "orx_experiment_logs": "research:read",
-}
-LOCAL_ORX_TOOLS = {**REGISTERED_TOOLS, **ORX_EXPERIMENT_TOOLS}
-KNOWN_TOOLS = {**LOCAL_ORX_TOOLS, "orx_paper": "research:read", "orx_text": "research:read", "orx_sources_report": "research:read"}
-LITERATURE_TOOLS = {**KNOWN_TOOLS, "orx_paper": "research:read", "orx_text": "research:read", "orx_sources_report": "research:read"}
-ToolContract = Literal["legacy-v1", "registered-runtime-v1", "local-orx-v1", "orx-evidence-v2", "pubmed-host-evidence-v1", "scientific-synthesis-fixture-v1", "bounded-process-v1", "controlled-development-v1", "research-process-v1", "research-bootstrap-v1", "autoresearch-session-v1"]
+# Generic legacy vocabulary is a compatibility contract, not installed seeds.
+LEGACY_TOOLS = {"ask_scope": "question:ask", "checksum": "checksum:read"}
+KNOWN_TOOLS = {**LEGACY_TOOLS, "bounded_process_run": "compute:local"}
+ToolContract = Literal["legacy-v1", "bounded-process-v1", "controlled-development-v1"]
 
 
 def tools_for_contract(contract: ToolContract) -> dict[str, str]:
-    if contract == "autoresearch-session-v1":
-        return {**{name: "compute:local" if name == "research_experiment" else "research:read" for name in
-            ("research_context", "research_candidate", "research_experiment", "research_result", "research_decision")},
-            "autoresearch_session_run": "research:read", "research_preparation_verify": "research:read",
-            "bounded_process_run": "compute:local",
-            "research_process_run": "compute:local"}
     if contract == "legacy-v1":
         return dict(LEGACY_TOOLS)
-    if contract == "registered-runtime-v1":
-        return dict(REGISTERED_TOOLS)
-    if contract == "local-orx-v1":
-        return dict(LOCAL_ORX_TOOLS)
-    if contract == "orx-evidence-v2":
-        return dict(LITERATURE_TOOLS)
-    if contract == "pubmed-host-evidence-v1":
-        return {**LEGACY_TOOLS, "pubmed_sources_report": "research:read"}
-    if contract == "controlled-development-v1":
-        return {**LEGACY_TOOLS, "pubmed_sources_report": "research:read", "bounded_process_run": "compute:local"}
-    if contract == "research-bootstrap-v1":
-        return {**LEGACY_TOOLS, "bounded_process_run": "compute:local", "research_process_run": "compute:local"}
-    if contract == "research-process-v1":
-        return {**LEGACY_TOOLS, "research_process_run": "compute:local"}
-    if contract == "bounded-process-v1":
-        return {**LEGACY_TOOLS, "bounded_process_run": "compute:local"}
-    if contract == "scientific-synthesis-fixture-v1":
-        return {**LEGACY_TOOLS, "save_literature_synthesis": "research:read"}
+    if contract in {"bounded-process-v1", "controlled-development-v1"}:
+        return dict(KNOWN_TOOLS)
     raise ValueError("Unsupported registered tool contract")
 
 
@@ -81,20 +49,19 @@ class PlanPolicyConfig:
     name: Literal["member-self-service"] = "member-self-service"
     revision: str = "department-member-v1"
     tool_contract: ToolContract = "legacy-v1"
-    source_synthesis_enabled: bool = False
 
     def __post_init__(self):
         if self.name != "member-self-service":
             raise ValueError("Members execute plans directly; plan review modes are retired")
         tools_for_contract(self.tool_contract)
-        if type(self.source_synthesis_enabled) is not bool:
-            raise ValueError("Source synthesis requires an explicit boolean contract")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
             raise ValueError("Policy revision must be a bounded identifier")
 
     @property
     def fingerprint(self):
-        return digest(asdict(self))
+        # Preserve the historic false bit in immutable policy fingerprints;
+        # no application-specific tool or enabling switch remains.
+        return digest({**asdict(self), "source_synthesis_enabled": False})
 
     @property
     def known_tools(self):

@@ -24,7 +24,7 @@ class ApplicationInterfacePostgresTests(fixtures.ApplicationCompositionPostgresT
     def test_v1_and_v2_start_original_native_task_and_keep_definitions_unchanged(self):
         v1 = self.publish_http()
         self.login('alice')
-        for app_id, mode, contract in [(v1['id'], 'literature', 1), ('checksum-neutral', 'execute', 2)]:
+        for app_id, mode, contract in [(v1['id'], 'literature', 1), ('fixture-checksum-v2', 'execute', 2)]:
             before = self.apps.list_active('alice')
             key = 'public-native-' + str(contract)
             body = {'interfaceVersion': 1, 'application': app_id, 'mode': mode,
@@ -53,7 +53,7 @@ class ApplicationInterfacePostgresTests(fixtures.ApplicationCompositionPostgresT
 
     def test_unknown_admission_original_receipt_restart_and_owner_scope_never_resubmit(self):
         self.login('alice')
-        body = {'application': 'checksum-neutral', 'mode': 'execute',
+        body = {'application': 'fixture-checksum-v2', 'mode': 'execute',
             'goal': 'Controlled lost native acknowledgement', 'requestId': 'public-unknown-001'}
         submit = AsyncMock(side_effect=TimeoutError('synthetic unconfirmed acknowledgement'))
         with patch.object(self.state['bridge'], 'submit', submit):

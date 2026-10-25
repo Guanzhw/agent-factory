@@ -15,17 +15,10 @@ FAST_PYTHON_TESTS = {
         'test_personal_mcp_teardown_auth',
     ),
     'bounded_research_iterations': (
-        'test_research_iterations',
-        'test_research_iteration_driver',
-        'test_research_iteration_recipe',
-        'test_research_iteration_api',
-        'test_research_iteration_retirement',
-        'test_research_iteration_revocation_driver',
         'test_native_workflow_bridge',
     ),
     'application_instance_ownership': (
         'test_application_runtime.ApplicationRuntimeTests',
-        'test_application_assembly.ApplicationAssemblyTests',
     ),
     'remote_v2_contract': (
         'test_remote_v2_manifest',
@@ -79,23 +72,11 @@ FAST_PYTHON_TESTS = {
     'original_receipt_and_stop': (
         'test_native_timeout_diagnostics',
         'test_process_receipt_validation.ProcessReceiptValidation',
-        'test_research_candidate_native_stop.NativeStopTests',
         'test_guardian_reaping',
-    ),
-    'research_input_contracts': (
-        'test_research_package_paths.RelativePackagePathTests',
-        'test_research_staging.StagingContractTests',
     ),
     'history_control_separation': (
         'test_history_summary_status.HistorySummaryStatusTests',
-        'test_remote_scientific_phase_reads.RemoteScientificPhaseReadTests',
-        'test_remote_scientific_evidence_contention',
-        'test_remote_scientific_late_authority',
-        'test_scientific_completion_claims',
         'test_remote_receipt_snapshot',
-        'test_autoresearch_remote_children.RemoteChildrenTests.test_lost_drive_ack_observes_original_only_after_validated_intent',
-        'test_autoresearch_remote_children.RemoteChildrenTests.test_503_without_original_drive_intent_is_not_swallowed',
-        'test_autoresearch_remote_children.RemoteChildrenTests.test_terminal_child_with_validated_drive_intent_only_observes_original',
     ),
 }
 
@@ -106,7 +87,6 @@ FAST_POSTGRES_TESTS = {
     'shared_local_budget_commitments': (
         'test_local_budget_scopes_postgres',
         'test_local_budget_scope_boundaries_postgres',
-        'test_research_iteration_retirement_postgres',
     ),
     'history_background_finalization': (
         'test_task_history_postgres.TaskHistoryPostgresTests.test_z_native_completion_waits_for_background_finalization_without_read_side_effects',
@@ -135,12 +115,5 @@ FAST_POSTGRES_TESTS = {
         'test_personal_tool_assembly.PersonalToolAssemblyPostgresTests',
         'test_personal_tool_native_postgres.PersonalToolNativePostgresTests',
         'test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests',
-    ),
-    # Tiny inert trees, including mutation checks; no installed ML tree or scale campaign.
-    'research_inventory_posix': (
-        'test_research_package_paths.CompletePackagePathJourneyTests',
-        'test_research_bootstrap_inventory.BootstrapInventoryTests',
-        'test_research_inventory_document_bounds.InventoryDocumentBoundsTests',
-        'test_research_staging.StagingFilesystemTests',
     ),
 }

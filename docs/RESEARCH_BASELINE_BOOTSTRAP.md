@@ -1,5 +1,7 @@
 # 本地受管 baseline：准备 → 训练 → 独立评价
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 本交接用于已经授权的本地开发训练。入口是
 [`scripts/run_research_baseline.py`](../scripts/run_research_baseline.py)；一次调用顺序执行三个阶段，
 复用 Factory 的成员素材发布、直接计划执行、原生任务、进程租约及证据存储。

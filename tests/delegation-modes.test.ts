@@ -16,7 +16,7 @@ describe('immutable parent application delegation choices', () => {
       expect(delegationModes(current, 'literature', false).available).toBe(false);
     }
     expect(delegationModes(undefined, 'literature', false).available).toBe(false);
-    expect(delegationModes(scope(), 'literature', false)).toMatchObject({ modes: ['literature', 'experiment'], available: true, legacy: true });
+    expect(delegationModes(scope(), 'literature', false)).toMatchObject({ modes: [], selected: '', available: false, legacy: true });
   });
   it('does not silently replace the mode of an uncertain retained request after scope changes', () => {
     expect(delegationModes(scope(['direct'], 'direct'), 'paused', true)).toEqual({ modes: ['direct'], selected: 'paused', available: false, legacy: false });

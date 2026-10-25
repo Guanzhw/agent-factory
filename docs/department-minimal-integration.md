@@ -8,7 +8,7 @@ Personal data and credentials remain owner-scoped.
 
 ## Current composition contract
 
-1. Core `Settings` and research `ResearchSettings` use
+1. Core `Settings` uses
    `temporary_policy="member-self-service"` and
    `material_review_mode="member-self-service"`. Their default revisions are
    `department-member-v1` and `material-department-v1`. Retired execution/publication

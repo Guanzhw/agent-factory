@@ -8,7 +8,7 @@ import { useCommandKeys } from './commandKeys.js';
 import type { ConnectionRegistration, JobSummary, User, UserConnection } from './models.js';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
-const names: Record<string, string> = { model: '模型', tool: '工具', knowledge: '知识', environment: '环境', orx: '研究适配器' };
+const names: Record<string, string> = { model: '模型', tool: '工具', knowledge: '知识', environment: '环境', orx: '历史适配器' };
 const states: Record<string, string> = { active: '可用于当前配置', available: '可绑定', unavailable: '当前配置不可用', expired: '已过期', revoked: '已撤销', changed: '配置已变更', missing: '登记已移除', task_ended: '绑定任务已结束' };
 const message = (error: unknown) => error instanceof Error ? error.message : '连接状态无法确认。';
 const date = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '未设置';
@@ -37,7 +37,7 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
   })}</div>;
 }
 
-export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, onResearch, onPrepareResearch, applicationLabel = '应用', remoteServices }: { user: User; jobs: JobSummary[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onResearch?: () => void; onPrepareResearch?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode }) {
+export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, onBack, applicationLabel = '应用', remoteServices }: { user: User; jobs: JobSummary[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onBack?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode }) {
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [registrations, setRegistrations] = useState<ConnectionRegistration[]>([]);
   const [registrationRef, setRegistrationRef] = useState('');
@@ -103,8 +103,8 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
       key.acknowledged(); setRefresh(n => n + 1); onNotice('连接已撤销。后续执行会重新检查绑定；已有证据保留。');
     });
   }
-  return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onResearch && <button className="secondary" disabled={!!busy} onClick={onResearch}>返回 {applicationLabel}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
-    <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onResearch={onPrepareResearch}/>
+  return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onBack && <button className="secondary" disabled={!!busy} onClick={onBack}>返回 {applicationLabel}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
+    <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
     <PersonalCredentials key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
     <PersonalToolConnections ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
     {remoteServices?.(refresh, () => setRefresh(n => n + 1))}

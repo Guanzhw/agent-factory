@@ -1,5 +1,7 @@
 # Unintegrated tokenizer preparation checkpoint
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This branch preserves an unfinished storage primitive separately from PR40.
 It is not wired into Factory, a runnable bootstrap, a training launcher, or an
 accepted managed tokenizer producer. Do not substitute invented task/run/lease

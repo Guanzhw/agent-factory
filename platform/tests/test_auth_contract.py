@@ -23,7 +23,7 @@ import httpx
 import jwt
 from starlette.websockets import WebSocketDisconnect
 
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.auth import AUDIENCE, AuthService, CookieBridge, DEMO_COOKIE, MemberTokenBoundary
 from agent_factory.accounts import account_router
 from agent_factory.native_bridge import INTERNAL_NATIVE, NativeBridge

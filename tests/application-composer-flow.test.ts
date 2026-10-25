@@ -42,7 +42,7 @@ async function fillTask() {
     const select = host.querySelector<HTMLSelectElement>('#application-selector')!; select.value = application.id; select.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await act(async () => {
-    const goal = host.querySelector<HTMLTextAreaElement>('#research-topic')!;
+    const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(goal, candidate.normalizedGoal);
     goal.dispatchEvent(new Event('input', { bubbles: true }));
     const select = host.querySelector<HTMLSelectElement>('[aria-label="资源连接 model"]')!; select.value = connection.ref; select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -80,8 +80,8 @@ describe('mounted task creation flow', () => {
     const form = host.querySelector('form')!;
     expect(history.open).toBe(false);
     expect(form.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const goal = host.querySelector<HTMLTextAreaElement>('#research-topic')!;
-    expect(host.querySelector('label[for="research-topic"]')?.textContent).toBe('2. 描述任务');
+    const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
+    expect(host.querySelector('label[for="task-goal"]')?.textContent).toBe('2. 描述任务');
     expect(goal.value).toBe(''); expect(goal.disabled).toBe(false); expect(goal.required).toBe(true);
     expect(button('预览任务方案').disabled).toBe(true);
     const steps = host.querySelector('[aria-label="新建任务步骤"]')!;
@@ -96,7 +96,7 @@ describe('mounted task creation flow', () => {
     else getItem.mockImplementation(() => { throw new Error('storage unavailable'); });
     await mount();
     expect(host.textContent).not.toContain('继续上次保存的任务');
-    expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.disabled).toBe(false);
+    expect(host.querySelector<HTMLTextAreaElement>('#task-goal')!.disabled).toBe(false);
     await fillTask();
     expect(button('预览任务方案').disabled).toBe(false);
     expect(api.recoverProposal).not.toHaveBeenCalled(); expect(api.propose).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
@@ -165,7 +165,7 @@ describe('mounted task creation flow', () => {
     expect(history.open).toBe(false);
     await act(async () => { history.open = true; });
     await click('继续上次保存的任务'); await settle(() => expect(host.textContent).toContain('提案归属或修订范围无法核对'));
-    expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.value).toBe(candidate.normalizedGoal);
+    expect(host.querySelector<HTMLTextAreaElement>('#task-goal')!.value).toBe(candidate.normalizedGoal);
     expect(host.querySelector('[aria-label="任务提交检查"]')).toBeNull();
     expect(window.sessionStorage.getItem('factory-proposal-v1:alice')).toBe(proposalId);
     expect(api.recoverProposal).toHaveBeenCalledExactlyOnceWith(proposalId);
@@ -176,7 +176,7 @@ describe('mounted task creation flow', () => {
     window.sessionStorage.setItem('factory-proposal-v1:alice', proposalId);
     await mount(); await fillTask(); await click('预览任务方案');
     await settle(() => expect(host.textContent).toContain('原装配请求未确认'));
-    expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>('#task-goal')!.disabled).toBe(true);
     expect(button('继续上次保存的任务').disabled).toBe(true);
     const firstCall = vi.mocked(api.propose).mock.calls[0];
     await click('核对原装配请求'); await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
@@ -194,7 +194,7 @@ describe('mounted task creation flow', () => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
       expect(host.textContent).toContain('当前没有可用的已发布应用');
     }, { timeout: 7000, interval: 50 });
-    expect(host.querySelector<HTMLTextAreaElement>('#research-topic')!.disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>('#task-goal')!.disabled).toBe(true);
     expect(button('核对原装配请求').disabled).toBe(false);
     await click('核对原装配请求'); await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
     expect(api.propose).toHaveBeenCalledTimes(2);

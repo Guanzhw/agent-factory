@@ -17,8 +17,8 @@ from fastapi.testclient import TestClient
 from pg_fixture import IsolatedPostgres
 
 from agent_factory.catalog import create_plan
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")
@@ -65,7 +65,7 @@ class SchedulingPostgresTests(unittest.TestCase):
     def call(self, function, *args):
         return self.client.portal.call(function, *args)
 
-    def fixture(self, goal="scheduled checksum fixture", application="checksum"):
+    def fixture(self, goal="scheduled checksum fixture", application="fixture-checksum"):
         plan = create_plan(self.store, "manager", goal, "literature", application)
         schedule = self.service.create("manager", plan["id"], "schedule-" + str(uuid4()), "0 0 1 1 *")
         self.schedule_ids.append(schedule["id"])
@@ -149,7 +149,7 @@ class SchedulingPostgresTests(unittest.TestCase):
         self.assertEqual(history["run_id"], self.store.task(second["task_id"])["run_id"])
 
     def test_04_quota_unknown_does_not_replay_pause_and_scoped_cancel(self):
-        _, schedule = self.fixture("sort", "research")
+        _, schedule = self.fixture("sort", "fixture-text")
         previous = self.settings.max_user_tasks
         try:
             self.settings.max_user_tasks = 0
@@ -224,7 +224,7 @@ class SchedulingPostgresTests(unittest.TestCase):
         login("manager")
         response = self.client.post("/api/factory/plans", json={
             "topic": "HTTP scheduling checksum fixture", "mode": "literature",
-            "application": "checksum", "requestId": str(uuid4())})
+            "application": "fixture-checksum", "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
         body = {"planId": response.json()["id"], "name": "HTTP-" + str(uuid4()),
                 "cron": "0 0 1 1 *", "timezone": "Etc/UTC"}

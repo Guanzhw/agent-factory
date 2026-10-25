@@ -43,7 +43,7 @@ class RemoteProcessContractTests(unittest.TestCase):
         self.assertEqual(scope.tools, [TOOL])
         self.assertNotIn(TOOL, tools_for_contract("legacy-v1"))
         self.assertEqual(tools_for_contract("bounded-process-v1")[TOOL], "compute:local")
-        for tools, capabilities in [([TOOL], ["research:read"]), ([TOOL], ["compute:local", "research:read"]),
+        for tools, capabilities in [([TOOL], ["fixture:unselected"]), ([TOOL], ["compute:local", "fixture:unselected"]),
                                     (["arbitrary_process"], ["compute:local"])]:
             with self.subTest(tools=tools, capabilities=capabilities), self.assertRaises(ValidationError):
                 AuthorityScope(tools=tools, capabilities=capabilities, budget=budget)

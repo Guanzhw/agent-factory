@@ -1,5 +1,7 @@
 # Runnable development implementation checkpoint
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 Branch: `coord/schedule-diagnostics-checkpoint-20261004`, based on accepted PR33
 `e0f74ec330b4f11929be49b4d260acbe1747856f`. The final draft PR acceptance receipt
 records the exact tested head SHA and both CI observations. Check out that SHA,

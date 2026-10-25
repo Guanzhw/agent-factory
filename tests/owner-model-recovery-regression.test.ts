@@ -59,7 +59,7 @@ afterEach(async () => {
 });
 
 async function mount() {
-  await act(async () => root.render(createElement(ModelSettings, { ownerId: owner, onResearch: vi.fn() })));
+  await act(async () => root.render(createElement(ModelSettings, { ownerId: owner, onBack: vi.fn() })));
 }
 async function remount() {
   await act(async () => root.unmount()); root = createRoot(host); await mount();

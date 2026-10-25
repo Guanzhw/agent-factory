@@ -1,6 +1,6 @@
 """Recover original synthetic proposals and plans in a loopback member demo.
 
-Requires development mock login and published demo research materials. The
+Requires development mock login and explicit core native fixture materials. The
 harness verifies lost acknowledgements and owner isolation without creating
 native task instances.
 """
@@ -121,7 +121,7 @@ def scenario(browser, base, output, name, viewport):
         goal = '合成研究提案恢复验收 ' + name + ' ' + uuid4().hex[:12]
         selector = page.get_by_label('1. 选择应用', exact=True)
         expect(selector).to_be_enabled()
-        selector.select_option('research')
+        selector.select_option('fixture-text')
         page.get_by_label('应用执行方式', exact=True).select_option('literature')
         page.get_by_label('2. 描述任务', exact=True).fill(goal)
         proposal = lost_reply(page, base, '/compositions/proposals', lambda:

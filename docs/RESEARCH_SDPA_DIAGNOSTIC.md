@@ -1,5 +1,7 @@
 # Fixed SDPA compatibility diagnostic and baseline handoff
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 Preserve the original FA3 failure as a separate observation. The designated
 target worker reported `no kernel image is available for execution on the device`
 on sm120 after5.6 seconds, before tokenizer preparation, training or evaluation.

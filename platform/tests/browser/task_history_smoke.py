@@ -124,7 +124,7 @@ def scenario(browser, base, output):
     page.on('console', lambda message: console_errors.append({'text': message.text, 'location': message.location})
             if message.type == 'error' else None)
     try:
-        page.goto(base + '/?tab=research', wait_until='networkidle')
+        page.goto(base + '/?tab=tasks', wait_until='networkidle')
         rows = page.locator('.task-row')
         expect(rows).to_have_count(50)
         expect(page.locator('.sync-state')).to_contain_text('部分区域更新失败')

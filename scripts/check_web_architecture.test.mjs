@@ -178,3 +178,18 @@ export { value } from '../apps/alpha/api.js';` });
     'src/shared/helper.ts': "export const value = import.meta.glob('./*.ts');" });
   assert.equal(f.check().gaps[0].module, 'src/shared/helper.ts');
 });
+
+
+test('standalone core allows no installed applications and still checks composition imports', t => {
+  const f = fixture(t);
+  f.config.source_roots = ['src/web', 'src/shared'];
+  f.config.core = ['src/web', 'src/shared'];
+  f.config.apps = {};
+  f.write({ 'src/web/composition.tsx': 'export const installed = [];',
+    'src/shared/helper.ts': 'export const value = 1;' });
+  assert.equal(f.check().accepted, true);
+  f.write({ 'src/shared/helper.ts': "import '../web/main.js'; export const value = 1;" });
+  assert.equal(f.check().accepted, false);
+  f.config.core = [];
+  assert.throws(() => f.check(), /nonempty core/);
+});

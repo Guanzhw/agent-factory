@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
 from fastapi import HTTPException
@@ -12,11 +13,13 @@ from fastapi.testclient import TestClient
 import httpx
 
 from agent_factory.byok_model import ADAPTER_ID, PROVIDER_ID
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.personal_remote_provider import origin
-from agent_factory_research.personal_research import publish_application
+from core_native_fixture import publish_owner_application
+from agent_factory.application_runs import factory_request_id
+from agent_factory.main import create_app as create_core_app
 from pg_fixture import IsolatedPostgres
 
 
@@ -34,8 +37,8 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('POST', path + '/sharing', {'visibility': 'personal', 'requestId': 'foreign-sharing-model'}, owner='bob', expected=404)
         selected = self.request('POST', path + '/default', {'requestId': 'sharing-bob-default'}, owner='bob')
         self.assertNotEqual(selected['connectionRef'], model['connectionRef'])
-        self.request('POST', '/personal-research', {'topic': 'Synthetic shared model', 'requestId': 'shared-native-task'}, owner='bob', expected=202)
-        task = self.store.task_for_request('shared-native-task', 'bob')
+        self.start({'goal': 'Synthetic shared model', 'requestId': 'shared-native-task'}, owner='bob', expected=202)
+        task = self.task_for_request('shared-native-task', 'bob')
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             native = self.store.native_db.get_job(task['run_id']) or {}
@@ -52,7 +55,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.auth.directory.set_disabled('bob', False)
         self.request('POST', path + '/sharing', {'visibility': 'personal', 'requestId': 'withdraw-shared-model'})
-        self.request('POST', '/personal-research', {'topic': 'Withdrawn shared model', 'requestId': 'withdrawn-native-task'}, owner='bob', expected=404)
+        self.start({'goal': 'Withdrawn shared model', 'requestId': 'withdrawn-native-task'}, owner='bob', expected=409)
         self.assertEqual(len(self.calls), 2)
         with self.assertRaises(HTTPException): retained.credential()
         with self.assertRaises(HTTPException): self.store.connections.resolve('bob', selected['connectionRef'], 'model')
@@ -67,9 +70,9 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision'],
             'requestId': 'fixture-go-agent-model'}, expected=201)
         self.request('POST', '/personal-models/' + model['reference'] + '/default', {'requestId': 'fixture-go-agent-default'})
-        self.request('POST', '/personal-research', {'topic': 'Synthetic tool-loop contract',
+        self.start({'goal': 'Synthetic tool-loop contract',
             'requestId': 'fixture-go-agent-run'}, expected=202)
-        task = self.store.task_for_request('fixture-go-agent-run', 'alice')
+        task = self.task_for_request('fixture-go-agent-run', 'alice')
         deadline = time.monotonic() + 30
         native = {}
         while time.monotonic() < deadline:
@@ -127,15 +130,16 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.addCleanup(self.database.__exit__, None, None, None)
         self.folder = TemporaryDirectory(); self.addCleanup(self.folder.cleanup)
         self.calls = []
+        self.selected_connections = {}
         def wire(request):
             self.calls.append(request)
             body = json.loads(request.content)
             # A genuine native tool iteration, followed by a synthetic summary.
             tool_messages = [m for m in body['messages'] if m['role'] == 'tool']
-            message, reason = {'role': 'assistant', 'content': 'Controlled BYOK research fixture completed.'}, 'stop'
+            message, reason = {'role': 'assistant', 'content': 'Controlled BYOK checksum fixture completed.'}, 'stop'
             if not tool_messages:
-                message, reason = {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'research-fixture-call',
-                    'type': 'function', 'function': {'name': 'literature_search', 'arguments': '{"query":"synthetic research"}'}}]}, 'tool_calls'
+                message, reason = {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'checksum-fixture-call',
+                    'type': 'function', 'function': {'name': 'checksum', 'arguments': '{"text":"synthetic checksum"}'}}]}, 'tool_calls'
             return httpx.Response(200, json={'choices': [{'finish_reason': reason, 'message': message}]})
         self.settings = Settings(db_url=self.database.url, workspace=Path(self.folder.name), max_workers=1,
             temporary_policy='member-self-service',
@@ -148,7 +152,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob')}
         self.addCleanup(self.store.engine.dispose); self.addCleanup(self.store.native_db.db_engine.dispose)
         self.auth.directory.upsert('fixture-reviewer', name='Synthetic template publisher')
-        publish_application(self.state, author='manager')
+        publish_owner_application(self.state, author='manager')
         self.client = TestClient(self.app); self.client.__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
 
     def request(self, method, path, body=None, *, owner='alice', expected=200, expected_owner=None):
@@ -158,7 +162,21 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text)
         self.assertNotIn('synthetic-test-password', response.text)
         self.assertNotIn('synthetic-rotated-password', response.text)
-        return response.json()
+        result = response.json()
+        if response.status_code == 200 and method == 'POST' and path.startswith('/personal-models/') and path.endswith(('/default', '/configure')):
+            self.selected_connections[owner] = result['connectionRef']
+        return result
+
+    def start(self, values, *, owner='alice', expected=202):
+        # Model selection is explicit client input; core does not select defaults.
+        connection = self.selected_connections.get(owner)
+        return self.request('POST', '/application-interface/v1/starts', {
+            'application': 'fixture-owner-checksum', 'mode': 'literature', **values,
+            'connectionRefs': {'ownerModel': connection} if connection else {},
+        }, owner=owner, expected=expected)
+
+    def task_for_request(self, request_id, owner):
+        return self.store.task_for_request(factory_request_id(request_id), owner)
 
     def configured(self):
         credential = self.request('POST', '/personal-credentials', {'requestId': 'fixture-save-key',
@@ -175,12 +193,15 @@ class PersonalModelsPostgresTests(unittest.TestCase):
 
     def test_single_submit_native_queue_no_billing_no_admin_and_replay(self):
         self.assertIsNone(self.store.usage_ledger)
-        error = self.request('POST', '/personal-research', {'topic': 'Synthetic research', 'requestId': 'missing-model'}, expected=409)
-        self.assertEqual(error['code'], 'PERSONAL_MODEL_SETUP_REQUIRED')
-        self.assertTrue(self.request('GET', '/personal-research/capabilities')['applicationAvailable'])
+        error = self.start({'goal': 'Synthetic checksum', 'requestId': 'missing-model'}, expected=409)
+        self.assertIn('Missing owner connection: ownerModel', error['message'])
+        self.assertIn('fixture-owner-checksum', [item['id'] for item in self.store.applications.list_active('alice')])
         credential, model = self.configured()
-        result = self.request('POST', '/personal-research', {'topic': 'Synthetic research', 'requestId': 'research-submit'}, expected=202)
-        task = self.store.task_for_request('research-submit', 'alice')
+        dispatch = AsyncMock(wraps=self.state['bridge'].submit)
+        replacement = patch.object(self.state['bridge'], 'submit', dispatch)
+        replacement.start(); self.addCleanup(replacement.stop)
+        result = self.start({'goal': 'Synthetic checksum', 'requestId': 'research-submit'}, expected=202)
+        task = self.task_for_request('research-submit', 'alice')
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             native = self.store.native_db.get_job(task['run_id']) or {}
@@ -194,18 +215,24 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.assertEqual(plan['policy'], 'member-self-service')
         self.assertEqual(self.store.plan_policy.require_execution('alice', plan)['source'], 'member-self-service')
         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
-        replay = self.request('POST', '/personal-research', {'topic': 'Synthetic research', 'requestId': 'research-submit'}, expected=202)
+        replay = self.start({'goal': 'Synthetic checksum', 'requestId': 'research-submit'}, expected=202)
         self.assertEqual(replay['planId'], result['planId'])
+        self.assertEqual(replay['job']['id'], task['id'])
+        self.assertEqual(dispatch.await_count, 1)
         self.assertEqual(len(self.calls), 2)
-        self.request('POST', '/personal-research', {'topic': 'Different research', 'requestId': 'research-submit'}, expected=409)
-        self.request('GET', '/personal-research/requests/research-submit', owner='bob', expected=404)
-        self.request('GET', '/personal-research/requests/research-submit')
+        self.start({'goal': 'Different checksum', 'requestId': 'research-submit'}, expected=409)
+        self.request('GET', '/application-interface/v1/starts/research-submit', owner='bob', expected=404)
+        receipt = self.request('GET', '/application-interface/v1/starts/research-submit')
+        self.assertEqual(receipt['taskId'], task['id'])
+        self.assertEqual(receipt['runId'], task['run_id'])
+        self.assertFalse(receipt['createsExecution'])
+        self.assertFalse(receipt['automaticReplay'])
         self.assertNotIn('synthetic-test-password', str(self.store.sql('SELECT * FROM af_encrypted_credentials')))
         self.assertFalse(self.request('GET', '/status')['feeManagementEnabled'])
-        # A separate real production-mode app has no automatic fixture template
-        # or real tool provider. Do not change a demo database's deployment mode.
+        # A separate production core starts empty; fixture registrations and
+        # applications are supplied only by this test's explicit composition.
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as production_db, TemporaryDirectory() as directory:
-            production = create_app(Settings(db_url=production_db.url, demo=False,
+            production = create_core_app(Settings(db_url=production_db.url, demo=False,
                 jwt_key='synthetic-production-fixture-signing-key', workspace=Path(directory)))
             state = production.app.state.factory
             production_store, production_auth = state['store'], state['auth']
@@ -213,20 +240,14 @@ class PersonalModelsPostgresTests(unittest.TestCase):
                 production_auth.directory.upsert('fixture-owner', name='Synthetic production owner')
                 headers = {'Authorization': 'Bearer ' + production_auth._issue_native_token('fixture-owner')}
                 with TestClient(production) as client:
-                    response = client.get('/api/factory/personal-research/capabilities', headers=headers)
-                    self.assertEqual(response.status_code, 200, response.text)
-                    support = response.json()
-                    self.assertFalse(support['supported'])
-                    self.assertFalse(support['applicationAvailable'])
-                    self.assertEqual(support['unsupportedReason'], 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED')
-                    response = client.post('/api/factory/personal-research', headers=headers,
-                        json={'topic': 'Do not substitute demo tools', 'requestId': 'production-no-real-tools'})
-                    self.assertEqual(response.status_code, 409, response.text)
-                    self.assertEqual(response.json()['code'], 'PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED')
-                    with self.assertRaises(HTTPException) as unavailable:
-                        publish_application(state, author='fixture-owner')
-                    self.assertEqual(unavailable.exception.detail, 'PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY')
+                    response = client.post('/api/factory/application-interface/v1/starts', headers=headers,
+                        json={'application': 'fixture-owner-checksum', 'mode': 'literature',
+                            'goal': 'Do not substitute fixture applications', 'requestId': 'production-no-fixtures'})
+                    self.assertEqual(response.status_code, 404, response.text)
+                    self.assertEqual(response.json()['message'], 'Published application configuration not found')
                     self.assertEqual(production_store.applications.list_active('fixture-owner'), [])
+                    self.assertEqual(production_store.materials(published_only=True), [])
+                    self.assertEqual(production_store.tasks('fixture-owner'), [])
             finally:
                 production_store.engine.dispose()
                 production_store.native_db.db_engine.dispose()
@@ -241,7 +262,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'username': 'api-key', 'password': 'synthetic-rotated-password'})
         self.assertEqual(self.request('GET', '/personal-models')[0]['status'], 'credential_unavailable')
         with self.assertRaises(HTTPException): self.store.connections.resolve('alice', model['connectionRef'], 'model')
-        self.request('POST', '/personal-research', {'topic': 'No stale key use', 'requestId': 'stale-research'}, expected=409)
+        self.start({'goal': 'No stale key use', 'requestId': 'stale-research'}, expected=409)
         body = {'provider': 'openai-compatible', 'baseURL': 'https://models.example.com/v1', 'model': 'fixture-model',
             'credentialRef': rotated['credentialRef'], 'credentialRevision': rotated['credentialRevision'],
             'requestId': 'fixture-reconfigure'}
@@ -260,9 +281,9 @@ class PersonalModelsPostgresTests(unittest.TestCase):
     def test_vault_lifecycle_blocks_future_use_preserves_native_task_context(self):
         credential, model = self.configured()
         old_handle = self.store.connections.resolve('alice', model['connectionRef'], 'model')
-        self.request('POST', '/personal-research', {'topic': 'Synthetic retained context',
+        self.start({'goal': 'Synthetic retained context',
             'requestId': 'credential-context-task'}, expected=202)
-        task = self.store.task_for_request('credential-context-task', 'alice')
+        task = self.task_for_request('credential-context-task', 'alice')
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             native = self.store.native_db.get_job(task['run_id']) or {}
@@ -274,7 +295,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         # Background observation, not GET detail, persists completion. Keep the
         # existing native deadline and wait for its positive terminal record.
         while time.monotonic() < deadline:
-            task = self.store.task_for_request('credential-context-task', 'alice')
+            task = self.task_for_request('credential-context-task', 'alice')
             if task['terminal'] and task['body']['lastStatus'] == 'completed':
                 break
             time.sleep(.05)
@@ -282,7 +303,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.assertIsNotNone(task['body'].get('observedAt'))
         detail = self.request('GET', '/jobs/' + task['id'])
         self.assertEqual(detail['job']['status'], 'completed')
-        task = self.store.task_for_request('credential-context-task', 'alice')
+        task = self.task_for_request('credential-context-task', 'alice')
         self.assertEqual(task['body']['lastStatus'], 'completed')
         self.assertIsNone(self.store.usage_ledger)
         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
@@ -293,7 +314,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'username': 'api-key', 'password': 'synthetic-rotated-password'}, expected_owner='alice')
         with self.assertRaises(HTTPException):
             old_handle.credential()
-        self.request('POST', '/personal-research', {'topic': 'No stale binding', 'requestId': 'context-stale'}, expected=409)
+        self.start({'goal': 'No stale binding', 'requestId': 'context-stale'}, expected=409)
         updated = self.request('POST', '/personal-models/' + model['reference'] + '/configure', {
             'provider': model['provider'], 'baseURL': model['baseURL'], 'model': model['model'],
             'credentialRef': rotated['credentialRef'], 'credentialRevision': rotated['credentialRevision'],
@@ -303,10 +324,10 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'requestId': 'context-revoke', 'credentialRevision': rotated['credentialRevision']}, expected_owner='alice')
         with self.assertRaises(HTTPException):
             current_handle.credential()
-        self.request('POST', '/personal-research', {'topic': 'No revoked binding', 'requestId': 'context-revoked'}, expected=409)
+        self.start({'goal': 'No revoked binding', 'requestId': 'context-revoked'}, expected=409)
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(self.store.plan(task['plan_id'], 'alice'), plan)
-        retained = self.store.task_for_request('credential-context-task', 'alice')
+        retained = self.task_for_request('credential-context-task', 'alice')
         for key in ('id', 'owner_id', 'plan_id', 'run_id', 'body'):
             self.assertEqual(retained[key], task[key])
         self.assertEqual(self.store.native_db.get_job(task['run_id'])['status'], 'completed')
@@ -324,9 +345,9 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.assertTrue(self.request('GET', '/status')['feeManagementEnabled'])
         self.assertFalse(self.settings.platform_paid_models_enabled)
         self.configured()
-        self.request('POST', '/personal-research', {
-            'topic': 'Synthetic legacy-host read fixture', 'requestId': 'legacy-byok-read'}, expected=202)
-        task = self.store.task_for_request('legacy-byok-read', 'alice')
+        self.start({
+            'goal': 'Synthetic legacy-host read fixture', 'requestId': 'legacy-byok-read'}, expected=202)
+        task = self.task_for_request('legacy-byok-read', 'alice')
         plan = self.store.plan(task['plan_id'], 'alice')
         self.assertEqual(plan['policy'], 'member-self-service')
         self.assertNotIn('usageBudget', plan)
@@ -341,7 +362,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         # Native completion can precede durable accounting/stop observation.
         # Keep the same deadline; GET must not perform that finalization.
         while time.monotonic() < deadline:
-            task = self.store.task_for_request('legacy-byok-read', 'alice')
+            task = self.task_for_request('legacy-byok-read', 'alice')
             if task['terminal'] and task['body']['lastStatus'] == 'completed':
                 break
             time.sleep(.05)
@@ -383,7 +404,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.store.usage_ledger = ledger
         model = self.store.personal_models.default('alice')
         plan = self.store.composition.create_plan('alice', 'Synthetic BYOK ledger independence',
-            'literature', 'personal-research-v1', request_id='legacy-byok-plan',
+            'literature', 'fixture-owner-checksum', request_id='legacy-byok-plan',
             connection_refs={'ownerModel': model['connectionRef']})
         self.assertEqual(plan['status'], 'ready', plan)
         self.assertNotIn('usageBudget', plan)
@@ -424,7 +445,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'requestId': 'wrong-destination'}
         self.request('POST', '/personal-models', body, expected=403)
         self.auth.directory.set_disabled('alice', True)
-        self.request('POST', '/personal-research', {'topic': 'Permission revoked', 'requestId': 'revoked-grant'}, expected=403)
+        self.start({'goal': 'Permission revoked', 'requestId': 'revoked-grant'}, expected=403)
         self.assertEqual(self.calls, [])
 
     def test_stale_tab_expected_owner_rejects_secret_and_metadata_before_any_write(self):

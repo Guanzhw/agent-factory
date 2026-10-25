@@ -30,10 +30,9 @@ from sqlalchemy.pool import StaticPool
 from agent_factory.connections import ConnectionService
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault, credential_vault_router
 from agent_factory.personal_remote_provider import RemoteConnectionError, origin
+from agent_factory.ssh_identity import SSHServer
 from agent_factory.personal_ssh import PersonalSSHServers, SSHAgents, SSHEnrollmentConfig, personal_ssh_router
-from agent_factory_research.runtime_packages.openresearch_v1 import ssh_prerequisites
 from agent_factory.ssh_credentials import PROVIDER_ID, SSHCredentialPolicy, endpoint, ssh_destination
-from agent_factory_research.ssh_openresearch import BASE, SSHServer
 from test_personal_remote_connections import Auth
 from pg_fixture import IsolatedPostgres
 
@@ -61,8 +60,7 @@ class PersonalSSHTests(unittest.TestCase):
         self.connections = ConnectionService(SimpleNamespace(engine=self.engine, _connection=shared), self.auth,
             clock=lambda: datetime(2026, 10, 11, tzinfo=timezone.utc))
         self.service = PersonalSSHServers(self.auth, self.connections, self.vault,
-            SSHEnrollmentConfig(max_active_seconds=60),
-            probe_source=(BASE / 'ssh_prerequisites.py').read_text())
+            SSHEnrollmentConfig(max_active_seconds=60))
         self.addCleanup(self.service.close)
         self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard))
         self.service.agents.acquire = self.acquire
@@ -435,30 +433,3 @@ class PersonalSSHPostgresTests(PersonalSSHTests):
         self.database.__enter__()
         self.addCleanup(self.database.__exit__, None, None, None)
         super().setUp()
-
-
-@unittest.skipUnless(os.name == 'posix', 'owner directory fixture requires POSIX')
-class SSHPrerequisiteTests(unittest.TestCase):
-    def test_inspect_never_creates_root_and_prepare_creates_only_private_child(self):
-        with TemporaryDirectory() as parent:
-            root = Path(parent) / 'private'
-            body = {'root': str(root), 'action': 'inspect', 'nonce': 'fixture'}
-            with patch.object(ssh_prerequisites.sys, 'platform', 'linux'), patch.object(ssh_prerequisites.os, 'uname', return_value=SimpleNamespace(machine='x86_64')), patch.object(ssh_prerequisites.os, 'getuid', return_value=os.getuid()), patch.object(ssh_prerequisites.shutil, 'which', return_value='/fixture/docker'), patch.object(ssh_prerequisites.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
-                result = ssh_prerequisites.run(body); self.assertTrue(result['ok']); self.assertFalse(root.exists())
-                result = ssh_prerequisites.run(body | {'action': 'prepare'}); self.assertTrue(result['ok'])
-                self.assertEqual(root.stat().st_mode & 0o777, 0o700)
-                self.assertEqual(list(Path(parent).iterdir()), [root])
-
-    def test_missing_dependencies_foreign_and_linked_directories_are_distinct_failures(self):
-        with TemporaryDirectory() as parent:
-            root = Path(parent) / 'private'; root.mkdir(mode=0o755); root.chmod(0o755)
-            body = {'root': str(root), 'action': 'inspect', 'nonce': 'fixture'}
-            with patch.object(ssh_prerequisites.shutil, 'which', return_value=None):
-                self.assertEqual(ssh_prerequisites.run(body)['code'], 'SSH_DOCKER_MISSING')
-            with patch.object(ssh_prerequisites.shutil, 'which', return_value='/fixture/docker'), patch.object(ssh_prerequisites.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr=b'permission denied')):
-                self.assertEqual(ssh_prerequisites.run(body)['code'], 'SSH_DOCKER_PERMISSION')
-            with patch.object(ssh_prerequisites.shutil, 'which', return_value='/fixture/docker'), patch.object(ssh_prerequisites.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
-                self.assertEqual(ssh_prerequisites.run(body)['code'], 'SSH_DIRECTORY_UNSAFE')
-                link = Path(parent) / 'link'; link.symlink_to(root)
-                self.assertEqual(ssh_prerequisites.run(body | {'root': str(link)})['code'], 'SSH_DIRECTORY_UNSAFE')
-            self.assertEqual(root.stat().st_mode & 0o777, 0o755)

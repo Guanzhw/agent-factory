@@ -12,113 +12,18 @@ import json
 import os
 from pathlib import Path
 import secrets
-import socket
-import subprocess
-import sys
-import sysconfig
 import tempfile
 import time
 import unittest
 from uuid import uuid4
 
-import httpx
 
 from pg_fixture import IsolatedPostgres
-from controlled_remote_worker import (MANAGER, MODEL_RECEIVER, MODEL_SOURCE, ORIGIN_OWNER, OTHER_OWNER,
-    RECEIVER_OWNER, TARGET_REF, token)
+from controlled_remote_worker import (MODEL_RECEIVER, MODEL_SOURCE, OTHER_OWNER,
+    TARGET_REF)
 from agent_factory.store import digest
-from agent_factory_research.orx_tools import ORX_ADAPTER_ID, ORX_ADAPTER_REVISION
 
-PROJECT = Path(__file__).resolve().parents[2]
-
-
-def loopback_port():
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
-
-
-class OwnedServer:
-    def __init__(self, configuration, directory):
-        self.configuration, self.directory = configuration, Path(directory)
-        self.path = self.directory / (configuration["role"] + "-server.json")
-        self.path.write_text(json.dumps(configuration), encoding="utf-8")
-        self.url = "http://127.0.0.1:" + str(configuration["port"])
-        self.process = self.log = None
-        self.starts = []
-
-    def start(self):
-        if self.process is not None and self.process.poll() is None:
-            raise RuntimeError("Owned fixture server is already running")
-        environment = {**os.environ, "FACTORY_REMOTE_PROCESS_CONFIG": str(self.path),
-                       "PYTHONPATH": os.pathsep.join([str(PROJECT / path) for path in
-                           ("platform", "platform/tests", "apps/research", "deployment")] + [sysconfig.get_path("purelib")]),
-                       "AGNO_TELEMETRY": "false"}
-        if self.log is not None:
-            self.log.close()
-        self.log = (self.directory / (self.configuration["role"] + "-server.log")).open("ab")
-        flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)) if os.name == "nt" else 0
-        # On Windows the venv executable is a redirector with a different
-        # child PID. Run real CPython with the same pinned environment path
-        # so the retained Popen identity owns the actual service directly.
-        interpreter = getattr(sys, "_base_executable", sys.executable)
-        self.process = subprocess.Popen([interpreter, "-m", "controlled_remote_worker"], cwd=PROJECT, env=environment,
-            stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT, creationflags=flags)
-        self.starts.append(self.process.pid)
-        deadline = time.monotonic() + 25
-        with httpx.Client(timeout=1, trust_env=False) as client:
-            while time.monotonic() < deadline:
-                if self.process.poll() is not None:
-                    raise AssertionError("Owned fixture startup failed: " + self.log_tail())
-                try:
-                    if client.get(self.url + "/api/health").status_code == 200:
-                        return self
-                except httpx.HTTPError:
-                    pass
-                time.sleep(.04)
-        raise AssertionError("Owned fixture did not start: " + self.log_tail())
-
-    def log_tail(self):
-        return (self.directory / (self.configuration["role"] + "-server.log")).read_text(encoding="utf-8", errors="replace")[-5000:]
-
-    def stop(self):
-        # Popen identity is created/retained by this fixture; never enumerate or
-        # kill arbitrary host processes. This workflow has no subprocess tools.
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(8)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(5)
-        if self.log is not None:
-            self.log.close()
-
-    def request(self, method, path, *, actor=None, fixture=False, **kwargs):
-        actor = actor or (ORIGIN_OWNER if self.configuration["role"] == "origin" else RECEIVER_OWNER)
-        headers = {"Authorization": "Bearer " + token(self.configuration["jwtKey"], actor)}
-        if fixture:
-            headers["X-Fixture-Control"] = self.configuration["controlKey"]
-        # One public instance request may await prepare, dispatch and detail,
-        # each with the production handoff client's 20-second read deadline.
-        # The outer fixture must allow those phases and current-authority checks
-        # to finish; bounded state waits and all admission/effect proofs remain.
-        read_seconds = 75 if method.upper() == "POST" and path == "/api/factory/instances" else 30
-        timeout = httpx.Timeout(connect=3, read=read_seconds, write=5, pool=3)
-        with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
-            return client.request(method, self.url + path, headers=headers, **kwargs)
-
-    def facts(self, task=None):
-        response = self.request("GET", "/__fixture/state", fixture=True, actor=MANAGER, params={"taskId": task} if task else {})
-        if response.status_code != 200:
-            raise AssertionError(response.text)
-        return response.json()
-
-    def control(self, op, **kwargs):
-        response = self.request("POST", "/__fixture/control", fixture=True, actor=MANAGER, json={"op": op, **kwargs})
-        if response.status_code != 200:
-            raise AssertionError(response.text)
-        return response.json()
+from controlled_remote_server import OwnedServer, loopback_port
 
 
 class OwnedRemotePair:
@@ -146,9 +51,6 @@ class OwnedRemotePair:
             source = self.origin.facts()
             spec = {"materialRef": source["materials"]["fixture-selected-model"], "adapterId": MODEL_SOURCE,
                     "revision": "1", "config": {"connectionName": "provider"}, "connection": source["connection"]}
-            if self.registered_tools:
-                common["sourceORXSpec"] = {"materialRef": source["materials"]["fixture-selected-orx"], "adapterId": ORX_ADAPTER_ID,
-                    "revision": ORX_ADAPTER_REVISION, "config": {"connectionName": "discovery"}, "toolName": "orx_discover", "connection": source["orxConnection"]}
             self.receiver = OwnedServer({**common, "role": "receiver", "dbUrl": self.receiver_db.url, "jwtKey": receiver_key,
                 "port": second, "workspace": str(self.path / "receiver-workspace"), "sourceSpec": spec, "sourceApplication": source["applicationSnapshot"]}, self.path)
             self.receiver.start()
@@ -207,7 +109,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         facts = self.origin.facts()
         proposal = self.call(self.origin, "POST", "/compositions/proposals", expected=201, json={
             "goal": goal, "mode": mode, "applicationRef": facts["applicationRef"],
-            "connectionRefs": {"provider": facts["connection"]["ref"], **({"discovery": facts["orxConnection"]["ref"]} if mode == "discovery" else {})}, "requestId": uuid4().hex}).json()
+            "connectionRefs": {"provider": facts["connection"]["ref"]}, "requestId": uuid4().hex}).json()
         self.assertEqual(proposal["candidate"]["status"], "ready", proposal)
         plan = self.call(self.origin, "POST", f"/compositions/proposals/{proposal['id']}/accept", expected=201,
             json={"requestId": uuid4().hex}).json()
@@ -511,36 +413,6 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         self.assertTrue(owned["terminal"])
         self.assertTrue(owned["cancel_requested"])
 
-    def test_09_registered_remote_orx_tool_actual_native_effect_and_controlled_discovery_artifact(self):
-        separate = OwnedRemotePair(os.environ["FACTORY_TEST_DATABASE_URL"], registered_tools=True).start()
-        previous_origin, previous_receiver, previous_tasks = self.origin, self.receiver, self.tasks
-        self.origin, self.receiver, self.tasks = separate.origin, separate.receiver, []
-        try:
-            plan, task, body, _ = self.execute("discovery")
-            self.assertIn("orx_discover", plan["tools"])
-            completed = self.wait(self.origin, task, {"completed"}, seconds=45)
-            receipt = completed["snapshot"]["remoteHandoff"]
-            for item in completed["artifacts"]:
-                self.assert_binding_provenance(item, plan, receipt)
-            mapped = next(entry for entry in receipt["receiverBindingProof"]["entries"] if entry["kind"] == "tool" and entry["sourceSpec"]["toolName"] == "orx_discover")
-            self.assertEqual(mapped["sourceSpec"]["connection"], self.origin.facts()["orxConnection"])
-            self.assertEqual(mapped["effectiveSpec"]["connection"], self.receiver.facts()["orxConnection"])
-            artifact = next(item for item in completed["artifacts"] if item["name"].startswith("orx-discovery-"))
-            raw = self.call(self.origin, "GET", f"/jobs/{task}/artifacts/{artifact['id']}")
-            self.assertEqual(hashlib.sha256(raw.content).hexdigest(), artifact["sha256"])
-            document = raw.json()
-            self.assertEqual(document["result"]["evidenceKind"], "controlled_transport_fixture")
-            self.assertEqual(document["result"]["results"][0]["id"], "W-controlled-tcp-fixture")
-            self.assertTrue(any(event["type"] == "orx_discovery_completed" for event in completed["events"]))
-            effects = self.call(self.receiver, "GET", "/remote-handoffs/" + receipt["id"]).json()["effects"]
-            self.assertEqual(len(effects), 1)
-            self.assertEqual(effects[0]["status"], "DONE")
-            self.call(self.origin, "POST", "/instances", expected=202, json=body)
-            self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
-            self.assertEqual(self.receiver.facts(receipt["remoteTaskId"])["nativeTickets"], 1)
-        finally:
-            self.origin, self.receiver, self.tasks = previous_origin, previous_receiver, previous_tasks
-            separate.close()
 
     def test_07_lost_dispatch_ack_receiver_restart_reconciles_one_original_native_ticket(self):
         plan = self.plan("paused")

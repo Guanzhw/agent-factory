@@ -25,7 +25,7 @@ class Login(Body):
 class PlanRequest(Body):
     topic: str = Field(min_length=2, max_length=2000)
     mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    application: str = Field(default="research", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    application: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     applicationRef: dict | None = None
     materialChoices: dict = Field(default_factory=dict, max_length=30)
     connectionRefs: dict = Field(default_factory=dict, max_length=30)

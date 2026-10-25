@@ -21,11 +21,10 @@ from pg_fixture import IsolatedPostgres
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.delegation import DelegationService, application_group_status
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.runtime import build_runtime
-from agent_factory_research.tools import DATASET_HASH
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")
@@ -72,7 +71,7 @@ class DelegationPostgresTests(unittest.TestCase):
         return self.client.portal.call(function, *args)
 
     def parent(self, mode="literature"):
-        response = self.client.post("/api/factory/plans", json={"topic": "sort", "mode": mode, "requestId": str(uuid4())})
+        response = self.client.post("/api/factory/plans", json={"topic": "sort", "application": "fixture-text", "mode": mode, "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
         plan = response.json()
         response = self.client.post("/api/factory/instances", json={"planId": plan["id"], "requestId": str(uuid4())})
@@ -134,7 +133,7 @@ class DelegationPostgresTests(unittest.TestCase):
         plan = self.store.plan(child["plan_id"])
         self.assertEqual(plan["budget"]["depth"], 1)
         pinned = copy.deepcopy(plan)
-        self.store.add_material({"id": "research-prompt", "kind": "prompt", "name": "Changed synthetic prompt", "description": "Fixture", "content": "Later catalog update", "dependencies": [], "permissions": [], "compatibility": ["agno:3.1.0", "mode:demo"], "archived": False}, "manager", seed=True)
+        self.store.add_material({"id": "fixture-prompt", "kind": "prompt", "name": "Changed synthetic prompt", "description": "Fixture", "content": "Later catalog update", "dependencies": [], "permissions": [], "compatibility": ["agno:3.1.0", "mode:demo"], "archived": False}, "manager", seed=True)
         self.assertEqual(self.store.plan(child["plan_id"]), pinned)
         recovered = DelegationService(self.settings, self.store, self.auth, self.bridge)
         recovered.initialize()
@@ -235,7 +234,7 @@ class DelegationPostgresTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         self.wait_native(root["id"], {"completed"})
         charged = self.store.sql("SELECT tool_name FROM af_delegation_tool_calls WHERE task_id=:task", task=root["id"])
-        self.assertEqual({row["tool_name"] for row in charged}, {"ask_scope", "literature_search"})
+        self.assertEqual({row["tool_name"] for row in charged}, {"ask_scope", "checksum"})
         self.assertFalse(self.service.delegation_scope("alice", root["id"])["allowed"])
         group = self.call(self.service.inspect_group, "alice", root["id"])
         self.assertEqual(application_group_status("completed", group), "waiting_children")
@@ -318,33 +317,6 @@ class DelegationPostgresTests(unittest.TestCase):
         finally:
             self.call(observer.start)
 
-    def test_08_running_experiment_cascade_confirms_cleanup(self):
-        root = self.parent("experiment")
-        child = self.child(root, mode="experiment", goal="Evaluate synthetic candidate")["childTask"]
-        detail = self.client.get("/api/factory/jobs/" + child["id"]).json()
-        approval = detail["job"]["approvalDetail"]
-        result = self.client.post(f'/api/factory/jobs/{child["id"]}/approve', json={"requirementId": approval["id"], "version": approval["version"], "approved": True})
-        self.assertEqual(result.status_code, 200, result.text)
-        self.wait_native(child["id"], {"running"})
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not any(event["type"] == "compute_started" for event in self.store.events(child["id"])):
-            time.sleep(.03)
-        self.assertTrue(any(event["type"] == "compute_started" for event in self.store.events(child["id"])))
-        group = self.call(self.service.inspect_group, "alice", root["id"])
-        self.assertFalse(group["unknown"], group)
-        self.assertFalse(group["allStopped"])
-        running = next(entry for entry in group["children"] if entry["taskId"] == child["id"])
-        self.assertEqual(running["nativeStatus"], "running")
-        self.assertFalse(running["unknown"])
-        self.assertEqual(application_group_status("running", group), "running")
-        self.call(self.service.cascade_cancel, "alice", root["id"])
-        group = self.wait_group(root["id"])
-        child_facts = next(entry for entry in group["children"] if entry["taskId"] == child["id"])
-        self.assertEqual(child_facts["nativeStatus"], "cancelled")
-        self.assertFalse(child_facts["unknown"])
-        self.assertTrue(any(effect["status"] == "CANCELLED" and effect["result"]["cleanupComplete"] for effect in child_facts["effects"]))
-        stopped = [event for event in self.store.events(child["id"]) if event["type"] == "compute_stopped"]
-        self.assertTrue(stopped)
 
     def test_09_shared_tool_budget_durable_duplicate_and_exhaustion(self):
         old = self.settings.max_tool_calls
@@ -364,9 +336,9 @@ class DelegationPostgresTests(unittest.TestCase):
             self.assertEqual(scope["sharedBudget"]["toolCallsUsed"], 2)
             self.denied(429, self.service.create, "alice", root["id"], "sort", "literature", str(uuid4()))
             with self.assertRaises(PermissionError):
-                recovered.consume_tool_budget(child_ctx, "fixture-third-call", "literature_search")
+                recovered.consume_tool_budget(child_ctx, "fixture-third-call", "checksum")
             with self.assertRaises(PermissionError):
-                recovered.consume_tool_budget(root_ctx, "fixture-root-call", "literature_search")
+                recovered.consume_tool_budget(root_ctx, "fixture-root-call", "checksum")
             self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root["id"])[0]["n"], 2)
         finally:
             self.settings.max_tool_calls = old
@@ -437,10 +409,39 @@ class DelegationPostgresTests(unittest.TestCase):
         self.assertTrue(group["unknown"])
         self.assertFalse(group["allStopped"])
 
-    def test_13_native_approved_experiment_current_authority_policy_and_unknown_stop_before_process(self):
+
+    def test_08_running_owned_operation_cascade_confirms_cleanup(self):
+        root = self.parent("experiment")
+        child = self.child(root, mode="experiment", goal="Run controlled owned operation")["childTask"]
+        detail = self.client.get("/api/factory/jobs/" + child["id"]).json()
+        approval = detail["job"]["approvalDetail"]
+        result = self.client.post(f'/api/factory/jobs/{child["id"]}/approve', json={"requirementId": approval["id"], "version": approval["version"], "approved": True})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.wait_native(child["id"], {"running"})
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not any(event["type"] == "operation_started" for event in self.store.events(child["id"])):
+            time.sleep(.03)
+        self.assertTrue(any(event["type"] == "operation_started" for event in self.store.events(child["id"])))
+        group = self.call(self.service.inspect_group, "alice", root["id"])
+        self.assertFalse(group["unknown"], group)
+        self.assertFalse(group["allStopped"])
+        running = next(entry for entry in group["children"] if entry["taskId"] == child["id"])
+        self.assertEqual(running["nativeStatus"], "running")
+        self.assertFalse(running["unknown"])
+        self.assertEqual(application_group_status("running", group), "running")
+        self.call(self.service.cascade_cancel, "alice", root["id"])
+        group = self.wait_group(root["id"])
+        child_facts = next(entry for entry in group["children"] if entry["taskId"] == child["id"])
+        self.assertEqual(child_facts["nativeStatus"], "cancelled")
+        self.assertFalse(child_facts["unknown"])
+        self.assertTrue(any(effect["status"] == "CANCELLED" and effect["result"]["allStopped"] for effect in child_facts["effects"]))
+        stopped = [event for event in self.store.events(child["id"]) if event["type"] == "operation_stopped"]
+        self.assertTrue(stopped)
+
+    def test_13_native_approved_owned_operation_current_authority_policy_and_unknown_stop_before_process(self):
         for scenario in ("revoked", "unknown"):
             with self.subTest(scenario=scenario):
-                response = self.client.post("/api/factory/plans", json={"topic": "Evaluate synthetic candidate", "mode": "experiment", "requestId": str(uuid4())})
+                response = self.client.post("/api/factory/plans", json={"topic": "Run controlled owned operation", "application": "fixture-text", "mode": "experiment", "requestId": str(uuid4())})
                 self.assertEqual(response.status_code, 201, response.text)
                 response = self.client.post("/api/factory/instances", json={"planId": response.json()["id"], "requestId": str(uuid4())})
                 self.assertEqual(response.status_code, 202, response.text)
@@ -450,12 +451,12 @@ class DelegationPostgresTests(unittest.TestCase):
                 snapshot = self.call(self.bridge.detail, task["run_id"], task["id"], "alice")
                 requirements = copy.deepcopy(snapshot.get("requirements") or snapshot.get("run", {}).get("requirements"))
                 self.assertEqual(len(requirements), 1)
-                self.assertEqual(requirements[0]["tool_execution"]["tool_name"], "run_experiment")
+                self.assertEqual(requirements[0]["tool_execution"]["tool_name"], "fixture_operation")
                 requirements[0]["confirmation"] = True
                 requirements[0]["tool_execution"]["confirmed"] = True
                 artifacts_before = copy.deepcopy(self.store.artifacts(task["id"]))
                 if scenario == "unknown":
-                    self.store.effect_reserve(task["run_id"], "experiment:bounded-sort-v1", {"experiment": "bounded-sort-v1", "datasetHash": DATASET_HASH, "evaluatorVersion": "1"})
+                    self.store.effect_reserve(task["run_id"], "fixture-operation-v1", {"taskId": task["id"]})
                     # Deliberately unresolved work cannot satisfy teardown's
                     # positive-stop assertion, even if a later assertion fails.
                     self.roots.remove(task["id"])
@@ -463,29 +464,29 @@ class DelegationPostgresTests(unittest.TestCase):
                 original = self.store.authorize_tool
                 changed = []
                 def change_at_protected_boundary(ctx, name):
-                    if name == "run_experiment" and not changed:
+                    if name == "fixture_operation" and not changed:
                         changed.append(name)
                         if scenario == "revoked":
                             self.auth.directory.set_disabled("alice", True)
                     return original(ctx, name)
-                with mock.patch("agent_factory_research.tools.subprocess.Popen", side_effect=AssertionError("Denied native experiment attempted compute")) as start_process:
+                with mock.patch("core_native_fixture.subprocess.Popen", side_effect=AssertionError("Denied native experiment attempted compute")) as start_process:
                     try:
                         with mock.patch.object(self.store, "authorize_tool", side_effect=change_at_protected_boundary):
                             self.call(self.bridge.continue_run, task["run_id"], task["id"], "alice", requirements)
                             self.wait_native(task["id"], {"completed", "failed", "cancelled"})
-                        self.assertEqual(changed, ["run_experiment"])
+                        self.assertEqual(changed, ["fixture_operation"])
                         self.assertEqual(self.store.effects(task["id"]), effects_before)
                         self.assertEqual(self.store.artifacts(task["id"]), artifacts_before)
-                        registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
+                        registered = next(tool for tool in self.registry.tools if tool.name == "fixture_operation")
                         ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="alice", session_state={})
                         async def direct_entrypoint():
-                            return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
+                            return await registered.entrypoint(run_context=ctx)
                         with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
                             self.call(direct_entrypoint)
                         start_process.assert_not_called()
                         self.assertEqual(self.store.effects(task["id"]), effects_before)
                         self.assertEqual(self.store.artifacts(task["id"]), artifacts_before)
-                        self.assertFalse(any(event["type"] == "compute_started" for event in self.store.events(task["id"])))
+                        self.assertFalse(any(event["type"] == "operation_started" for event in self.store.events(task["id"])))
                     finally:
                         self.auth.directory.set_disabled("alice", False)
                 response = self.client.get("/api/factory/jobs/" + task["id"])

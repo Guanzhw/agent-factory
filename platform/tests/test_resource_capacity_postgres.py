@@ -15,8 +15,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.resources import ComputePool, PersistentResourceService, RemoteTarget
 from pg_fixture import IsolatedPostgres
 
@@ -116,7 +116,7 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
 
     def task(self, owner):
         plan = self.request(owner, "POST", "/plans", expected=201, json={"topic": "sort", "mode": "literature",
-            "application": "research", "requestId": str(uuid4())}).json()
+            "application": "fixture-text", "requestId": str(uuid4())}).json()
         task = self.request(owner, "POST", "/instances", expected=202,
             json={"planId": plan["id"], "requestId": str(uuid4())}).json()["id"]
         self.wait(owner, task, {"waiting_input"})

@@ -37,8 +37,8 @@ are not followed. Timeouts, response bounds and explicit connection failures
 remain operational controls.
 
 The generic OpenCode adapter checks health, the configured project identity and
-available agents. Native OpenResearch uses its declared service-authentication
-protocol. These checks establish the adapter's actual protocol contract.
+available agents. These checks establish the adapter's actual protocol contract;
+the retired Research application is not installed.
 
 ## SSH servers
 
@@ -60,11 +60,10 @@ Docker or an installed research application. It creates no remote directory.
 The configured directory is the generic resource's directory; an application may
 select its own subdirectory when preparing its environment.
 
-Preparing a research application separately checks that application's actual
-requirements. For example, a missing Python runtime produces
-`SSH_PYTHON_MISSING` during preparation even though generic SSH verification
-succeeded. A deployment without a preparation adapter reports
-`SSH_CHECK_UNCONFIRMED` for that unavailable preparation operation.
+An explicitly installed application must separately validate its preparation
+requirements. A successful generic SSH directory check does not establish those
+requirements or install an application. Unavailable preparation reports
+`SSH_CHECK_UNCONFIRMED`.
 
 The private key is encrypted in the owner's vault. Execution loads a bounded
 lease into a private local `ssh-agent` over stdin. Only public identity and
@@ -94,15 +93,15 @@ The following tests generate synthetic credentials and use isolated loopback
 services. They do not contact external model providers or user SSH servers:
 
 ```sh
-PYTHONPATH=platform:apps/research:platform/tests:apps/research/tests/python \
-  work/.venv-linux/bin/python -m unittest \
+PYTHONPATH=platform:platform/tests \
+  uv run python -m unittest \
   test_custom_resource_endpoints test_personal_ssh test_byok_model \
   test_trusted_model_proxy -v
 
 # An installed or task-owned extracted sshd executable is required:
 FACTORY_TEST_SSHD=/absolute/path/to/sshd \
-PYTHONPATH=platform:apps/research:platform/tests \
-  work/.venv-linux/bin/python -W error::ResourceWarning -m unittest \
+PYTHONPATH=platform:platform/tests \
+  uv run python -W error::ResourceWarning -m unittest \
   test_personal_ssh_live -v
 ```
 

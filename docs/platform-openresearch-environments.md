@@ -1,5 +1,7 @@
 # Platform OpenResearch environments (first increment)
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 Ordinary research may use a platform-provided environment after its operator
 installs the reviewed runtime package. The owner configures a default model once,
 chooses **platform**, and starts with a goal. Preparation creates or restores the

@@ -1,5 +1,7 @@
 # Fixed eager-model memory preflight
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 `probe_research_model_memory.py` is an operator-authorized local diagnostic, not a
 Factory training task. It reuses the unchanged source generator and SDPA runtime
 from base `87f7227fae1d4a39ba85db6f68d96061f9f4de3a`. It does not install anything,

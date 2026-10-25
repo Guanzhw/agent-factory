@@ -23,7 +23,7 @@ class CatalogContractTests(ApplicationCompositionFixture):
         owned = self.material(kind="knowledge", id="catalog-archive-owned")
         definition = app_definition(self.store, identifier="catalog-archive-fixture")
         refs = definition["modes"]["literature"]["materialRefs"]
-        refs[refs.index(next(ref for ref in refs if ref["id"] == "synthetic-knowledge"))] = pin(owned)
+        refs[refs.index(next(ref for ref in refs if ref["id"] == "fixture-knowledge"))] = pin(owned)
         application = self.applications.create_draft("manager", definition, "catalog-archive-app")
         self.applications.publish("manager", application["id"], application["version"], "catalog-archive-publish")
         original = create_plan(self.store, "alice", "Compare synthetic candidates", "literature",
@@ -36,8 +36,8 @@ class CatalogContractTests(ApplicationCompositionFixture):
 
     def test_tool_kind_and_registered_binding_cannot_be_replaced(self):
         for changes in ({"kind": "tool", "content": "arbitrary_shell", "permissions": ["checksum:read"]},
-                        {"id": "literature-tool", "kind": "prompt"},
-                        {"id": "literature-tool", "kind": "tool", "content": "ask_scope", "permissions": ["question:ask"]}):
+                        {"id": "fixture-question-tool", "kind": "prompt"},
+                        {"id": "fixture-question-tool", "kind": "tool", "content": "ask_scope", "permissions": ["question:ask"]}):
             with self.subTest(changes=changes), self.assertRaises(HTTPException):
                 self.material(**changes)
         self.assertEqual(self.plan()["status"], "ready")
@@ -65,7 +65,7 @@ class CatalogContractTests(ApplicationCompositionFixture):
         alternate = self.material(content="Changed approved instructions in a new immutable version.")
         revised_definition = app_definition(self.store)
         refs = revised_definition["modes"]["literature"]["materialRefs"]
-        refs[refs.index(next(ref for ref in refs if ref["id"] == "research-prompt"))] = pin(alternate)
+        refs[refs.index(next(ref for ref in refs if ref["id"] == "fixture-prompt"))] = pin(alternate)
         revised = self.applications.revise("manager", application["id"], 1, revised_definition, "revise-config")
         self.applications.publish("manager", revised["id"], 2, "publish-config")
         current = create_plan(self.store, "alice", "Original governed synthetic plan", "literature", application_ref=pin(revised))

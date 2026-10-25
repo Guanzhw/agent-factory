@@ -40,9 +40,9 @@ export function StoragePanel({ ownerId, busy, act, onNotice }: { ownerId: string
         <p className="quiet">共享空间包含宿主机与 Docker 数据。这里不会清理其他用户目录或执行全局 prune。磁盘预留用于准入，不等同于操作系统硬配额。</p>
       </section>
       <section className="storage-card"><h2>我的数据与预留</h2><p>数据库证据产物：{value.databaseArtifacts.count} 项，{bytes(value.databaseArtifacts.bytes)}。证据不进入自动回收。</p>
-        <p className="quiet">本次最多展示 {value.observationLimits.objects} 个目录、{value.observationLimits.plans} 个计划和 {value.observationLimits.orxDirectories} 个 ORX 证据目录；不是完整历史导出。</p>
+        <p className="quiet">本次最多展示 {value.observationLimits.objects} 个目录、{value.observationLimits.plans} 个计划和 {value.observationLimits.orxDirectories} 个历史证据目录；不是完整历史导出。</p>
         <p>{value.ownerHolds.filter(hold => hold.state === 'HELD').length} 项磁盘预留仍占用；UNKNOWN 和未回收的资源租约不会被当作空闲。</p>
-        {value.protectedDirectories.map(directory => <p className="quiet" key={directory.taskId}>ORX 证据目录 · {directory.taskId} · {bytes(directory.logicalBytes)} · 保留保护</p>)}
+        {value.protectedDirectories.map(directory => <p className="quiet" key={directory.taskId}>历史证据目录 · {directory.taskId} · {bytes(directory.logicalBytes)} · 保留保护</p>)}
         {value.protectedContainers.map(container => <p className="quiet" key={container.taskId}>原任务容器 · {container.taskId} · {container.complete ? `可写层 ${bytes(container.writableLayerBytes)}，逻辑根文件系统 ${bytes(container.rootFilesystemLogicalBytes)}` : '归属或用量未确认'} · 保留停止证据，不进入目录回收。逻辑大小不能相加作为 vfs 实占。</p>)}
       </section>
       <section className="storage-card"><h2>可观测的任务目录</h2>

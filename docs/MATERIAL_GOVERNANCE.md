@@ -7,7 +7,7 @@ record, preserving earlier plans and artifact evidence.
 
 ## Membership, ownership and publication
 
-`Settings` and `ResearchSettings` use `member-self-service`. Every active member
+Core `Settings` uses `member-self-service`. Every active member
 can create and directly publish their own exact versions. Authors manage their
 own drafts, revisions, withdrawals and archives. Account administrators manage
 accounts and have no override over another author's materials or private history.

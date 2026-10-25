@@ -8,7 +8,7 @@ import { PersonalCredentials } from '../web/PersonalCredentials.js';
 import { personalRemoteApi, RemoteRequestError } from '../web/personalRemoteApi.js';
 import { credentialReceipt, matchCredentialReceipt, readCredentialCommand } from '../web/credentialManagement.js';
 
-const row = { credentialRef: 'credential-fixture', credentialRevision: 'r1', providerId: 'openresearch-personal-session-v1', destination: 'https://service.example.org', status: 'active' };
+const row = { credentialRef: 'credential-fixture', credentialRevision: 'r1', providerId: 'synthetic-remote-service', destination: 'https://service.example.org', status: 'active' };
 const secret = 'synthetic-credential-only'; const storage = 'factory-credential-management:alice';
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {

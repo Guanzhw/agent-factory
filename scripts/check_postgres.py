@@ -73,8 +73,8 @@ def main(argv=None):
     if not os.environ.get('FACTORY_TEST_DATABASE_URL'):
         print('POSTGRES_REQUIRED: set FACTORY_TEST_DATABASE_URL to a disposable database', file=sys.stderr)
         return 1
-    if sys.platform != 'linux' and (not args.group or 'research_candidate_postgres' in args.group):
-        print('POSTGRES_REQUIRED: full/candidate acceptance requires Linux', file=sys.stderr)
+    if sys.platform != 'linux' and not args.group:
+        print('POSTGRES_REQUIRED: full acceptance requires Linux', file=sys.stderr)
         return 1
     configure_imports()
     requirements = {group: REQUIRED_TESTS[group] for group in args.group} if args.group else REQUIRED_TESTS

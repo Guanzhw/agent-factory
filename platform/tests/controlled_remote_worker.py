@@ -26,13 +26,11 @@ from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import AuthService
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration, KnowledgeContext
-from agent_factory_server.main import create_app
-from agent_factory_research.openresearch import BinaryPin, REVISION, VERSION
-from agent_factory_research.orx_tools import ORX_ADAPTER_ID
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
@@ -50,7 +48,6 @@ APP_ID = "fixture-governed-checksum"
 MODEL_SOURCE = "fixture-origin-model-v1"
 MODEL_RECEIVER = "fixture-receiver-model-v1"
 CONNECTION_REGISTRATION = "fixture-owner-model"
-ORX_CONNECTION_REGISTRATION = "fixture-owner-orx"
 MAPPING_REF = "fixture-exact-model-mapping"
 CONNECTION_FIELDS = ("ref", "version", "fingerprint", "kind", "revision", "capabilities", "taskId")
 
@@ -74,23 +71,8 @@ class ControlledProvider:
         return "<opaque-controlled-fixture-provider>"
 
 
-class ControlledORXAdapter:
-    """No command, binary or discovery network is invoked in this fixture."""
-    def __init__(self, owner_id, task_id, max_output_bytes, command_timeout):
-        self.owner_id, self.task_id = owner_id, task_id
-        self.pin = BinaryPin(REVISION, VERSION, "d602b1b184589b72d9ce68a119b8959ee595f46869e951f63309781e60b173e7")
-        self.enabled = True
-        self.transport_kind = "controlled_transport_fixture"
-        self.max_output_bytes, self.command_timeout = max_output_bytes, command_timeout
-        self._processes = set()
-
-    async def discover(self, query, *, corpus, limit):
-        return [{"source": "openalex", "id": "W-controlled-tcp-fixture", "title": "Synthetic remote discovery metadata", "year": 2026}][:limit]
 
 
-class ControlledORXProvider:
-    def create_adapter(self, *, owner_id, task_id, scope, authorize, pin, max_output_bytes, command_timeout):
-        return ControlledORXAdapter(owner_id, task_id, max_output_bytes, command_timeout)
 
 
 class ControlledModel(DemoModel):
@@ -133,9 +115,6 @@ def provision_owned_subjects(settings):
         try:
             service = ConnectionService(store, auth, settings.trusted_connections)
             bound = service.bind(local_owner, CONNECTION_REGISTRATION, "fixture-bind-before-main", capabilities=["checksum:read"])
-            if ORX_CONNECTION_REGISTRATION in settings.trusted_connections:
-                orx = service.bind(local_owner, ORX_CONNECTION_REGISTRATION, "fixture-orx-bind-before-main", capabilities=["research:read"])
-                settings.fixture_orx_pin = {name: orx[name] for name in CONNECTION_FIELDS}
             return {name: bound[name] for name in CONNECTION_FIELDS}
         finally:
             store.engine.dispose()
@@ -157,16 +136,13 @@ def publish_fixture(state, source_application=None):
     governance, applications = state["material_governance"], state["applications"]
     definitions = [
         material_definition("fixture-selected-model", "model", "Explicit operator-installed controlled model.", MODEL_SOURCE, {"connectionName": "provider"}),
-        material_definition("fixture-selected-environment", "environment", "Fixed bounded local environment.", "local-bounded-environment-v1"),
-        material_definition("fixture-selected-knowledge", "knowledge", "Original public controlled checksum knowledge.", "fixture-knowledge-v1"),
+        material_definition("fixture-selected-environment", "environment", "Fixed bounded local environment.", "fixture-environment-v1"),
+        material_definition("fixture-selected-knowledge", "knowledge", "Original public controlled checksum knowledge.", "fixture-controlled-knowledge-v1"),
         material_definition("fixture-selected-skill", "skill", "Calculate only the approved checksum and report artifact evidence."),
         material_definition("fixture-selected-prompt", "prompt", "Follow the reviewed task and current authority."),
-        material_definition("fixture-selected-checksum", "tool", "checksum", "native-checksum-v1", permissions=["checksum:read"]),
-        material_definition("fixture-selected-question", "tool", "ask_scope", "native-ask-scope-v1", permissions=["question:ask"]),
+        material_definition("fixture-selected-checksum", "tool", "checksum", "fixture-checksum-v1", permissions=["checksum:read"]),
+        material_definition("fixture-selected-question", "tool", "ask_scope", "fixture-ask-scope-v1", permissions=["question:ask"]),
     ]
-    if state["settings"].runtime_tool_contract == "registered-runtime-v1":
-        definitions.append(material_definition("fixture-selected-orx", "tool", "orx_discover", ORX_ADAPTER_ID,
-            {"connectionName": "discovery"}, permissions=["research:read"]))
     materials = {}
     for definition in definitions:
         mid = definition["id"]
@@ -180,10 +156,6 @@ def publish_fixture(state, source_application=None):
     paused = {**direct, "materialRefs": [*common, pin(materials["fixture-selected-question"])],
               "capabilities": ["checksum:read", "question:ask"], "toolOrder": ["ask_scope", "checksum"], "config": {"askScopeBelowLength": 2000}}
     modes = {"direct": direct, "paused": paused}
-    if "fixture-selected-orx" in materials:
-        modes["discovery"] = {**direct, "materialRefs": [*common, pin(materials["fixture-selected-orx"])],
-            "capabilities": ["checksum:read", "research:read"], "toolOrder": ["checksum", "orx_discover"],
-            "connectionRequirements": [*requirement, {"name": "discovery", "kind": "orx", "requiredCapabilities": ["research:read"], "required": True}]}
     if source_application is None:
         application = applications.create_draft(MANAGER, {"id": APP_ID, "name": "Governed controlled checksum",
             "description": "Actual non-demo policy path with explicitly controlled provider.", "defaultMode": "direct",
@@ -310,10 +282,6 @@ def main():
     trusted = TrustedConnectionBinding(owner, "model", adapter, frozenset({"checksum:read"}), "fixture-provider-v1",
         available=True, opaque_handle=provider, handle_ref=role + "-stable-owned-provider")
     settings.trusted_connections = {CONNECTION_REGISTRATION: trusted}
-    if configuration.get("registeredTools"):
-        settings.trusted_connections[ORX_CONNECTION_REGISTRATION] = TrustedConnectionBinding(owner, "orx", ORX_ADAPTER_ID,
-            frozenset({"research:read"}), "fixture-orx-provider-v1", available=True, opaque_handle=ControlledORXProvider(),
-            handle_ref=role + "-stable-owned-orx-provider")
     connection_pin = provision_owned_subjects(settings)
     controls = {"fault": None, "unknownUsage": False}
     if configuration.get("usageProfile") == "metered":
@@ -336,7 +304,7 @@ def main():
             {"fixtureOnly": True, "ownerId": owner, "adapterId": adapter, "pid": os.getpid(), "workspace": str(workspace)})
         return ControlledMeteredModel(controls) if configuration.get("usageProfile") == "metered" else ControlledModel(id=adapter)
     settings.runtime_adapters = [AdapterRegistration("model", adapter, "1", model, connection_kind="model", required_capabilities=("checksum:read",)),
-        AdapterRegistration("knowledge", "fixture-knowledge-v1", "1", lambda context: KnowledgeContext("Original scoped fixture checksum context.", {"evidenceKind": "controlled-adapter"}))]
+        AdapterRegistration("knowledge", "fixture-controlled-knowledge-v1", "1", lambda context: KnowledgeContext("Original scoped fixture checksum context.", {"evidenceKind": "controlled-adapter"}))]
     target = HandoffTarget(TARGET_REF, ORIGIN_REF, configuration["receiverUrl"], {ORIGIN_OWNER: RECEIVER_OWNER},
         lambda source_owner: {"Authorization": "Bearer " + token(configuration["receiverJwtKey"], RECEIVER_OWNER)}, configuration_revision="fixture-target-v1")
     initial_mapping = None
@@ -347,8 +315,8 @@ def main():
             target_revision=target.configuration_revision, target_fingerprint=target.fingerprint,
             receiver_identity_map=target.identity_map,
             credential_provider=lambda source_owner: token(configuration["originJwtKey"], RECEIVER_OWNER))
-        origin_options = {"tools": frozenset({"ask_scope", "checksum", "orx_discover"}),
-            "capabilities": frozenset({"question:ask", "checksum:read", "research:read"}),
+        origin_options = {"tools": frozenset({"ask_scope", "checksum"}),
+            "capabilities": frozenset({"question:ask", "checksum:read"}),
             "configuration_revision": "fixture-registered-origin-v1", "tool_contract": "registered-runtime-v1"} if configuration.get("registeredTools") else {}
         settings.handoff_origins = {ORIGIN_REF: TrustedOrigin(ORIGIN_REF, {ORIGIN_OWNER: RECEIVER_OWNER}, transport, **origin_options)}
         source = configuration["sourceSpec"]
@@ -356,11 +324,6 @@ def main():
         initial_mapping = TrustedRemoteBindingMapping(MAPPING_REF, "fixture-mapping-v1", ORIGIN_REF, ORIGIN_OWNER, RECEIVER_OWNER,
             "model", source, effective)
         settings.remote_binding_mappings = {MAPPING_REF: initial_mapping}
-        if configuration.get("registeredTools"):
-            orx_source = configuration["sourceORXSpec"]
-            settings.remote_binding_mappings["fixture-exact-orx-mapping"] = TrustedRemoteBindingMapping("fixture-exact-orx-mapping",
-                "fixture-orx-mapping-v1", ORIGIN_REF, ORIGIN_OWNER, RECEIVER_OWNER, "tool", orx_source,
-                {**copy.deepcopy(orx_source), "connection": settings.fixture_orx_pin})
     application = create_app(settings)
     state = application.app.state.factory
     if role == 'origin':
@@ -417,7 +380,7 @@ def main():
         native = db.get_job(task['run_id']) if task and task.get('run_id') else None
         return {"fixtureOnly": True, "pid": os.getpid(), "mode": "production-policy-controlled-provider", "demo": settings.demo,
             "workspace": str(workspace), "applicationRef": application_ref, "applicationSnapshot": snapshot, "connection": connection_pin,
-            "materials": {key: pin(value) for key, value in materials.items()}, "orxConnection": getattr(settings, "fixture_orx_pin", None), "providerCreated": list(provider.created),
+            "materials": {key: pin(value) for key, value in materials.items()}, "providerCreated": list(provider.created),
             "nativeTickets": count, "tasks": store.tasks(owner),
             'nativeStatus': native.get('status') if native else None,
             'events': store.events(taskId) if taskId else [], 'artifacts': store.artifacts(taskId) if taskId else [],

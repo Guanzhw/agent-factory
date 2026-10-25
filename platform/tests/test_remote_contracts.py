@@ -80,25 +80,25 @@ def _reference(material: dict) -> dict:
 
 def _fixture():
     connection = {
-        "ref": "orx-demo",
+        "ref": "fixture-metadata-connection",
         "version": 1,
         "fingerprint": "a" * 64,
-        "kind": "orx",
+        "kind": "model",
         "revision": "operator-r1",
-        "capabilities": ["research:read"],
+        "capabilities": ["metadata:read"],
         "taskId": None,
     }
     model_binding = {"adapterId": "fixture-model-v1", "revision": "1", "config": {}}
     environment_binding = {"adapterId": "fixture-environment-v1", "revision": "1", "config": {}}
     tool_binding = {
-        "adapterId": "openresearch-discover-v1",
+        "adapterId": "fixture-metadata-v1",
         "revision": "1",
-        "config": {"connectionName": "literatureProvider"},
+        "config": {"connectionName": "metadataProvider"},
     }
     materials = [
         _material("fixture-model", "model", "fixture-model-v1", model_binding),
         _material("fixture-environment", "environment", "fixture-environment-v1", environment_binding),
-        _material("fixture-orx-discover", "tool", "orx_discover", tool_binding, ["research:read"]),
+        _material("fixture-metadata-tool", "tool", "fixture_metadata", tool_binding, ["metadata:read"]),
     ]
     refs = [_reference(item) for item in materials]
     model_ref, environment_ref, tool_ref = refs
@@ -110,7 +110,7 @@ def _fixture():
             **tool_binding,
             "materialRef": tool_ref,
             "connection": connection,
-            "toolName": "orx_discover",
+            "toolName": "fixture_metadata",
         }],
         "knowledge": [],
     }
@@ -118,27 +118,27 @@ def _fixture():
     binding_anchor = {
         "schema": 1,
         "executionBindingsSha256": execution_bindings["sha256"],
-        "connections": {"literatureProvider": connection},
+        "connections": {"metadataProvider": connection},
         "materialRefs": refs,
     }
     binding_anchor["sha256"] = digest(binding_anchor)
     plan = {
         "id": str(uuid4()),
         "ownerId": "alice",
-        "normalizedGoal": "Find public research metadata.",
-        "mode": "research",
-        "application": "research",
+        "normalizedGoal": "Read controlled fixture metadata.",
+        "mode": "fixture-metadata",
+        "application": "fixture-metadata",
         "instructions": ["Return a short public metadata summary."],
-        "tools": ["orx_discover"],
+        "tools": ["fixture_metadata"],
         "config": {
             "askScope": False,
             "sample": "public metadata",
             "experimentDurationSeconds": 1,
-            "toolOrder": ["orx_discover"],
+            "toolOrder": ["fixture_metadata"],
         },
         "materialRefs": refs,
         "materials": materials,
-        "capabilities": ["research:read"],
+        "capabilities": ["metadata:read"],
         "missing": [],
         "status": "ready",
         "createdAt": "2026-10-02T00:00:00+00:00",
@@ -152,7 +152,7 @@ def _fixture():
             "depth": 0,
         },
         "syntheticFixture": False,
-        "applicationRef": {"id": "research", "version": 1, "sha256": "b" * 64},
+        "applicationRef": {"id": "fixture-metadata", "version": 1, "sha256": "b" * 64},
         "executionBindings": execution_bindings,
         "bindingManifest": binding_anchor,
         "compositionProposalId": str(uuid4()),
@@ -166,7 +166,7 @@ def _fixture():
 class RemoteContractsTests(unittest.TestCase):
     def test_member_policy_manifest_is_supported_without_accepting_unknown_policy(self):
         materials, plan, _ = _fixture()
-        store = _Store("registered-runtime-v1", materials)
+        store = _Store("bounded-process-v1", materials)
         registry = ExecutionBindings(store.settings, store, _Connections())
         service = RemoteBindingService.__new__(RemoteBindingService)
         service.store, service.bindings = store, registry
@@ -190,14 +190,12 @@ class RemoteContractsTests(unittest.TestCase):
         self.assertEqual(
             tools_for_contract("legacy-v1"),
             {
-                "literature_search": "research:read",
                 "ask_scope": "question:ask",
                 "checksum": "checksum:read",
-                "run_experiment": "experiment:synthetic",
             },
         )
         origin = TrustedOrigin("fixture-origin", {"alice": "bob"}, _no_authority)
-        self.assertEqual(origin.fingerprint, "54041d86f7edace9b101ea7104a5b0127d0f083d610199d300e39f8ac4ad809b")
+        self.assertEqual(origin.fingerprint, '88425db87ae6f336876845d27b8e1fe3e559241d8eef589b8fefcbc6855b12a3')
         self.assertEqual(origin.tool_contract, "legacy-v1")
 
     def test_registered_remote_contract_requires_a_distinct_operator_revision(self):
@@ -206,22 +204,22 @@ class RemoteContractsTests(unittest.TestCase):
                 "fixture-origin",
                 {"alice": "bob"},
                 _no_authority,
-                capabilities=frozenset({"research:read"}),
-                tools=frozenset({"orx_discover"}),
-                tool_contract="registered-runtime-v1",
+                capabilities=frozenset({"checksum:read"}),
+                tools=frozenset({"checksum"}),
+                tool_contract="bounded-process-v1",
             )
 
         origin = TrustedOrigin(
             "fixture-origin",
             {"alice": "bob"},
             _no_authority,
-            capabilities=frozenset({"research:read"}),
-            tools=frozenset({"orx_discover"}),
-            configuration_revision="orx-contract-r2",
-            tool_contract="registered-runtime-v1",
+            capabilities=frozenset({"checksum:read"}),
+            tools=frozenset({"checksum"}),
+            configuration_revision="fixture-contract-r2",
+            tool_contract="bounded-process-v1",
         )
-        self.assertEqual(origin.tool_contract, "registered-runtime-v1")
-        self.assertNotEqual(origin.fingerprint, "54041d86f7edace9b101ea7104a5b0127d0f083d610199d300e39f8ac4ad809b")
+        self.assertEqual(origin.tool_contract, "bounded-process-v1")
+        self.assertNotEqual(origin.fingerprint, "88425db87ae6f336876845d27b8e1fe3e559241d8eef589b8fefcbc6855b12a3")
 
     def test_exact_source_bindings_are_independent_of_builtin_tool_contract(self):
         materials, _, manifest = _fixture()
@@ -233,7 +231,7 @@ class RemoteContractsTests(unittest.TestCase):
         store.remote_bindings = service
 
         self.assertEqual(_manifest(manifest, store, "alice", receiver=True), manifest["plan"])
-        self.assertEqual(tools_for_contract("legacy-v1").get("orx_discover"), None)
+        self.assertEqual(tools_for_contract("legacy-v1").get("fixture_metadata"), None)
 
     def test_manifest_tool_and_capability_scope_matches_selected_materials(self):
         materials, plan, _ = _fixture()
@@ -243,8 +241,8 @@ class RemoteContractsTests(unittest.TestCase):
         service.store, service.bindings = store, registry
         store.execution_bindings = registry
         store.remote_bindings = service
-        for changes, expected_status in (({"tools": ["orx_discover", "unselected_tool"]}, 409),
-                                         ({"capabilities": ["research:read", "compute:local"]}, 422)):
+        for changes, expected_status in (({"tools": ["fixture_metadata", "unselected_tool"]}, 409),
+                                         ({"capabilities": ["metadata:read", "compute:local"]}, 422)):
             with self.subTest(changes=changes):
                 candidate = deepcopy(plan)
                 candidate.update(changes)
@@ -256,9 +254,9 @@ class RemoteContractsTests(unittest.TestCase):
                     _manifest(manifest, store, "alice", receiver=True)
                 self.assertEqual(denied.exception.status_code, expected_status)
 
-    def test_registered_orx_scope_requires_exact_registered_adapter_and_preflight(self):
+    def test_registered_metadata_scope_requires_exact_registered_adapter_and_preflight(self):
         materials, plan, manifest = _fixture()
-        store = _Store("registered-runtime-v1", materials)
+        store = _Store("bounded-process-v1", materials)
         connections = _Connections()
         registry = ExecutionBindings(store.settings, store, connections)
         service = RemoteBindingService.__new__(RemoteBindingService)
@@ -278,25 +276,25 @@ class RemoteContractsTests(unittest.TestCase):
 
         registry.register(
             "tool",
-            "openresearch-discover-v1",
+            "fixture-metadata-v1",
             "1",
             lambda _context: None,
-            tool_name="orx_discover",
-            connection_kind="orx",
-            required_capabilities=("research:read",),
-            permissions=("research:read",),
+            tool_name="fixture_metadata",
+            connection_kind="model",
+            required_capabilities=("metadata:read",),
+            permissions=("metadata:read",),
         )
         service._effective_check("tool", source, source, tool_material, "bob")
 
         self.assertEqual(len(connections.preflights), 1)
         owner, reference, options = connections.preflights[0]
-        self.assertEqual((owner, reference), ("bob", "orx-demo"))
-        self.assertEqual(options["expected_kind"], "orx")
+        self.assertEqual((owner, reference), ("bob", "fixture-metadata-connection"))
+        self.assertEqual(options["expected_kind"], "model")
         self.assertEqual(options["expected_revision"], "operator-r1")
         self.assertEqual(options["expected_fingerprint"], "a" * 64)
         self.assertEqual(options["expected_version"], 1)
-        self.assertEqual(options["required_capabilities"], ("research:read",))
-        self.assertEqual(options["expected_adapter_ref"], "openresearch-discover-v1")
+        self.assertEqual(options["required_capabilities"], ("metadata:read",))
+        self.assertEqual(options["expected_adapter_ref"], "fixture-metadata-v1")
 
         widened = deepcopy(source)
         widened["connection"]["capabilities"].append("experiment:run")

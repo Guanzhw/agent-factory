@@ -19,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from agent_factory.accounts import account_router
 from agent_factory.auth import AuthService, MemberTokenBoundary
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from pg_fixture import IsolatedPostgres
 
 

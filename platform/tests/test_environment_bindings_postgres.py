@@ -30,10 +30,10 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         original = self.fixture.service
         return ApplicationEnvironments(SimpleNamespace(engine=self.engine,
             settings=SimpleNamespace(workspace=Path(self.fixture.folder.name))),
-            original.auth, original.models, original.connections, {'openresearch': self.fixture.package})
+            original.auth, original.models, original.connections, {'fixture-runtime': self.fixture.package})
 
     def stopped(self):
-        env = self.service.prepare('alice', 'openresearch', 'pg-original-prepare')['environment']
+        env = self.service.prepare('alice', 'fixture-runtime', 'pg-original-prepare')['environment']
         self.service.stop('alice', env['id'], 'pg-original-stop')
         self.fixture.model_revision = 'verified-rotated-model'
         return env, self.service.bindings.preview('alice', env['id'])
@@ -49,7 +49,7 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         self.assertEqual(len(self.service.bindings.history('alice', env['id'])), 1)
         with self.service.db.read() as conn: after = self.service._row(conn, 'alice', env['id'])
         self.assertEqual(after['body'], before['body']); self.assertEqual(after['body_hash'], before['body_hash'])
-        restored = self.service.prepare('alice', 'openresearch', 'pg-explicit-restore')['environment']
+        restored = self.service.prepare('alice', 'fixture-runtime', 'pg-explicit-restore')['environment']
         self.assertEqual(restored['id'], env['id']); self.assertEqual(restored['projectId'], env['projectId'])
         self.assertEqual(restored['originalModelRevision'], env['modelRevision'])
         self.assertEqual(restored['modelRevision'], 'verified-rotated-model'); self.assertEqual(self.fixture.research, [])
@@ -97,7 +97,7 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
 
     def test_unknown_original_remains_results_only_after_rotation_and_package_update_creates_distinct_generation(self):
         self.fixture.failed = True
-        original = self.service.prepare('alice', 'openresearch', 'pg-unknown-original')['environment']
+        original = self.service.prepare('alice', 'fixture-runtime', 'pg-unknown-original')['environment']
         self.assertEqual(self.service.list('alice')[0]['lastOperation'],
             {'requestId': 'pg-unknown-original', 'action': 'prepare', 'state': 'unknown'})
         self.fixture.model_revision = 'rotated-after-unknown'; self.service = self.reopen()
@@ -106,18 +106,18 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         self.assertFalse(preview['canRebind']); self.assertEqual(len(self.fixture.prepares), 1)
         self.fixture.package.version = 'new-fixed-fixture'; self.fixture.failed = False
         self.assertEqual(self.service.bindings.preview('alice', original['id'])['nextAction'], 'new-environment')
-        created = self.service.prepare('alice', 'openresearch', 'pg-new-generation', new_environment=True)['environment']
+        created = self.service.prepare('alice', 'fixture-runtime', 'pg-new-generation', new_environment=True)['environment']
         self.assertNotEqual(created['id'], original['id']); self.assertNotEqual(created['projectId'], original['projectId'])
         self.service = self.reopen()
         self.assertEqual(self.service.inspect('alice', original['id'])['projectId'], original['projectId'])
-        repeated = self.service.prepare('alice', 'openresearch', 'pg-new-generation', new_environment=True)
+        repeated = self.service.prepare('alice', 'fixture-runtime', 'pg-new-generation', new_environment=True)
         self.assertEqual(repeated['environment']['id'], created['id'])
         self.assertEqual(len(self.fixture.prepares), 2); self.assertEqual(self.fixture.research, [])
 
     def test_explicit_generation_restore_after_restart_rotation_and_lost_ack_never_selects_default(self):
-        default = self.service.prepare('alice', 'openresearch', 'pg-default-before-update')['environment']
+        default = self.service.prepare('alice', 'fixture-runtime', 'pg-default-before-update')['environment']
         self.fixture.package.version = 'new-fixed-fixture'
-        created = self.service.prepare('alice', 'openresearch', 'pg-new-explicit-generation', new_environment=True)['environment']
+        created = self.service.prepare('alice', 'fixture-runtime', 'pg-new-explicit-generation', new_environment=True)['environment']
         with self.service.db.read() as conn: original = deepcopy(self.service._row(conn, 'alice', created['id']))
         self.service.stop('alice', created['id'], 'pg-stop-generation')
         self.fixture.model_revision = 'rotated-generation-model'
@@ -126,7 +126,7 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         self.service = self.reopen()
         actor = ['alice']
         app = FastAPI(); app.include_router(environment_router(SimpleNamespace(user=lambda _: {'id': actor[0]}), self.service))
-        body = {'requestId': 'pg-restore-generation', 'environmentId': created['id']}
+        body = {'requestId': 'pg-restore-generation', 'applicationId': 'fixture-runtime', 'environmentId': created['id']}
         with TestClient(app) as client:
             path = '/api/factory/application-environments/prepare'
             actor[0] = 'bob'

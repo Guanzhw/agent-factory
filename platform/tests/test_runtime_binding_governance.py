@@ -14,8 +14,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import (
     GovernanceConfig, LICENSES, MaterialGovernance, RuntimeBinding, normalize_runtime_binding,
 )
@@ -28,7 +28,7 @@ import test_material_governance as governance_fixture
 import test_plan_policy as policy_fixture
 
 
-def binding(adapter="native-checksum-v1", **config):
+def binding(adapter="fixture-checksum-v1", **config):
     return {"adapterId": adapter, "revision": "1", "config": config}
 
 
@@ -63,9 +63,9 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
 
     def test_binding_normalizes_only_strict_inert_data_without_starting_anything(self):
         examples = [governance_fixture.definition(kind="tool", content="checksum", permissions=["checksum:read"], runtimeBinding=binding()),
-                    governance_fixture.definition(kind="model", runtimeBinding=binding("local-synthetic-model-v1", temperature=0.2, maxOutputTokens=100, mode="concise")),
-                    governance_fixture.definition(kind="environment", runtimeBinding=binding("local-bounded-environment-v1", profile="bounded", labels=["fixture", "local"])),
-                    governance_fixture.definition(kind="knowledge", runtimeBinding=binding("local-synthetic-knowledge-v1"))]
+                    governance_fixture.definition(kind="model", runtimeBinding=binding("fixture-model-v1", temperature=0.2, maxOutputTokens=100, mode="concise")),
+                    governance_fixture.definition(kind="environment", runtimeBinding=binding("fixture-environment-v1", profile="bounded", labels=["fixture", "local"])),
+                    governance_fixture.definition(kind="knowledge", runtimeBinding=binding("local-fixture-knowledge-v1"))]
         with patch("subprocess.Popen") as no_process, patch("importlib.import_module") as no_import:
             imported = self.service.import_definitions("manager", examples, "inert-bindings")
         self.assertEqual(no_process.call_count, 0)
@@ -93,7 +93,7 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
             binding(value=float("inf")), binding(value=10**1000), binding(value=list(range(33))),
             {**binding(), "adapterId": 1}, {**binding(), "revision": 1}, {**binding(), "extra": "x"},
             {**binding(), "adapterId": "sk-proj-" + "X" * 30},
-            {"adapterId": "native-checksum-v1", "revision": "1"}]
+            {"adapterId": "fixture-checksum-v1", "revision": "1"}]
         nested = {}
         for _ in range(8):
             nested = {"next": nested}
@@ -165,7 +165,7 @@ class RuntimeBindingGovernancePostgresTests(unittest.TestCase):
             try:
                 with TestClient(app) as client:
                     self.assertEqual(client.post("/api/factory/demo/login", json={"persona": "manager"}).status_code, 200)
-                    value = governance_fixture.definition(kind="model", id="registered-model-metadata", runtimeBinding=binding("local-synthetic-model-v1", temperature=0.2))
+                    value = governance_fixture.definition(kind="model", id="registered-model-metadata", runtimeBinding=binding("fixture-model-v1", temperature=0.2))
                     body = {"definition": value, "requestId": "actual-runtime-binding"}
                     first = client.post("/api/factory/material-governance/drafts", json=body)
                     repeat = client.post("/api/factory/material-governance/drafts", json=body)
@@ -174,7 +174,7 @@ class RuntimeBindingGovernancePostgresTests(unittest.TestCase):
                     material = first.json()
                     self.assertEqual(material["runtimeBinding"], value["runtimeBinding"])
                     self.assertFalse(material["published"])
-                    changed = {**body, "definition": {**value, "runtimeBinding": binding("local-synthetic-model-v1", temperature=0.3)}}
+                    changed = {**body, "definition": {**value, "runtimeBinding": binding("fixture-model-v1", temperature=0.3)}}
                     self.assertEqual(client.post("/api/factory/material-governance/drafts", json=changed).status_code, 409)
                     count = state["store"].sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"]
                     self.assertEqual(count, 0)

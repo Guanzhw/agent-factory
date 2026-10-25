@@ -117,7 +117,7 @@ class ArchitectureCheckerTests(unittest.TestCase):
             check(self.root, invalid)
 
     def test_stale_or_empty_ownership_cannot_report_success(self):
-        for key, value in (("core", []), ("core", ["missing"]), ("apps", {})):
+        for key, value in (("core", []), ("core", ["missing"])):
             with self.subTest(key=key, value=value):
                 invalid = {**self.config, key: value}
                 with self.assertRaises(ValueError):
@@ -126,6 +126,13 @@ class ArchitectureCheckerTests(unittest.TestCase):
         invalid["apps"]["alpha"] = {"package": "core", "public": ["core.runtime"]}
         with self.assertRaisesRegex(ValueError, "cannot replace the core"):
             check(self.root, invalid)
+
+    def test_standalone_core_without_apps_keeps_composition_boundary(self):
+        self.config['apps'] = {}
+        self.write({'launch.py': 'from core import runtime'})
+        self.assertEqual(self.violations(), set())
+        self.write({'shared/helper.py': 'import launch'})
+        self.assertIn(('core.runtime', 'shared.helper', 'launch'), self.violations())
 
     def test_dynamic_coverage_is_limited_to_owned_code_and_reachable_helpers(self):
         dynamic = "import importlib\nimportlib.import_module(module_name)"

@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
@@ -164,8 +164,8 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
         assert self.store.material_governance is not None
         with self.store.engine.begin() as conn:
             conn.execute(self.store.material_governance.versions.update().where(
-                self.store.material_governance.versions.c.material_id == "synthetic-knowledge").values(author_id="manager"))
-        self.store.material_governance.withdraw("manager", "synthetic-knowledge", 1, "withdraw-local-material", "Original isolated test")
+                self.store.material_governance.versions.c.material_id == "fixture-knowledge").values(author_id="manager"))
+        self.store.material_governance.withdraw("manager", "fixture-knowledge", 1, "withdraw-local-material", "Original isolated test")
         # Exact retry recovers the original immutable import receipt; it does
         # not restore material publication or approve the local application.
         self.assertEqual(self.applications.import_snapshot("manager", snapshot, "before-material-withdrawal"), accepted)

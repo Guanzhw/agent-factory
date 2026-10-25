@@ -30,7 +30,7 @@ let context: WorkspaceContext;
 beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  window.history.replaceState(null, '', '/?tab=research');
+  window.history.replaceState(null, '', '/?tab=tasks');
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 1, queuedJobs: 0, maxWorkers: 2, integration: 'fixture', liveEnabled: false });
   vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.executionTargets).mockResolvedValue([]);
   vi.mocked(api.jobs).mockResolvedValue({ items: [job('new')], nextCursor: 'older-cursor' });
@@ -80,7 +80,7 @@ it('loads earlier history, keeps it and its selection during refresh, and restor
   expect(context.nextCursor).toBeNull();
   await click('newest');
   await act(async () => {
-    window.history.replaceState(null, '', '/?tab=research&task=old');
+    window.history.replaceState(null, '', '/?tab=tasks&task=old');
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
   expect(context.route.task).toBe('old');

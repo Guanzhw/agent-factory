@@ -13,8 +13,8 @@ import unittest
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated PostgreSQL")
@@ -42,7 +42,7 @@ class FactoryPostgresTests(unittest.TestCase):
         response = self.client.post("/api/factory/demo/login", json={"persona": persona})
         self.assertEqual(response.status_code, 200, response.text)
 
-    def plan(self, topic, mode="literature", application="research", request=None):
+    def plan(self, topic, mode="literature", application="fixture-text", request=None):
         from uuid import uuid4
         body = {"topic": topic, "mode": mode, "application": application, "requestId": request or str(uuid4())}
         response = self.client.post("/api/factory/plans", json=body)
@@ -104,7 +104,7 @@ class FactoryPostgresTests(unittest.TestCase):
         result = self.client.post(f'/api/factory/jobs/{task["id"]}/answer', json=body)
         self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual(self.wait(task["id"], {"completed", "failed"})["job"]["status"], "completed")
-        plan, _ = self.plan("factory checksum fixture", application="checksum")
+        plan, _ = self.plan("factory checksum fixture", application="fixture-checksum")
         task, _ = self.submit(plan)
         detail = self.wait(task["id"], {"completed", "failed"})
         self.assertEqual(detail["job"]["status"], "completed", detail)

@@ -63,7 +63,7 @@ def main():
             probe = command([binary("psql"), "-h", "127.0.0.1", "-p", args.db_port, "-U", "factory_demo", "-d", "postgres", "-Atc", "SELECT 1 FROM pg_database WHERE datname='factory_demo'"])
             if not probe.stdout.strip():
                 command([binary("createdb"), "-h", "127.0.0.1", "-p", args.db_port, "-U", "factory_demo", "factory_demo"])
-            env = {**os.environ, "PYTHONPATH": os.pathsep.join(str(ROOT / part) for part in ("platform", "apps/research", "deployment")), "FACTORY_MODE": "demo",
+            env = {**os.environ, "PYTHONPATH": os.pathsep.join(str(ROOT / part) for part in ("platform", "deployment")), "FACTORY_MODE": "demo",
                    "FACTORY_DATABASE_URL": f"postgresql+psycopg://factory_demo@127.0.0.1:{args.db_port}/factory_demo",
                    "FACTORY_WORKSPACE": str(local), "FACTORY_PORT": str(args.port), "AGNO_TELEMETRY": "false"}
             print(f"Synthetic demo only: http://127.0.0.1:{args.port}. Ctrl+C stops owned services.", flush=True)
