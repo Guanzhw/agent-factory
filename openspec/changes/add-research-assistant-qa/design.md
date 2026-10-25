@@ -26,7 +26,7 @@
 
 新增固定`research-qa` Workflow，仅三个顶层步骤：受治理`research_qa_context` → tool-free选定模型 → 受治理`research_qa_record`。两个函数是可信静态executor，不作为模型可调用工具；模型tools=[]；沿现有owner模型文本协议显式要求单个JSON对象，由record用严格Answer schema本地验证，不传provider response_format/output_schema，不增加修复模型、重试或静默fallback。精确pin、唯一QA mode与tool集合在配置时验证。不得带研究launch、delegation、CLI、MCP、remote或GPU工具/compute模式；拒绝任意用户app冒充QA组件。无外部操作/等待，不注册第二恢复器或自己的worker。
 
-QA环境是应用显式注册的固定adapter，只返回已有EnvironmentLimits，无prepare、远程target、连接或外部执行。不能任选研究compute环境。core Budget当前maxChildren/maxDepth最小为1；不能写0伪称已有该能力。无训练能力来自完整固定组件/模式及可达工具集合，而非提示词或伪造零数值。必须通过实际模型恶意tool请求、伪造研究消息反例验证零训练/GPU dispatch；当前恶意provider tool_call仍待core响应边界修复与真实native复验，不记为已通过。
+QA环境是应用显式注册的固定adapter，只返回已有EnvironmentLimits，无prepare、远程target、连接或外部执行。不能任选研究compute环境。core Budget当前maxChildren/maxDepth最小为1；不能写0伪称已有该能力。无训练能力来自完整固定组件/模式及可达工具集合，而非提示词或伪造零数值。必须通过实际模型恶意tool请求、伪造研究消息反例验证零训练/GPU dispatch；验收状态单独见verification，不能以来源中的恶意文字替代provider实际工具调用反例。
 
 复用setup的owner草稿、明确publish、原子材料/应用治理及回执：新增窄`POST /api/factory/research/setup/qa/drafts`，body `{requestId,name,modelConnectionRef,budget}`，budget为现有core应用运行预算。环境和两个控制材料由已安装QA注册提供，不接受实验材料/环境/任意JSON。现有`GET /setup/{id}`、`GET /setup/requests/{requestId}`与`POST /setup/{id}/publish`处理此明确类型；preview及已发布结果增加`mode:'qa'`以供接线。内部复用治理流程，不引入purpose插件框架。发布只存符号model槽，个人连接留owner setup。
 

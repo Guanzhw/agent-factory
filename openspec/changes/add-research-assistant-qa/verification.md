@@ -4,8 +4,8 @@
 
 - core reply最终已审序列已集成；身份P2独立复审PASS。
 - 正常实际native QA与OwnerChatModel合成HTTP：1 passed/8.166s。finite操作额度、scope耗尽拒绝、双方证据依赖与撤回已观测；token/费用未计量。
-- 恶意provider train tool_call反例仍BLOCKED：等待core按本次请求声明工具集合拒绝未声明调用，再运行native反例；不能用普通来源中的恶意文字替代。
-- 原身份配置PG：CAS/事务rollback 2项通过；原收据恢复目标在最新core fixture适配后1 passed/1.489s，分次证据不称最新完整组合。首次fixture失败见下文。
+- 已集成core未声明工具响应修复（原`fa6ed5e/7a41dbf`，本分支`221cf07/c758e01`）；实际恶意train tool_call native反例1 passed/48.450s：1次模型请求、固定拒绝、原任务failed、无reply、training trap/child均0、次问额度拒绝。不是只测试来源里的恶意文字。
+- 最终core上身份3PG全部通过（同5项组合中）；正常native随后1通过，恶意target再1通过。五个适用case均有最终相关代码通过证据，但不是同一轮完整5/5绿色结果；首次失败及修复如下。
 - QA实际浏览器尚未完成；另一路研究UI浏览器验收不能代替QA。C02/C03真实模型/任务/费用条件与D资源仍BLOCKED，主动关联仍后续任务。
 
 以下按阶段保留证据；早期Pending只描述当时状态。
@@ -57,3 +57,15 @@
 - `/tmp/research-qa-byok-identity-pg.log`：3 fixture errors，2.288s，新core AssistantMessages构造已需要content；补真实ApplicationContent/ResourceSharing。
 - `/tmp/research-qa-byok-identity-pg-fixed.log`：2 passed/1 fixture error，3.757s；fake Admission未提供最终core内部原receipt读取端口。
 - `/tmp/research-qa-byok-identity-receipt.log`：只修fixture同义原receipt读取后目标1 passed/1.489s，exit0，原allocation/task/dispatch不变。未改产品权限判断，未反复完整追绿。
+
+## Final integration and corrections
+
+依赖已集成：metadata strip `6dbccac/4956857`、工具响应authority `fa6ed5e/7a41dbf`、实际CI research包import `5ffb7c3`。没有绕过core注册pin或原身份校验。
+
+- `/tmp/research-qa-final-native-five.log`：5项组合22.007s，3身份通过/2native失败。新增unsupported-metering HTTP负例发现Pydantic语义ValueError被全局净化为INVALID_REQUEST；先补规范`abec7ea`固定safe业务错误，再将该语义拒绝移到configure事务前HTTP422，基本格式仍Pydantic。没有删除拒绝断言。
+- `/tmp/research-qa-final-native-two-fixed.log`：2项16.902s，正常QA通过；恶意provider已拒绝但fixture误取不存在的Store.task.status，出现KeyError。改为既有原事实body.stoppedStatus。
+- `/tmp/research-qa-final-native-malicious.log`：目标1 passed/48.450s，exit0；保持原80s外层限额。实际`PERSONAL_MODEL_TOOL_NOT_DECLARED`、原task failed、wire1、无reply、training adapter trap0、delegation links0、耗尽后第二问题429且零新模型/task。启动过程较慢但持续产生输出；没有证据将其归因于历史defunct进程，不作为性能基线。
+- `/tmp/research-qa-final-portable.log`：14 passed/1.415s，0 skipped，包含safe业务拒绝、原身份恢复、原输入依赖、真实OwnerChatModel合成HTTP、setup和迁移。Ruff exit0；限定源码Pyright见最终日志。
+- 所有本次TestClient/scheduler/worker正常关闭，一次性PG由IsolatedPostgres清理；没有超时kill、没有后台QA测试继续运行。仍保留动态input helper同名Registry warning；没有为消警告更改core精确schema身份。
+
+实际QA浏览器和正式模型C03仍待验收；BYOK token/费用硬预算不受支持、不算通过。当前证据不关闭完整P7主动关联或真实团队研究价值门槛。

@@ -4,10 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException
-from pydantic import ValidationError
 from sqlalchemy import func, select
 
-from research.assistants import CreateAssistant, QuestionBudget, ResearchAssistants
+from research.assistants import ConfigureAssistant, CreateAssistant, ResearchAssistants
 from agent_factory.assistant_messages import SendAssistantMessage
 import test_applications_composition as fixtures
 
@@ -77,8 +76,13 @@ class ResearchAssistantsTests(fixtures.ApplicationCompositionFixture):
 
     def test_owner_model_rejects_unsupported_metering_instead_of_dropping_it(self):
         caps = dict(rounds=1, toolCalls=2, tokenLimit=100, amountMicros=10, currency='USD')
-        with self.assertRaises(ValidationError):
-            QuestionBudget(caps=caps, perQuestionCaps=caps, deadline=9999999999.0)
+        body = ConfigureAssistant(requestId='unsupported-budget', expectedRevision=0,
+            applicationRef={'id': 'qa', 'version': 1, 'sha256': 'a' * 64}, connectionRefs={},
+            budget={'caps': caps, 'perQuestionCaps': caps, 'deadline': 9999999999.0})
+        with self.assertRaises(HTTPException) as denied:
+            self.service.configure('alice', body)
+        self.assertEqual(denied.exception.detail, 'RESEARCH_QA_BYOK_METERING_UNSUPPORTED')
+        self.assertIsNone(self.service.me('alice')['assistant'])
 
     def test_published_compute_application_cannot_be_used_as_qa(self):
         application = self.publish()

@@ -29,8 +29,6 @@ class QuestionBudget(BaseModel):
     def bounded(self):
         if self.perQuestionCaps.rounds != 1:
             raise ValueError('One question consumes one native root allocation')
-        if self.caps.tokenLimit is not None or self.perQuestionCaps.tokenLimit is not None:
-            raise ValueError('RESEARCH_QA_BYOK_METERING_UNSUPPORTED: token and monetary limits are not supported')
         if self.perQuestionCaps.toolCalls > self.caps.toolCalls:
             raise ValueError('Question caps exceed the total commitment')
         return self
@@ -157,6 +155,8 @@ class ResearchAssistants:
 
     def configure(self, owner, body: ConfigureAssistant):
         self.auth.require_member(owner)
+        if body.budget.caps.tokenLimit is not None or body.budget.perQuestionCaps.tokenLimit is not None:
+            raise HTTPException(422, 'RESEARCH_QA_BYOK_METERING_UNSUPPORTED')
         value = body.model_dump(exclude={'requestId', 'expectedRevision'})
         fingerprint = digest({'action': 'configure', 'expectedRevision': body.expectedRevision, **value})
         with self.store.transaction() as conn:

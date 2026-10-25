@@ -107,7 +107,7 @@ class ResearchQANativeTests(unittest.TestCase):
             time.sleep(.05)
         if malicious:
             self.assertIsNone(result.get('reply'))
-            self.assertEqual(store.task(result['delivery']['taskId'], 'alice')['status'], 'failed')
+            self.assertEqual(store.task(result['delivery']['taskId'], 'alice')['body']['stoppedStatus'], 'failed')
         else:
             self.assertIsNotNone(result.get('reply'), {'message': result, 'tasks': store.tasks('alice')})
             self.assertEqual(result['reply']['state'], 'available', result)
