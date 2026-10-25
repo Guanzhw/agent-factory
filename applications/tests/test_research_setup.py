@@ -26,7 +26,7 @@ class ResearchSetupTests(unittest.TestCase):
     def setUp(self):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        db = SqliteDb(db_file=str(Path(directory.name) / 'setup.sqlite'))
+        db = self.database(directory.name)
         self.addCleanup(db.db_engine.dispose)
         settings = Settings(db_url='sqlite://', workspace=Path(directory.name))
         self.auth = AuthService(settings, db)
@@ -53,6 +53,9 @@ class ResearchSetupTests(unittest.TestCase):
         self.apps = ApplicationService(self.store, self.auth)
         self.store.applications = self.apps
         self.setup = ResearchSetup(self.store, self.auth, self.connections, self.models, controller_registrations=self.controllers)
+
+    def database(self, directory):
+        return SqliteDb(db_file=str(Path(directory) / 'setup.sqlite'))
 
     def no_dispatch(self, _):
         self.fail('Setup must never instantiate an execution adapter')
