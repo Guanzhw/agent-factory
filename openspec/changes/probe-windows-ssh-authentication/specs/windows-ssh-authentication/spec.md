@@ -17,4 +17,5 @@ The probe SHALL authenticate the existing runner account using actual installed 
 
 #### Scenario: Missing existing server prerequisite
 - **WHEN** system sshd or existing account privileges cannot support the private foreground fixture
-- **THEN** report the exact safe prerequisite stage as BLOCKED and do not install services, create accounts, modify privileges or claim authentication success
+- **THEN** report BLOCKED only for an explicitly identified prerequisite; unknown fixture/configuration errors remain INCOMPLETE and observed authentication failures remain FAIL
+- **AND** do not install services, create accounts, modify privileges or claim authentication success
