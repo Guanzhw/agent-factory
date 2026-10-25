@@ -1,5 +1,6 @@
 """Real PostgreSQL event atomicity and allocation deduplication; no paid execution."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from functools import partial
 from threading import Event
 import asyncio
@@ -214,3 +215,63 @@ class AssistantEventsPostgresTests(unittest.TestCase):
                 self.assertEqual(caught.exception.detail, 'ASSISTANT_DELIVERY_STOPPING')
             submit.assert_not_called()
         self.assertEqual(self.fixture.store.tasks('bob'), [])
+
+    def test_public_instances_cannot_bypass_prepared_delivery_revocation_without_keywords(self):
+        event = self.emit('pg-public-bypass-event')
+        delivery = self.service.prepare(event['id'], self.endpoint['id'])
+        with self.service.db.read() as conn:
+            message = self.service.messages._row(conn, delivery['message_id'])
+        endpoint = self.service.endpoints.resolve(delivery['endpoint_id'])
+        body = self.service.messages._start_body(message, endpoint)
+        plan, request_id = self.service.messages.runs._prepare('bob', body)
+        with self.fixture.store.engine.connect() as conn:
+            self.assertEqual(self.scopes.request_allocation(conn, 'bob', request_id), delivery['allocation_id'])
+            self.assertEqual(self.scopes.request_delivery(conn, 'bob', request_id), delivery['id'])
+        self.fixture.state['application_content'].set_visibility('alice', self.publication['id'],
+            'personal', 'pg-public-revoke')
+        self.fixture.login('bob')
+        with patch.object(self.fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            response = self.fixture.client.post('/api/factory/instances', json={
+                'planId': plan['id'], 'requestId': request_id})
+            self.assertEqual(response.status_code, 404, response.text)
+            submit.assert_not_called()
+        self.assertEqual(self.fixture.store.tasks('bob'), [])
+        with self.fixture.store.engine.connect() as conn:
+            allocation = self.scopes._allocation(conn, 'bob', delivery['allocation_id'])
+            self.assertIsNone(allocation['task_id'])
+            self.assertEqual(allocation['state'], 'ALLOCATED')
+
+    def test_application_cleanup_observes_shutdown_fence_before_attempting_prepared_delivery(self):
+        event = self.emit('pg-cleanup-event')
+        delivery = self.service.prepare(event['id'], self.endpoint['id'])
+        self.fixture.stop()
+        observations = []
+
+        @asynccontextmanager
+        async def application_lifespan(app):
+            yield
+            state = app.state.factory
+            service = state['assistant_events']
+            self.assertIsNotNone(service.admission_stopping)
+            self.assertTrue(service.admission_stopping.is_set())
+            with self.assertRaises(HTTPException) as caught:
+                await service.messages.recover('bob', delivery['message_id'],
+                    allocation_id=delivery['allocation_id'], delivery_id=delivery['id'])
+            self.assertEqual(caught.exception.detail, 'ASSISTANT_DELIVERY_STOPPING')
+            self.assertEqual(state['store'].tasks('bob'), [])
+            with state['store'].engine.connect() as conn:
+                allocation = state['store'].local_budget_scopes._allocation(conn, 'bob', delivery['allocation_id'])
+                self.assertIsNone(allocation['task_id'])
+                self.assertEqual(allocation['state'], 'ALLOCATED')
+            observations.append('application cleanup fenced before any fresh task')
+
+        create_app = fixtures.create_app
+        with patch.object(fixtures, 'create_app', side_effect=lambda settings: create_app(
+                settings, lifespan_context=application_lifespan)):
+            self.fixture.start()
+        self.service = self.fixture.state['assistant_events']
+        self.assertFalse(self.service.admission_stopping.is_set())
+        with patch.object(self.fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            self.fixture.stop()
+            submit.assert_not_called()
+        self.assertEqual(observations, ['application cleanup fenced before any fresh task'])

@@ -37,6 +37,14 @@ class ApplicationRuns:
 
     async def start(self, owner, body, *, allocation_id=None, delivery_id=None):
         from .factory_api import InstanceRequest
+        if self.factory.store._connection.get() is not None:
+            raise RuntimeError('Native admission requires a committed metadata boundary')
+        if allocation_id is not None:
+            def bind():
+                with self.factory.store.transaction() as conn:
+                    self.factory.store.local_budget_scopes.bind_request(conn, owner, allocation_id,
+                        factory_request_id(body.requestId), delivery_id=delivery_id)
+            await asyncio.to_thread(bind)
         plan, key = await asyncio.to_thread(self._prepare, owner, body)
         # This existing admission path scopes ordinary OwnerSubmissions, rechecks
         # current policy, reserves the original task before dispatch, and never

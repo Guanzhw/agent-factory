@@ -69,6 +69,14 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         delivery = self.service.prepare(event['id'], self.endpoint['id'])
         self.assertEqual(self.service.prepare(event['id'], self.endpoint['id']), delivery)
         self.scopes.allocate.assert_called_once()
+        self.scopes.bind_request.assert_called_once()
+        names = [call[0] for call in self.scopes.mock_calls]
+        self.assertLess(names.index('admission_lock'), names.index('allocate'))
+        self.assertLess(names.index('allocate'), names.index('bind_request'))
+        binding = self.scopes.bind_request.call_args
+        self.assertEqual(binding.args[1:3], ('bob', delivery['allocation_id']))
+        self.assertEqual(binding.args[3], 'application-start:assistant-message:' + delivery['message_id'])
+        self.assertEqual(binding.kwargs, {'delivery_id': delivery['id']})
         self.assertEqual(delivery['subscription_id'], subscription['id'])
         with self.service.db.read() as conn:
             self.assertEqual(conn.execute(select(func.count()).select_from(self.messages.messages)).scalar(), 1)

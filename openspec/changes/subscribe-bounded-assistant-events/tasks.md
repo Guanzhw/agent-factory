@@ -6,6 +6,8 @@
 - [x] 1.2 root显式装配单一LocalBudgetScopes及既有guard，实现allocation_id可信参数贯穿ApplicationRuns/FactoryAPI/reserve_task；在原reservation事务内绑定，真实PG测试绑定异常整体回滚、同task同allocation幂等及换scope拒绝（A03/A04）。
 - [x] 1.3 实现仅无task消息的可信原request重入，保持公开重复POST只读；用真实PG/native屏障测试双恢复者均先读到无task、旧发送者暂停后恢复、预留提交后/bridge前crash和native丢ACK，证明dispatch最多一次、UNKNOWN不重派（A03）。
 
+- [x] 1.4 持久原request/plan预算及delivery关联，普通instances省略参数、换请求键和远端root入口均不能绕过；真实PG公开入口屏障及精确冲突断言。
+
 ## 2. 事务事件与有界订阅
 
 - [x] 2.1 实现同领域事务emit/producer幂等及不透明内容引用，测试回滚双方不可见、提交后进程退出仍有intent、相同键异内容冲突；记录最小应用接入示例（A04）。

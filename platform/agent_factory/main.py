@@ -337,6 +337,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                 nonlocal armed
                 if not armed:
                     armed = True
+                    if assistant_events.admission_stopping is not None:
+                        assistant_events.admission_stopping.set()
                     if shutdown_guard is not None:
                         deadline = shutdown.enter_context(shutdown_guard())
                         if deadline is not None:

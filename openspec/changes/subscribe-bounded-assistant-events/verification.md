@@ -20,3 +20,13 @@
 ## 边界
 
 reserved但无native回执仍只观察不补派；本次不解决所有崩溃窗口最终执行。自动lineage在可信parent/task传入时校验，P5真实agent上下文接入尚未完成，不能声称已证明整条自动循环不可绕过。新应用P5–P9未完成，真实C/D参数未冻结仍BLOCKED/NOTRUN。UI后续实现及含UI合并暂停，等待用户原型确认；本变更无UI源码修改。
+
+## 后续共享准入审查整改
+
+P5独立审查发现prepared请求可经普通入口省略allocation；进一步检查覆盖同plan换request及远端root，以及原bind_root已有绑定但无新request映射。现持久请求关联在原intent事务写入，所有Store reservation强制原plan/request/allocation/delivery；远端实际HandoffClient入口在原admission栅栏拒绝本地scope。未引入迁移框架或第二恢复器。
+
+新增公开入口PG首5/5通过26.914s；随后组合26项25通过1失败（旧测试期待后层BINDING_CONFLICT，现提前REQUEST_CONFLICT；精确更新断言，没有接受任意错误）。另8项专项有3个测试error，原因新HTTP断言误用detail而项目错误envelope为message；status409已正确，修正结构后2/2通过7.435s。最终全部7个公开入口case通过43.802s，涵盖真实HTTP远端链零prepare/dispatch/transport/placement及旧绑定反例。
+
+应用cleanup前stop栅栏集成1/1通过9.370s；无新task且allocation仍hold。便携含P5组合44/44通过6.645s。日常Python354项353通过1失败（历史MCP慢DELETE至少2chunk断言），该轮与PG并发，不能排除资源干扰。原日志p3-p5-daily-python-final.log保留。仅一次串行外部观察：原单例1pass1.321s，第二cancel后30chunk持续至总deadline，未复现失败；不据此关闭历史问题。无断言/期限放宽，无整套追绿。
+
+精确最终提交CI与必要完整检查待运行；之前16/16不冒充新增入口的验收，以上专项分别列明。

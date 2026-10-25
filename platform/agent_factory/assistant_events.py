@@ -170,31 +170,35 @@ class AssistantEvents:
         return endpoint
 
     def prepare(self, event_id, endpoint_id):
-        with self.db.write() as conn:
-            existing = conn.execute(select(self.deliveries).where(self.deliveries.c.event_id == event_id,
-                self.deliveries.c.endpoint_id == endpoint_id)).mappings().first()
-            if existing:
-                return dict(existing)
-            event = self._row(conn, self.events, event_id)
-            value = event['body']
-            if endpoint_id not in value['candidates']:
-                raise HTTPException(404, 'ASSISTANT_EVENT_CANDIDATE_NOT_FOUND')
-            subscription = conn.execute(select(self.subscriptions).where(self.subscriptions.c.endpoint_id == endpoint_id,
-                self.subscriptions.c.namespace == value['namespace'], self.subscriptions.c.event_type == value['eventType'],
-                self.subscriptions.c.enabled.is_(True))).mappings().first()
-            if subscription is None:
-                return None
-            self._current(conn, event, subscription, endpoint_id)
-            identifier, allocation_id = str(uuid4()), str(uuid4())
-            config, owner = subscription['body'], subscription['owner_id']
-            self.scopes.allocate(conn, owner, config['scopeId'], allocation_id,
-                digest({'event': event_id, 'endpoint': endpoint_id}), config['caps'])
-            message, _ = self.messages._reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
-                requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']))
-            conn.execute(self.deliveries.insert().values(id=identifier, event_id=event_id, endpoint_id=endpoint_id,
-                subscription_id=subscription['id'], owner_id=owner, message_id=message['id'],
-                allocation_id=allocation_id, state='pending', attempted_at=0))
-            return self._row(conn, self.deliveries, identifier)
+        with self.store.transaction() as conn:
+            self.scopes.admission_lock(conn)
+            with self.db.write():
+                existing = conn.execute(select(self.deliveries).where(self.deliveries.c.event_id == event_id,
+                    self.deliveries.c.endpoint_id == endpoint_id)).mappings().first()
+                if existing:
+                    return dict(existing)
+                event = self._row(conn, self.events, event_id)
+                value = event['body']
+                if endpoint_id not in value['candidates']:
+                    raise HTTPException(404, 'ASSISTANT_EVENT_CANDIDATE_NOT_FOUND')
+                subscription = conn.execute(select(self.subscriptions).where(self.subscriptions.c.endpoint_id == endpoint_id,
+                    self.subscriptions.c.namespace == value['namespace'], self.subscriptions.c.event_type == value['eventType'],
+                    self.subscriptions.c.enabled.is_(True))).mappings().first()
+                if subscription is None:
+                    return None
+                self._current(conn, event, subscription, endpoint_id)
+                identifier, allocation_id = str(uuid4()), str(uuid4())
+                config, owner = subscription['body'], subscription['owner_id']
+                self.scopes.allocate(conn, owner, config['scopeId'], allocation_id,
+                    digest({'event': event_id, 'endpoint': endpoint_id}), config['caps'])
+                message, _ = self.messages._reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
+                    requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']))
+                conn.execute(self.deliveries.insert().values(id=identifier, event_id=event_id, endpoint_id=endpoint_id,
+                    subscription_id=subscription['id'], owner_id=owner, message_id=message['id'],
+                    allocation_id=allocation_id, state='pending', attempted_at=0))
+                self.scopes.bind_request(conn, owner, allocation_id,
+                    'application-start:' + self.messages._request_id(message), delivery_id=identifier)
+                return self._row(conn, self.deliveries, identifier)
 
     def validate_admission(self, conn, owner, delivery_id, request_id, plan, allocation_id):
         if self.admission_stopping is not None and self.admission_stopping.is_set():

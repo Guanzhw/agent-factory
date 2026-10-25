@@ -67,3 +67,18 @@
 #### Scenario: 前项失败与后项进展
 - **WHEN** 先扫描事件读取依赖失败或pending消息发生异常，后方另有可交付事件
 - **THEN** 前项保留原身份及错误类别，后项仍获得处理；终局拒绝不每秒重新准入，未知allocation仍保留
+
+### Requirement: 所有原请求准入遵守持久预算关联
+系统 SHALL 在预算化启动意图中持久保存原owner/request与allocation关联，所有原请求准入入口均强制绑定，不得通过省略内部参数绕过；已有无预算task不可事后作为该预算化意图的执行。
+
+#### Scenario: prepared请求经普通入口准入
+- **WHEN** 预算化请求的plan已保存但task尚未预留，owner使用公开instances原handoff
+- **THEN** 仍绑定同一allocation且只派发一次；scope已关闭时零新派发
+
+#### Scenario: 原身份改绑或采用旧无预算任务
+- **WHEN** 请求已关联allocation后试图改绑，或同request已有无预算task
+- **THEN** 返回明确冲突，不接受为预算化执行
+
+#### Scenario: 改请求键或改远端目标复用受限计划
+- **WHEN** 用户使用预算化原plan的新requestId，或省略内部参数将原请求送到远端root入口
+- **THEN** 明确拒绝且零新的native或remote prepare/dispatch，不使接收端绕过本地scope

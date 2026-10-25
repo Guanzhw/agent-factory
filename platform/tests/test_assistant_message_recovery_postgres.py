@@ -187,7 +187,7 @@ class AssistantMessageRecoveryPostgresTests(unittest.TestCase):
             self.assertEqual(repeated['job']['id'], first['job']['id'])
             with self.assertRaises(HTTPException) as caught:
                 self.start_original(message, 'other-allocation')
-            self.assertEqual(caught.exception.detail, 'LOCAL_BUDGET_BINDING_CONFLICT')
+            self.assertEqual(caught.exception.detail, 'LOCAL_BUDGET_REQUEST_CONFLICT')
             self.assertEqual(submit.await_count, 1)
         self.assertEqual(len(self.fixture.store.tasks('bob')), 1)
 
