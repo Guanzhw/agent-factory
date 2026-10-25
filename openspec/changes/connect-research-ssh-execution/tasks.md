@@ -50,3 +50,19 @@ Open/partial obligations:
 - PR136 and PR137 remain Draft and unmerged. Dependency PR136's older 624 full CI40228654327 ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips, 2091.848s. The four lifecycle errors have fixes at 5cde50a; the two failures are under investigation. No successful replacement full is claimed.
 
 Details: [native fault evidence](verification-native-inputs.md), [Research integration](verification-research-native.md), [browser](verification-browser-ssh.md), [loopback](verification-loopback.md), [review](review.md).
+
+
+## Native Windows remote-path correction
+- [x] W1 Independently review the explicit remote POSIX construction design against local spec validation, inherited post-init signatures, SSH reconstruction and dynamic `replace`; preserve original full CI 40236302474 and its 24 Windows errors.
+- [x] W2 Implement the narrow construction-only path semantics without serialized fields/schema changes or expanded local custody types; update actual SSH profile consumers rather than substituting Windows fake paths or skipping portable tests.
+- [ ] W3 Verify native Windows remote executable/cwd construction, input-derived replacement, relative/drive-letter rejection, unchanged local validation and fixed serialization/hash identity; retain the Linux helper boundary and run necessary exact-head checks. No implementation or test pass is claimed by this documentation update.
+
+
+## Current checkpoint: remote path correction ab9b4da
+
+- PR136 merged as `e7987e75ac4659cff9f1d7fee63150d68583941d`; main CI [40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) succeeded. Its final documentation is integrated here; earlier failed runs remain historical evidence.
+- Spec `40223ec` preceded implementation `525ff60` and tests `ab9b4da`. Remote SSH process construction explicitly uses POSIX paths, independent of the controller OS. The construction-only option does not change serialized spec fields or hashes; local process and UV validation keep native semantics.
+- Independent `foundation_review`: cumulative `1597fe8 → ab9b4da` and incremental `d0e0239 → ab9b4da` PASS. Local verification: 34 portable SSH cases, zero skips (0.195s); 19 existing core process/profile cases, zero skips (4.978s); targeted Pyright Windows and Linux both zero errors/warnings, Ruff passed.
+- First Windows full [40236302474](https://github.com/Guanzhw/agent-factory/actions/runs/40236302474) failed its Windows job with 24 errors rejecting remote `/bin/train` as a native Windows path. Its original PostgreSQL job remains in progress at this checkpoint. The new code has not yet passed actual Windows CI; W3 and final integrated acceptance remain open.
+- The first local portable attempt lacked loopback networking and was terminated, not passed. The first isolated new fixture omitted required `maxLength`: four passed/one error; corrected fixture subsequently passed all 34. No production timeout or assertion was weakened.
+- Windows controller credential and pipe transport remain a separate implementation task in PR138. Remote helper remains Linux-only; this path correction alone does not make native Windows SSH dispatch available. GPU allocation/binding remains unimplemented and rejected.

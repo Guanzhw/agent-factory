@@ -20,7 +20,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         server = SimpleNamespace(validate=lambda: None, pin=lambda: 'a' * 64,
                                  scope_pin=lambda: 'b' * 64, host_key='synthetic-host-key', allowed_root='/private/runs')
         self.provider = SSHProcessProvider(server, target_ref='compute',
-            spec=ProcessSpec('/bin/program', 'c' * 64, ()), limits=ProcessLimits(),
+            spec=ProcessSpec('/bin/program', 'c' * 64, (), path_style='posix'), limits=ProcessLimits(),
             exchange=self.exchange, read_lease=lambda owner, key: copy.deepcopy(self.lease),
             archive_original=AsyncMock())
         self.lease = {'id': 'lease-1', 'ownerId': 'alice', 'localTaskId': 'task-1', 'nativeRunId': 'run-1',

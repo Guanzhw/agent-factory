@@ -85,7 +85,7 @@ class SSHExecutionEffectPostgresTests(unittest.TestCase):
             server = SimpleNamespace(validate=lambda: None, host_key='synthetic-host-key',
                 pin=lambda: 'a' * 64, allowed_root=folder)
             provider = SSHProcessProvider(server, target_ref='fixed',
-                spec=ProcessSpec('/bin/not-launched', 'b' * 64, ()), limits=ProcessLimits(),
+                spec=ProcessSpec('/bin/not-launched', 'b' * 64, (), path_style='posix'), limits=ProcessLimits(),
                 exchange=lambda value, **_: handle(value), read_lease=lambda owner, key: current(),
                 archive_original=lambda owner, key: runtime._archive(current()))
             target = RemoteTarget('Real stopped journal fixture', 'compute', frozenset({'alice'}),

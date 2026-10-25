@@ -62,7 +62,7 @@ def specification(spec, limits):
                 and type(values['working_directory_identity']) in {tuple, list})
         values['environment'] = tuple(tuple(pair) for pair in values['environment'])
         values['working_directory_identity'] = tuple(values['working_directory_identity'])
-    return cls(**values), limit_cls(**limits)
+    return cls(**values, path_style='posix'), limit_cls(**limits)
 
 
 def request(value):

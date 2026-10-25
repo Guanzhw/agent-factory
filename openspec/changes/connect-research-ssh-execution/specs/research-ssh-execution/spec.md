@@ -163,3 +163,21 @@ The remote process helper SHALL require Linux before request parsing or filesyst
 #### Scenario: Unsupported helper execution
 - **WHEN** handle, directory traversal or bounded file reading is invoked on a non-Linux platform
 - **THEN** it raises the explicit unsupported-platform enforcement error before opening files, importing fcntl, or creating custody; the existing CLI safe error envelope remains unchanged
+
+
+### Requirement: Remote path semantics independent of controller host
+The SSH controller SHALL validate remote executable and research working-directory paths using explicit POSIX semantics on native Windows and Linux. Local process specification callers SHALL retain their existing native-path validation. This distinction MUST NOT alter serialized specification fields, existing hashes or original-operation identity.
+
+#### Scenario: Windows controller prepares the original Linux target
+- **WHEN** a native Windows controller constructs an SSH profile with absolute POSIX executable and working directory, then derives argv from validated experiment inputs
+- **THEN** construction, SSH contract reconstruction and dataclass replacement preserve POSIX validation and the exact path bytes, while remote relative or drive-letter paths are rejected
+- **AND** argv bounds, working-directory identity, environment and resource validation remain enforced
+
+#### Scenario: Original identity survives explicit path semantics
+- **WHEN** the same valid SSH specification and inputs are prepared on Linux and native Windows
+- **THEN** serialized fields, profile fingerprint, target reference and original receipt/spec hashes remain identical, with no path-style field added to wire or custody data
+- **AND** the Linux helper receives the existing concrete spec type and retains its existing file/identity and execution checks
+
+#### Scenario: Local semantics are not widened
+- **WHEN** a local caller constructs a process specification without opting into SSH POSIX validation
+- **THEN** its native absolute-path validation remains unchanged, and the correction does not enable remote uv execution or change local interpreter validation

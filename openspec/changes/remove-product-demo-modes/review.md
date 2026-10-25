@@ -47,3 +47,18 @@ This conclusion permits continuing the Draft and necessary exact-head CI, not
 claiming a successful full run. Original full failures, two later MCP timeouts
 and the storage cancellation timeout remain recorded; isolated diagnostic passes
 do not close their historical causes.
+
+## Final-code cumulative review: 1597fe8
+
+Independent `foundation_review`: exact base
+`9454000e088ca6fba55621b8b2443ab55ffcc764` → head
+`1597fe8bbc29a2ba596db1e1f3878dd4da014c6c`, **PASS**.
+The exact full40233357540 subsequently completed all seven jobs successfully;
+counts and boundaries are in [verification](verification.md#current-final-code-validation-1597fe8).
+This supersedes earlier pending-full status without erasing earlier rejected
+reviews, failures or unresolved historical timing causes.
+
+The present follow-up is documentation only: production/tests/workflows/lockfiles
+are unchanged from tested 1597fe8. Its documentation diff and new exact fast CI
+remain to be reviewed before merge. PR136 remains unmerged; no future main SHA
+or result is assumed.
