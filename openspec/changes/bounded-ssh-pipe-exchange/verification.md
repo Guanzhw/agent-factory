@@ -23,3 +23,29 @@ ran **50 cases: 46 passed, 4 errors, 2.933s**. Its 12 real pipe cases and actual
 Three errors came from remote-profile fixture replacements losing their explicit POSIX remote paths; one came from collecting a directly executed Linux helper case on Windows. Reviewed fixture changes (spec `48998cb`, code `fff64a1`, applied from the PR137 correction) restore the remote paths and label the Linux helper boundary. Linux targeted verification passed **16/16, zero skips, 0.093s**. The revised Windows head has not yet been verified at this checkpoint; Linux targeted results cannot close that gate.
 
 The Windows pipe result is genuine platform evidence, but Windows credential support remains a separate unimplemented responsibility. Neither this module nor its consumer review establishes complete Windows SSH support. No final combined PASS, real remote deployment or GPU outcome is claimed.
+
+## Revised actual Windows portable result — dc1fead
+
+Exact `dc1fead` [Windows run40239805493, portable job121308976958](https://github.com/Guanzhw/agent-factory/actions/runs/40239805493/job/121308976958)
+passed **49/49, zero skips, 2.905s**. The selection explicitly includes three
+portable classes and excludes the actual Linux-helper case; that helper's Linux
+targeted group already passed 16/16. This is the revised Windows pipe/consumer
+result, not a successful rerun of the earlier 50-case selection with a hidden skip.
+The separate ASKPASS job in the same run failed, so Windows SSH overall acceptance
+is **not passed**.
+
+The older d3 [full40239428444 Windows job121307877812](https://github.com/Guanzhw/agent-factory/actions/runs/40239428444/job/121307877812)
+ran 2171 cases: **1297 passed, 869 skipped, 4 errors, 1 failure, 272.171s**.
+In addition to the four fixture/collection errors already described, the old
+selector cancellation test failed because `pause_on=2` never reached its gate
+within the unchanged `wait(3)`. Its log at 22:21:26 records the actual task
+exception `OSError: [WinError 10038]` (non-socket operation), with call chain
+`ssh_process_provider.py:55 → test_ssh_process_provider.py:133 gated_select → selectors.py:323 select`.
+This is the old product's Windows pipe/selector incompatibility, not an unexplained
+flaky timeout. PR138 replaces that selector path with nonblocking pipe exchange;
+the revised exact-head 49-case Windows result above verifies the replacement.
+No timeout extension or repeated-until-green explanation is used.
+
+The older d3 full run's PG job is still running at this checkpoint. Its failed
+Windows job cannot be relabelled PASS because a later bounded-pipe job succeeded.
+ASKPASS/credential behavior remains a separate open gate.
