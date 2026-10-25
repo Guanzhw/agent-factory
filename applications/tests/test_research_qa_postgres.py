@@ -26,7 +26,7 @@ class ResearchQANativeTests(unittest.TestCase):
     def test_provider_training_tool_call_has_no_tool_dispatch_or_unbounded_retry(self):
         self.run_qa(malicious=True)
 
-    def run_qa(self, *, malicious=False):
+    def run_qa(self, *, malicious=False, transient=False):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory())
         calls, train_dispatches = [], []
@@ -37,6 +37,8 @@ class ResearchQANativeTests(unittest.TestCase):
         def wire(request):
             body = json.loads(request.content)
             calls.append(body)
+            if transient and len(calls) == 1:
+                raise httpx.ReadError("Synthetic first request transport failure")
             self.assertNotIn('tools', body)
             self.assertNotIn('response_format', body)
             text = json.dumps(body, ensure_ascii=False)
@@ -112,7 +114,7 @@ class ResearchQANativeTests(unittest.TestCase):
             self.assertIsNotNone(result.get('reply'), {'message': result, 'tasks': store.tasks('alice')})
             self.assertEqual(result['reply']['state'], 'available', result)
             self.assertEqual(set(result['reply']['contentIds']), set(source_ids))
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2 if transient else 1)
         self.assertEqual(len(store.tasks('alice')), 1)
         self.assertEqual(store.tasks('bob'), [])
         self.assertEqual(store.sql('SELECT * FROM af_delegation_links'), [])
@@ -126,6 +128,6 @@ class ResearchQANativeTests(unittest.TestCase):
         self.assertIsNone(scope['usage'])
         post('/assistants/' + assistant['id'] + '/questions',
             {'requestId': 'exhausted-qa-question', 'text': 'another measurement'}, owner='bob', expected=429)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2 if transient else 1)
         self.assertEqual(len(store.tasks('alice')), 1)
         self.assertEqual(settings.native_workflows, ())
