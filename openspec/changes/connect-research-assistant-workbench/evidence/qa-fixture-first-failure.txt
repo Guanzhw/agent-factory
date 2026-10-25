@@ -1,0 +1,75 @@
+
+ RUN  v4.1.12 /workspace/agent-factory-research-assistant-ui
+
+ ❯ web/apps/research/live/AssistantQuestions.test.ts (8 tests | 3 failed) 115ms
+   × recovers a 408 with the original key and body after remount, never admitting a replacement 21ms
+   × keeps an acknowledged original question when later reading fails without sending again 13ms
+   × clears cached text on focus revalidation and a denied source read 8ms
+ ❯ web/apps/research/live/AssistantSettings.test.ts (4 tests | 1 failed) 189ms
+   × retains allowance inputs across CAS conflict and requires explicit confirmation of the new revision 56ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  web/apps/research/live/AssistantQuestions.test.ts > recovers a 408 with the original key and body after remount, never admitting a replacement
+TypeError: Cannot read properties of undefined (reading 'click')
+ ❯ web/apps/research/live/AssistantQuestions.test.ts:30:39
+     28|   await askMount('bob'); expect(host.textContent).not.toContain('重试原操作…
+     29|   const onQuestion = await askMount(); expect(button('发送私密问题').disable…
+     30|   await act(async () => button('重试原操作').click());
+       |                                       ^
+     31|   expect(ask.mock.calls[1]).toEqual(['alice', 'bob-assistant', origina…
+     32| });
+ ❯ process.env.NODE_ENV.exports.act ../agent-factory-research-ui-demo/node_modules/react/cjs/react.development.js:790:22
+ ❯ web/apps/research/live/AssistantQuestions.test.ts:30:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  web/apps/research/live/AssistantQuestions.test.ts > keeps an acknowledged original question when later reading fails without sending again
+AssertionError: expected '原私密问题问题：q-original核对原问题404' to contain '读取被拒绝'
+
+Expected: "读取被拒绝"
+Received: "原私密问题问题：q-original核对原问题404"
+
+ ❯ web/apps/research/live/AssistantQuestions.test.ts:44:47
+     42|   const ask = vi.spyOn(assistantApi, 'ask').mockResolvedValue(question…
+     43|   const onQuestion = await askMount(); await send(); expect(onQuestion…
+     44|   await readMount(); expect(host.textContent).toContain('读取被拒绝'); expe…
+       |                                               ^
+     45| });
+     46| it('removes the entire derived answer when any input dependency become…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  web/apps/research/live/AssistantQuestions.test.ts > clears cached text on focus revalidation and a denied source read
+AssertionError: expected '原私密问题问题：q-original核对原问题403' to contain '来源不可读'
+
+Expected: "来源不可读"
+Received: "原私密问题问题：q-original核对原问题403"
+
+ ❯ web/apps/research/live/AssistantQuestions.test.ts:67:152
+     65| it('clears cached text on focus revalidation and a denied source read'…
+     66|   vi.spyOn(assistantApi, 'question').mockResolvedValue(question); vi.s…
+     67|   await readMount(); await act(async () => button('source-a').click())…
+       |                                                                                                                                                        ^
+     68|   await act(async () => window.dispatchEvent(new Event('focus'))); exp…
+     69| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  web/apps/research/live/AssistantSettings.test.ts > retains allowance inputs across CAS conflict and requires explicit confirmation of the new revision
+AssertionError: expected '我的研究助手持续身份不代表常驻推理。助手仅在已确认的操作额度和权限内回答原…' to contain '配置修订冲突'
+
+Expected: "配置修订冲突"
+Received: "我的研究助手持续身份不代表常驻推理。助手仅在已确认的操作额度和权限内回答原问题。操作额度受限，token/费用未计量稳定助手：stable-a配置修订：0尚未配置问答，不能接收新问题。核对我的助手准备新的QA配置确认有限问答操作额度操作额度受限，token/费用未计量当前配置修订 0。确认后同事可在你离线时询问经验；不授权训练。替换配置不迁移旧问题或原任务。409读取最新助手配置最多回答问题数总工具操作额度每问工具操作上限问答授权截止时间按修订 0 确认问答配置"
+
+ ❯ web/apps/research/live/AssistantSettings.test.ts:55:70
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  4 failed | 19 passed (23)
+   Start at  15:28:41
+   Duration  2.12s (transform 794ms, setup 0ms, import 1.47s, tests 920ms, environment 1.39s)
+

@@ -1,11 +1,10 @@
 import { factoryRequest } from '../../api.js';
-import type { AssistantSummary, Page, ResearchAgreement, ResearchProject, ResearchProjectSummary } from './types.js';
+import type { Page, ResearchAgreement, ResearchProject, ResearchProjectSummary } from './types.js';
 const projectPath = (id: string) => `/research/projects/${encodeURIComponent(id)}`;
 export const researchApi = {
   projects: (owner: string, after = '', signal?: AbortSignal) => factoryRequest<Page<ResearchProjectSummary>>(`/research/projects?limit=20&after=${encodeURIComponent(after)}`, 'GET', undefined, signal, owner),
   project: (owner: string, id: string, signal?: AbortSignal) => factoryRequest<ResearchProject>(projectPath(id), 'GET', undefined, signal, owner),
-  assistants: (owner: string, after = '', signal?: AbortSignal) => factoryRequest<Page<AssistantSummary>>(`/assistants?limit=50&after=${encodeURIComponent(after)}`, 'GET', undefined, signal, owner),
-  create: (owner: string, body: { requestId: string; title: string; assistantId: string | null }) => factoryRequest<ResearchProject>('/research/projects', 'POST', body, undefined, owner),
+  create: (owner: string, body: { requestId: string; title: string; assistantId: string | null; researchAssistantId?: string | null }) => factoryRequest<ResearchProject>('/research/projects', 'POST', body, undefined, owner),
   goal: (owner: string, id: string, body: { requestId: string; expectedVersion: number; agreement: ResearchAgreement }) => factoryRequest<ResearchProject>(`${projectPath(id)}/goals`, 'POST', body, undefined, owner),
   confirm: (owner: string, id: string, body: { requestId: string; expectedVersion: number }) => factoryRequest<ResearchProject>(`${projectPath(id)}/confirm`, 'POST', body, undefined, owner),
   start: (owner: string, id: string, body: { requestId: string; expectedVersion: number }) => factoryRequest(`${projectPath(id)}/start`, 'POST', body, undefined, owner),
