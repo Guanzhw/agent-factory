@@ -1,3 +1,5 @@
+> Historical record: the demo/development runtime entrypoints described below were removed by `remove-product-demo-modes`. These commands are not current deployment instructions. Existing evidence and UNKNOWN records remain preserved.
+
 # Bounded Go validation — 2026-10-03
 
 ## Actual result

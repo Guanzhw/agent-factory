@@ -5,6 +5,7 @@ Fixtures use generated loopback PostgreSQL databases and controlled synthetic
 identities. Tests exercise main application wiring when installed and otherwise
 mount only the owned connection router into the controlled Factory fixture.
 """
+from fixture_auth import authorize_client
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding, connection_router
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import Store
@@ -64,12 +65,12 @@ class ConnectionPostgresTests(unittest.TestCase):
         else:
             self.service = ConnectionService(self.store, self.auth, self.registry, clock=lambda: self.at)
             self.app.app.include_router(connection_router(self.auth, self.service))
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 
     def login(self, persona="alice"):
         self.client.cookies.clear()
-        response = self.client.post("/api/factory/demo/login", json={"persona": persona})
+        response = authorize_client(self.client, persona)
         self.assertEqual(response.status_code, 200)
 
     def bind(self, **kwargs):

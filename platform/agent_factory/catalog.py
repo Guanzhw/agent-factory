@@ -1,14 +1,5 @@
-"""Original synthetic catalog; no private knowledge or executable user scripts."""
+"""Governed plan creation shared by HTTP and child execution."""
 from fastapi import HTTPException
-
-
-def seed_catalog(store, seeds=()):
-    existing = {item["id"] for item in store.materials()}
-    for mid, kind, name, content, permissions in seeds:
-        if mid not in existing:
-            store.add_material({"id": mid, "kind": kind, "name": name, "description": content, "content": content,
-                "license": "MIT", "origin": "factory synthetic fixture", "dependencies": [], "compatibility": ["agno:3.1.0", "mode:demo"],
-                "permissions": permissions, "inputSchema": {}, "outputSchema": {}, "archived": False}, "demo-bootstrap", seed=True)
 
 
 def create_plan(store, owner, goal, mode, application=None, *,

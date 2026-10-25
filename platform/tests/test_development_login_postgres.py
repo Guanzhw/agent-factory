@@ -1,4 +1,4 @@
-"""Real create_app/native PostgreSQL with in-process development mock OIDC.
+"""Real create_app/native PostgreSQL with test-only external OIDC protocol fixture.
 
 HTTPS ASGI scheme is simulated; these tests do not prove deployed TLS. No live
 IdP/provider, host changes or alternate browser session implementation. A local
@@ -8,10 +8,14 @@ is verified separately by the real HTTPS browser acceptance.
 import json
 import os
 from pathlib import Path
-import re
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+
+from sqlalchemy import create_engine, text
 from uuid import uuid4
+from dataclasses import replace
+from urllib.parse import parse_qs, urlencode, urlsplit
 from typing import cast
 
 from starlette.types import ASGIApp
@@ -19,8 +23,10 @@ from starlette.types import ASGIApp
 from fastapi.testclient import TestClient
 
 from agent_factory.browser_auth import SESSION_COOKIE
-from agent_factory.config import Settings
-from agent_factory.development_identity import PREFIX
+from fixture_settings import Settings
+from browser_identity_fixture import BrowserIdentityFixture
+from agent_factory.browser_oidc import BrowserCodeExchanger
+from fixture_auth import initialize_members
 from agent_factory.main import create_app
 from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]
 
@@ -34,19 +40,28 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         directory = TemporaryDirectory(prefix="development-login-postgres-")
         self.addCleanup(directory.cleanup)
+        self.idp = BrowserIdentityFixture(redirect_uri=ORIGIN + '/api/factory/auth/callback')
+        config = replace(self.idp.config(), jwks=self.idp.jwks, subject_owners={
+            (self.idp.issuer, 'subject-' + owner): owner for owner in ('alice', 'bob', 'manager', 'manager2')})
         settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=1,
-            development_mock_login=True, development_public_origin=ORIGIN,
+            browser_oidc=config,
             storage_task_reserve_bytes=8*1024*1024)
         # Backend CI intentionally has no frontend build. Supply a disposable
         # document through the real FileResponse route instead of depending on
         # an unrelated local dist/ directory or mocking an HTTP success.
         static_root = Path(directory.name) / "web-fixture"
         (static_root / "dist").mkdir(parents=True)
-        (static_root / "dist" / "index.html").write_text("<!doctype html><title>Synthetic development login fixture</title>", encoding="utf-8")
+        (static_root / "dist" / "index.html").write_text("<!doctype html><title>Synthetic external OIDC login fixture</title>", encoding="utf-8")
         settings.web_directory = static_root / "dist"
         self.app = create_app(settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
+        initialize_members(self.auth)
+        self.auth.directory.upsert('manager2', name='Second manager')
+        self.auth.account_roles.assign('manager2', 'factory-manager')
+        self.state['browser_auth'].exchanger = BrowserCodeExchanger(config, transport=self.idp.transport)
+        self.identity_client = TestClient(self.idp.app, base_url=self.idp.issuer, follow_redirects=False)
+        self.addCleanup(self.identity_client.close)
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(cast(ASGIApp, self.app), base_url=ORIGIN, follow_redirects=False).__enter__()
@@ -56,15 +71,12 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         client = client or self.client
         started = client.post("/api/factory/auth/login", json={}, headers={"Origin": ORIGIN})
         self.assertEqual(started.status_code, 200, started.text)
-        selector = client.get(started.json()["authorizationUrl"])
-        self.assertEqual(selector.status_code, 200, selector.text)
-        form = {"persona": persona}
-        for name in ("flow", "csrf"):
-            match = re.search('name="' + name + '" value="([A-Za-z0-9_-]{43})"', selector.text)
-            assert match is not None
-            form[name] = match.group(1)
-        selected = client.post(PREFIX + "/select", data=form, headers={"Origin": ORIGIN})
-        self.assertEqual(selected.status_code, 303, selected.text)
+        if persona == 'cancel':
+            query = parse_qs(urlsplit(started.json()['authorizationUrl']).query)
+            return client.get('/api/factory/auth/callback?' + urlencode({'state': query['state'][0], 'error': 'access_denied'}))
+        self.idp.subject = 'subject-' + persona
+        selected = self.identity_client.get(started.json()['authorizationUrl'])
+        self.assertEqual(selected.status_code, 302, selected.text)
         return selected
 
     def login(self, persona, client=None):
@@ -86,7 +98,7 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         self.assertEqual(config.status_code, 200)
         self.assertTrue(config.json()["enabled"])
         cancelled = self.select("cancel")
-        self.assertIn("signin_cancelled", cancelled.headers["location"])
+        self.assertIn("signin_failed", cancelled.headers["location"])
         self.assertFalse(self.client.get("/api/factory/auth/session").json()["authenticated"])
         self.assertEqual(self.store.sql("SELECT id FROM af_browser_auth WHERE kind='session'"), [])
         csrf = self.login("alice")
@@ -94,7 +106,7 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         for _ in range(3):
             document = self.client.get("/")
             self.assertEqual(document.status_code, 200)
-            self.assertIn("Synthetic development login fixture", document.text)
+            self.assertIn("Synthetic external OIDC login fixture", document.text)
             self.assertEqual(self.client.get("/api/factory/session").json()["id"], "alice")
             self.assertEqual(self.client.cookies.get(SESSION_COOKIE), opaque)
         self.assertEqual(len(self.store.sql("SELECT id FROM af_browser_auth WHERE kind='session'")), 1)
@@ -135,6 +147,56 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
             self.assertEqual(self.client.get("/api/factory/session").json()["role"], "manager")
             self.auth.require_account_admin(manager)
         self.assertEqual(other.get("/api/factory/session").json()["id"], "bob")
+
+
+@unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated loopback PostgreSQL")
+class UnconfiguredPublicIdentityPostgresTests(unittest.TestCase):
+    def test_old_demo_database_is_rejected_before_schema_or_identity_writes(self):
+        from agent_factory.config import Settings as ProductSettings
+        database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
+        self.addCleanup(database.__exit__, None, None, None)
+        directory = TemporaryDirectory(prefix='old-demo-postgres-')
+        self.addCleanup(directory.cleanup)
+        engine = create_engine(database.url)
+        self.addCleanup(engine.dispose)
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE af_bootstrap(id TEXT PRIMARY KEY, mode TEXT NOT NULL)"))
+            conn.execute(text("INSERT INTO af_bootstrap VALUES('mode','demo')"))
+            conn.execute(text("CREATE TABLE retained_legacy_data(id TEXT PRIMARY KEY, value TEXT)"))
+            conn.execute(text("INSERT INTO retained_legacy_data VALUES('original','synthetic legacy data')"))
+            before = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).scalars().all()
+        settings = ProductSettings(db_url=database.url, workspace=Path(directory.name),
+            jwt_key='synthetic-explicit-native-key-at-least-32bytes')
+        with patch('agent_factory.store.create_engine', return_value=engine):
+            with self.assertRaisesRegex(ValueError, 'Existing demo database cannot be used'):
+                create_app(settings)
+        with engine.connect() as conn:
+            self.assertEqual(conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).scalars().all(), before)
+            self.assertEqual(conn.execute(text("SELECT id,mode FROM af_bootstrap")).all(), [('mode', 'demo')])
+            self.assertEqual(conn.execute(text("SELECT id,value FROM retained_legacy_data")).all(), [('original', 'synthetic legacy data')])
+
+    def test_no_idp_keeps_health_but_rejects_internal_tokens_and_legacy_cookie(self):
+        from agent_factory.config import Settings as ProductSettings
+        database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
+        self.addCleanup(database.__exit__, None, None, None)
+        directory = TemporaryDirectory(prefix='no-idp-postgres-')
+        self.addCleanup(directory.cleanup)
+        app = create_app(ProductSettings(db_url=database.url, workspace=Path(directory.name),
+            jwt_key='synthetic-explicit-native-key-at-least-32bytes', max_workers=1))
+        state = app.app.state.factory
+        store, auth = state['store'], state['auth']
+        self.addCleanup(store.engine.dispose)
+        self.addCleanup(store.native_db.db_engine.dispose)
+        self.assertEqual(list(auth.directory.ids()), [])
+        initialize_members(auth)
+        with TestClient(app, base_url=ORIGIN) as client:
+            self.assertEqual(client.get('/api/health').status_code, 200)
+            self.assertFalse(client.get('/api/factory/auth/config').json()['enabled'])
+            token = auth._issue_native_token('alice')
+            for headers in ({'Authorization': 'Bearer ' + token}, {'Cookie': 'factory_demo_session=' + token}):
+                self.assertEqual(client.get('/api/factory/session', headers=headers).status_code, 401)
+            response = client.portal.call(state['bridge']._request, 'GET', '/api/factory/session', 'alice')
+            self.assertEqual(response['id'], 'alice')
 
 
 if __name__ == "__main__":

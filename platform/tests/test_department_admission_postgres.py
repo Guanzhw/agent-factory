@@ -3,6 +3,7 @@
 All users, models, applications and Workflow steps are synthetic. The existing
 UNKNOWN/cancellation suites retain the separate external-stop proof.
 """
+from fixture_identity import access_token
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,7 +18,7 @@ from agno.workflow.types import HumanReview, OnError, StepInput, StepOutput
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.input_schema import input_model
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.native_workflows import NativeWorkflowRegistration
@@ -65,7 +66,7 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
 
     def stop(self):
         if getattr(self, 'client', None) is not None:
@@ -76,7 +77,7 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
 
     def request(self, method, path, body=None, *, owner='alice', expected=200, headers=None):
         response = self.client.request(method, '/api/factory' + path, json=body,
-            headers={'Authorization': 'Bearer ' + self.auth.issue_demo_token(owner), **(headers or {})})
+            headers={'Authorization': 'Bearer ' + access_token(owner), **(headers or {})})
         self.assertEqual(response.status_code, expected, response.text)
         return response.json()
 

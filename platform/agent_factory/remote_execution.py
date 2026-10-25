@@ -10,6 +10,8 @@ import copy
 from typing import Any
 from uuid import UUID
 
+from .runtime_hooks import execution_classification
+
 from fastapi import HTTPException
 from .store import canonical, digest
 from .task_status import finalized_status
@@ -113,14 +115,14 @@ class RemoteExecution:
                "definitionId": plan["application"], "definitionVersion": 1, "definition": {},
                "binding": {}, "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
                "status": "unknown", "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
-               "runtime": "demo" if self.store.settings.demo else "live", "attempt": 0,
+               "runtime": "live", "attempt": 0,
                "allowedActions": ["inspect", "reconcile", "cancel"],
                "validationStatus": "远端执行结果尚未确认", "evidenceKind": "未确认",
                "executionPlacement": {"kind": "remote-factory", "targetRef": row["target_ref"],
                                       "originTaskId": task["id"], "state": row["state"]}}
         return {"job": job, "events": self.store.events(task["id"]), "artifacts": [],
                 "snapshot": {"remoteUnavailable": True, "remoteReadCode": code, "capacityHeld": not task["terminal"],
-                             "syntheticFixture": self.store.settings.demo, "cancelRequested": task["cancel_requested"]}}
+                             "syntheticFixture": execution_classification(plan)["syntheticFixture"], "cancelRequested": task["cancel_requested"]}}
 
     async def detail(self, task: dict, child: str | None = None) -> dict:
         try:

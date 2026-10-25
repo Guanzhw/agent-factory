@@ -28,7 +28,7 @@ def main():
         with tempfile.TemporaryDirectory() as profile, sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(profile, headless=True)
             origin = str(fixture.client.base_url)
-            context.request.post(origin + "/api/factory/demo/login", data={"persona": "alice"})
+            context.set_extra_http_headers(fixture.headers("alice"))
             page = context.new_page()
             page.goto(origin)
             page.get_by_role("button", name="磁盘与回收", exact=True).click()
@@ -43,7 +43,7 @@ def main():
             assert not path.exists()
             context.close()
             context = playwright.chromium.launch_persistent_context(profile, headless=True)
-            context.request.post(origin + "/api/factory/demo/login", data={"persona": "alice"})
+            context.set_extra_http_headers(fixture.headers("alice"))
             page = context.new_page()
             posts = []
             page.on("request", lambda request: posts.append(request.url) if request.method == "POST" and "/storage/" in request.url else None)
@@ -56,8 +56,8 @@ def main():
             assert (path / "synthetic.txt").read_bytes() == b"Owned recoverable storage fixture"
             assert len(posts) == 1
             page.screenshot(path=str(args.output / "alice-restored.png"), full_page=True)
-            page.get_by_role("button", name="退出", exact=True).click()
-            page.get_by_role("button", name="研究员 Bob", exact=True).click()
+            context.set_extra_http_headers(fixture.headers("bob"))
+            page.goto(origin)
             page.get_by_role("button", name="磁盘与回收", exact=True).click()
             page.get_by_text("尚无平台登记的任务目录。历史目录不会被自动接管。", exact=True).wait_for()
             assert page.locator('[data-retention-id="' + plan["id"] + '"]').count() == 0
@@ -67,7 +67,7 @@ def main():
             context.close()
             evidence = {"taskId": task, "planId": plan["id"], "dryRunDidNotMove": True, "quarantineDidNotDelete": True,
                 "browserRestartRecoveredOriginal": True, "recoveryMutationPOSTs": 0, "explicitRestorePOSTs": len(posts),
-                "restoredBytesMatch": True, "bobCannotSeeAlicePlan": True, "mobileOverflow": False}
+                "restoredBytesMatch": True, "bobCannotSeeAlicePlan": True, "identityMode": "test-host-signed-bearer", "mobileOverflow": False}
             (args.output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
             print(json.dumps({"ok": True, "output": str(args.output)}))
     finally:

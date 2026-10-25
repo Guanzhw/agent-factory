@@ -79,7 +79,7 @@ class RemoteDisconnectReadTests(unittest.IsolatedAsyncioTestCase):
             return deepcopy(plan)
 
         mutation = Mock(side_effect=AssertionError('Read must not mutate task/capacity or dispatch'))
-        store = SimpleNamespace(settings=SimpleNamespace(demo=True, experiment_output_bytes=65536),
+        store = SimpleNamespace(settings=SimpleNamespace(experiment_output_bytes=65536),
             sql=sql, task=owned_task, plan=owned_plan, events=lambda _: [], usage_ledger=None,
             request_cancel=mutation, observed=mutation, reserve_task=mutation, release_task=mutation)
         client = TrustedHandoffClient.__new__(TrustedHandoffClient)

@@ -16,6 +16,7 @@ import httpx
 from playwright.sync_api import sync_playwright  # type: ignore[reportMissingImports]
 import uvicorn
 
+from fixture_auth import member_headers
 from test_process_runtime_postgres import ProcessRuntimePostgresTests  # type: ignore[reportMissingImports]
 
 
@@ -63,7 +64,7 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1440, "height": 1000})
-            assert context.request.post(origin + "/api/factory/demo/login", data={"persona": "alice"}).ok
+            context.set_extra_http_headers(member_headers(fixture.auth, "alice"))
             page = context.new_page()
             errors, mutations = [], []
             page.on("pageerror", lambda error: errors.append(type(error).__name__))
@@ -108,7 +109,7 @@ def main():
             page.set_viewport_size({"width": 1440, "height": 1000})
             page.screenshot(path=str(args.output / "desktop-unknown-held.png"), full_page=True)
             bob = browser.new_context()
-            assert bob.request.post(origin + "/api/factory/demo/login", data={"persona": "bob"}).ok
+            bob.set_extra_http_headers(member_headers(fixture.auth, "bob"))
             bob_page = bob.new_page()
             bob_page.goto(origin)
             bob_page.get_by_role("button", name="我的资源连接", exact=True).click()
@@ -122,7 +123,7 @@ def main():
         evidence = {"schema": 1, "evidenceKind": "actual-native-cooperative-process-controlled-fixture",
             "taskId": task["id"], "planId": plan["id"], "leaseId": lease["id"],
             "nativeRunId": projected["nativeRunId"], "providerJobId": projected["providerJobId"],
-            "actualNativeTask": True, "nativeTaskCompleted": True, "actualBoundedProcess": True,
+            "actualNativeTask": True, "identityMode": "test-host-signed-bearer", "nativeTaskCompleted": True, "actualBoundedProcess": True,
             "normalLifecycleReleased": True, "stoppedHeldBrowserScenario": False,
             "browserMutationRequests": 0, "pageErrors": 0, "mobileHorizontalOverflow": False,
             "bobCannotSeeAliceLease": True, "allocationCount": allocations + 1, "browserTriggeredAllocations": 0,

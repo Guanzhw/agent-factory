@@ -9,6 +9,7 @@ import subprocess
 import sys
 import json
 from dataclasses import dataclass
+from unittest.mock import patch
 
 from agno.exceptions import RunCancelledException
 from agno.models.base import Model
@@ -19,6 +20,7 @@ from agent_factory.application_schema import ApplicationDefinition, ApplicationD
 from agent_factory.execution_bindings import ExecutionBindings, EnvironmentLimits, KnowledgeContext
 from agent_factory.main import create_app as create_core_app
 from agent_factory.usage_ledger import PricingRevision
+from fixture_auth import initialize_members
 
 MODEL_ADAPTER = 'fixture-model-v1'
 ENVIRONMENT_ADAPTER = 'fixture-environment-v1'
@@ -31,7 +33,7 @@ SEEDS = [
     ('fixture-model', 'model', 'Controlled native model', 'No provider network calls.', []),
     ('fixture-environment', 'environment', 'Bounded fixture', 'Inert local tools only.', []),
 ]
-LEGACY_BINDINGS = {
+FIXTURE_BINDINGS = {
     'fixture-operation-tool': ('tool', 'fixture-operation-v1'),
     'fixture-model': ('model', MODEL_ADAPTER),
     'fixture-environment': ('environment', ENVIRONMENT_ADAPTER),
@@ -180,22 +182,22 @@ def build_tools(settings, store, operation_name='fixture_operation'):
 
 
 def fixture_bindings(settings, store, connections=None):
-    registry = ExecutionBindings(settings, store, connections, legacy_materials=SEEDS, legacy_bindings=LEGACY_BINDINGS)
+    registry = ExecutionBindings(settings, store, connections)
     def empty(config):
         if config: raise ValueError('Fixture adapter accepts no configuration')
-    registry.register('model', MODEL_ADAPTER, '1', lambda _: FixtureModel(), demo_only=True, validator=empty)
+    registry.register('model', MODEL_ADAPTER, '1', lambda _: FixtureModel(), validator=empty)
     for name, permission in [('checksum', 'checksum:read'), ('ask_scope', 'question:ask')]:
         registry.register('tool', 'fixture-' + name.replace('_', '-') + '-v1', '1',
             lambda context, name=name: build_tools(context.settings, context.store)[name],
             tool_name=name, permissions=(permission,), validator=empty)
     registry.register('tool', 'fixture-operation-v1', '1',
         lambda context: build_tools(context.settings, context.store)['fixture_operation'],
-        tool_name='fixture_operation', permissions=('fixture:operate',), demo_only=True, validator=empty)
+        tool_name='fixture_operation', permissions=('fixture:operate',), validator=empty)
     def knowledge(context):
         ref = context.spec['materialRef']
         material = next(item for item in context.plan['materials'] if all(item[k] == ref[k] for k in ref))
         return KnowledgeContext(material['content'], {'evidenceKind': 'synthetic', 'source': 'approved-material-content'})
-    registry.register('knowledge', 'fixture-knowledge-v1', '1', knowledge, demo_only=True, validator=empty)
+    registry.register('knowledge', 'fixture-knowledge-v1', '1', knowledge, validator=empty)
     fields = {'runtimeId': 'runtime_id', 'timeoutSeconds': 'timeout_seconds', 'outputBytes': 'output_bytes',
         'memoryBytes': 'memory_bytes', 'processLimit': 'process_limit', 'cpuPercent': 'cpu_percent'}
     def environment(context):
@@ -264,21 +266,46 @@ def governed_fixture_definitions(store, definitions=all_fixture_definitions):
     return define
 
 
+def publish_fixture_materials(store, seeds=SEEDS):
+    governance = store.material_governance
+    existing = {item['id']: item for item in store.materials()}
+    for mid, kind, name, content, permissions in seeds:
+        if mid in existing:
+            continue
+        body = {'id': mid, 'kind': kind, 'name': name, 'content': content, 'permissions': permissions}
+        binding = FIXTURE_BINDINGS.get(mid)
+        if binding:
+            body['runtimeBinding'] = {'adapterId': binding[1], 'revision': '1', 'config': {}}
+        material = governance.create_draft('manager', body, mid + ':fixture-draft')
+        governance.publish('manager', mid, material['version'], mid + ':fixture-publish')
+    return {item['id']: item for item in store.materials()}
+
+
+def publish_fixture_applications(store, definitions=all_fixture_definitions):
+    seeds = publish_fixture_materials(store)
+    values = governed_fixture_definitions(store, definitions)(seeds)
+    existing = {item['application']['id'] for item in store.applications.list_definitions('manager')}
+    for value in values:
+        if value['id'] in existing:
+            continue
+        # Equivalent isolated fixture installations must share immutable application pins.
+        with patch('agent_factory.applications.now', return_value='1970-01-01T00:00:00+00:00'):
+            application = store.applications.create_draft('manager', value, value['id'] + ':fixture-draft')
+        store.applications.publish('manager', application['id'], application['version'], value['id'] + ':fixture-publish')
+
+
 def create_fixture_app(settings, **kwargs):
     prices = {(p.adapter_id, p.adapter_revision): p for p in (*fixture_zero_prices(), *settings.usage_pricing)}
     settings.usage_pricing = tuple(prices.values())
-    options = dict(bindings_factory=fixture_bindings, seed_materials=SEEDS,
-        demo_definitions=all_fixture_definitions, tool_catalog_factory=build_tools)
+    definitions = kwargs.pop('definitions', all_fixture_definitions)
+    options = dict(bindings_factory=fixture_bindings, tool_catalog_factory=build_tools)
     options.update(kwargs)
-    original_bindings = options['bindings_factory']
-    original_definitions = options['demo_definitions']
-    captured = {}
-    def bindings(*args):
-        captured['store'] = args[1]
-        return original_bindings(*args)
-    options['bindings_factory'] = bindings
-    options['demo_definitions'] = lambda seeds: governed_fixture_definitions(captured['store'], original_definitions)(seeds)
-    return create_core_app(settings, **options)
+    app = create_core_app(settings, **options)
+    state = app.app.state.factory
+    initialize_members(state['auth'])
+    publish_fixture_materials(state['store'])
+    publish_fixture_applications(state['store'], definitions)
+    return app
 
 
 def publish_owner_application(state, *, author):

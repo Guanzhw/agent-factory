@@ -1,9 +1,12 @@
+from fixture_auth import disabled_member_request
 """Factory cursor protocol tests: owned portable SQL + opt-in native PostgreSQL.
 
 SQLite/native-auth cases prove cursor validation, scope and byte bounds only.
 Generated PostgreSQL databases additionally prove actual Factory HTTP/native jobs,
 snapshot/commit ordering, large history, concurrent CAS and API restart.
 """
+from fixture_auth import authorize_client
+from fixture_auth import initialize_members
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 import hashlib
@@ -26,7 +29,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, create_engine, select, text
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.event_replay import EventReplay, event_replay_router
 from core_native_fixture import create_fixture_app as create_app
@@ -85,8 +88,8 @@ class EventReplayTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "owned-events.sqlite"))
-        self.auth = AuthService(SimpleNamespace(demo=True, jwt_key=secrets.token_urlsafe(48)), self.db)
-        self.auth.initialize_demo()
+        self.auth = AuthService(SimpleNamespace(jwt_key=secrets.token_urlsafe(48)), self.db)
+        initialize_members(self.auth)
         self.store = PortableEvents(self.db)
         self.alice, self.bob = self.store.add_task("alice"), self.store.add_task("bob")
         self.service = EventReplay(self.store, self.auth, signing_key=self.auth._key)
@@ -273,9 +276,9 @@ class EventReplayTests(unittest.TestCase):
         native = AgentOS(id="event-router-fixture", agents=[Agent(id="factory-executor", db=self.db, model=DemoModel(), telemetry=False)],
                          db=self.db, **self.auth.agentos_kwargs(), mcp=False, scheduler=False, telemetry=False).get_app()
         native.include_router(event_replay_router(self.auth, self.service))
-        with TestClient(native) as client:
-            alice = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
-            bob = {"Authorization": "Bearer " + self.auth.issue_demo_token("bob")}
+        with TestClient(native, base_url="https://testserver") as client:
+            alice = {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
+            bob = {"Authorization": "Bearer " + self.auth._issue_native_token("bob")}
             path = "/api/factory/jobs/" + self.alice + "/events"
             self.assertEqual(client.get(path).status_code, 401)
             self.assertEqual(client.get(path, headers=bob).status_code, 404)
@@ -302,7 +305,7 @@ class EventReplayPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.service = self.state["event_replay"]
         self.assertIs(self.store.event_replay, self.service)
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.login()
 
     def stop(self):
@@ -316,7 +319,7 @@ class EventReplayPostgresTests(unittest.TestCase):
 
     def login(self, owner="alice"):
         self.client.cookies.clear()
-        response = self.client.post("/api/factory/demo/login", json={"persona": owner})
+        response = authorize_client(self.client, owner)
         self.assertEqual(response.status_code, 200, response.text)
 
     def job(self, owner="alice"):
@@ -359,7 +362,7 @@ class EventReplayPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 404)
         self.login("alice")
         self.auth.directory.set_disabled("alice", True)
-        self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 403)
+        disabled_member_request(self, self.state, self.client, 'GET', f'/api/factory/jobs/{task}/events')
 
     def test_postgres_large_history_other_job_gaps_and_late_events(self):
         first_job, other_job = self.job(), self.job("bob")

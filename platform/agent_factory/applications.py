@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 import re
-from typing import Any, Callable, Iterable
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -108,8 +108,6 @@ class ApplicationService:
             Column("policy_hash", String, nullable=False), Column("decision", String, nullable=False),
             Column("reviewer_id", String), Column("created_at", String, nullable=False), Column("decided_at", String))
         self.commands = self.db.command_table("af_application_commands", metadata)
-        self.legacy = Table("af_legacy_application_pins", metadata, Column("plan_id", String, primary_key=True),
-            Column("plan_hash", String, nullable=False), Column("application_ref", JSON, nullable=False), Column("created_at", String, nullable=False))
         metadata.create_all(store.engine)
 
     @staticmethod
@@ -147,8 +145,7 @@ class ApplicationService:
         if state["state"] != "published":
             raise HTTPException(409, "INACTIVE_APPLICATION: exact version is not published")
         if state["bootstrap"]:
-            if not self.store.settings.demo:
-                raise HTTPException(409, "Demo application approval cannot authorize production")
+            raise HTTPException(409, "BOOTSTRAP_APPLICATION_DISABLED: historical bootstrap cannot authorize execution")
 
     def closure(self, refs, *, candidate_refs=None):
         governance = getattr(self.store, "material_governance", None)
@@ -423,7 +420,9 @@ class ApplicationService:
             return body
 
     def require_plan_current(self, plan):
-        ref = plan.get("applicationRef") or self.require_legacy_demo_plan(plan)
+        ref = plan.get("applicationRef")
+        if not ref:
+            raise HTTPException(409, "APPLICATION_PIN_REQUIRED: historical unpinned plans cannot authorize execution")
         application = self.require_current(ref)
         # Contract selection is governed by the immutable application, never a
         # caller-supplied plan marker. V1's absent marker is part of its format.
@@ -458,18 +457,15 @@ class ApplicationService:
             except ValueError as error:
                 raise HTTPException(409, 'Governed application input binding differs') from error
         if anchor is None:
-            # Explicit proved legacy plans have no mutable reconstructed manifest.
-            self.require_legacy_demo_plan(plan)
-            choices = {}
-        else:
-            if anchor.get("sha256") != digest({key: value for key, value in anchor.items() if key != "sha256"}) or anchor.get("applicationRef") != ref or anchor.get("mode") != plan["mode"] or anchor.get("materialRefs") != plan.get("materialRefs"):
-                raise HTTPException(409, "Composition binding anchor integrity differs")
-            if anchor.get("sourceSnapshotRef") != plan.get("sourceSnapshotRef"):
-                raise HTTPException(409, "Composition source snapshot binding differs")
-            execution = plan.get("executionBindings") or {}
-            if anchor.get("executionBindingsSha256") != execution.get("sha256"):
-                raise HTTPException(409, "Composition execution binding anchor differs")
-            choices = anchor.get("materialChoices", {})
+            raise HTTPException(409, "APPLICATION_BINDING_REQUIRED: exact composition manifest is required")
+        if anchor.get("sha256") != digest({key: value for key, value in anchor.items() if key != "sha256"}) or anchor.get("applicationRef") != ref or anchor.get("mode") != plan["mode"] or anchor.get("materialRefs") != plan.get("materialRefs"):
+            raise HTTPException(409, "Composition binding anchor integrity differs")
+        if anchor.get("sourceSnapshotRef") != plan.get("sourceSnapshotRef"):
+            raise HTTPException(409, "Composition source snapshot binding differs")
+        execution = plan.get("executionBindings") or {}
+        if anchor.get("executionBindingsSha256") != execution.get("sha256"):
+            raise HTTPException(409, "Composition execution binding anchor differs")
+        choices = anchor.get("materialChoices", {})
         materials = self.closure(self.chosen_refs(mode, choices), candidate_refs=plan.get("materialRefs", []))
         refs = [self.pin(item) for item in materials]
         if {(item["id"], item["version"], item["sha256"]) for item in refs} != {(item["id"], item["version"], item["sha256"]) for item in plan.get("materialRefs", [])}:
@@ -478,74 +474,24 @@ class ApplicationService:
         caps = {cap for item in materials for cap in item["permissions"]}
         if set(plan.get("tools", [])) != tools or set(plan.get("capabilities", [])) != caps or caps - set(mode["capabilities"]):
             raise HTTPException(403, "Plan tool/capability scope differs from its governed application")
-        if anchor is not None:
-            order = mode["toolOrder"] or list(dict.fromkeys(item["content"] for item in materials if item["kind"] == "tool"))
-            config = plan.get("config", {})
-            if config.get("toolOrder") != order or config.get("sample") != plan.get("normalizedGoal"):
-                raise HTTPException(403, "Plan task configuration differs from its governed application")
-            if application.get("contractVersion", 1) == 2:
-                expected = task_config(application, mode, plan["normalizedGoal"], order, plan["budget"])
-                if config != expected or plan.get("contractVersion") != 2:
-                    raise HTTPException(403, "Plan application configuration differs from its governed schema")
-            else:
-                duration = config.get("experimentDurationSeconds")
-                if type(duration) is not int or not 1 <= duration <= min(mode["config"]["experimentDurationSeconds"], plan.get("budget", {}).get("experimentSeconds", 0)):
-                    raise HTTPException(403, "Plan environment duration exceeds its governed ceiling")
+        order = mode["toolOrder"] or list(dict.fromkeys(item["content"] for item in materials if item["kind"] == "tool"))
+        config = plan.get("config", {})
+        if config.get("toolOrder") != order or config.get("sample") != plan.get("normalizedGoal"):
+            raise HTTPException(403, "Plan task configuration differs from its governed application")
+        if application.get("contractVersion", 1) == 2:
+            expected = task_config(application, mode, plan["normalizedGoal"], order, plan["budget"])
+            if config != expected or plan.get("contractVersion") != 2:
+                raise HTTPException(403, "Plan application configuration differs from its governed schema")
+        else:
+            duration = config.get("experimentDurationSeconds")
+            if type(duration) is not int or not 1 <= duration <= min(mode["config"]["experimentDurationSeconds"], plan.get("budget", {}).get("experimentSeconds", 0)):
+                raise HTTPException(403, "Plan environment duration exceeds its governed ceiling")
         for key, ceiling in mode["budget"].items():
             ceiling = min(ceiling, operator_limits[key])
             if type(plan.get("budget", {}).get(key)) is not int or not 1 <= plan["budget"][key] <= ceiling:
                 raise HTTPException(403, "Plan budget exceeds its application ceiling")
         return application
 
-    def adopt_legacy_demo_plan(self, plan):
-        """Trusted explicit migration proof; never exposed as a user/model route."""
-        if not self.store.settings.demo or not plan.get("syntheticFixture") or plan.get("applicationRef") or plan.get("executionBindings"):
-            raise HTTPException(409, "Only explicit historical synthetic plans may receive a legacy pin")
-        stored = self.store.plan(plan["id"], plan["ownerId"])
-        if digest(stored) != digest(plan):
-            raise HTTPException(409, "Legacy plan must match its existing immutable stored body")
-        with self.db.write() as conn:
-            application, state = self._row(conn, plan["application"], 1)
-            if not state["bootstrap"]:
-                raise HTTPException(409, "Legacy application must be a proved demo bootstrap")
-            self._active(conn, application, state)
-            mode = application["modes"].get(plan["mode"])
-            if mode is None:
-                raise HTTPException(409, "Legacy plan has no seeded application mode")
-            materials = self.closure(mode["materialRefs"])
-            expected = {tuple(self.pin(item).values()) for item in materials}
-            actual = {(item["id"], item["version"], item["sha256"]) for item in plan.get("materialRefs", [])}
-            if expected != actual or set(plan.get("tools", [])) != {item["content"] for item in materials if item["kind"] == "tool"} or set(plan.get("capabilities", [])) != {cap for item in materials for cap in item["permissions"]}:
-                raise HTTPException(409, "Legacy plan differs from exact seeded material/tool/capability scope")
-            for key, ceiling in mode["budget"].items():
-                if type(plan.get("budget", {}).get(key)) is not int or not 1 <= plan["budget"][key] <= ceiling:
-                    raise HTTPException(409, "Legacy plan exceeds seeded application budget")
-            reference = self.pin(application)
-            old = conn.execute(select(self.legacy).where(self.legacy.c.plan_id == plan["id"])).mappings().first()
-            if old and (old["plan_hash"] != digest(plan) or old["application_ref"] != reference):
-                raise HTTPException(409, "Legacy application proof conflicts")
-            if not old:
-                conn.execute(self.legacy.insert().values(plan_id=plan["id"], plan_hash=digest(plan), application_ref=reference, created_at=now()))
-            return {"applicationRef": reference, "planHash": digest(plan), "proofSource": "explicit-demo-legacy-pin", "productionAllowed": False}
-
-    def require_legacy_demo_plan(self, plan):
-        if not self.store.settings.demo:
-            raise HTTPException(409, "Legacy execution bindings are forbidden in production")
-        stored = self.store.plan(plan.get("id"), plan.get("ownerId"))
-        projection = {key: value for key, value in plan.items() if key not in {"taskId", "runId"}}
-        if projection != stored:
-            raise HTTPException(409, "Legacy plan differs from its exact immutable stored body")
-        if "taskId" in plan or "runId" in plan:
-            if not plan.get("taskId") or not plan.get("runId"):
-                raise HTTPException(409, "Legacy execution projection requires both bound task and run")
-            task = self.store.task(plan["taskId"], plan["ownerId"])
-            if task["id"] != plan["taskId"] or task["run_id"] != plan["runId"] or task["plan_id"] != stored["id"]:
-                raise HTTPException(409, "Legacy execution projection differs from the persisted owner task/run binding")
-        with self.db.read() as conn:
-            row = conn.execute(select(self.legacy).where(self.legacy.c.plan_id == plan.get("id"))).mappings().first()
-            if not row or row["plan_hash"] != digest(stored):
-                raise HTTPException(409, "Explicit exact legacy demo application pin is required")
-            return row["application_ref"]
 
     def inspect(self, actor, identifier, version):
         with self.db.read() as conn:
@@ -616,36 +562,6 @@ class ApplicationService:
 
     def withdraw(self, actor, identifier, version, request_id, reason=""):
         return self._deactivate(actor, identifier, version, request_id, reason, "withdrawn")
-
-    def seed_demo(self, definitions: Iterable[dict] | Callable[[dict[str, dict]], Iterable[dict]] = ()):
-        """Trusted startup only; two explicit configs over proved immutable seeds."""
-        if not self.store.settings.demo:
-            raise ValueError("Demo application seed approval is forbidden in production")
-        governance = self.store.material_governance
-        governance.adopt_demo_bootstrap()
-        # Read historical seed bodies, including withdrawn versions. Bootstrap
-        # proof above validates origin/hash/audit and never restores activation.
-        seeds = {item["id"]: item for item in self.store.materials() if item["version"] == 1 and item.get("origin") == "factory synthetic fixture"}
-        definitions = definitions(seeds) if callable(definitions) else definitions
-        with self.db.write() as conn:
-            for definition in definitions:
-                identifier = definition["id"]
-                existing = conn.execute(select(self.versions).where(self.versions.c.id == identifier, self.versions.c.version == 1)).mappings().first()
-                if existing:
-                    body, state = self._row(conn, identifier, 1)
-                    expected = {key: value for key, value in body.items() if key not in {"version", "createdAt", "sha256", "schema", "origin"}}
-                    if expected != definition or not state["bootstrap"] or state["author_id"] != "demo-bootstrap":
-                        raise HTTPException(409, "Demo application seed conflicts with existing immutable lineage")
-                    continue  # Never restore withdrawal/archive on restart.
-                body = {**definition, "version": 1, "createdAt": "1970-01-01T00:00:00+00:00", "schema": 1, "origin": "factory synthetic application fixture"}
-                body["sha256"] = digest(body)
-                conn.execute(self.versions.insert().values(id=identifier, version=1, body=body, sha=body["sha256"]))
-                conn.execute(self.states.insert().values(id=identifier, version=1, author_id="demo-bootstrap", state="published", bootstrap=True, updated_at=now()))
-        return {"seeded": [definition["id"] for definition in definitions], "approvalMode": "verified-demo-application-bootstrap", "productionAllowed": False}
-
-
-
-
 
 
 class ApplicationCommand(BaseModel):

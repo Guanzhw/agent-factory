@@ -30,7 +30,6 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
   currentUser.current = user;
   const [loading, setLoading] = useState(true);
   const [authConfig, setAuthConfig] = useState<BrowserAuthConfig>();
-  const [loginMode, setLoginMode] = useState<'demo' | 'live'>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -45,12 +44,7 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
         const config = await browserAuthConfig(controller.signal);
         if (controller.signal.aborted) return;
         setAuthConfig(config);
-        if (config.enabled) setLoginMode(config.developmentOnly ? 'demo' : 'live');
-        else {
-          const status = await api.status(controller.signal);
-          if (controller.signal.aborted) return;
-          setLoginMode(status.mode);
-        }
+        if (!config.enabled) { setError('浏览器身份认证尚未配置，请联系服务维护者配置 OIDC。'); return; }
         const current = await api.session(controller.signal);
         if (!controller.signal.aborted) { setUser(current); setError(''); }
       } catch (e) {
@@ -71,12 +65,6 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
     try { window.location.assign(await startBrowserLogin()); }
     catch { setError('登录暂时不可用，请重新开始登录。'); lock.current = false; setBusy(false); }
   }
-  async function login(persona: 'manager' | 'alice' | 'bob') {
-    if (lock.current) return;
-    lock.current = true; setBusy(true); setError('');
-    try { setUser(await api.login(persona)); } catch (e) { setError(describe(e)); }
-    finally { lock.current = false; setBusy(false); }
-  }
   async function logout() {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError('');
@@ -84,7 +72,7 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
     finally { lock.current = false; setBusy(false); }
   }
   if (user && authConfig) return <WorkspaceComponent key={user.id} user={user} logout={() => void logout()} sessionBusy={busy} sessionError={error}/>;
-  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">F</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Agent Factory 工作台</p><h1>从任务目标，<br/>到可核对的结果。</h1><p>选择应用，描述任务目标后开始。进度与结果都在任务记录中。</p>{loginMode === 'demo' ? <div className="demo-notice"><strong>{authConfig?.developmentOnly ? '开发模拟登录（仅本地）' : '本地演示入口'}</strong><span>确定性运行与合成结果用于验证流程，不代表真实任务已完成。真实模型调用需另行启用。</span></div> : <div className="demo-notice"><strong>{loginMode === 'live' ? '真实运行环境' : '环境状态待确认'}</strong><span>{loginMode === 'live' ? authConfig?.enabled ? '使用组织的统一身份认证登录，账号权限由服务端核对。' : '请使用服务端配置的身份认证入口。演示身份登录已关闭。' : '环境模式尚未确认，演示登录不可用。'}</span></div>}<ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{authConfig?.enabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>{busy ? '正在前往登录…' : authConfig.developmentOnly ? '选择开发测试身份' : '使用企业账号登录'}</button></div>}{authConfig?.enabled === false && loginMode === 'demo' && <div className="login-actions">{([['alice', '成员 Alice'], ['bob', '成员 Bob'], ['manager', '管理员']] as const).map(([id, label]) => <button key={id} className={id === 'alice' ? 'primary' : 'secondary'} disabled={busy || loading} onClick={() => void login(id)}>{label}</button>)}</div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : (!authConfig || !loginMode) && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
+  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">F</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Agent Factory 工作台</p><h1>从任务目标，<br/>到可核对的结果。</h1><p>选择应用，描述任务目标后开始。进度与结果都在任务记录中。</p><div className="auth-notice"><strong>{authConfig?.enabled ? '统一身份认证' : '身份认证未就绪'}</strong><span>{authConfig?.enabled ? '使用组织的统一身份认证登录，账号权限由服务端核对。' : '需要配置浏览器 OIDC 身份认证后才能登录。'}</span></div><ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{authConfig?.enabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>{busy ? '正在前往登录…' : '使用企业账号登录'}</button></div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : !authConfig?.enabled && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
 }
 
 export function Workspace({ user, logout, sessionBusy, sessionError, navigation = defaultNavigation, children, onCompose, applicationView }: WorkspaceSessionProps & { navigation?: WorkspaceNavigation; children?: (context: WorkspaceContext) => ReactNode; applicationView?: (context: WorkspaceContext) => ReactNode | undefined; onCompose?: WorkspaceContext['onCompose'] }) {
@@ -223,7 +211,7 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
       <div id="secondary-navigation" className={`secondary-navigation ${navigationOpen ? 'expanded' : ''}`}><span className="nav-group-label">高级工具</span>{(navigation.advancedTabs ?? ['schedules', 'storage']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}<button aria-current={tab === 'developer' ? 'page' : undefined} onClick={() => setTab('developer')}>开发者装配</button>{<><span className="nav-group-label">共享应用与材料</span>{(['applications', 'materials', 'reviews'] as const).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}</>}{user.role === 'manager' && <><span className="nav-group-label">账号</span><button aria-current={tab === 'accounts' ? 'page' : undefined} onClick={() => setTab('accounts')}>账号管理</button></>}</div>
     </nav><div className="sidebar-context"><span className="sidebar-line"/><p>能力来自已发布材料。<br/>连接只在授权范围内使用。</p></div><div className="identity"><div className="avatar" aria-hidden="true">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{user.role === 'manager' ? '账号管理员' : '成员'}</small></div><button className="logout" disabled={sessionBusy || !!busy} onClick={logout}>退出</button></div></aside>
     <main className="workspace"><header className="workspace-header"><div><span className="quiet">工作区 / </span><strong>{tabs[tab]}</strong></div><div className="sync-state"><span className={`connection-dot ${syncError ? 'disconnected' : ''}`} aria-hidden="true"/>{syncError ? '部分区域更新失败' : syncedAt ? '页面已同步' : '页面同步中'}<button className="text-button" onClick={retry} disabled={!!busy}>刷新</button></div></header>
-    <div className="workspace-body"><div className="runtime-strip"><div><strong>{status?.mode === 'demo' ? '演示运行' : status?.mode === 'live' ? '真实运行模式' : '运行模式待确认'}</strong><span>{status?.mode === 'demo' ? '开发验证环境 · 实际模型与证据状态以任务记录为准' : status?.mode === 'live' ? '实际执行与证据状态以任务记录为准' : '等待服务端确认，尚未创建任务'}</span></div><span className="integration">{status?.integration ?? '集成状态未知'}</span></div>
+    <div className="workspace-body"><div className="runtime-strip"><div><strong>{status ? '运行状态' : '运行状态待确认'}</strong><span>{status ? '实际执行与证据状态以任务记录为准' : '等待服务端确认，尚未创建任务'}</span></div><span className="integration">{status?.integration ?? '集成状态未知'}</span></div>
       <ErrorMessage message={sessionError}/><ErrorMessage message={readErrors.status && `运行状态更新失败：${readErrors.status}`} retry={retry}/>{['catalog', 'developer', 'materials', 'applications'].includes(tab) && <ErrorMessage message={readErrors.materials && `材料目录更新失败：${readErrors.materials}`} retry={retry}/>}<ErrorMessage message={readErrors.targets && `执行目标更新失败：${readErrors.targets}`} retry={retry}/><ErrorMessage message={actionError}/>{notice && <div className="success-message" role="status">{notice}</div>}
       {children?.(context)}<footer className="workspace-footer"><span>最近成功读取 {time(syncedAt)}</span><span>任务执行与结果验证分别记录</span></footer>
     </div></main></div></FeeVisibility>;

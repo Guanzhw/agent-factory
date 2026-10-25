@@ -1,3 +1,4 @@
+from fixture_auth import member_headers
 """Department members publish exact versions without a separate administrator.
 
 SQLite exercises service contracts; optional isolated PostgreSQL cases exercise
@@ -13,8 +14,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_factory.config import Settings
-from core_native_fixture import SEEDS
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
 from pg_fixture import IsolatedPostgres
@@ -204,12 +204,12 @@ class DepartmentPublicationTests(DepartmentPublicationCases, ApplicationComposit
     def setUp(self):
         super().setUp()
         # Safe startup changes only the publication workflow, preserving seeds.
-        self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(), seed_materials=SEEDS)
+        self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig())
         self.store.material_governance = self.governance
 
     def test_service_restart_does_not_restore_review_mutations(self):
         material, application = self.material(), self.application()
-        self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(), seed_materials=SEEDS)
+        self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig())
         self.store.material_governance = self.governance
         for operation in (
             lambda: self.governance.request_publication("alice", material["id"], 1, "legacy-review"),
@@ -237,17 +237,17 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.store, self.auth = state["store"], state["auth"]
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(application)
+        self.client = TestClient(application, base_url="https://testserver")
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.applications = state["applications"]
         self.governance = self.store.material_governance
 
     def test_http_member_can_publish_and_archive_own_resource(self):
-        headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
+        headers = member_headers(self.auth, "alice")
         material = self.material()
         application = self.application()
-        bob_headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("bob")}
+        bob_headers = member_headers(self.auth, "bob")
         for identity, expected in ((headers, True), (bob_headers, False)):
             response = self.client.get("/api/factory/materials", headers=identity)
             self.assertEqual(response.status_code, 200, response.text)
@@ -279,8 +279,8 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.assertTrue(published.json()["published"])
 
     def test_http_own_private_archive_preserves_owner_visibility(self):
-        headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
-        bob_headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("bob")}
+        headers = member_headers(self.auth, "alice")
+        bob_headers = member_headers(self.auth, "bob")
         material, application = self.material(), self.application()
         for path in (f"/api/factory/material-governance/versions/{material['id']}/1",
                      f"/api/factory/applications/{application['id']}/versions/1"):

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import HTTPException, Request
 import uvicorn
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.main import create_app
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 
@@ -21,7 +21,7 @@ class ExplicitObserver(FactoryLifecycleObserver):
 
 def serve(configuration):
     app = create_app(Settings(db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
-        jwt_key=configuration['jwtKey'], demo=True, max_workers=1),
+        jwt_key=configuration['jwtKey'], max_workers=1),
         lifecycle_observer_type=ExplicitObserver)
     native = app
     while not hasattr(getattr(native, 'state', None), 'factory'):
@@ -55,7 +55,7 @@ def serve(configuration):
         authorize(request)
         return await state['lifecycle_observer'].observe_root(taskId)
 
-    uvicorn.run(app, host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
+    uvicorn.run(state["http_app"], host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
 
 
 if __name__ == '__main__':

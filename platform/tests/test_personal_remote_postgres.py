@@ -1,8 +1,10 @@
+from fixture_auth import disabled_member_request
 """Opt-in native SQL authorization + owner remote HTTP lifecycle.
 
 Runs only against the existing disposable-loopback PostgreSQL CI service.
 Remote IO and secret backends remain controlled synthetic fixtures.
 """
+from fixture_auth import authorize_client
 import os
 from pathlib import Path
 import tempfile
@@ -12,7 +14,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import ConnectionService
 from agent_factory.main import create_app
 from agent_factory.personal_remote_provider import OpenCodeServeProvider, PROVIDER_ID
@@ -36,13 +38,13 @@ class PersonalRemotePostgresTests(unittest.TestCase):
         self.store, self.auth, self.service = state["store"], state["auth"], state["connections"]
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.root = "/api/factory/personal-remotes"
 
     def login(self, owner):
         self.client.cookies.clear()
-        self.assertEqual(self.client.post("/api/factory/demo/login", json={"persona": owner}).status_code, 200)
+        self.assertEqual(authorize_client(self.client, owner).status_code, 200)
 
     def test_actual_http_member_scope_bind_restart_and_member_disable(self):
         self.assertEqual(self.client.get(self.root).status_code, 401)
@@ -71,8 +73,8 @@ class PersonalRemotePostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as denied:
             restarted.resolve("alice", bound["ref"], "environment")
         self.assertEqual(denied.exception.status_code, 403)
-        self.assertEqual(self.client.post(f"{self.root}/{reference}/verify", json={"requestId": uuid4().hex}).status_code, 403)
-        self.assertEqual(self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex}).status_code, 403)
+        disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', f'{self.root}/{reference}/verify', json={'requestId': uuid4().hex})
+        disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', f'{self.root}/{reference}/revoke', json={'requestId': uuid4().hex})
         self.auth.directory.set_disabled('alice', False)
         revoked = self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex})
         self.assertEqual(revoked.status_code, 200)

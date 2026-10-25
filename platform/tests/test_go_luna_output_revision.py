@@ -9,7 +9,7 @@ from agno.models.message import Message
 from fastapi import HTTPException
 
 from agent_factory.execution_bindings import BindingContext, ExecutionBindings
-from agent_factory.go_development import CAPABILITY, MODEL_ADAPTER_IDS, material_drafts, model_registrations, preflight_plan
+from fixture_go_development import CAPABILITY, MODEL_ADAPTER_IDS, material_drafts, model_registrations, preflight_plan
 from agent_factory.go_usage import luna_512_pricing, pricing_registrations, request_guard
 from agent_factory.material_governance import MaterialDefinition
 import test_go_development_profile as helpers  # type: ignore[reportMissingImports]
@@ -104,7 +104,7 @@ class LunaOutputRevisionTests(unittest.TestCase):
         for entry in [*model_registrations(), *model_registrations(revision="2")]:
             registry.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
                 connection_kind=entry.connection_kind, required_capabilities=entry.required_capabilities,
-                validator=entry.validator, demo_only=entry.demo_only, connection_adapter_ref=entry.connection_adapter_ref)
+                validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
         self.assertEqual(registry._entry("model", context.spec).revision, "2")
         for changed in ({**context.spec, "revision": "3"},
                         {**context.spec, "adapterId": MODEL_ADAPTER_IDS["deepseek-flash"]}):

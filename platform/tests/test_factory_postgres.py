@@ -1,8 +1,10 @@
+from fixture_auth import disabled_member_request
 """Actual native queue/API tests; a fresh disposable PostgreSQL DB is required.
 
 Set FACTORY_TEST_DATABASE_URL; never point this at a production database.
 The deterministic model replaces only provider output, not runtime or queue.
 """
+from fixture_auth import authorize_client
 import hashlib
 import json
 import os
@@ -13,7 +15,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -26,7 +28,7 @@ class FactoryPostgresTests(unittest.TestCase):
         cls.settings = Settings(material_policy_revision="material-governance-v1", db_url=cls.database.url, workspace=Path(cls.workspace.name), max_workers=1)
         cls.app = create_app(cls.settings)
         cls.settings = cls.app.app.state.factory["settings"]
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
 
     @classmethod
     def tearDownClass(cls):
@@ -39,7 +41,7 @@ class FactoryPostgresTests(unittest.TestCase):
 
     def login(self, persona="alice"):
         self.client.cookies.clear()
-        response = self.client.post("/api/factory/demo/login", json={"persona": persona})
+        response = authorize_client(self.client, persona)
         self.assertEqual(response.status_code, 200, response.text)
 
     def plan(self, topic, mode="literature", application="fixture-text", request=None):
@@ -150,7 +152,7 @@ class FactoryPostgresTests(unittest.TestCase):
         auth = self.app.app.state.factory["auth"]
         try:
             auth.directory.set_disabled("alice", True)
-            denied = self.client.post("/api/factory/instances", json={"planId": ready["id"], "requestId": str(uuid4())})
+            denied = disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', '/api/factory/instances', json={"planId": ready["id"], "requestId": str(uuid4())})
             self.assertEqual(denied.status_code, 403, denied.text)
         finally:
             auth.directory.set_disabled("alice", False)

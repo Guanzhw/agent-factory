@@ -5,8 +5,9 @@
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
 remaining flows and historical evidence boundaries. Browser PKCE/session/CSRF/logout
-has controlled HTTPS acceptance; explicitly selected mock/demo login supports
-ongoing development while production identity remains fail-closed. Existing
+has controlled HTTPS acceptance. Product demo/mock login has been removed;
+public access requires configured external identity. Synthetic OIDC providers
+exist only in isolated test fixtures, not as a product login mode. Existing
 receiver/runtime attachment is required; machine/cloud provisioning is optional.
 Aggregate cgroup integration has fake/offline validation only: this container's
 read-only cgroup mount supplies **no real aggregate enforcement acceptance**.
@@ -20,7 +21,7 @@ supply secrets. Collect the following choices for production integration while i
 
 | Decision | Minimum non-secret input | Existing boundary |
 |---|---|---|
-| Browser identity entry | Existing OIDC provider or trusted authentication gateway; public issuer/discovery URL, audience/client ID, site/callback domain, session/logout expectations. Say none if none exists. | Pinned public-JWKS RS256 access-token entry now maps existing SQL owners. Actual issuer/audience/public keys/subject mapping and TLS are deployment inputs; browser callback/PKCE/session/CSRF/logout are implemented with controlled HTTPS acceptance. Development uses the explicitly selected mock/demo login; real IdP acceptance is a production gate only. No automatic identity provisioning. |
+| Browser identity entry | Existing OIDC provider or trusted authentication gateway; public issuer/discovery URL, audience/client ID, site/callback domain, session/logout expectations. Say none if none exists. | Pinned public-JWKS RS256 access-token entry now maps existing SQL owners. Actual issuer/audience/public keys/subject mapping and TLS are deployment inputs; browser callback/PKCE/session/CSRF/logout are implemented with controlled HTTPS acceptance. Development checks use isolated test OIDC providers; the product has no demo login. Real IdP acceptance remains separate. No automatic identity provisioning. |
 | Identity and responsibilities | Stable provider subject to Factory owner mapping; pilot researcher, material author and separate reviewer IDs; who disables users; remote origin/receiver owner mapping and audience if needed. | SQL roles remain authoritative; no automatic production users/admins, no roles granted solely by JWT, and current revocation remains checked. No shared signing secrets requested. |
 | First real research question | One public non-toy question, domain/time scope, allowed sources/full-text licences, desired deliverable and minimum success criteria (source count/comparison dimensions/citations), domain reviewer. | Installed literature query IDs are immutable; a new question requires a governed query contract. Historical container retrieval returned zero sources; the new explicit host profile retrieved two public abstracts. Controlled synthesis does not establish scientific validity. |
 | Experiment or literature only | Choose literature-only, or provide public repo + pinned commit, dataset version/licence, baseline command, metric/threshold, target CPU/RAM/GPU/runtime/network allowlist (Linux OS is already selected), mutable-file scope and approver. | The selected fixed autoresearch baseline and local adapter now have actual training/evaluation/release acceptance. Scope new candidate changes or other workloads explicitly; real paired improvement and domain validity remain separate. |
@@ -37,7 +38,7 @@ been established on the target machine. Identify an existing receiver and its
 trusted owner mapping/TLS contract for required runtime attachment. A cloud or
 machine allocator is needed only if optional machine provisioning is selected.
 Production identity and non-toy scientific inputs do not block independent
-mock-login development and controlled application-flow implementation.
+isolated synthetic-OIDC testing and controlled application-flow implementation.
 
 ## Historical continuation summaries (superseded status)
 

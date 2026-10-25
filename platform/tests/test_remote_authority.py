@@ -1,8 +1,9 @@
 """Actual loopback HTTP origin mandate checks, never fixed-success callbacks.
 
 Portable cases exercise denial against adversarial HTTP replies. Opt-in native
-PostgreSQL cases run the actual wired Factory origin route and managed Auth;
-they do not claim cross-process remote execution (a separate acceptance suite).
+PostgreSQL cases serve the internal native ASGI boundary on a test-owned loopback
+listener to exercise the wired origin route and managed Auth. They do not test
+public OIDC login or claim cross-process remote execution (separate suites).
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,7 @@ import httpx
 from pydantic import ValidationError
 import uvicorn
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import TrustedConnectionBinding
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
@@ -205,7 +206,7 @@ class OriginAuthorityPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.addCleanup(self.store.engine.dispose)
-        self.loopback = OwnedLoopbackFactory(self.app)
+        self.loopback = OwnedLoopbackFactory(self.state['http_app'])
         self.addCleanup(self.loopback.close)
         self.client = httpx.Client(base_url=self.loopback.url, trust_env=False, timeout=5)
         self.addCleanup(self.client.close)

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from agent_factory.applications import ApplicationDefinition
 from agent_factory.execution_bindings import BindingContext, ExecutionBindings
-from agent_factory.go_development import (APPLICATION_ID, CAPABILITY, CONNECTION_NAME, MODEL_ADAPTER_IDS,
+from fixture_go_development import (APPLICATION_ID, CAPABILITY, CONNECTION_NAME, MODEL_ADAPTER_IDS,
     GoDevelopmentHandle, application_definition, material_drafts, model_registrations, preflight,
     _scope, preflight_plan, publish_go_development_models, stable_session, trusted_model_binding)
 from agent_factory.material_governance import MaterialDefinition
@@ -21,21 +21,19 @@ class GoDevelopmentProfileTests(unittest.TestCase):
     def fixture(self, model="deepseek-v4-flash"):
         transport = httpx.MockTransport(lambda request: httpx.Response(500))
         handle = GoDevelopmentHandle(mode="fixture", async_transport=transport)
-        settings = SimpleNamespace(demo=True, development_profile="opencode-go")
+        settings = SimpleNamespace(development_profile="opencode-go")
         plan = {"ownerId": "alice", "application": APPLICATION_ID, "applicationRef": {"id": APPLICATION_ID},
                 "mode": model, "tools": ["checksum"], "capabilities": ["checksum:read"]}
         context = SimpleNamespace(user_id="alice", session_id="synthetic-session-123", run_id="synthetic-run-123")
         spec = next(d["runtimeBinding"] for d in material_drafts() if d["runtimeBinding"]["adapterId"] == MODEL_ADAPTER_IDS[model])
         return BindingContext(settings, None, plan, context, spec, handle)
 
-    def test_disabled_and_production_fail_before_callbacks_or_transport(self):
+    def test_unknown_model_fails_before_callbacks_or_transport(self):
         credential, billing = Mock(), Mock(return_value=True)
         handle = GoDevelopmentHandle(credential=credential, billing_verified=billing)
-        for settings in (SimpleNamespace(), SimpleNamespace(demo=True, development_profile="disabled"),
-                         SimpleNamespace(demo=False, development_profile="opencode-go")):
-            with self.subTest(settings=settings), self.assertRaises(HTTPException) as caught:
-                preflight(handle, session_id="synthetic-session", model_id="deepseek-v4-flash", settings=settings)
-            self.assertTrue(caught.exception.detail.startswith("GO_DEVELOPMENT_DISABLED"))
+        with self.assertRaises(HTTPException) as caught:
+            preflight(handle, session_id='synthetic-session', model_id='unregistered-model', settings=SimpleNamespace())
+        self.assertTrue(caught.exception.detail.startswith('GO_DEVELOPMENT_BINDING'))
         credential.assert_not_called()
         billing.assert_not_called()
 
@@ -84,7 +82,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         self.assertEqual({entry.adapter_id for entry in entries}, set(MODEL_ADAPTER_IDS.values()))
         for model, entry in zip(MODEL_ADAPTER_IDS, entries):
             context = self.fixture(model)
-            with patch("agent_factory.go_development.GoDevelopmentModel") as constructor:
+            with patch("fixture_go_development.GoDevelopmentModel") as constructor:
                 entry.factory(context)
             kwargs = constructor.call_args.kwargs
             self.assertEqual(kwargs["model_id"], model)
@@ -92,7 +90,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
             self.assertEqual(kwargs["native_retries"], 0)
             self.assertTrue(kwargs["wire_stream"])
             self.assertIs(kwargs["async_transport"], context.connection.async_transport)
-            self.assertTrue(entry.demo_only)
+            self.assertFalse(hasattr(entry, "demo_only"))
             self.assertEqual(entry.required_capabilities, (CAPABILITY,))
             self.assertEqual(stable_session(context.run_context), stable_session(context.run_context))
 
@@ -133,7 +131,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         plan = {**context.plan, "executionBindings": {"model": {**context.spec, "connection": pin}}}
         connections = Mock()
         connections.resolve.return_value = context.connection
-        with patch("agent_factory.go_development.GoDevelopmentModel") as factory:
+        with patch("fixture_go_development.GoDevelopmentModel") as factory:
             result = preflight_plan(context.settings, plan, connections)
             self.assertEqual(result["evidenceMode"], "fixture")
             self.assertEqual(connections.resolve.call_args.kwargs["expected_fingerprint"], pin["fingerprint"])
@@ -174,7 +172,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
                 store = Mock()
                 store.materials.return_value = materials
                 state = {"auth": Mock(), "material_governance": governance, "store": store}
-                with patch("agent_factory.go_development.GoDevelopmentModel") as model:
+                with patch("fixture_go_development.GoDevelopmentModel") as model:
                     result = publish_go_development_models(state, author="alice", luna_output_revision=revision)
                 self.assertEqual(result, materials)
                 state["auth"].require_member.assert_called_once_with("alice")
@@ -204,7 +202,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         for entry in model_registrations():
             registry.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
                 connection_kind=entry.connection_kind, required_capabilities=entry.required_capabilities,
-                validator=entry.validator, demo_only=entry.demo_only, connection_adapter_ref=entry.connection_adapter_ref)
+                validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
         self.assertEqual(registry._entry("model", context.spec).adapter_id, context.spec["adapterId"])
         altered = copy.deepcopy(context.spec)
         altered["config"]["scope"] = "research"
@@ -212,8 +210,6 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as invalid:
             registry._spec({**material, "version": 1, "sha256": "a" * 64, "runtimeBinding": altered}, {})
         self.assertIn("BINDING_CONFIG_INVALID", invalid.exception.detail)
-        context.settings.demo = False
-        with self.assertRaises(HTTPException): registry._entry("model", context.spec)
         binding = trusted_model_binding("alice", context.connection)
         self.assertEqual(binding.kind, "model")
         self.assertEqual(binding.capabilities, frozenset({CAPABILITY}))

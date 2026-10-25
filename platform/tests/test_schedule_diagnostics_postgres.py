@@ -1,5 +1,7 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Real native claims and PG contention; diagnostics never replay an occurrence."""
+from fixture_identity import access_token
 from contextlib import ExitStack
 import os
 from pathlib import Path
@@ -15,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
@@ -35,12 +37,12 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
         self.db = self.store.native_db
         self.stack.callback(self.store.engine.dispose)
         self.stack.callback(self.db.db_engine.dispose)
-        self.client = self.stack.enter_context(TestClient(self.app))  # pyright: ignore[reportArgumentType]
+        self.client = self.stack.enter_context(TestClient(self.app, base_url="https://testserver"))  # pyright: ignore[reportArgumentType]
         assert self.client.portal is not None
         self.portal = self.client.portal
         self.auth.account_roles.unassign('manager', 'factory-manager')
         self.assertEqual(self.auth.identity('manager')['role'], 'user')
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('manager', 'bob')}
+        self.tokens = {owner: access_token(owner) for owner in ('manager', 'bob')}
         self.ids = []
         self.stack.callback(self.cleanup)
 
@@ -240,9 +242,9 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
         self.get('/' + schedule['id'])
         self.auth.directory.set_disabled('manager', True)
         try:
-            self.get('/' + schedule['id'] + '/diagnostics', status=403)
-            self.get('/diagnostic-schedules', status=403)
-            self.get('/' + schedule['id'], status=403)
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/' + schedule['id'] + '/diagnostics'), owner='manager')
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/diagnostic-schedules'), owner='manager')
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/' + schedule['id']), owner='manager')
         finally:
             self.auth.directory.set_disabled('manager', False)
 

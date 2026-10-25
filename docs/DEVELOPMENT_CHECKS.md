@@ -242,7 +242,7 @@ Record exact-revision results separately from previous split-core or Research
 passes. Check actual login, logout/relogin, direct URLs and refresh, an empty
 application catalog/task list, owner resources and explicitly published test
 applications. Old Research URLs must not expose the removed application or leave
-a broken workspace. Run demo identity and production-mode local synthetic
+a broken workspace. Run test-only local synthetic
 authentication separately; real external production identity remains unverified
 unless exercised with its actual protocol/provider.
 

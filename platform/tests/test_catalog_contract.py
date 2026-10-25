@@ -9,7 +9,7 @@ import unittest
 from fastapi import HTTPException
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
 
@@ -34,12 +34,19 @@ class CatalogContractTests(ApplicationCompositionFixture):
         with self.assertRaises(HTTPException):
             self.applications.require_plan_current(original)
 
-    def test_tool_kind_and_registered_binding_cannot_be_replaced(self):
-        for changes in ({"kind": "tool", "content": "arbitrary_shell", "permissions": ["checksum:read"]},
-                        {"id": "fixture-question-tool", "kind": "prompt"},
-                        {"id": "fixture-question-tool", "kind": "tool", "content": "ask_scope", "permissions": ["question:ask"]}):
-            with self.subTest(changes=changes), self.assertRaises(HTTPException):
-                self.material(**changes)
+    def test_tool_contract_and_owner_pins_cannot_be_replaced(self):
+        with self.assertRaises(HTTPException):
+            self.material(kind="tool", content="arbitrary_shell", permissions=["checksum:read"])
+        service = self.store.material_governance
+        original = service.inspect_version("manager", "fixture-question-tool", 1)
+        replacement = {"id": "fixture-question-tool", "kind": "prompt", "name": "Revised instructions",
+                       "content": "Ordinary member-owned revision.", "license": "MIT"}
+        with self.assertRaises(HTTPException) as denied:
+            service.create_draft("alice", replacement, "other-owner-revision")
+        self.assertEqual(denied.exception.status_code, 403)
+        revised = service.create_draft("manager", replacement, "owner-revision")
+        self.assertEqual(revised["version"], 2)
+        self.assertEqual(service.inspect_version("manager", "fixture-question-tool", 1), original)
         self.assertEqual(self.plan()["status"], "ready")
 
     def test_forward_cycles_deep_chains_and_closure_count_are_bounded(self):
@@ -79,7 +86,7 @@ class CatalogContractTests(ApplicationCompositionFixture):
         with self.assertRaises(ValueError):
             Settings(db_url="unused", temporary_policy="manual-review")
         with self.assertRaises(ValueError):
-            Settings(db_url="unused", demo=False, temporary_policy="unset")
+            Settings(db_url="unused", temporary_policy="unset")
 
 
 if __name__ == "__main__":

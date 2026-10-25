@@ -1,0 +1,29 @@
+{
+  "identityMode": "synthetic-loopback-https",
+  "realIdentityProviderVerified": false,
+  "hostTrustChanged": false,
+  "screens": [
+    {
+      "viewport": "desktop",
+      "login": true,
+      "reloadSession": true,
+      "logout": true,
+      "pendingLoginRetry": true,
+      "privateNoStore": true,
+      "httpOnlySecureCookie": true,
+      "horizontalOverflow": false
+    },
+    {
+      "viewport": "mobile",
+      "login": true,
+      "reloadSession": true,
+      "logout": true,
+      "pendingLoginRetry": true,
+      "privateNoStore": true,
+      "httpOnlySecureCookie": true,
+      "horizontalOverflow": false
+    }
+  ],
+  "authorizationCount": 2,
+  "exchangeCount": 2
+}

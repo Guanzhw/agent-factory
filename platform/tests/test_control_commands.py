@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Durable command fault boundaries against actual PostgreSQL/native execution."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -203,8 +204,8 @@ class ControlCommandPostgresTests(unittest.TestCase):
         self.login()
         auth = self.state["auth"]
         auth.directory.set_disabled("alice", True)
-        self.assertEqual(self.post(task, command).status_code, 403)
-        self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}').status_code, 403)
+        disabled_member_request(self, self.state, self.client, 'POST', f'/api/factory/jobs/{task}/commands', json=command)
+        disabled_member_request(self, self.state, self.client, 'GET', f'/api/factory/jobs/{task}/commands/{command["commandId"]}')
         auth.directory.set_disabled("alice", False)
         self.assertTrue(self.receipt(task, command)["decisionRecorded"])
 
@@ -217,7 +218,7 @@ class ControlCommandPostgresTests(unittest.TestCase):
         path = f'/api/factory/jobs/{task}/commands/{command["commandId"]}/dispatch'
         auth = self.state["auth"]
         auth.directory.set_disabled("alice", True)
-        self.assertEqual(self.client.post(path).status_code, 403)
+        disabled_member_request(self, self.state, self.client, 'POST', path)
         self.assertEqual(self.api.commands.row("alice", task, command["commandId"])["state"], "PREPARED")
         auth.directory.set_disabled("alice", False)
         self.assertEqual(self.receipt(task, command)["state"], "INTENT_RECORDED")

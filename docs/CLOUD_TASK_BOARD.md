@@ -1,4 +1,19 @@
-# Active: standalone core after Research removal — 2026-10-25
+# Active: remove product demo modes and independent SSH execution — 2026-10-25
+
+| Owner | Scope / dependency | Actual state and remaining gate |
+|---|---|---|
+| root; assistant_endpoints | No-demo authentication/configuration, integration and publication | Public identity is configured external identity; no product demo/persona login. Final exact-head validation remains with root. |
+| assistant_messages | Test-only synthetic identities and fixture migration | Portable suite exposed fixture migration errors; corrections and final validation tracked in the [migration verification](../openspec/changes/remove-product-demo-modes/verification-testing.md). |
+| research_frontend | Formal UI, removal of old HTML prototype, frontend checks | Old standalone HTML prototype is retired, not an alternative runtime. Final frontend checks are separate from the historical prototype screenshots. |
+| acceptance_doc_review | Browser/install drivers and current documentation | Core desktop/mobile OIDC passed after preserving missing-browser and wrong-build fixture failures; research evidence desktop/mobile passed on its first migrated run. Both use independent builds. Research root/child, ZIP, permissions, associations and withdrawal used synthetic model HTTP and actual local CLI. Installed wheel passed; its resource authorization uses ASGI HTTPS, not real external IdP/TLS. Temporary listeners/databases cleaned. |
+| foundation_review; pr104_independent_review | Independent full-diff and simplicity review | Corrections require affected-code review; no claim that historical review covers a changed head. |
+| root integration; research_app_spec SSH helper/provider/runtime; assistant_endpoints waits | Independent `spec/research-ssh-execution-20261025` stack in `/workspace/agent-factory-ssh-research-plan`, depends on no-demo | Spec reviewed. Helper identity defect fixed and independently re-reviewed. Provider cancel-send and wait-hook swallowing non-SSH confirmation remain review blockers under correction. Only portable validation so far; PG, sshd and research consumer acceptance remain incomplete. |
+
+SSH reviewers are foundation_review and pr104_independent_review. SSH P5/D01 is not closed; real GPU acceptance needs the target execution method and resource parameters. No new deployment or paid model/GPU run is implied. Heavy PG/browser checks remain serial. Prior checkpoints below retain their original failures and evidence; they are not current demo-mode instructions.
+
+---
+
+# Historical: standalone core after Research removal — 2026-10-25
 
 Base main a2e021c97ba2257d86c1ec484296bbeda0b6c05a. PR97–103 merged with successful main CI40164609318. This new phase is authorized for an independent Draft, not merge or deployment. Exact old-data manifest confirmed at05:40UTC:5files,52emptydirectories,old stopped container/volume deleted and absence verified; no other targets touched. Isolated empty acceptance fixtures remain separate.
 
@@ -1987,3 +2002,18 @@ There has been no deployment, paid model/GPU call or new credential grant. The
 historical MCP long-tail investigation and lack of whole-suite speedup evidence
 remain disclosed. Final main SHA/CI are reported from the actual merged result,
 not inferred from the earlier combined full run.
+
+## No-demo published checkpoint — ba08307
+
+PR136 exact fast [40223992140](https://github.com/Guanzhw/agent-factory/actions/runs/40223992140)
+passed. Earlier full [40223312294](https://github.com/Guanzhw/agent-factory/actions/runs/40223312294)
+at d6c8f62 failed: platform PG 2068 total, 2018 passed, 36 failures, 9 errors,
+5 skips; research discovery completion is unconfirmed. assistant_messages and
+assistant_endpoints own the remaining fixture corrections; root retains final
+integration/CI. acceptance_doc_review corrected the synthetic personal-tools
+browser session contract at ba08307, actual Chromium 8/8 passed and independent
+review PASS. c874→3247127 fixture and 3247127→d6c8f62 diagnostic incremental
+reviews also passed; this does not turn the failed full run green. See
+[review boundaries](../openspec/changes/remove-product-demo-modes/review.md).
+Historical MCP cause and real external IdP remain unverified. No SSH acceptance
+status is advanced by these no-demo checks.

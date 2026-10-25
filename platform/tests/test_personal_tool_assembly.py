@@ -3,6 +3,7 @@
 These tests exercise installed routes and native owner authorization. They never
 start a CLI, connect to an MCP server, or call a model.
 """
+from fixture_auth import authorize_client
 from dataclasses import replace
 import json
 import os
@@ -13,7 +14,7 @@ import unittest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import ConnectionService
 from agent_factory.credential_vault import EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration
@@ -89,7 +90,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
 
     def login(self, client, owner='alice'):
         client.cookies.clear()
-        self.request(client, 'POST', '/demo/login', {'persona': owner})
+        authorize_client(client, owner).raise_for_status()
 
     def exercise(self, create_app, connection_type):
         app, state = self.app(create_app)
@@ -101,7 +102,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
                      if entry['adapterId'] == self.adapter.descriptor.adapter_id]
         self.assertEqual(len(installed), 1)
         self.assertEqual(installed[0]['connectionKind'], 'tool')
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             for path in ('/personal-tools', '/personal-tools/descriptors'):
                 self.request(client, 'GET', path, expected=401)
             self.login(client)
@@ -151,7 +152,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
             self.assertEqual(self.adapter.calls, [])
         # Restarting core must preserve the exact registration and existing owner data.
         restarted, restarted_state = self.app(create_app)
-        with TestClient(restarted) as client:
+        with TestClient(restarted, base_url="https://testserver") as client:
             self.login(client)
             self.assertEqual(self.request(client, 'GET', '/personal-tools/requests/assembly-configure'), retained)
             self.assertEqual(self.request(client, 'POST', '/personal-tools', intent, expected=201), configured)
@@ -169,7 +170,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
         intents = {}
         credentials = {}
         app, _ = self.app(create_app)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             self.login(client)
             for case in ('rotated', 'credential-revoked', 'tool-revoked', 'unavailable', 'changed'):
                 credential = self.request(client, 'POST', '/personal-credentials', {
@@ -213,7 +214,7 @@ class PersonalToolAssemblyPostgresTests(unittest.TestCase):
                 self.settings = replace(original_settings, personal_tool_adapters=adapters,
                     runtime_adapters=[] if adapters else original_settings.runtime_adapters)
                 restarted, _ = self.app(create_app)
-                with TestClient(restarted) as client:
+                with TestClient(restarted, base_url="https://testserver") as client:
                     self.login(client)
                     self.assert_binding_error(client, configured[case], intents[case], code, status)
         self.assertEqual(self.adapter.calls, [])

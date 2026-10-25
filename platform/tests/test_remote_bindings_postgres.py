@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import TrustedConnectionBinding
 from core_native_fixture import FixtureModel as DemoModel
 from core_native_fixture import fixture_bindings as default_bindings
@@ -58,7 +58,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        client = TestClient(app).__enter__()
+        client = TestClient(app, base_url="https://testserver").__enter__()
         self.addCleanup(client.__exit__, None, None, None)
         self.connections, self.bindings = self.state["connections"], self.state["execution_bindings"]
         self.source_pin = self.pin(self.connections.bind("alice", "origin-fixture", str(uuid4())))

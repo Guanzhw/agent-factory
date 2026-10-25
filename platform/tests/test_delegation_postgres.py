@@ -3,6 +3,7 @@
 FACTORY_TEST_DATABASE_URL is opt-in. Provider output alone is deterministic;
 the worker, lifecycle, authentication, metadata and effects are native/real.
 """
+from fixture_auth import authorize_client
 import copy
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -21,7 +22,7 @@ from pg_fixture import IsolatedPostgres
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.delegation import DelegationService, application_group_status
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.runtime import build_runtime
@@ -53,13 +54,13 @@ class DelegationPostgresTests(unittest.TestCase):
         cls.service = DelegationService(cls.settings, cls.store, cls.auth, cls.bridge)
         cls.service.initialize()
         cls.store.delegation = cls.service
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     def setUp(self):
         self.roots = []
         self.client.cookies.clear()
-        self.assertEqual(self.client.post("/api/factory/demo/login", json={"persona": "alice"}).status_code, 200)
+        self.assertEqual(authorize_client(self.client, "alice").status_code, 200)
 
     def tearDown(self):
         self.auth.directory.set_disabled("alice", False)
@@ -133,7 +134,11 @@ class DelegationPostgresTests(unittest.TestCase):
         plan = self.store.plan(child["plan_id"])
         self.assertEqual(plan["budget"]["depth"], 1)
         pinned = copy.deepcopy(plan)
-        self.store.add_material({"id": "fixture-prompt", "kind": "prompt", "name": "Changed synthetic prompt", "description": "Fixture", "content": "Later catalog update", "dependencies": [], "permissions": [], "compatibility": ["agno:3.1.0", "mode:demo"], "archived": False}, "manager", seed=True)
+        replacement = self.store.material_governance.create_draft('manager',
+            {'id': 'fixture-prompt', 'kind': 'prompt', 'name': 'Changed synthetic prompt',
+             'content': 'Later catalog update'}, 'changed-fixture-prompt')
+        self.store.material_governance.publish('manager', replacement['id'], replacement['version'],
+                                               'publish-changed-fixture-prompt')
         self.assertEqual(self.store.plan(child["plan_id"]), pinned)
         recovered = DelegationService(self.settings, self.store, self.auth, self.bridge)
         recovered.initialize()

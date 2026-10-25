@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from agent_factory_server.main import native_queue_attempts
+from agent_factory.config import Settings as ProductSettings
 
-_RUNNER = Path(__file__).resolve().parents[2] / "scripts" / "run_go_project_workflow.py"
+_RUNNER = Path(__file__).with_name("fixture_run_go_project_workflow.py")
 spec = importlib.util.spec_from_file_location("go_project_workflow", _RUNNER)
 assert spec is not None and spec.loader is not None
 runner = importlib.util.module_from_spec(spec)
@@ -19,12 +19,10 @@ spec.loader.exec_module(runner)
 
 
 class GoProjectWorkflowTests(unittest.TestCase):
-    def test_deployment_queue_policy_bounds_default_go_profile(self):
-        for profile, live, attempts in [('disabled', False, 2), ('opencode-go', False, 1),
-                                        ('opencode-go', True, 1), ('disabled', True, 1)]:
-            with self.subTest(profile=profile, live=live):
-                settings = SimpleNamespace(development_profile=profile, development_live_validation=live)
-                self.assertEqual(native_queue_attempts(settings), attempts)
+    def test_product_rejects_retired_development_profile(self):
+        with self.assertRaises(TypeError):
+            ProductSettings(db_url='unused', jwt_key='synthetic-key-with-at-least-32-bytes',
+                development_profile='opencode-go')
 
     def proof(self, **changes):
         ticket = dict(model="deepseek-flash", actual_model="deepseek-flash", purpose="smoke",

@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Actual installed native QA and owner model wire; synthetic model, no external IO."""
 import json
 import os
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 import httpx
 
 from agent_factory.application_content import ContentPublication
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
@@ -58,12 +59,14 @@ class ResearchQANativeTests(unittest.TestCase):
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         app = create_app(settings)
         state = factory_state(app)
+        from fixture_auth import initialize_members
+        initialize_members(state['auth'])
         store = state['store']
         self.addCleanup(store.engine.dispose)
         self.addCleanup(store.native_db.db_engine.dispose)
         self.addCleanup(store.dispose_root_locks)
-        client = self.enterContext(TestClient(app))
-        tokens = {owner: state['auth']._issue_native_token(owner) for owner in ('alice', 'bob')}
+        client = self.enterContext(TestClient(app, base_url="https://testserver"))
+        tokens = {owner: access_token(owner) for owner in ('alice', 'bob')}
         def post(path, body, owner='alice', expected=200):
             reply = client.post('/api/factory/research' + path, json=body,
                 headers={'Authorization': 'Bearer ' + tokens[owner]})

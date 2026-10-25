@@ -14,8 +14,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
-from core_native_fixture import create_fixture_app as create_app
+from fixture_settings import Settings
+from agent_factory.main import create_app
+from core_native_fixture import fixture_bindings, build_tools
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.usage_ledger import PricingRevision
@@ -37,19 +38,18 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         workspace = TemporaryDirectory(prefix="factory-oidc-synthetic-")
         self.addCleanup(workspace.cleanup)
         settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", temporary_policy="member-self-service",
-            db_url=database.url, workspace=Path(workspace.name), demo=False,
-            fee_management_enabled=True,
+            db_url=database.url, workspace=Path(workspace.name), fee_management_enabled=True,
             jwt_key="synthetic-oidc-native-signing-key-at-least-32-bytes",
             oidc_identity=self.config(subject_owners={
                 (ISSUER, "subject-123"): "alice", (ISSUER, "subject-bob"): "bob",
                 (ISSUER, "subject-unprovisioned"): "unprovisioned",
             }), runtime_adapters=[AdapterRegistration("model", "oidc-native-local-fixture-v1", "1",
-                lambda _: OIDCLocalFixtureModel(), demo_only=False)],
+                lambda _: OIDCLocalFixtureModel(), )],
             usage_pricing=(PricingRevision("oidc-native-local-fixture-v1", "1", "oidc-local-fixture",
                 "oidc-native-local-fixture-v1", "zero-local-v1", local_model_type=OIDCLocalFixtureModel),),
             max_workers=1, storage_task_reserve_bytes=8 * 1024 * 1024,
         )
-        self.app = create_app(settings)
+        self.app = create_app(settings, bindings_factory=fixture_bindings, tool_catalog_factory=build_tools)
         state = self.app.app.state.factory
         self.store, self.auth = state["store"], state["auth"]
         self.addCleanup(self.store.engine.dispose)

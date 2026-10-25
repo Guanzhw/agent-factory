@@ -1,6 +1,7 @@
 """Only generated task scratch is moved or deleted; real PostgreSQL/native stop."""
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 import time
 from pathlib import Path
 import tempfile
@@ -32,7 +33,7 @@ class StorageGovernancePostgresTests(unittest.TestCase):
     def setUp(self):
         self.login()
         self.tasks = []
-        self.settings.storage_retention_grace_seconds = 0
+        self.settings.storage_retention_grace_seconds = 60
         self.settings.storage_allow_purge = False
 
     def tearDown(self):
@@ -62,6 +63,13 @@ class StorageGovernancePostgresTests(unittest.TestCase):
 
     def action(self, plan, action):
         return self.client.post(f'/api/factory/storage/retention/plans/{plan["id"]}/{action}')
+
+    def purge_after_grace(self, plan):
+        with patch('agent_factory.storage_governance.datetime') as clock:
+            clock.now.return_value = datetime.now(timezone.utc) + timedelta(
+                seconds=self.settings.storage_retention_grace_seconds + 1)
+            clock.fromisoformat.side_effect = datetime.fromisoformat
+            return self.action(plan, 'purge')
 
     def test_low_water_refusal_is_atomic_and_duplicate_admission_keeps_original_hold(self):
         task, path = self.owned()
@@ -122,9 +130,9 @@ class StorageGovernancePostgresTests(unittest.TestCase):
         self.assertEqual(self.action(plan, "quarantine").status_code, 200)
         self.assertEqual(self.action(plan, "purge").status_code, 403)
         self.settings.storage_allow_purge = True  # Generated fixture namespace only.
-        self.assertEqual(self.action(plan, "purge").json()["state"], "PURGED")
+        self.assertEqual(self.purge_after_grace(plan).json()["state"], "PURGED")
         self.assertFalse((self.storage.quarantine / path.name).exists())
-        self.assertEqual(self.action(plan, "purge").json()["state"], "PURGED")
+        self.assertEqual(self.purge_after_grace(plan).json()["state"], "PURGED")
         self.assertTrue(self.store.events(task))
 
     def test_modified_content_links_and_namespace_replacement_never_touch_foreign_directory(self):
@@ -197,7 +205,7 @@ class StorageGovernancePostgresTests(unittest.TestCase):
             raise RuntimeError("Owned injected interruption after first unlink")
         with patch("agent_factory.storage_governance.os.unlink", side_effect=lose_after_owned_unlink):
             with self.assertRaises(RuntimeError):
-                self.action(plan, "purge")
+                self.purge_after_grace(plan)
         self.assertEqual(len(calls), 1)
         target = self.storage.quarantine / path.name
         self.assertTrue(target.exists())
@@ -205,7 +213,7 @@ class StorageGovernancePostgresTests(unittest.TestCase):
         self.assertEqual(result.json()["state"], "PURGING")
         self.assertTrue(target.exists(), "GET must never resume deletion")
         self.assertEqual(self.action(plan, "restore").status_code, 409)
-        self.assertEqual(self.action(plan, "purge").json()["state"], "PURGED")
+        self.assertEqual(self.purge_after_grace(plan).json()["state"], "PURGED")
         self.assertFalse(target.exists())
 
     def test_replaced_object_and_namespace_are_refused(self):

@@ -1,5 +1,7 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Governed template copy to native synthetic literature; disposable PG only."""
+from fixture_auth import authorize_client
 from copy import deepcopy
 import hashlib
 import os
@@ -11,7 +13,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from agent_factory.applications import ApplicationDefinition
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
@@ -28,12 +30,12 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state['store'], self.state['auth']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(self.app).__enter__()  # pyright: ignore[reportArgumentType]
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()  # pyright: ignore[reportArgumentType]
         self.addCleanup(self.client.__exit__, None, None, None)
 
     def login(self, actor):
         self.client.cookies.clear()
-        self.post('/demo/login', {'persona': actor}, 200)
+        authorize_client(self.client, actor).raise_for_status()
 
     def post(self, path, body, status=201):
         response = self.client.post('/api/factory' + path, json=body)
@@ -134,7 +136,7 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.post(route, self.command(), 404)
         self.login('manager')
         self.auth.directory.set_disabled('manager', True)
-        self.post(route, self.command(), 403)
+        disabled_member_request(self, self.state, self.client, 'POST', '/api/factory' + route, owner='manager', json=self.command())
         self.auth.directory.set_disabled('manager', False)
         self.post(route, self.command(), 200)
         invalid = deepcopy(definition)

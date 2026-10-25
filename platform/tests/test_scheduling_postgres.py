@@ -3,6 +3,7 @@
 Set FACTORY_TEST_DATABASE_URL to an owned disposable database. These tests never
 replace the scheduler, HTTP route, queue or worker with a synthetic service.
 """
+from fixture_auth import authorize_client
 import copy
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 from pg_fixture import IsolatedPostgres
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -37,7 +38,7 @@ class SchedulingPostgresTests(unittest.TestCase):
         cls.settings = cls.state['settings']
         cls.store, cls.auth, cls.bridge = (cls.state[key] for key in ("store", "auth", "bridge"))
         cls.db = cls.store.native_db
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.service = cls.state["schedules"]
 
     @classmethod
@@ -218,7 +219,7 @@ class SchedulingPostgresTests(unittest.TestCase):
     def test_07_http_wrapper_plan_only_replay_ownership_and_native_ingress(self):
         def login(persona):
             self.client.cookies.clear()
-            response = self.client.post("/api/factory/demo/login", json={"persona": persona})
+            response = authorize_client(self.client, persona)
             self.assertEqual(response.status_code, 200, response.text)
 
         login("manager")

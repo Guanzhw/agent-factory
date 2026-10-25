@@ -6,6 +6,7 @@ This proves clean-stop schema/data recovery, not production RPO/RTO, PITR,
 concurrent backup consistency, external workspace/credential backup or load.
 Only generated loopback databases and a private temporary dump are used.
 """
+from fixture_auth import authorize_client
 import hashlib
 import os
 from pathlib import Path
@@ -23,7 +24,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import EXECUTOR_ID
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
@@ -60,7 +61,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
             max_user_tasks=1, temporary_policy="member-self-service", policy_revision=self.policy_revision,
             material_policy_revision=self.material_revision)
         app = create_app(settings)
-        client = TestClient(app).__enter__()
+        client = TestClient(app, base_url="https://testserver").__enter__()
         state = app.app.state.factory
         handle = (client, state["store"], state)
         self.handles.append(handle)
@@ -84,7 +85,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
 
     def login(self, client, persona="alice"):
         client.cookies.clear()
-        response = client.post("/api/factory/demo/login", json={"persona": persona})
+        response = authorize_client(client, persona)
         self.assertEqual(response.status_code, 200)
 
     def historical_plan(self, client, policy, application):

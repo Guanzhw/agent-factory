@@ -13,7 +13,7 @@ from unittest.mock import patch
 from sqlalchemy.engine import make_url
 
 from agent_factory.application_runs import factory_request_id
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.personal_cli import cli_destination
@@ -83,7 +83,7 @@ def restore(harness, database_url, workspace, saved):
     harness.settings = Settings(db_url=database_url, workspace=workspace, max_workers=2,
         max_user_tasks=2, temporary_policy='member-self-service',
         runtime_adapters=[AdapterRegistration('model', fixture.native.MODEL, '1',
-            lambda _: fixture.OperationModel(), demo_only=True),
+            lambda _: fixture.OperationModel(), ),
             AdapterRegistration('environment', fixture.native.ENVIRONMENT, '1', lambda _: EnvironmentLimits())],
         credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b't' * 32,
             {'member-cli': fixture.DestinationPolicy(cli_destination), 'member-mcp': fixture.DestinationPolicy(mcp_url)}))

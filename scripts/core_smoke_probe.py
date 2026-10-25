@@ -15,6 +15,7 @@ from pathlib import Path
 import secrets
 import socket
 import sys
+import time
 from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.error import HTTPError
@@ -47,28 +48,53 @@ def health(port):
         raise SmokeFailure("Core health response was not ready")
 
 
-def empty_catalog(native, port):
+async def empty_catalog(native, port):
+    # The TCP listener remains the actual unconfigured public application.
+    # A separately constructed test bridge checks installed OIDC at ASGI HTTPS,
+    # not a live provider or a second public/inner listener.
+    import httpx
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+    from agent_factory.oidc_identity import OIDCIdentityBridge, OIDCAccessTokenVerifier, OIDCIdentityConfig
+
     auth = native.state.factory["auth"]
     owner = "core-smoke-member"
     auth.directory.upsert(owner, name="Synthetic core smoke member")
-    headers = {"Authorization": "Bearer " + auth._issue_native_token(owner)}
-    for route in ("/api/factory/materials", "/api/factory/applications"):
-        status, body = request(port, route, headers)
-        if status != 200 or body != []:
-            raise SmokeFailure(f"Expected empty catalog at {route}; received HTTP {status}")
-    if request(port, "/api/factory/openresearch/capabilities", headers)[0] != 404:
-        raise SmokeFailure("Standalone core exposed the research capability route")
-    for route in ("/api/factory/personal-credentials/capabilities",
-                  "/api/factory/personal-models/capabilities", "/api/factory/personal-remotes/providers",
-                  "/api/factory/personal-tools/descriptors", "/api/factory/personal-ssh/capabilities"):
-        if request(port, route, headers)[0] != 200:
-            raise SmokeFailure(f"Standalone member resource entrypoint unavailable: {route}")
-    if request(port, "/api/factory/accounts", headers)[0] != 403:
-        raise SmokeFailure("Ordinary member acquired account administration")
-    from agent_factory.auth import ACCOUNT_ADMIN_ROLE
-    auth.account_roles.assign(owner, ACCOUNT_ADMIN_ROLE)
-    if request(port, "/api/factory/accounts", headers)[0] != 200:
-        raise SmokeFailure("Account administrator entrypoint unavailable")
+    internal = {"Authorization": "Bearer " + auth._issue_native_token(owner)}
+    status, body = await asyncio.to_thread(request, port, "/api/factory/materials", internal)
+    if status != 401 or body.get("detail") != "AUTHENTICATION_NOT_CONFIGURED":
+        raise SmokeFailure("Unconfigured public identity accepted an internal member token")
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public = RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
+    public.update(kid="smoke-key", alg="RS256", use="sig")
+    issuer, audience = "https://smoke-idp.example.test", "https://smoke-core.example.test"
+    config = OIDCIdentityConfig(issuer=issuer, audience=audience, jwks={"keys": [public]},
+        subject_owners={(issuer, "smoke-subject"): owner})
+    timestamp = int(time.time())
+    token = jwt.encode({"iss": issuer, "aud": audience, "sub": "smoke-subject", "iat": timestamp,
+        "exp": timestamp + 300, "jti": "smoke-request", "client_id": "smoke-client"}, key,
+        algorithm="RS256", headers={"kid": "smoke-key", "typ": "at+jwt"})
+    bridge = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(config))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=bridge), base_url=audience,
+            headers={"Authorization": "Bearer " + token}) as client:
+        for route in ("/api/factory/materials", "/api/factory/applications"):
+            response = await client.get(route)
+            if response.status_code != 200 or response.json() != []:
+                raise SmokeFailure(f"Expected empty catalog at {route}; received HTTP {response.status_code}")
+        if (await client.get("/api/factory/openresearch/capabilities")).status_code != 404:
+            raise SmokeFailure("Standalone core exposed the research capability route")
+        for route in ("/api/factory/personal-credentials/capabilities",
+                      "/api/factory/personal-models/capabilities", "/api/factory/personal-remotes/providers",
+                      "/api/factory/personal-tools/descriptors", "/api/factory/personal-ssh/capabilities"):
+            if (await client.get(route)).status_code != 200:
+                raise SmokeFailure(f"Standalone member resource entrypoint unavailable: {route}")
+        if (await client.get("/api/factory/accounts")).status_code != 403:
+            raise SmokeFailure("Ordinary member acquired account administration")
+        from agent_factory.auth import ACCOUNT_ADMIN_ROLE
+        auth.account_roles.assign(owner, ACCOUNT_ADMIN_ROLE)
+        if (await client.get("/api/factory/accounts")).status_code != 200:
+            raise SmokeFailure("Account administrator entrypoint unavailable")
 
 
 async def probe(timeout, summary):
@@ -81,14 +107,21 @@ async def probe(timeout, summary):
     import agent_factory
     if not Path(agent_factory.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()):
         raise SmokeFailure("Core was not imported from the smoke virtual environment")
+    for module in ("development_identity", "development_tls", "process_runtime_profile", "go_development"):
+        if importlib.util.find_spec("agent_factory." + module) is not None:
+            raise SmokeFailure("Installed core contains a removed development module")
     summary["appPackagesAbsent"] = True
+    summary["removedDevelopmentModulesAbsent"] = True
     from agent_factory.config import Settings
+    if "demo" in Settings.__dataclass_fields__:
+        raise SmokeFailure("Installed core still accepts a demo configuration field")
+    summary["demoSettingAbsent"] = True
     from agent_factory.main import create_app
     from sqlalchemy import create_engine, text
     import uvicorn
 
     with ExitStack() as cleanup, TemporaryDirectory(prefix="workspace-", dir=Path.cwd()) as workspace, socket.socket() as listener:
-        settings = Settings(db_url=os.environ["FACTORY_CORE_SMOKE_DATABASE_URL"], demo=False,
+        settings = Settings(db_url=os.environ["FACTORY_CORE_SMOKE_DATABASE_URL"],
             jwt_key=secrets.token_urlsafe(48), workspace=Path(workspace), max_workers=1,
             web_directory=Path(workspace) / "no-web")
         if (settings.runtime_adapters or settings.usage_pricing or settings.native_workflows
@@ -142,7 +175,10 @@ async def probe(timeout, summary):
                 summary["phase"] = "application_absence"
                 if getattr(native.state, "queue_worker", None) is None:
                     raise SmokeFailure("Native queue worker is missing")
-                await asyncio.to_thread(empty_catalog, native, port)
+                await empty_catalog(native, port)
+                summary.update(publicUnconfiguredIdentityDenied=True, resourceAuthTransport="ASGI-HTTPS",
+                    syntheticExternalBearerVerified=True, realIdentityProviderVerified=False,
+                    actualTLSVerified=False)
                 if len((settings.runtime_directory / "credential-vault.key").read_bytes()) != 32:
                     raise SmokeFailure("Persistent default vault key unavailable")
                 snapshots["running"] = await asyncio.to_thread(tables)

@@ -27,12 +27,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.main import create_app
 from agent_factory.material_governance import MaterialDefinition
 from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec, birth, same_birth
 from agent_factory.process_provider import ProcessResourceProvider
-from agent_factory.process_runtime_profile import (MODEL_ID, TOOL_NAME, ProcessFixtureModel, process_settings,
+from fixture_process_runtime_profile import (MODEL_ID, TOOL_NAME, ProcessFixtureModel, process_settings,
     publish_process_application, registrations)
 from agent_factory.remote_authority import OriginAuthorityTransport
 from agent_factory.remote_bindings import TrustedRemoteBindingMapping
@@ -626,7 +626,7 @@ def main():
         return {"fixtureOnly": True, "op": op}
 
     import uvicorn
-    wrapped = DropControlAcknowledgement(app, controls, state["store"], directory / (role + "-fault.json"), launch_exit)
+    wrapped = DropControlAcknowledgement(state["http_app"], controls, state["store"], directory / (role + "-fault.json"), launch_exit)
     uvicorn.run(wrapped, host="127.0.0.1", port=settings.port, access_log=False, log_level="warning")
 
 

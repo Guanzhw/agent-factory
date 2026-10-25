@@ -25,9 +25,10 @@ The product serves a trusted small team. Active members create and use component
 
 A new empty database exposes the shared login, empty application catalog, task and
 resource workspace. Test-only native fixtures explicitly install synthetic
-applications; they are not startup defaults. Demo identity and production-mode
-local synthetic authentication require separate browser evidence, and neither
-proves external identity-provider compatibility. Core-only acceptance is recorded in
+applications; they are not startup defaults. Product demo login and bundled mock
+identity providers are removed. An unconfigured public identity boundary rejects
+authentication; test-only OIDC peers do not prove organization identity-provider
+compatibility. Core-only acceptance is recorded in
 [the exact-revision verification](openspec/changes/remove-research-verify-core/verification.md);
 historical Research evidence remains historical.
 

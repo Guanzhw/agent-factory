@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Dual-database command receipts across the real guarded Factory routes."""
 import os
 import json
@@ -36,10 +37,10 @@ def create_approval_fixture_app(settings, *, source=None):
     """Explicit v1 contract fixture, not compute-pool/provider compatibility."""
     settings.runtime_tool_contract = 'bounded-process-v1'
     settings.runtime_adapters = [*settings.runtime_adapters,
-        AdapterRegistration('model', APPROVAL_MODEL, '1', lambda _: ApprovalFixtureModel(id=APPROVAL_MODEL), demo_only=True),
+        AdapterRegistration('model', APPROVAL_MODEL, '1', lambda _: ApprovalFixtureModel(id=APPROVAL_MODEL), ),
         AdapterRegistration('tool', APPROVAL_TOOL, '1',
             lambda context: build_tools(context.settings, context.store, operation_name='bounded_process_run')['bounded_process_run'],
-            tool_name='bounded_process_run', permissions=('compute:local',), demo_only=True)]
+            tool_name='bounded_process_run', permissions=('compute:local',), )]
     settings.usage_pricing = (*settings.usage_pricing,
         PricingRevision(APPROVAL_MODEL, '1', 'controlled-fixture', APPROVAL_MODEL,
                         'fixture-zero-local-v1', local_model_type=ApprovalFixtureModel))
@@ -181,9 +182,9 @@ class RemoteControlCommandPostgresTests(unittest.TestCase):
         headers = self.headers()
         self.origin["auth"].directory.set_disabled("alice", True)
         try:
-            denied = self.origin_client.post(f"/api/factory/jobs/{task}/commands", headers=headers, json=command)
+            denied = disabled_member_request(self, self.origin, self.origin_client, 'POST', f'/api/factory/jobs/{task}/commands', headers=headers, json=command)
             self.assertEqual(denied.status_code, 403, denied.text)
-            denied_read = self.origin_client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}', headers=headers)
+            denied_read = disabled_member_request(self, self.origin, self.origin_client, 'GET', f'/api/factory/jobs/{task}/commands/{command["commandId"]}', headers=headers)
             self.assertEqual(denied_read.status_code, 403, denied_read.text)
         finally:
             self.origin["auth"].directory.set_disabled("alice", False)

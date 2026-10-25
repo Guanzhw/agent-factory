@@ -1,3 +1,5 @@
+from fixture_auth import disabled_member_request
+from fixture_identity import access_token
 """Public product HTTP contracts with two actual apps and native PostgreSQL queues.
 
 Only provider output and inter-app transport are synthetic: authenticated routes,
@@ -20,7 +22,7 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 
@@ -77,15 +79,15 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         for state in (cls.origin, cls.receiver):
             cls.addClassCleanup(state["store"].engine.dispose)
             cls.addClassCleanup(state["store"].native_db.db_engine.dispose)
-        cls.target = HandoffTarget("receiver-fixture", trusted.reference, "http://receiver.factory.invalid",
+        cls.target = HandoffTarget("receiver-fixture", trusted.reference, "https://receiver.factory.invalid",
                                    {"alice": "bob"},
-                                   lambda owner: {"Authorization": "Bearer " + cls.receiver["auth"]._issue_native_token("bob")},
+                                   lambda owner: {"Authorization": "Bearer " + access_token("bob")},
                                    transport=httpx.ASGITransport(app=cls.receiver_app))
         # Operator-installed cyclic fixture connection, before any HTTP request.
         cls.handoff.targets[cls.target.reference] = cls.target
-        cls.origin_client = TestClient(cls.origin_app).__enter__()
+        cls.origin_client = TestClient(cls.origin_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.origin_client.__exit__, None, None, None)
-        cls.receiver_client = TestClient(cls.receiver_app).__enter__()
+        cls.receiver_client = TestClient(cls.receiver_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.receiver_client.__exit__, None, None, None)
 
     def setUp(self):
@@ -116,7 +118,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
 
     def headers(self, owner="alice", state=None):
         state = state or self.origin
-        return {"Authorization": "Bearer " + state["auth"]._issue_native_token(owner)}
+        return {"Authorization": "Bearer " + access_token(owner)}
 
     def request(self, method, path, *, expected=200, owner="alice", **kwargs):
         response = self.origin_client.request(method, "/api/factory" + path, headers=self.headers(owner), **kwargs)
@@ -390,7 +392,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
             for method, path, json_body in (("GET", "/requests/" + body["requestId"], None),
                 ("GET", "/jobs/" + job["id"], None),
                 ("POST", f'/jobs/{job["id"]}/cancel', {}), ("POST", "/instances", body)):
-                response = self.origin_client.request(method, "/api/factory" + path, headers=headers, json=json_body)
+                response = disabled_member_request(self, self.origin, self.origin_client, method, '/api/factory' + path, headers=headers, json=json_body)
                 self.assertEqual(response.status_code, 403, response.text)
             # Real lifecycle observation persists authority loss; reading a
             # receipt cannot create another receiver task or renew execution.
@@ -483,7 +485,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         headers = self.headers()
         self.origin["auth"].directory.set_disabled("alice", True)
         try:
-            denied = self.origin_client.get("/api/factory" + path, params={"limit": 2}, headers=headers)
+            denied = disabled_member_request(self, self.origin, self.origin_client, 'GET', '/api/factory' + path, params={'limit': 2}, headers=headers)
             self.assertEqual(denied.status_code, 403, denied.text)
         finally:
             self.origin["auth"].directory.set_disabled("alice", False)

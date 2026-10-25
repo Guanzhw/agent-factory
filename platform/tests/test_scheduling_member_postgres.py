@@ -1,4 +1,5 @@
 """Member schedule HTTP journeys on isolated PG with the offline checksum fixture."""
+from fixture_identity import access_token
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,7 +11,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from agent_factory.schedule_contract import preview_schedule
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
@@ -27,9 +28,9 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.store, self.auth, self.service = (self.state[key] for key in ('store', 'auth', 'schedules'))
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = self.enterContext(TestClient(app))
+        self.client = self.enterContext(TestClient(app, base_url="https://testserver"))
         # Keep the original authenticated tokens across current grant/disabled changes.
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob')}
+        self.tokens = {owner: access_token(owner) for owner in ('alice', 'bob')}
         self.enterContext(patch('agent_factory.schedule_management.preview_schedule',
             side_effect=lambda cron, zone: preview_schedule(cron, zone, now_epoch=1893456000)))
         self.plan = self.request('POST', '/plans', self.command(topic='Offline scheduled checksum',
@@ -128,14 +129,27 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.request('POST', '/schedules', {key: value for key, value in self.creation().items()
             if key != 'requestId'}, owner='bob', status=404)
         self.assertEqual(self.request('GET', '/schedule-management', owner='bob')['items'], [])
+        retained_native_token = self.auth._issue_native_token('alice')
+        original_tasks = self.store.sql('SELECT id, run_id FROM af_tasks ORDER BY id')
         self.auth.directory.set_disabled('alice', True)
         try:
             for method, path, body in [('GET', '/schedule-management/metadata', None),
                     ('POST', '/schedule-management', self.creation()), *operations]:
                 with self.subTest(owner='disabled-alice', path=path, method=method):
-                    self.request(method, path, body, status=403)
+                    denied = self.request(method, path, body, status=401)
+                    self.assertEqual(denied['detail'], 'OIDC_ACCESS_TOKEN_INVALID')
+                    # The public verifier rejects the disabled identity before
+                    # routing; the native boundary independently rejects it too.
+                    native_client = TestClient(self.state['http_app'], base_url='https://testserver')
+                    try:
+                        response = native_client.request(method, '/api/factory' + path, json=body,
+                            headers={'Authorization': 'Bearer ' + retained_native_token})
+                    finally:
+                        native_client.close()
+                    self.assertEqual(response.status_code, 403, response.text)
         finally:
             self.auth.directory.set_disabled('alice', False)
+        self.assertEqual(self.store.sql('SELECT id, run_id FROM af_tasks ORDER BY id'), original_tasks)
         self.assertEqual(self.request('GET', editor), schedule)
         self.assertFalse(self.enabled(schedule, False)['enabled'])
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_tasks')[0]['n'], 0)

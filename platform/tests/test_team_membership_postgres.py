@@ -1,4 +1,5 @@
 """Native Agno identity, durable queue and account migration on isolated PG."""
+from fixture_auth import initialize_members
 import os
 import time
 from types import SimpleNamespace
@@ -30,9 +31,9 @@ class TeamMembershipPostgresTests(unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         self.db = PostgresDb(db_url=database.url, id="team-membership-native")
         self.addCleanup(self.db.db_engine.dispose)
-        self.settings = SimpleNamespace(demo=True, jwt_key="synthetic-team-native-key-more-than-32-bytes")
+        self.settings = SimpleNamespace(jwt_key="synthetic-team-native-key-more-than-32-bytes")
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         native = AgentOS(id="team-membership", db=self.db,
             agents=[Agent(id="new-member-component", db=self.db, model=DemoModel())],
             workflows=[Workflow(id="new-member-workflow", db=self.db, steps=[Agent(model=DemoModel())])],
@@ -40,7 +41,7 @@ class TeamMembershipPostgresTests(unittest.TestCase):
             **self.auth.agentos_kwargs(), mcp=False, scheduler=False, telemetry=False).get_app()
         native.add_middleware(MemberTokenBoundary)
         native.include_router(account_router(self.auth))
-        self.client = TestClient(native).__enter__()
+        self.client = TestClient(native, base_url="https://testserver").__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 
     def headers(self, owner):
@@ -126,7 +127,7 @@ class TeamMembershipPostgresTests(unittest.TestCase):
         self.assertTrue(restarted.directory.get("legacy-disabled")["disabled"])
         self.assertEqual(restarted.directory.get("legacy-disabled")["metadata"]["retained"], "synthetic")
         manager = self.headers("manager")
-        legacy = {"Authorization": "Bearer " + restarted._issue_native_token("legacy-admin")}
+        legacy = {"Authorization": "Bearer " + self.auth._issue_native_token("legacy-admin")}
         self.assertEqual(self.client.get("/api/factory/accounts", headers=legacy).status_code, 200)
         demoted = self.client.patch("/api/factory/accounts/legacy-admin", headers=manager, json={"accountAdmin": False})
         self.assertEqual(demoted.status_code, 200, demoted.text)

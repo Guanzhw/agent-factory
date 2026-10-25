@@ -1,4 +1,5 @@
 """Owner history through real HTTP/PostgreSQL; deterministic synthetic records."""
+from fixture_identity import access_token
 import base64
 import json
 import os
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from pg_fixture import IsolatedPostgres
 from agent_factory.store import canonical
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -30,7 +31,7 @@ class TaskHistoryPostgresTests(unittest.TestCase):
         cls.store, cls.auth = cls.state['store'], cls.state['auth']
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
         cls.client.portal.call(cls.state['lifecycle_observer'].stop)
         cls.plan = cls.client.post('/api/factory/plans', headers=cls.headers(), json={
@@ -46,7 +47,7 @@ class TaskHistoryPostgresTests(unittest.TestCase):
 
     @classmethod
     def headers(cls, owner='alice'):
-        return {'Authorization':'Bearer ' + cls.auth._issue_native_token(owner)}
+        return {'Authorization':'Bearer ' + access_token(owner)}
 
     def get(self, **params):
         response = self.client.get('/api/factory/jobs', headers=self.headers(), params=params)

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from sqlalchemy import create_engine
 
-from agent_factory.go_development import MODEL_ADAPTER_IDS
+from fixture_go_development import MODEL_ADAPTER_IDS
 from agent_factory.go_usage import pricing_registrations, request_guard
 from agent_factory.store import digest
 from agent_factory.usage_ledger import PricingRevision, UsageLedger

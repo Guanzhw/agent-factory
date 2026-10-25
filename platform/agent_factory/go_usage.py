@@ -63,6 +63,6 @@ def pricing_registrations(adapter_ids):
 def luna_512_pricing():
     """New immutable adapter revision; same conservative 512-token reservation."""
     from dataclasses import replace
-    from .go_development import MODEL_ADAPTER_IDS
+    from .go_legacy import MODEL_ADAPTER_IDS
     original = next(p for p in pricing_registrations(MODEL_ADAPTER_IDS) if p.model == "gpt-6-luna")
     return replace(original, adapter_revision="2", revision="go-luna-512-operator-nominal-2026-10-04-v3")

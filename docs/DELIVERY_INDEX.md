@@ -23,8 +23,9 @@ acceptance remain distinct. Personal-agent/24-hour work remains deferred in
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)
 and [PR28 application workflow audit](V03_APP_GAP_AUDIT.md) for implementation,
 remaining flows and historical evidence boundaries. Browser PKCE/session/CSRF/logout
-has controlled HTTPS acceptance; explicitly selected mock/demo login supports
-ongoing development while production identity remains fail-closed. Existing
+has controlled HTTPS acceptance. Product demo/mock login has been removed;
+public access requires configured external identity. Synthetic OIDC providers
+exist only in isolated test fixtures, not as a product login mode. Existing
 receiver/runtime attachment is required; machine/cloud provisioning is optional.
 Aggregate cgroup integration has fake/offline validation only: this container's
 read-only cgroup mount supplies **no real aggregate enforcement acceptance**.

@@ -1,9 +1,11 @@
+from fixture_auth import disabled_member_request
 """Twenty test identities against actual PostgreSQL, auth and native queue.
 
 The deterministic model is an explicit fixture. These tests verify admission,
 held capacity and cancellation, not twenty CPU workers or production throughput.
 Subjects and native grants exist only inside the generated test database.
 """
+from fixture_identity import access_token, identity_config
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
@@ -19,7 +21,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import MetaData, Table, create_engine, func, inspect, select, text
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -31,18 +33,18 @@ class CapacityPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.database.__exit__, None, None, None)
         cls.workspace = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.workspace.cleanup)
-        cls.settings = Settings(db_url=cls.database.url, workspace=Path(cls.workspace.name),
+        cls.users = [f"fixture-capacity-{index:02d}" for index in range(20)]
+        cls.settings = Settings(oidc_identity=identity_config(cls.users),db_url=cls.database.url, workspace=Path(cls.workspace.name),
                                 max_workers=2, max_user_tasks=2, max_total_tasks=12, queue_poll=.05)
         cls.app = create_app(cls.settings)
         cls.state = cls.app.app.state.factory
         cls.store, cls.auth = cls.state["store"], cls.state["auth"]
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
-        cls.users = [f"fixture-capacity-{index:02d}" for index in range(20)]
         for index, owner in enumerate(cls.users):
             cls.auth.directory.upsert(owner, name=f"Synthetic capacity user {index:02d}")
-        cls.tokens = {owner: cls.auth._issue_native_token(owner) for owner in cls.users}
-        cls.client = TestClient(cls.app).__enter__()
+        cls.tokens = {owner: access_token(owner) for owner in cls.users}
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     def tearDown(self):
@@ -198,8 +200,8 @@ class CapacityPostgresTests(unittest.TestCase):
         self.assertEqual(self.held(), 3)
         self.auth.directory.set_disabled(owner, True)
         try:
-            self.request(owner, "POST", "/instances", expected=403, json=denied_body)
-            self.request(owner, "GET", "/jobs/" + first["id"], expected=403)
+            disabled_member_request(self, self.state, self.client, 'POST', '/api/factory/instances', owner=owner, json=denied_body)
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/jobs/' + first['id'], owner=owner)
         finally:
             # Explicit fixture account restoration inside the disposable DB.
             self.auth.directory.set_disabled(owner, False)

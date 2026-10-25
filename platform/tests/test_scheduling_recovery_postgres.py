@@ -4,6 +4,7 @@ Models are synthetic; Factory HTTP, immutable metadata, native schedule history,
 native queue and PostgreSQL are real. Faults delay replies at recorded boundaries
 before an owned process hard kill. No lease rows are manually reset or cleared.
 """
+from fixture_auth import internal_headers
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -28,7 +29,7 @@ from sqlalchemy import create_engine, text
 
 from pg_fixture import IsolatedPostgres
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -53,7 +54,7 @@ class SchedulingProcessRecoveryTests(unittest.TestCase):
         cls.base = f"http://127.0.0.1:{cls.port}"
         cls.env = {name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "LANG", "LC_ALL") if name in os.environ}
         cls.env.update(PYTHONPATH=os.pathsep.join(str(cls.root / part) for part in ("platform", "deployment", "platform/tests")),
-                       PYTHONIOENCODING="utf-8", FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE="demo",
+                       PYTHONIOENCODING="utf-8", FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE="production",
                        FACTORY_JWT_KEY=secrets.token_urlsafe(48), FACTORY_PORT=str(cls.port),
                        FACTORY_WORKSPACE=cls.directory.name, FACTORY_RECOVERY_FIXTURE_DIRECTORY=cls.directory.name,
                        AGNO_TELEMETRY="false")
@@ -118,7 +119,8 @@ class SchedulingProcessRecoveryTests(unittest.TestCase):
             self.marker.unlink()
 
     def login(self):
-        self.client.post("/api/factory/demo/login", json={"persona": "manager"}).raise_for_status()
+        self.client.headers.update(internal_headers(self.env['FACTORY_JWT_KEY'], 'manager'))
+        self.client.get('/api/factory/session').raise_for_status()
 
     def rows(self, statement, **params):
         with self.engine.connect() as connection:
@@ -288,7 +290,7 @@ class SchedulingLeaseRecoveryTests(unittest.TestCase):
         cls.store, cls.auth, cls.db, cls.service = cls.state["store"], cls.state["auth"], cls.state["store"].native_db, cls.state["schedules"]
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.db.db_engine.dispose)
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     def setUp(self):

@@ -45,24 +45,22 @@ These are alternative distribution choices, not packages to overlay in one
 installation. See the [development guide](docs/APPLICATION_DEVELOPMENT.md#源码归属与静态装配)
 for assembly and source-checkout commands.
 
-## Start locally
+## Start with configured authentication
 
-Requires Node 24+, Python 3.12+, uv and existing PostgreSQL binaries. Tested locally on Windows with Python 3.14.3 and PostgreSQL 17.11. Dependency versions and CI action/image revisions are pinned.
+Requires Node 24+, Python 3.12+, uv and an existing operator-managed PostgreSQL database. There is no demo login, bundled identity provider, disposable database launcher or offline research prototype.
 
-```powershell
+```sh
 npm ci --ignore-scripts
 uv sync --frozen
-npm run check
-npm run check:python
 npm run build
-# Existing PostgreSQL bin directory; this does not download/install PostgreSQL.
-$env:FACTORY_POSTGRES_BIN = 'C:\path\to\postgresql\bin'
+# Supply FACTORY_DATABASE_URL and FACTORY_JWT_KEY through your existing secure configuration.
+# Configure external identity and existing member mappings before browser use.
 npm start
 ```
 
-Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or account administrator. The demo script initializes only `.local/postgres`, binds both services to loopback and stops its owned services on Ctrl+C. Its trust authentication belongs only to the disposable local cluster. Do not expose the demo to a network. Logs, database, runtime files and credentials are ignored by Git.
+`npm start`, `npm run dev` and `npm run start:configured` use the configured server. Missing signing configuration fails startup; missing browser identity gives a configuration error rather than persona login. Old demo-mode configuration is rejected. A previous demo database cannot be silently used as a production database; keep it untouched pending a precise data inventory and separate cleanup decision.
 
-For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate database and existing member accounts; it provisions no identities. Active members use ordinary components and workflows; account administrators manage accounts. Execution checks published applications/materials, installed adapters, owner/shared resource access and task bounds. Real provider SDK attempt/retry enforcement and production OS acceptance remain integration work. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
+Browser login uses an operator-constructed `Settings.browser_oidc=BrowserOIDCConfig(...)` with HTTPS issuer/endpoints, public-client ID, exact callback, pinned public keys and existing member mappings. See [the browser contract](docs/BROWSER_AUTH_PROCESS_ENFORCEMENT.md) and [upgrade instructions](docs/REMOVE_DEMO_UPGRADE.md). This is trusted deployment composition, not an invented environment-based IdP setup wizard. A separate external bearer-token verifier is available through `Settings.oidc_identity`. No actual organization identity provider is configured or certified by this repository. The frontend-only `npm run dev:web` proxies `/api` to the configured local server and provides no identity bypass.
 
 Normal entrypoints use core `Settings.from_env()` with
 `member-self-service` for task admission and material/application publication.
@@ -89,7 +87,7 @@ access to the service account. An injected organizational vault remains supporte
 - Trusted registered model/tool/knowledge/environment factories selected by immutable material bindings; current owner connection references with bind/revoke, expiry, rotation and redacted metadata.
 - Personal CLI/MCP adapters are installed statically; members register them with matching owner credentials and bind connections for on-demand calls ([setup and lifecycle](docs/PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)).
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
-- Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicit demo identity with HttpOnly cookie.
+- Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, configured external identity with protected browser sessions.
 - Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation and bounded local process custody, persistent application events and artifact hashes.
 - Bounded native child delegation: independent tickets, inherited scope, depth/count and durable shared tool budgets, group inspection and cascading cancellation.
 - Guarded native schedule poller: owner-scoped immutable-plan definitions, per-occurrence admission, current rights/quotas, no blind UNKNOWN replay.
@@ -123,9 +121,8 @@ accounting contracts. See [architecture](ARCHITECTURE.md),
 
 Core-only acceptance requires login, logout/relogin, direct URLs and refresh,
 empty catalog/task states, resource management, explicitly published synthetic
-applications, native queue behavior and independent core installation. Demo
-personas and production-mode local synthetic identity must be checked separately;
-neither establishes compatibility with an external production identity provider.
+applications, native queue behavior and independent core installation. Test-only synthetic identity validates the real protocol without establishing
+compatibility with an external production identity provider.
 Use fresh isolated databases/workspaces and run heavy PostgreSQL/browser checks
 serially. Results for this change belong in its Draft PR, not in historical counts.
 
@@ -168,7 +165,7 @@ it does not change the old outcome or send another request. See
 |---|---|
 | Six-kind material governance, immutable plans/bindings, native queue, HITL, durable control receipts, cancellation, delegation, usage ledger and Chinese UI | Production/scientific acceptance is separate from controlled-provider execution |
 | Actual pinned Linux ORX toy, local and receiver AT10 recovery including receiver-parent, same native/ORX identities and one launch | Fixed toy/evaluator; Windows and target-host reliability remain separate acceptance |
-| Explicit Go development profile: exact Chat/Responses model selection through native queue, loopback HTTP SSE, tool, receipt/artifact and PostgreSQL usage | Coding checksum scope only. Bounded live campaign stopped on first UNKNOWN smoke attempt; no live product success. Not a research provider |
+| Historical, now removed Go development profile: exact Chat/Responses model selection through native queue, loopback HTTP SSE, tool, receipt/artifact and PostgreSQL usage | Coding checksum scope only. Bounded live campaign stopped on first UNKNOWN smoke attempt; no live product success. Not a research provider |
 | Literature source/package tools and controlled native evidence downloads | Actual PubMed attempt returned **0 sources** after connectivity failure; no successful live retrieval or scientific synthesis evidence |
 | Governed Factory receiver execution, runtime attachment and resource lifecycle contracts | No real compute allocator/environment provisioning implementation; production remote TLS/identity/host setup is absent |
 | Storage quarantine, finite twenty-user pressure and online PostgreSQL snapshot/restore | Measured **4 CPU / 16 GiB**; target **32 cores / 64 GB** or **54 cores / 192 GB** is unmeasured. Single active scheduler only |

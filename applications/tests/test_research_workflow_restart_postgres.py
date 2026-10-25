@@ -77,7 +77,7 @@ def serve(configuration):
             'native': store.native_db.get_job(task['run_id']) if task and task['run_id'] else None,
             'children': [{'id': child['id'], 'runId': child['run_id'],
                 'native': store.native_db.get_job(child['run_id']) if child['run_id'] else None} for child in children]}
-    uvicorn.run(app, host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
+    uvicorn.run(state["http_app"], host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
 
 
 class ResearchServer(WorkflowServer):

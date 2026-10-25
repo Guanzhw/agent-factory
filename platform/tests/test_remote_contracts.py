@@ -39,7 +39,6 @@ class _Store:
 
     def __init__(self, contract: str, materials: list[dict]):
         self.settings = SimpleNamespace(
-            demo=False,
             runtime_tool_contract=contract,
             max_tool_calls=8,
             experiment_timeout_seconds=8,

@@ -1,4 +1,5 @@
 """Owned disposable PG + existing encrypted vault/auth; provider remains in memory."""
+from fixture_identity import access_token
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,7 +13,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_factory.byok_model import PROVIDER_ID
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.personal_remote_provider import origin
@@ -38,13 +39,13 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         publish_owner_application(self.state, author='manager')
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, base_url="https://testserver")
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 
     def request(self, method, path, values=None, *, owner='alice', status=200):
         response = self.client.request(method, '/api/factory'+path, json=values,
-            headers={'Authorization':'Bearer '+self.auth._issue_native_token(owner)})
+            headers={'Authorization':'Bearer '+access_token(owner)})
         self.assertEqual(response.status_code, status, response.text)
         self.assertNotIn('synthetic-vault-password', response.text)
         self.assertNotIn('synthetic-rotated-password', response.text)

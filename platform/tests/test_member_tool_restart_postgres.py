@@ -1,4 +1,6 @@
 """A published member command executes in a fresh native worker without tool registration."""
+from fixture_identity import access_token
+from fixture_auth import initialize_members
 import asyncio
 import json
 import os
@@ -14,7 +16,7 @@ from agno.models.response import ModelResponse
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.main import create_app
 from agent_factory.personal_tool_contract import ToolInvocation
@@ -50,13 +52,13 @@ class CommandModel(Model):
 
 def settings(database, workspace):
     return Settings(db_url=database, workspace=Path(workspace), max_workers=1,
-        runtime_adapters=(AdapterRegistration('model', MODEL, '1', lambda _: CommandModel(), demo_only=True),
+        runtime_adapters=(AdapterRegistration('model', MODEL, '1', lambda _: CommandModel(), ),
             AdapterRegistration('environment', ENVIRONMENT, '1', lambda _: EnvironmentLimits())))
 
 
 def request(client, auth, method, path, body=None, expected=200, owner='alice'):
     response = client.request(method, '/api/factory' + path, json=body,
-        headers={'Authorization': 'Bearer ' + auth._issue_native_token(owner), 'X-Factory-Expected-Owner': owner})
+        headers={'Authorization': 'Bearer ' + access_token(owner), 'X-Factory-Expected-Owner': owner})
     if response.status_code != expected:
         raise AssertionError(f'{path}: {response.status_code} {response.text}')
     return response.json()
@@ -68,7 +70,7 @@ def run_worker():
     state = app.app.state.factory
     store, auth = state['store'], state['auth']
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             assert not store.personal_tools.adapters
             (Path(sys.argv[2]) / 'member-worker-ready').write_text('ready')
             print('MEMBER_WORKER_READY', flush=True)
@@ -114,9 +116,10 @@ class MemberToolRestartPostgresTests(unittest.TestCase):
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
+        initialize_members(self.auth)
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
 
     def stop(self):
         if self.client is not None:

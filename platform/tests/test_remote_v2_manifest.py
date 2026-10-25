@@ -136,8 +136,9 @@ class RemoteV2ManifestTests(V2ManifestFixture):
         self.assertEqual(envelope, {'plan': plan, 'sha256': digest(plan)})
         self.assertEqual(_manifest(envelope, self.store, 'alice'), plan)
         self.assertNotIn('contractVersion', envelope['plan'])
+        # Explicit member-authored fixture with fixed creation time and declared runtime bindings.
         self.assertEqual(self.applications.require_current(plan['applicationRef'])['sha256'],
-                         '298bbb566460389093987a9720fe342933ab08f5072cdf16c68493d0cdaf0ac8')
+                         '1ae47b187fa677e869316ab5a6801f1e35b738cc9ac91753c0d1f8d91eb1e949')
 
 
 class RemoteV2ConfigurationTests(unittest.TestCase):

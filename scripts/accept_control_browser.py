@@ -1,4 +1,4 @@
-"""Owned Chromium restarts over the real demo TCP service; no paid providers.
+"""Owned Chromium restarts over the real authenticated TCP service; no paid providers.
 
 Run with platform/tests on PYTHONPATH, isolated FACTORY_TEST_DATABASE_URL and
 an installed Playwright Chromium after npm run build. Evidence contains only
@@ -28,7 +28,7 @@ def main():
                 task, _ = fixture.waiting("answer" if action == "cancel" else action)
                 context = playwright.chromium.launch_persistent_context(profile, headless=True)
                 origin = str(fixture.client.base_url)
-                context.request.post(origin + "/api/factory/demo/login", data={"persona": "alice"})
+                context.set_extra_http_headers(fixture.headers("alice"))
                 page = context.new_page()
                 page.goto(origin)
                 page.locator(".task-list .task-row").first.click()
@@ -67,7 +67,7 @@ def main():
                 context = playwright.chromium.launch_persistent_context(profile, headless=True)
                 # Session cookies need not survive browser shutdown: authenticate
                 # again while the durable command pointer remains in localStorage.
-                context.request.post(origin + "/api/factory/demo/login", data={"persona": "alice"})
+                context.set_extra_http_headers(fixture.headers("alice"))
                 page = context.new_page()
                 recovery_posts = []
                 page.on("request", lambda request: recovery_posts.append(request.url) if request.method == "POST" and "/commands" in request.url else None)
@@ -77,17 +77,17 @@ def main():
                 receipt = fixture.api("GET", f'/jobs/{task}/commands/{command["commandId"]}')
                 assert receipt["decisionRecorded"], receipt
                 assert not recovery_posts
-                page.get_by_role("button", name="退出", exact=True).click()
-                page.get_by_role("button", name="研究员 Bob", exact=True).click()
+                context.set_extra_http_headers(fixture.headers("bob"))
+                page.goto(origin)
                 page.get_by_role("heading", name="研究工作台", exact=True).wait_for()
                 assert page.locator('[data-command-id="' + command["commandId"] + '"]').count() == 0
-                page.get_by_role("button", name="退出", exact=True).click()
-                page.get_by_role("button", name="研究员 Alice", exact=True).click()
+                context.set_extra_http_headers(fixture.headers("alice"))
+                page.goto(origin)
                 row.wait_for()
                 assert not recovery_posts
                 page.screenshot(path=str(args.output / (action + str(approved) + ".png")), full_page=True)
                 evidence.append({"action": action, "approved": approved, "commandId": command["commandId"], "taskId": task,
-                    "receiptState": receipt["state"], "browserRestart": True, "identitySwitch": True,
+                    "receiptState": receipt["state"], "browserRestart": True, "identitySwitch": True, "identityMode": "test-host-signed-bearer",
                     "controlPOSTs": len(posts), "recoveryPOSTs": len(recovery_posts), "answerStored": False})
                 context.close()
                 fixture.api("POST", "/jobs/" + task + "/cancel")
