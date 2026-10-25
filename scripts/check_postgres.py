@@ -6,6 +6,7 @@ synthetic fixtures and platform skips; only required selectors reject skips.
 import argparse
 import json
 import os
+from pathlib import Path
 import sys
 import unittest
 
@@ -59,9 +60,11 @@ def run_checks(discovered, required, *, subset=False, stream=None, resultclass=N
         'passed': len(identities & result.successful_ids),
         'notPassed': sorted(identities - result.successful_ids)}
         for group, identities in required.items()}
-    accepted = result.wasSuccessful() and all(not group['notPassed'] for group in groups.values())
+    accepted = not result.shouldStop and result.wasSuccessful() and all(not group['notPassed'] for group in groups.values())
     return result, {'suite': 'postgres_acceptance', 'testsRun': result.testsRun,
-        'skipped': len(result.skipped), 'groups': groups, 'accepted': accepted,
+        'selected': len(selected), 'skipped': len(result.skipped),
+        'failures': len(result.failures), 'errors': len(result.errors), 'shouldStop': result.shouldStop,
+        'groups': groups, 'accepted': accepted,
         'modelLive': False, 'externalRemoteVerified': False, 'realCredentialsUsed': False}
 
 
@@ -69,6 +72,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--group', action='append', choices=tuple(REQUIRED_TESTS),
         help='Run only this required group; repeat to select several groups')
+    parser.add_argument('--summary-file', type=Path, help='Write completion JSON after the runner returns')
     args = parser.parse_args(argv)
     if not os.environ.get('FACTORY_TEST_DATABASE_URL'):
         print('POSTGRES_REQUIRED: set FACTORY_TEST_DATABASE_URL to a disposable database', file=sys.stderr)
@@ -84,6 +88,8 @@ def main(argv=None):
         print(f'POSTGRES_COLLECTION_FAILED: {error}', file=sys.stderr)
         return 1
     _, summary = run_checks(discovered, required, subset=bool(args.group))
+    if args.summary_file is not None:
+        args.summary_file.write_text(json.dumps(summary) + '\n', encoding='utf-8')
     print(json.dumps(summary))
     return 0 if summary['accepted'] else 1
 

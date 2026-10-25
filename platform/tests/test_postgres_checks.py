@@ -1,6 +1,9 @@
 """Synthetic unittest fixtures for required coverage; no database or provider IO."""
 import importlib.util
 import io
+import json
+import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -305,6 +308,75 @@ class PostgresCheckTests(unittest.TestCase):
                 def test_other(self): pass
         ''')
         self.assertFalse(summary['accepted'])
+
+    def test_early_stop_is_not_acceptance_even_after_required_case_passes(self):
+        _, result, summary = self.run_fixture("""
+            class Case(unittest.TestCase):
+                def test_required(self): self._outcome.result.stop()
+            class Later(unittest.TestCase):
+                def test_not_reached(self): pass
+        """)
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual(summary['groups']['critical']['passed'], 1)
+        self.assertEqual((summary['selected'], summary['testsRun']), (2, 1))
+        self.assertTrue(summary['shouldStop'])
+        self.assertFalse(summary['accepted'])
+
+    def test_optional_class_skip_does_not_require_selected_equals_run(self):
+        _, _, summary = self.run_fixture("""
+            class Case(unittest.TestCase):
+                def test_required(self): pass
+            class Optional(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls): raise unittest.SkipTest('fixture platform unavailable')
+                def test_a(self): pass
+                def test_b(self): pass
+        """)
+        self.assertEqual((summary['selected'], summary['testsRun'], summary['skipped']), (3, 1, 1))
+        self.assertTrue(summary['accepted'])
+
+    def completion_step(self, folder):
+        workflow = (SCRIPTS.parent / '.github/workflows/ci.yml').read_text()
+        step = workflow.split('      - name: Verify full PostgreSQL completion\n', 1)[1].split('      - name:', 1)[0]
+        code = step.split("          uv run python - <<'PYTHON'\n", 1)[1].split('          PYTHON', 1)[0]
+        return subprocess.run([sys.executable, '-c', textwrap.dedent(code)],
+            env={**os.environ, 'RUNNER_TEMP': str(folder), 'GITHUB_STEP_SUMMARY': str(folder / 'step.md')},
+            capture_output=True, text=True, timeout=10)
+
+    def test_summary_file_and_independent_ci_step_accept_only_completed_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            report = folder / 'postgres-completion.json'
+            for action, accepted in [('pass', True), ('self._outcome.result.stop()', False), ("self.skipTest('fixture')", False),
+                                     ("self.fail('fixture')", False), ("raise RuntimeError('fixture')", False)]:
+                with self.subTest(action=action):
+                    _, discovered, required = self.fixture(f"""
+                        class Case(unittest.TestCase):
+                            def test_required(self): {action}
+                    """)
+                    with patch.dict(os.environ, {'FACTORY_TEST_DATABASE_URL': 'synthetic-unused'}), \
+                            patch.object(sys, 'platform', 'linux'), patch.object(checks, 'configure_imports'), \
+                            patch.object(checks, 'collect', return_value=(discovered, required)), \
+                            patch('sys.stdout', io.StringIO()), patch('sys.stderr', io.StringIO()):
+                        code = checks.main(['--summary-file', str(report)])
+                    summary = json.loads(report.read_text())
+                    self.assertEqual(summary['accepted'], accepted)
+                    self.assertEqual(code, 0 if accepted else 1)
+                    checked = self.completion_step(folder)
+                    self.assertEqual(checked.returncode == 0, accepted, checked.stderr)
+                    if accepted:
+                        self.assertEqual(json.loads(checked.stdout), summary)
+                        self.assertIn('postgres_acceptance', (folder / 'step.md').read_text())
+
+    def test_ci_rejects_exit_zero_without_completion_or_invalid_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            subprocess.run([sys.executable, '-c', 'pass'], check=True, timeout=10)
+            self.assertNotEqual(self.completion_step(folder).returncode, 0)
+            report = folder / 'postgres-completion.json'
+            for content in ('not JSON', '{}', '{"suite":"other","accepted":true}'):
+                report.write_text(content)
+                self.assertNotEqual(self.completion_step(folder).returncode, 0)
 
     def test_missing_database_stops_before_discovery(self):
         with patch.dict('os.environ', {}, clear=True), patch.object(checks, 'collect') as collect, \
