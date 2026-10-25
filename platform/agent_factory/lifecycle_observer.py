@@ -49,7 +49,7 @@ class FactoryLifecycleObserver:
         self._remote_tasks: dict[str, asyncio.Task] = {}
         self._remote_results: dict[str, dict] = {}
 
-    def _binding(self, task: dict) -> dict | None:
+    def _binding(self, task: dict, *, include_content: bool = False) -> dict | None:
         """Strict native read; caller must keep missing/mismatched work held."""
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         if not task.get("run_id"):
@@ -72,6 +72,7 @@ class FactoryLifecycleObserver:
         session = self.native_db.get_session(task["id"], session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
         native_status = None
         requirements = []
+        content = None
         if session is not None:
             if session.user_id != task["owner_id"] or getattr(session, kind + "_id", None) != component_id:
                 raise ValueError("Native session differs from its Factory owner/executor")
@@ -80,11 +81,14 @@ class FactoryLifecycleObserver:
                 raise ValueError("Exact persisted native Factory run is not observable")
             native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
             requirements = runs[0].to_dict().get("requirements") or []
+            if include_content:
+                content = runs[0].to_dict().get("content")
             if state is None:
                 state = (session.session_data or {}).get("session_state")
         if not isinstance(state, dict) or state.get("factory_envelope") != envelope:
             raise ValueError("Native payload/session lacks the exact immutable Factory envelope")
-        return {**ticket, "persistedRunStatus": native_status, "requirements": requirements}
+        return {**ticket, "persistedRunStatus": native_status, "requirements": requirements,
+                **({"content": content} if include_content else {})}
 
     def _group(self, root: dict) -> tuple[list[dict], list[dict]]:
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE root_id=:root ORDER BY depth,created_at", root=root["id"])
@@ -215,9 +219,9 @@ class FactoryLifecycleObserver:
         # Its result acknowledges intent, never proves stop or releases quota.
         await Agent.acancel_run(task["run_id"])
 
-    def _facts(self, task: dict) -> dict:
+    def _facts(self, task: dict, *, include_content: bool = False) -> dict:
         try:
-            ticket = self._binding(task)
+            ticket = self._binding(task, include_content=True) if include_content else self._binding(task)
         except Exception as error:
             return {"taskId": task["id"], "stopped": False, "unknown": True, "errorType": type(error).__name__}
         effects_unknown = any(effect_unresolved(effect, self.store) for effect in self.store.effects(task["id"]))
@@ -229,7 +233,53 @@ class FactoryLifecycleObserver:
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
                 "failed": (task["body"]["stoppedStatus"] == "failed" if task["body"].get("stoppedStatus") is not None
                            else self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed")),
-                "displayStatus": task["body"].get("stoppedStatus") or self._display_status(task, ticket, effects_unknown)}
+                "displayStatus": task["body"].get("stoppedStatus") or self._display_status(task, ticket, effects_unknown),
+                **({"content": ticket.get("content")} if include_content and ticket and stopped else {})}
+
+    def _subtree(self, owner: str, child_id: str):
+        child = self.store.task(child_id, owner)
+        root_id, _ = self.store.delegation._ancestry(child)
+        tasks, links = self._group(self.store.task(root_id, owner))
+        selected = {child_id}
+        missing = False
+        for link in links:
+            if link['parent_id'] in selected:
+                if link['child_id'] is None:
+                    missing = True
+                else:
+                    selected.add(link['child_id'])
+        return root_id, [task for task in tasks if task['id'] in selected], missing
+
+    def _inspect_subtree(self, owner: str, child_id: str):
+        root_id, _ = self.store.delegation._ancestry(self.store.task(child_id, owner))
+        with self.store.delegation._root_lock(root_id):
+            _, tasks, missing = self._subtree(owner, child_id)
+            facts = {task['id']: self._facts(task, include_content=task['id'] == child_id) for task in tasks}
+            return {'parent': facts[child_id], 'children': [fact for key, fact in facts.items() if key != child_id],
+                    'unknown': missing or any(fact['unknown'] for fact in facts.values()),
+                    'allStopped': not missing and all(fact['stopped'] for fact in facts.values())}
+
+    async def inspect_subtree(self, owner: str, child_id: str):
+        """Trusted original custody read, without including the waiting parent."""
+        return await asyncio.to_thread(self._inspect_subtree, owner, child_id)
+
+    async def cancel_subtree(self, owner: str, child_id: str):
+        def mark():
+            root_id, _ = self.store.delegation._ancestry(self.store.task(child_id, owner))
+            with self.store.delegation._root_lock(root_id):
+                _, tasks, _ = self._subtree(owner, child_id)
+                for task in tasks:
+                    self._mark_cancel(task, 'cancel-requested')
+                return tasks
+        tasks = await asyncio.to_thread(mark)
+        requested, errors = [], []
+        for task in tasks:
+            try:
+                await self._cancel_bound(task)
+                requested.append(task['id'])
+            except Exception as error:
+                errors.append({'taskId': task['id'], 'errorType': type(error).__name__})
+        return {**await self.inspect_subtree(owner, child_id), 'requested': requested, 'errors': errors}
 
     def _display_status(self, task, ticket, effects_unknown):
         if task["admission"] == "rejected":
