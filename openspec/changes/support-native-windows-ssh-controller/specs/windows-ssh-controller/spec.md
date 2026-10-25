@@ -30,3 +30,11 @@ The production fixed helper SHALL be available from the standalone core installa
 #### Scenario: Unavailable real integration environment
 - **WHEN** no authorized Windows-to-Linux helper endpoint is available for the final real check
 - **THEN** mark that gate BLOCKED rather than equating Windows loopback or synthetic protocol checks with cross-machine acceptance
+
+
+#### Scenario: Unicode installed helper path
+- **WHEN** a Windows SSH invocation uses a core installation and carrier parent containing Unicode and spaces
+- **THEN** invoke only a byte-identical copy of the fixed installed helper at a fixed relative filename in the protected invocation directory
+- **AND** authenticate that exact copied helper and the original installed interpreter chain before releasing the password
+- **AND** preserve strict host pinning, one-use release, cancellation and cleanup without changing system locale or using an alternate credential path
+- **AND** a launcher that cannot run from that location fails closed rather than weakening identity checks

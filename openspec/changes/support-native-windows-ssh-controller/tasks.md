@@ -16,3 +16,6 @@
 - [ ] 3.4 Preserve first installed-core failure and independently review fixed safe phase/code instrumentation; run one authorized instrumented acceptance to distinguish acquisition, helper identity/handshake and command failure without changing the oracle.
 
 Implementation/review checks above are complete through f8d59fb; exact fast CI40244764642 passed, including the independent Linux core check. Windows portable checks passed 60/60, but the first installed-product run40244764651 failed at PRODUCTION_CONSUMERS. Thus 3.1 remains open; neither source review nor a successful wheel install closes it. Historical failures remain in verification documents.
+
+- [ ] 3.5 Independently review invocation-local fixed helper filename design against the observed NOT_FOUND/error-2 failure; implement only after review.
+- [ ] 3.6 Verify byte-preserving copy and identity/cleanup wiring, then run the unchanged actual installed Windows acceptance with Unicode-and-space parents; retain all failed reports and keep the Windows-to-Linux gate separate.
