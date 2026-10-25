@@ -29,11 +29,19 @@
 - **THEN** 保留真实负结果及缺项，agent解释与测量分开，不补造commit/命令或声称已验证
 
 ### Requirement: Reproducible delivery preserves dependencies
-系统 SHALL 汇集原目标、全部相关运行事实、精选证据、负结果和剩余问题形成不可变成果修订；每次读取/下载继续核对当前actor与来源权限，不泄漏撤回内容。
+系统 SHALL 仅在应用保存派生成果，不通过通用内容入口暴露绕过来源权限的副本；汇集原目标、全部相关运行事实、精选证据、负结果和剩余问题形成不可变成果修订；每次读取/下载继续核对当前actor与来源权限，不泄漏撤回内容。
 
 #### Scenario: Two member export and withdrawal
 - **WHEN** Bob下载Alice共享成果，随后任一依赖记录撤回
 - **THEN** 首包字节与精确引用一致；后续manifest正文和下载拒绝，不代理Alice读取，也不承诺远程销毁已读字节
+
+#### Scenario: Generic content cannot bypass derived source withdrawal
+- **WHEN** 生成manifest后来源撤回，调用通用内容list/read/artifact及应用目录/详情/导出
+- **THEN** 通用入口不存在派生正文/附件副本；应用目录无目标或结论摘要且隐藏不可读条目，详情/导出拒绝，原source遵守原core权限
+
+#### Scenario: Empty source does not grant team visibility
+- **WHEN** 项目尚无可共享source且owner生成缺项manifest
+- **THEN** 仅owner可读，其他成员目录及详情不获得该私有项目信息
 
 #### Scenario: Bounded complete export
 - **WHEN** 选中来源损坏、缺失或总量超限

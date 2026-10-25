@@ -7,7 +7,7 @@
 ## What Changes
 
 - 一个明确的CLI证据消费者：原native child继续使用MemberCliAdapter；parent结果步骤按owner预先确认的材料pin及输出字段选择收集原完成回执，用原application_context写精选artifact。
-- 复用ApplicationContent分享有限证据与不可变成果manifest，保留负结果和缺项；当前actor有界下载选定字节，不执行配方、不清理源。
+- 复用ApplicationContent分享原精选证据；派生manifest仅存应用不可变领域记录，每次读/导出复核全部原source权限，保留负结果和缺项；当前actor有界下载选定字节，不执行配方、不清理源。
 - 明确所需core原工具结果只读口，独立审查后由coordinator集成，不在应用直查effect表或复制执行链。
 
 ## Capabilities

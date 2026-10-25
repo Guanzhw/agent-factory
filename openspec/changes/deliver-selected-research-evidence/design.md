@@ -12,7 +12,7 @@
 
 ### 1. 唯一当前消费者及确认边界
 
-采用一个具体CLI JSON证据消费者，不另造CLI runner。项目Agreement新增可选evidence配置：`toolMaterial`精确已发布材料pin、`fields`角色到JSON顶层key的有限映射。角色仅metrics/source/dependency_lock/run_recipe/data_descriptor/selected_result，key为普通属性名，不支持路径表达式或脚本。选择由owner确认目标时写入不可变目标版本，不能由Decision/Evaluation或程序输出替换；未配置保留旧项目并明确证据未配置。
+采用一个具体CLI JSON证据消费者，不另造CLI runner。项目Agreement新增可选evidence配置：`toolMaterial`精确已发布材料pin、`fields`角色到JSON顶层key的有限映射。当前具体CLI消费者只产出metrics/source/run_recipe三种角色；依赖、数据前提和预期输出写在run_recipe中，不提前建立未被实际消费的独立角色。映射中的key为普通属性名，不支持路径表达式或脚本。选择由owner确认目标时写入不可变目标版本，不能由Decision/Evaluation或程序输出替换；未配置保留旧项目并明确证据未配置。
 
 v1自动消费者限定原child计划仅有一个个人CLI工具且精确匹配toolMaterial及其已确认operation/runtime binding；从既有材料/绑定读取验证transport=cli。若不能证明唯一来源则明确不采集，不以输出自报toolName或文件名赋权。这个限制是可证实的首个collector边界，不是最终限制所有研究只能单工具；多工具自动归因需先增加真实调用来源证据，不能假定af_effects存了它没有的字段。
 
@@ -22,7 +22,7 @@ v1自动消费者限定原child计划仅有一个个人CLI工具且精确匹配t
 
 既有child Agent → personal_tool_registration → MemberCliAdapter → 原effect持久化不变。parent `research_results`原生Step增加已支持的application_context参数，将其传给具体ResearchEvidence.capture。沿ResearchRounds._bound、attempt.operation_id及custody.read确认原owner/root/run/closed child身份；UNKNOWN不启动新实验、不猜测输出。
 
-需要最小可信只读端口（由coordinator审定并实现）：`ApplicationRuns.tool_results(owner, task_id, run_id)`，当前member+Store.task(owner)+精确task.run_id核对，返回有限原personal-tool effects `{effectKey,status,outcome,output}`，非完成状态不给成功output。仅Python服务，无新HTTP、无代他人read、无提交/重试/更新；限制沿原已存在工具结果大小/调用预算。当前唯一消费者ResearchEvidence，应用禁止自行直查af_effects。端口不声称知道工具名/argv，归因依赖上条精确单CLI计划。若无法从现有选定材料证明唯一CLI，实施停在此边界报告，不能降为schema看起来相似就接受。
+core依赖已由coordinator独立规范/实现审查：9ad11a0、be25678（/workspace/agent-factory-original-tool-results），应用在本规范复审后摘取。具体接口`ApplicationRuns.tool_results(owner, task_id, run_id)`返回taskId/runId/planId/materialRef/operationRef/binding{adapterId,revision,toolName}/receipts{effectKey,outcome,output}，要求本地ordinary executor、完整唯一工具、持久MemberToolOperation CLI证明；不支持时409 APPLICATION_CLI_PROVENANCE_UNAVAILABLE，不退回弱推断。应用对原custody child、原run及owner已确认toolMaterial再次核对；所有缺失归因保留为明确未采集，不从输出内容猜测。端口无HTTP/执行/更新，不返回rawconfig、connection或任意metadata；不证明argv/source真实性。当前唯一消费者ResearchEvidence。
 
 owner只读端口可读取已停止原task；不要求旧预算仍可花。应用选中字段在仍获授权的parent结果步骤通过`application_context.write_artifact`写入，不在终态callback临时创建执行上下文。父artifact附原child/task/run/effectKey及材料pin来源，不能冒充child自行写的文件。content.publish的附件引用实际父task/artifact/hash。
 
@@ -38,13 +38,19 @@ owner只读端口可读取已停止原task；不要求旧预算仍可花。应�
 
 ### 4. 交付manifest与下载
 
-具体ResearchDelivery服务：owner按project生成不可变成果修订，复用projects.db命令幂等与ApplicationContent source/revision。输入只含requestId和目标版本，不允许模型注入任意artifact授权。服务收集原项目goals、ending、全部原实验/负结果及已发布selection内容ID；正文不复制resourceRefs/connectionRefs/原聊天。只有当前原记录在core中可读时才能引用分享，不能把撤回来源复制成新公开正文。
+具体ResearchDelivery服务：owner按project生成应用内不可变成果修订，复用projects.db命令幂等，新增应用领域delivery表保存id/owner/project/version及manifest；不是运行状态机或另一份artifact仓库。输入只含requestId和目标版本，不允许模型注入任意artifact授权。manifest保存原项目目标/ending、全部相关实验/负结果及原selection来源内容ID；不复制resourceRefs/connectionRefs/原聊天。**不得把派生manifest正文或附件再次publish为可独立读取的ApplicationContent**，否则generic core read/list/artifact会绕过派生依赖撤回检查。
 
-manifest包含目标/评价/停止条件、原运行与材料pin、选中源码/依赖/recipe/data/metrics证据引用、agent_analysis明确标签、missingEvidence、remainingQuestions、继续说明。没有精确源码/数据/配方时不能标完整；process completed不等于scientific met。继续需要新项目/预算/身份，不重派原UNKNOWN。
+原精选证据本身继续使用ApplicationContent，core是唯一来源权限及字节读取权威。派生manifest的每次读取和导出，在既有admission事务锁中先检查当前actor成员及全部原source content的当前读取权，再构造正文/字节快照；使用当前actor，不代理owner。任一来源撤回或不可读则整段派生正文与下载拒绝；数据库/完整性错误不吞成缺项。所有依赖包括原实验记录、目标来源、selected content，不允许只检查附件来源而泄漏别处复制来的摘要。
 
-HTTP仅应用router：POST `/projects/{id}/deliveries` owner生成，GET `/deliveries/{contentId}`按当前actor读manifest，GET `/deliveries/{contentId}/download`有界导出。复用ApplicationContent.read/artifact验证所有依赖内容及精确附件；不代理作者全job。任一来源撤回时整个派生manifest正文/下载拒绝，不只删链接留摘要；已下载字节不能撤销。导出只读取本地已有artifact，不下载外部URL，不执行recipe。
+应用只保存引用和有限成果领域事实，不建立新的成员目录/分享ACL。作者有原领域写权；团队成员读权来自全部原source在core中的可读交集。没有可共享source的项目只可owner读取，不用空集合校验给全团队新权限。只有已在原共享记录中明确公开的目标/条件/结论才能进入团队manifest；其余owner私有信息不因manifest生成而公开。
 
-单次导出原始字节总量含manifest及选中文件，复用settings.experiment_output_bytes作为明确总上限；先核对元数据再读取，逐项核对hash/长度；超过上限明确拒绝整包，不静默遗漏。归档固定`manifest.json`及`evidence/<artifactId>`安全名；zip仅是请求期下载容器，不持久复制归档仓库。manifest正文仍受现有16KiB限制，附件分享沿20项限制；超限不声明完整，可读取原记录，不调高底座限制掩盖容量问题。
+manifest包含原共享目标/评价/停止条件、原运行与材料pin、源码/recipe/metrics证据引用、agent_analysis标签、missingEvidence、remainingQuestions和继续说明。recipe包含依赖/数据访问前提/预期比较条件；没有源码/数据/配方时不能标完整。process completed不等于scientific met；继续需要新项目/预算/身份，不重派原UNKNOWN。
+
+HTTP仅应用router：POST `/projects/{id}/deliveries` owner生成；GET `/deliveries`分页列出当前actor可读成果的安全目录；GET `/deliveries/{deliveryId}`按当前actor读manifest；GET `/deliveries/{deliveryId}/download`有界导出。目录只有opaque deliveryId、作者ID、createdAt，不保存或返回目标/结论/题目/指标摘要；目录查询也逐项调用同一全部source权限判定，不可读项不出现，不以能列出推断拥有内容权限。当前actor有效但第三方项目原有private读不被目录放开。
+
+分享入口为现有研究应用成果目录与具体delivery链接，不增加core ApplicationContent派生条目。不新增UI，后续经视觉确认的界面消费该目录。core generic read/list/artifact找不到派生正文或派生附件，原source本身仍按其已有权限读取。导出仅读取当前可读原content及精确artifact，不下载外部URL、不执行recipe；已下载字节不能远程撤销。
+
+单次导出原始字节总量含manifest及选中文件，复用settings.experiment_output_bytes作为明确总上限；先核对元数据再读取，逐项核对hash/长度；超过上限明确拒绝整包，不静默遗漏。归档固定`manifest.json`及`evidence/<artifactId>`安全名；zip仅是请求期下载容器，不持久复制归档仓库。应用manifest正文复用现有16KiB JSON限额，附件分享沿20项限制；超限不声明完整，可读取原记录，不调高底座限制掩盖容量问题。
 
 ### 5. 具体责任与实现顺序
 
