@@ -7,6 +7,7 @@ import argparse
 from contextlib import ExitStack
 from dataclasses import replace
 import json
+import re
 from pathlib import Path
 import ssl
 
@@ -114,18 +115,20 @@ def run(browser, dist, output):
         page.get_by_label('研究目标', exact=True).fill('Inspect selected SSH evidence')
         page.get_by_label('评价与达标标准', exact=True).fill('Use original selected metrics')
         page.get_by_label('停止与放弃条件', exact=True).fill('No execution in this browser fixture')
+        page.get_by_label('最多实验轮数', exact=True).fill('1')
+        page.get_by_label('最多工具调用', exact=True).fill('32')
         page.get_by_role('button', name='读取已发布实验材料', exact=True).click()
         candidates = fixture.request('GET', '/research/setup')['experimentMaterials']
         launch = next(item for item in candidates if item['id'] == 'ssh-native-launch')
         pin = ':'.join(str(launch[key]) for key in ('id', 'version', 'sha256'))
-        page.get_by_label('证据来源', exact=True).select_option('ssh-process')
-        page.get_by_label('证据SSH启动材料', exact=True).select_option(pin)
+        page.get_by_role('combobox', name=re.compile('^证据来源')).select_option('ssh-process')
+        page.get_by_role('combobox', name=re.compile('^证据SSH启动材料')).select_option(pin)
         page.get_by_label('指标输出字段', exact=True).fill('metrics')
-        page.get_by_label('证据来源', exact=True).select_option('cli')
-        expect(page.get_by_label('证据CLI材料', exact=True)).to_have_value('')
+        page.get_by_role('combobox', name=re.compile('^证据来源')).select_option('cli')
+        expect(page.get_by_role('combobox', name=re.compile('^证据CLI材料'))).to_have_value('')
         expect(page.get_by_label('指标输出字段', exact=True)).to_have_count(0)
-        page.get_by_label('证据来源', exact=True).select_option('ssh-process')
-        page.get_by_label('证据SSH启动材料', exact=True).select_option(pin)
+        page.get_by_role('combobox', name=re.compile('^证据来源')).select_option('ssh-process')
+        page.get_by_role('combobox', name=re.compile('^证据SSH启动材料')).select_option(pin)
         for label, value in (('指标', 'metrics'), ('源码', 'source'), ('运行配方', 'recipe')):
             page.get_by_label(label + '输出字段', exact=True).fill(value)
         page.get_by_role('button', name='保存研究约定', exact=True).click()
@@ -137,7 +140,7 @@ def run(browser, dist, output):
             'fields': {'metrics': 'metrics', 'source': 'source', 'run_recipe': 'recipe'}}
         page.reload()
         page.get_by_role('button', name='修改目标', exact=True).click()
-        expect(page.get_by_label('证据来源', exact=True)).to_have_value('ssh-process')
+        expect(page.get_by_role('combobox', name=re.compile('^证据来源'))).to_have_value('ssh-process')
         expect(page.get_by_label('指标输出字段', exact=True)).to_have_value('metrics')
         page.screenshot(path=str(output / 'ssh-selected-evidence.png'), full_page=True)
 

@@ -1,0 +1,39 @@
+/workspace/agent-factory-ssh-research-plan/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-2d8501e4, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-6383324a poll=0.2s
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+Traceback (most recent call last):
+  File "/workspace/agent-factory-ssh-research-plan/scripts/accept_research_ssh_ui.py", line 187, in <module>
+    main()
+  File "/workspace/agent-factory-ssh-research-plan/scripts/accept_research_ssh_ui.py", line 180, in main
+    result = run(browser, args.dist, args.output)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-ssh-research-plan/scripts/accept_research_ssh_ui.py", line 121, in run
+    page.get_by_label('证据来源', exact=True).select_option('ssh-process')
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/sync_api/_generated.py", line 17630, in select_option
+    self._sync(
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_sync_base.py", line 115, in _sync
+    return task.result()
+           ^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_locator.py", line 597, in select_option
+    return await self._frame.select_option(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 781, in select_option
+    return await self._channel.send("selectOption", self._timeout, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_connection.py", line 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_connection.py", line 559, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Locator.select_option: Timeout 30000ms exceeded.
+Call log:
+  - waiting for get_by_label("证据来源", exact=True)
