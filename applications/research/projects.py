@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
-from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
+from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, inspect, select, text
 
 from agent_factory.applications import GovernedStorage
 from agent_factory.material_governance import PinnedRef
@@ -83,6 +83,7 @@ class CreateProject(BaseModel):
     requestId: RequestId
     title: str = Field(min_length=1, max_length=120)
     assistantId: Reference | None = None
+    researchAssistantId: Reference | None = None
 
 
 class ProjectCommand(BaseModel):
@@ -105,14 +106,16 @@ def reject(code, message, status=409) -> NoReturn:
 
 
 class ResearchProjects:
-    def __init__(self, store, auth, endpoints):
+    def __init__(self, store, auth, endpoints, *, assistants=None):
         self.auth, self.endpoints = auth, endpoints
+        self.assistants = assistants
         self.execution: Any = None
         self.db = GovernedStorage(store, 'research_projects_v1')
         metadata = MetaData()
         self.projects = Table('research_projects', metadata,
             Column('id', String, primary_key=True), Column('owner_id', String, nullable=False),
             Column('title', String, nullable=False), Column('assistant_id', String),
+            Column('research_assistant_id', String),
             Column('state', String, nullable=False), Column('goal_version', Integer, nullable=False),
             Column('ending', JSON), Column('created_at', String, nullable=False))
         self.goals = Table('research_goal_versions', metadata,
@@ -121,6 +124,9 @@ class ResearchProjects:
             Column('confirmed_at', String))
         self.commands = self.db.command_table('research_project_commands', metadata)
         metadata.create_all(store.engine)
+        with self.db.write() as conn:
+            if 'research_assistant_id' not in {c['name'] for c in inspect(conn).get_columns('research_projects')}:
+                conn.execute(text('ALTER TABLE research_projects ADD COLUMN research_assistant_id VARCHAR'))
 
     def _owned(self, conn, owner, identifier):
         row = conn.execute(select(self.projects).where(
@@ -135,7 +141,7 @@ class ResearchProjects:
             with self.db.read() as conn:
                 execution = self.execution.availability(conn, row)
         return {'id': row['id'], 'ownerId': row['owner_id'], 'title': row['title'],
-            'assistantId': row['assistant_id'], 'state': row['state'],
+            'assistantId': row['assistant_id'], 'researchAssistantId': row['research_assistant_id'], 'state': row['state'],
             'currentGoalVersion': row['goal_version'], 'ending': deepcopy(row['ending']),
             'createdAt': row['created_at'],
             'execution': execution}
@@ -150,6 +156,8 @@ class ResearchProjects:
     def create(self, owner, body: CreateProject):
         self.auth.require_member(owner)
         value = body.model_dump(exclude={'requestId'})
+        if body.researchAssistantId is None:
+            value.pop('researchAssistantId')
         fingerprint = digest({'action': 'create', **value})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
@@ -157,9 +165,13 @@ class ResearchProjects:
                 return old
             if body.assistantId is not None:
                 self.endpoints.owned(owner, body.assistantId)
+            if body.researchAssistantId is not None:
+                if self.assistants is None:
+                    reject('RESEARCH_ASSISTANT_NOT_INSTALLED', '研究助手未安装')
+                self.assistants.owned(owner, body.researchAssistantId)
             identifier = str(uuid4())
             conn.execute(self.projects.insert().values(id=identifier, owner_id=owner,
-                title=body.title, assistant_id=body.assistantId, state='draft', goal_version=0,
+                title=body.title, assistant_id=body.assistantId, research_assistant_id=body.researchAssistantId, state='draft', goal_version=0,
                 ending=None, created_at=now()))
             result = self._detail(conn, self._owned(conn, owner, identifier))
             return self.db.record(conn, self.commands, owner, body.requestId, fingerprint, 'research.create', result)
