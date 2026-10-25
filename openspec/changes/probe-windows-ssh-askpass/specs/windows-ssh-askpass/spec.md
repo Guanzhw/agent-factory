@@ -31,3 +31,8 @@ The isolated probe SHALL install its pinned OpenSSH encryption KDF dependency be
 - **WHEN** encrypted serialization cannot load cryptography's optional bcrypt KDF
 - **THEN** report an incomplete fixture before invoking OpenSSH and retain the first failure
 - **AND** a separate locked probe dependency enables the same encrypted behavior without weakening its checks
+
+#### Scenario: Fixed venv redirector chain
+- **WHEN** the installed console helper starts the exact configured venv Python which starts the base Python pipe client
+- **THEN** validate each of these fixed process identities and creation/parent relationships to the original live OpenSSH handle before releasing a secret
+- **AND** an extra or different intermediary, exited process or reversed creation order is rejected
