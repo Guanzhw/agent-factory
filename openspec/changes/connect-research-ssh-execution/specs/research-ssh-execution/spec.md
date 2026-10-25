@@ -156,3 +156,10 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 #### Scenario: QA publication cannot acquire the SSH launch tool
 - **WHEN** QA is prepared and published while SSH adapters are registered
 - **THEN** its exact published tool set remains research_qa_context and research_qa_record, its model has no callable tools, and an unsolicited provider tool call fails without tool dispatch or a delegated child
+
+### Requirement: Linux-only helper rejects unsupported platforms before work
+The remote process helper SHALL require Linux before request parsing or filesystem access. Core imports and Windows static checks SHALL remain valid without replacing Linux no-follow flags or locking with weaker fallbacks.
+
+#### Scenario: Unsupported helper execution
+- **WHEN** handle, directory traversal or bounded file reading is invoked on a non-Linux platform
+- **THEN** it raises the explicit unsupported-platform enforcement error before opening files, importing fcntl, or creating custody; the existing CLI safe error envelope remains unchanged
