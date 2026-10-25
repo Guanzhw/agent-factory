@@ -56,7 +56,7 @@ jobs:
           import os, subprocess, sys
           code = """
           import sys, unittest
-          modules = ['test_ssh_exchange', 'test_ssh_process_paths',
+          modules = ['test_ssh_exchange', 'test_windows_ssh_process', 'test_ssh_process_paths',
                      'test_ssh_operation_runtime.SSHOperationProjectionTests',
                      'test_ssh_operation_runtime.SSHPersonalTargetTests',
                      'test_ssh_operation_runtime.SSHLaunchPreflightTests',
