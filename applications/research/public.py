@@ -10,21 +10,27 @@ def install(state, *, workflow=None, qa_workflow=None):
     if qa_workflow is not None:
         from .assistants import ResearchAssistants, assistants_router
         from .qa import ResearchQA
+        from .peer_sources import ResearchPeerSources
+        from .associations import ResearchAssociations, associations_router
         from .qa_workflow import WORKFLOW_ID as QA_WORKFLOW_ID
         store = state['store']
         assistants = ResearchAssistants(store, state['auth'], state['assistant_endpoints'],
             state['assistant_messages'], state['local_budget_scopes'],
             pin=store.native_workflows.pin(QA_WORKFLOW_ID), tool_registrations=qa_workflow.tool_registrations,
-            environment_registration=qa_workflow.environment_registration)
+            environment_registration=qa_workflow.environment_registration, events=state['assistant_events'])
+        sources = ResearchPeerSources(store, state['application_content'], state['local_budget_scopes'])
+        associations = ResearchAssociations(sources, assistants, state['assistant_events'])
         qa = ResearchQA(store, assistants, state['assistant_messages'], ApplicationRuns(state['factory_api']),
-            state['application_content'])
+            state['application_content'], associations=associations)
         qa_workflow.bind(qa)
         state['research_assistants'], state['research_qa'] = assistants, qa
+        state['research_peer_sources'], state['research_associations'] = sources, associations
+        state['http_app'].include_router(associations_router(state['auth'], associations))
         state['http_app'].include_router(assistants_router(state['auth'], assistants))
     projects = ResearchProjects(state['store'], state['auth'], state['assistant_endpoints'], assistants=assistants)
     state['http_app'].include_router(projects_router(state['auth'], projects))
     state['research_projects'] = projects
-    records = ResearchRecords(state['application_content'])
+    records = ResearchRecords(state['application_content'], state.get('research_associations'))
     runs = ResearchRuns(projects, ApplicationRuns(state['factory_api']), state['local_budget_scopes'], state['applications'], records)
     if workflow is not None:
         from .rounds import ResearchRounds
@@ -38,7 +44,8 @@ def install(state, *, workflow=None, qa_workflow=None):
         state['http_app'].include_router(setup_router(state['auth'], setup))
         rounds = ResearchRounds(runs, events=state['assistant_events'],
             endpoints=state['assistant_endpoints'], custody=store.workflow,
-            control=store.workflow_control, pin=pin)
+            control=store.workflow_control, pin=pin, associations=state.get('research_associations'))
+        projects.peer_sources = rounds.peer_sources
         workflow.bind(rounds)
         store.application_runtime.register('research-round', rounds,
             native_components=(tuple(pin[key] for key in ('kind', 'id', 'revision', 'sha256')),),
