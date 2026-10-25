@@ -44,7 +44,7 @@
 
 ## 实施前验收与独立审查
 
-2026-10-25 09:34–09:35 UTC，用户要求先确定最终验收测试、行为和标准，再开始实施；每个 PR 合入前须由作者之外的审查者检查完整 diff，特别识别过早通用化、无依据兜底、过度防御及无谓注释。具体判据与精确 base/head 审查门槛见[最终验收契约](docs/plans/research-platform-acceptance-contract.md)。契约当前待用户确认，尚未执行。
+2026-10-25 09:34–09:35 UTC，用户要求先确定最终验收测试、行为和标准，再开始实施；每个 PR 合入前须由作者之外的审查者检查完整 diff，特别识别过早通用化、无依据兜底、过度防御及无谓注释。具体判据与精确 base/head 审查门槛见[最终验收契约](docs/plans/research-platform-acceptance-contract.md)。用户于2026-10-25 09:59 UTC确认开始实施，接受总体验收框架；实际验收尚未运行，真实任务/模型预算/机器负载/容差仍需运行前冻结。10:03 UTC进一步明确按OpenSpec先proposal/design/spec/tasks再实现。
 
 ## OpenResearch 参考范围
 

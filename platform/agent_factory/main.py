@@ -231,6 +231,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .credential_vault import credential_vault_router
     base.include_router(credential_vault_router(auth, credential_vault))
     base.include_router(application_router(auth, applications))
+    from .assistant_endpoints import AssistantEndpoints, assistant_endpoints_router
+    assistant_endpoints = AssistantEndpoints(store, auth, applications)
+    base.include_router(assistant_endpoints_router(auth, assistant_endpoints))
     base.include_router(composition_router(auth, composition))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
@@ -348,7 +351,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
     native.state.factory.update(credential_vault=credential_vault, resources=resources,
         resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
-        factory_api=factory_api, http_app=native)
+        factory_api=factory_api, assistant_endpoints=assistant_endpoints, http_app=native)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:
