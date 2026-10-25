@@ -1,3 +1,5 @@
+> 状态：已撤回的诊断方案，仅保留历史证据。真实嵌套恢复复验仍失败，应用已改用扁平 native steps；本分支中的探索性 core 修改已还原。本 change 不是当前待实现/验收要求，不据下列旧计划宣称嵌套恢复已修复。详见 `../restore-team-research-application/native-workflow-verification.md`。
+
 # Design
 
 The observed response and original `step_executor_runs` both use `research_wait`; the original requirement uses a UUID but the same `step_name`, `executor_id` and `executor_run_id`. Completed step results do not yet contain the waiting node. This is an identity representation mismatch, not missing authorization.
