@@ -69,3 +69,9 @@ v2 的准备、授权回调、执行与恢复 SHALL 使用 operationSeconds，v1
 #### Scenario: Cancellation with uncertain effect
 - **WHEN** 已请求取消但尚无原效果的停止证据
 - **THEN** 保持 UNKNOWN 或取消中及容量占用，状态读取不触发 provider 控制或释放，后台确认停止后才收尾
+
+#### Scenario: Prepared reply lost before origin reconciliation
+- **GIVEN** receiver preparation succeeds for the original owner/request and no native execution is dispatched
+- **WHEN** the successful prepare reply is lost before any origin background or explicit reconciliation observes the receiver
+- **THEN** the origin retains exact `PREPARE_UNKNOWN`; explicit original-request reconciliation recovers that same prepared receipt, still with zero native tickets, and a subsequent explicit dispatch creates one original native ticket
+- **AND** the fault test controls the origin observer during this boundary and proves the successful original response was actually dropped; an arbitrary HTTP error or a concurrently reconciled state is not evidence for this pre-reconciliation scenario
