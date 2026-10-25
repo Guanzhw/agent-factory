@@ -332,3 +332,46 @@ The two deterministic capacity fixture corrections were then independently
 verified: **2 passed, 0 skipped, 18.710s, exit 0**,
 `/tmp/no-demo-capacity-disabled-final.log`. This does not close the MCP failure
 or establish that the earlier storage cancellation timeout is harmless.
+
+### Second instrumented MCP matrix: bounded pass, cause remains unknown
+
+Exact source head `a0112b05714983b789f2e154d55a701b5dbb086b` ran the same single
+matrix once with `FACTORY_MCP_DIAGNOSTICS=1`, the original 20-second native waits
+and an outer 240-second cap: **1 passed, 0 skipped, 59.808s, exit 0**. Log:
+`/tmp/no-demo-mcp-matrix-diagnostic-second.log`; final-run safe metadata:
+`/tmp/no-demo-mcp-second-final-run.json`; watchdog directory:
+`/tmp/no-demo-mcp-stacks-second`. All fixture cleanup completed before releasing
+the exclusive PG slot. No third run was started.
+
+The change from the first instrumented run is diagnostic only: source-free
+frame traversal, separately persisted snapshots, an independent 15-second C
+watchdog and passive GC timestamps. The five original runs had callback spans
+9.683 / 8.438 / 9.337 / 10.011 / 7.966 seconds. All completed before the watchdog
+checkpoint; five empty watchdog files and no Python snapshot files are therefore
+expected. There was no 15-second snapshot I/O in this passing run.
+
+The fifth run `00589c5a-2806-4e26-926e-9d84e403fd76` retained 74 callbacks and
+zero callback drops. Credential wall time median/max was 0.328/0.436 seconds;
+authorization 0.133/0.209 seconds. The last 3.38-second rolling event window
+contains 1346 matched pool acquisitions: median 0.00075 seconds, p95 0.00413,
+maximum 0.03457. Its largest inter-event gap is 0.02857 seconds, contrasting
+with 4.147 seconds in the prior failed window. The GC ring contains only the
+last 3.34 seconds (256 events, generations 0 and 1); no retained matched pair
+exceeds 20ms. This bounded window **cannot** prove absence of earlier GC, or
+identify GC as the prior failure's cause.
+
+Evidence narrows the observed difference to slow wall time within synchronous
+callbacks/SQL/pool acquisition in the failing run, rather than long executor
+queue admission. It does not distinguish database waits from CPU/GIL stalls
+or determine their origin. The first failed instrumented run has no reliable
+thread/task snapshot; this passing run did not reach the snapshot threshold.
+Do not infer stable MCP behavior from this pass or remove any prior failure.
+
+At this checkpoint the deterministic migration corrections have targeted
+passing coverage: the separate identity/origin-authority group, 28 successful
+cases from the original 32-case follow-up, and the two corrected capacity
+cases. Storage's original cancellation timeout and MCP's original plus first
+instrumented timeouts remain recorded; each later single instrumented pass is
+bounded evidence, not root-cause closure. A necessary full CI run on the final
+changed fixture head may verify integration, but even a green full run would
+not establish that these historical timing causes have been resolved.
