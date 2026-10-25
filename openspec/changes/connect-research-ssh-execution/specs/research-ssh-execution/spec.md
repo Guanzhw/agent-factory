@@ -181,3 +181,12 @@ The SSH controller SHALL validate remote executable and research working-directo
 #### Scenario: Local semantics are not widened
 - **WHEN** a local caller constructs a process specification without opting into SSH POSIX validation
 - **THEN** its native absolute-path validation remains unchanged, and the correction does not enable remote uv execution or change local interpreter validation
+
+
+### Requirement: Separate controller contracts from local Linux helper fixtures
+Remote POSIX profile fixtures SHALL retain explicit POSIX semantics when replacing a specification, including test-created input profiles. Actual Linux helper filesystem/journal checks SHALL run on Linux; portable Windows controller checks SHALL not invoke a Linux helper locally or rewrite its POSIX root to a Windows path.
+
+#### Scenario: Windows controller contract selection
+- **WHEN** Windows runs the portable SSH controller suite
+- **THEN** every selected controller case executes without skips, including profile replacement
+- **AND** the direct Linux helper journal case remains in Linux full discovery with its existing assertions
