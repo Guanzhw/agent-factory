@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 
+from .process_enforcement import ProcessSpec, ProcessLimits, ResearchProcessLimits
 from .process_runtime import ProcessRuntimeService, process_reservation
 from .resource_maintenance import ResourceMaintenance
 from .resources import TERMINAL, ComputePool, RemoteTarget
@@ -17,8 +18,8 @@ from .workflow_operations import require
 
 @dataclass(frozen=True)
 class SSHTrainingProfile:
-    spec: object
-    limits: object
+    spec: ProcessSpec
+    limits: ProcessLimits | ResearchProcessLimits
     interpreter: str
     pool: ComputePool
 
@@ -48,6 +49,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
         require(set(config) == {'connectionName', 'profileId', 'profileSha256'})
         profile = self.profiles.get(config['profileId'])
         require(isinstance(profile, SSHTrainingProfile) and profile.fingerprint == config['profileSha256'])
+        assert isinstance(profile, SSHTrainingProfile)
         target_ref = 'ssh-' + digest({'actor': task['owner_id'], 'material': spec['materialRef'],
                                       'connection': spec['connection'], 'profile': profile.fingerprint})
         return spec, profile, target_ref
@@ -113,7 +115,9 @@ class SSHOperationRuntime(ProcessRuntimeService):
                 and execution['effectKey'] == EFFECT and execution['nativeRunId'] == task['run_id']
                 and owner == task['owner_id'] and type(execution['requirement']) is dict
                 and set(execution['requirement']) == {'operationId'})
-        body = self.store.workflow._load(owner, execution['requirement']['operationId'])
+        guard = execution['requirement']
+        assert isinstance(guard, dict)
+        body = self.store.workflow._load(owner, guard['operationId'])
         self.store.workflow._identity(body)
         require(body['taskId'] == task['id'] and body['nativeRunId'] == task['run_id']
                 and body['planSha256'] == digest(plan) and body['adapterPin'] == self.pin
@@ -137,6 +141,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
         lease, target, task, ticket = super()._custody(lease_id)
         guard = lease.get('executionGuard')
         require(type(guard) is dict and set(guard) == {'operationId'})
+        assert isinstance(guard, dict)
         body = self.store.workflow._load(lease['ownerId'], guard['operationId'])
         self.store.workflow._identity(body)
         require(body['adapterPin'] == self.pin and body['taskId'] == lease['localTaskId']
