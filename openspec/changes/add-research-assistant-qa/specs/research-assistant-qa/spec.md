@@ -94,7 +94,7 @@ P7后续交付 SHALL 包含少数相关记录的主动关联及来源对实际�
 
 #### Scenario: Unsupported monetary or token commitment
 - **WHEN** 用户为当前BYOK QA请求非null token或金额上限
-- **THEN** 配置明确拒绝且不创建scope/endpoint，不开启platform-paid、不静默移除上限
+- **THEN** 配置业务入口以HTTP422固定safe code `RESEARCH_QA_BYOK_METERING_UNSUPPORTED`明确拒绝且不创建scope/endpoint，不开启platform-paid、不静默移除上限；基本字段格式仍由Pydantic校验，避免具体不支持能力被通用INVALID_REQUEST掩盖
 
 #### Scenario: Model requests a forbidden training tool
 - **WHEN** 实际provider返回train tool_call而QA模型没有工具
