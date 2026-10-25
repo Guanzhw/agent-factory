@@ -17,7 +17,7 @@ class GuardStore:
         self.plan_policy = None
         self.usage_ledger = SimpleNamespace(inspect=lambda *args: {'scopes': []})
         self.record = {'id': 'task', 'owner_id': 'owner', 'plan_id': 'plan',
-                       'run_id': 'run', 'request_id': 'request', 'cancel_requested': False}
+                       'run_id': 'run', 'request_id': 'request', 'cancel_requested': False, 'body': {}}
 
     def task(self, *args):
         return dict(self.record)
@@ -44,7 +44,7 @@ class StoreGuardScopeTests(unittest.TestCase):
         def guard(owner, plan, context, tool):
             calls.append((owner, plan, context, tool))
         store.register_execution_guard('guard', guard, tool_independent=True)
-        context = object()
+        context = SimpleNamespace(user_id="owner", session_id="task", run_id="run")
         plan = store.plan()
         checked = store.require_plan_execution('owner', plan, run_context=context)
         self.assertEqual(calls, [('owner', plan, context, None)])

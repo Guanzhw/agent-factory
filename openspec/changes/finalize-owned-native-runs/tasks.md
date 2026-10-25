@@ -18,3 +18,7 @@
 ## Workflow follow-up
 
 - coordinator核对证据后才勾选任务；研究应用后续接入另在其change推进。当前仅spec准备，不代表端口已实现。
+
+## Full-suite fixture follow-up
+
+- [ ] 3.3 对full40193918455暴露的便携fixture契约滞后做最小修正：任务具备真实body字段，Store guard fixture提供原session/task读取；保留所有原terminal race、撤权和停止证明断言。先复现再针对性验证，不为测试添加产品fallback或放宽断言。
