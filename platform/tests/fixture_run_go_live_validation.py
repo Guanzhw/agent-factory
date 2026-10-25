@@ -15,7 +15,6 @@ import io
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 import time
 from uuid import uuid4
