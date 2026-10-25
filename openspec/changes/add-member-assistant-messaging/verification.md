@@ -19,3 +19,9 @@ PR104 base a2e021c97ba2257d86c1ec484296bbeda0b6c05a / head ddc82b2642e8784099e55
 - 便携消息6/6通过0.184s；真实PG/native3/3通过13.404s，覆盖并发重投dispatch一次、丢ACK重启保留原UNKNOWN、required goal schema实际入原任务。
 - 首轮受限sandbox asyncio唤醒停滞栈与20s有界退出保留；network权限后通过，未改产品超时。输入schema映射的首版kwargs静态类型错误已修正，最终Pyright0。
 - P1独立审查base d2090254 / head836f810d7fc45d8a269ca1926d2b8caa35046cb0完整19文件diff无阻断，包含文本schema整改复审。PR105 CI40184199282待终态，不能当已通过。
+
+## 最终P1/P2提交与CI
+
+P1 head836f810d7fc45d8a269ca1926d2b8caa35046cb0经foundation_review完整19文件审查无阻断；PR105 fast40184199282 success，合并642ddda88ac15ae2730c7a5d7e09d7e387300acb，main40184582271 success。
+
+P2 head3ed6e26400a8109f62fd74552c1e7b9640cc3678完整7文件独立审查无阻断；新base642ddda与原836f810 tree相等，retarget无diff变化。PR106 fast40184420374 success，合并b31dc3e133acc2aec27490b530e320637f7ae3af，main40184947317 success。上述均实际查询终态，非估计。
