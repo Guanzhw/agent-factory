@@ -39,3 +39,17 @@ Raw logs were not copied to the public repository. This summary contains only sy
 Each run exited its owned browser/server contexts and stopped native worker/scheduler. Each `IsolatedPostgres` context dropped only its generated `af_test_` database. After the diagnostic, a read-only catalog query found **zero `af_test_` databases**. The pre-existing `af-research-next-pg` container/volume was retained. No test server remains from these runs; PostgreSQL execution slot was released to the coordinator.
 
 Continue after the owner-model compatibility repair with `scripts/accept_live_research_workbench.py`. Complete the remaining browser identity/history/owner-isolation assertions and production-local OIDC/mobile journey; the current failure is not a substitute for those results. The script intentionally fails until an actual research decision exists. The authoritative implementation must not be changed by the diagnostic wrapper.
+
+## Text-output repair verification: second concrete blocker
+
+On integrated code `81859a528e75a8031880166362e9e5e19aed5b40`, the same browser script created a fresh database and explicitly published the newly registered workflow pin. Frontend bytes were unchanged from the existing `30699a3` research build. The first model decision now succeeded and dispatched an actual native child. In the uninstrumented run, that child completed the local checksum tool and archived an artifact. The root workflow still failed later, with `decision: null`; the original failed root and completed child were both retained. `/tmp/af-live-real-browser-text-model.log` exited 1. The planned production-local/mobile scenario was NOTRUN because the desktop journey failed first.
+
+A single transparent `_body` diagnostic then recorded `ValueError`, `response_format_present=False`, distinguishing this from the repaired format rejection. That run's failure cleanup also interrupted its child; do not substitute its failed child for the completed child in the first uninstrumented run. Its log is `/tmp/af-live-real-browser-text-body-diagnostic.log`, exit 1. The PostgreSQL slot was released after cleanup to the identity tests.
+
+A focused portable experiment using actual Agno `Agent`, actual `OwnerChatModel`, and the actual `factory_wait_operations` tool confirmed the exact failure **without PostgreSQL or a provider call**:
+
+```text
+OwnerChatModel._body → encode_request → _tools → ValueError('MODEL_PROTOCOL_TOOL')
+```
+
+Agno's tool schema includes the local `external_execution: true` field inside `function`. The personal-model adapter passes that schema unchanged to the protocol codec, whose provider tool allowlist rejects this local runtime field. The diagnostic contains only the public tool declaration and frame locations: `/tmp/af-live-owner-wait-portable-diagnostic.txt`. No product code was edited here. The repair must preserve local external-wait semantics and the strict provider boundary rather than removing the native pause or accepting arbitrary provider fields. The browser remains **FAIL**, pending this second actual integration repair and the remaining journey assertions.
