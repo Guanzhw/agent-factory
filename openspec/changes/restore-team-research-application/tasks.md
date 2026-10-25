@@ -55,3 +55,7 @@
 ## Workflow follow-up
 
 - 仅在所有适用任务及独立审查完成后由coordinator决定归档；真实C/D未完成不得宣称完整产品验收通过。
+
+## A06/A07 consumer acceptance follow-up
+
+- [ ] 7.1 用现有真实paused ResearchServer增加一个取消/UNKNOWN/同库硬重启/原停止确认的连续场景，核对root/child/custody、hold、一次终态与无后继；仅测试夹具注入停止确认不可得，不扩展产品恢复器。真实远端不停止与付费资源不在此证据范围。
