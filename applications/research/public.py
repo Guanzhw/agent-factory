@@ -5,8 +5,23 @@ from .records import ResearchRecords
 from .projects import ResearchProjects, projects_router
 
 
-def install(state, *, workflow=None):
-    projects = ResearchProjects(state['store'], state['auth'], state['assistant_endpoints'])
+def install(state, *, workflow=None, qa_workflow=None):
+    assistants = None
+    if qa_workflow is not None:
+        from .assistants import ResearchAssistants, assistants_router
+        from .qa import ResearchQA
+        from .qa_workflow import WORKFLOW_ID as QA_WORKFLOW_ID
+        store = state['store']
+        assistants = ResearchAssistants(store, state['auth'], state['assistant_endpoints'],
+            state['assistant_messages'], state['local_budget_scopes'],
+            pin=store.native_workflows.pin(QA_WORKFLOW_ID), tool_registrations=qa_workflow.tool_registrations,
+            environment_registration=qa_workflow.environment_registration)
+        qa = ResearchQA(store, assistants, state['assistant_messages'], ApplicationRuns(state['factory_api']),
+            state['application_content'])
+        qa_workflow.bind(qa)
+        state['research_assistants'], state['research_qa'] = assistants, qa
+        state['http_app'].include_router(assistants_router(state['auth'], assistants))
+    projects = ResearchProjects(state['store'], state['auth'], state['assistant_endpoints'], assistants=assistants)
     state['http_app'].include_router(projects_router(state['auth'], projects))
     state['research_projects'] = projects
     records = ResearchRecords(state['application_content'])
@@ -18,7 +33,7 @@ def install(state, *, workflow=None):
         store = state['store']
         pin = store.native_workflows.pin(WORKFLOW_ID)
         setup = ResearchSetup(store, state['auth'], state['connections'], store.personal_models,
-            controller_registrations=workflow.tool_registrations)
+            controller_registrations=workflow.tool_registrations, qa_workflow=qa_workflow)
         state['research_setup'] = setup
         state['http_app'].include_router(setup_router(state['auth'], setup))
         rounds = ResearchRounds(runs, events=state['assistant_events'],

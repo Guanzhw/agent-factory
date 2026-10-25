@@ -32,16 +32,25 @@ class PrepareSetup(BaseModel):
     budget: Budget
 
 
+class PrepareQASetup(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    requestId: RequestId
+    name: str = Field(min_length=1, max_length=120)
+    modelConnectionRef: Reference
+    budget: Budget
+
+
 class PublishSetup(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
 
 
 class ResearchSetup:
-    def __init__(self, store, auth, connections, models, *, controller_registrations):
+    def __init__(self, store, auth, connections, models, *, controller_registrations, qa_workflow=None):
         self.store, self.auth, self.connections, self.models = store, auth, connections, models
         self.apps, self.materials = store.applications, store.material_governance
         self.controller_registrations = tuple(controller_registrations)
+        self.qa_workflow = qa_workflow
         self.db = GovernedStorage(store, 'research_setup_v1')
         metadata = MetaData()
         self.drafts = Table('research_setup', metadata,
@@ -121,7 +130,7 @@ class ResearchSetup:
         env = intent['environment']
         environment = descriptor('environment', env['adapterId'], env['revision'])
         model = descriptor('model', 'owner-chat-completions-v1', '1')
-        tools = self.apps.closure(intent['experimentMaterialRefs'])
+        tools = [] if intent.get('mode') == 'qa' else self.apps.closure(intent['experimentMaterialRefs'])
         selected = {(ref['id'], ref['version'], ref['sha256']) for ref in intent['experimentMaterialRefs']}
         if any(item['content'] in self._controllers() for item in tools if item['kind'] == 'tool'):
             raise HTTPException(422, 'RESEARCH_SETUP_EXPERIMENT_CONTROLLER')
@@ -172,30 +181,49 @@ class ResearchSetup:
         if missing:
             raise HTTPException(409, {'code': 'RESEARCH_SETUP_BINDINGS_UNAVAILABLE', 'missing': missing})
         controllers = []
-        if {entry.tool_name for entry in self.controller_registrations} != self._controllers():
+        registrations = self.controller_registrations
+        names = self._controllers()
+        if intent.get('mode') == 'qa':
+            from .qa_workflow import FUNCTION_TOOLS as QA_TOOLS
+            if self.qa_workflow is None:
+                raise HTTPException(409, 'RESEARCH_QA_NOT_INSTALLED')
+            registrations = self.qa_workflow.tool_registrations
+            names = set(QA_TOOLS)
+        if {entry.tool_name for entry in registrations} != names:
             raise HTTPException(409, 'RESEARCH_SETUP_CONTROLLER_UNAVAILABLE')
-        for registration in self.controller_registrations:
+        for registration in registrations:
             entry = descriptor('tool', registration.adapter_id, registration.revision)
             if entry['toolName'] != registration.tool_name:
                 raise HTTPException(409, 'RESEARCH_SETUP_CONTROLLER_UNAVAILABLE')
             controllers.append(entry)
         return refs, pins, list(requirements.values()), tools, model, environment, controllers
 
+    def prepare_qa(self, owner, request: PrepareQASetup):
+        if self.qa_workflow is None:
+            raise HTTPException(409, 'RESEARCH_QA_NOT_INSTALLED')
+        registration = self.qa_workflow.environment_registration
+        intent = request.model_dump(exclude={'requestId'}) | {'mode': 'qa',
+            'environment': {'adapterId': registration.adapter_id, 'revision': registration.revision},
+            'experimentMaterialRefs': [], 'connectionRefs': {}}
+        return self._prepare(owner, request.requestId, intent)
+
     def prepare(self, owner, request: PrepareSetup):
+        return self._prepare(owner, request.requestId, request.model_dump(exclude={'requestId'}, exclude_none=True))
+
+    def _prepare(self, owner, request_id, intent):
         self.auth.require_member(owner)
-        intent = request.model_dump(exclude={'requestId'}, exclude_none=True)
         fingerprint = digest({'action': 'prepare', 'intent': intent})
         with self.db.write() as conn:
-            old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
+            old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
             if old is not None:
                 return old
             refs, *_ = self._selection(owner, intent)
             identifier = str(uuid4())
-            preview = {**intent, 'workflowPin': self.store.native_workflows.pin(WORKFLOW_ID)}
+            preview = {**intent, 'workflowPin': self.store.native_workflows.pin('research-qa' if intent.get('mode') == 'qa' else WORKFLOW_ID)}
             result = {'id': identifier, 'state': 'draft', 'applicationRef': None,
                 'connectionRefs': refs, 'materialRefs': [], 'preview': preview}
             conn.execute(self.drafts.insert().values(id=identifier, owner_id=owner, intent=intent, result=result))
-            return self.db.record(conn, self.commands, owner, request.requestId, fingerprint, 'prepare', result)
+            return self.db.record(conn, self.commands, owner, request_id, fingerprint, 'prepare', result)
 
     def publish(self, owner, identifier, request: PublishSetup):
         self.auth.require_member(owner)
@@ -208,7 +236,7 @@ class ResearchSetup:
             if row['result']['state'] == 'published':
                 return self.db.record(conn, self.commands, owner, request.requestId, fingerprint, 'publish', row['result'])
             intent, preview = row['intent'], row['result']['preview']
-            if self.store.native_workflows.pin(WORKFLOW_ID) != preview['workflowPin']:
+            if self.store.native_workflows.pin('research-qa' if intent.get('mode') == 'qa' else WORKFLOW_ID) != preview['workflowPin']:
                 raise HTTPException(409, 'RESEARCH_SETUP_PREVIEW_CHANGED')
             refs, pins, requirements, tools, model, environment, controllers = self._selection(owner, intent)
             generated = []
@@ -232,13 +260,18 @@ class ResearchSetup:
                     'connectionRequirements': requirements, 'budget': intent['budget'],
                     'toolOrder': [item['content'] for item in materials if item['kind'] == 'tool']}
             research = mode(generated + tools)
-            research.update(nativeComponent=preview['workflowPin'], inputSchema=INPUT_SCHEMA)
-            experiment = mode(generated[:2] + tools)
+            if intent.get('mode') == 'qa':
+                from .qa_workflow import INPUT_SCHEMA as QA_INPUT_SCHEMA
+                research.update(nativeComponent=preview['workflowPin'], inputSchema=QA_INPUT_SCHEMA)
+                default_mode, modes = 'qa', {'qa': research}
+            else:
+                research.update(nativeComponent=preview['workflowPin'], inputSchema=INPUT_SCHEMA)
+                default_mode, modes = 'research', {'research': research, 'experiment': mode(generated[:2] + tools)}
             application = self.apps.create_draft(owner, {'contractVersion': 2, 'name': intent['name'],
-                'defaultMode': 'research', 'modes': {'research': research, 'experiment': experiment}}, str(uuid4()))
+                'defaultMode': default_mode, 'modes': modes}, str(uuid4()))
             self.apps.publish(owner, application['id'], application['version'], str(uuid4()))
             result = {**row['result'], 'state': 'published', 'applicationRef': self.apps.pin(application),
-                'connectionRefs': refs, 'materialRefs': research['materialRefs']}
+                'connectionRefs': refs, 'materialRefs': research['materialRefs'], 'mode': default_mode}
             conn.execute(self.drafts.update().where(self.drafts.c.id == identifier).values(result=result))
             return self.db.record(conn, self.commands, owner, request.requestId, fingerprint, 'publish', result)
 
@@ -253,6 +286,10 @@ def setup_router(auth, service):
     @router.post('/drafts')
     def prepare(request: Request, body: PrepareSetup):
         return service.prepare(auth.user(request)['id'], body)
+
+    @router.post('/qa/drafts')
+    def prepare_qa(request: Request, body: PrepareQASetup):
+        return service.prepare_qa(auth.user(request)['id'], body)
 
     @router.get('/requests/{request_id}')
     def recover(request: Request, request_id: str):

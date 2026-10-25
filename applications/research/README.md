@@ -56,3 +56,36 @@ agreement新增可选execution；缺失时可保存约定，但start返回409。
 这是开始时的意图快照，不是动态运行状态。即使首轮随后完成，快照仍保留最初的pending_admission；实际准入/任务状态应读取原execution回执和授权任务。固定研究Workflow与终态完成消费者尚未接入，不给任意成员发布应用注册research runtime owner，也不假称完整自动实验记录已完成。
 
 本阶段没有相关接收者选择器，因此不发通知outbox、不广播团队。后续只有存在明确相关候选并具备接收者订阅/预算时，才在相应事务接既有P3事件；此切片不创建新消息/权限控制链。
+
+### Private research QA (P7 local implementation)
+
+`ResearchQAWorkflow` is explicitly installed by the research deployment. Its
+three top-level steps load original message context, run the selected owner
+model with no tools, and validate one JSON-text answer locally before recording
+it on the original core message. It does not use provider structured-output
+options, an application answer store, reverse messages, or GPU/CLI/MCP tools.
+
+`POST /setup/qa/drafts` accepts `requestId`, `name`, `modelConnectionRef` and the
+normal application `budget`; the existing explicit publish endpoint returns a
+single `qa` mode. Model connections are not published in shared definitions.
+`POST /assistants` creates the owner's stable identity. Configuration under
+`/assistants/me/configurations` requires an expected revision, published QA
+application, owner connections and finite total/per-question operation caps plus deadline.
+BYOK does not enter platform accounting: token/amount/currency must be null,
+and the configuration explicitly reports “操作额度受限，token/费用未计量”.
+Requests for unsupported token or fee hard limits are rejected, not dropped.
+A replaced endpoint remains associated with the same historical identity for
+original question recovery, but receives no new questions.
+
+Questions use `/assistants/{id}/questions`; reads use
+`/assistant-questions/{messageId}`. Core reply `contentIds` are **all evidence
+inputs the model saw**, not only citations it chose. The bounded context scans
+at most 50 candidate publications and supplies at most eight currently shared
+research records (16 KiB). It contains no private chat or raw artifacts. Missing
+sources are reported as insufficient evidence; withdrawing any input makes the
+whole derived reply unavailable through the core read path.
+
+The nullable project `researchAssistantId` is the stable member identity.
+Historical `assistantId` retains its original core-endpoint meaning. QA does
+not complete proactive research associations or the paired real-model team
+value evaluation; those remain separate P7 acceptance work.
