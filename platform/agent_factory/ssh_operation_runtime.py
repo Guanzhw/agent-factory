@@ -10,7 +10,7 @@ from .process_enforcement import ProcessSpec, ProcessLimits, ResearchProcessLimi
 from .process_runtime import ProcessRuntimeService, process_reservation
 from .resource_maintenance import ResourceMaintenance
 from .resources import TERMINAL, ComputePool, RemoteTarget
-from .ssh_process_contract import LAUNCH_ADAPTER_ID, LAUNCH_TOOL, OPERATION_PIN, REVISION, ssh_target_reference
+from .ssh_process_contract import LAUNCH_ADAPTER_ID, LAUNCH_TOOL, OPERATION_PIN, OUTPUT_BYTES, REVISION, ssh_target_reference
 from .ssh_process_provider import EFFECT, SSHProcessProvider, SSHProcessTransport
 from .store import canonical, digest
 from .workflow_contracts import validate_runtime_observation
@@ -213,6 +213,11 @@ class SSHOperationRuntime(ProcessRuntimeService):
             if original['stepId'] == 'ssh-process-launch':
                 return await self.store.workflow.start(context, 'ssh-process-launch', 'ssh-process',
                                                        self.pin, intent, retain_inputs=True)
+        archive_limit = self.store.settings.experiment_output_bytes
+        output_limit = (profile.limits.output_bytes if isinstance(profile.limits, ResearchProcessLimits)
+                        else profile.limits.file_size_bytes)
+        if archive_limit < 65536 or output_limit > min(OUTPUT_BYTES, archive_limit):
+            raise ValueError('SSH_PROCESS_OUTPUT_LIMIT_UNSUPPORTED')
         require(self.ensure_target(task, plan, checked) == target_ref)
         provider = self.resources._provider(self.resources._authorize(context.user_id, target_ref))
         await provider.preflight(before_effect=lambda: self.store.authorize_tool(context, LAUNCH_TOOL))

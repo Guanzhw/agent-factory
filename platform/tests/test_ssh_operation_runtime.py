@@ -240,6 +240,7 @@ class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
     setUp = SSHPersonalTargetTests.setUp
 
     def prepare_launch(self):
+        self.store.settings = SimpleNamespace(experiment_output_bytes=65536)
         self.store.authorize_tool = Mock()
         self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value={})
         self.store.sql = Mock(return_value=[])
@@ -303,9 +304,52 @@ class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
         context = self.prepare_launch()
         self.store.sql.return_value = [{'id': 'original-operation'}]
         self.store.workflow.read.return_value = {'stepId': 'ssh-process-launch'}
+        self.store.settings.experiment_output_bytes = 1024
         original = {'id': 'original-operation', 'closed': False, 'observation': None}
         self.store.workflow.start.return_value = original
         with patch('agent_factory.ssh_process_provider.SSHProcessTransport.__call__',
                    side_effect=AssertionError('Original replay must not preflight')):
             self.assertIs(await self.runtime.launch(context, 'original-call', {}), original)
         self.resources.register_target.assert_not_called()
+
+    async def test_output_archive_boundaries_precede_all_new_effects(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        from agent_factory.process_enforcement import ResearchProcessLimits, ResearchProcessSpec
+        from agent_factory.ssh_process_contract import OUTPUT_BYTES
+        context = self.prepare_launch()
+        cases = [
+            (65535, self.profile.limits, False),
+            (65536, self.profile.limits, True),
+            (65536, ResearchProcessLimits(output_bytes=65536), True),
+            (65536, ResearchProcessLimits(output_bytes=65537), False),
+            (OUTPUT_BYTES * 2, ResearchProcessLimits(output_bytes=OUTPUT_BYTES), True),
+            (OUTPUT_BYTES * 2, ResearchProcessLimits(output_bytes=OUTPUT_BYTES + 1), False),
+            (65536, ResearchProcessLimits(), False),
+        ]
+        for local_limit, limits, accepted in cases:
+            with self.subTest(local_limit=local_limit, limits=limits, accepted=accepted):
+                process_spec = self.profile.spec
+                if isinstance(limits, ResearchProcessLimits):
+                    process_spec = ResearchProcessSpec('/bin/train', 'a' * 64, (),
+                        working_directory='/private/work', working_directory_identity=(1, 2),
+                        environment=tuple((name, '1') for name in (
+                            'HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE', 'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE')))
+                profile = replace(self.profile, spec=process_spec, limits=limits)
+                self.runtime.profiles['fixed'] = profile
+                self.spec['config']['profileSha256'] = profile.fingerprint
+                self.store.settings.experiment_output_bytes = local_limit
+                self.resources.register_target.reset_mock()
+                self.store.workflow.start.reset_mock()
+                with patch('agent_factory.ssh_process_provider.SSHProcessTransport.__call__',
+                           return_value=self.capabilities()) as transport:
+                    if accepted:
+                        await self.runtime.launch(context, 'original-call', {})
+                        self.store.workflow.start.assert_awaited_once()
+                        self.assertEqual(transport.call_args.args[0]['action'], 'capabilities')
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'SSH_PROCESS_OUTPUT_LIMIT_UNSUPPORTED'):
+                            await self.runtime.launch(context, 'original-call', {})
+                        transport.assert_not_called()
+                        self.resources.register_target.assert_not_called()
+                        self.store.workflow.start.assert_not_awaited()
