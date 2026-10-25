@@ -1,0 +1,392 @@
+{
+  "mode": "desktop",
+  "database": "af_test_d762c663c81240bb9bb762bfcd15824a",
+  "businessAPIsMocked": false,
+  "identity": "local-synthetic-oidc",
+  "result": {
+    "associations": null,
+    "projectId": "07cb9ea6-6908-4a61-bf97-3e4aa894968e",
+    "deliveryId": "7b54e326-01c0-4e18-ae33-85de79dcda5a",
+    "goalVersion": 4,
+    "originalRound": {
+      "id": "d15f2baf-58f1-46b0-b5d1-86e130af9426",
+      "goalVersion": 3,
+      "scopeId": "a217bcc4-24c1-4e7c-829e-d2e6a660926a",
+      "allocationId": "d15f2baf-58f1-46b0-b5d1-86e130af9426",
+      "taskId": "a8e805f9-ea19-4146-868b-ba0ec057fc47",
+      "deliveryId": null,
+      "decision": {
+        "action": "stop",
+        "reason": "Actual evidence differs",
+        "evidenceIds": [
+          "f753f12a-0b6e-4ce5-826a-63855f166aba"
+        ],
+        "outcome": "not_met",
+        "sourceAssessments": []
+      },
+      "terminal": {
+        "taskId": "a8e805f9-ea19-4146-868b-ba0ec057fc47",
+        "runId": "12fb40b5-467d-4969-b9b1-f49c973d7501",
+        "decision": {
+          "action": "stop",
+          "reason": "Actual evidence differs",
+          "evidenceIds": [
+            "f753f12a-0b6e-4ce5-826a-63855f166aba"
+          ],
+          "outcome": "not_met",
+          "sourceAssessments": []
+        },
+        "runtime": [
+          {
+            "taskId": "a8e805f9-ea19-4146-868b-ba0ec057fc47",
+            "runId": "12fb40b5-467d-4969-b9b1-f49c973d7501",
+            "status": "completed"
+          },
+          {
+            "taskId": "fb4123d5-97cd-4ab5-8c2d-1db9e57d1925",
+            "runId": "afdb632f-12a7-4e39-bd62-583cb679b46a",
+            "status": "completed"
+          }
+        ],
+        "verificationStatus": "unverified",
+        "sharing": "published",
+        "continuationBlocked": null
+      },
+      "terminalRecordId": "dd7c962b-1248-4ea4-96ae-c5991c07cd3f",
+      "continuations": []
+    },
+    "selectedRoles": [
+      "metrics",
+      "run_recipe",
+      "source"
+    ],
+    "missingEvidence": [],
+    "downloadedBytes": 7755,
+    "pageErrors": [],
+    "consoleErrors": [],
+    "expectedUnauthorized": [
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 404
+      }
+    ],
+    "apiResponses": [
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/auth/login",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/callback",
+        "status": 303
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 201
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/drafts",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/0a96e5a3-febc-4dc4-84eb-7b5d916e1c04",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/0a96e5a3-febc-4dc4-84eb-7b5d916e1c04/publish",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/user-connections",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/confirm",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/start",
+        "status": 202
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/confirm",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e/deliveries",
+        "status": 201
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/07cb9ea6-6908-4a61-bf97-3e4aa894968e",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/logout",
+        "status": 204
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/auth/login",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/callback",
+        "status": 303
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a/download",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/7b54e326-01c0-4e18-ae33-85de79dcda5a",
+        "status": 404
+      }
+    ],
+    "privateProjectDenied": true,
+    "withdrawnDownloadStatus": 404,
+    "realProviderOrGPU": false,
+    "modelAndToolConfiguredVia": "real core fixture prerequisite; selection/publication/evidence/goal/delivery via browser"
+  }
+}
