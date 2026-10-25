@@ -107,7 +107,8 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
 
     async def sign_in(self):
         params, binding = self.start()
-        return await self.service.finish("synthetic-code", params["state"][0], binding)
+        token, _ = await self.service.finish("synthetic-code", params["state"][0], binding)
+        return token
 
     def cookie(self, token):
         return {"Cookie": SESSION_COOKIE + "=" + token}
@@ -122,7 +123,7 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["code_challenge_method"], ["S256"])
         self.assertEqual(params["scope"], ["openid"])
         state = params["state"][0]
-        token = await self.service.finish("synthetic-code", state, binding)
+        token, _ = await self.service.finish("synthetic-code", state, binding)
         stored = json.dumps(self.rows())
         for value in (token, binding, state, "synthetic-code", *self.exchange.calls[0].values()):
             self.assertNotIn(value, stored)
@@ -157,7 +158,7 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
     async def test_lost_success_receipt_never_replays_and_session_fixation_rotates(self):
         old = await self.sign_in()
         params, binding = self.start(session_cookie=old)
-        new = await self.service.finish("replacement-code", params["state"][0], binding)
+        new, _ = await self.service.finish("replacement-code", params["state"][0], binding)
         self.assertNotEqual(new, old)
         with self.assertRaises(HTTPException): self.service.session(old)
         self.assertEqual(self.service.session(new)["owner"], "alice")
@@ -179,7 +180,7 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException):
             await self.service.finish("synthetic-code", params["state"][0], binding)
         self.exchange.pause.set()
-        token = await first
+        token, _ = await first
         self.assertEqual(self.service.session(token)["owner"], "alice")
         self.assertEqual(len(self.exchange.calls), 1)
 
@@ -211,7 +212,7 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_logout_flow_binding_revokes_completed_but_delayed_session_cookie(self):
         params, binding = self.start()
-        token = await self.service.finish("synthetic-code", params["state"][0], binding)
+        token, _ = await self.service.finish("synthetic-code", params["state"][0], binding)
         # Callback committed, but its Set-Cookie response has not reached the browser.
         response = await self.client.post(PREFIX + "/logout", headers={"Origin": ORIGIN, "Cookie": FLOW_COOKIE + "=" + binding})
         self.assertEqual(response.status_code, 204)
@@ -224,7 +225,7 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
     async def test_completed_flow_survives_gc_past_pending_ttl_to_revoke_late_cookie(self):
         self.exchange.token_lifetime = 1200
         params, binding = self.start()
-        token = await self.service.finish("synthetic-code", params["state"][0], binding)
+        token, _ = await self.service.finish("synthetic-code", params["state"][0], binding)
         self.clock += 301
         self.assertEqual(self.service.session(token)["owner"], "alice")
         # A different browser starts login, triggering bounded expiry collection.
@@ -311,6 +312,33 @@ class BrowserAuthTests(RSAFixture, unittest.IsolatedAsyncioTestCase):
             self.assertIn(flag, cookie)
         self.assertNotIn("domain=", cookie)
         self.assertNotIn("code_verifier", response.text)
+
+    async def test_workspace_return_survives_service_restart_and_cannot_be_overridden(self):
+        target = "/?tab=research&project=project-1#evidence"
+        response = await self.client.post(PREFIX + "/login", headers={"Origin": ORIGIN}, json={"returnTo": target})
+        self.assertEqual(response.status_code, 200)
+        state = parse_qs(urlsplit(response.json()["authorizationUrl"]).query)["state"][0]
+        self.bridge.service = BrowserSessionService(self.store, self.auth, self.config, self.exchange, clock=lambda: self.clock)
+        query = urlencode({"code": "synthetic-code", "state": state})
+        denied = await self.client.get(PREFIX + "/callback?" + query + "&returnTo=/")
+        self.assertEqual(denied.headers["location"], "/?auth_error=signin_failed")
+        self.assertEqual(self.exchange.calls, [])
+        completed = await self.client.get(PREFIX + "/callback?" + query)
+        self.assertEqual(completed.status_code, 303)
+        self.assertEqual(completed.headers["location"], target)
+        self.assertTrue((await self.client.get(PREFIX + "/session")).json()["authenticated"])
+
+    async def test_workspace_return_rejects_foreign_and_non_workspace_targets_before_flow(self):
+        for target in ("https://evil.test/", "//evil.test/", "///evil.test/", "/\\evil.test/", "/api/factory/auth/callback",
+                       "/%2fevil.test", "/?tab=research\r\nLocation:bad", None, 2, "/?" + "x" * 901):
+            with self.subTest(target=target):
+                response = await self.client.post(PREFIX + "/login", headers={"Origin": ORIGIN}, json={"returnTo": target})
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.rows(), [])
+        self.assertEqual(self.exchange.calls, [])
+        response = await self.client.post(PREFIX + "/login", headers={"Origin": ORIGIN},
+            content=b'{"returnTo":"/?q=\\ud800"}')
+        self.assertEqual(response.status_code, 400)
 
     async def test_duplicate_cookies_and_bearer_ambiguity_fail_closed(self):
         token = await self.sign_in()

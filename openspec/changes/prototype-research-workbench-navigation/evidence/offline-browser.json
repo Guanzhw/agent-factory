@@ -1,0 +1,70 @@
+[
+  {
+    "viewport": {
+      "width": 1487,
+      "height": 1058
+    },
+    "browser": "Chromium",
+    "identity": "unpacked offline ZIP, no interception",
+    "network_requests": [
+      "http://127.0.0.1:8765/",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=inference&researchTab=evidence",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=demo-d9c6e3ba-54dd-4afe-92ea-a22755d56bca",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=inference",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=demo-d9c6e3ba-54dd-4afe-92ea-a22755d56bca",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css"
+    ],
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  },
+  {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "browser": "Chromium",
+    "identity": "unpacked offline ZIP, no interception",
+    "network_requests": [
+      "http://127.0.0.1:8765/",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=inference&researchTab=evidence",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=demo-4a09f88b-9a80-47f6-8c4f-a2e44d06abf2",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=inference",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css",
+      "http://127.0.0.1:8765/?tab=research&project=demo-4a09f88b-9a80-47f6-8c4f-a2e44d06abf2",
+      "http://127.0.0.1:8765/synthetic-fetch.js",
+      "http://127.0.0.1:8765/assets/index--lu5WS84.js",
+      "http://127.0.0.1:8765/assets/index-S7aLVcnn.css"
+    ],
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  }
+]

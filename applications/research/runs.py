@@ -15,9 +15,9 @@ from .projects import Agreement, ProjectCommand, reject
 
 
 class ResearchRuns:
-    def __init__(self, projects, application_runs, scopes, applications):
+    def __init__(self, projects, application_runs, scopes, applications, records):
         self.projects, self.runs, self.scopes = projects, application_runs, scopes
-        self.applications = applications
+        self.applications, self.records = applications, records
         metadata = MetaData()
         self.commitments = Table('research_execution_commitments', metadata,
             Column('project_id', String, primary_key=True), Column('scope_id', String, nullable=False),
@@ -87,7 +87,7 @@ class ResearchRuns:
         fingerprint = digest({'action': 'start', 'project': project_id, **body.model_dump(exclude={'requestId'})})
         with projects.db.store.transaction() as admission:
             self.scopes.admission_lock(admission)
-            with projects.db.write() as conn:
+            with projects.db.write() as conn, self.records.content.db.write():
                 project = projects._owned(conn, owner, project_id)
                 old = projects.db.old(conn, projects.commands, owner, body.requestId, fingerprint)
                 if old is not None:
@@ -123,7 +123,8 @@ class ResearchRuns:
                                 'resourceRefs': agreement.resourceRefs}, created_at=now()))
                 conn.execute(self.attempts.insert().values(id=attempt_id, experiment_id=experiment_id,
                     allocation_id=allocation_id, request=native.model_dump()))
-                result = {'projectId': project_id, 'goalVersion': body.expectedVersion, 'experimentId': experiment_id,
+                content_id = self.records.start(owner, project_id, body.expectedVersion, experiment_id, attempt_id, agreement)
+                result = {'startRecordId': content_id, 'projectId': project_id, 'goalVersion': body.expectedVersion, 'experimentId': experiment_id,
                     'attemptId': attempt_id, 'scopeId': scope_id, 'allocationId': allocation_id,
                     'request': native.model_dump()}
                 return projects.db.record(conn, projects.commands, owner, body.requestId, fingerprint, 'research.start', result)

@@ -386,19 +386,35 @@ class DelegationService:
         """Request cancellation of an unsubmitted placement, without claiming stop proof."""
         return False
 
-    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, placement: dict | None = None) -> dict[str, Any]:
+    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, placement: dict | None = None, original_operation_id: str | None = None) -> dict[str, Any]:
         if not isinstance(requestId, str) or not 8 <= len(requestId) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in requestId):
             raise HTTPException(422, "A bounded delegation request ID is required")
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
             raise HTTPException(422, "Unsupported bounded child goal or mode")
+        if requestId.startswith('operation:') and original_operation_id is None:
+            raise HTTPException(409, "DELEGATED_OPERATION_REQUEST_RESERVED")
         self.auth.require_member(owner)
         parent = self.store.task(parentTaskId, owner)
         request = self._creation_request(owner, parent, goal, mode, placement)
         root_id, _ = self._ancestry(parent)
         fp = digest(request)
         native_request = "delegation:" + digest({"parent": parent["id"], "request": requestId})
+        def original_operation():
+            if original_operation_id is None:
+                return
+            from .delegated_operations import DELEGATED_OPERATION_PIN
+            custody = self.store.workflow
+            body = custody._load(owner, original_operation_id)
+            custody._identity(body)
+            if (body['taskId'] != parent['id'] or body['adapterPin'] != DELEGATED_OPERATION_PIN
+                    or requestId != 'operation:' + body['id']
+                    or body['inputsSha256'] != digest({'goal': goal, 'mode': mode})
+                    or body['cancelRequested'] or body['closed'] or placement is not None):
+                raise HTTPException(409, "DELEGATED_OPERATION_AUTHORITY_ENDED")
+
         fresh, duplicate = False, False
         with self._root_lock(root_id) as conn:
+            original_operation()
             previous = self.store.sql("SELECT * FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request", owner=owner, parent=parent["id"], request=requestId)
             if previous and previous[0]["fingerprint"] != fp:
                 raise HTTPException(409, "IDEMPOTENCY_CONFLICT: delegation request changed")
@@ -460,6 +476,7 @@ class DelegationService:
                 # Cancellation may have landed after metadata commit. If no
                 # native submission started, rejecting is a known safe outcome.
                 self._mandate(owner, self.store.task(parent["id"], owner), creating=True)
+                original_operation()
             except HTTPException:
                 self.store.request_cancel(task["id"])
                 self.store.admission_failed(task["id"], "Ancestor authority ended before native submission")

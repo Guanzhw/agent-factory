@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/workspace/agent-factory-research-ui-demo/scripts/accept_research_demo_browser.py", line 160, in <module>
+    main()
+  File "/workspace/agent-factory-research-ui-demo/scripts/accept_research_demo_browser.py", line 150, in main
+    assert not console_errors, console_errors
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: ['Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. alice', 'Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. alice', 'Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. alice']
