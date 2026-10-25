@@ -42,6 +42,8 @@ class FactoryLifecycleObserver:
         self.last_result: dict[str, Any] = {}
         self.last_error_type: str | None = None
         self._cursor = ""
+        self._remote_tasks: dict[str, asyncio.Task] = {}
+        self._remote_results: dict[str, dict] = {}
 
     def _binding(self, task: dict) -> dict | None:
         """Strict native read; caller must keep missing/mismatched work held."""
@@ -65,6 +67,7 @@ class FactoryLifecycleObserver:
             state = json.loads(state)
         session = self.native_db.get_session(task["id"], session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
         native_status = None
+        requirements = []
         if session is not None:
             if session.user_id != task["owner_id"] or getattr(session, kind + "_id", None) != component_id:
                 raise ValueError("Native session differs from its Factory owner/executor")
@@ -72,11 +75,12 @@ class FactoryLifecycleObserver:
             if len(runs) != 1:
                 raise ValueError("Exact persisted native Factory run is not observable")
             native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
+            requirements = runs[0].to_dict().get("requirements") or []
             if state is None:
                 state = (session.session_data or {}).get("session_state")
         if not isinstance(state, dict) or state.get("factory_envelope") != envelope:
             raise ValueError("Native payload/session lacks the exact immutable Factory envelope")
-        return {**ticket, "persistedRunStatus": native_status}
+        return {**ticket, "persistedRunStatus": native_status, "requirements": requirements}
 
     def _group(self, root: dict) -> tuple[list[dict], list[dict]]:
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE root_id=:root ORDER BY depth,created_at", root=root["id"])
@@ -214,7 +218,48 @@ class FactoryLifecycleObserver:
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
                 "nativeStatus": ticket["status"] if ticket else None,
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
-                "failed": self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed")}
+                "failed": self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed"),
+                "displayStatus": self._display_status(task, ticket, effects_unknown)}
+
+    def _display_status(self, task, ticket, effects_unknown):
+        if task["admission"] == "rejected":
+            return "failed"
+        if ticket is None:
+            return "unknown"
+        # Match the detail projector: an ordinary in-flight effect is UNKNOWN
+        # until its receipt arrives, but a verified running ticket stays running.
+        # Once native execution pauses or ends, unresolved effects take priority.
+        raw = ticket["status"] or ticket.get("persistedRunStatus") or "queued"
+        if effects_unknown and raw != "running":
+            return "unknown"
+        if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:
+            return "canceling"
+        if raw == "paused":
+            return "waiting_input" if any((item.get("tool_execution") or {}).get("requires_user_input")
+                                           for item in ticket.get("requirements", [])) else "waiting_approval"
+        return {"pending": "queued", "cancelled": "canceled", "error": "failed"}.get(raw, raw)
+
+    def _summary_status(self, task, status):
+        """Applications may project their persisted wait state for the summary."""
+        return status
+
+    def _observe_summaries(self, root, facts):
+        tasks, links = self._group(self.store.task(root["id"], root["owner_id"]))
+        for task in tasks:
+            fact = facts.get(task["id"])
+            if fact is None:
+                continue  # A child admitted after this observation awaits the next tick.
+            if fact["groupStopped"]:
+                continue  # Terminal observation already published under stop proof.
+            status = fact.get("displayStatus", "unknown")
+            descendants = [link for link in links if link["parent_id"] == task["id"]]
+            children_unknown = any(not link["child_id"] or facts.get(link["child_id"], {}).get("unknown", True)
+                                   for link in descendants)
+            if (fact["unknown"] and status not in {"running", "canceling"}) or children_unknown:
+                status = "unknown"
+            elif status == "completed" and descendants:
+                status = "waiting_children"
+            self.store.observe_summary(task, self._summary_status(task, status))
 
     async def _observe_application_waits(self, root):
         """Application observers may inspect existing work before core cleanup."""
@@ -234,6 +279,7 @@ class FactoryLifecycleObserver:
             except Exception as error:
                 errors.append({"taskId": task["id"], "errorType": type(error).__name__})
         facts = await asyncio.to_thread(self._observe_stopped, root)
+        await asyncio.to_thread(self._observe_summaries, root, facts)
         return {"rootTaskId": root["id"], "allStopped": facts[root["id"]]["groupStopped"],
                 "requested": list(requested), "facts": list(facts.values()), "errors": errors}
 
@@ -306,8 +352,13 @@ class FactoryLifecycleObserver:
         async with self._tick_lock:
             process_runtime = getattr(self.store, "process_runtime", None)
             process_results = await process_runtime.tick() if process_runtime is not None else []
-            query = """SELECT task.id FROM af_tasks task WHERE NOT EXISTS(
+            # Origin placements have no local native ticket. Only their exact
+            # receiver evidence may settle custody, never local ticket absence.
+            placement_filter = ("AND NOT EXISTS (SELECT 1 FROM af_remote_placements placement WHERE placement.task_id=task.id)"
+                                if getattr(self.store, "handoff_client", None) is not None else "")
+            query = f"""SELECT task.id FROM af_tasks task WHERE NOT EXISTS(
                 SELECT 1 FROM af_delegation_links own_link WHERE own_link.child_id=task.id)
+                {placement_filter}
                 AND (NOT task.terminal OR EXISTS(SELECT 1 FROM af_delegation_links link JOIN af_tasks child ON child.id=link.child_id
                 WHERE link.root_id=task.id AND NOT child.terminal)) AND task.id>:after ORDER BY task.id LIMIT :limit"""
             roots = self.store.sql(query, after=self._cursor, limit=self.batch_limit)
@@ -322,8 +373,27 @@ class FactoryLifecycleObserver:
                 except Exception as error:
                     errors.append({"rootTaskId": row["id"], "errorType": type(error).__name__})
                 await asyncio.sleep(0)
-            self.last_result = {"groups": groups, "errors": errors, "processLeases": process_results, "nativeOwner": "agno", "createsExecution": False}
+            self._schedule_remote_observation()
+            self.last_result = {"groups": groups, "errors": errors, "processLeases": process_results,
+                                "remoteObservations": dict(self._remote_results), "nativeOwner": "agno", "createsExecution": False}
             return self.last_result
+
+    async def _observe_remote(self, name, service):
+        try:
+            # One remote batch cannot consume the local cleanup loop. A timeout
+            # abandons observation, never re-dispatches an ambiguous operation.
+            async with asyncio.timeout(5):
+                self._remote_results[name] = await service.observe_pending(limit=self.batch_limit)
+        except Exception as error:
+            self._remote_results[name] = {"errors": [{"errorType": type(error).__name__}]}
+
+    def _schedule_remote_observation(self):
+        for name in ("handoff_receiver", "handoff_client"):
+            service = getattr(self.store, name, None)
+            current = self._remote_tasks.get(name)
+            if service is not None and (current is None or current.done()) and not self._stop.is_set():
+                self._remote_tasks[name] = asyncio.create_task(
+                    self._observe_remote(name, service), name="factory-observe-" + name)
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -347,6 +417,10 @@ class FactoryLifecycleObserver:
         if self._task is not None:
             await self._task
             self._task = None
+        for task in self._remote_tasks.values():
+            task.cancel()
+        await asyncio.gather(*self._remote_tasks.values(), return_exceptions=True)
+        self._remote_tasks.clear()
 
     @asynccontextmanager
     async def lifespan(self, app: Any):

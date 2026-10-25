@@ -39,7 +39,7 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   row = structuredClone(baseRow); metadata = structuredClone(baseMetadata);
   vi.spyOn(api, 'status').mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2 } as Awaited<ReturnType<typeof api.status>>);
-  vi.spyOn(api, 'materials').mockResolvedValue([]); vi.spyOn(api, 'jobs').mockResolvedValue([]); vi.spyOn(api, 'executionTargets').mockResolvedValue([]);
+  vi.spyOn(api, 'materials').mockResolvedValue([]); vi.spyOn(api, 'jobs').mockResolvedValue({ items: [], nextCursor: null }); vi.spyOn(api, 'executionTargets').mockResolvedValue([]);
   vi.spyOn(api.scheduleDiagnostics, 'list').mockResolvedValue({ schema: 1, ownerId: owner.id, items: [], nextCursor: null });
   vi.spyOn(client, 'metadata').mockImplementation(async () => metadata);
   vi.spyOn(client, 'list').mockImplementation(async () => ({ schema: 1, ownerId: row.ownerId, items: [row], nextCursor: null, snapshot: false }));

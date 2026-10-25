@@ -1,5 +1,6 @@
 """Synthetic boundary tests; these do not prove a live provider integration."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -65,10 +66,44 @@ class RuntimeHookTests(unittest.TestCase):
         task = {"id": "task", "terminal": False, "body": {"lastStatus": "running"}}
         store._observed_locked(task, "completed", True)
         store.storage.release.assert_not_called()
-        self.assertFalse(store.sql.call_args.kwargs["terminal"])
+        # Unconfirmed stop keeps the existing nonterminal row. A fresh display
+        # summary is allowed, but it must not write terminal=True or free storage.
+        terminal_updates = [call for call in store.sql.call_args_list if "terminal" in call.kwargs]
+        self.assertEqual(terminal_updates, [])
+        summary_updates = [call for call in store.sql.call_args_list if "body" in call.kwargs]
+        self.assertEqual(len(summary_updates), 1)
+        summary = json.loads(summary_updates[0].kwargs["body"])
+        self.assertEqual(summary["lastStatus"], "completed")
+        self.assertIsInstance(summary["observedAt"], str)
+        self.assertFalse(task["terminal"])
+        store.sql.reset_mock()
         store.effects.return_value[0]["result"] = {"stopEvidence": {"allStopped": True}}
         store._observed_locked(task, "completed", True)
         store.storage.release.assert_called_once_with("task")
+        terminal_updates = [call for call in store.sql.call_args_list if "terminal" in call.kwargs]
+        self.assertEqual(len(terminal_updates), 1)
+        self.assertEqual(terminal_updates[0].kwargs, {"id": "task", "terminal": True})
+
+    def test_summary_observation_cannot_release_storage_or_reopen_terminal_task(self):
+        for terminal in (False, True):
+            with self.subTest(terminal=terminal):
+                store = Store.__new__(Store)
+                store.storage = Mock()
+                store.transaction = lambda: nullcontext()
+                store.event = Mock()
+                task = {"id": "task", "owner_id": "alice", "terminal": terminal,
+                        "body": {"lastStatus": "running"}}
+                store.sql = Mock(side_effect=lambda statement, **params: [task] if statement.startswith("SELECT") else [])
+                store.observe_summary(task, "completed")
+                store.storage.release.assert_not_called()
+                self.assertIs(task["terminal"], terminal)
+                self.assertFalse(any("terminal" in call.kwargs for call in store.sql.call_args_list))
+                updates = [call for call in store.sql.call_args_list if "body" in call.kwargs]
+                self.assertEqual(len(updates), 0 if terminal else 1)
+                if terminal:
+                    store.event.assert_not_called()
+                else:
+                    self.assertEqual(json.loads(updates[0].kwargs["body"])["lastStatus"], "completed")
 
     def test_missing_artifact_provenance_is_unknown_not_synthetic(self):
         store = Store.__new__(Store)

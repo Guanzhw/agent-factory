@@ -6,6 +6,18 @@ from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 
 
 class ResearchLifecycleObserver(FactoryLifecycleObserver):
+    def _summary_status(self, task, status):
+        from .inference_wait import CONTROL_NAME, read as read_wait
+        waiting = read_wait(self.store, task["id"])
+        if waiting and waiting["state"] == "WAITING" and not task["cancel_requested"] and not self.store.has_failures(task["id"]):
+            ticket = self._binding(task)
+            if ticket and ticket["status"] == "paused" and any(
+                    (item.get("tool_execution") or {}).get("tool_name") == CONTROL_NAME
+                    and (item.get("tool_execution") or {}).get("external_execution_required") is True
+                    for item in ticket.get("requirements", [])):
+                return "waiting_approval"
+        return status
+
     def _mark_cancel(self, task: dict, reason: str) -> None:
         # Store.transaction shares its connection across nested metadata calls.
         # Publish research wait cleanup with the original task cancellation.

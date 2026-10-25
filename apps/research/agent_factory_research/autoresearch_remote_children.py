@@ -113,8 +113,11 @@ class AutoResearchRemoteChildren:
 
     async def _observe(self, body, phase, *, cleanup=False):
         child = self._child(body, phase); pin = body['binding']; entry = body['phases'][phase]
-        reader = services_for(self.store).remote_scientific.cleanup_phase if cleanup else self.reader or services_for(self.store).remote_scientific.origin_phase
-        observed = await resolved(reader(pin['ownerId'], child['id']))
+        if self.reader is not None and not cleanup:
+            observed = await resolved(self.reader(pin['ownerId'], child['id']))
+        else:
+            observed = await services_for(self.store).remote_scientific.reconcile_phase(
+                pin['ownerId'], child['id'], cleanup=cleanup)
         require(type(observed) is dict and set(observed) == {'scope', 'receipt', 'status', 'allStopped'}
             and type(observed['allStopped']) is bool)
         scope = validate_scientific_scope(observed['scope'])
@@ -210,16 +213,18 @@ class AutoResearchRemoteChildren:
                 while True:
                     original = self._bound(ctx); body = deepcopy(original)
                     original_child = self._child(original, phase)
-                    try:
-                        await services_for(self.store).remote_scientific.start_phase(task['owner_id'], original_child['id'])
-                    except HTTPException as error:
-                        if (error.status_code != 503 or error.detail !=
-                                'REMOTE_ACK_UNKNOWN: read the original owner-bound receipt'):
-                            raise
-                        # This read validates the persisted original scope, receipt
-                        # and native identity. It cannot grant or replay a dispatch.
-                        if services_for(self.store).remote_scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
-                            raise
+                    scientific = services_for(self.store).remote_scientific
+                    if scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
+                        try:
+                            await services_for(self.store).remote_scientific.start_phase(task['owner_id'], original_child['id'])
+                        except HTTPException as error:
+                            if (error.status_code != 503 or error.detail !=
+                                    'REMOTE_ACK_UNKNOWN: read the original owner-bound receipt'):
+                                raise
+                            # This read validates the persisted original scope, receipt
+                            # and native identity. It cannot grant or replay a dispatch.
+                            if services_for(self.store).remote_scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
+                                raise
                     observed, evidence = await self._observe(body, phase)
                     require(observed['status'] not in {'failed', 'cancelled', 'canceled'})
                     body['phases'][phase].update(childId=observed['scope']['originChildTaskId'],

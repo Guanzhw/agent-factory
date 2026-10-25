@@ -5,7 +5,7 @@ import { PersonalToolConnections } from './PersonalToolConnections.js';
 import { api } from './api.js';
 import { processExecutionState, processLeasePage, processLeaseState, processLeaseView, type ProcessLease } from './processLeaseView.js';
 import { useCommandKeys } from './commandKeys.js';
-import type { ConnectionRegistration, FactoryJob, User, UserConnection } from './models.js';
+import type { ConnectionRegistration, JobSummary, User, UserConnection } from './models.js';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const names: Record<string, string> = { model: '模型', tool: '工具', knowledge: '知识', environment: '环境', orx: '研究适配器' };
@@ -37,7 +37,7 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
   })}</div>;
 }
 
-export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, onResearch, onPrepareResearch, applicationLabel = '应用', remoteServices }: { user: User; jobs: FactoryJob[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onResearch?: () => void; onPrepareResearch?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode }) {
+export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, onResearch, onPrepareResearch, applicationLabel = '应用', remoteServices }: { user: User; jobs: JobSummary[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onResearch?: () => void; onPrepareResearch?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode }) {
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [registrations, setRegistrations] = useState<ConnectionRegistration[]>([]);
   const [registrationRef, setRegistrationRef] = useState('');
