@@ -18,7 +18,7 @@
 
 仅对明确声明完成责任的原计划运行应用完成动作。新增精确nativeComponent pin选择是当前消费者的实际需要：现有application(id,version)选择仅在没有binding owner时生效，研究Workflow带其他工具owner会漏选，且同一组件可被多个成员应用复用。组件选择须以既有完整pin(kind/id/revision/sha256)附加research owner，同时保留其他binding/effect owner，不另造摘要或证明链，不按用户app名称/前缀匹配。没有声明的core任务维持原有语义。旧pin声明仍存在但hooks缺失时保守保留；若删除全部声明，registry无法凭空识别旧责任，本change不声称具备这种识别能力，装配撤回必须保留旧声明。不能为完成流程移除其他effect/custody的正向停止要求。
 
-建议单一同步接口 `finalize_original(conn, completion)`，只读事实含原owner/task/run/plan引用、原group结果、scope/allocation及settled statement。稳定完成身份使用原task/allocation，不额外制作hash链。回调只写自身领域记录和现有内容/outbox，不submit、取消、调用模型/网络或改写core事实。真正研究意图/是否发后继由应用核对；core不理解研究结论。暂用测试消费者验证事务，不能把它算作研究产品已交付。
+采用单一同步接口 `finalization_context(conn, task)`：应用在传入的同一事务连接上获取自身/content/event锁并yield完成回调；core在该context内完成terminal/settle后调用该回调。context不得提交、吞异常或另外开启事务。只允许一个完成消费者，歧义明确拒绝，其他owner仍参与停止证明。只读完成事实含原owner/task/run/plan引用、原group结果、scope/allocation及settled statement。稳定完成身份使用原task/allocation，不额外制作hash链。回调只写自身领域记录和现有内容/outbox，不submit、取消、调用模型/网络或改写core事实。真正研究意图/是否发后继由应用核对；core不理解研究结论。暂用测试消费者验证事务，不能把它算作研究产品已交付。
 
 ### 2. 原root完成事务
 
@@ -37,7 +37,7 @@ HELD回滚保留原root nonterminal；现有tick会继续按同一身份核对�
 
 ### 3. 停止与收尾投影分离
 
-禁止把等待账务/应用完成注册为task_held、effect custody或ended_reason，否则_facts、Store终态保护、settle会相互阻断并可能错误取消。groupStopped仍表示执行与效果已正向停止；finalization是否提交是另一个事实。正向停止观察及其原成功/失败/取消类别独立提交到现有任务观察元数据，不能随完成事务回滚而丢失；以后scope到期或账务等待不能把已停止成功改成失败/取消。原effect仍未知时不得提前写正向停止证明。_observe_summaries不能再仅凭groupStopped跳过尚未提交root：展示原native完成及finalizing/原用量待核对；失败/取消也保留真实类别并说明收尾未完成。显示不能伪造任务仍在训练或清理已全部提交。
+禁止把等待账务/应用完成注册为task_held、effect custody或ended_reason，否则_facts、Store终态保护、settle会相互阻断并可能错误取消。groupStopped仍表示执行与效果已正向停止；finalization是否提交是另一个事实。正向停止观察及其原成功/失败/取消类别独立提交到现有任务观察元数据；该标记同时在原执行入口拒绝保留的模型/工具context新增工作，原清理/观察仍允许。以实际保留入口调用计数证明，不只检查显示。正向停止类别不能随完成事务回滚而丢失；以后scope到期或账务等待不能把已停止成功改成失败/取消。原effect仍未知时不得提前写正向停止证明。_observe_summaries不能再仅凭groupStopped跳过尚未提交root：展示原native完成及finalizing/原用量待核对；失败/取消也保留真实类别并说明收尾未完成。显示不能伪造任务仍在训练或清理已全部提交。
 
 最终实验记录/outbox需等待完成事务；等待期间可读取原生实际结果与已持久领域事实，不能把未生成最终记录等同于未产生实验结果。
 

@@ -68,3 +68,10 @@
 #### Scenario: 回调与并发准入竞争
 - **WHEN** 同时发生scope结算、应用outbox回调和另一个任务reserve
 - **THEN** 回调的namespace锁已在usage锁前取得；reserve跳过该消费者的快捷terminal，不通过反向root锁阻塞形成死锁
+
+### Requirement: 正向停止关闭原运行的新执行
+持久正向停止事实 SHALL 阻止同一root及child的保留模型、工具和新child入口；原身份读取、清理、用量核对和完成事务仍可继续。
+
+#### Scenario: 原用量尚未结算
+- **WHEN** 已确认原运行停止但allocation为HELD且task尚未terminal，保留context试图调用模型、工具或新建child
+- **THEN** 新工作被拒绝，调用/dispatch计数不增；重启后仍拒绝；observer不将该停止边界或后来的scope到期误判为原成功任务失败，原usage结算后可完成同一事务
