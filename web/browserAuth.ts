@@ -30,12 +30,12 @@ export function configureBrowserAuth(value: unknown): BrowserAuthConfig {
   enabled = config.enabled;
   return config as BrowserAuthConfig;
 }
-async function authJson(path: string, method = 'GET', signal?: AbortSignal) {
+async function authJson(path: string, method = 'GET', signal?: AbortSignal, body: object = {}) {
   const started = epoch;
   let response: Response;
   try {
     response = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
-      ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}) });
+      ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     throw new BrowserAuthError(0);
@@ -82,7 +82,8 @@ export async function startBrowserLogin(): Promise<string> {
   if (!enabled) throw new BrowserAuthError(0);
   clearBrowserSession();
   const started = epoch;
-  const value = await authJson('/api/factory/auth/login', 'POST');
+  const value = await authJson('/api/factory/auth/login', 'POST', undefined,
+    { returnTo: window.location.pathname + window.location.search + window.location.hash });
   assertAuthEpoch(started);
   return authorizationDestination(value);
 }
