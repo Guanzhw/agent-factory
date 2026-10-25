@@ -72,3 +72,9 @@ Agreement新增可选字段，旧值无配置；attempt仅加nullable selection�
 ### 跨应用集成中的真实来源权限接缝
 
 P7实际consumer会让选中证据依赖peer来源；仅应用manifest检查不够，因为精选artifact自身也可能通过generic content访问。coordinator为此另立最小固定sourceContentIds契约（de32456，独立review/实现中），所有core read/list/artifact统一核对原来源，非通用任意DAG框架。P8的精选publication需继承P7实际使用来源并集；manifest仍应用持有，逐次检查所有来源，不能只取安全public shell丢掉依赖。未接入该已审定端口前只验无peer路径，不声称peer派生附件权限通过。应用之间以实际peer_sources服务读口衔接，禁止以owner代理整job下载弥补授权缺口。
+
+### 当前配方的有限完整性判据（实现审查整改）
+
+三角色保持不变。metrics与run_recipe.expected均为非空对象，值只允许字符串、布尔或有限数字，不接受嵌套对象/NaN/Infinity。source是非空文本。run_recipe为对象：command为非空字符串数组；dependencies为非空字符串或字符串数组（空数组明确表示无额外包），不能是bool/number；data为已声明的字符串、数组或对象（无额外数据用空数组/对象明确声明），不接受null/bool/number；expected为上述非空指标对象。字段不符合就把run_recipe列为缺项且不发布其artifact，不推测默认值、不执行命令。数据/依赖可取得性及科学容差仍需实际复现，不由schema通过声称验证。
+
+当前领域没有独立remainingQuestions输入，manifest明确写`remainingQuestions: {status: 'not_provided'}`；不伪造空items集合表示没有问题。未来只有实际owner/model持久字段存在时才收录其来源，不从reason自由文本猜测用户已问完所有问题。

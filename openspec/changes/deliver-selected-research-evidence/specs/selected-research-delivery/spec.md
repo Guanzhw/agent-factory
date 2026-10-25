@@ -28,6 +28,10 @@
 - **WHEN** 原CLI正常退出但指标未达标，或缺源码/recipe字段
 - **THEN** 保留真实负结果及缺项，agent解释与测量分开，不补造commit/命令或声称已验证
 
+#### Scenario: Recipe prerequisites are missing rather than invented
+- **WHEN** 配方使用dependencies=true、data=null、expected空对象或其他不符合当前有限契约的字段
+- **THEN** run_recipe保留明确缺项且不产出配方artifact；没有实际剩余问题记录时manifest标not_provided，不伪装没有问题
+
 ### Requirement: Reproducible delivery preserves dependencies
 系统 SHALL 仅在应用保存派生成果，不通过通用内容入口暴露绕过来源权限的副本；汇集原目标、全部相关运行事实、精选证据、负结果和剩余问题形成不可变成果修订；每次读取/下载继续核对当前actor与来源权限，不泄漏撤回内容。
 
