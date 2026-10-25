@@ -45,6 +45,14 @@ def read_file(fd, name, maximum):
         os.close(item)
 
 
+def original(observation, binding, value):
+    require(observation['ownerId'] == binding['ownerId']
+            and observation['taskId'] == binding['taskId']
+            and observation['requestId'] == binding['requestId']
+            and observation['specSha256'] == hashlib.sha256(encoded(
+                {'spec': value['spec'], 'limits': value['limits']}, MAX_REQUEST_BYTES)).hexdigest())
+
+
 def handle(value):
     value = request(value)
     if value['action'] == 'capabilities':
@@ -91,13 +99,11 @@ def handle(value):
                     observation = adapter.launch(owner_id=binding['ownerId'], before_effect=lambda: None)
                 else:
                     adapter = BoundedProcessAdapter(path)
-                    observation = (adapter.cancel(owner_id=binding['ownerId']) if action == 'cancel'
-                                   else adapter.inspect(owner_id=binding['ownerId']))
-                require(observation['ownerId'] == binding['ownerId']
-                        and observation['taskId'] == binding['taskId']
-                        and observation['requestId'] == binding['requestId']
-                        and observation['specSha256'] == hashlib.sha256(encoded(
-                            {'spec': value['spec'], 'limits': value['limits']}, MAX_REQUEST_BYTES)).hexdigest())
+                    observation = adapter.inspect(owner_id=binding['ownerId'])
+                    original(observation, binding, value)
+                    if action == 'cancel':
+                        observation = adapter.cancel(owner_id=binding['ownerId'])
+                original(observation, binding, value)
                 result = {'protocol': PROTOCOL, 'binding': binding, 'observation': observation}
                 if action == 'output':
                     require(observation['stoppedProof'] is True

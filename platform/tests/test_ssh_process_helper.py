@@ -5,7 +5,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded, request
+from agent_factory.process_enforcement import BoundedProcessAdapter
+from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded, request, specification
 from agent_factory.ssh_process_helper import handle
 
 
@@ -96,6 +97,26 @@ class SSHProcessHelperTests(unittest.TestCase):
         factory.return_value.inspect.return_value = {**self.observation, 'specSha256': 'd' * 64}
         with self.assertRaises(ValueError):
             handle({**self.value, 'action': 'inspect'})
+
+    def test_foreign_same_owner_journal_is_unchanged_by_cancel(self):
+        for field in ('task', 'request', 'spec'):
+            with self.subTest(field=field), TemporaryDirectory(dir=self.root) as folder:
+                run = Path(folder)
+                value = {**self.value, 'binding': {**self.value['binding'], 'leaseId': run.name}}
+                descriptor = {key: request(value)[key] for key in ('protocol', 'binding', 'root', 'spec', 'limits')}
+                (run / 'binding.json').write_bytes(encoded(descriptor, MAX_REQUEST_BYTES))
+                spec, limits = specification({**value['spec'], 'argv': ['-S']}
+                    if field == 'spec' else value['spec'], value['limits'])
+                journal = run / 'custody.sqlite'
+                BoundedProcessAdapter.create(journal, owner_id='alice',
+                    task_id='foreign-task' if field == 'task' else 'task-1',
+                    request_id='foreign-request' if field == 'request' else 'request-1', spec=spec, limits=limits)
+                before = journal.read_bytes()
+                with patch.object(BoundedProcessAdapter, 'cancel', wraps=BoundedProcessAdapter(journal).cancel) as cancel:
+                    with self.assertRaises(ValueError):
+                        handle({**value, 'action': 'cancel'})
+                    cancel.assert_not_called()
+                self.assertEqual(journal.read_bytes(), before)
 
     def test_protocol_rejects_extra_fields_and_path_escape(self):
         for value in ({**self.value, 'shell': 'anything'},
