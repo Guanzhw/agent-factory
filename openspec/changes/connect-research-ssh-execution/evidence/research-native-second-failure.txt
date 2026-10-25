@@ -1,0 +1,29 @@
+/workspace/agent-factory-ssh-research-plan/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+test_setup_to_original_ssh_child_and_selected_team_evidence (test_research_ssh_native_postgres.ResearchSSHNativePostgresTests.test_setup_to_original_ssh_child_and_selected_team_evidence) ... WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-6b52033a, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-5abf51ab poll=0.2s
+INFO    Workflow queued: research-round run=05843b96-a554-44c8-93a6-0f21cdd77731
+INFO    Agent queued: factory-executor run=54d9df62-415c-4f0b-b7f9-cf38fba58c15
+ERROR
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+
+======================================================================
+ERROR: test_setup_to_original_ssh_child_and_selected_team_evidence (test_research_ssh_native_postgres.ResearchSSHNativePostgresTests.test_setup_to_original_ssh_child_and_selected_team_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-ssh-research-plan/applications/tests/test_research_ssh_native_postgres.py", line 156, in test_setup_to_original_ssh_child_and_selected_team_evidence
+    child = rounds.runs.delegated_child('alice', attempt['operation_id'])
+            ^^^^^^^^^^^
+AttributeError: 'ResearchRounds' object has no attribute 'runs'
+
+----------------------------------------------------------------------
+Ran 1 test in 14.290s
+
+FAILED (errors=1)

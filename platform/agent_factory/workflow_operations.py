@@ -63,6 +63,9 @@ class OperationCustody:
             and body['taskId'] == row['task_id'] and body['nativeRunId'] == row['native_run_id']
             and body['effectSlot'] == row['effect_slot'] and body['closed'] == bool(row['closed']))
         require(type(body['closed']) is bool and type(body['cancelRequested']) is bool)
+        if 'inputs' in body:
+            require(type(body['inputs']) is dict
+                    and digest(bounded_json(body['inputs'], maximum=16384)) == body['inputsSha256'])
         if body['observation'] is None:
             require(body['handle'] is None and not body['closed'])
         else:
@@ -152,13 +155,13 @@ class OperationCustody:
             body=canonical(body), closed=body['closed'], id=body['id'], owner=body['ownerId'])
         require(len(result) == 1)
 
-    async def start(self, ctx, step_id, effect_slot, adapter_pin, inputs):
+    async def start(self, ctx, step_id, effect_slot, adapter_pin, inputs, *, retain_inputs=False):
         require(identifier(step_id) and identifier(effect_slot) and type(adapter_pin) is dict
             and set(adapter_pin) == {'adapterId', 'revision', 'configFingerprint'})
         pin = deepcopy(adapter_pin)
         require(all(identifier(pin[k]) for k in ('adapterId', 'revision'))
             and type(pin['configFingerprint']) is str and re.fullmatch('[a-f0-9]{64}', pin['configFingerprint']) is not None)
-        require(type(inputs) is dict)
+        require(type(inputs) is dict and type(retain_inputs) is bool)
         checked_inputs = bounded_json(inputs, maximum=16384)
         slot = 'external-operation:' + digest({'stepId': step_id, 'slot': effect_slot})
         with self.store.transaction():
@@ -180,6 +183,8 @@ class OperationCustody:
                 'planSha256': digest(plan), 'stepId': step_id, 'effectSlot': slot, 'adapterPin': pin,
                 'inputsSha256': digest(checked_inputs), 'requestSha256': digest(request),
                 'version': 0, 'closed': False, 'cancelRequested': False, 'handle': None, 'observation': None}
+            if retain_inputs:
+                body['inputs'] = deepcopy(checked_inputs)
             self._original(body)
             value = 'CAST(:body AS JSONB)' if self._postgres else ':body'
             self.store.sql('INSERT INTO af_external_operations VALUES(:id,:owner,:task,:run,:slot,FALSE,' + value + ')',

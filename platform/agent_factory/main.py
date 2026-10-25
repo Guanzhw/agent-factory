@@ -253,6 +253,30 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .process_runtime import ProcessRuntimeService
     at('PREPARATION_APP_PROCESS_RUNTIME')
     store.process_runtime = ProcessRuntimeService(store, auth, resources)
+    if settings.ssh_training_profiles:
+        from .ssh_operation_runtime import SSHOperationRuntime
+        from .ssh_operation_waits import SSHOperationWaits
+        from .ssh_process_contract import BINDINGS, OPERATION_PIN, RUNTIME_OWNER
+        from .ssh_process_provider import EFFECT
+        from .ssh_tool_factory import ssh_tool_registrations
+        if store.personal_ssh is None:
+            raise ValueError('SSH training requires the existing personal SSH credential service')
+        ssh_runtime = SSHOperationRuntime(store, resources, store.personal_ssh, settings.ssh_training_profiles)
+        resources.ssh_targets = ssh_runtime
+        resources.execution_runtimes[EFFECT] = ssh_runtime
+        operation_key = tuple(OPERATION_PIN[key] for key in ('adapterId', 'revision', 'configFingerprint'))
+        if operation_key in store.workflow.runtimes:
+            raise ValueError('SSH operation runtime is already registered')
+        store.workflow.runtimes[operation_key] = ssh_runtime
+        for entry in ssh_tool_registrations(ssh_runtime):
+            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
+                tool_name=entry.tool_name, connection_kind=entry.connection_kind,
+                required_capabilities=entry.required_capabilities, permissions=entry.permissions,
+                validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
+        store.application_runtime.register(RUNTIME_OWNER,
+            SSHOperationWaits(store, store.workflow, OPERATION_PIN, commands=factory_api.commands,
+                runs=ApplicationRuns(factory_api)),
+            bindings=BINDINGS)
     resource_maintenance = ResourceMaintenance(resources)
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))

@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "bindRequests": [
+    "00b2275d-1bb3-4419-8869-aba7098fd840"
+  ],
+  "projectId": "8b6f0bb6-7d1b-437e-88df-939baaec164d",
+  "evidence": {
+    "kind": "ssh-process",
+    "toolMaterial": {
+      "id": "ssh-native-launch",
+      "version": 1,
+      "sha256": "5bd21b7eed29c150626049a3d1a931d1df6627ef00dc5f347d426b53fff21590"
+    },
+    "fields": {
+      "metrics": "metrics",
+      "source": "source",
+      "run_recipe": "recipe"
+    }
+  },
+  "qaToolsWithSSHRegistered": [
+    "research_qa_context",
+    "research_qa_record"
+  ],
+  "tasks": 0,
+  "helperLaunches": 0,
+  "pageErrors": [],
+  "consoleErrors": [],
+  "expectedConsole": [
+    {
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "path": "/api/factory/session"
+    }
+  ],
+  "businessAPIsMocked": false,
+  "faultInjection": "drop one actual successful bind-execution response",
+  "identity": "synthetic local HTTPS OIDC",
+  "runtimeUnknownTested": false,
+  "externalProviderOrGPU": false
+}

@@ -11,10 +11,10 @@ const identifier = (value: unknown): value is string => typeof value === 'string
 function readPending(value: unknown, owner: string): Pending | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const p = value as Pending;
-  if (p.owner !== owner || !identifier(p.requestId) || !['credential', 'configure', 'verify', 'bind', 'revoke', 'sharing'].includes(p.action) ||
+  if (p.owner !== owner || !identifier(p.requestId) || !['credential', 'configure', 'verify', 'bind', 'bind-execution', 'revoke', 'sharing'].includes(p.action) ||
       Object.keys(p).some(k => !['owner', 'requestId', 'action', 'reference', 'input', 'destination', 'credentialRef', 'credentialRevision'].includes(k)) ||
       p.reference !== undefined && !/^remote-[a-f0-9]{32}$/.test(p.reference) ||
-      ['verify', 'bind', 'revoke', 'sharing'].includes(p.action) && !p.reference) return null;
+      ['verify', 'bind', 'bind-execution', 'revoke', 'sharing'].includes(p.action) && !p.reference) return null;
   if (p.action === 'credential' || p.action === 'configure') {
     const i = p.input;
     if (!i || Object.keys(i).sort().join(',') !== 'address,allowedRoot,hostKey,name,port,username' ||
@@ -26,7 +26,7 @@ function readPending(value: unknown, owner: string): Pending | null {
   return p;
 }
 function serverReceipt(value: PersonalSSHServer): PersonalSSHServer {
-  if (!value || !/^remote-[a-f0-9]{32}$/.test(value.reference) || typeof value.enabled !== 'boolean' ||
+  if (!value || !/^remote-[a-f0-9]{32}$/.test(value.reference) || typeof value.enabled !== 'boolean' || typeof value.executionEnabled !== 'boolean' ||
       typeof value.name !== 'string' || typeof value.hostKey !== 'string' || typeof value.hostFingerprint !== 'string' ||
       typeof value.allowedRoot !== 'string' || value.isOwner !== false && (!identifier(value.credentialRef) || !identifier(value.credentialRevision))) throw new Error('Invalid server receipt');
   return value;
@@ -59,7 +59,7 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
       if (typeof cap.enabled !== 'boolean') throw new Error('Invalid capability');
       const [servers, saved] = cap.enabled ? await Promise.all([personalSSHApi.list(ownerId, ctrl.signal), personalRemoteApi.credentials(ctrl.signal, ownerId)]) : [[], []];
       await verifyOwner();
-      if (!ctrl.signal.aborted && alive.current) { setRows(servers.map(serverReceipt)); setCredentials(saved.map(credentialReceipt).filter(c => c.providerId === SSH_CREDENTIAL_PROVIDER && c.status === 'active')); setEnabled(cap.enabled); setReady(true); }
+      if (!ctrl.signal.aborted && alive.current) { setRows(servers.map(serverReceipt)); setCredentials(saved.map(credentialReceipt).filter(c => c.providerId === SSH_CREDENTIAL_PROVIDER && c.status === 'active')); setEnabled(cap.enabled); setReady(true); if (cap.controllerDiagnostic) setError(sshMessages[cap.controllerDiagnostic] ?? '当前控制端不支持 SSH 执行。'); }
     })().catch(e => { if (!ctrl.signal.aborted && alive.current) { if (e instanceof RemoteRequestError && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else setError('暂时无法读取自己的服务器，请重新读取。原记录保留。'); } });
     return () => ctrl.abort();
   }, [ownerId, refresh, revision]);
@@ -118,12 +118,12 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
       const p: Pending = { owner: ownerId, action, reference: server.reference, requestId: crypto.randomUUID() }; retain(p);
       try {
         serverReceipt(await personalSSHApi.command(ownerId, server.reference, action, p.requestId)); await verifyOwner();
-        if (alive.current) { acknowledge(p); setRevoking(undefined); setNotice(action === 'verify' ? '连接与目录已通过。确认启用后即可用于应用。' : action === 'bind' ? '服务器已启用。' : '连接授权已撤销，已有研究数据保留。'); changed(); }
+        if (alive.current) { acknowledge(p); setRevoking(undefined); setNotice(action === 'verify' ? '连接与目录已通过。确认启用后即可用于应用。' : action === 'bind-execution' ? '已允许执行在此服务器上明确配置的训练；尚未启动任务。' : action === 'bind' ? '服务器已启用连接准备；训练执行仍需单独允许。' : '连接授权已撤销，已有研究数据保留。'); changed(); }
       } catch (e) {
         if (e instanceof RemoteRequestError && e.rejected && alive.current) {
           if (action === 'verify' && e.code && sshMessages[e.code]) {
             const diagnostic = e.code;
-            setRows(previous => previous.map(row => row.reference === server.reference ? { ...row, status: 'failed', enabled: false, diagnostic, lastCheckRequestId: p.requestId } : row));
+            setRows(previous => previous.map(row => row.reference === server.reference ? { ...row, status: 'failed', enabled: false, executionEnabled: false, diagnostic, lastCheckRequestId: p.requestId } : row));
           }
           acknowledge(p); changed();
         }
@@ -181,8 +181,8 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
     {!ready && !error && <p role="status">正在读取自己的服务器…</p>}{ready && !enabled && <p className="state-note">此部署尚未启用 SSH 服务器接入。请检查平台 SSH 和凭据存储配置。</p>}
     {pending && <div className="state-note"><h3>上次操作待确认</h3><p>私钥输入已清空。核对只读取原结果，不会重发或安装。</p><button disabled={busy || blocked} onClick={() => void recover(pending)}>核对原操作</button><button disabled={busy || blocked || archived.length >= 100} onClick={() => setConfirmStop(true)}>停止等待</button>{confirmStop && <div><p>停止等待不会取消原操作，它仍可能完成。将保留原结果核对入口，任何新操作都需重新确认。</p><button disabled={busy} onClick={stopWaiting}>确认停止等待并保留记录</button><button disabled={busy} onClick={() => setConfirmStop(false)}>继续等待</button></div>}</div>}
     {!!archived.length && <details><summary>未确认的保留操作</summary>{archived.map(p => <p key={p.requestId}>原操作仍可核对。<button disabled={disabled || form} onClick={() => void recover(p, true)}>核对保留结果</button></p>)}</details>}
-    {rows.map(server => <article className="model-record" key={server.reference}><h3>{server.name}</h3><p>{server.username}@{server.address}:{server.port} · {server.allowedRoot}</p><p>{server.visibility === 'team' ? '团队共享' : '个人'}{server.isOwner === false ? ` · 所有者 ${server.ownerId}` : ''}</p><p role="status">{server.enabled ? '已启用' : server.status === 'verified' ? '连接已通过，请确认启用' : server.status === 'revoked' ? '连接授权已撤销' : server.status === 'expired' ? '检查授权已到期，请重新检查并启用' : server.status === 'credential_unavailable' ? 'SSH 身份不可用，请更换连接设置' : '需要检查连接与目录'}</p><p className="quiet">检查授权有效 15 分钟。到期后重新检查并启用，原研究数据保留。</p>{server.diagnostic && <p className="error-message">{sshMessages[server.diagnostic] ?? '依赖检查未通过。'}</p>}
-      {server.status !== 'revoked' && <div className="button-row">{server.isOwner !== false && <button disabled={disabled} onClick={() => void command(server, 'verify')}>检查连接与目录</button>}{server.status === 'verified' && !server.enabled && <button disabled={disabled} onClick={() => void command(server, 'bind')}>启用此服务器</button>}{server.isOwner !== false && <><button disabled={disabled} onClick={() => begin(server)}>更换连接设置</button><button disabled={disabled} onClick={() => void share(server)}>{server.visibility === 'team' ? '改为个人服务器' : '共享服务器给团队'}</button><button disabled={disabled} onClick={() => setRevoking(server.reference)}>撤销授权</button></>}</div>}
+    {rows.map(server => <article className="model-record" key={server.reference}><h3>{server.name}</h3><p>{server.username}@{server.address}:{server.port} · {server.allowedRoot}</p><p>{server.visibility === 'team' ? '团队共享' : '个人'}{server.isOwner === false ? ` · 所有者 ${server.ownerId}` : ''}</p><p role="status">{server.enabled ? '已启用' : server.status === 'verified' ? '连接已通过，请确认启用' : server.status === 'revoked' ? '连接授权已撤销' : server.status === 'expired' ? '检查授权已到期，请重新检查并启用' : server.status === 'credential_unavailable' ? 'SSH 身份不可用，请更换连接设置' : '需要检查连接与目录'}</p><p>{server.executionEnabled ? '已允许执行已配置训练' : '尚未允许训练执行'}</p><p className="quiet">执行授权允许当前成员使用此 SSH 身份运行已配置的训练，可能占用服务器资源；连接检查或共享不会自动开启它。此按钮不启动任务。</p><p className="quiet">检查授权有效 15 分钟。到期后重新检查并启用，原研究数据保留。</p>{server.diagnostic && <p className="error-message">{sshMessages[server.diagnostic] ?? '依赖检查未通过。'}</p>}
+      {server.status !== 'revoked' && <div className="button-row">{server.isOwner !== false && <button disabled={disabled} onClick={() => void command(server, 'verify')}>检查连接与目录</button>}{server.status === 'verified' && !server.enabled && <button disabled={disabled} onClick={() => void command(server, 'bind')}>启用此服务器</button>}{server.status === 'verified' && !server.executionEnabled && <button disabled={disabled} onClick={() => void command(server, 'bind-execution')}>允许执行已配置训练</button>}{server.isOwner !== false && <><button disabled={disabled} onClick={() => begin(server)}>更换连接设置</button><button disabled={disabled} onClick={() => void share(server)}>{server.visibility === 'team' ? '改为个人服务器' : '共享服务器给团队'}</button><button disabled={disabled} onClick={() => setRevoking(server.reference)}>撤销授权</button></>}</div>}
       {revoking === server.reference && <div><p>确认撤销 {server.name} 的后续连接授权？原研究数据保留。</p><button disabled={disabled} onClick={() => void command(server, 'revoke')}>确认撤销服务器授权</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留授权</button></div>}</article>)}
     {ready && enabled && !form && !pending && <><p>{!rows.length && '还没有自己的服务器。先添加并检查，再用于应用。'}</p><button disabled={disabled} onClick={() => begin()}>添加我的服务器</button></>}
     {form && !pending && !blocked && <form className="model-form" aria-label="设置我的服务器" onSubmit={e => { e.preventDefault(); void (identity ? save() : preview()); }}><h3>{identity ? '确认服务器身份与授权' : editing ? '更换服务器连接设置' : '添加我的服务器'}</h3>

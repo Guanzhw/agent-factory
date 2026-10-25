@@ -11,7 +11,7 @@ export interface ResearchAgreement {
     deadline: number;
     perRoundCaps: ResearchAgreement['budget'];
   } | null;
-  evidence?: { toolMaterial: { id: string; version: number; sha256: string }; fields: Partial<Record<'metrics' | 'source' | 'run_recipe', string>> } | null;
+  evidence?: { kind?: 'cli' | 'ssh-process'; toolMaterial: { id: string; version: number; sha256: string }; fields: Partial<Record<'metrics' | 'source' | 'run_recipe', string>> } | null;
   budget: { rounds: number; toolCalls: number; tokenLimit: number | null; amountMicros: number | null; currency: 'USD' | 'EUR' | 'CNY' | null };
 }
 export interface VisibleResearchGoal {

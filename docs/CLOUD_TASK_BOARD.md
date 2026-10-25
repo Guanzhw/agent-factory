@@ -1,15 +1,15 @@
-# Active: remove product demo modes and independent SSH execution — 2026-10-25
+# Active: final Linux SSH publication and separate Windows implementation — 2026-10-25
 
-| Owner | Scope / dependency | Actual state and remaining gate |
+| Owner / scope | Current evidence | Remaining gate |
 |---|---|---|
-| root; assistant_endpoints | No-demo authentication/configuration, integration and publication | Public identity is configured external identity; no product demo/persona login. Final exact-head validation remains with root. |
-| assistant_messages | Test-only synthetic identities and fixture migration | Portable suite exposed fixture migration errors; corrections and final validation tracked in the [migration verification](../openspec/changes/remove-product-demo-modes/verification-testing.md). |
-| research_frontend | Formal UI, removal of old HTML prototype, frontend checks | Old standalone HTML prototype is retired, not an alternative runtime. Final frontend checks are separate from the historical prototype screenshots. |
-| acceptance_doc_review | Browser/install drivers and current documentation | Core desktop/mobile OIDC passed after preserving missing-browser and wrong-build fixture failures; research evidence desktop/mobile passed on its first migrated run. Both use independent builds. Research root/child, ZIP, permissions, associations and withdrawal used synthetic model HTTP and actual local CLI. Installed wheel passed; its resource authorization uses ASGI HTTPS, not real external IdP/TLS. Temporary listeners/databases cleaned. |
-| foundation_review; pr104_independent_review | Independent full-diff and simplicity review | Corrections require affected-code review; no claim that historical review covers a changed head. |
-| root integration; research_app_spec SSH helper/provider/runtime; assistant_endpoints waits | Independent `spec/research-ssh-execution-20261025` stack in `/workspace/agent-factory-ssh-research-plan`, depends on no-demo | Spec reviewed. Helper identity defect fixed and independently re-reviewed. Provider cancel-send and wait-hook swallowing non-SSH confirmation remain review blockers under correction. Only portable validation so far; PG, sshd and research consumer acceptance remain incomplete. |
+| root — PR136 | Merged `e7987e75`; [main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS. | Real organization identity remains separate. |
+| root — PR137 | Exact `860e46090dc98f6b2160da4cbc3b7d9de17aa775` [full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220): all seven jobs SUCCESS. PG2183 passed/5 skipped (1581.818s); Windows1317 passed/871 skipped (233.556s); zero failures/errors; six required groups SSH6/BYOK109/boundaries16/native10/self-service19/invariants5 all zero skips; Web490 both platforms, Chromium2 and standalone core passed. | Documentation-only follow-up review/exact fast, then merge/main checks. Not yet merged. |
+| independent reviewers | Code-review records retained; `07c75a0` adds review documentation. Later changes remain documentation-only relative to tested860e460. | No unchanged full rerun required; documentation review and exact fast still required. |
+| PR138 Windows implementation | Separate Draft; bounded pipes have actual Windows evidence. | Production Windows credential integration unfinished; this is an implementation gap, not merely missing target access. |
 
-SSH reviewers are foundation_review and pr104_independent_review. SSH P5/D01 is not closed; real GPU acceptance needs the target execution method and resource parameters. No new deployment or paid model/GPU run is implied. Heavy PG/browser checks remain serial. Prior checkpoints below retain their original failures and evidence; they are not current demo-mode instructions.
+[PG artifact12617398651](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220/artifacts/12617398651) and [SSH verification](../openspec/changes/connect-research-ssh-execution/verification.md) record the result. Linux CPU helper/native mechanisms are implemented; GPU allocation/binding remains UNIMPLEMENTED and rejected. Native accepted-continuation ACK loss does not establish SSH-wire submit ACK loss. Actual Windows→Linux target, physical network-fault and real model/GPU/hardware acceptance remain open.
+
+Prior failed/cancelled CI runs and MCP/storage timing uncertainty remain disclosed below. No overall speedup, deployment or paid execution claim is added. Root owns publication; this checkpoint does not mark PR137 merged.
 
 ---
 
@@ -2017,3 +2017,13 @@ reviews also passed; this does not turn the failed full run green. See
 [review boundaries](../openspec/changes/remove-product-demo-modes/review.md).
 Historical MCP cause and real external IdP remain unverified. No SSH acceptance
 status is advanced by these no-demo checks.
+
+### Later verification of the earlier 2068-case discovery scope
+
+The earlier d6c8f62 full-run entry called 2068 cases platform-only and left
+Research completion unknown. Subsequent inspection of that exact
+`scripts/check_python.py` confirms `TEST_DIRECTORIES=(platform/tests, applications/tests)`;
+the original CI log also includes `test_research_setup` cases passing. The
+2068-case count is therefore **combined core/application discovery**, with the
+same failed result (2018 passed, 36 failures, 9 errors, 5 skips, 1347.913s).
+This corrects scope, not outcome; original failure entries are retained.

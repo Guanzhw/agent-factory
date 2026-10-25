@@ -1,0 +1,12 @@
+/workspace/agent-factory-ssh-research-plan/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-b837f641, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-7ff85d33 poll=0.2s
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
