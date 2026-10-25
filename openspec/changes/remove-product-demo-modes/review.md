@@ -27,3 +27,23 @@ These are code-review conclusions, not a full-suite PASS. The exact fast run at
 ba08307 succeeded, while the earlier d6c8f62 full run failed. Subsequent PG
 fixture edits require their own affected-diff review and validation; see the
 [CI checkpoint](verification-testing.md#published-ci-checkpoint--2026-10-25-head-ba08307).
+
+## Final cumulative review before necessary full validation
+
+Independent reviewer `/root/pr104_independent_review` reviewed base
+`9454000e088ca6fba55621b8b2443ab55ffcc764` through
+`1ebd15b754e5f22e1dce98fdd79b2fddc852a04a`: **PASS**, 219 files.
+The reviewer reused the original complete product review and checked the full
+37-file increment from c874287: tests, browser fixture, documentation and evidence
+only, with no SSH implementation mixed into this change. Current-member denial,
+empty OIDC directory, binding rejection, budget and UNKNOWN assertions remain.
+Diagnostic wrappers preserve original calls and deadlines; stack output excludes
+source lines and locals; GC observation does not change collection policy.
+
+The earlier diagnostic source-line finding at d345014 was corrected by 8362eb7
+and independently re-reviewed PASS. Foundation review also passed the passive
+GC/watchdog correction a0112b0. The final cumulative diff check passed.
+This conclusion permits continuing the Draft and necessary exact-head CI, not
+claiming a successful full run. Original full failures, two later MCP timeouts
+and the storage cancellation timeout remain recorded; isolated diagnostic passes
+do not close their historical causes.
