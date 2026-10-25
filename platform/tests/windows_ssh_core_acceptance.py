@@ -114,7 +114,7 @@ def exercise(root, report):
         raise Blocked('SYSTEM_SSH_BINARIES_MISSING')
     username = w.win32api.GetUserName()
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', username):
-        raise Blocked('FIXTURE_ACCOUNT_FORMAT_UNSUPPORTED')
+        raise AssertionError('FIXTURE_ACCOUNT_FORMAT_UNSUPPORTED')
     w.directory(root)
     host, client = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
     def public(key):
@@ -142,11 +142,13 @@ def exercise(root, report):
         'LogLevel ERROR', 'ForceCommand ' + command]) + '\n').encode('utf-8'))
     env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'ProgramData', 'TEMP', 'TMP') if name in os.environ}
     env['PATH'] = str(system)
+    report['stage'] = 'VALIDATE_FOREGROUND_SSHD_CONFIG'
     checked = subprocess.run([str(system / 'sshd.exe'), '-t', '-f', str(config)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-    if checked.returncode:
-        raise Blocked('FOREGROUND_SSHD_CONFIG_REJECTED')
+    report['serverConfigExitCode'] = checked.returncode
+    require(checked.returncode == 0, 'FOREGROUND_SSHD_CONFIG_REJECTED')
 
+    report['stage'] = 'START_FOREGROUND_SSHD'
     with ExitStack() as stack:
         server_process = stack.enter_context(process_module.WindowsSSHProcess(
             [str(system / 'sshd.exe'), '-D', '-e', '-f', str(config)], env))
@@ -161,8 +163,10 @@ def exercise(root, report):
             except OSError:
                 time.sleep(.05)
         if not ready:
-            raise Blocked('FOREGROUND_SSHD_NOT_READY')
+            report['serverStartupExitCode'] = server_process.poll()
+            raise AssertionError('FOREGROUND_SSHD_NOT_READY')
         report['fixtureReady'] = True
+        report['stage'] = 'PRODUCTION_CONSUMERS'
         engine = create_engine('sqlite:///' + str(root / 'vault.sqlite'), connect_args={'check_same_thread': False})
         stack.callback(engine.dispose)
         vault = EncryptedCredentialVault(engine, secrets.token_bytes(32), {PROVIDER_ID: SSHCredentialPolicy()})

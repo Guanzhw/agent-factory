@@ -53,9 +53,11 @@ def main():
                                     cwd=root, env=env, timeout=180)
     except Exception as error:
         report = json.loads(output.read_text(encoding='utf-8')) if output.exists() else {}
-        report.update(status='FAIL' if stage == 'acceptance' else 'BLOCKED',
+        report.update(status='FAIL',
                       wrapperStage=stage, failureType=type(error).__name__,
                       freshEnvironmentRemoved=environment is not None and not environment.exists())
+        if isinstance(error, subprocess.CalledProcessError):
+            report['wrapperExitCode'] = error.returncode
         output.write_text(json.dumps(report, indent=2), encoding='utf-8')
         return 1
 
