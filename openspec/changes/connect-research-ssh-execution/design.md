@@ -110,6 +110,10 @@ FAILED/CANCELLED keep `output=null` as required by the existing runtime contract
 
 ## Migration Plan
 
+资源装配复用原不可变计划与连接 pin，不要求 operator 为每个成员手工复制 target。`PersistentResourceService.register_target(ref, target)` 与初始化共用 ref、原配置、namespace/pool 校验；相同定义幂等，冲突拒绝。注册与列表快照只持短锁，不在锁内访问 vault/SSH。SSH runtime 从原材料构造成员特定 provider；同主机容量 namespace 不按成员、连接别名、训练规格或凭据版本分裂。主机密钥相同的入口共用一个容量责任；这不是对未测集群调度或设备隔离的承诺。
+
+重启后的资源 API/维护可以先于任何新 launch：资源服务仅在 target 不在内存时调用已装配的 `ssh_targets.restore_target(owner, ref)`，该唯一具体消费者从该成员现有 lease 的原 plan、操作和连接 pin 重建并注册原 target。没有原 lease 不能由任意 ref 创建提交授权；原 pin 不再可授权时拒绝并保留 hold。恢复回调只读原身份和注册内存 provider，不执行 SSH 或新 allocate；原有 observer 再观察同一操作。
+
 以显式新 adapter/material version 发布，不改旧 immutable plan。依赖并行去 demo 变更的正式认证和测试夹具；无数据库清空/凭据迁移。回滚停用新提交但保留原 adapter 的 inspect/cancel 能力与未决 custody；不能卸载原代码后声称已清理远端任务。
 
 ## Required target facts
