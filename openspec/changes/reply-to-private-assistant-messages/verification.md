@@ -9,3 +9,12 @@
 - 受影响生产文件Pyright 0 errors/0 warnings，退出0：`/tmp/private-replies-pyright.log`；Ruff与git diff --check通过。
 - 来源/会员检查按当前读取机制执行；PG屏障证明内容sharing撤回锁序，不外推所有身份变更都共用该锁。已读字节不能远程撤销。
 - 独立实现完整diff审查、精确head CI待执行。没有真实模型QA质量、真实GPU、浏览器或应用团队价值验收；未推送/合并。
+
+## 独立实现审查整改：禁用接收者的原收据
+
+- 独立review发现原消息reply已隐藏，但真实ApplicationRuns.request仍按被禁用receiver鉴权，导致发送者整个消息读取403；此前合成Runs fixture未检查会员，不能证明该边界。
+- spec先补31b1faf，提取内部只读_request_receipt，公开request保留require_member；消息仅使用持久原recipient/request并过滤state/taskId/runId，不吞403或伪造unconfirmed。
+- 新便携用真实ApplicationRuns配合合成存储复现修前1项error（403），0.053秒：`/tmp/private-replies-disabled-first.log`。首次误用无loopback权限的运行停在async fixture，已终止并保留 `/tmp/private-replies-disabled-sandbox-stalled.log`，不计通过。
+- 修后便携5模块38/38通过、0跳过，3.667秒，退出0：`/tmp/private-replies-disabled-portable-fixed.log`；生产3文件Pyright 0 errors/0 warnings：`/tmp/private-replies-disabled-pyright.log`；Ruff通过。
+- 实际PG/native原task新增单例1/1通过、0跳过，5.746秒，退出0：`/tmp/private-replies-disabled-pg-first.log`。Bob禁用后Alice实际HTTP read/request/repeated send均保留原问句/收据、回复隐藏、零submit；公开ApplicationRuns.request仍拒绝Bob。PG槽已释放。此前4项PG为上一代码版本证据，不改记为本次5项整组通过。
+- 修后精确head独立复审及CI仍待执行。

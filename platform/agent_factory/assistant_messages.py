@@ -193,7 +193,7 @@ class AssistantMessages:
 
     def _receipt(self, message):
         try:
-            receipt = self.runs.request(message['recipient_id'], self._request_id(message))
+            receipt = self.runs._request_receipt(message['recipient_id'], self._request_id(message))
         except HTTPException as error:
             if error.status_code != 404 or error.detail != 'APPLICATION_START_RECEIPT_NOT_FOUND':
                 raise

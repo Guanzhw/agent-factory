@@ -132,3 +132,21 @@ class AssistantRepliesPostgresTests(unittest.TestCase):
                 after = self.messages.read('alice', self.message['id'])
                 self.assertEqual(after['reply'], {'state': 'source_unavailable'})
                 self.assertEqual(after['text'], self.base.body['text'])
+
+    def test_disabled_receiver_leaves_sender_question_and_original_receipt_readable(self):
+        original = self.reply()
+        self.fixture.state['auth'].directory.set_disabled('bob', True)
+        with self.assertRaises(HTTPException):
+            self.messages.runs.request('bob', self.messages._request_id(self.message))
+        self.fixture.login('alice')
+        with patch.object(self.fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            responses = [self.fixture.client.get('/api/factory/assistant-messages/' + self.message['id']),
+                self.fixture.client.get('/api/factory/assistant-message-requests/' + self.base.body['requestId']),
+                self.fixture.client.post(self.base.path, json=self.base.body)]
+            for response in responses:
+                self.assertIn(response.status_code, (200, 202), response.text)
+                value = response.json()
+                self.assertEqual(value['text'], self.base.body['text'])
+                self.assertEqual(value['delivery'], original['delivery'])
+                self.assertEqual(value['reply'], {'state': 'source_unavailable'})
+            self.assertEqual(submit.await_count, 0)
