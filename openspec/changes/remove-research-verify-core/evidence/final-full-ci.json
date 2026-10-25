@@ -1,0 +1,54 @@
+{
+  "head": "506cb4eff8aa96bfa53c13e8fe57beb65adeb5ab",
+  "runId": 40171164057,
+  "url": "https://github.com/Guanzhw/agent-factory/actions/runs/40171164057",
+  "status": "completed",
+  "conclusion": "success",
+  "postgres": {
+    "suite": "postgres_acceptance",
+    "testsRun": 1815,
+    "skipped": 5,
+    "groups": {
+      "owner_byok_default_off": {
+        "requiredCases": 102,
+        "passed": 102,
+        "notPassed": []
+      },
+      "platform_application_boundaries": {
+        "requiredCases": 16,
+        "passed": 16,
+        "notPassed": []
+      },
+      "workflow_native_fixture": {
+        "requiredCases": 10,
+        "passed": 10,
+        "notPassed": []
+      },
+      "department_self_service": {
+        "requiredCases": 19,
+        "passed": 19,
+        "notPassed": []
+      },
+      "execution_invariants": {
+        "requiredCases": 5,
+        "passed": 5,
+        "notPassed": []
+      }
+    },
+    "accepted": true,
+    "modelLive": false,
+    "externalRemoteVerified": false,
+    "realCredentialsUsed": false,
+    "testSeconds": 1730.808,
+    "passed": 1810
+  },
+  "windows": {
+    "testsRun": 1815,
+    "passed": 1079,
+    "skipped": 736,
+    "testSeconds": 177.551,
+    "failures": 0,
+    "errors": 0
+  },
+  "artifact": "Uploaded successfully; this environment download returned Forbidden. Counts independently verified via authorized workflow job log endpoint."
+}

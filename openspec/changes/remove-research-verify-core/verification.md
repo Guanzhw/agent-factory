@@ -4,7 +4,7 @@
 
 环境：4 CPU /16 GiB；Python3.12.14、uv0.12.19、Node24.19.0，锁定依赖，无付费/真实模型调用。新临时 PostgreSQL17.11 仅监听 loopback55439。用户05:40UTC确认旧数据精确清单后，复核并删除5文件、52空目录、唯一旧停止容器/卷，逐项不存在核验成功；新验收DB、源码/Git/证据/OPENCODE_GO 均保留。
 
-原始日志与命令/UTC/耗时/退出码：`/workspace/scratch/core-only-20261025/`。仓库内将补充安全汇总与截图，避免仅本地路径交付。
+原始日志与命令/UTC/耗时/退出码：`/workspace/scratch/core-only-20261025/`。仓库内提供安全汇总、逐项失败清单、结构化结果及截图；原始本地日志保留。
 
 ## Completed checks
 
@@ -13,15 +13,15 @@
 - Python架构402模块、0违规、0覆盖缺口；Python/JS checker各11测试通过。JS首次空apps拒绝已修正为允许零应用、继续要求非空core和装配方向，新增回归通过。
 - 独立core wheel：12.232秒，exit0；无应用包、初始0表、空应用/材料、成员资源和账号管理可用，真实native启动/health/干净关闭，Research路由/表不存在；没有模型调用。
 - 远程portable30通过（含5个退役placement保护）；纯同步治理/生命周期/policy18通过。
-- 原生/模型36项首次35通过1失败：旧环境限额测试仍用已移除夹具；现改为真正BoundedProcessAdapter、kernel RLIMIT、valid stop、UNKNOWN不重派，针对1项通过。完整PG整合验收正在运行。
+- 原生/模型36项首次35通过1失败：旧环境限额测试仍用已移除夹具；现改为真正BoundedProcessAdapter、kernel RLIMIT、valid stop、UNKNOWN不重派，针对1项通过。完整PG整合结果见末节。
 - 沙箱中的native portable等待已终止留trace；同一checksum case在获准环境1.953秒完成，没有改产品超时。npm install首次沙箱EPERM保留，获准子进程安装成功。
 - 浏览器首次demo桌面/移动完成；production-local夹具旧managed-role API失败。改为现有TrustedTeamProvider需要的活跃目录成员，第二轮36.882秒完整通过demo和production-local桌面/移动：真实HTTPS与业务API，登录、空catalog/tasks、资源、退出重登、直达刷新、旧URL。身份是本地合成OIDC，不是外部生产身份。
 - npm生产与完整audit各exit0、0漏洞。
 - 独立review发现空目录工具默认literature_search导致保存异常，已删除虚构内建建议、保持字符串权限、空提交拒绝并新增回归；review复核无剩余确定阻塞。其静态结论不替代运行验收。
 
-## Pending
+## Acceptance boundaries
 
-最终完整core PostgreSQL、最后截图、最终源码静态/精确CI、临时资源清理。历史MCP时序失败不能因本次移除或单例通过而宣称解决；不宣称整套加速或真实生产身份/外部模型验收。
+最终完整core PostgreSQL、截图、源码静态/精确CI和临时资源清理均已完成，结果见末节。历史MCP时序失败不能因本次移除或单例通过而宣称解决；不宣称整套加速或真实生产身份/外部模型验收。
 
 ## Browser artifacts
 
@@ -71,3 +71,29 @@ Remote有界诊断一次：77.729秒测试/82.780秒包装，exit1。原full在�
 可复用MCP多账号单例聚合诊断一次通过，内部66.570秒（包装75.113秒），377 callbacks、53186观测事件；完整pool connect（含pre-ping）、SQL与固定函数类别聚合，避免早期环形日志丢失。保留原期限和全部断言；本次通过不关闭完整运行慢因。未进行生产授权优化或重复全量追绿。
 
 最终修复静态：Ruff通过、Pyright 0 errors（16.055秒）、CI scope/summary9项通过、diff whitespace通过。[MCP安全聚合摘要](evidence/reusable-mcp-diagnostic.json)保留完整统计；pool connect最大38.811ms、SQL最大173.510ms、callback最大643.884ms，未复现完整运行慢因。
+
+
+修复提交 `506cb4eff8aa96bfa53c13e8fe57beb65adeb5ab` 已推送；精确 [fast CI40171134456](https://github.com/Guanzhw/agent-factory/actions/runs/40171134456)、[full CI40171164057](https://github.com/Guanzhw/agent-factory/actions/runs/40171164057) 均已成功。新本地验收容器 `af-core-only-20261025` 及唯一tmpfs数据已停止/删除并确认不存在，无遗留本轮Python/native worker；[清理证据](evidence/cleanup.json)。源码/Git与日志/截图保留，不部署、不实现新应用。
+
+首轮完整本地失败的逐项ID与后续状态见[失败清单](evidence/first-full-failures.json)，只提取用例元数据，原始snapshot/异常日志仍保留；对应首轮CI日志可从上面的公开run链接读取。
+
+
+## Final result
+
+源码与测试冻结提交 **506cb4eff8aa96bfa53c13e8fe57beb65adeb5ab**：
+
+| 检查 | 实际结果 |
+| --- | --- |
+| Fast CI40171134456 | success；Python334通过/零跳过；PG48通过/零跳过 |
+| Full CI40171164057 | success；完整工作流所有适用job通过 |
+| Full Linux PG | 1815项，1810通过/5显式跳过，零失败/错误；1730.808秒 |
+| Full Windows Python | 1815项，1079通过/736平台或配置跳过，零失败/错误；177.551秒 |
+| PG required | 五组全部通过，102+16+10+19+5项各组零跳过；不把组计数当去重总数 |
+| Web/架构/静态/审计 | 两平台Web通过；Ruff/Pyright/架构通过；生产与完整npm audit零漏洞 |
+| 独立core与浏览器 | 新空PG安装/native启动/干净关闭、demo与production-local合成身份桌面/移动流程通过；CI两个真实Chromium工具短流程通过 |
+
+[最终CI结构化摘要](evidence/final-full-ci.json)。full PG原始日志artifact成功上传、保留7天；本环境尝试下载返回Forbidden，未绕过限制。使用正常GitHub job log接口独立核对1815项、skip5与accepted=true；历史失败仍见前文，不由本次通过抹去。
+
+最终证据整理仅修改文档/JSON；完整通过的源码、测试、工作流、锁文件不再变动。浏览器截图对应的runtime/frontend/依赖字节在a79ffc0与506cb4e之间完全一致；修复仅涉及测试夹具、CI日志保存与文档，不把旧截图冒充不同UI版本。
+
+结论：底座可在不安装Research、空应用/材料目录与新空数据库下独立使用。真实外部组织身份、生产部署与付费/真实模型未验收；历史MCP/remote时序慢因未闭合，没有整套提速证据。PR104保持Draft，不合并、不部署、不开发新AutoResearch。
