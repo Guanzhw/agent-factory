@@ -33,7 +33,7 @@ from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.types import HumanReview, OnError, OnReject, StepInput, StepOutput
 from agent_factory.input_schema import input_model
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits, KnowledgeContext
 from agent_factory.main import create_app
 from agent_factory.native_workflows import NativeWorkflowRegistration
@@ -182,11 +182,11 @@ def settings(configuration, backend, holder):
         return denied
     entries = [AdapterRegistration('tool', name + '-v1', '1', lambda ctx, name=name: factory_wait_operations if name == 'factory_wait_operations' else registered_tool(name),
         tool_name=name, permissions=(PERMISSION,)) for name in TOOLS]
-    entries += [AdapterRegistration('model', MODEL, '1', WorkflowFixtureModel, demo_only=True),
+    entries += [AdapterRegistration('model', MODEL, '1', WorkflowFixtureModel, ),
         AdapterRegistration('environment', 'native-fixture-environment-v1', '1',
-            lambda ctx: EnvironmentLimits(timeout_seconds=30), demo_only=True),
+            lambda ctx: EnvironmentLimits(timeout_seconds=30), ),
         AdapterRegistration('knowledge', 'native-fixture-knowledge-v1', '1',
-            lambda ctx: KnowledgeContext('Representative synthetic source.', {'evidenceKind': 'synthetic'}), demo_only=True)]
+            lambda ctx: KnowledgeContext('Representative synthetic source.', {'evidenceKind': 'synthetic'}), )]
     return Settings(db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
         jwt_key=configuration['jwtKey'], max_workers=1, max_tool_calls=32, max_user_tasks=3,
         temporary_policy='member-self-service', policy_revision=APP, material_policy_revision=APP,
@@ -197,6 +197,8 @@ def settings(configuration, backend, holder):
             local_model_type=WorkflowFixtureModel, per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),))
 
 def publish(state):
+    from fixture_auth import initialize_members
+    initialize_members(state['auth'])
     governance, apps = state['material_governance'], state['applications']
     refs = []
     items = [('prompt', 'instructions', None), ('skill', 'workflow-skill', None),
@@ -319,7 +321,7 @@ def serve(configuration):
             raise HTTPException(400, 'FIXTURE_CONTROL_INVALID')
         return {'ok': True}
 
-    uvicorn.run(app, host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
+    uvicorn.run(state["http_app"], host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
 
 
 class WorkflowServer:

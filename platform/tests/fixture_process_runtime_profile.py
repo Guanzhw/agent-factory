@@ -14,9 +14,9 @@ from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.tools import tool
 
-from .config import Settings
-from .execution_bindings import AdapterRegistration, EnvironmentLimits
-from .usage_ledger import PricingRevision
+from fixture_settings import Settings
+from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
+from agent_factory.usage_ledger import PricingRevision
 
 APPLICATION_ID = "bounded-process-fixture-v1"
 MODEL_ID = "bounded-process-fixture-model-v1"
@@ -92,7 +92,7 @@ def registrations(*, target_ref, owner="alice", include_fixture_model=False):
 
     def fixture(ctx):
         config(dict(ctx.spec["config"]))
-        if (ctx.settings.demo is not True or ctx.run_context.user_id != owner
+        if (ctx.run_context.user_id != owner
                 or ctx.plan.get("ownerId") != owner or ctx.plan.get("application") != APPLICATION_ID
                 or (ctx.plan.get("applicationRef") or {}).get("id") != APPLICATION_ID
                 or ctx.plan.get("mode") != "controlled-fixture" or ctx.plan.get("delegation")
@@ -109,7 +109,7 @@ def registrations(*, target_ref, owner="alice", include_fixture_model=False):
         permissions=(PERMISSION,), validator=config),
         AdapterRegistration("environment", ENVIRONMENT_ID, "1", environment, validator=config)]
     if include_fixture_model:
-        entries.append(AdapterRegistration("model", MODEL_ID, "1", fixture, validator=config, demo_only=True))
+        entries.append(AdapterRegistration("model", MODEL_ID, "1", fixture, validator=config, ))
     return entries
 
 
@@ -129,6 +129,8 @@ def process_settings(*, db_url, workspace: Path, target_ref, remote_targets, own
 
 
 def publish_process_application(state, *, target_ref, author):
+    from fixture_auth import initialize_members
+    initialize_members(state['auth'])
     target_ref = _target(target_ref)
     governance, applications = state["material_governance"], state["applications"]
     state["auth"].require_member(author)

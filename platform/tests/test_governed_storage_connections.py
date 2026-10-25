@@ -21,7 +21,7 @@ class GovernedStorageConnectionTests(unittest.TestCase):
         Table("af_materials", metadata, Column("id", String, primary_key=True))
         Table("af_audit", metadata, Column("id", String, primary_key=True))
         metadata.create_all(engine)
-        self.store = SimpleNamespace(engine=engine, settings=SimpleNamespace(demo=False),
+        self.store = SimpleNamespace(engine=engine, settings=SimpleNamespace(),
             _connection=ContextVar("governed_read_fixture", default=None))
         self.governance = MaterialGovernance(self.store, None)
         self.applications = GovernedStorage(self.store, "application-read-fixture")

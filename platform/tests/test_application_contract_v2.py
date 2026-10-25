@@ -6,7 +6,7 @@ from uuid import uuid4
 from agent_factory.store import digest
 from fastapi import HTTPException
 from agent_factory.application_schema import ApplicationDefinitionV2, definition_model, time_budget
-from core_native_fixture import governed_fixture_definitions
+from core_native_fixture import publish_fixture_applications
 from core_native_fixture import fixture_definitions as demo_definitions, all_fixture_definitions as all_demo_definitions
 from agent_factory.remote_handoff import _manifest, plan_manifest
 import test_applications_composition as fixtures
@@ -64,7 +64,7 @@ class ApplicationContractV2Tests(fixtures.ApplicationCompositionFixture):
             self.assertNotIn('contractVersion', actual)
             self.assertEqual(actual['sha256'], hashes[actual['id']])
         original = self.composition.create_plan('alice', 'Checksum historical compatibility', 'literature', 'fixture-checksum')
-        self.applications.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
+        publish_fixture_applications(self.store, all_demo_definitions)
         self.assertEqual(self.store.plan(original['id'], 'alice'), original)
         self.assertNotIn('contractVersion', original)
         self.assertIn('experimentSeconds', original['budget'])

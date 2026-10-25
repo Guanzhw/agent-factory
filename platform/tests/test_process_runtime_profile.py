@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 from agno.models.message import Message
 from agno.run import RunContext
 
-from agent_factory.process_runtime_profile import (APPLICATION_ID, MODEL_ID, PERMISSION,
+from fixture_process_runtime_profile import (APPLICATION_ID, MODEL_ID, PERMISSION,
     TOOL_NAME, ProcessFixtureModel, process_settings, publish_process_application, registrations)
 
 
@@ -17,7 +17,7 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
     def context(self) -> Any:
         run = RunContext(user_id="alice", session_id="session-1", run_id="run-1")
         return SimpleNamespace(spec={"config": {"targetRef": "reviewed-target"}}, run_context=run,
-            settings=SimpleNamespace(demo=True), plan={"ownerId": "alice", "application": APPLICATION_ID,
+            settings=SimpleNamespace(), plan={"ownerId": "alice", "application": APPLICATION_ID,
                 "applicationRef": {"id": APPLICATION_ID}, "mode": "controlled-fixture", "tools": [TOOL_NAME],
                 "capabilities": [PERMISSION]}, store=SimpleNamespace(authorize_tool=Mock(),
                 process_runtime=SimpleNamespace(run=AsyncMock(return_value={"leaseId": "original-lease", "receiptId": "original-receipt"}))))
@@ -54,7 +54,7 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
     def test_exact_inert_target_pin_and_environment(self):
         entries = registrations(target_ref="reviewed-target")
         self.assertEqual([e.kind for e in entries], ["tool", "environment"])
-        self.assertTrue(all(not e.demo_only for e in entries))
+        self.assertTrue(all(not hasattr(e, "demo_only") for e in entries))
         for entry in entries:
             assert entry.validator is not None
             entry.validator({"targetRef": "reviewed-target"})
@@ -68,9 +68,9 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 registrations(target_ref=invalid)
 
-    def test_fixture_is_explicit_demo_scoped_and_no_provider(self):
+    def test_fixture_is_explicit_test_registration_and_no_provider(self):
         entry = next(e for e in registrations(target_ref="reviewed-target", include_fixture_model=True) if e.kind == "model")
-        self.assertTrue(entry.demo_only)
+        self.assertFalse(hasattr(entry, "demo_only"))
         context = self.context()
         model = entry.factory(context)
         self.assertIsInstance(model, ProcessFixtureModel)
@@ -84,9 +84,6 @@ class ProcessProfile(unittest.IsolatedAsyncioTestCase):
             modified.plan.update(changes)
             with self.assertRaises(ValueError):
                 entry.factory(modified)
-        context.settings.demo = False
-        with self.assertRaises(ValueError):
-            entry.factory(context)
 
     def test_explicit_fixture_settings(self):
         settings = process_settings(db_url="postgresql://synthetic", workspace=Path("/tmp/synthetic-process-profile"),

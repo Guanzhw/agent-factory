@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import httpx
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.store import Store
 from agent_factory.storage_governance import StorageGovernance
 import test_control_commands_process as fixture

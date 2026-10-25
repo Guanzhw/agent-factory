@@ -1,4 +1,5 @@
 """Member schedule HTTP journeys on isolated PG with the offline checksum fixture."""
+from fixture_identity import access_token
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,7 +11,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from agent_factory.schedule_contract import preview_schedule
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
@@ -27,9 +28,9 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.store, self.auth, self.service = (self.state[key] for key in ('store', 'auth', 'schedules'))
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = self.enterContext(TestClient(app))
+        self.client = self.enterContext(TestClient(app, base_url="https://testserver"))
         # Keep the original authenticated tokens across current grant/disabled changes.
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob')}
+        self.tokens = {owner: access_token(owner) for owner in ('alice', 'bob')}
         self.enterContext(patch('agent_factory.schedule_management.preview_schedule',
             side_effect=lambda cron, zone: preview_schedule(cron, zone, now_epoch=1893456000)))
         self.plan = self.request('POST', '/plans', self.command(topic='Offline scheduled checksum',

@@ -71,7 +71,7 @@ class ResearchSetup:
             'connections': [{k: item[k] for k in ('ref', 'registrationRef', 'kind', 'capabilities', 'available')}
                 for item in self.connections.list(owner)],
             'environments': [{k: item[k] for k in ('adapterId', 'revision', 'connectionKind', 'requiredCapabilities')}
-                for item in self.store.execution_bindings.describe() if item['kind'] == 'environment' and not item['demoOnly']],
+                for item in self.store.execution_bindings.describe() if item['kind'] == 'environment'],
             'experimentMaterials': [self._tool_candidate(item)
                 for item in self.store.materials(published_only=True)
                 if item['kind'] == 'tool' and item.get('runtimeBinding') and item['content'] not in self._controllers()]}
@@ -87,7 +87,7 @@ class ResearchSetup:
                 binding = material.get('runtimeBinding') or {}
                 entry = next((x for x in descriptors if x['kind'] == material['kind']
                     and x['adapterId'] == binding.get('adapterId') and x['revision'] == binding.get('revision')
-                    and not x['demoOnly']), None)
+                   ), None)
                 if entry is None:
                     raise HTTPException(409, 'RESEARCH_SETUP_ADAPTER_UNAVAILABLE')
                 if entry['connectionKind']:
@@ -123,7 +123,7 @@ class ResearchSetup:
         descriptors = self.store.execution_bindings.describe()
         def descriptor(kind, adapter_id, revision):
             entry = next((x for x in descriptors if x['kind'] == kind and x['adapterId'] == adapter_id
-                and x['revision'] == revision and not x['demoOnly']), None)
+                and x['revision'] == revision), None)
             if entry is None:
                 raise HTTPException(409, 'RESEARCH_SETUP_ADAPTER_UNAVAILABLE')
             return entry

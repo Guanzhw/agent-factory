@@ -20,7 +20,7 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 
@@ -83,9 +83,9 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                                    transport=httpx.ASGITransport(app=cls.receiver_app))
         # Operator-installed cyclic fixture connection, before any HTTP request.
         cls.handoff.targets[cls.target.reference] = cls.target
-        cls.origin_client = TestClient(cls.origin_app).__enter__()
+        cls.origin_client = TestClient(cls.origin_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.origin_client.__exit__, None, None, None)
-        cls.receiver_client = TestClient(cls.receiver_app).__enter__()
+        cls.receiver_client = TestClient(cls.receiver_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.receiver_client.__exit__, None, None, None)
 
     def setUp(self):

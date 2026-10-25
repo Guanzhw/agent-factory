@@ -57,7 +57,7 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
     def test_actual_http_owner_and_consent_guards_precede_journal_and_unknown_get_never_rebinds(self):
         env, preview = self.stopped(); actor = ['alice']
         app = FastAPI(); app.include_router(environment_router(SimpleNamespace(user=lambda _: {'id': actor[0]}), self.service))
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             path = '/api/factory/application-environments/' + env['id'] + '/rebind'
             body = {'requestId': 'pg-original-confirm', 'previewHash': preview['previewHash'], 'approved': True}
             actor[0] = 'bob'
@@ -127,7 +127,7 @@ class EnvironmentBindingPostgresTests(unittest.TestCase):
         actor = ['alice']
         app = FastAPI(); app.include_router(environment_router(SimpleNamespace(user=lambda _: {'id': actor[0]}), self.service))
         body = {'requestId': 'pg-restore-generation', 'applicationId': 'fixture-runtime', 'environmentId': created['id']}
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             path = '/api/factory/application-environments/prepare'
             actor[0] = 'bob'
             self.assertEqual(client.post(path, json=body, headers={'X-Factory-Expected-Owner':'alice'}).status_code, 409)

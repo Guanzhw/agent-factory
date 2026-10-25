@@ -194,3 +194,17 @@ P0 独立 core 与移除接缝、P1 身份、P2 消息/离线 QA、P3 事件/有
 截至 main `da783091a4fb77ee656383c57c1407d122dede05`，#104–133 均已合并。正式工作台 #125、问答界面 #130、主动关联 #131、精选成果/继续研究 #132 已合入；最终证据界面 #134 和本验收记录 #135 尚待合并。#134 精确 `505a316504157ce47c177bae38b1a71152bbd3cf` 的当前 main 完整 diff 与原审范围逐字节一致，独立复审 PASS；对应 fast 40215526281 尚待终态。部署没有执行，未配置实际目标主机或暴露入口。
 
 发布更新：#134 已以 `9f349d0438bceb91b873c2c4924ae60fda544326` 合并；精确 head `505a316504157ce47c177bae38b1a71152bbd3cf` 的 [fast40215526281](https://github.com/Guanzhw/agent-factory/actions/runs/40215526281) SUCCESS。最终证据界面已合入，#135 验收记录待合并。完整逐 PR 发布及独立审查范围见[发布索引](research-release-register-20261025.md)，其中历史记录缺失与合并后补审明确区分。最终 main CI 将在交付报告绑定实际合并提交，不用本文自身提交预言未来 SHA。
+
+## 2026-10-25 remote execution source audit correction
+
+P5 remote experiment execution / D01 is **not implemented, not solely blocked on access to real GPU resources**. A subsequent direct
+source audit of `9454000` established an implementation gap: Research
+`rounds.py` calls original delegated custody without remote placement;
+`delegation.py` rejects nonempty placement and uses the local native bridge.
+Research root start supplies no `executionTargetRef`. Core's separate HTTP remote
+handoff branch requires that explicit target and is not wired into this research
+flow. Personal SSH currently provides inspect/prepare, not a research training
+submit/poll/cancel/reattach adapter. Selecting an environment/connection does not
+establish remote GPU execution. Implementing that integration is distinct from
+then validating it on a real target; neither is complete. The earlier local
+P7/P8 results remain valid within their recorded scope.

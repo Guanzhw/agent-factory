@@ -1,4 +1,5 @@
 """Fresh bounded material authority reads on disposable PostgreSQL; no provider calls."""
+from fixture_auth import initialize_members
 import copy
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.execution_bindings import ExecutionBindings
 from agent_factory.material_governance import MaterialGovernance
 from agent_factory.store import Store, digest
@@ -35,7 +36,7 @@ class MaterialGovernanceBulkPostgresTests(unittest.TestCase):
         self.native = PostgresDb(db_url=self.database.url)
         self.addCleanup(self.native.db_engine.dispose)
         self.auth = AuthService(self.settings, self.native)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.store.execution_bindings = ExecutionBindings(self.settings, self.store)
         self.service = MaterialGovernance(self.store, self.auth)
 
@@ -116,7 +117,6 @@ class MaterialGovernanceBulkPostgresTests(unittest.TestCase):
         self.rewrite_fixture(material)
         with self.store.engine.begin() as conn:
             conn.execute(self.service.versions.update().where(self.service.versions.c.material_id == material['id']).values(bootstrap=True))
-        self.settings.demo = False
         with self.assertRaises(HTTPException) as bootstrap:
             self.require(material)
         self.assertIn('bootstrap', str(bootstrap.exception.detail))

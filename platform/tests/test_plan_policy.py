@@ -1,4 +1,6 @@
 """Member execution, original historical reviews and current native boundaries."""
+from fixture_auth import authorize_client
+from fixture_auth import initialize_members
 from contextvars import ContextVar
 import copy
 from datetime import datetime, timezone
@@ -22,7 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, JSON, MetaData, String, Table, create_engine, select
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import FixtureModel as DemoModel
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, ToolContract, plan_policy_router
@@ -92,9 +94,9 @@ class PlanPolicyTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "policy.sqlite"))
-        self.settings = SimpleNamespace(demo=True, jwt_key=secrets.token_urlsafe(48))
+        self.settings = SimpleNamespace(jwt_key=secrets.token_urlsafe(48))
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.store = MetadataFixture(self.db, self.settings)
         self.at = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
         self.service = PlanPolicyService(self.store, self.auth, clock=lambda: self.at)
@@ -166,8 +168,8 @@ class PlanPolicyTests(unittest.TestCase):
                          db=self.db, **self.auth.agentos_kwargs(), mcp=False, scheduler=False, telemetry=False).get_app()
         native.include_router(plan_policy_router(self.auth, self.service))
         original = historical_review(self.service, self.plan, decision="approved")
-        with TestClient(native) as client:
-            headers = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
+        with TestClient(native, base_url="https://testserver") as client:
+            headers = {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
             self.assertEqual(client.get("/api/factory/plan-policy").status_code, 401)
             self.assertEqual(client.post("/api/factory/plan-reviews", json={"planId": self.plan["id"]}, headers=headers).status_code, 410)
             self.assertEqual(client.post("/api/factory/plan-reviews/" + original["id"] + "/decision", json={"approved": True}, headers=headers).status_code, 410)
@@ -211,7 +213,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.service = self.state["plan_policy"]
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.login()
 
     def tearDown(self):
@@ -223,7 +225,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
 
     def login(self, owner="alice"):
         self.client.cookies.clear()
-        response = self.client.post("/api/factory/demo/login", json={"persona": owner})
+        response = authorize_client(self.client, owner)
         self.assertEqual(response.status_code, 200, response.text)
 
     def plan(self, *, mode="literature", goal="Controlled policy research comparison", application="fixture-text"):

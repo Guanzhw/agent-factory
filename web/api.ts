@@ -342,7 +342,6 @@ export const api = {
   events,
   resourceLeases: (after?: string, signal?: AbortSignal) => request<{ leases: unknown[]; nextCursor: string | null }>('/resources/leases' + (after ? '?after=' + encodeURIComponent(after) : ''), 'GET', undefined, signal),
   session: (signal?: AbortSignal) => request<User>('/session', 'GET', undefined, signal),
-  login: (persona: 'manager' | 'alice' | 'bob') => request<User>('/demo/login', 'POST', { persona }),
   logout: () => request<void>('/logout', 'POST'),
   status: (signal?: AbortSignal) => request<FactoryStatus>('/status', 'GET', undefined, signal),
   materials: (signal?: AbortSignal) => request<FactoryMaterial[]>('/materials', 'GET', undefined, signal),

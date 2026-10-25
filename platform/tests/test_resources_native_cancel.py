@@ -5,6 +5,7 @@ storage and cancellation intent. No model, worker, remote host or experiment is
 started. It proves native request compatibility, not Factory-to-Factory dispatch
 or confirmed external process cleanup. Factory native ingress remains closed.
 """
+from fixture_auth import initialize_members
 from pathlib import Path
 import secrets
 from tempfile import TemporaryDirectory
@@ -30,10 +31,10 @@ from agent_factory.resources import NativeAgnoHTTP, RemoteTarget
 class NativeRemoteCancelContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = TemporaryDirectory()
-        self.settings = SimpleNamespace(demo=True, jwt_key=secrets.token_urlsafe(48))
+        self.settings = SimpleNamespace(jwt_key=secrets.token_urlsafe(48))
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "native-cancel.sqlite"))
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         agent = Agent(id="factory-executor", db=self.db, model=DemoModel(), telemetry=False)
         self.app = AgentOS(id="native-cancel-schema-fixture", agents=[agent], db=self.db,
                            **self.auth.agentos_kwargs(), mcp=False, scheduler=False,
@@ -52,7 +53,7 @@ class NativeRemoteCancelContractTests(unittest.IsolatedAsyncioTestCase):
         self.lease = {"remoteRunId": self.run_id, "remoteSessionId": self.session_id}
 
     def bearer(self, owner):
-        return {"Authorization": "Bearer " + self.auth.issue_demo_token(owner)}
+        return {"Authorization": "Bearer " + self.auth._issue_native_token(owner)}
 
     async def asyncTearDown(self):
         await acleanup_run(self.run_id)

@@ -18,7 +18,7 @@ from agno.run import RunContext
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.store import digest
 from core_native_fixture import create_fixture_app
 from pg_fixture import IsolatedPostgres
@@ -43,7 +43,7 @@ class DelegatedOperationsPostgresTests(unittest.TestCase):
         cls.adapter = cls.store.workflow.runtimes[tuple(PIN.values())]
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     setUp = delegation_fixture.DelegationPostgresTests.setUp

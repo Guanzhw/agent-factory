@@ -2,6 +2,7 @@
 
 The fixture decisions test evidence transport and governance, not scientific autonomy.
 """
+from fixture_auth import authorize_client, initialize_members
 import hashlib
 import json
 import os
@@ -20,7 +21,7 @@ from agno.run import RunContext
 from agno.tools import tool
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits, KnowledgeContext
 from agent_factory.usage_ledger import PricingRevision
 from agent_factory_server.main import factory_state
@@ -116,6 +117,7 @@ def fixture_compute(ctx):
 
 
 def publish(state):
+    initialize_members(state['auth'])
     governance, apps = state['material_governance'], state['applications']
     tools = [*FUNCTION_TOOLS, 'factory_wait_operations', 'research_fixture_compute']
     entries = [('model', 'model', MODEL), ('environment', 'environment', 'research-fixture-environment-v1'),
@@ -148,7 +150,7 @@ def settings_for(db_url, workspace, **overrides):
     return Settings(db_url=db_url, workspace=Path(workspace), max_workers=2, max_user_tasks=3,
         max_tool_calls=32, material_review_mode='member-self-service', material_policy_revision='research-fixture-v1',
         temporary_policy='member-self-service', policy_revision='research-fixture-v1', runtime_adapters=[
-            AdapterRegistration('model', MODEL, '1', ResearchModel, demo_only=True),
+            AdapterRegistration('model', MODEL, '1', ResearchModel, ),
             AdapterRegistration('environment', 'research-fixture-environment-v1', '1', lambda ctx: EnvironmentLimits(timeout_seconds=30)),
             AdapterRegistration('knowledge', 'research-fixture-knowledge-v1', '1', lambda ctx: KnowledgeContext('Synthetic', {})),
             AdapterRegistration('tool', 'research-fixture-compute-v1', '1', fixture_compute,
@@ -170,12 +172,12 @@ class ResearchNativeWorkflowTests(unittest.TestCase):
         self.addCleanup(self.state['store'].native_db.db_engine.dispose)
         self.addCleanup(self.state['store'].engine.dispose)
         self.addCleanup(self.state['store'].dispose_root_locks)
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.ref = publish(self.state)
         self.assertEqual(len(self.settings.runtime_adapters), 4)
         self.assertEqual(self.settings.native_workflows, ())
-        self.assertEqual(self.client.post('/api/factory/demo/login', json={'persona': 'alice'}).status_code, 200)
+        self.assertEqual(authorize_client(self.client, 'alice').status_code, 200)
 
     def start(self, objective, *, rounds=1):
         result = self.client.post('/api/factory/research/projects', json={'requestId': 'native-project-create', 'title': 'Native controlled research'})

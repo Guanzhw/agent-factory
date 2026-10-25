@@ -5,7 +5,7 @@ import httpx
 from agno.models.message import Message
 from fastapi import HTTPException
 
-from agent_factory.go_development import MODEL_ADAPTER_IDS
+from fixture_go_development import MODEL_ADAPTER_IDS
 from agent_factory.go_usage import request_guard, pricing_registrations
 from agent_factory.opencode_go import GoDevelopmentModel
 

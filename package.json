@@ -8,9 +8,9 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "dev": "uv run python scripts/dev.py",
+    "dev": "uv run agent-factory",
     "dev:web": "vite --host 127.0.0.1",
-    "start": "uv run python scripts/dev.py",
+    "start": "uv run agent-factory",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint web shared tests *.ts *.js",
@@ -32,7 +32,6 @@
     "@types/react": "19.1.16",
     "@types/react-dom": "19.1.9",
     "@vitejs/plugin-react": "5.0.3",
-    "chart.js": "4.5.1",
     "eslint": "10.11.0",
     "happy-dom": "21.0.4",
     "typescript": "5.9.2",

@@ -1,6 +1,6 @@
-"""Controlled HTTPS mock-login schedule-management browser acceptance.
+"""Controlled test-only HTTPS OIDC schedule-management browser acceptance.
 
-Use only an isolated synthetic Factory. Members submit their own plans directly;
+Starts its own isolated synthetic Factory. Members submit their own plans directly;
 creation defaults to paused and cron dates are far from the fixture clock.
 Native occurrences are triggered explicitly by the existing API in the test
 fixture, never by a production timer or external provider. UI wiring is finalized
@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 
-from accept_app_recovery_browser import capture, json_get, login, lost_reply, origin
+from accept_app_recovery_browser import capture, recovery_fixture, json_get, login, lost_reply
 from accept_material_template_browser import mutation
 
 PREFIX = '/api/factory'
@@ -41,7 +41,7 @@ def prepared_plan(owner_page, label):
     return plan, goal
 
 
-def contexts_for(browser, base, viewport):
+def contexts_for(browser, base, viewport, identity):
     contexts = []
     try:
         for persona in ('manager', 'bob'):
@@ -49,7 +49,7 @@ def contexts_for(browser, base, viewport):
             contexts.append(context)
             page = context.new_page()
             page.set_default_timeout(20000)
-            login(page, base, persona)
+            login(page, base, persona, identity)
         return contexts
     except Exception:
         for context in reversed(contexts):
@@ -123,8 +123,8 @@ def manual_occurrence(page, schedule_id):
     return response['body']
 
 
-def scenario(browser, base, output, name, viewport):
-    contexts = contexts_for(browser, base, viewport)
+def scenario(browser, base, output, name, viewport, identity):
+    contexts = contexts_for(browser, base, viewport, identity)
     owner, foreign = contexts
     manager, bob = [context.pages[0] for context in contexts]
     counts = mutations(manager)
@@ -236,18 +236,19 @@ def scenario(browser, base, output, name, viewport):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base-url', type=origin, required=True)
+    parser.add_argument('--database-url', required=True)
+    parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    evidence = {'evidenceMode': 'controlled-fixture', 'productionSchedule': False, 'screens': []}
+    evidence = {'evidenceMode': 'controlled-fixture', 'productionSchedule': False, 'identity': 'local-synthetic-oidc', 'realIdentityProviderVerified': False, 'screens': []}
     try:
-        with sync_playwright() as playwright:
+        with recovery_fixture(args.database_url, args.dist) as (base, identity, _state), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
                 for name, viewport in (('desktop', {'width': 1440, 'height': 1000}),
                                        ('mobile', {'width': 390, 'height': 844})):
-                    evidence['screens'].append(scenario(browser, args.base_url, args.output_dir, name, viewport))
+                    evidence['screens'].append(scenario(browser, base, args.output_dir, name, viewport, identity))
             finally:
                 browser.close()
         evidence['ok'] = True

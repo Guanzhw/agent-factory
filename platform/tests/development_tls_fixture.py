@@ -1,4 +1,4 @@
-"""Temporary loopback TLS for explicit development mock login only.
+"""Temporary loopback TLS for isolated browser tests only.
 
 No persistent key, system trust installation, certificate renewal or host change.
 """
@@ -15,7 +15,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from .development_identity import validate_development_origin
+def validate_development_origin(value):
+    parsed = urlsplit(value)
+    if (parsed.scheme != "https" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or parsed.path not in {"", "/"}):
+        raise ValueError("Test TLS requires an explicit HTTPS loopback origin")
+    return value
 
 
 @contextmanager
@@ -24,7 +30,7 @@ def temporary_development_tls(public_origin):
     host = urlsplit(public_origin).hostname
     assert host is not None
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Agent Factory DEVELOPMENT MOCK")])
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Agent Factory TEST ONLY")])
     now = datetime.now(timezone.utc)
     alternative = x509.DNSName(host) if host == "localhost" else x509.IPAddress(ipaddress.ip_address(host))
     certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())

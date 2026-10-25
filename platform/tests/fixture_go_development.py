@@ -13,12 +13,12 @@ from typing import Any, Callable
 import httpx
 from fastapi import HTTPException
 
-from .connections import TrustedConnectionBinding
-from .execution_bindings import AdapterRegistration, BindingContext
-from .go_legacy import APPLICATION_ID, MODEL_ADAPTER_IDS, is_go_plan
-from .opencode_go import GoDevelopmentModel, GoLoopbackTransport
-from .go_live import GoLiveCampaign, GoLiveGateError
-from .go_project_campaign import GoProjectCampaign
+from agent_factory.connections import TrustedConnectionBinding
+from agent_factory.execution_bindings import AdapterRegistration, BindingContext
+from agent_factory.go_legacy import APPLICATION_ID, MODEL_ADAPTER_IDS, is_go_plan
+from agent_factory.opencode_go import GoDevelopmentModel, GoLoopbackTransport
+from agent_factory.go_live import GoLiveCampaign, GoLiveGateError
+from agent_factory.go_project_campaign import GoProjectCampaign
 
 PROFILE_REVISION = "go-development-v1"
 PROVIDER_ADAPTER_ID = "go-development-provider-v1"
@@ -81,12 +81,10 @@ def stable_session(context: Any) -> str:
 
 def preflight(handle: GoDevelopmentHandle, *, session_id: str, model_id: str, settings: Any, owner_id: str | None = None) -> dict[str, str]:
     """Fresh billing authorization before credentials/network; default denies."""
-    if getattr(settings, "development_profile", "disabled") != "opencode-go" or getattr(settings, "demo", False) is not True:
-        raise HTTPException(409, "GO_DEVELOPMENT_DISABLED: explicit demo development profile is required")
     if model_id not in MODEL_ADAPTER_IDS or not isinstance(handle, GoDevelopmentHandle):
         raise HTTPException(409, "GO_DEVELOPMENT_BINDING: exact trusted development model is required")
     if handle.mode == "subscription":
-        if handle.live_campaign is None or getattr(settings, "development_live_validation", False) is not True:
+        if handle.live_campaign is None:
             raise HTTPException(409, "GO_LIVE_VALIDATION_PENDING: explicit bounded live campaign required")
         try:
             handle.live_campaign.preflight(model_id, owner_id)
@@ -182,7 +180,7 @@ def model_registrations(*, revision="1") -> list[AdapterRegistration]:
                 live_campaign=handle.live_campaign)
         return create
     return [AdapterRegistration("model", adapter, revision, factory(model), connection_kind="model",
-        required_capabilities=(CAPABILITY,), validator=validate, demo_only=True, connection_adapter_ref=PROVIDER_ADAPTER_ID)
+        required_capabilities=(CAPABILITY,), validator=validate, connection_adapter_ref=PROVIDER_ADAPTER_ID)
         for model, adapter in MODEL_ADAPTER_IDS.items() if revision == "1" or model == "gpt-6-luna"]
 
 

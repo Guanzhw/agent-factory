@@ -1,4 +1,4 @@
-"""Operator-only bounded Go acceptance. Never invoked by tests or application startup.
+"""Test-only bounded Go runner contracts; excluded from product installation.
 
 Requires an explicit current account-setting attestation and a fresh, fixed evidence
 path. Existing campaigns are inspection-only; this script never resets authority.
@@ -6,6 +6,7 @@ Only the credential callback reads OPENCODE_GO, immediately before authorized HT
 """
 from __future__ import annotations
 
+from fixture_auth import authorize_client
 import argparse
 import asyncio
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -14,7 +15,6 @@ import io
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -22,15 +22,14 @@ from uuid import uuid4
 from agno.models.message import Message
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
-from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
+from fixture_settings import Settings
+from fixture_go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
 from agent_factory.go_diagnostics import safe_diagnostic
 # Explicit acceptance fixtures only; normal deployment remains application-free.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'platform/tests'))
 from core_native_fixture import create_fixture_app
-from agent_factory.go_development import model_registrations, MODEL_ADAPTER_IDS
+from fixture_go_development import model_registrations, MODEL_ADAPTER_IDS
 from agent_factory.go_usage import pricing_registrations
 from agent_factory_server.shutdown import shutdown_guard
 from agent_factory.opencode_go import GoDevelopmentModel
@@ -90,7 +89,7 @@ def run(args):
             handle = GoDevelopmentHandle(mode="subscription", credential=credential,
                 wire_stream=True, native_retries=0, live_campaign=campaign)
             settings = Settings(db_url=args.database_url, workspace=root / "factory",
-                development_profile="opencode-go", development_live_validation=True,
+                
                 max_workers=1, max_tool_calls=1, temporary_policy="member-self-service",
                 policy_revision="go-live-policy-v1", material_policy_revision="go-live-material-v1",
                 runtime_tool_contract="legacy-v1", fee_management_enabled=True,
@@ -104,7 +103,7 @@ def run(args):
             store = state["store"]
             stack.callback(store.engine.dispose)
             stack.callback(store.native_db.db_engine.dispose)
-            client = stack.enter_context(TestClient(application))
+            client = stack.enter_context(TestClient(application, base_url="https://testserver"))
 
             def post(url, body, status):
                 response = client.post(url, json=body)
@@ -113,7 +112,7 @@ def run(args):
 
             def login(owner):
                 client.cookies.clear()
-                post("/api/factory/demo/login", {"persona": owner}, 200)
+                authorize_client(client, owner).raise_for_status()
 
             models = publish_go_development_models(state, author="alice")
             seeds = store.materials(published_only=True)

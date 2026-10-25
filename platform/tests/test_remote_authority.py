@@ -25,7 +25,7 @@ import httpx
 from pydantic import ValidationError
 import uvicorn
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import TrustedConnectionBinding
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration

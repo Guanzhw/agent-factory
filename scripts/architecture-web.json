@@ -14,20 +14,12 @@
         "web/apps/research/ResearchWorkspace.tsx"
       ],
       "path": "web/apps/research"
-    },
-    "research-demo": {
-      "public": [
-        "web/apps/research-demo/ResearchDemo.tsx"
-      ],
-      "path": "web/apps/research-demo"
     }
   },
   "composition_roots": [
     "web/composition.tsx",
     "web/main.tsx",
     "web/research-composition.tsx",
-    "web/research-main.tsx",
-    "web/research-demo-composition.tsx",
-    "web/research-demo-main.tsx"
+    "web/research-main.tsx"
   ]
 }

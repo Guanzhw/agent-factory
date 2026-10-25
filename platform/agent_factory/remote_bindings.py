@@ -213,11 +213,7 @@ class RemoteBindingService:
                 visited.add(key)
                 raw_binding = material.get("runtimeBinding")
                 if raw_binding is None:
-                    legacy = self.bindings.legacy_bindings.get(material["id"])
-                    seed = next((item for item in self.bindings.legacy_materials if item[0] == material["id"]), None)
-                    if not self.store.settings.demo or legacy is None or legacy[0] != kind or seed is None or material.get("content") != seed[3]:
-                        raise ValueError("Missing explicit source runtime binding")
-                    raw_binding = {"adapterId": legacy[1], "revision": "1", "config": {}}
+                    raise ValueError("Missing explicit source runtime binding")
                 if {key: spec[key] for key in ("adapterId", "revision", "config")} != normalize_runtime_binding(raw_binding):
                     raise ValueError("Original source adapter/config differs from its material")
                 if kind == "tool":

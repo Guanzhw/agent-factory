@@ -3,6 +3,7 @@
 PostgreSQL and native authentication/queue/HITL are real. Provider output is
 synthetic; failure injection is explicitly bounded to these disposable apps.
 """
+from fixture_identity import access_token
 import copy
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from core_native_fixture import create_fixture_app as create_app
 from core_native_fixture import build_tools
@@ -40,7 +41,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         cls.store, cls.auth, cls.bridge = cls.state["store"], cls.state["auth"], cls.state["bridge"]
         cls.addClassCleanup(cls.store.engine.dispose)
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
-        cls.client = TestClient(cls.app).__enter__()
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     def setUp(self):
@@ -65,7 +66,7 @@ class LifecycleObserverPostgresTests(unittest.TestCase):
         return self.client.portal.call(function, *args)
 
     def headers(self):
-        return {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
+        return {"Authorization": "Bearer " + access_token("alice")}
 
     def request(self, method, path, expected=200, **kwargs):
         response = self.client.request(method, "/api/factory" + path, headers=self.headers(), **kwargs)

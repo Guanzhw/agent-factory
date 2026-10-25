@@ -1,4 +1,5 @@
 """Declared personal tools through real PG/Agno/vault; no provider network IO."""
+from fixture_identity import access_token
 import asyncio
 from contextlib import ExitStack
 import json
@@ -17,7 +18,7 @@ from agno.tools.function import FunctionCall
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.main import create_app
@@ -124,7 +125,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
             'test_fresh_services_replay_done_then_revocation_denies_next_native_call' else None)
         self.settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=1,
             temporary_policy='member-self-service', personal_tool_adapters=(self.adapter,),
-            runtime_adapters=[AdapterRegistration('model', MODEL, '1', lambda _: InventoryModel(self.retry_unknown, self.pause), demo_only=True),
+            runtime_adapters=[AdapterRegistration('model', MODEL, '1', lambda _: InventoryModel(self.retry_unknown, self.pause), ),
                 AdapterRegistration('environment', ENVIRONMENT, '1', lambda _: EnvironmentLimits())],
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b't' * 32,
                 {self.adapter.descriptor.credential_provider_id: origin}))
@@ -150,7 +151,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
             generation.callback(self.store.engine.dispose)
             generation.callback(self.store.native_db.db_engine.dispose)
             # LIFO: lifespan/worker exit must finish before either pool disposal.
-            client = generation.enter_context(TestClient(self.app))
+            client = generation.enter_context(TestClient(self.app, base_url="https://testserver"))
             self._generation_stack = generation.pop_all()
             self.client = client
 
@@ -165,7 +166,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
 
     def request(self, method, path, body=None, *, owner='alice', expected=200):
         response = self.client.request(method, '/api/factory' + path, json=body,
-            headers={'Authorization': 'Bearer ' + self.auth._issue_native_token(owner),
+            headers={'Authorization': 'Bearer ' + access_token(owner),
                 'X-Factory-Expected-Owner': owner})
         self.assertEqual(response.status_code, expected, response.text)
         self.assertNotIn('synthetic-inventory-secret-', response.text)

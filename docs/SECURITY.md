@@ -1,6 +1,6 @@
 # Security and deployment assumptions
 
-This milestone runs an explicitly synthetic, loopback-only demo. It grants no external access and changes no account credentials. Use a separate production database; the store refuses demo/production mode reuse. Demo identity and the fixture database's loopback trust authentication must never be exposed to a department network.
+Product startup has no demo identity or synthetic login mode. Existing signing configuration, enabled member accounts and a configured external identity path are required. Old demo database markers are rejected without migration or deletion. Test-only synthetic identity providers are not shipped as runtime authentication.
 
 ## Trust boundaries
 
@@ -86,5 +86,5 @@ after cancel/restart; a process-stop receipt is not an authoritative usage bill.
 Trusted usage parsers and request guards are required for a future paid adapter;
 synthetic prices and controlled providers verify only the accounting mechanics.
 No paid call, production credential, access grant or deployment is authorized
-or performed by this milestone. The isolated opt-in demo creates only its own
+or performed by this milestone. Historical isolated fixtures created only their own
 generated native principals and distinct publication reviewer.

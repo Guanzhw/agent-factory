@@ -7,6 +7,7 @@ inert sleep fixture. No HTTP cancellation is used after authorization is revoked
 """
 from __future__ import annotations
 
+from fixture_auth import authorize_client
 from copy import deepcopy
 import os
 import sys
@@ -26,7 +27,7 @@ if str(TESTS) not in sys.path:
 from fastapi.testclient import TestClient
 from agno.db.base import SessionType
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.applications import ApplicationDefinition
 from agent_factory.material_governance import MaterialDefinition
@@ -71,7 +72,7 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
         store = self.app.app.state.factory["store"]
         self.addCleanup(store.native_db.db_engine.dispose)
         self.addCleanup(store.engine.dispose)
-        client = TestClient(self.app)
+        client = TestClient(self.app, base_url="https://testserver")
         self.client = client.__enter__()
         self.addCleanup(client.__exit__, None, None, None)
         self.state = self.app.app.state.factory
@@ -91,7 +92,7 @@ class ActiveComputeAuthorityPostgresTests(unittest.TestCase):
         owned = self.state['applications'].create_draft('alice', definition, uuid4().hex)
         self.state['applications'].publish('alice', owned['id'], owned['version'], uuid4().hex)
         self.application_id = owned['id']
-        self.client.post("/api/factory/demo/login", json={"persona": "alice"})
+        authorize_client(self.client, "alice")
         self.task_id = None
 
     def tearDown(self):

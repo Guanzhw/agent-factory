@@ -18,7 +18,7 @@ import httpx
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
 
-from agent_factory.go_development import MODEL_ADAPTER_IDS
+from fixture_go_development import MODEL_ADAPTER_IDS
 from agent_factory.go_live import GoLiveCampaign
 from agent_factory.go_single_smoke import GoSingleSmokeCampaign
 from agent_factory.go_usage import go_response_usage, pricing_registrations

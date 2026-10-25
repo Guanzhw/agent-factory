@@ -27,28 +27,15 @@ def _abort_shared_store(store):
             except Exception:
                 pass  # Preserve the original constructor error.
 
-def native_queue_attempts(settings):
-    # Go already owns bounded provider retries and UNKNOWN usage custody.
-    # A second native job attempt must not create another paid request after
-    # a failed/ambiguous model call. This responsibility does not belong to an app.
-    return 1 if settings.development_profile == 'opencode-go' or settings.development_live_validation else 2
-
 
 def create_app(settings=None, *, diagnostics=None, applications=None):
     applications = validate_applications(() if applications is None else applications)
     settings = copy(settings or Settings.from_env())
-    if settings.development_profile == 'opencode-go':
-        # Explicit operator development selection, never loaded by the core.
-        from agent_factory.go_development import model_registrations, MODEL_ADAPTER_IDS
-        from agent_factory.go_usage import pricing_registrations
-        settings.runtime_adapters = [*settings.runtime_adapters, *model_registrations()]
-        # Keep explicit operator pricing overrides last.
-        settings.usage_pricing = (*pricing_registrations(MODEL_ADAPTER_IDS), *settings.usage_pricing)
     app = create_core_app(settings, diagnostics=diagnostics,
         lifespan_context=application_lifespan(applications),
         shutdown_callback=lambda state: release_applications(state, applications),
         shutdown_guard=shutdown_guard,
-        queue_max_attempts=native_queue_attempts(settings))
+        queue_max_attempts=2)
     state = factory_state(app)
     state.update(shutdown_failed=shutdown_failed)
     try:

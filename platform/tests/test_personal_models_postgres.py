@@ -1,4 +1,5 @@
 """Real isolated PG, native AgentOS queue, owner identity and fake provider only."""
+from fixture_identity import access_token
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 import httpx
 
 from agent_factory.byok_model import ADAPTER_ID, PROVIDER_ID
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.personal_remote_provider import origin
@@ -149,11 +150,11 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob')}
+        self.tokens = {owner: access_token(owner) for owner in ('alice', 'bob')}
         self.addCleanup(self.store.engine.dispose); self.addCleanup(self.store.native_db.db_engine.dispose)
         self.auth.directory.upsert('fixture-reviewer', name='Synthetic template publisher')
         publish_owner_application(self.state, author='manager')
-        self.client = TestClient(self.app); self.client.__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
+        self.client = TestClient(self.app, base_url="https://testserver"); self.client.__enter__(); self.addCleanup(self.client.__exit__, None, None, None)
 
     def request(self, method, path, body=None, *, owner='alice', expected=200, expected_owner=None):
         response = self.client.request(method, '/api/factory' + path, json=body,
@@ -232,14 +233,13 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         # A separate production core starts empty; fixture registrations and
         # applications are supplied only by this test's explicit composition.
         with IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']) as production_db, TemporaryDirectory() as directory:
-            production = create_core_app(Settings(db_url=production_db.url, demo=False,
-                jwt_key='synthetic-production-fixture-signing-key', workspace=Path(directory)))
+            production = create_core_app(Settings(db_url=production_db.url, jwt_key='synthetic-production-fixture-signing-key', workspace=Path(directory)))
             state = production.app.state.factory
             production_store, production_auth = state['store'], state['auth']
             try:
                 production_auth.directory.upsert('fixture-owner', name='Synthetic production owner')
-                headers = {'Authorization': 'Bearer ' + production_auth._issue_native_token('fixture-owner')}
-                with TestClient(production) as client:
+                headers = {'Authorization': 'Bearer ' + access_token('fixture-owner')}
+                with TestClient(production, base_url="https://testserver") as client:
                     response = client.post('/api/factory/application-interface/v1/starts', headers=headers,
                         json={'application': 'fixture-owner-checksum', 'mode': 'literature',
                             'goal': 'Do not substitute fixture applications', 'requestId': 'production-no-fixtures'})

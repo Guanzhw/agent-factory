@@ -1,11 +1,10 @@
-"""Read-only schedule diagnostics acceptance against isolated mock-login HTTPS.
+"""Read-only schedule diagnostics acceptance against isolated synthetic OIDC HTTPS.
 
 Fixture preparation may call the real native scheduling admission service with
 controlled claims. Those actions are never represented as a production timer or
 UI trigger. Diagnostics must come from persisted admission records; this harness
 never fabricates API responses or stores browser credentials/traces.
 """
-import argparse
 from collections import Counter
 from pathlib import Path
 import traceback
@@ -13,20 +12,20 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 import json
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
-from accept_app_recovery_browser import capture, json_get, origin
+from accept_app_recovery_browser import capture, json_get, login
 from accept_schedule_management_browser import (
-    CREATE_CRON, TIMEZONE, approved_plan, change, contexts_for, preview,
+    CREATE_CRON, TIMEZONE, prepared_plan, change, preview,
 )
 
 PREFIX = '/api/factory'
 
 
-def create_paused_schedule(page, reviewer, label):
-    """Only normal UI controls create the reviewed immutable-plan schedule."""
-    plan, _goal = approved_plan(page, reviewer, label)
-    page.get_by_role('button', name='用此已批准方案设置计划任务', exact=True).click()
+def create_paused_schedule(page, label):
+    """Only normal UI controls create the owner-authorized immutable-plan schedule."""
+    plan, _goal = prepared_plan(page, label)
+    page.get_by_role('button', name='用此方案设置计划任务', exact=True).click()
     panel = page.get_by_role('region', name='计划任务', exact=True)
     schedule_name = '计划拒绝诊断 ' + label + ' ' + uuid4().hex[:10]
     panel.get_by_label('计划任务名称', exact=True).fill(schedule_name)
@@ -105,16 +104,25 @@ def diagnostics(context, base, schedule_id):
     return result
 
 
-def scenario(browser, base, output, name, viewport, *, prepare=None, schedule_id=None):
+def scenario(browser, base, output, name, viewport, *, identity, prepare=None, schedule_id=None):
     """prepare is an isolated-fixture callback, never a production API endpoint.
 
     It receives the UI-created schedule and returns evidence of real persisted
     admission refusals; it must never submit a successful native occurrence.
     Without it, the CLI verifies a previously prepared synthetic schedule only.
     """
-    contexts = contexts_for(browser, base, viewport)
-    owner, reviewer, foreign = contexts
-    page, review_page, bob = [context.pages[0] for context in contexts]
+    contexts = []
+    try:
+        for member in ('manager', 'bob'):
+            context = browser.new_context(ignore_https_errors=True, viewport=viewport)
+            contexts.append(context)
+            login(context.new_page(), base, member, identity)
+    except Exception:
+        for context in reversed(contexts):
+            context.close()
+        raise
+    owner, foreign = contexts
+    page = owner.pages[0]
     stage, counts, observer = 'fixture-preparation', Counter(), None
     page_errors, console_errors = [], []
     page.on('pageerror', lambda _error: page_errors.append('PAGE_ERROR'))
@@ -125,7 +133,7 @@ def scenario(browser, base, output, name, viewport, *, prepare=None, schedule_id
     try:
         fixture_evidence = None
         if prepare is not None:
-            schedule = create_paused_schedule(page, review_page, name)
+            schedule = create_paused_schedule(page, name)
             schedule_id = schedule['id']
             fixture_evidence = prepare(schedule)
             assert fixture_evidence['method'] == 'controlled-native-admission-not-ui-timer'
@@ -196,31 +204,9 @@ def select_diagnostic_schedule(panel, schedule_id):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base-url', type=origin, required=True)
-    parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--schedule-id', required=True,
-                        help='Existing controlled fixture schedule with real retained refusals')
-    args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=False)
-    evidence = {'evidenceMode': 'controlled-fixture', 'productionSchedule': False, 'screens': []}
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            try:
-                for name, viewport in (('desktop', {'width': 1440, 'height': 1000}),
-                                       ('mobile', {'width': 390, 'height': 844})):
-                    evidence['screens'].append(scenario(browser, args.base_url, args.output_dir,
-                        name, viewport, schedule_id=args.schedule_id))
-            finally:
-                browser.close()
-        evidence['ok'] = True
-    except Exception:
-        evidence['ok'] = False
-    (args.output_dir / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
-    print(json.dumps({'ok': evidence['ok'], 'screens': len(evidence['screens'])}))
-    if not evidence['ok']:
-        raise SystemExit('SCHEDULE_DIAGNOSTICS_BROWSER_FAILED')
+    # The executable entrypoint owns its synthetic identity provider and database.
+    from run_schedule_diagnostics_acceptance import main as run
+    raise SystemExit(run())
 
 
 if __name__ == '__main__':

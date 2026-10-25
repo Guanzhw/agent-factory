@@ -4,6 +4,8 @@ Portable cases use owned SQLite metadata (not queue/concurrency evidence).
 Opt-in PostgreSQL cases use the wired Factory HTTP/native executor and generated
 databases. All identities, models, materials and execution are synthetic fixtures.
 """
+from fixture_auth import authorize_client
+from fixture_auth import initialize_members
 from contextlib import contextmanager
 from contextvars import ContextVar
 import copy
@@ -27,13 +29,13 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 
 from agent_factory.applications import ApplicationService, application_router
 from agent_factory.auth import AuthService
-from agent_factory.catalog import create_plan, seed_catalog
-from core_native_fixture import governed_fixture_definitions
-from core_native_fixture import SEEDS, all_fixture_definitions as all_demo_definitions
+from agent_factory.catalog import create_plan
+from core_native_fixture import publish_fixture_materials, publish_fixture_applications
+from core_native_fixture import all_fixture_definitions as all_demo_definitions
 from agent_factory.composition import CompositionService, composition_router
 from agent_factory.connections import ConnectionService
 from agent_factory.personal_tools import ConfigureResourceRequest, PersonalTools
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from core_native_fixture import fixture_bindings as default_bindings
@@ -123,19 +125,19 @@ class ApplicationCompositionFixture(unittest.TestCase):
         self.addCleanup(self.db.db_engine.dispose)
         self.settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url="sqlite://", workspace=Path(self.directory.name))
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         # Explicitly owned test subjects/roles; no production grants are touched.
         self.auth.account_roles.unassign("bob", "factory-user")
         self.auth.account_roles.assign("bob", "factory-manager")
         self.store = PortableCompositionStore(self.db, self.settings)
-        seed_catalog(self.store, SEEDS)
         self.store.material_governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(
-            review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
+            review_mode="member-self-service", revision="material-governance-v1"))
         self.bindings = default_bindings(self.settings, self.store, None)
         self.store.execution_bindings = self.bindings
         self.applications = ApplicationService(self.store, self.auth)
-        self.applications.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
         self.store.applications = self.applications
+        publish_fixture_materials(self.store)
+        publish_fixture_applications(self.store, all_demo_definitions)
         self.composition = CompositionService(self.store, self.auth, self.applications, self.bindings, None)
         self.store.composition = self.composition
 
@@ -355,7 +357,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
         self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], application)
         restarted = ApplicationService(self.store, self.auth)
-        restarted.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
+        publish_fixture_applications(self.store, all_demo_definitions)
         with self.assertRaises(HTTPException):
             restarted.require_current(pin(application))
 
@@ -395,35 +397,28 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         with self.assertRaises(HTTPException):
             self.composition.accept("alice", proposal["id"], "after-rights-revoked")
 
-    def test_legacy_pin_is_explicit_exact_demo_only_and_never_implicitly_adopted(self):
-        plan = create_plan(self.store, "alice", "Checksum historical fixture", "literature", "fixture-checksum")
-        legacy = {k: v for k, v in plan.items() if k not in {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}}
-        legacy["syntheticFixture"] = True
-        legacy["id"] = str(uuid4())
+    def test_legacy_plan_is_readable_but_never_adopted_for_execution(self):
+        plan = create_plan(self.store, 'alice', 'Checksum historical fixture', 'literature', 'fixture-checksum')
+        legacy = {k: v for k, v in plan.items() if k not in {'applicationRef', 'executionBindings', 'bindingManifest', 'compositionProposalId'}}
+        legacy['syntheticFixture'] = True
+        legacy['id'] = str(uuid4())
         self.store.save_plan(legacy)
         with self.assertRaises(HTTPException):
             self.bindings.manifest(legacy)
-        proof = self.applications.adopt_legacy_demo_plan(legacy)
-        self.assertFalse(proof["productionAllowed"])
-        with self.assertRaises(HTTPException) as no_reconstruction:
-            self.bindings.manifest(legacy)
-        self.assertEqual(no_reconstruction.exception.status_code, 409)
-        self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
-        self.applications.require_plan_current(legacy)
-        with self.assertRaises(HTTPException):
-            self.applications.require_legacy_demo_plan({**legacy, "normalizedGoal": "Changed historical intent"})
-        self.settings.demo = False
-        with self.assertRaises(HTTPException):
+        with self.assertRaises(HTTPException) as rejected:
             self.applications.require_plan_current(legacy)
+        self.assertEqual(rejected.exception.detail, 'APPLICATION_PIN_REQUIRED')
+        self.assertEqual(self.store.plan(legacy['id'], 'alice'), legacy)
+        self.assertFalse(hasattr(self.applications, 'adopt_legacy_demo_plan'))
 
     def test_actual_native_authenticated_routers_forbid_body_identity_and_model_grants(self):
         native = AgentOS(id="owned-composition-router", agents=[Agent(id="factory-executor", db=self.db, model=DemoModel(), telemetry=False)],
                          db=self.db, **self.auth.agentos_kwargs(), mcp=False, scheduler=False, telemetry=False).get_app()
         native.include_router(application_router(self.auth, self.applications))
         native.include_router(composition_router(self.auth, self.composition))
-        with TestClient(native) as client:
-            alice = {"Authorization": "Bearer " + self.auth.issue_demo_token("alice")}
-            manager = {"Authorization": "Bearer " + self.auth.issue_demo_token("manager")}
+        with TestClient(native, base_url="https://testserver") as client:
+            alice = {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
+            manager = {"Authorization": "Bearer " + self.auth._issue_native_token("manager")}
             path = "/api/factory/compositions/proposals"
             self.assertEqual(client.get("/api/factory/applications").status_code, 401)
             self.assertEqual(client.post("/api/factory/applications/drafts", headers=alice, json={"definition": app_definition(self.store), "requestId": "user-draft"}).status_code, 201)
@@ -455,7 +450,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state["store"], self.state["auth"]
         self.apps, self.composition = self.state["applications"], self.state["composition"]
         self.assertIs(self.store.composition, self.composition)
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
 
     def stop(self):
         if getattr(self, "client", None):
@@ -466,7 +461,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
 
     def login(self, owner):
         self.client.cookies.clear()
-        response = self.client.post("/api/factory/demo/login", json={"persona": owner})
+        response = authorize_client(self.client, owner)
         self.assertEqual(response.status_code, 200, response.text)
 
     def publish_http(self):
@@ -550,7 +545,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
             other_app = create_app(other_settings)
             other_state = other_app.app.state.factory
             try:
-                with TestClient(other_app):
+                with TestClient(other_app, base_url="https://testserver"):
                     first = {application["id"]: pin(application) for application in self.apps.list_active("alice")}
                     second = {application["id"]: pin(application) for application in other_state["applications"].list_active("alice")}
                     self.assertEqual(first, second)
@@ -568,11 +563,10 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         legacy["id"] = str(uuid4())
         legacy["fingerprint"] = digest({key: value for key, value in legacy.items() if key not in {"id", "createdAt", "fingerprint"}})
         self.store.save_plan(legacy)
-        self.apps.adopt_legacy_demo_plan(legacy)
         self.login("alice")
         rejected = self.client.post("/api/factory/instances", json={"planId": legacy["id"], "requestId": "legacy-native-instance"})
         self.assertEqual(rejected.status_code, 409, rejected.text)
-        self.assertIn("BINDING_MANIFEST_REQUIRED", rejected.text)
+        self.assertIn("APPLICATION_PIN_REQUIRED", rejected.text)
         self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
         for changed in ({"instructions": ["Changed after adoption"]}, {"unexpected": "silently stripped value"}):
             with self.subTest(changed=changed), self.assertRaises(HTTPException):
@@ -610,7 +604,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
             registrations = [AdapterRegistration("environment", "owned-environment-v1", "1", forbidden_factory),
                              AdapterRegistration("tool", "owned-checksum-v1", "1", forbidden_factory, tool_name="checksum", permissions=("checksum:read",)),
                              AdapterRegistration("knowledge", "owned-knowledge-v1", "1", forbidden_factory)]
-            settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=database.url, demo=False, jwt_key=self.settings.jwt_key,
+            settings = Settings(material_review_mode="member-self-service", material_policy_revision="material-governance-v1", db_url=database.url, jwt_key=self.settings.jwt_key,
                                 workspace=Path(directory), runtime_adapters=registrations, max_workers=1)
             app = create_app(settings)
             state = app.app.state.factory
@@ -638,7 +632,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                     "modes": {"literature": {"materialRefs": [pin(material) for material in materials], "capabilities": ["checksum:read"], "toolOrder": ["checksum"]}}}
                 application = state["applications"].create_draft("owned-author", definition, "prod-app")
                 state["applications"].publish("owned-author", application["id"], 1, "prod-app-publish")
-                with TestClient(app) as client:
+                with TestClient(app, base_url="https://testserver") as client:
                     headers = {"Authorization": "Bearer " + auth._issue_native_token("owned-user")}
                     proposal = client.post("/api/factory/compositions/proposals", headers=headers, json={"goal": "Controlled production-mode fixture with no provider calls", "applicationRef": pin(application), "requestId": "prod-proposal"})
                     self.assertEqual(proposal.status_code, 201, proposal.text)

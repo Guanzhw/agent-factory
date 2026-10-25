@@ -4,6 +4,7 @@ The deterministic model is an explicit fixture. These tests verify admission,
 held capacity and cancellation, not twenty CPU workers or production throughput.
 Subjects and native grants exist only inside the generated test database.
 """
+from fixture_identity import access_token
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import MetaData, Table, create_engine, func, inspect, select, text
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -41,8 +42,8 @@ class CapacityPostgresTests(unittest.TestCase):
         cls.users = [f"fixture-capacity-{index:02d}" for index in range(20)]
         for index, owner in enumerate(cls.users):
             cls.auth.directory.upsert(owner, name=f"Synthetic capacity user {index:02d}")
-        cls.tokens = {owner: cls.auth._issue_native_token(owner) for owner in cls.users}
-        cls.client = TestClient(cls.app).__enter__()
+        cls.tokens = {owner: access_token(owner) for owner in cls.users}
+        cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
     def tearDown(self):

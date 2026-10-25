@@ -26,7 +26,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from accept_browser_auth import listener, serve
 from agent_factory.browser_oidc import BrowserCodeExchanger
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory_server.main import create_app, factory_state
 from browser_identity_fixture import BrowserIdentityFixture, private_tls_files
 from pg_fixture import IsolatedPostgres

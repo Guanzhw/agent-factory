@@ -36,10 +36,10 @@ def create_approval_fixture_app(settings, *, source=None):
     """Explicit v1 contract fixture, not compute-pool/provider compatibility."""
     settings.runtime_tool_contract = 'bounded-process-v1'
     settings.runtime_adapters = [*settings.runtime_adapters,
-        AdapterRegistration('model', APPROVAL_MODEL, '1', lambda _: ApprovalFixtureModel(id=APPROVAL_MODEL), demo_only=True),
+        AdapterRegistration('model', APPROVAL_MODEL, '1', lambda _: ApprovalFixtureModel(id=APPROVAL_MODEL), ),
         AdapterRegistration('tool', APPROVAL_TOOL, '1',
             lambda context: build_tools(context.settings, context.store, operation_name='bounded_process_run')['bounded_process_run'],
-            tool_name='bounded_process_run', permissions=('compute:local',), demo_only=True)]
+            tool_name='bounded_process_run', permissions=('compute:local',), )]
     settings.usage_pricing = (*settings.usage_pricing,
         PricingRevision(APPROVAL_MODEL, '1', 'controlled-fixture', APPROVAL_MODEL,
                         'fixture-zero-local-v1', local_model_type=ApprovalFixtureModel))

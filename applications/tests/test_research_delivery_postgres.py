@@ -1,4 +1,5 @@
 """Real native Workflow/MemberCliAdapter and PG; model choices are synthetic."""
+from fixture_auth import authorize_client
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from io import BytesIO
@@ -121,7 +122,7 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
         self.assertEqual(selection['provenance']['materialRef'], self.material)
         self.assertEqual(len(selection['artifacts']), 3)
         self.assertIn('UNSELECTED_PRIVATE_CANARY', json.dumps(self.state['store'].effects(child_id)))
-        self.client.post('/api/factory/demo/login', json={'persona': 'bob'})
+        authorize_client(self.client, 'bob')
         self.assertEqual(self.client.get('/api/factory/jobs/' + child_id).status_code, 404)
         path = '/api/factory/research/deliveries/' + manifest['id']
         response = self.client.get(path + '/download')

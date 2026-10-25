@@ -68,13 +68,10 @@ def scenario(browser, origin, output, mode, identity, viewport):
         else:
             console_errors.append({'text': message.text, 'url': url.removeprefix(origin)})
     page.on('console', console)
-    login_name = '选择开发测试身份' if mode == 'demo' else '使用企业账号登录'
+    login_name = '使用企业账号登录'
     def login(owner):
-        if identity:
-            identity.subject = 'subject-' + owner
+        identity.subject = 'subject-' + owner
         page.get_by_role('button', name=login_name, exact=True).click()
-        if mode == 'demo':
-            page.locator(f'button[name="persona"][value="{owner}"]').click()
         expect(page.locator('.rw-identity')).to_be_visible()
         assert context.request.get(origin + '/api/factory/session').json()['id'] == owner
     def post(path, value, expected):
@@ -191,34 +188,29 @@ def run_mode(browser, args, mode):
         app_socket = listener()
         stack.callback(app_socket.close)
         origin = 'https://127.0.0.1:' + str(app_socket.getsockname()[1])
-        identity = None
-        options = {'development_mock_login': True, 'development_public_origin': origin} if mode == 'demo' else {}
-        if mode != 'demo':
-            idp_socket = listener(); stack.callback(idp_socket.close)
-            identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
-            options['browser_oidc'] = identity.config()
-        settings = settings_for(database.url, scratch / 'workspace', demo=mode == 'demo',
+        idp_socket = listener(); stack.callback(idp_socket.close)
+        identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
+        settings = settings_for(database.url, scratch / 'workspace',
             jwt_key='synthetic-research-browser-signing-key-at-least-32bytes', web_directory=args.dist.resolve(),
-            owner_model_transport_factory=lambda: httpx.MockTransport(model_wire), **options)
+            owner_model_transport_factory=lambda: httpx.MockTransport(model_wire), browser_oidc=identity.config())
         app = create_app(settings); state = factory_state(app); store = state['store']
         stack.callback(store.engine.dispose); stack.callback(store.native_db.db_engine.dispose)
         stack.callback(store.dispose_root_locks)
-        if identity:
-            state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(),
-                transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
-            for owner in ('alice', 'bob'):
-                state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
-            serve(stack, identity.app, idp_socket, certificate, key)
+        state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(),
+            transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
+        for owner in ('alice', 'bob'):
+            state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
+        serve(stack, identity.app, idp_socket, certificate, key)
         serve(stack, app, app_socket, certificate, key)
         governance = state['material_governance']
         tool = governance.create_draft('alice', {'id': 'browser-synthetic-compute', 'kind': 'tool',
             'name': 'research_fixture_compute', 'content': 'research_fixture_compute',
             'permissions': [PERMISSION], 'runtimeBinding': {'adapterId': 'research-fixture-compute-v1', 'revision': '1', 'config': {}}}, 'browser-tool-draft')
         governance.publish('alice', tool['id'], tool['version'], 'browser-tool-publish')
-        viewport = {'width': 1487, 'height': 1058} if mode == 'demo' else {'width': 390, 'height': 844}
+        viewport = {'width': 1487, 'height': 1058} if mode == 'desktop' else {'width': 390, 'height': 844}
         result = scenario(browser, origin, output, mode, identity, viewport)
         return {'mode': mode, 'database': database.name, 'businessAPIsMocked': False,
-            'identity': 'development-selector' if mode == 'demo' else 'local-synthetic-oidc', 'result': result}
+            'identity': 'local-synthetic-oidc', 'result': result}
 
 
 def main():
@@ -226,12 +218,12 @@ def main():
     parser.add_argument('--database-url', required=True)
     parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--mode', choices=('demo', 'production-local', 'both'), default='both')
+    parser.add_argument('--viewport', choices=('desktop', 'mobile', 'both'), default='both')
     args = parser.parse_args(); args.output.mkdir(parents=True, exist_ok=False)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', headless=True)
         try:
-            results = [run_mode(browser, args, mode) for mode in (('demo', 'production-local') if args.mode == 'both' else (args.mode,))]
+            results = [run_mode(browser, args, mode) for mode in (('desktop', 'mobile') if args.viewport == 'both' else (args.viewport,))]
             (args.output / 'evidence.json').write_text(json.dumps({'ok': True, 'results': results}, indent=2))
         finally:
             browser.close()

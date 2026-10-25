@@ -3,6 +3,7 @@
 All provider output and prices are controlled original fixtures. No provider
 network, real credentials, paid calls, or production grants are involved.
 """
+from fixture_auth import initialize_members
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -24,7 +25,7 @@ from agno.run.agent import RunOutput
 from fastapi import HTTPException
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.delegation import DelegationService
 from core_native_fixture import FixtureModel as DemoModel
 from core_native_fixture import fixture_bindings as default_bindings, fixture_zero_prices as default_zero_prices
@@ -110,7 +111,7 @@ class UsageLedgerPostgresTests(unittest.TestCase):
         self.addCleanup(self.db.db_engine.dispose)
         self.store.native_db = self.db
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.store.auth = self.auth
         self.records, self.options = [], {}
         self.bindings = default_bindings(self.settings, self.store)

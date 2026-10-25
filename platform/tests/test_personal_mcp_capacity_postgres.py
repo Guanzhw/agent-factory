@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 from mcp import ClientSession
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.personal_mcp import MCPToolAdapter, _InvocationState
@@ -327,7 +327,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
             db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=1,
             temporary_policy='member-self-service', personal_tool_adapters=(self.adapter,),
             runtime_adapters=[
-                AdapterRegistration('model', native_fixture.MODEL, '1', lambda _: EchoModel(), demo_only=True),
+                AdapterRegistration('model', native_fixture.MODEL, '1', lambda _: EchoModel(), ),
                 AdapterRegistration('environment', native_fixture.ENVIRONMENT, '1', lambda _: EnvironmentLimits()),
             ],
             credential_vault_factory=lambda engine: EncryptedCredentialVault(

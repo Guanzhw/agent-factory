@@ -87,9 +87,8 @@ class CompositionService:
             if not chosen:
                 raise HTTPException(404, "Published application configuration not found")
             return chosen, {"method": "explicit-application", "matchedKeywords": []}
-        # A coding-development profile must be chosen explicitly even if an
-        # administrator republishes its discovery defaults or keywords.
-        from .go_development import APPLICATION_ID as GO_DEVELOPMENT_APPLICATION
+        # Historical development profiles are never automatic discovery defaults.
+        from .go_legacy import APPLICATION_ID as GO_DEVELOPMENT_APPLICATION
         latest.pop(GO_DEVELOPMENT_APPLICATION, None)
         normalized = values["goal"].casefold()
         scored = []
@@ -180,7 +179,7 @@ class CompositionService:
                 failures = preflight(materials, owner, connections=connection_pins) if preflight is not None else []
                 for failure in failures:
                     reference = failure["materialRef"]
-                    descriptor = f'{failure["adapterId"]}@{failure["revision"]}' if failure.get("adapterId") and failure.get("revision") else "explicit approved demo seed"
+                    descriptor = f'{failure["adapterId"]}@{failure["revision"]}' if failure.get("adapterId") and failure.get("revision") else "missing explicit runtime binding"
                     connection = f'; connection {failure["connectionName"]}' if failure.get("connectionName") else ""
                     missing.append(f'{failure["code"]}: selected {failure["kind"]} {reference["id"]}@{reference["version"]}; adapter {descriptor}{connection}')
                 if not failures:
@@ -195,13 +194,13 @@ class CompositionService:
                 descriptors = describe() if describe is not None else []
                 unavailable = [item for item in selected if item.get("runtimeBinding") and not any(
                     entry["kind"] == item["kind"] and entry["adapterId"] == item["runtimeBinding"]["adapterId"] and
-                    entry["revision"] == item["runtimeBinding"]["revision"] and entry["availableForMode"] for entry in descriptors)] if describe is not None else []
+                    entry["revision"] == item["runtimeBinding"]["revision"] for entry in descriptors)] if describe is not None else []
                 if unavailable:
                     selected = unavailable
                     code = "BINDING_ADAPTER_UNAVAILABLE"
                 for item in selected:
                     binding = item.get("runtimeBinding")
-                    descriptor = "explicit approved demo seed" if binding is None else f'{binding["adapterId"]}@{binding["revision"]}'
+                    descriptor = "missing explicit runtime binding" if binding is None else f'{binding["adapterId"]}@{binding["revision"]}'
                     missing.append(f'{code}: selected {item["kind"]} {item["id"]}@{item["version"]}; adapter {descriptor}; exact registration/connection preflight required')
         manifest = {"schema": 1, "applicationRef": ApplicationService.pin(application), "mode": mode_name,
                     "materialRefs": refs, "materialChoices": {name: values["materialChoices"].get(name, slot["defaultRef"]) for name, slot in mode["materialChoices"].items()},

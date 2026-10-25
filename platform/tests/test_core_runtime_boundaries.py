@@ -60,10 +60,10 @@ assert not any(name.startswith('agent_factory_research') for name in sys.modules
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_core_does_not_implicitly_install_adapters_seeds_or_free_models(self):
-        registry = default_bindings(SimpleNamespace(demo=True), object())
+        registry = default_bindings(SimpleNamespace(), object())
         self.assertEqual(registry.describe(), [])
-        self.assertEqual(registry.legacy_materials, ())
-        self.assertEqual(registry.legacy_bindings, {})
+        self.assertFalse(hasattr(registry, "legacy_materials"))
+        self.assertFalse(hasattr(registry, "legacy_bindings"))
         self.assertEqual(default_zero_prices(), ())
 
     def test_stop_requirement_is_bound_to_the_explicit_store(self):
