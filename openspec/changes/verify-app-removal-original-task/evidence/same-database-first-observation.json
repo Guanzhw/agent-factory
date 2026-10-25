@@ -1,0 +1,215 @@
+{
+  "originalTaskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+  "originalRunId": "1b185470-2e35-48b1-beff-47833bb408ad",
+  "beforeNativeStatus": "paused",
+  "observation": {
+    "rootTaskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+    "allStopped": true,
+    "requested": [
+      "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+      "ec1a2236-99b7-4bd8-b692-c10450bcf9d3"
+    ],
+    "facts": [
+      {
+        "taskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+        "stopped": true,
+        "unknown": false,
+        "nativeStatus": "cancelled",
+        "persistedRunStatus": "paused",
+        "failed": true,
+        "displayStatus": "failed",
+        "groupStopped": true,
+        "groupFailed": true,
+        "finalizationCommitted": true
+      },
+      {
+        "taskId": "ec1a2236-99b7-4bd8-b692-c10450bcf9d3",
+        "stopped": true,
+        "unknown": false,
+        "nativeStatus": "completed",
+        "persistedRunStatus": "completed",
+        "failed": true,
+        "displayStatus": "failed",
+        "groupStopped": true,
+        "groupFailed": true
+      }
+    ],
+    "errors": []
+  },
+  "after": {
+    "researchImported": false,
+    "deploymentImported": false,
+    "applicationOwners": false,
+    "configuredWorkflows": 0,
+    "configuredAdapters": 0,
+    "taskIds": [
+      "ec1a2236-99b7-4bd8-b692-c10450bcf9d3",
+      "8899dd51-6884-4e75-b02b-89d9bbec8efd"
+    ],
+    "operations": [
+      {
+        "id": "165b39d5-023e-4dea-9dcc-a4d75480b1f5",
+        "taskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+        "runId": "1b185470-2e35-48b1-beff-47833bb408ad",
+        "closed": false,
+        "observation": {
+          "state": "RUNNING",
+          "handle": {
+            "id": "165b39d5-023e-4dea-9dcc-a4d75480b1f5",
+            "revision": "1",
+            "adapterId": "native-delegated-operations-v1"
+          },
+          "output": null,
+          "schema": 1,
+          "failure": null,
+          "allStopped": false,
+          "operationId": "165b39d5-023e-4dea-9dcc-a4d75480b1f5"
+        }
+      }
+    ],
+    "scope": {
+      "scopeId": "a8edbd7a-225b-4a8c-b6ca-02fc6aca185e",
+      "ownerId": "alice",
+      "commitmentSha256": "214750c90ae521823cf92f2ffd6e1ff5bfc7eae07e34fbd853ecd0a7a6a3743e",
+      "caps": {
+        "rounds": 1,
+        "toolCalls": 32,
+        "tokenLimit": null,
+        "amountMicros": null,
+        "currency": null
+      },
+      "deadline": 1792947191.6392791,
+      "state": "ACTIVE",
+      "allocatedRounds": 1,
+      "heldToolCalls": 32,
+      "settledToolCalls": 0,
+      "usage": null,
+      "metering": "unavailable",
+      "allocations": [
+        {
+          "allocationId": "a502ee3b-980a-47ab-a96d-a08422eac869",
+          "scopeId": "a8edbd7a-225b-4a8c-b6ca-02fc6aca185e",
+          "state": "BOUND",
+          "taskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+          "planSha256": "1367b563397899733b8cbcab13384514504c0887918c72734bfe3b7886946abf",
+          "caps": {
+            "rounds": 1,
+            "toolCalls": 32,
+            "tokenLimit": null,
+            "amountMicros": null,
+            "currency": null
+          },
+          "statement": null
+        }
+      ]
+    },
+    "task": {
+      "id": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+      "run_id": "1b185470-2e35-48b1-beff-47833bb408ad",
+      "terminal": false,
+      "cancel_requested": true,
+      "body": {
+        "createdAt": "2026-10-25T16:50:11.898713+00:00",
+        "requestId": "application-start:research:a502ee3b-980a-47ab-a96d-a08422eac869",
+        "updatedAt": "2026-10-25T16:50:13.357965+00:00",
+        "lastStatus": "unknown",
+        "observedAt": "2026-10-25T16:50:14.520470+00:00"
+      }
+    },
+    "nativeStatus": "paused"
+  },
+  "final": {
+    "researchImported": false,
+    "deploymentImported": false,
+    "applicationOwners": false,
+    "configuredWorkflows": 0,
+    "configuredAdapters": 0,
+    "taskIds": [
+      "ec1a2236-99b7-4bd8-b692-c10450bcf9d3",
+      "8899dd51-6884-4e75-b02b-89d9bbec8efd"
+    ],
+    "operations": [
+      {
+        "id": "165b39d5-023e-4dea-9dcc-a4d75480b1f5",
+        "taskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+        "runId": "1b185470-2e35-48b1-beff-47833bb408ad",
+        "closed": true,
+        "observation": {
+          "state": "FAILED",
+          "handle": {
+            "id": "165b39d5-023e-4dea-9dcc-a4d75480b1f5",
+            "revision": "1",
+            "adapterId": "native-delegated-operations-v1"
+          },
+          "output": null,
+          "schema": 1,
+          "failure": {
+            "code": "DELEGATED_CHILD_FAILED",
+            "schema": 1,
+            "retryable": false,
+            "messageCode": "DELEGATED_CHILD_FAILED"
+          },
+          "allStopped": true,
+          "operationId": "165b39d5-023e-4dea-9dcc-a4d75480b1f5"
+        }
+      }
+    ],
+    "scope": {
+      "scopeId": "a8edbd7a-225b-4a8c-b6ca-02fc6aca185e",
+      "ownerId": "alice",
+      "commitmentSha256": "214750c90ae521823cf92f2ffd6e1ff5bfc7eae07e34fbd853ecd0a7a6a3743e",
+      "caps": {
+        "rounds": 1,
+        "toolCalls": 32,
+        "tokenLimit": null,
+        "amountMicros": null,
+        "currency": null
+      },
+      "deadline": 1792947191.6392791,
+      "state": "ACTIVE",
+      "allocatedRounds": 1,
+      "heldToolCalls": 0,
+      "settledToolCalls": 3,
+      "usage": null,
+      "metering": "unavailable",
+      "allocations": [
+        {
+          "allocationId": "a502ee3b-980a-47ab-a96d-a08422eac869",
+          "scopeId": "a8edbd7a-225b-4a8c-b6ca-02fc6aca185e",
+          "state": "SETTLED",
+          "taskId": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+          "planSha256": "1367b563397899733b8cbcab13384514504c0887918c72734bfe3b7886946abf",
+          "caps": {
+            "rounds": 1,
+            "toolCalls": 32,
+            "tokenLimit": null,
+            "amountMicros": null,
+            "currency": null
+          },
+          "statement": {
+            "state": "SETTLED",
+            "allocationId": "a502ee3b-980a-47ab-a96d-a08422eac869",
+            "toolCalls": 3,
+            "settledTokens": null,
+            "settledAmountMicros": null
+          }
+        }
+      ]
+    },
+    "task": {
+      "id": "8899dd51-6884-4e75-b02b-89d9bbec8efd",
+      "run_id": "1b185470-2e35-48b1-beff-47833bb408ad",
+      "terminal": true,
+      "cancel_requested": true,
+      "body": {
+        "createdAt": "2026-10-25T16:50:11.898713+00:00",
+        "requestId": "application-start:research:a502ee3b-980a-47ab-a96d-a08422eac869",
+        "updatedAt": "2026-10-25T16:50:20.572875+00:00",
+        "lastStatus": "failed",
+        "observedAt": "2026-10-25T16:50:20.749754+00:00",
+        "stoppedStatus": "failed"
+      }
+    },
+    "nativeStatus": "cancelled"
+  }
+}
