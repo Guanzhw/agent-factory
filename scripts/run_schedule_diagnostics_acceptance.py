@@ -40,7 +40,7 @@ def run(database_url, output, evidence):
     sys.path[:0] = [str(root / path) for path in
         ('platform', 'deployment', 'platform/tests')]
     from playwright.sync_api import sync_playwright
-    from agent_factory.config import Settings
+    from fixture_settings import Settings
     from core_native_fixture import create_fixture_app as create_app
     from agent_factory.development_tls import temporary_development_tls
     from pg_fixture import IsolatedPostgres
@@ -63,7 +63,7 @@ def run(database_url, output, evidence):
         sock = listener(); stack.callback(sock.close)
         origin = 'https://127.0.0.1:' + str(sock.getsockname()[1])
         cert, key = stack.enter_context(temporary_development_tls(origin))
-        settings = Settings(db_url=database.url, workspace=workspace, demo=True,
+        settings = Settings(db_url=database.url, workspace=workspace,
                             temporary_policy='member-self-service', development_mock_login=True,
                             development_public_origin=origin, max_workers=1)
         settings.schedule_poll_seconds = 3600  # Fixture-only explicit claim driver, not a timer test.

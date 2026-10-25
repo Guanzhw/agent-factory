@@ -11,6 +11,10 @@
 - **WHEN** 已配置 OIDC 身份登录、回跳、刷新、退出和重新登录
 - **THEN** 复用真实会话/CSRF/安全重定向与成员权限，不提供绕过身份提供方的入口
 
+#### Scenario: Internal signature cannot replace external identity
+- **WHEN** 无外部身份配置时客户端提交为既有成员签发的合法内部 JWT、旧 demo cookie 或 WebSocket 身份帧
+- **THEN** 公开应用拒绝认证；健康/静态与原有受信任 in-process native 执行路径保持独立
+
 ### Requirement: Synthetic fixtures are not deployable product modes
 合成身份/材料/模型 SHALL 仅在测试边界显式提供，MUST NOT 随产品 wheel、正式前端或部署入口提供可启用旁路。
 

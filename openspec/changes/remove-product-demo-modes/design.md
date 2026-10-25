@@ -4,7 +4,7 @@
 Settings.demo 默认 true，FACTORY_MODE 默认 demo；create_app 会种 persona/material，FactoryAPI 暴露 /demo/login，CookieBridge 接受 demo cookie。development_identity 与 scripts/dev.py 提供可运行本地演示身份/数据库。前端另有原型数据与单 HTML 打包。正式 OIDC/token 桥接已有实现，应保留单一真实认证链。
 
 ## Decisions
-删除可选演示运行模式，而非隐藏按钮或将其改名为开发登录。生产构造与 CLI 不接受开启合成身份的参数；旧配置值拒绝并给缺项说明。认证配置验证应早于数据库/目录/种子副作用。无浏览器 IdP 时不提供登录替身；保留已配置外部 token 接口与内部原执行身份的既有边界。
+删除可选演示运行模式，而非隐藏按钮或将其改名为开发登录。生产构造与 CLI 不接受开启合成身份的参数；旧配置值拒绝并给缺项说明。认证配置验证应早于数据库/目录/种子副作用。无 IdP 时保留健康/静态/缺项说明，但外层拒绝外部 bearer 和 WebSocket 身份入口；内部签名 token 只能供原有 in-process native bridge 使用，不能成为外部登录替身。无浏览器 IdP 时不提供登录替身；保留已配置外部 token 接口与内部原执行身份的既有边界。
 
 测试用成员、模型、种子和本地 OIDC 仅属于 tests/helper、测试进程或受测依赖注入；不能通过环境变量/CLI/HTTP打开，也不能被生产 wheel/部署入口导入。迁移原测试的行为断言而非批量跳过。由独立 reviewer 检查没有把 demo=True 改名留下同等旁路。
 
