@@ -57,3 +57,55 @@ heavy-test window was released. Before this execution the no-database import
 probe collected three tests and explicitly skipped all three; those skips were
 never counted as behavioral passes. Test changes and this evidence still need
 the author-independent review gate.
+
+## Accepted ACK loss and actual controller SIGKILL
+
+After independent review of the test implementation and orphan-agent cleanup,
+exact source `a6552d23dc6fb789734ef59d1ed17c93e588fe97` ran the two new cases
+once: **2 passed, 0 skipped, 33.152 seconds, exit 0**. The existing three cases
+were not rerun or counted again. The outer timeout remained 240 seconds and
+no per-case deadline changed. First-run log:
+`/tmp/af-ssh-hard-restart-first.log` (local evidence, not a published artifact).
+
+```sh
+timeout 240 env \
+  PYTHONPATH=platform:deployment:applications:platform/tests \
+  FACTORY_TEST_DATABASE_URL=<existing-loopback-test-database-url> \
+  /workspace/agent-factory-core-only/.venv/bin/python -m unittest -v \
+  test_ssh_native_postgres.SSHNativePostgresTests.test_accepted_continuation_with_lost_ack_recovers_without_second_send \
+  test_ssh_native_process.SSHNativeProcessTests.test_hard_kill_paused_controller_preserves_original_helper_and_run
+```
+
+The accepted-ACK case called the real original native `continue_run`, waited for
+it to return, then injected a missing reply. Original command proof recovered
+`decisionRecorded=true`, retained its fingerprint/binding/requirement, and could
+not dispatch again. Service reconstruction and repeated reconciliation left
+the actual send count and original process start count at one, with the actual
+archived measurement delivered to the same native task. This differs from the
+retained before-send UNKNOWN test; positive native evidence was not forced into
+UNKNOWN.
+
+The hard-restart case asserted the actual native job was PAUSED, killed its
+controller process and verified exit code `-SIGKILL` (-9). It checked that the
+original helper child retained its boot/PID/start/group identity, was still
+RUNNING and not a zombie, and retained the same journal without stopped proof.
+A newly started controller had a different PID and used the original database
+and workspace. Completion retained the original task/run/plan/request,
+operation/lease and typed inputs, one wait command and one actual continuation
+send, one helper start and the actual output. These are executed assertions;
+this log does not retain the numeric PIDs as a separate artifact.
+
+Before the kill, the fixture recorded only its own SSH-agent birth and socket
+directory metadata. Cleanup verified that identity and used a pidfd to terminate
+the orphan agent, removed only its unchanged socket and empty directories, and
+then performed normal new-controller teardown. No guardian or training process
+was targeted by agent cleanup. All cleanup assertions passed. A subsequent
+process check found no controlled SSH worker, `ssh-native-` process or
+`ssh-agent -D`; a read-only PostgreSQL check found no remaining `af_test_%`
+databases. The shared PostgreSQL server remained running; the heavy slot was
+released.
+
+This is explicit test-owned orphan cleanup after a bare-PID kill, **not** proof
+of production automatic agent reclamation. Deployment supervisor/process-
+namespace behavior, real external SSH/GPU and live providers remain separate
+unverified boundaries. Local helper transport substitution remains unchanged.
