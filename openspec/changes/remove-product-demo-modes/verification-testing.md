@@ -375,3 +375,17 @@ instrumented timeouts remain recorded; each later single instrumented pass is
 bounded evidence, not root-cause closure. A necessary full CI run on the final
 changed fixture head may verify integration, but even a green full run would
 not establish that these historical timing causes have been resolved.
+
+### Lifecycle unit-double follow-up
+
+Fast CI `40228647346` on `624bf82` reported 370 cases with four errors in
+`test_native_fixture_lifecycle`: its intentionally opaque `auth=object()` could
+not satisfy the new test-fixture member initialization. These errors occurred
+before the lifecycle assertions, not in production authentication. The unit
+fixture now explicitly mocks `initialize_members` with autospec; its original
+lifespan-enter/exit, failed-start, engine ownership, callback count and exactly-once
+disposal assertions are unchanged. No production/helper AttributeError catch
+was added. Entire module: **5 passed, 0 skipped, 0.005s, exit 0**,
+`/tmp/no-demo-native-fixture-lifecycle-fixed.log`; Ruff passed. Complete fast
+Python validation is pending its serial slot. The already running full CI
+`40228654327` was not canceled or restarted and retains the old source result.

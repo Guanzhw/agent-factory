@@ -50,6 +50,7 @@ def application(events, name):
 
 class NativeFixtureLifecycleTests(unittest.TestCase):
     def fixture(self):
+        self.enterContext(patch.object(native_fixture, 'initialize_members', autospec=True))
         fixture = FixtureCase()
         fixture.settings = object()
         self.addCleanup(fixture.doCleanups)
