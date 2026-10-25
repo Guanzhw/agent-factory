@@ -83,10 +83,18 @@ def scenario(browser, origin, output, mode, viewport):
         screenshot(tab)
 
     try:
-        page.goto(origin)
+        page.goto(origin + "/?tab=resources#connections")
         expect(page.get_by_role("button", name=login_name, exact=True)).to_be_visible()
         screenshot("login")
         login()
+        expect(page).to_have_url(origin + "/?tab=resources#connections")
+        expect(page.get_by_role("heading", name="我的资源", exact=True)).to_be_visible()
+        screenshot("login-return")
+        page.get_by_role("button", name="应用", exact=True).click()
+        expect(page.get_by_text("暂无已接入的应用。", exact=True)).to_be_visible()
+        page.go_back()
+        expect(page.get_by_role("heading", name="我的资源", exact=True)).to_be_visible()
+        page.go_forward()
         expect(page.get_by_text("暂无已接入的应用。", exact=True)).to_be_visible()
         screenshot("home")
         status = context.request.get(origin + "/api/factory/status")
@@ -121,6 +129,7 @@ def scenario(browser, origin, output, mode, viewport):
         assert not failed_api, failed_api
         return {"screenshots": screenshots, "login": True, "emptyCatalog": True, "emptyTasks": True,
                 "resourceNavigation": True, "directURLsAndRefresh": True, "retiredURLs": True,
+                "loginDeepLinkReturn": True, "backForward": True,
                 "logoutRevokesSession": True, "relogin": True, "pageErrors": errors, "serverErrors": failed_api}
     except BaseException:
         screenshot("failure")

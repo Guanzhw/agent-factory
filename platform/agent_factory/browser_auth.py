@@ -14,7 +14,7 @@ import json
 import re
 import secrets
 import time
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
@@ -45,6 +45,19 @@ def _valid(value):
 
 def _hash(value):
     return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+
+def _workspace_return(value):
+    _check(type(value) is str, 400)
+    try:
+        size = len(value.encode())
+    except UnicodeError:
+        raise HTTPException(400, "BROWSER_AUTH_REJECTED") from None
+    _check(value.startswith("/") and not value.startswith("//") and size <= 900
+           and "\\" not in value and all(ord(c) >= 32 and ord(c) != 127 for c in value), 400)
+    parsed = urlsplit(value)
+    _check(not parsed.scheme and not parsed.netloc and parsed.path == "/", 400)
+    return value
 
 
 class BrowserSessionService:
@@ -112,7 +125,8 @@ class BrowserSessionService:
                 body.update(status="CANCELLED", sealed=None)
                 self._save(conn, row[0], "flow", body)
 
-    def start(self, flow_cookie=None, session_cookie=None):
+    def start(self, flow_cookie=None, session_cookie=None, return_to="/"):
+        return_to = _workspace_return(return_to)
         state, binding, verifier, nonce = (secrets.token_urlsafe(32) for _ in range(4))
         identity = _hash(state)
         sealed = self._cipher.encrypt(canonical({"verifier": verifier, "nonce": nonce,
@@ -127,7 +141,7 @@ class BrowserSessionService:
                 prior = None
             self._save(conn, identity, "flow", {"status": "PENDING", "binding": _hash(binding),
                 "config": self.fingerprint, "expires": self.clock() + FLOW_SECONDS,
-                "sealed": sealed, "prior": prior}, insert=True)
+                "sealed": sealed, "prior": prior, "returnTo": return_to}, insert=True)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
         params = {"response_type": "code", "client_id": self.config.client_id,
             "redirect_uri": self.config.redirect_uri, "scope": "openid", "state": state,
@@ -181,7 +195,7 @@ class BrowserSessionService:
                 "expires": expires, "config": self.fingerprint, "revoked": False}, insert=True)
             row.update(status="COMPLETE", issued=_hash(token), expires=expires)
             self._save(conn, _hash(state), "flow", row)
-        return token
+        return token, row.get("returnTo", "/")
 
     def session(self, token):
         _check(_valid(token))
@@ -251,11 +265,17 @@ class BrowserAuthBridge:
         _check(request.scope.get("scheme") == "https", 403)
         if path == PREFIX + "/login" and method == "POST":
             self._origin(request.scope)
-            size = 0
+            body = bytearray()
             async for chunk in request.stream():
-                size += len(chunk)
-                _check(size <= 1024, 413)
-            url, binding = await asyncio.to_thread(self.service.start, cookies.get(FLOW_COOKIE), cookies.get(SESSION_COOKIE))
+                _check(len(body) + len(chunk) <= 1024, 413)
+                body.extend(chunk)
+            try:
+                payload = json.loads(body or b"{}")
+            except (ValueError, UnicodeError):
+                raise HTTPException(400, "BROWSER_AUTH_REJECTED") from None
+            _check(type(payload) is dict and set(payload) <= {"returnTo"}, 400)
+            url, binding = await asyncio.to_thread(self.service.start, cookies.get(FLOW_COOKIE),
+                cookies.get(SESSION_COOKIE), payload.get("returnTo", "/"))
             response = JSONResponse({"authorizationUrl": url})
             response.set_cookie(FLOW_COOKIE, binding, max_age=FLOW_SECONDS + SESSION_SECONDS, secure=True, httponly=True, samesite="lax", path="/")
             return response
@@ -268,8 +288,8 @@ class BrowserAuthBridge:
                 _check(len(params) == len(items) and set(params) <= {"code", "state", "iss"}
                        and {"code", "state"} <= set(params)
                        and params.get("iss", self.service.config.issuer) == self.service.config.issuer)
-                token = await self.service.finish(params["code"], params["state"], cookies.get(FLOW_COOKIE))
-                response = RedirectResponse("/", status_code=303)
+                token, return_to = await self.service.finish(params["code"], params["state"], cookies.get(FLOW_COOKIE))
+                response = RedirectResponse(return_to, status_code=303)
                 response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, secure=True, httponly=True, samesite="strict", path="/")
                 response.delete_cookie(FLOW_COOKIE, secure=True, httponly=True, samesite="lax", path="/")
                 return response
