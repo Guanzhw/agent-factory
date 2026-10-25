@@ -6,6 +6,9 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'ssh_original_contracts': (
+        'test_ssh_operation_runtime', 'test_ssh_operation_waits', 'test_ssh_tool_factory',
+    ),
     'assistant_event_contracts': ('test_assistant_events', 'test_assistant_message_recovery'),
     'research_projects': ('test_research_projects',),
     'shared_mcp_authority_regressions': (
@@ -83,6 +86,9 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'ssh_original_native_wait': (
+        'test_ssh_native_postgres.SSHNativePostgresTests.test_original_native_wait_resumes_once_after_controller_restart',
+    ),
     'owned_native_finalization': (
         'test_owned_native_finalization_postgres.OwnedNativeFinalizationPostgresTests.test_unknown_usage_retains_holds_then_original_evidence_finishes_once_after_reopen',
         'test_owned_native_finalization_postgres.OwnedNativeFinalizationPostgresTests.test_two_observers_and_reserve_share_commit_without_duplicate_outbox',
