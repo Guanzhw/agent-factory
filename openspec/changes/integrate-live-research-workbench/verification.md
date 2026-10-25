@@ -38,3 +38,7 @@
 修复只改变成功POST之后的读取错误语义：明确返回“启动已响应、状态尚未核对”的复合Error并保留原cause/错误说明，原恢复hook保留request/payload。POST本身4xx分类不变，没有新增重试控制器。32项相关测试通过，含403/404、remount、新启动禁用、同键恢复。修复仍待独立精确head复审与集成最终完整检查，不用此前464项通过冒充新head全量结果。
 
 项目/资源轻量浏览器所用4176 Vite已停止；依赖symlink仅本地测试使用，未纳入提交。实际npm完整/生产audit均exit0、0 vulnerabilities，lock未改。
+
+## Integration review: operation without observation
+
+The real custody contract permits an existing operation with `observation: null`. A new regression initially failed with `TypeError: Cannot read properties of null (reading state)` (2 passed, 1 failed; preserved in `evidence/null-observation-first-failure.txt`). The frontend type now matches that contract and renders UNKNOWN / observation not yet confirmed while retaining the original operation identity. The only action is to read the original records; it does not dispatch a replacement. The targeted run passes 3 tests. This deterministic contract regression does not substitute real backend browser acceptance.

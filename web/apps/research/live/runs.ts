@@ -5,7 +5,7 @@ export interface ResearchRound {
   decision: RoundDecision | null;
   terminal: null | { verificationStatus: 'unverified'; runtime: { taskId: string; runId: string | null; status: string }[]; continuationBlocked: string | null; sharing: string };
 }
-interface OriginalOperation { id: string; closed: boolean; observation: { state: string; output?: { artifacts?: { id?: string; name?: string }[] } | null } }
+interface OriginalOperation { id: string; closed: boolean; observation: { state: string; output?: { artifacts?: { id?: string; name?: string }[] } | null } | null }
 interface ExperimentBase { id: string; projectId: string; goalVersion: number; hypothesis: string; conditions: Record<string, unknown> }
 export type ResearchExperiment = ExperimentBase & (
   { attempts: { id: string; operationId: string | null; operation: OriginalOperation | null }[] }
