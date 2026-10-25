@@ -1,5 +1,9 @@
 # Design
 
+## Original event status for the research consumer
+
+`event(owner, event_id)` reads an event owned by the current member and its existing delivery statuses. Return only `id`, `scanned`, `errorCode` and `deliveries` containing `id`, `endpointId`, `state`, `errorCode`; do not expose recipient scope/allocation/task or private inputs. The research consumer already holds the emitted event ID and uses this projection when rejection occurs before a successor task exists. Missing or foreign events return 404. Reading never prepares, dispatches, retries or allocates work.
+
 ## Decisions
 
 ### 原任务输入读取
