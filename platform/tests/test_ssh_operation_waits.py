@@ -20,7 +20,8 @@ from agent_factory.factory_api import requirement_version
 from agent_factory.native_external_wait import factory_wait_operations
 from agent_factory.personal_remote_provider import SecretLease
 from agent_factory.ssh_operation_waits import SSHOperationWaits
-from agent_factory.ssh_process_contract import OPERATION_PIN, LAUNCH_ADAPTER_ID, WAIT_ADAPTER_ID, REVISION
+from agent_factory.ssh_process_contract import OPERATION_PIN, LAUNCH_ADAPTER_ID, WAIT_ADAPTER_ID, REVISION, WAIT_TOOL
+from agent_factory.ssh_tool_factory import ssh_tool_registrations
 
 
 class SSHOperationWaitTests(unittest.IsolatedAsyncioTestCase):
@@ -33,7 +34,7 @@ class SSHOperationWaitTests(unittest.IsolatedAsyncioTestCase):
             if len(self.requests) == 1:
                 message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                     'id': 'original-ssh-wait', 'type': 'function', 'function': {
-                        'name': 'factory_wait_operations', 'arguments': '{"operationIds":["original-operation"]}'}}]}
+                        'name': WAIT_TOOL, 'arguments': '{"operationIds":["original-operation"]}'}}]}
             return httpx.Response(200, json={'choices': [{'finish_reason': 'tool_calls' if len(self.requests) == 1 else 'stop',
                 'message': message}]})
         model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'selected-fixture',
@@ -43,7 +44,15 @@ class SSHOperationWaitTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(directory.cleanup)
         db = SqliteDb(db_file=str(Path(directory.name) / 'native.sqlite'))
         self.addCleanup(db.db_engine.dispose)
-        self.agent = Agent(model=model, db=db, tools=[factory_wait_operations], telemetry=False)
+        original_wait = deepcopy(factory_wait_operations.to_dict())
+        wait_registration = next(item for item in ssh_tool_registrations(None) if item.adapter_id == WAIT_ADAPTER_ID)
+        ssh_wait = wait_registration.factory(None)
+        self.assertEqual(ssh_wait.name, WAIT_TOOL)
+        self.assertEqual(factory_wait_operations.name, 'factory_wait_operations')
+        self.assertEqual(factory_wait_operations.to_dict(), original_wait)
+        self.assertTrue(ssh_wait.external_execution)
+        self.assertIsNot(ssh_wait, factory_wait_operations)
+        self.agent = Agent(model=model, db=db, tools=[ssh_wait], telemetry=False)
         self.paused = await self.agent.arun('Wait for the original SSH operation')
         self.assertTrue(self.paused.is_paused)
         self.requirement = self.paused.requirements[0].to_dict()

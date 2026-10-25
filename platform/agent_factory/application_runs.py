@@ -56,7 +56,7 @@ class ApplicationRuns:
                 'binding': {key: binding[key] for key in ('adapterId', 'revision', 'toolName')},
                 'receipts': receipts}
 
-    def ssh_results(self, owner, child_task_id, run_id, operation_id):
+    def ssh_results(self, owner, child_task_id, run_id):
         """Read private archived SSH evidence; never poll or resume remote work."""
         from .ssh_process_contract import OPERATION_PIN, LAUNCH_ADAPTER_ID, WAIT_ADAPTER_ID, REVISION, LAUNCH_TOOL, WAIT_TOOL
         from .store import digest
@@ -92,7 +92,13 @@ class ApplicationRuns:
                     and material['runtimeBinding']['revision'] == REVISION)
             selected.append({'materialRef': deepcopy(binding['materialRef']),
                 'binding': {key: binding[key] for key in ('adapterId', 'revision', 'toolName')}})
-        operation = store.workflow.read(owner, operation_id)
+        rows = store.sql('SELECT id FROM af_external_operations WHERE owner_id=:owner AND task_id=:task AND native_run_id=:run',
+            owner=owner, task=child_task_id, run=run_id)
+        operations = [store.workflow.read(owner, row['id']) for row in rows]
+        operations = [item for item in operations if item['adapterPin'] == OPERATION_PIN]
+        require(len(operations) == 1)
+        operation = operations[0]
+        operation_id = operation['id']
         require(operation['id'] == operation_id and operation['taskId'] == child_task_id
                 and operation['nativeRunId'] == run_id and operation['planId'] == task['plan_id']
                 and operation['planSha256'] == digest(plan) and operation['adapterPin'] == OPERATION_PIN

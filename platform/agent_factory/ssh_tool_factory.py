@@ -30,15 +30,20 @@ def ssh_tool_registrations(runtime):
                     'observation': body['observation']}
 
         return Function(name=LAUNCH_TOOL,
-            description='Start the configured training operation once. Wait for its original operation ID with factory_wait_operations.',
+            description='Start the configured training operation once. Wait for its original operation ID with factory_wait_ssh_process.',
             parameters={'type': 'object', 'properties': {}, 'additionalProperties': False},
             entrypoint=invoke, skip_entrypoint_processing=True)
+
+    def wait(binding):
+        function = factory_wait_operations.model_copy(deep=True)
+        function.name = WAIT_TOOL
+        return function
 
     return (
         AdapterRegistration('tool', LAUNCH_ADAPTER_ID, REVISION, launch,
             tool_name=LAUNCH_TOOL, permissions=('ssh:execute',), validator=configuration,
             connection_kind='environment', required_capabilities=('ssh:execute',),
             connection_adapter_ref='owner-ssh-server-v1'),
-        AdapterRegistration('tool', WAIT_ADAPTER_ID, REVISION, lambda binding: factory_wait_operations,
+        AdapterRegistration('tool', WAIT_ADAPTER_ID, REVISION, wait,
             tool_name=WAIT_TOOL, permissions=('ssh:execute',)),
     )

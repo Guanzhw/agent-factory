@@ -42,6 +42,7 @@ class ApplicationSSHResultsTests(unittest.TestCase):
         self.store = Mock()
         self.store.task.side_effect = self.task
         self.store.plan.side_effect = lambda *args: self.plan
+        self.operation_ids = ['operation']
         self.store.workflow.read.side_effect = lambda *args: self.operation
         resources = SimpleNamespace(store=self.store, _body=lambda value: value)
         self.store.process_runtime.resources = resources
@@ -60,6 +61,9 @@ class ApplicationSSHResultsTests(unittest.TestCase):
 
     def sql(self, query, **kwargs):
         target_id = digest({'owner': self.lease['ownerId'], 'connectionRef': self.lease['connectionRef']})
+        if 'FROM af_external_operations' in query:
+            self.assertEqual(kwargs, {'owner': 'alice', 'task': 'task', 'run': 'run'})
+            return [{'id': identifier} for identifier in self.operation_ids]
         if 'FROM af_leases' in query:
             return [{**{key: self.lease[key] for key in ('id', 'fingerprint', 'state')},
                 'owner_id': self.lease['ownerId'], 'request_id': self.lease['requestId'],
@@ -95,8 +99,8 @@ class ApplicationSSHResultsTests(unittest.TestCase):
             raise HTTPException(409, 'Artifact integrity check failed')
         return deepcopy(meta), raw
 
-    def read(self, owner='alice', task='task', run='run', operation='operation'):
-        return self.service.ssh_results(owner, task, run, operation)
+    def read(self, owner='alice', task='task', run='run'):
+        return self.service.ssh_results(owner, task, run)
 
     def test_original_archive_is_detached_private_and_only_reads(self):
         result = self.read()
@@ -111,13 +115,21 @@ class ApplicationSSHResultsTests(unittest.TestCase):
         self.assertTrue(all(call[0] in allowed for call in self.store.mock_calls), self.store.mock_calls)
 
     def test_member_owner_alias_run_and_foreign_operation_are_rejected(self):
-        for args in [('bob', 'task', 'run', 'operation'), ('alice', 'run', 'run', 'operation'),
-                     ('alice', 'task', 'wrong', 'operation'), ('alice', 'task', 'run', 'foreign')]:
+        for args in [('bob', 'task', 'run'), ('alice', 'run', 'run'), ('alice', 'task', 'wrong')]:
             with self.subTest(args=args), self.assertRaises(HTTPException):
                 self.read(*args)
         self.auth.require_member.side_effect = HTTPException(403, 'disabled')
         with self.assertRaises(HTTPException):
             self.read()
+
+    def test_missing_or_ambiguous_original_operation_is_unavailable(self):
+        for identifiers in ([], ['operation', 'duplicate']):
+            with self.subTest(identifiers=identifiers):
+                self.operation_ids = identifiers
+                with self.assertRaises(HTTPException) as error:
+                    self.read()
+                self.assertEqual(error.exception.detail, 'APPLICATION_SSH_PROVENANCE_UNAVAILABLE')
+        self.store.artifacts.assert_not_called()
 
     def test_operation_lease_material_and_archive_mismatches_are_rejected(self):
         mutations = [lambda: self.operation.update(closed=False),
