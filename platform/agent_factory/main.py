@@ -181,8 +181,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_COMPOSITION')
     composition = CompositionService(store, auth, applications, bindings, connections)
     store.composition = composition
-    store.register_execution_guard("execution-bindings",
-        lambda owner, plan, context, tool: bindings.recheck(plan, context), tool_independent=True)
+    store.register_execution_guard("execution-bindings", bindings.require_execution, tool_independent=True)
     store.register_execution_guard("application-governance",
         lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
     at('PREPARATION_APP_NATIVE_GRAPH')

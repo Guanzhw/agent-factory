@@ -99,9 +99,12 @@ class Store:
     """Atomic effect fixture retains the production fingerprint/status contract."""
     def __init__(self, adapter):
         self.personal_tools = SimpleNamespace(adapters={adapter.descriptor.adapter_id: adapter})
-        self.execution_bindings = SimpleNamespace(recheck=self.recheck)
+        self.execution_bindings = ExecutionBindings(SimpleNamespace(), self)
+        self.execution_bindings.recheck = self.recheck
+        self.execution_guards = {'execution-bindings': self.execution_bindings.require_execution}
         self.effects = {}
         self.contexts = {}
+        self.plans = {}
         self.plan_allowed = self.binding_allowed = self.tool_allowed = True
         self.cancelled = False
         self.checks = {'plan': 0, 'binding': 0, 'tool': 0}
@@ -111,6 +114,8 @@ class Store:
         self.checks['plan'] += 1
         if not self.plan_allowed or owner != plan['ownerId'] or owner != run_context.user_id:
             raise PermissionError('fixture plan revoked')
+        for guard in self.execution_guards.values():
+            guard(owner, plan, run_context, None)
 
     def recheck(self, plan, context):
         self.checks['binding'] += 1
@@ -123,6 +128,9 @@ class Store:
         self.checks['tool'] += 1
         if not self.tool_allowed or name != 'fixture_query':
             raise PermissionError('fixture tool revoked')
+        plan = self.plans[context.run_id]
+        self.require_plan_execution(context.user_id, plan, run_context=context)
+        return plan
 
     def cancellation_requested(self, run_id):
         return self.cancelled
@@ -165,6 +173,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         context = RunContext(user_id=owner, session_id='task-' + owner, run_id=run, session_state={})
         plan = {'id': 'plan-' + owner, 'ownerId': owner}
         self.store.contexts[run] = (owner, context.session_id, plan['id'])
+        self.store.plans[run] = plan
         handle = Handle(owner, self.adapter, self.store.personal_tools)
         spec = {'connection': {'ref': 'connection-' + owner, 'revision': 'connection-v1'}}
         binding = BindingContext(None, self.store, plan, context, spec, handle)
@@ -384,6 +393,66 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             await self.invoke(fc)
         self.assertFalse(self.adapter.calls)
         self.assertFalse(self.store.effects)
+
+    async def test_each_callback_runs_execution_and_binding_guards_once(self):
+        async def behavior(invocation):
+            before = dict(self.store.checks)
+            invocation.check_authorized()
+            self.assertEqual({name: self.store.checks[name] - count for name, count in before.items()},
+                {'plan': 1, 'binding': 1, 'tool': 1})
+            self.store.plan_allowed = False
+            with self.assertRaises(PermissionError):
+                invocation.check_authorized()
+            self.store.plan_allowed = True
+            return {'ok': True}
+        self.adapter.behavior = behavior
+        fc, _, _ = self.call()
+        self.assertEqual(await self.invoke(fc), {'ok': True})
+
+    async def test_missing_replaced_or_foreign_binding_guard_cannot_dispatch(self):
+        trusted = self.store.execution_guards['execution-bindings']
+        foreign = ExecutionBindings(SimpleNamespace(), self.store)
+        replacements = (None, lambda *args: None, foreign.require_execution)
+        for replacement in replacements:
+            with self.subTest(replacement=replacement):
+                fc, handle, _ = self.call()
+                if replacement is None:
+                    self.store.execution_guards.pop('execution-bindings', None)
+                else:
+                    self.store.execution_guards['execution-bindings'] = replacement
+                with self.assertRaisesRegex(PermissionError, 'PERSONAL_TOOL_AUTHORIZATION_DENIED'):
+                    await self.invoke(fc)
+                self.assertEqual(handle.resolutions, 0)
+        self.store.execution_bindings.require_execution = lambda *args: None
+        self.store.execution_guards['execution-bindings'] = self.store.execution_bindings.require_execution
+        fc, _, _ = self.call()
+        with self.assertRaises(PermissionError):
+            await self.invoke(fc)
+        self.store.execution_guards['execution-bindings'] = trusted
+        self.assertFalse(self.adapter.calls)
+        self.assertFalse(self.store.effects)
+
+    async def test_authorized_plan_must_match_captured_binding(self):
+        fc, _, context = self.call()
+        self.store.plans[context.run_id] = {'id': 'different-plan', 'ownerId': 'alice'}
+        self.store.contexts[context.run_id] = ('alice', context.session_id, 'different-plan')
+        with self.assertRaisesRegex(PermissionError, 'PERSONAL_TOOL_AUTHORIZATION_DENIED'):
+            await self.invoke(fc)
+        self.assertFalse(self.store.effects)
+        self.assertFalse(self.adapter.calls)
+
+    async def test_revocation_during_credential_resolution_withholds_lease(self):
+        fc, handle, _ = self.call()
+        resolve = handle.resolve_credential
+        def revoke_while_reading():
+            lease = resolve()
+            self.store.plan_allowed = False
+            return lease
+        handle.resolve_credential = revoke_while_reading
+        with self.assertRaises(StopAgentRun):
+            await self.invoke(fc)
+        self.assertEqual(handle.resolutions, 1)
+        self.assertEqual(self.effect()['status'], 'UNKNOWN')
 
     async def test_mutated_descriptor_or_adapter_registry_cannot_dispatch(self):
         fc, _, _ = self.call()
