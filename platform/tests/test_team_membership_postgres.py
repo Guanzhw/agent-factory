@@ -1,5 +1,4 @@
 """Native Agno identity, durable queue and account migration on isolated PG."""
-from fixture_identity import access_token
 from fixture_auth import initialize_members
 import os
 import time
@@ -46,7 +45,7 @@ class TeamMembershipPostgresTests(unittest.TestCase):
         self.addCleanup(self.client.__exit__, None, None, None)
 
     def headers(self, owner):
-        return {"Authorization": "Bearer " + access_token(owner)}
+        return {"Authorization": "Bearer " + self.auth._issue_native_token(owner)}
 
     def test_member_and_account_admin_run_new_native_components_and_workflows(self):
         for owner in ("alice", "manager"):
@@ -100,7 +99,7 @@ class TeamMembershipPostgresTests(unittest.TestCase):
     def test_native_member_websocket_executes_with_own_identity(self):
         with self.client.websocket_connect("/workflows/ws") as socket:
             self.assertEqual(socket.receive_json()["event"], "connected")
-            socket.send_json({"action": "authenticate", "token": access_token("alice")})
+            socket.send_json({"action": "authenticate", "token": self.auth._issue_native_token("alice")})
             self.assertEqual(socket.receive_json()["event"], "authenticated")
             self.assertEqual(socket.receive_json()["user_id"], "alice")
             socket.send_json({"action": "start-workflow", "workflow_id": "new-member-workflow",
@@ -128,7 +127,7 @@ class TeamMembershipPostgresTests(unittest.TestCase):
         self.assertTrue(restarted.directory.get("legacy-disabled")["disabled"])
         self.assertEqual(restarted.directory.get("legacy-disabled")["metadata"]["retained"], "synthetic")
         manager = self.headers("manager")
-        legacy = {"Authorization": "Bearer " + access_token("legacy-admin")}
+        legacy = {"Authorization": "Bearer " + self.auth._issue_native_token("legacy-admin")}
         self.assertEqual(self.client.get("/api/factory/accounts", headers=legacy).status_code, 200)
         demoted = self.client.patch("/api/factory/accounts/legacy-admin", headers=manager, json={"accountAdmin": False})
         self.assertEqual(demoted.status_code, 200, demoted.text)

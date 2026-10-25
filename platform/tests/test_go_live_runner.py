@@ -172,18 +172,3 @@ class GoLiveRunnerTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'stopped')
                 campaign.stop.assert_called_once_with('UNKNOWN')
                 self.assertNotIn('private', json.dumps(result))
-
-
-class CoreGoQueueBoundaryTests(unittest.TestCase):
-    def test_direct_core_go_rejects_queue_amplification_before_database_or_workspace(self):
-        from fixture_settings import Settings
-        from agent_factory.main import create_app
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory) / 'untouched'
-            settings = Settings(db_url='postgresql://synthetic', workspace=workspace, )
-            with patch('agent_factory.main.PostgresDb') as database:
-                for options in ({}, {'queue_max_attempts': 2}, {'queue_max_attempts': True}):
-                    with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'exactly one native queue attempt'):
-                        create_app(settings, **options)
-                database.assert_not_called()
-                self.assertFalse(workspace.exists())

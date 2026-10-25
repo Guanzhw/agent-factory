@@ -1,3 +1,4 @@
+from fixture_auth import member_headers
 """Department members publish exact versions without a separate administrator.
 
 SQLite exercises service contracts; optional isolated PostgreSQL cases exercise
@@ -243,10 +244,10 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.governance = self.store.material_governance
 
     def test_http_member_can_publish_and_archive_own_resource(self):
-        headers = {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
+        headers = member_headers(self.auth, "alice")
         material = self.material()
         application = self.application()
-        bob_headers = {"Authorization": "Bearer " + self.auth._issue_native_token("bob")}
+        bob_headers = member_headers(self.auth, "bob")
         for identity, expected in ((headers, True), (bob_headers, False)):
             response = self.client.get("/api/factory/materials", headers=identity)
             self.assertEqual(response.status_code, 200, response.text)
@@ -278,8 +279,8 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.assertTrue(published.json()["published"])
 
     def test_http_own_private_archive_preserves_owner_visibility(self):
-        headers = {"Authorization": "Bearer " + self.auth._issue_native_token("alice")}
-        bob_headers = {"Authorization": "Bearer " + self.auth._issue_native_token("bob")}
+        headers = member_headers(self.auth, "alice")
+        bob_headers = member_headers(self.auth, "bob")
         material, application = self.material(), self.application()
         for path in (f"/api/factory/material-governance/versions/{material['id']}/1",
                      f"/api/factory/applications/{application['id']}/versions/1"):

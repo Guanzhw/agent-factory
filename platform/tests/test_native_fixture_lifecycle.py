@@ -21,7 +21,8 @@ class Engine:
 
 
 class Client:
-    def __init__(self, app, *, enter_failure=False, exit_failure=False):
+    def __init__(self, app, *, base_url, enter_failure=False, exit_failure=False):
+        assert base_url == "https://testserver"
         self.app = app
         self.enter_failure, self.exit_failure = enter_failure, exit_failure
 
@@ -77,8 +78,8 @@ class NativeFixtureLifecycleTests(unittest.TestCase):
         events = []
         failed, next_app = application(events, 'failed'), application(events, 'next')
         fixture = self.fixture()
-        def client(app):
-            return Client(app, enter_failure=app is failed)
+        def client(app, *, base_url):
+            return Client(app, base_url=base_url, enter_failure=app is failed)
         with patch.object(native_fixture, 'create_app', side_effect=[failed, next_app]), \
                 patch.object(native_fixture, 'TestClient', side_effect=client):
             with self.assertRaisesRegex(RuntimeError, 'enter failure'):
@@ -121,7 +122,7 @@ class NativeFixtureLifecycleTests(unittest.TestCase):
         app = application(events, 'failed-exit')
         fixture = self.fixture()
         with patch.object(native_fixture, 'create_app', return_value=app), \
-                patch.object(native_fixture, 'TestClient', side_effect=lambda value: Client(value, exit_failure=True)):
+                patch.object(native_fixture, 'TestClient', side_effect=lambda value, *, base_url: Client(value, base_url=base_url, exit_failure=True)):
             fixture.start()
             with self.assertRaisesRegex(RuntimeError, 'exit failure'):
                 fixture.stop()

@@ -68,3 +68,30 @@ The following is an explicit AST method-name comparison against `9454000`, captu
 - Replacement: `MaterialGovernanceTests.test_historical_bootstrap_remains_unadopted_and_cannot_execute`.
 
 Additional real PostgreSQL replacements in `test_development_login_postgres.py`: unconfigured public boundary rejects internal tokens/old cookies; old demo database rejected before schema/identity mutation. No blanket skips were introduced. The authentication author supplies final detailed login-behavior equivalence evidence.
+
+## Follow-up fixture boundary corrections
+
+- Public department-publication HTTP checks use the configured external RS256 issuer; bare native team-membership HTTP/WebSocket checks retain the original internal HS256 token. They test different identity boundaries and are not interchangeable.
+- The core workspace browser fixture now runs only the real BrowserAuth flow against its disposable loopback HTTPS OIDC issuer. Desktop/mobile selection controls viewport only. Original login, navigation, empty state, deep link, refresh and logout/relogin assertions remain; this synthetic issuer does not prove deployment identity integration.
+- Storage governance fixtures use the production-valid 60-second retention grace. Positive purge cases advance only the service's clock after establishing the plan; permission denial and not-yet-elapsed rejection remain direct checks. No product retention validation or timeout was relaxed. These storage cases require their own PostgreSQL run.
+
+## First complete portable discovery and corrections
+
+`env -u FACTORY_TEST_DATABASE_URL timeout 600 python scripts/check_python.py` completed with exit 1: 2069 cases in 175.686s, 7 failure records, 12 error records, 561 skips. Some records are subtests, so subtracting failure/error records from case count does not give an accurate passed-case count. Original evidence: `/tmp/no-demo-full-portable-first.log`.
+
+Corrections are confined to fixture contracts:
+
+- Two snapshot tests assumed a globally empty command ledger. Ordinary fixture draft/publication now legitimately creates six commands. Capture the initial count and assert unchanged / exactly one new import command; no arbitrary replacement constant.
+- The historical unpinned-plan denial includes an explanatory message. Assert the precise current error, preserving the denial and unchanged original body.
+- Four actual-runtime failures shared hand-built materials lacking `runtimeBinding`. The helper now includes the same explicit fixture binding before hashing; original native tool/HITL/budget/UNKNOWN assertions remain.
+- Four lifecycle errors came from a fake TestClient constructor not accepting the now-explicit HTTPS `base_url`. The fake checks that exact URL; lifecycle ordering and engine-disposal assertions remain.
+- The removed `publish_demo_compatibility` method is asserted absent; ordinary production publication remains exercised.
+- Old product-reserved fixture material names are no longer special. Catalog/material tests retain rejection of unknown `arbitrary_shell` and `checksum` with `fixture:operate` permission, then assert another author receives 403, the actual owner can create version 2, and version 1's complete inspected body/governance remains unchanged. This does not loosen reserved request fields or runtime tool authority.
+
+Additional ID mapping:
+
+- `CatalogContractTests.test_tool_kind_and_registered_binding_cannot_be_replaced` → `test_tool_contract_and_owner_pins_cannot_be_replaced`.
+- `MaterialGovernanceTests.test_registered_tool_binding_and_reserved_identity_cannot_expand` → `test_registered_tool_permissions_and_material_owner_cannot_expand`.
+- Removed `CoreGoQueueBoundaryTests.test_direct_core_go_rejects_queue_amplification_before_database_or_workspace`: it exclusively asserted the deleted product Go-profile queue override. `GoProjectWorkflowTests.test_product_rejects_retired_development_profile` covers removed configuration; retained `GoLiveRunnerTests.test_member_settings_reach_local_app_boundary_without_provider_access` checks the test-only campaign explicitly passes `queue_max_attempts=1` without provider/credential access. No ordinary queue/retry behavior was deleted.
+
+The first full run is still a failure; targeted corrections and final combined validation must be recorded separately.

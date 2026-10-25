@@ -407,7 +407,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.bindings.manifest(legacy)
         with self.assertRaises(HTTPException) as rejected:
             self.applications.require_plan_current(legacy)
-        self.assertEqual(rejected.exception.detail, 'APPLICATION_PIN_REQUIRED')
+        self.assertEqual(rejected.exception.detail, 'APPLICATION_PIN_REQUIRED: historical unpinned plans cannot authorize execution')
         self.assertEqual(self.store.plan(legacy['id'], 'alice'), legacy)
         self.assertFalse(hasattr(self.applications, 'adopt_legacy_demo_plan'))
 
