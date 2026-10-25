@@ -16,3 +16,13 @@
 - Ruff、diff check通过；定向Pyright 0 errors/0 warnings：`/tmp/owner-tool-response-pyright.log`。
 
 全部为便携原生Agent+合成HTTP；未运行PG、真实模型、GPU。QA部署/完整native集成由应用作者另验，不能从本测试外推已通过。任务勾选及独立精确head审查由协调者核对。
+
+## 首轮精确 CI 失败与夹具修正
+
+CI [40205672388](https://github.com/Guanzhw/agent-factory/actions/runs/40205672388) 的 bb1d11b Python 370 项出现9 errors，PG通过；首次日志保留在 `/tmp/af-core-tool-response-first-ci-failure.log`，不以局部通过覆盖失败。9 errors来自5个 owner continuation/private-marker 测试首次请求未声明 checksum_fixture，却要求返回该工具。两个跨协议/legacy测试各产生3个错误子例。新增规则正确拒绝，续接断言尚未执行。
+
+仅补5次首请求的固定工具声明，全部原断言、后续纯文本无工具请求及产品代码保持不变。完整 owner 协议相关模块与原17项合跑：
+
+`PYTHONPATH=platform:platform/tests timeout 120 /workspace/agent-factory-research-next/.venv/bin/python -m unittest test_model_protocol test_model_protocol_execution test_byok_tool_authority test_byok_native_wait test_byok_model -v`
+
+55/55，零跳过，0.643s，退出0；`/tmp/owner-tool-response-ci-fixture-fix.log`。Ruff、diff check通过。没有重跑PG或完整CI；新head仍需独立复审与精确CI，前17项曾漏掉完整协议夹具范围，不称原CI已通过。
