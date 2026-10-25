@@ -35,3 +35,9 @@ prepare将当时准确workflowPin保存在preview中；publish必须比较当前
 ## Acceptance and limits
 
 确定性契约测试：无启动写入；非成员/跨owner拒绝；draft不创建治理版本或发布；明确publish后准确pin可读；相同请求恢复无新版本、异内容冲突；schema无连接ref或凭据；缺/撤销资源无新发布；不调用adapter factory。PG测试证明嵌套治理同事务回滚、重启原收据与并发原命令幂等。双用户同published app/material hash用个人连接做真实core preflight；合成凭据/本地adapter只证机制。Browser验收由集成方以空库走资源配置→setup表单→明确发布→研究约定，无JSON粘贴；未执行前保持NOTRUN。真实模型/GPU另验收，不由setup通过替代。
+
+## Static installation into the optional research application
+
+`research.public.install(state, workflow=...)` constructs `ResearchSetup` after the installed Workflow's exact registration is available. It passes the actual `workflow.tool_registrations`, existing connections and `store.personal_models`, exposes `state['research_setup']`, and installs `setup_router` on the existing authenticated HTTP app. No second lifespan or background task is introduced. Legacy `install(state)` without this component keeps its existing project/first-root behavior; the app-free core gets no setup routes or seeds.
+
+A portable real-HTTP contract test follows setup candidates → owner draft → explicit publication → project agreement/confirmation using the returned immutable applicationRef and connectionRefs. The portable fixture has no native executor and must not claim research execution; actual deployment installation is checked separately on isolated PostgreSQL. A registered process adapter requiring `targetRef` remains an existing but unconfigured capability, not an invented missing implementation.

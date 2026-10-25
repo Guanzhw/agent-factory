@@ -38,3 +38,11 @@ setup SHALL 保留原事务收据，不因响应丢失另建版本。
 #### Scenario: Preview workflow changed
 - WHEN 保存preview后已安装workflow pin发生变化
 - THEN 发布拒绝并要求重新查看确认，不静默发布新pin
+
+#### Scenario: Optional installed workflow supplies the setup controller
+- WHEN the explicit research deployment installs its current fixed Workflow
+- THEN setup HTTP routes use that Workflow's exact controller registrations and existing resource services, without publishing seeds or adding a lifecycle worker
+
+#### Scenario: Published setup becomes the confirmed project execution reference
+- WHEN an owner explicitly publishes a setup then saves and confirms a research agreement
+- THEN the project preserves that published applicationRef and the owner's connectionRefs exactly; confirmation alone does not dispatch model or tool execution
