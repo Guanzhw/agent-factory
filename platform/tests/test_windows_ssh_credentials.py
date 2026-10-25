@@ -72,6 +72,7 @@ class WindowsCredentialScopeTests(unittest.TestCase):
             process_handle = 3
             def __init__(self, args, env, *, cwd=None):
                 self.env = env
+                self.args = args
                 self.cwd = cwd
                 self.resumed = False
                 self.killed = False
@@ -117,6 +118,13 @@ class WindowsCredentialScopeTests(unittest.TestCase):
             helper = Path(process.cwd) / 'askpass.exe'
             self.assertEqual(helper.read_bytes(), self.binary.read_bytes())
             self.assertEqual(process.env['SSH_ASKPASS'], './askpass.exe')
+            self.assertEqual([arg for arg in process.args if arg.startswith('UserKnownHostsFile=')],
+                             ['UserKnownHostsFile=known_hosts'])
+            self.assertIn('StrictHostKeyChecking=yes', process.args)
+            self.assertIn('HostKeyAlias=factory-pinned', process.args)
+            self.assertIn('GlobalKnownHostsFile=none', process.args)
+            self.assertEqual((Path(process.cwd) / 'known_hosts').read_text(),
+                             'factory-pinned synthetic-host-key\n')
             self.assertEqual(self.support.check_client.call_args.args[3], helper)
             self.assertEqual(self.releases, 1)
             self.assertFalse(self.password_in_environment)

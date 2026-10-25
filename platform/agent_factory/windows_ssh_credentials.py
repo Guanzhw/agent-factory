@@ -151,7 +151,7 @@ class WindowsSSHCredentials:
             pipe_name = r'\\.\pipe\af-ssh-' + uuid.uuid4().hex
             pipe = w.server_pipe(pipe_name)
             args = [str(ssh), '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
-                    '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}',
+                    '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=known_hosts',
                     '-o', 'GlobalKnownHostsFile=none', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none',
                     '-o', 'AddKeysToAgent=no', '-i', 'identity', '-o', 'BatchMode=no',
                     '-o', 'PreferredAuthentications=publickey', '-o', 'NumberOfPasswordPrompts=1',
