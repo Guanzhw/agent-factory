@@ -21,3 +21,13 @@ describe.each([['demo', demoNavigation], ['live', researchNavigation]] as const)
     expect(workspaceUrl(url, { tab: 'catalog', task: '', project: '', researchTab: '', researchView: '' }, navigation)).toBe('/?tab=catalog');
   });
 });
+
+it('preserves live assistant setup and original-question context through resources without sharing it with core', () => {
+  const url = new URL('https://factory.example/?tab=research&researchView=assistant&researchQASetup=qa-1&researchPeer=peer-1&researchQuestion=question-1');
+  const route = readWorkspaceRoute(url, false, researchNavigation);
+  expect(route).toMatchObject({ researchView: 'assistant', researchQASetup: 'qa-1', researchPeer: 'peer-1', researchQuestion: 'question-1' });
+  const resourceURL = workspaceUrl(url, { ...route, tab: 'resources', modelReturn: 'research' }, researchNavigation);
+  expect(readWorkspaceRoute(new URL(resourceURL, url), false, researchNavigation)).toMatchObject({ researchQuestion: 'question-1', researchQASetup: 'qa-1' });
+  expect(readWorkspaceRoute(url, false).researchQuestion).toBeUndefined();
+  expect(readWorkspaceRoute(new URL('https://factory.example/?tab=research&researchQuestion=../other&researchQASetup=https://wrong'), false, researchNavigation)).toMatchObject({ researchQuestion: '', researchQASetup: '' });
+});

@@ -1,0 +1,282 @@
+{
+  "api": [
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 401
+    },
+    {
+      "path": "/api/factory/auth/login",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/auth/callback",
+      "status": 303
+    },
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/projects",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/auth/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/qa/drafts",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/7630b0bf-0669-47b3-9187-614892c5ebca",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/7630b0bf-0669-47b3-9187-614892c5ebca/publish",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me/configurations",
+      "status": 409
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me/configurations",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/logout",
+      "status": 204
+    },
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 401
+    },
+    {
+      "path": "/api/factory/auth/login",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/auth/callback",
+      "status": 303
+    },
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/projects",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/auth/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/c177af90-0363-47cb-aa7c-ccc42f37a8f6/questions",
+      "status": 202
+    },
+    {
+      "path": "/api/factory/research/assistant-questions/9aef562c-a76c-412a-b662-e037f1f612f3",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistant-questions/9aef562c-a76c-412a-b662-e037f1f612f3",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistant-questions/9aef562c-a76c-412a-b662-e037f1f612f3",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/application-content/7eccd07a-3cce-4e1b-9202-fc5a0109bae1",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/projects",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistant-questions/9aef562c-a76c-412a-b662-e037f1f612f3",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    }
+  ],
+  "errors": [],
+  "consoleErrors": []
+}

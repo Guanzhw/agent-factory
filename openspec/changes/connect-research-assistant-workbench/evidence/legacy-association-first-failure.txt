@@ -1,0 +1,45 @@
+
+ RUN  v4.1.12 /workspace/agent-factory-research-assistant-ui
+
+ ❯ web/apps/research/ResearchWorkspace.test.ts (11 tests | 1 failed) 1637ms
+   × offers personal project creation and real resource navigation without a fake execution action 327ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  web/apps/research/ResearchWorkspace.test.ts > offers personal project creation and real resource navigation without a fake execution action
+AssertionError: expected "create" to be called with arguments: [ 'alice', …(1) ]
+
+Received:
+
+  1st create call:
+
+  [
+    "alice",
+    {
+-     "assistantId": "a",
+-     "requestId": Any<String>,
++     "assistantId": null,
++     "requestId": "eb8e55c2-f965-4426-84e9-e61d472ea8c3",
++     "researchAssistantId": null,
+      "title": "新研究",
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ web/apps/research/ResearchWorkspace.test.ts:48:30
+     46|   await field('项目名称', '新研究'); await field('关联我的助手', 'a');
+     47|   await act(async () => button('创建项目').click());
+     48|   expect(researchApi.create).toHaveBeenCalledWith('alice', { requestId…
+       |                              ^
+     49|   expect(onProject).toHaveBeenCalledWith('project-1'); expect(button('…
+     50| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 5 passed (6)
+      Tests  1 failed | 32 passed (33)
+   Start at  15:26:01
+   Duration  9.47s (transform 5.04s, setup 0ms, import 12.41s, tests 3.59s, environment 3.80s)
