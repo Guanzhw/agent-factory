@@ -2004,3 +2004,17 @@ main a877268 的 daily fast40205579401成功。#121 head35a9783 fast40205859880�
 [17项验收/P0–P9独立覆盖审计](https://github.com/Guanzhw/agent-factory/blob/e21c655/docs/plans/research-acceptance-progress-20261025.md)明确局部机制证据与最终门槛；不是完成声明。P7真实native正常/恶意QA在分次修复后通过，费用仍未计量。P7 UI owner=research_frontend，精确48fabd7独立review PASS，480Web通过，真实QA浏览器正在串行验收。P7主动关联owner=research_app_spec，规范314619e修复派生文本撤回旁路后独立PASS，开始实现；全部peer影响字段/后继消费继承完整来源集合，不能把推断洗成无依赖事实。
 
 P8 owner=assistant_messages，规范be534069经独立review PASS开始实现；派生manifest存应用记录，所有读取/导出委托core检查原来源，压缩在锁外。root拥有原CLI回执窄core接口be25678，独立review/6portable/Ruff/Pyright通过，实际CLI消费者仍待验。两应用worker独立worktree，rounds/projects/public重叠由root最终集成；本地PG仅一个重型窗口。P7完整协作、P8实际第二成员复现、P9最终组合及真实C/D仍未完成。
+
+
+### 16:12 精确终态、确定性根因与剩余集成
+
+main `bc776078f349b29c3d72999f145008fa4196c203` 的 fast [40208942470](https://github.com/Guanzhw/agent-factory/actions/runs/40208942470) SUCCESS；#124/#126已合并。正式UI #125仍Draft，没有以截图确认或fast取代完整行为门槛。#121 `ef411f4` fast40209307647、#125 `ece86bb` fast40209314890、#127 `5b9e6f0` fast40209353352、#128 `18921fc` fast40209360880均SUCCESS，均未合并。
+
+首组合full [40206239436](https://github.com/Guanzhw/agent-factory/actions/runs/40206239436) 精确551f1bf最终FAIL：PG2029项2fail/7error/5skip，Windows2029项7error/822skip；独立core实际安装/空库/启动关闭成功，required五组均通过仍不能抵消普通失败。7errors已由#126修复夹具；未重复启动full追绿。
+
+- remote取消测试：实际后台observer可在断言前把PREPARED变CANCELLED_NO_DISPATCH。a2421fb先spec、65ec5dd控制观察前后阶段，原精确断言保留并补原identity/零dispatch；两项PG（含dispatch-CAS先胜必须UNKNOWN反例）2pass/0skip，9.884s。pr104_independent_review完整551f1bf→65ec5dd PASS，无生产变动。root集成3088c44。
+- 恶意QA：真实native queue同task/run attempt1→2导致第二次模型HTTP；两次均正确拒绝未声明工具，仍不符合一次拒绝即停止的行为。首单例FAIL10.513s，正常→恶意组合2项1FAIL22.725s。assistant_endpoints负责永久协议拒绝原任务栅栏，foundation_review要求先admission后task锁、原失败+取消同事务、最终failed且保留原账务；先spec1a3545b，代码待验。不得把此前单例绿视为闭合。
+- P7关联 f848c6a：50portable通过，但foundation_review完整diff不通过：projects锁序反转、直接原记录检索缺失、core来源权限已有后仍双存富正文。research_app_spec负责整改；research_frontend同步撤权精简投影的UI类型与无旧正文显示。重型PG待核心修复后串行。
+- P8 210810f：30portable+5target通过，pr104_independent_review整改PASS；旧版本实际CLI另一成员复现/继续2PG、注入写失败不重派1PG通过。仍需与P7完整来源对接、当前head集成和成果UI/browser。不能宣称完整C04。
+
+root本地集成已包含#127/#128，组合11项portable通过0.836s；未外推PG或完整验收。最新[17case/P0–P9矩阵](https://github.com/Guanzhw/agent-factory/blob/154579f/docs/plans/research-acceptance-progress-20261025.md)保留原审计并追加本轮缺口。当前仍有确定性实现/验收工作，不只是C/D资源阻塞；真实任务/模型预算/身份/目标GPU与部署/容量容差仍待运行前冻结，无付费调用、新凭据或公网暴露。
