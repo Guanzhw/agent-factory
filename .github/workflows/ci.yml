@@ -45,6 +45,7 @@ jobs:
       - run: node --test scripts/check_web_architecture.test.mjs
       - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
       - run: npm run check
+      - run: npm run build:research
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         if: runner.os == 'Linux'
         with:
@@ -77,7 +78,7 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run ruff check platform deployment scripts
+      - run: uv run ruff check platform deployment applications scripts
       - run: uv run pyright
       - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json
       - name: Fast selected Python regressions

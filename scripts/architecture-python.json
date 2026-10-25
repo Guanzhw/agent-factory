@@ -1,6 +1,23 @@
 {
-  "source_roots": ["platform", "deployment", "scripts"],
-  "core": ["agent_factory"],
-  "apps": {},
-  "composition_roots": ["deployment/agent_factory_server/main.py"]
+  "source_roots": [
+    "platform",
+    "deployment",
+    "scripts",
+    "applications"
+  ],
+  "core": [
+    "agent_factory"
+  ],
+  "apps": {
+    "research": {
+      "package": "research",
+      "public": [
+        "research.public"
+      ]
+    }
+  },
+  "composition_roots": [
+    "deployment/agent_factory_server/main.py",
+    "deployment/agent_factory_server/research.py"
+  ]
 }
