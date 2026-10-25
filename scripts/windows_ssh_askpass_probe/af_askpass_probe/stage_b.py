@@ -48,10 +48,14 @@ def case(root, mode, system, experiment_deadline):
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
+        username = w.win32api.GetUserName()
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+', username):
+            raise w.Reject('FIXTURE_ACCOUNT_FORMAT')
         nonce = secrets.token_hex(16)
         config = folder / 'sshd_config'
         config_text = '\n'.join([
             f'Port {port}', 'ListenAddress 127.0.0.1',
+            f'PidFile "{(folder / "sshd.pid").as_posix()}"', f'AllowUsers {username.lower()}',
             f'HostKey "{host_path.as_posix()}"', f'AuthorizedKeysFile "{authorized.as_posix()}"',
             'StrictModes yes', 'PubkeyAuthentication yes', 'AuthenticationMethods publickey',
             'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'PermitEmptyPasswords no',
@@ -106,7 +110,7 @@ def case(root, mode, system, experiment_deadline):
                    'ControlMaster=no', 'ControlPath=none', 'PermitLocalCommand=no', 'LogLevel=ERROR']
         for option in options:
             args.extend(['-o', option])
-        args.extend(['-l', w.win32api.GetUserName(), '127.0.0.1', 'ignored-by-force-command'])
+        args.extend(['-l', username, '127.0.0.1', 'ignored-by-force-command'])
         client_job = w.OwnedJob()
         output = folder / 'command-output'
         proc, thread, pid = client_job.spawn(args, env, output, suspended=True)
