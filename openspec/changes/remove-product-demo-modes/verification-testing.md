@@ -427,3 +427,12 @@ Test source was `fcfc3d3`; a disjoint removal-test commit `c424c84` occurred dur
 execution, without changing this case or production bytes. `0513cbe` corrects
 only that exact expected status to 201. Ruff passed; next targeted runtime
 verification is pending its serial slot.
+
+Corrected-status targeted validation began at
+`5d240843f783ef72975538c167486fdeee8a3953`: **1 passed, 0 skipped, 9.959s,
+exit 0**, `/tmp/no-demo-prepare-ack-controlled-status-fixed.log`. All precise
+successful-201/original-receipt/one-prepare/one-dropped-ACK/UNKNOWN/zero-before-
+explicit-single-dispatch assertions passed. Both native workers and isolated
+fixtures completed cleanup. No additional whole-class/full rerun was made;
+this controls the required test boundary rather than claiming reproduction of
+the historical background-observer interleaving.
