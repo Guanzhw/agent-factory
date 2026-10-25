@@ -40,6 +40,18 @@ agreement包括objective、evaluation、stopConditions、resourceRefs（slot到�
 
 原生恢复负责继续/核对原任务。应用重启可从事件和原receipt重建研究视图，但视图缺失不是重新submit许可。该区分比另建后台研究轮询worker简单且保留UNKNOWN边界。
 
+### P5 首切片：确认的首轮准入与原请求引用
+
+agreement.execution 显式包含 applicationRef（精确发布版本）、mode、materialChoices/connectionRefs、deadline（UTC epoch秒）及 perRoundCaps（rounds固定1）；这些字段随目标版本确认，缺少配置时start返回409。budget是整个项目承诺，perRoundCaps不得超过总承诺且计费类型/币种一致。不得从resourceRefs字符串猜测模型或连接。截止时间与额度不由服务器暗定。
+
+首root的goal明确拼接完整「研究目标」「评价标准」「停止条件」三段，不仅传objective，不截断。组合文本受既有ApplicationStart的2000字符限制，超限明确拒绝并要求缩短约定。当前发布mode无inputSchema则直接传goal；有schema时只接受字符串goal且无其他必填字段，并按schema验证后传inputValues.goal。任何不兼容模式明确拒绝，不创建通用字段映射器。
+
+每一轮是一个native root，对应一个scope allocation；临时child继承该root及预算，不单独bind_root。项目只创建一个scope；修订目标不得修改或重置已建立的总预算、deadline。首切片只准入第一个原root，不开放未经验证的后继轮入口。实验节点保存假设/条件，运行引用保存goal版本、原application request、allocation；task/run与执行状态始终读取core原回执。后续自主决策复用原生运行与选定材料；具体Workflow接入需先完成最小core契约设计，不手写provider循环，也不假定NativeWorkflows已支持Loop。
+
+POST `/projects/{id}/start` 只接收requestId/expectedVersion。短事务按core admission锁→应用namespace锁→usage锁顺序验证已确认版本，原子创建项目scope、实验/运行意图、allocation及factory原request→allocation绑定，提交后才await ApplicationRuns.start。所有core reserve入口均强制该绑定，不能通过另一个无allocation参数的路由绕过。已有task回执必须与公开scope inspect的原allocation.taskId一致，不匹配明确拒绝。重复请求只核对同一原request；已存在task（包括UNKNOWN）不重新调用start。尚无task时仅沿原请求恢复既有core准入，不生成新身份。首切片新request不能绕过已有实验意图启动第二root。GET `/projects/{id}/experiments` 返回领域事实及原回执投影，不把accepted当completed。实验开始记录当前仅本人可见，P6再接自动团队内容发布。
+
+应用通过public.install注入ApplicationRuns与LocalBudgetScopes实例，不从公开context取出Store调用私有执行器。end在同一领域事务取消已建立scope，阻断未准入/后续工具模型入口；不声称中断已在途外部操作。旧目标原请求已确认的意图可按旧约定结束，修订创建的新目标没有自动启动权；首切片没有冲突后继。结束后的未准入意图不得恢复执行。UNKNOWN不释放预算。P5首切片不是自主多轮或C/D验收完成。
+
 ### 4. 目标修订与停止
 
 用户提交目标修改附当前版本；冲突返回当前版本，不最后写入覆盖。修改先形成新约定与影响说明，明确后生效。默认允许已在途的不冲突操作按旧目标完结并标为旧版证据；与新目标冲突的操作请求原身份取消，正向停止证明到达前不启动冲突后继。目标修订不重置scope消费；需要增加预算是另一次明确资源约定，不隐式扩容。整体停止仅阻止新尝试；UNKNOWN和子任务清理继续显示待核对，不要求伪造清理完成才能保存研究结束理由。
