@@ -1,15 +1,17 @@
 import hashlib
 import json
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from agent_factory.process_enforcement import BoundedProcessAdapter
+from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessEnforcementError
 from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded, request, specification
-from agent_factory.ssh_process_helper import handle
+from agent_factory.ssh_process_helper import handle, directory, read_file
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'requires Linux no-follow descriptors and flock')
 class SSHProcessHelperTests(unittest.TestCase):
     def setUp(self):
         self.temp = self.enterContext(TemporaryDirectory())
@@ -142,3 +144,20 @@ class SSHProcessHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             handle({'protocol': PROTOCOL, 'action': 'capabilities', 'root': str(self.root)})
         self.assertEqual(list(self.root.iterdir()), [])
+
+
+class SSHProcessUnsupportedPlatformTests(unittest.TestCase):
+    def test_os_entrypoints_reject_before_parsing_or_file_access(self):
+        for platform in ('win32', 'darwin'):
+            with self.subTest(platform=platform), patch('agent_factory.ssh_process_helper.sys.platform', platform), \
+                    patch('agent_factory.ssh_process_helper.os.open') as opened, \
+                    patch('agent_factory.ssh_process_helper.request') as parsed:
+                with self.assertRaisesRegex(ProcessEnforcementError, 'SSH_PROCESS_PLATFORM_UNSUPPORTED'):
+                    handle(None)
+                with self.assertRaisesRegex(ProcessEnforcementError, 'SSH_PROCESS_PLATFORM_UNSUPPORTED'):
+                    with directory('/unsupported'):
+                        self.fail('unsupported directory was entered')
+                with self.assertRaisesRegex(ProcessEnforcementError, 'SSH_PROCESS_PLATFORM_UNSUPPORTED'):
+                    read_file(-1, 'unsupported', 1)
+                opened.assert_not_called()
+                parsed.assert_not_called()

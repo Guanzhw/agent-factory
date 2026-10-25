@@ -16,6 +16,8 @@ from .ssh_process_contract import (PROTOCOL, MAX_REQUEST_BYTES, MAX_RESPONSE_BYT
 @contextmanager
 def directory(path):
     """Traverse absolute paths without following directory symlinks."""
+    if sys.platform != 'linux':
+        raise ProcessEnforcementError('SSH_PROCESS_PLATFORM_UNSUPPORTED')
     fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in Path(path).parts[1:]:
@@ -28,6 +30,8 @@ def directory(path):
 
 
 def read_file(fd, name, maximum):
+    if sys.platform != 'linux':
+        raise ProcessEnforcementError('SSH_PROCESS_PLATFORM_UNSUPPORTED')
     item = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
     try:
         before = os.fstat(item)
@@ -54,6 +58,8 @@ def original(observation, binding, value):
 
 
 def handle(value):
+    if sys.platform != 'linux':
+        raise ProcessEnforcementError('SSH_PROCESS_PLATFORM_UNSUPPORTED')
     value = request(value)
     if value['action'] == 'capabilities':
         with directory(Path(value['root'])) as root_fd:
