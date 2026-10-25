@@ -11,3 +11,6 @@
 - [ ] 3.1 Run portable scope/guard/limit/failure tests and actual Windows installed-core SSH checks.
 - [ ] 3.2 Verify Linux checks and standalone wheel behavior.
 - [ ] 3.3 Run controlled Windows-to-Linux original submit/recovery/cancel or report the precise missing environment gate.
+
+
+- [ ] 3.4 Preserve first installed-core failure and independently review fixed safe phase/code instrumentation; run one authorized instrumented acceptance to distinguish acquisition, helper identity/handshake and command failure without changing the oracle.
