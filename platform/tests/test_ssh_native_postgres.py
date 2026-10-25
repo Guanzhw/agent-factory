@@ -4,6 +4,7 @@ The transport still obtains a real disposable ssh-agent/vault lease and speaks
 its bounded JSON protocol. The subprocess runs locally, so this is not sshd,
 GPU, external-host verification or live-model acceptance.
 """
+import ast
 import hashlib
 import json
 import os
@@ -46,7 +47,7 @@ class SSHSequenceModel(InventoryModel):
             return ModelResponse(role='assistant', content='Original training operation finished.')
         launches = [m for m in results if m.tool_name == LAUNCH_TOOL]
         if launches:
-            value = json.loads(launches[-1].content)
+            value = ast.literal_eval(launches[-1].content)
             name, args, identifier = WAIT_TOOL, {'operationIds': [value['operationId']]}, 'original-ssh-wait'
         else:
             name, args, identifier = LAUNCH_TOOL, {}, 'original-ssh-launch'
