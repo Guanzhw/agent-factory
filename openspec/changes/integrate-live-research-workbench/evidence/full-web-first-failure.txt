@@ -35,4 +35,3 @@ Error: Timed out in waitFor!
       Tests  1 failed | 457 passed (458)
    Start at  13:49:09
    Duration  47.99s (transform 10.48s, setup 0ms, import 25.48s, tests 57.64s, environment 25.90s)
-
