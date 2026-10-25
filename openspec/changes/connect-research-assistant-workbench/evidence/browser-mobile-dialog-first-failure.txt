@@ -75,4 +75,3 @@ Call log:
        - <dialog open="" class="rw-dialog" aria-label="研究助手">…</dialog> intercepts pointer events
      - retrying click action
        - waiting 500ms
-
