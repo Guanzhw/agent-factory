@@ -148,6 +148,92 @@ class ResearchDeliveryTests(unittest.TestCase):
             self.assertEqual(self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context), selected)
         f.native.tool_results.assert_called_with('alice', 'child', 'child-run')
 
+    def ssh_selection_fixture(self):
+        f = self.fixture
+        operation = {'id': 'parent-operation', 'taskId': f.task, 'nativeRunId': f.run, 'closed': True,
+            'observation': {'state': 'FAILED', 'output': None}}
+        f.custody.start.return_value = operation
+        asyncio.run(self.rounds.launch(f.ctx, Decision(action='experiment', reason='Measure',
+            hypothesis='Test', conditions='Controlled', goal='Measure')))
+        pin = {'id': 'ssh-launch', 'version': 1, 'sha256': 'a' * 64}
+        config = EvidenceSelection(kind='ssh-process', toolMaterial=pin, fields={'metrics': 'measurement'})
+        f.native.delegated_child.return_value = {'taskId': 'child', 'runId': 'child-run'}
+        proof = {'kind': 'ssh-process', 'taskId': 'child', 'runId': 'child-run', 'planId': 'child-plan',
+            'operationId': 'ssh-original', 'materials': [{'materialRef': pin, 'binding': {'adapterId': 'ssh-process-launch-v1', 'revision': '1', 'toolName': 'ssh_process_launch'}}],
+            'receipt': {'leaseId': 'lease', 'providerJobId': 'process', 'executionStatus': 'FAILED', 'exitCode': 2, 'stopEvidence': {'allStopped': True}},
+            'output': {'text': json.dumps({'measurement': {'value': 3}, 'privateCanary': 'PRIVATE_NOT_SELECTED'}), 'truncated': False, 'utf8Valid': True, 'artifact': {'taskId': 'child', 'artifactId': 'private-log', 'sha256': 'b' * 64}}}
+        f.native.ssh_results.return_value = proof
+        with f.store.transaction() as conn:
+            attempt = conn.execute(select(f.legacy.attempts)).mappings().one()
+        recorded = []
+        def write(name, raw):
+            recorded.append(json.loads(raw))
+            return {'jobId': f.task, 'id': 'selected', 'sha256': 'c' * 64, 'size': len(raw.encode())}
+        return operation, config, proof, attempt, recorded, SimpleNamespace(write_artifact=write)
+
+    def test_failed_ssh_original_selects_only_authorized_fields_and_preserves_provenance(self):
+        operation, config, proof, attempt, recorded, context = self.ssh_selection_fixture()
+        with self.fixture.store.transaction() as conn:
+            result = self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
+        self.assertEqual(result['provenance']['executionStatus'], 'FAILED')
+        self.assertEqual(result['provenance']['exitCode'], 2)
+        self.assertEqual(recorded[0]['value'], {'value': 3})
+        self.assertEqual(result['missingEvidence'], ['run_recipe', 'source'])
+        self.assertNotIn('PRIVATE_NOT_SELECTED', json.dumps(result) + json.dumps(recorded))
+        self.assertNotIn('private-log', json.dumps(result))
+        self.fixture.native.delegated_child.assert_called_once_with('alice', 'parent-operation')
+        self.fixture.native.ssh_results.assert_called_once_with('alice', 'child', 'child-run')
+        self.fixture.native.tool_results.assert_not_called()
+        with self.fixture.store.transaction() as conn:
+            self.assertEqual(self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context), result)
+        self.assertEqual(len(recorded), 1)
+
+    def test_ssh_invalid_or_incomplete_outputs_are_missing_without_sharing_logs(self):
+        operation, config, proof, attempt, recorded, context = self.ssh_selection_fixture()
+        for output, expected in [(None, 'ssh_output_not_available'),
+                ({'text': '{}', 'truncated': False, 'utf8Valid': False}, 'invalid_ssh_output'),
+                ({'text': '{}', 'truncated': True, 'utf8Valid': True}, 'ssh_output_truncated'),
+                ({'text': ' ' * 16385, 'truncated': False, 'utf8Valid': True}, 'ssh_output_truncated'),
+                *[({'text': value, 'truncated': False, 'utf8Valid': True}, 'ssh_output_invalid_json') for value in
+                    ['[]', '{} {}', '{"measurement":NaN}', '{"measurement":1,"measurement":2}', 'log line\n{}']]]:
+            with self.subTest(output=output), self.assertRaisesRegex(RuntimeError, 'rollback-output'):
+                with self.fixture.store.transaction() as conn:
+                    proof['output'] = output
+                    result = self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
+                    self.assertEqual(result['missingEvidence'], [expected])
+                    self.assertEqual(result['artifacts'], [])
+                    raise RuntimeError('rollback-output')
+        self.assertEqual(recorded, [])
+
+    def test_ssh_missing_child_and_provenance_do_not_hide_authority_failures(self):
+        operation, config, proof, attempt, recorded, context = self.ssh_selection_fixture()
+        native = self.fixture.native
+        cases = [(None, None, 'ssh_child_not_started'),
+            ({'taskId': 'child', 'runId': None, 'planId': 'child-plan'}, None, 'original_ssh_result_unavailable'),
+            ({'taskId': 'child', 'runId': 'child-run'}, HTTPException(409, 'APPLICATION_SSH_PROVENANCE_UNAVAILABLE'), 'ssh_provenance_unavailable')]
+        for child, error, expected in cases:
+            with self.assertRaisesRegex(RuntimeError, 'rollback-missing'):
+                with self.fixture.store.transaction() as conn:
+                    native.delegated_child.return_value = child; native.ssh_results.side_effect = error
+                    result = self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
+                    self.assertEqual(result['missingEvidence'], [expected])
+                    if child is not None and child['runId'] is None:
+                        self.assertEqual(result['provenance']['taskId'], 'child')
+                        self.assertIsNone(result['provenance']['runId'])
+                    raise RuntimeError('rollback-missing')
+        for error in [HTTPException(403, 'revoked'), HTTPException(404, 'foreign'), HTTPException(409, 'OTHER_MISMATCH')]:
+            native.ssh_results.side_effect = error
+            with self.fixture.store.transaction() as conn, self.assertRaises(HTTPException) as caught:
+                self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
+            self.assertIs(caught.exception, error)
+        native.ssh_results.side_effect = None
+        proof['materials'][0]['materialRef'] = {**config.toolMaterial.model_dump(), 'sha256': 'd' * 64}
+        with self.fixture.store.transaction() as conn, self.assertRaises(HTTPException) as caught:
+            self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
+        self.assertEqual(caught.exception.detail, 'RESEARCH_EVIDENCE_MATERIAL_MISMATCH')
+        self.assertEqual(recorded, [])
+        self.assertEqual(EvidenceSelection(toolMaterial=config.toolMaterial, fields=config.fields).kind, 'cli')
+
     def test_current_recipe_prerequisites_are_explicit_and_not_truthy_placeholders(self):
         valid = {'command': ['python', 'source.py'], 'dependencies': [], 'data': [1, 2], 'expected': {'value': 3}}
         self.assertTrue(_valid_value('run_recipe', valid))

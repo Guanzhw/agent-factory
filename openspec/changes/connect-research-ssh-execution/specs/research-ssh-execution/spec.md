@@ -75,7 +75,7 @@
 #### Scenario: Explicit SSH output selection for research delivery
 - **WHEN** the user selects evidence `kind: ssh-process`, the exact launch-material pin, and named metrics/source/run_recipe fields
 - **THEN** the application resolves the original delegated child through the core read port, including failed or cancelled children, and reads the original SSH receipt/output without dispatch
-- **AND** only non-truncated stdout of at most 16 KiB containing one strict JSON object is eligible for selected-field artifacts; unselected output and raw log artifacts are never automatically shared
+- **AND** only stdout whose complete original bytes pass core strict UTF-8 verification (`utf8Valid: true`), non-truncated and of at most 16 KiB containing one strict JSON object is eligible for selected-field artifacts; unselected output and raw log artifacts are never automatically shared
 - **AND** absent child/output, truncated output, invalid JSON or invalid role values yield explicit missingEvidence while preserving original execution status, exit code and provenance; none is guessed or replaced with model text
 - **AND** omitted evidence kind remains the existing CLI contract, with its original tool_results checks unchanged
 
