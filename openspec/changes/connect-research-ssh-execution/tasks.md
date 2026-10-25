@@ -50,3 +50,9 @@ Open/partial obligations:
 - PR136 and PR137 remain Draft and unmerged. Dependency PR136's older 624 full CI40228654327 ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips, 2091.848s. The four lifecycle errors have fixes at 5cde50a; the two failures are under investigation. No successful replacement full is claimed.
 
 Details: [native fault evidence](verification-native-inputs.md), [Research integration](verification-research-native.md), [browser](verification-browser-ssh.md), [loopback](verification-loopback.md), [review](review.md).
+
+
+## Native Windows remote-path correction
+- [ ] W1 Independently review the explicit remote POSIX construction design against local spec validation, inherited post-init signatures, SSH reconstruction and dynamic `replace`; preserve original full CI 40236302474 and its 24 Windows errors.
+- [ ] W2 Implement the narrow construction-only path semantics without serialized fields/schema changes or expanded local custody types; update actual SSH profile consumers rather than substituting Windows fake paths or skipping portable tests.
+- [ ] W3 Verify native Windows remote executable/cwd construction, input-derived replacement, relative/drive-letter rejection, unchanged local validation and fixed serialization/hash identity; retain the Linux helper boundary and run necessary exact-head checks. No implementation or test pass is claimed by this documentation update.
