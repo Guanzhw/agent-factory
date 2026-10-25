@@ -246,6 +246,19 @@ class AssistantEvents:
             return [dict(row) for row in conn.execute(select(self.subscriptions).where(
                 self.subscriptions.c.owner_id == owner).order_by(self.subscriptions.c.id)).mappings()]
 
+    def event(self, owner, identifier):
+        self.auth.require_member(owner)
+        with self.db.read() as conn:
+            row = self._row(conn, self.events, identifier)
+            if row['owner_id'] != owner:
+                raise HTTPException(404, 'ASSISTANT_EVENT_RECORD_NOT_FOUND')
+            deliveries = conn.execute(select(self.deliveries.c.id, self.deliveries.c.endpoint_id,
+                self.deliveries.c.state, self.deliveries.c.error).where(
+                    self.deliveries.c.event_id == identifier).order_by(self.deliveries.c.id)).mappings()
+            return {'id': row['id'], 'scanned': row['scanned'], 'errorCode': row['error'],
+                'deliveries': [{'id': item['id'], 'endpointId': item['endpoint_id'],
+                    'state': item['state'], 'errorCode': item['error']} for item in deliveries]}
+
     def delivery(self, owner, identifier):
         self.auth.require_member(owner)
         with self.db.read() as conn:

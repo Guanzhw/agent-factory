@@ -44,6 +44,24 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         with self.store.transaction() as conn:
             return self.service.emit(conn, 'alice', self.event, key, **kwargs)
 
+    def test_author_reads_rejection_before_task_without_receiver_private_fields_or_execution(self):
+        event = self.emit()
+        self.assertEqual(self.service.event('alice', event['id'])['deliveries'], [])
+        with self.service.db.write() as conn:
+            conn.execute(self.service.deliveries.insert().values(id='rejected-delivery',
+                event_id=event['id'], endpoint_id=self.endpoint['id'], state='rejected',
+                error='LOCAL_BUDGET_SCOPE_EXHAUSTED', attempted_at=time.time()))
+        self.assertEqual(self.service.event('alice', event['id']), {
+            'id': event['id'], 'scanned': False, 'errorCode': None,
+            'deliveries': [{'id': 'rejected-delivery', 'endpointId': self.endpoint['id'],
+                'state': 'rejected', 'errorCode': 'LOCAL_BUDGET_SCOPE_EXHAUSTED'}]})
+        for owner, identifier in [('bob', event['id']), ('alice', 'missing-event')]:
+            with self.subTest(owner=owner, identifier=identifier), self.assertRaises(HTTPException) as caught:
+                self.service.event(owner, identifier)
+            self.assertEqual(caught.exception.status_code, 404)
+        self.scopes.allocate.assert_not_called()
+        self.messages.runs.start.assert_not_called()
+
     def test_emit_requires_domain_transaction_and_rolls_back_intent_receipt(self):
         with self.store.engine.connect() as conn:
             with self.assertRaises(RuntimeError):
