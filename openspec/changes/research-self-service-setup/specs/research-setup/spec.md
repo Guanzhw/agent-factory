@@ -30,3 +30,11 @@ setup SHALL 保留原事务收据，不因响应丢失另建版本。
 #### Scenario: Partial governance failure
 - WHEN 事务内任何材料或应用检查失败
 - THEN setup与治理写入一起回滚，不能留下伪published配置；缺真实环境/工具不以fixture兜底
+
+#### Scenario: Resource visibility is not a binding
+- WHEN 共享模型可见但当前成员还没有connectionRef
+- THEN 引导现有显式绑定入口；GET不绑定，registrationRef不能替代执行ref
+
+#### Scenario: Preview workflow changed
+- WHEN 保存preview后已安装workflow pin发生变化
+- THEN 发布拒绝并要求重新查看确认，不静默发布新pin
