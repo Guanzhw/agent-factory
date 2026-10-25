@@ -228,4 +228,3 @@ def server_pipe(name):
 def client_pipe(name):
     return win32file.CreateFile(name, win32con.GENERIC_READ | win32con.GENERIC_WRITE, 0,
                                None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_OVERLAPPED, None)
-
