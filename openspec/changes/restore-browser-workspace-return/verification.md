@@ -36,3 +36,9 @@ This verifies core-only login return, not the new Research demo's full route
 journey. The optional demo will receive this change and run its own integration
 checks. Synthetic local OIDC over HTTPS is not external production IdP acceptance.
 No real model, GPU, new credential configuration or public exposure was used.
+
+## Development identity fixture follow-up
+
+组合full40196675940 Windows annotations显示MockIdentityTests.test_existing_sql_session_lifecycle_logout_and_current_owner_recheck错误：finish已返回(token,returnTo)，旧fixture将tuple传入session触发正常401。先运行完整development_identity/browser_auth两模块，33项1error（3.897秒）；仅正确解包并新增默认returnTo为/的断言，所有会话、csrf、撤权、注销及code重放断言保持。核对所有finish调用：其他消费结果的browser_auth测试和产品router已解包，未使用返回值的故障/取消测试不需修改。最终33通过/0跳过，2.891秒，exit0。
+
+原失败`/tmp/af-research-next-evidence/browser-return-fixture-first.log`，修后`browser-return-fixture-fixed.log`。无产品修改，无full/PG重跑，不把Linux便携结果写成Windows实跑。
