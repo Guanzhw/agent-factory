@@ -26,28 +26,44 @@ def safe_error(stage, exc):
 
 def helper_main():
     # SSH captures stdout as the passphrase. Never print diagnostics here.
+    folder = None
+    stage = 'IMPORT_WINDOWS'
     try:
-        from . import windows as w
         key_path = os.environ['AF_PROBE_KEY']
+        folder = Path(key_path).parent
+        from . import windows as w
+        stage = 'VERIFY_FIXTURE_DIRECTORY'
+        w.verify(folder)
+        stage = 'EXACT_PROMPT'
         if len(sys.argv) != 2 or sys.argv[1] != f'Enter passphrase for "{key_path}": ':
+            save(folder, 'helper-status', {'stage': stage, 'errorCode': 'PROMPT_MISMATCH'})
             return 1
         if os.environ.get('SSH_ASKPASS_PROMPT') in ('confirm', 'none'):
+            save(folder, 'helper-status', {'stage': stage, 'errorCode': 'NON_PASSPHRASE_PROMPT'})
             return 1
         mode = os.environ['AF_PROBE_MODE']
+        stage = 'PIPE_OPEN'
         pipe = w.client_pipe(os.environ['AF_PROBE_PIPE'])
         controller = w.process(int(os.environ['AF_PROBE_CONTROLLER']))
         try:
+            stage = 'PIPE_SERVER_IDENTITY'
             if w.pipe_pid(pipe, False) != int(os.environ['AF_PROBE_CONTROLLER']) or not w.alive(controller):
+                save(folder, 'helper-status', {'stage': stage, 'errorCode': 'SERVER_IDENTITY_REJECTED'})
                 return 1
             deadline = time.monotonic() + 6
             if mode == 'stalled':
+                save(folder, 'helper-status', {'stage': 'CONTROLLED_STALL'})
                 time.sleep(20)  # Actual connected helper must die with its job.
                 return 1
+            stage = 'PIPE_SECRET_READ'
             w.transfer(pipe, deadline, payload=b'READY')
             password = bytearray(w.transfer(pipe, deadline, size=64))
             try:
                 if len(password) != 64:
+                    save(folder, 'helper-status', {'stage': stage, 'errorCode': 'SECRET_LENGTH_REJECTED'})
                     return 1
+                stage = 'PIPE_RECEIPT'
+                save(folder, 'helper-status', {'stage': 'SECRET_RECEIVED'})
                 w.transfer(pipe, deadline, payload=b'RECEIVED')
                 if mode == 'forced':
                     # Parent kills the broker after this acknowledgement: a real
@@ -55,9 +71,11 @@ def helper_main():
                     w.transfer(pipe, time.monotonic() + 20, size=1)
                     return 1
                 if mode == 'repeat':
+                    stage = 'REPEATED_REQUEST'
                     w.transfer(pipe, deadline, payload=b'AGAIN')
                     if w.transfer(pipe, deadline, size=1) != b'N':
                         return 1
+                stage = 'SSH_PRIVATE_STDOUT'
                 sys.stdout.buffer.write(password + b'\n')
                 sys.stdout.buffer.flush()
                 return 0
@@ -66,7 +84,12 @@ def helper_main():
         finally:
             pipe.Close()
             controller.Close()
-    except Exception:
+    except Exception as exc:
+        if folder is not None:
+            try:
+                save(folder, 'helper-status', safe_error(stage, exc))
+            except Exception:
+                pass  # No fallback stdout/stderr: OpenSSH treats stdout as secret.
         return 1
 
 
@@ -187,7 +210,11 @@ def controller(root, mode):
              'foreignDenied': rejected, 'repeatDenied': repeat_denied, 'encryptedOnly': encrypted,
              'keyAbsentAfterClose': not key_path.exists(), 'jobStopped': True})
     except Exception as exc:
-        save(root, mode, safe_error(stage, exc))
+        result = safe_error(stage, exc)
+        helper_status = root / mode / 'helper-status.json'
+        if helper_status.is_file():
+            result['helper'] = json.loads(helper_status.read_text(encoding='utf-8'))
+        save(root, mode, result)
     finally:
         password[:] = b'\0' * len(password)
         if pipe is not None:
