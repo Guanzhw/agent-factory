@@ -38,4 +38,3 @@ Traceback (most recent call last):
 playwright._impl._errors.TimeoutError: Locator.select_option: Timeout 30000ms exceeded.
 Call log:
   - waiting for get_by_label("个人模型连接", exact=True)
-
