@@ -102,8 +102,11 @@ def provenance(environment, checkout):
     require(all(p.is_relative_to(environment) and not p.is_relative_to(checkout) for p in paths),
             'CORE_NOT_INSTALLED_IN_FRESH_ENVIRONMENT')
     require(helper.is_file() and helper.resolve().is_relative_to(environment), 'FIXED_HELPER_NOT_INSTALLED')
+    helper_parent = str(helper.resolve().parent)
+    require(not helper_parent.isascii() and ' ' in helper_parent, 'HELPER_PATH_CONDITIONS_NOT_EXERCISED')
     return {'coreVersion': importlib.metadata.version('department-agent-factory-core'),
-            'corePath': str(paths[0]), 'helperPath': str(helper), 'isolatedPython': bool(sys.flags.isolated)}
+            'corePath': str(paths[0]), 'helperPath': str(helper), 'isolatedPython': bool(sys.flags.isolated),
+            'helperParentUnicode': not helper_parent.isascii(), 'helperParentSpace': ' ' in helper_parent}
 
 
 def endpoint_script():
@@ -266,8 +269,10 @@ def exercise(root, report):
         stack.callback(manager.close)
         manager_root = manager.root
         require(not str(manager_root).isascii(), 'UNICODE_CARRIER_PARENT_NOT_EXERCISED')
+        require(' ' in str(manager_root), 'SPACE_CARRIER_PARENT_NOT_EXERCISED')
         require(manager.diagnostic() is None, 'INSTALLED_CLIENT_OR_HELPER_MISSING')
         report['unicodeCarrierParent'] = True
+        report['spaceCarrierParent'] = True
         report['stage'] = 'INSTALLED_HELPER_PREFLIGHT'
         ssh, helper = manager.paths()
         helper_env = {name: os.environ[name] for name in

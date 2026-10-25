@@ -30,7 +30,7 @@ def main():
     environment = None
     try:
         with TemporaryDirectory(prefix='af-installed-core-') as temporary:
-            root = Path(temporary) / ('独立核心验收' * 5)
+            root = Path(temporary) / ('独立核心 验收' * 5)
             root.mkdir()
             requirements = root / 'requirements.txt'
             subprocess.run(['uv', 'export', '--frozen', '--no-dev', '--no-emit-project', '--no-hashes',
