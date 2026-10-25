@@ -10,12 +10,15 @@
 
 - 单一公开同步入口 `exchange(argv, payload, *, env, max_output, before_effect, cancelled=None)`；输入是既有 pinned SSH 参数构造产生的 argv 和有限 bytes，stdin写块4096，响应逐块累计检查。stderr DEVNULL，无shell；helper不记录字节或argv。
 - 入口先核payload<=32768和合法响应上限<=1MiB，创建统一绝对工作deadline（默认30秒）。spawn、写、读、正常退出共享剩余时间，不能各自重置30秒。probe空输入允许；JSON/nonce和响应码仍调用方解释。
-- 每次调用在当前已有同步worker内使用私有 asyncio.Runner；Windows明确使用Proactor loop，POSIX使用默认loop。不新增 reader/writer 线程，不使用communicate。loop内使用公开低层subprocess transport/protocol以便在deadline后关闭owned管道且独立观察process_exited，不依赖私有 `Process._transport` 或无限EOF等待。
+- 每次调用在当前已有同步worker内使用私有 asyncio event loop；Windows明确使用Proactor loop，POSIX使用默认loop。不新增 reader/writer 线程，不使用communicate。loop内使用公开低层subprocess transport/protocol以便在deadline后关闭owned管道且独立观察process_exited，不依赖私有 `Process._transport` 或无限EOF等待。
 - 仅少量 I/O职责：protocol累加有界stdout、记录EOF和退出、提供写端背压通知；协程写payload、每块write与EOF前执行同步before_effect、等待响应EOF与退出。完整缓冲最多响应cap加单次回调块（超限立即终止，不返回截断成功）。spawn前也fresh检查。
 - cancelled是现allocate_bound已有threading.Event的窄输入；loop内有界短间隔检查，发现取消即中断传输。guard只能同步；不得把awaitable当授权通过。
-- 异常/超时/取消先kill本地子进程，再close transport管道，不先flush/EOF。总工作deadline外最多5秒清理额度用于reap/结束owned asyncio任务；无无界wait或join。若OS未确认退出，返回明确cleanup错误，不能声明成功清理。任务全部cancel并收回，Runner退出不留ownedI/O线程/task。
+- 异常/超时/取消先kill本地子进程，再close transport管道，不先flush/EOF。总工作deadline外最多5秒清理额度用于reap/结束owned asyncio任务；无无界wait或join。若OS未确认退出，返回明确cleanup错误，不能声明成功清理。正常清理必须cancel并收回owned任务。显式管理loop生命周期而不使用Runner自动无限shutdown：清理期限到仍未收回的任务先记录cleanup错误，停止/关闭本私有loop，不能继续后台运行或宣称已完全reap。无default executor或新增I/O线程。
 - 原请求完整发送后丢回执仍交原消费者按UNKNOWN处理；helper不submit重试、不推断远端停止。清理只针对已拥有的本地OpenSSH进程，不添加孙进程扫描/kill树。
 - 后续集成必须保留worker引用，外部async取消设置event后等待本helper清理结果再传播CancelledError；仅cancel asyncio.to_thread await并返回不足以证明worker已清理。本切片不修改消费者。
+
+- spawn协程开始前创建protocol owner；`connection_made`立即登记transport，不等subprocess_exec返回才取得所有权。清理开始后若transport迟到，回调立即kill/close；对spawn任务的取消/有界收回与已登记transport共同处理，测试覆盖OS子进程已创建而spawn await尚未返回的窗口。
+- 绝对deadline不能抢占同步trusted guard或OS进程创建本身。前后检查期限，逾期后不再写/EOF；这些同步操作自身须遵守其既有有界契约。本helper的30秒+5秒界限只覆盖可调度I/O/退出等待，不声称能中止任意阻塞Python回调/OS调用，也不另加线程伪造抢占。
 
 ## Risks / Trade-offs
 

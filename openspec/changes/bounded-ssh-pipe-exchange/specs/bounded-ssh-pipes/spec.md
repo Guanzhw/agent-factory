@@ -25,3 +25,11 @@
 #### Scenario: 平台证据分开
 - **WHEN** Linux受控真实子进程测试通过但Windows runner尚未执行
 - **THEN** 只记录Linux管道能力，不能将mock平台或本helper通过记作完整Windows SSH控制端支持
+
+#### Scenario: spawn 返回前取消
+- **WHEN** OS子进程已创建但subprocess创建await尚未返回就收到取消或超时
+- **THEN** connection_made登记的transport仍被回收，迟到transport在清理状态立即kill/close；清理失败明确报告而非成功
+
+#### Scenario: 同步guard跨过期限
+- **WHEN** 受信任的同步guard返回时工作期限已过
+- **THEN** 不再启动写入或EOF；记录超时且清理，本helper不声称能抢占该同步回调或OS创建调用
