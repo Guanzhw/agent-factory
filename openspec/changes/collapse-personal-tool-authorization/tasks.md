@@ -9,3 +9,5 @@
 - [ ] 2.1 运行便携回归及静态检查，保留失败证据。
 - [ ] 2.2 串行运行原两项PG用例，保留原断言/期限与首次失败。
 - [ ] 2.3 coordinator独立精简review并确认适用验收；不以单例通过关闭历史问题。
+
+- [ ] 2.4 核对共享Store fixture全部消费者（adapter integration/member resources），统一原plan与实际tool name登记；完整模块保留撤权/凭据隔离断言。

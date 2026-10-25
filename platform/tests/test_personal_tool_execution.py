@@ -99,6 +99,7 @@ class Store:
     """Atomic effect fixture retains the production fingerprint/status contract."""
     def __init__(self, adapter):
         self.personal_tools = SimpleNamespace(adapters={adapter.descriptor.adapter_id: adapter})
+        self.tool_name = adapter.descriptor.tool_name
         self.execution_bindings = ExecutionBindings(SimpleNamespace(), self)
         self.execution_bindings.recheck = self.recheck
         self.execution_guards = {'execution-bindings': self.execution_bindings.require_execution}
@@ -126,7 +127,7 @@ class Store:
 
     def authorize_tool(self, context, name):
         self.checks['tool'] += 1
-        if not self.tool_allowed or name != 'fixture_query':
+        if not self.tool_allowed or name != self.tool_name:
             raise PermissionError('fixture tool revoked')
         plan = self.plans[context.run_id]
         self.require_plan_execution(context.user_id, plan, run_context=context)
