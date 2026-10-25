@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+from typing import Callable, cast
 
 
 class _StartupInfo(ctypes.Structure):
@@ -25,7 +26,9 @@ class _ProcessInfo(ctypes.Structure):
     _fields_ = [('hProcess', wt.HANDLE), ('hThread', wt.HANDLE), ('dwProcessId', wt.DWORD), ('dwThreadId', wt.DWORD)]
 
 
-def _kernel():
+def _kernel() -> ctypes.CDLL:
+    if sys.platform != 'win32':
+        raise OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [wt.LPVOID, wt.LPCWSTR]
     kernel.CreateJobObjectW.restype = wt.HANDLE
@@ -42,18 +45,36 @@ def _kernel():
     return kernel
 
 
+def _os_handle(fd: int) -> int:
+    if sys.platform == 'win32':
+        import msvcrt
+        return msvcrt.get_osfhandle(fd)
+    raise OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
+
+
+def _binary_flag() -> int:
+    if sys.platform == 'win32':
+        return os.O_BINARY
+    raise OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
+
+
+def _error() -> OSError:
+    if sys.platform == 'win32':
+        return ctypes.WinError(ctypes.get_last_error())
+    return OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
+
+
 class WindowsSSHProcess:
     """Construct suspended and job-assigned; resume only after caller authority checks."""
-    def __init__(self, args, env):
-        if sys.platform != 'win32':
-            raise OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
+    def __init__(self, args: list[str], env: dict[str, str], *, cwd: str | None = None):
+        kernel = _kernel()
         import pywintypes
         import win32api
         import win32con
         import win32event
         import win32job
         import win32process
-        import msvcrt
+        handle_from_raw = cast("Callable[[int], pywintypes.HANDLEType]", pywintypes.HANDLE)
         self._api, self._con, self._event = win32api, win32con, win32event
         self._jobs, self._processes = win32job, win32process
         self._lock = threading.RLock()
@@ -64,20 +85,19 @@ class WindowsSSHProcess:
         self.returncode = None
         child_handles = []
         try:
-            kernel = _kernel()
             raw_job = kernel.CreateJobObjectW(None, None)
             if not raw_job:
-                raise ctypes.WinError(ctypes.get_last_error())
-            self._job = pywintypes.HANDLE(raw_job)
-            win32api.SetHandleInformation(self._job, win32con.HANDLE_FLAG_INHERIT, 0)
-            limits = win32job.QueryInformationJobObject(self._job, win32job.JobObjectExtendedLimitInformation)
+                raise _error()
+            self._job = handle_from_raw(raw_job)
+            win32api.SetHandleInformation(int(self._job), win32con.HANDLE_FLAG_INHERIT, 0)
+            limits = win32job.QueryInformationJobObject(int(self._job), win32job.JobObjectExtendedLimitInformation)
             limits['BasicLimitInformation']['LimitFlags'] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            win32job.SetInformationJobObject(self._job, win32job.JobObjectExtendedLimitInformation, limits)
+            win32job.SetInformationJobObject(int(self._job), win32job.JobObjectExtendedLimitInformation, limits)
 
             def child_end(fd):
                 try:
                     current = win32api.GetCurrentProcess()
-                    handle = win32api.DuplicateHandle(current, msvcrt.get_osfhandle(fd), current,
+                    handle = win32api.DuplicateHandle(current, _os_handle(fd), current,
                         0, True, win32con.DUPLICATE_SAME_ACCESS)
                     child_handles.append(handle)
                     return int(handle)
@@ -90,17 +110,17 @@ class WindowsSSHProcess:
             output_read, output_write = os.pipe()
             self.stdout = os.fdopen(output_read, 'rb', buffering=0)
             child_output = child_end(output_write)
-            child_error = child_end(os.open(os.devnull, os.O_WRONLY | os.O_BINARY))
+            child_error = child_end(os.open(os.devnull, os.O_WRONLY | _binary_flag()))
             size = ctypes.c_size_t()
             kernel.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
             attributes = ctypes.create_string_buffer(size.value)
             if not kernel.InitializeProcThreadAttributeList(attributes, 1, 0, ctypes.byref(size)):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise _error()
             try:
                 handles = (wt.HANDLE * 3)(child_input, child_output, child_error)
                 if not kernel.UpdateProcThreadAttribute(attributes, 0, 0x00020002, handles,
                                                        ctypes.sizeof(handles), None, None):
-                    raise ctypes.WinError(ctypes.get_last_error())
+                    raise _error()
                 startup = _StartupInfoEx()
                 startup.StartupInfo.cb = ctypes.sizeof(startup)
                 startup.StartupInfo.dwFlags = win32con.STARTF_USESTDHANDLES
@@ -115,12 +135,12 @@ class WindowsSSHProcess:
                 flags = (win32con.CREATE_SUSPENDED | win32con.CREATE_NO_WINDOW |
                          win32con.CREATE_UNICODE_ENVIRONMENT | 0x00080000)
                 if not kernel.CreateProcessW(args[0], command, None, None, True, flags,
-                                             environment, None, ctypes.byref(startup), ctypes.byref(info)):
-                    raise ctypes.WinError(ctypes.get_last_error())
-                self._process = pywintypes.HANDLE(info.hProcess)
-                self._thread = pywintypes.HANDLE(info.hThread)
+                                             environment, cwd, ctypes.byref(startup), ctypes.byref(info)):
+                    raise _error()
+                self._process = handle_from_raw(info.hProcess)
+                self._thread = handle_from_raw(info.hThread)
                 self.pid = info.dwProcessId
-                win32job.AssignProcessToJobObject(self._job, self._process)
+                win32job.AssignProcessToJobObject(int(self._job), int(self._process))
                 self._assigned = True
             finally:
                 kernel.DeleteProcThreadAttributeList(attributes)
@@ -137,12 +157,14 @@ class WindowsSSHProcess:
         with self._lock:
             if self._closed:
                 raise ValueError('WINDOWS_SSH_PROCESS_CLOSED')
+            assert self._process is not None
             return int(self._process)
 
     def resume(self):
         with self._lock:
             if self._closed or self._resumed:
                 raise ValueError('WINDOWS_SSH_PROCESS_NOT_SUSPENDED')
+            assert self._thread is not None
             self._processes.ResumeThread(self._thread)
             self._resumed = True
             self._thread.Close()
