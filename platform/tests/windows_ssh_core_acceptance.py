@@ -62,7 +62,19 @@ def ssh_log_summary(path):
     with path.open('rb') as stream:
         raw = stream.read(65537)
     text = raw[:65536].lower()
+    prefix = b'ssh_askpass: posix_spawnp: '
+    reasons = {b'no such file or directory': 'NOT_FOUND', b'permission denied': 'PERMISSION_DENIED',
+               b'exec format error': 'EXEC_FORMAT', b'invalid argument': 'INVALID_ARGUMENT',
+               b'bad file descriptor': 'BAD_DESCRIPTOR'}
+    spawn_failures = []
+    for line in text.splitlines():
+        if prefix in line:
+            suffix = line.split(prefix, 1)[1].strip()
+            reason = reasons.get(suffix, 'UNKNOWN')
+            if reason not in spawn_failures:
+                spawn_failures.append(reason)
     return {'present': True, 'truncated': len(raw) > 65536,
+            'askpassSpawnFailures': spawn_failures,
             'authenticatedPublicKey': b'authenticated to ' in text and b'using "publickey"' in text,
             'permissionDenied': b'permission denied' in text,
             'hostKeyRejected': b'host key verification failed' in text or b'host identification has changed' in text,
@@ -248,6 +260,23 @@ def exercise(root, report):
         require(not str(manager_root).isascii(), 'UNICODE_CARRIER_PARENT_NOT_EXERCISED')
         require(manager.diagnostic() is None, 'INSTALLED_CLIENT_OR_HELPER_MISSING')
         report['unicodeCarrierParent'] = True
+        report['stage'] = 'INSTALLED_HELPER_PREFLIGHT'
+        ssh, helper = manager.paths()
+        helper_env = {name: os.environ[name] for name in
+                      ('SystemRoot', 'WINDIR', 'ProgramData', 'TEMP', 'TMP') if name in os.environ}
+        helper_env['PATH'] = str(ssh.parent)
+        report['helperPreflight'] = {'executablePresent': helper.is_file()}
+        for name, command, expected in (
+            ('supportImport', [sys.executable, '-I', '-c',
+                               'from agent_factory import windows_ssh_support'], 0),
+            ('invalidPrompt', [str(helper), 'not-a-passphrase-prompt'], 1),
+        ):
+            report['stage'] = 'HELPER_IMPORT' if name == 'supportImport' else 'HELPER_INVALID_PROMPT'
+            with process_module.WindowsSSHProcess(command, helper_env, cwd=str(root)) as process:
+                process.resume()
+                code = process.wait(timeout=5)
+                report['helperPreflight'][name] = {'exitCode': code}
+            require(code == expected, 'INSTALLED_HELPER_PREFLIGHT_FAILED')
         releases = []
         original_process, original_transfer, original_client = process_module.WindowsSSHProcess, w.transfer, w.check_client
         original_connect = w.connect
