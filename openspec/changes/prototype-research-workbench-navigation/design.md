@@ -64,3 +64,11 @@
 ## Migration Plan
 
 独立spec提交后实现demo；不接入默认生产entry。回退删除demo装配选择即可，原core与研究数据不变。先本地审查/真实浏览器与视觉QA，再让用户体验确认；无push/merge或正式部署。
+
+## 独立离线交付包
+
+已审查的 demo 构建 JS/CSS 原样打包；仅复制的 HTML 使用相对 assets 路径并先载入交付专用 synthetic fetch fixture。fixture 不进入生产 composition，不使用生产身份或凭据：默认 Alice，退出可选择 Alice/Bob，tab sessionStorage 仅保存公开演示 persona。已知只读 API 返回固定空资源，只有演示登录/退出改变 persona；未知路径、方法和外部 URL 本地拒绝，绝不转发网络。包用标准 Python 静态服务器在 127.0.0.1 打开，无 npm/Node 或额外 Python 依赖。它不是公开预览、真实身份/模型/GPU验收或正式 UI 批准。
+
+验收从 ZIP 重新解压启动，不拦截 API：平台首页→应用→项目→返回、资源上下文、刷新、退出/Bob隔离均成功；捕获实际网络、console 与 pageerror；未知请求不产生网络。保留截图及构建来源。结束停止本次静态服务器。
+
+单 HTML 交付使用相同冻结 JS/CSS 内联及同一 fixture；无新增页面实现。许可证与构建出处以 inert JSON 保留。file:// 模式必须实际验证 History/query、刷新与演示 sessionStorage；若浏览器不支持，以本机 ZIP 静态服务备用，不为包装修改产品路由。

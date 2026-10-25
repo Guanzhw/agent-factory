@@ -11,6 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--origin', default='http://127.0.0.1:4175')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--offline-package', action='store_true', help='Use the unpacked artifact fixture without HTTP interception')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
@@ -20,7 +21,8 @@ def main():
             size = {'width': 390, 'height': 844} if mobile else {'width': 1487, 'height': 1058}
             context = browser.new_context(viewport=size, device_scale_factor=1)
             page = context.new_page()
-            errors, writes, console_errors = [], [], []
+            errors, writes, console_errors, requests = [], [], [], []
+            page.on('request', lambda request: requests.append(request.url))
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('console', lambda message: console_errors.append(message.text) if message.type == 'error' else None)
             user = {'id': 'alice', 'name': '张予阳', 'role': 'user'}
@@ -59,7 +61,8 @@ def main():
                 assert path in data, f'Unexpected API request: {path}'
                 route.fulfill(json=data[path])
 
-            page.route('**/api/**', fixture)
+            if not args.offline_package:
+                page.route('**/api/**', fixture)
             page.goto(args.origin)
             expect(page.get_by_role('heading', name='应用目录', exact=True)).to_be_visible()
             page.screenshot(path=str(args.output / f'platform-{size["width"]}.png'))
@@ -146,10 +149,19 @@ def main():
             page.get_by_role('button', name='成员 Bob', exact=True).click()
             page.goto(created_url)
             expect(page.get_by_role('heading', name='未找到演示项目')).to_be_visible()
+            if args.offline_package:
+                before = len(requests)
+                assert page.evaluate("async () => (await fetch('/api/factory/not-supported')).status") == 404
+                assert page.evaluate("async () => { try { await fetch('https://example.invalid/blocked'); return false; } catch { return true; } }")
+                assert len(requests) == before, requests
+                if urlparse(args.origin).scheme == 'file':
+                    assert all(urlparse(url)._replace(query='', fragment='') == urlparse(args.origin) for url in requests), requests
+                else:
+                    assert not any('/api/' in url or not url.startswith(args.origin + '/') for url in requests), requests
             assert not errors, errors
             assert not console_errors, console_errors
             assert set(writes) <= {'/api/factory/demo/login', '/api/factory/logout'}, writes
-            results.append({'viewport': size, 'browser': 'Chromium', 'identity': 'synthetic HTTP fixture, not real authentication', 'core_and_research_write_calls': [path for path in writes if path not in {'/api/factory/demo/login', '/api/factory/logout'}], 'page_errors': errors, 'console_errors': console_errors, 'result': 'passed'})
+            results.append({'viewport': size, 'browser': 'Chromium', 'identity': 'offline artifact, no interception' if args.offline_package else 'synthetic HTTP fixture, not real authentication', 'network_requests': requests if args.offline_package else [], 'core_and_research_write_calls': [path for path in writes if path not in {'/api/factory/demo/login', '/api/factory/logout'}], 'page_errors': errors, 'console_errors': console_errors, 'result': 'passed'})
             context.close()
         browser.close()
     (args.output / 'browser.json').write_text(json.dumps(results, ensure_ascii=False, indent=2) + '\n')

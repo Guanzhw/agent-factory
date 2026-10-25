@@ -1,0 +1,125 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "mode": "demo",
+      "database": "af_test_a3966c57645a47ab9992a36d7fa9973e",
+      "newIsolatedDatabase": true,
+      "identity": "development-selector",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "result": "passed",
+          "loginInterruptedProject": true,
+          "platformEntryAndReturn": true,
+          "backForward": true,
+          "refresh": true,
+          "logoutRelogin": true,
+          "researchUI": "synthetic",
+          "businessAPIsMocked": false,
+          "businessWrites": [],
+          "pageErrors": [],
+          "consoleErrors": [],
+          "expectedAuthConsole": [
+            {
+              "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+              "url": "https://127.0.0.1:46845/api/factory/session"
+            }
+          ],
+          "screenshots": [
+            "login-interrupted-project.png",
+            "project-return.png",
+            "platform-home.png",
+            "workbench.png"
+          ]
+        },
+        "mobile": {
+          "result": "passed",
+          "loginInterruptedProject": true,
+          "platformEntryAndReturn": true,
+          "backForward": true,
+          "refresh": true,
+          "logoutRelogin": true,
+          "researchUI": "synthetic",
+          "businessAPIsMocked": false,
+          "businessWrites": [],
+          "pageErrors": [],
+          "consoleErrors": [],
+          "expectedAuthConsole": [
+            {
+              "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+              "url": "https://127.0.0.1:46845/api/factory/session"
+            }
+          ],
+          "screenshots": [
+            "login-interrupted-project.png",
+            "project-return.png",
+            "platform-home.png",
+            "workbench.png"
+          ]
+        }
+      }
+    },
+    {
+      "mode": "production-local",
+      "database": "af_test_6798c07ccd1d468f83080ea247ba166f",
+      "newIsolatedDatabase": true,
+      "identity": "local-synthetic-oidc-over-https",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "result": "passed",
+          "loginInterruptedProject": true,
+          "platformEntryAndReturn": true,
+          "backForward": true,
+          "refresh": true,
+          "logoutRelogin": true,
+          "researchUI": "synthetic",
+          "businessAPIsMocked": false,
+          "businessWrites": [],
+          "pageErrors": [],
+          "consoleErrors": [],
+          "expectedAuthConsole": [
+            {
+              "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+              "url": "https://127.0.0.1:39249/api/factory/session"
+            }
+          ],
+          "screenshots": [
+            "login-interrupted-project.png",
+            "project-return.png",
+            "platform-home.png",
+            "workbench.png"
+          ]
+        },
+        "mobile": {
+          "result": "passed",
+          "loginInterruptedProject": true,
+          "platformEntryAndReturn": true,
+          "backForward": true,
+          "refresh": true,
+          "logoutRelogin": true,
+          "researchUI": "synthetic",
+          "businessAPIsMocked": false,
+          "businessWrites": [],
+          "pageErrors": [],
+          "consoleErrors": [],
+          "expectedAuthConsole": [
+            {
+              "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+              "url": "https://127.0.0.1:39249/api/factory/session"
+            }
+          ],
+          "screenshots": [
+            "login-interrupted-project.png",
+            "project-return.png",
+            "platform-home.png",
+            "workbench.png"
+          ]
+        }
+      }
+    }
+  ]
+}
