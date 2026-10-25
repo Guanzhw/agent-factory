@@ -16,6 +16,25 @@ import uuid
 from . import safe_error
 
 
+def diagnostic_flags(client_log, remote_error, output_empty):
+    def bounded(path):
+        if not path.is_file():
+            return b'', False
+        with path.open('rb') as stream:
+            data = stream.read(16385)
+        return data[:16384], len(data) > 16384
+    log, log_truncated = bounded(client_log)
+    error, error_truncated = bounded(remote_error)
+    lowered = error.lower()
+    return {'authenticatedPublickey': b'Authenticated to ' in log and b'using "publickey"' in log,
+            'stdoutEmpty': output_empty, 'stderrPresent': bool(error),
+            'shellSyntaxError': b'syntax' in lowered,
+            'commandNotFound': b'not recognized' in lowered or b'not found' in lowered,
+            'accessDenied': b'access is denied' in lowered or b'permission denied' in lowered,
+            'channelRequestFailed': b'request failed on channel' in log.lower(),
+            'clientLogTruncated': log_truncated, 'stderrTruncated': error_truncated}
+
+
 def case(root, mode, system, experiment_deadline):
     from cryptography.hazmat.primitives import serialization as s
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -107,13 +126,14 @@ def case(root, mode, system, experiment_deadline):
                    'PreferredAuthentications=publickey', 'PasswordAuthentication=no',
                    'KbdInteractiveAuthentication=no', 'NumberOfPasswordPrompts=1', 'ConnectTimeout=5',
                    'ProxyCommand=none', 'ProxyJump=none', 'ForwardAgent=no', 'ClearAllForwardings=yes',
-                   'ControlMaster=no', 'ControlPath=none', 'PermitLocalCommand=no', 'LogLevel=ERROR']
+                   'ControlMaster=no', 'ControlPath=none', 'PermitLocalCommand=no', 'LogLevel=VERBOSE']
         for option in options:
             args.extend(['-o', option])
         args.extend(['-l', username, '127.0.0.1', 'ignored-by-force-command'])
         client_job = w.OwnedJob()
         output = folder / 'command-output'
-        proc, thread, pid = client_job.spawn(args, env, output, suspended=True)
+        remote_error = folder / 'remote-error'
+        proc, thread, pid = client_job.spawn(args, env, output, suspended=True, error_output=remote_error)
         deadline = min(time.monotonic() + 10, experiment_deadline)
         w.win32process.ResumeThread(thread)
         shape = None
@@ -140,7 +160,8 @@ def case(root, mode, system, experiment_deadline):
             raise TimeoutError('CLIENT_EXIT')
         exit_code = w.win32process.GetExitCodeProcess(proc)
         with output.open('rb') as stream:
-            matched = stream.read(1024).strip() == nonce.encode()
+            actual_output = stream.read(1024)
+            matched = actual_output.strip() == nonce.encode()
         host_rejected = False
         if mode == 'wrong-pin' and log.is_file():
             with log.open('rb') as stream:
@@ -152,7 +173,8 @@ def case(root, mode, system, experiment_deadline):
             accepted = accepted and repeat_denied
         result = {'fixtureComplete': True, 'accepted': accepted, 'status': 'PASS' if accepted else 'FAIL',
                   'stage': stage, 'clientExitCode': exit_code, 'nonceMatched': matched, 'releases': releases,
-                  'hostPinRejected': host_rejected, 'repeatDenied': repeat_denied, 'shape': shape}
+                  'hostPinRejected': host_rejected, 'repeatDenied': repeat_denied, 'shape': shape,
+                  'diagnostics': diagnostic_flags(log, remote_error, not actual_output)}
     except Exception as exc:
         result = {**safe_error(stage, exc), 'fixtureComplete': ready, 'accepted': False,
                   'status': 'FAIL' if ready else 'INCOMPLETE', 'releases': releases}

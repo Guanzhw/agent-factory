@@ -225,7 +225,7 @@ class OwnedJob:
         win32job.SetInformationJobObject(self.handle, win32job.JobObjectExtendedLimitInformation, limits)
         self.processes = []
 
-    def spawn(self, args, env, output, suspended=False):
+    def spawn(self, args, env, output, suspended=False, *, error_output=None):
         inherit = pywintypes.SECURITY_ATTRIBUTES()
         inherit.bInheritHandle = True
         stdout = win32file.CreateFile(str(output), win32con.GENERIC_WRITE, win32con.FILE_SHARE_READ,
@@ -234,12 +234,18 @@ class OwnedJob:
                                    win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, inherit, win32con.OPEN_EXISTING, 0, None)
         startup = win32process.STARTUPINFO()
         startup.dwFlags = win32con.STARTF_USESTDHANDLES
-        startup.hStdInput, startup.hStdOutput, startup.hStdError = null, stdout, null
+        stderr = null
         try:
+            if error_output is not None:
+                stderr = win32file.CreateFile(str(error_output), win32con.GENERIC_WRITE, win32con.FILE_SHARE_READ,
+                                             inherit, win32con.CREATE_NEW, 0, None)
+            startup.hStdInput, startup.hStdOutput, startup.hStdError = null, stdout, stderr
             proc, thread, pid, _ = win32process.CreateProcess(str(args[0]), subprocess.list2cmdline(args), None, None,
                 True, win32con.CREATE_SUSPENDED | win32con.CREATE_NO_WINDOW, env, None, startup)
         finally:
             stdout.Close()
+            if stderr is not null:
+                stderr.Close()
             null.Close()
         self.processes.append((proc, thread))
         try:
