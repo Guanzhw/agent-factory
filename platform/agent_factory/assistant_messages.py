@@ -54,26 +54,51 @@ class AssistantMessages:
     def _request_id(message):
         return 'assistant-message:' + message['id']
 
+    def _start_body(self, message, endpoint):
+        values = {**endpoint['defaults'], 'requestId': self._request_id(message), 'goal': message['text']}
+        if endpoint['textInput']:
+            values['inputValues'] = {'goal': message['text']}
+        return ApplicationStart.model_validate(values)
+
     async def send(self, sender, endpoint_id, body: SendAssistantMessage):
         message, fresh = await asyncio.to_thread(self._reserve, sender, endpoint_id, body)
         if fresh:
             self.auth.require_member(sender)
             endpoint = await asyncio.to_thread(self.endpoints.resolve, endpoint_id)
-            values = {**endpoint['defaults'], 'requestId': self._request_id(message), 'goal': message['text']}
-            if endpoint['textInput']:
-                values['inputValues'] = {'goal': message['text']}
-            await self.runs.start(message['recipient_id'], ApplicationStart.model_validate(values))
+            await self.runs.start(message['recipient_id'], self._start_body(message, endpoint))
         return await asyncio.to_thread(self.read, sender, message['id'])
 
-    def _projection(self, message):
+    async def recover(self, recipient, identifier, *, allocation_id, delivery_id=None):
+        """Trusted admission reentry; the original reservation owns the fresh gate."""
+        if self.db.store._connection.get() is not None:
+            raise RuntimeError('Assistant recovery requires a committed message transaction')
+        self.auth.require_member(recipient)
+        with self.db.read() as conn:
+            message = self._row(conn, identifier)
+        if message['recipient_id'] != recipient:
+            raise HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
+        receipt = await asyncio.to_thread(self._receipt, message)
+        if receipt['taskId'] is None:
+            self.auth.require_member(message['sender_id'])
+            endpoint = await asyncio.to_thread(self.endpoints.resolve, message['endpoint_id'])
+            options = {'allocation_id': allocation_id}
+            if delivery_id is not None:
+                options['delivery_id'] = delivery_id
+            await self.runs.start(recipient, self._start_body(message, endpoint), **options)
+        return await asyncio.to_thread(self._projection, message)
+
+    def _receipt(self, message):
         try:
             receipt = self.runs.request(message['recipient_id'], self._request_id(message))
         except HTTPException as error:
             if error.status_code != 404 or error.detail != 'APPLICATION_START_RECEIPT_NOT_FOUND':
                 raise
-            # A missing receipt cannot distinguish pre-admission failure from a
-            # concurrent or interrupted start. It never permits another start.
+            # Absence alone cannot establish that an earlier start did not run.
             receipt = {'state': 'unconfirmed', 'taskId': None, 'runId': None}
+        return receipt
+
+    def _projection(self, message):
+        receipt = self._receipt(message)
         return {'id': message['id'], 'senderId': message['sender_id'],
             'recipientId': message['recipient_id'], 'endpointId': message['endpoint_id'],
             'text': message['text'], 'createdAt': message['created_at'],

@@ -1904,13 +1904,21 @@ Final additional acceptance: real pinnedORXcompleted-before-settlement disable+c
 
 ## 2026-10-25 新研究实施（当前有效）
 
-基线 main a2e021c97ba2257d86c1ec484296bbeda0b6c05a；PR104 仍 Draft/open，head ddc82b2642e8784099e5590040ef7d4223df18b1。工作区 /workspace/agent-factory-research-next，分支 impl/research-foundation-local-20261025，继承验收文档91cb2a83。旧 worktree 不覆盖。用户已确认开始实施；真实模型/GPU/容量参数未冻结，C/D NOTRUN/BLOCKED，不能由 mock 代替。
+工作区 /workspace/agent-factory-research-next；当前 impl/bounded-assistant-events-20261025。PR104已合并d2090254，原独立完整680文件审查/精确head记录见add-member-assistant-messaging/verification.md，合并后CI40183654044成功。旧worktree保持不覆盖。
 
 | 单元 | Owner / 文件范围 | 依赖与验收 | 状态 |
 | --- | --- | --- | --- |
-| PR104 独立精简审查 | pr104_independent_review 只读完整base/head diff | 原full/fast证据及代码等价核对 | 进行中，审查后才合并 |
-| P1 助手端点 | assistant_endpoints，仅assistant_endpoints.py与专属tests | A02/A03，持久身份不取代native task | 实施中 |
-| P2 消息/准入 | root，消息服务/API/schema/生命周期集成 | P1、原ApplicationRuns/nativequeue，无第二执行链 | 设计与实现 |
-| P0/P1 验证集成 | root，main/store/task board，串行PG | 静态、专属tests、独立core；作者之外review待分派 | 准备 |
+| P1端点 PR105 | assistant_endpoints作者，foundation_review独立审查，root接线 | 836f810精确fast40184199282成功，main40184582271成功 | 合并642ddda |
+| P2消息 PR106 | assistant_messages作者，foundation_review独立完整7文件审查 | 3ed6e26精确fast40184420374成功；retarget base tree相等，main40184947317成功 | 合并b31dc3e |
+| scoped content PR107 | assistant_endpoints作者；pr104_independent_review完整11文件审查；root API | be70a8d便携4/PG2通过；fast40185064353与main40185545289成功 | 合并6ae19c6 |
+| P4项目 PR108 | research_app_spec后端，research_frontend前端，root装配/CI；acceptance_doc_review完整33文件 | 7737e2d精确fast40185970130成功；便携6/PG2/Web442/daily340；真实Chromium两demo用户；首次失败及整改已记录 | 合并abea80e，main CI待终态 |
+| P3事件/预算 | assistant_messages原身份恢复与tests；assistant_endpoints事件服务/tests；root Store/API/生命周期/锁 | spec-first，foundation_review独立设计/基础预审；原reserved不补派；真实PG屏障串行 | 实施中，撤权栅栏与完整review/CI未完成 |
+| P5–P9 | root统筹；应用边界独立作者与审查 | P3/P4，17项上位验收契约 | 未完成，不能把P4当完整产品 |
 
-发布/合并已获后续明确授权，但必须保留每单元独立审查、精确head检查；正式部署目标尚缺，不公开部署。无付费模型、新凭据grant或真实外部GPU调用。重型PG串行，保留首失败。
+P4独立审查修复408/刷新丢原请求；真实浏览器修复研究构建入口hook与标题遮挡；CI修复research build覆盖core smoke的次序。P3首轮模拟BaseException杀死TestClient portal的两次fixture错误均保留，改独立loop注入后targeted通过；不是实际OS crash验收。
+
+发布/合并已授权但逐单元独立审查和精确head检查不减。正式部署目标尚缺，不公开部署；真实模型/GPU/容量参数未冻结，C/D NOTRUN/BLOCKED。无付费模型、新凭据grant或真实外部GPU调用。重型PG串行，保留首失败。历史MCP偶发时序根因未闭合，无整套加速结论。
+
+### 10:49 UI新门槛
+
+PR108已在收到新指令前合并abea80e。临时功能UI未经用户视觉确认，不算定稿；后续前端扩展/定稿/含UI合并已暂停，等待主对话设计研究→可见原型→用户确认。保留不回滚；当前P3及后端独立继续。

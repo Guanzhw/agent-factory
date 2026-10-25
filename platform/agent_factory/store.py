@@ -67,6 +67,8 @@ class Store:
         self.personal_tools: Any = None
         self.owner_submissions: Any = None
         self.usage_ledger: Any = None
+        self.local_budget_scopes: Any = None
+        self.assistant_events: Any = None
         self.process_runtime: Any = None
         self.workflow: Any = None
         self.workflow_control: Any = None
@@ -261,11 +263,42 @@ class Store:
         return {'planId': row['plan_id'], 'taskId': row['id'], 'nativeRunId': row['run_id'],
                 'executionContract': 'personal-external-v1'}
 
-    def reserve_task(self, plan, request_id):
+    def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None, remote_target=False):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
         with self.transaction() as conn:
             # Serialize admission globally so simultaneous users cannot evade total quotas.
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+            if self.local_budget_scopes is not None:
+                plan_request = conn.execute(text('''SELECT r.request_id FROM af_plan_requests p
+                    JOIN af_local_budget_requests r ON r.owner_id=p.owner_id AND r.request_id=p.request_id
+                    WHERE p.owner_id=:owner AND p.plan_id=:plan'''),
+                    {'owner': owner, 'plan': plan['id']}).scalar_one_or_none()
+                if plan_request is not None and plan_request != request_id:
+                    raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_PLAN_CONFLICT')
+                bound_plan = conn.execute(text('''SELECT t.id FROM af_tasks t
+                    JOIN af_local_budget_allocations a ON a.task_id=t.id
+                    WHERE t.owner_id=:owner AND t.plan_id=:plan AND t.request_id<>:request LIMIT 1'''),
+                    {'owner': owner, 'plan': plan['id'], 'request': request_id}).first()
+                if bound_plan is not None:
+                    raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_PLAN_CONFLICT')
+                required_allocation = self.local_budget_scopes.request_allocation(conn, owner, request_id)
+                if required_allocation is not None:
+                    if remote_target:
+                        raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
+                    if allocation_id is not None and allocation_id != required_allocation:
+                        raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_CONFLICT')
+                    prepared_plan = conn.execute(text('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:request'),
+                        {'owner': owner, 'request': request_id}).scalar_one_or_none()
+                    if prepared_plan != plan['id']:
+                        raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_PLAN_CONFLICT')
+                    allocation_id = required_allocation
+                    required_delivery = self.local_budget_scopes.request_delivery(conn, owner, request_id)
+                    if required_delivery is not None:
+                        if delivery_id is not None and delivery_id != required_delivery:
+                            raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_CONFLICT')
+                        delivery_id = required_delivery
+            if remote_target and allocation_id is not None:
+                raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
             if self.native_db is not None:
                 active = conn.execute(text("SELECT id,run_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL")).mappings().all()
                 for candidate in active:
@@ -288,7 +321,20 @@ class Store:
             if old:
                 if old["fingerprint"] != fp:
                     raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request ID belongs to a different immutable plan")
+                if remote_target and self.local_budget_scopes is not None:
+                    bound = conn.execute(text('SELECT id FROM af_local_budget_allocations WHERE task_id=:task AND owner_id=:owner'),
+                        {'task': old['id'], 'owner': owner}).scalar_one_or_none()
+                    if bound is not None:
+                        raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
+                if allocation_id is not None:
+                    bound = conn.execute(text('SELECT task_id FROM af_local_budget_allocations WHERE id=:id AND owner_id=:owner'),
+                        {'id': allocation_id, 'owner': owner}).scalar_one_or_none()
+                    if bound != old['id']:
+                        raise HTTPException(409, 'LOCAL_BUDGET_BINDING_CONFLICT')
+                    self.local_budget_scopes.bind_root(conn, owner, allocation_id, old['id'], digest(plan))
                 return dict(old), False
+            if delivery_id is not None:
+                self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, plan, allocation_id)
             count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
             user_count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal AND owner_id=:owner"), {"owner": owner}).scalar()
             if count >= self.settings.max_total_tasks or user_count >= self.settings.max_user_tasks:
@@ -299,6 +345,8 @@ class Store:
                                {"id": task_id, "owner": owner, "plan": plan["id"], "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
                 raise RuntimeError("Task reservation did not persist")
+            if allocation_id is not None:
+                self.local_budget_scopes.bind_root(conn, owner, allocation_id, task_id, digest(plan))
             if self.storage is not None:
                 self.storage.reserve(task_id, owner)
         self.event(task_id, "admission_reserved", "Scoped task reserved; native queue acceptance pending", {"planId": plan["id"]})

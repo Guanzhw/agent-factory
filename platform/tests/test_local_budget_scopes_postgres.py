@@ -141,8 +141,12 @@ class LocalBudgetScopesPostgresTests(unittest.TestCase):
         with self.store.transaction() as conn:
             initial = self.scopes.bind_root(conn, 'alice', 'round-1', task['id'], digest(plan))
             self.assertEqual(self.scopes.bind_root(conn, 'alice', 'round-1', task['id'], digest(plan)), initial)
-        other, _ = self.fixture.task(plan, accepted=False)
-        for task_id, sha in ((other['id'], digest(plan)), (task['id'], '0' * 64)):
+        with self.assertRaises(HTTPException) as duplicate:
+            self.fixture.task(plan, accepted=False)
+        self.assertEqual(duplicate.exception.detail, 'LOCAL_BUDGET_REQUEST_PLAN_CONFLICT')
+        other_plan = self.fixture.plan()
+        other, _ = self.fixture.task(other_plan, accepted=False)
+        for task_id, sha in ((other['id'], digest(other_plan)), (task['id'], '0' * 64)):
             with self.assertRaises(HTTPException) as caught, self.store.transaction() as conn:
                 self.scopes.bind_root(conn, 'alice', 'round-1', task_id, sha)
             self.assertEqual(caught.exception.detail, 'LOCAL_BUDGET_BINDING_CONFLICT')

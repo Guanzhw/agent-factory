@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from sqlalchemy import Boolean, Column, JSON, MetaData, String, Table, or_, select
+from sqlalchemy import Boolean, Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
 from .material_governance import MaterialGovernance, PinnedRef
@@ -143,18 +143,21 @@ class AssistantEndpoints:
     def set_enabled(self, owner, endpoint_id, enabled, request_id):
         self.auth.require_member(owner)
         fingerprint = digest({'action': 'state', 'id': endpoint_id, 'enabled': enabled})
-        with self.db.write() as conn:
-            row = self._row(conn, endpoint_id)
-            if row['owner_id'] != owner:
-                raise HTTPException(404, 'ASSISTANT_ENDPOINT_NOT_FOUND')
-            old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
-            if old is not None:
-                return old
-            if enabled:
-                self._current(row['configuration'])
-            conn.execute(self.endpoints.update().where(self.endpoints.c.id == endpoint_id).values(enabled=enabled))
-            return self.db.record(conn, self.commands, owner, request_id, fingerprint,
-                'assistant.state', self._owned(self._row(conn, endpoint_id)))
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+            with self.db.write():
+                row = self._row(conn, endpoint_id)
+                if row['owner_id'] != owner:
+                    raise HTTPException(404, 'ASSISTANT_ENDPOINT_NOT_FOUND')
+                old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
+                if old is not None:
+                    return old
+                if enabled:
+                    self._current(row['configuration'])
+                conn.execute(self.endpoints.update().where(self.endpoints.c.id == endpoint_id).values(enabled=enabled))
+                return self.db.record(conn, self.commands, owner, request_id, fingerprint,
+                    'assistant.state', self._owned(self._row(conn, endpoint_id)))
 
 
 def assistant_endpoints_router(auth, service):

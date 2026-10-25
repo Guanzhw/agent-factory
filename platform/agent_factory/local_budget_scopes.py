@@ -66,7 +66,45 @@ class LocalBudgetScopes:
             Column('hash', String, nullable=False), Column('state', String, nullable=False),
             Column('task_id', String, unique=True), Column('plan_sha', String), Column('binding_hash', String),
             Column('statement', JSON))
+        self.requests = Table('af_local_budget_requests', metadata,
+            Column('owner_id', String, primary_key=True), Column('request_id', String, primary_key=True),
+            Column('allocation_id', String, nullable=False, unique=True), Column('delivery_id', String))
         metadata.create_all(store.engine)
+
+    @staticmethod
+    def admission_lock(conn):
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+
+    def bind_request(self, conn, owner, allocation_id, request_id, *, delivery_id=None):
+        _key(request_id)
+        self.admission_lock(conn)
+        self.lock(conn)
+        allocation = self._allocation(conn, owner, allocation_id)
+        previous = self.request_allocation(conn, owner, request_id)
+        if previous is not None and previous != allocation_id:
+            raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_CONFLICT')
+        if previous is not None and delivery_id is not None and self.request_delivery(conn, owner, request_id) != delivery_id:
+            raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_CONFLICT')
+        other = conn.execute(select(self.requests.c.request_id).where(
+            self.requests.c.allocation_id == allocation_id)).scalar_one_or_none()
+        if other is not None and other != request_id:
+            raise HTTPException(409, 'LOCAL_BUDGET_REQUEST_CONFLICT')
+        task = conn.execute(text('SELECT id FROM af_tasks WHERE owner_id=:owner AND request_id=:request'),
+            {'owner': owner, 'request': request_id}).scalar_one_or_none()
+        if (task is not None and allocation['task_id'] != task
+                or task is None and allocation['task_id'] is not None):
+            raise HTTPException(409, 'LOCAL_BUDGET_BINDING_CONFLICT')
+        if previous is None:
+            conn.execute(self.requests.insert().values(owner_id=owner, request_id=request_id,
+                allocation_id=allocation_id, delivery_id=delivery_id))
+
+    def request_allocation(self, conn, owner, request_id):
+        return conn.execute(select(self.requests.c.allocation_id).where(
+            self.requests.c.owner_id == owner, self.requests.c.request_id == request_id)).scalar_one_or_none()
+
+    def request_delivery(self, conn, owner, request_id):
+        return conn.execute(select(self.requests.c.delivery_id).where(
+            self.requests.c.owner_id == owner, self.requests.c.request_id == request_id)).scalar_one_or_none()
 
     def lock(self, conn):
         # Same short accounting lock across scopes, attempts and settlement.

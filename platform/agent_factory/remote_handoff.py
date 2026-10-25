@@ -1118,7 +1118,7 @@ class TrustedHandoffClient:
         # owns the whole shared-budget/authority tree until cross-server fencing.
         if plan.get("remoteHandoff") or plan.get("delegation"):
             raise HTTPException(409, "Delegation must stay on its initially selected receiver")
-        task, _ = self.store.reserve_task(plan, request_id)
+        task, _ = self.store.reserve_task(plan, request_id, remote_target=True)
         if task.get("run_id"):
             raise HTTPException(409, "A locally executing task cannot switch execution servers")
         saved = {"manifest": manifest, "receipt": None, "dispatchAttempted": False, "createdAt": now()}

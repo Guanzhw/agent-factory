@@ -6,6 +6,7 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'assistant_event_contracts': ('test_assistant_events', 'test_assistant_message_recovery'),
     'research_projects': ('test_research_projects',),
     'shared_mcp_authority_regressions': (
         'test_application_closure_authority.BoundedApplicationClosureTests',
@@ -82,6 +83,16 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'bounded_assistant_admission': (
+        'test_assistant_budget_request_postgres.AssistantBudgetRequestPostgresTests.test_public_handoff_wins_reservation_but_inherits_original_budget',
+        'test_assistant_budget_request_postgres.AssistantBudgetRequestPostgresTests.test_bound_plan_cannot_start_with_an_unbudgeted_new_request_key',
+        'test_assistant_budget_request_postgres.AssistantBudgetRequestPostgresTests.test_local_budget_root_cannot_select_remote_before_or_after_reservation',
+        'test_assistant_events_postgres.AssistantEventsPostgresTests.test_actual_background_delivery_wakes_offline_receiver_with_bound_scope',
+        'test_assistant_events_postgres.AssistantEventsPostgresTests.test_revocation_commits_after_initial_check_before_reservation_and_dispatch_is_zero',
+        'test_assistant_events_postgres.AssistantEventsPostgresTests.test_stopping_after_recovery_check_before_reservation_blocks_fresh_dispatch',
+        'test_assistant_message_recovery_postgres.AssistantMessageRecoveryPostgresTests.test_two_recoverers_both_observe_no_task_but_native_dispatches_once',
+        'test_assistant_budget_guard_postgres.AssistantBudgetGuardPostgresTests.test_cancelled_scope_blocks_retained_native_model_and_tool',
+    ),
     'research_projects': ('test_research_projects_postgres',),
     'fresh_bounded_material_authority': (
         'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests',
