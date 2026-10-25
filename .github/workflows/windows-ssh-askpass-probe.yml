@@ -18,7 +18,7 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           version: '0.12.1'
-      - run: uv sync --frozen
+      - run: uv sync --frozen --group ssh-probe
       - name: Install only the synthetic probe entry points
         run: uv pip install --python .venv/Scripts/python.exe --no-deps --no-build-isolation ./scripts/windows_ssh_askpass_probe
       - name: Exercise system OpenSSH encrypted key loader and one-use IPC
@@ -37,3 +37,33 @@ jobs:
           name: windows-ssh-askpass-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/windows-ssh-askpass-probe.json
           if-no-files-found: error
+
+  portable-pipes:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen
+      - name: Exercise actual Windows pipes and portable SSH contracts
+        shell: python
+        run: |
+          import os, subprocess, sys
+          code = """
+          import sys, unittest
+          modules = ['test_ssh_exchange', 'test_ssh_process_paths',
+                     'test_ssh_operation_runtime', 'test_ssh_process_provider', 'test_ssh_tool_factory',
+                     'test_personal_ssh.PersonalSSHTests.test_probe_cleanup_error_propagates_without_becoming_unconfirmed']
+          suite = unittest.defaultTestLoader.loadTestsFromNames(modules)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() and result.testsRun and not result.skipped else 1)
+          """
+          os.environ['PYTHONPATH'] = os.pathsep.join(['platform', 'deployment', 'applications',
+                                                     'platform/tests', 'applications/tests'])
+          result = subprocess.run(['.venv/Scripts/python.exe', '-c', code], timeout=120)
+          sys.exit(result.returncode)
