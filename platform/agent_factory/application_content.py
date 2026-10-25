@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
 from .input_schema import bounded_json
@@ -142,15 +142,18 @@ class ApplicationContent:
     def set_visibility(self, owner, identifier, visibility, request_id):
         self.auth.require_member(owner)
         fingerprint = digest({'action': 'sharing', 'id': identifier, 'visibility': visibility})
-        with self.db.write() as conn:
-            row = self._row(conn, identifier)
-            if row['owner_id'] != owner:
-                raise HTTPException(404, 'APPLICATION_CONTENT_NOT_FOUND')
-            old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
-            if old is None:
-                self.sharing.set(conn, owner, row['reference'], visibility)
-                self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.sharing', {'id': identifier})
-            return self._project(conn, owner, row)
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+            with self.db.write():
+                row = self._row(conn, identifier)
+                if row['owner_id'] != owner:
+                    raise HTTPException(404, 'APPLICATION_CONTENT_NOT_FOUND')
+                old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
+                if old is None:
+                    self.sharing.set(conn, owner, row['reference'], visibility)
+                    self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.sharing', {'id': identifier})
+                return self._project(conn, owner, row)
 
     def artifact(self, actor, identifier, artifact_id):
         self.auth.require_member(actor)

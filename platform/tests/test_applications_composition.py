@@ -70,6 +70,9 @@ class PortableCompositionStore:
             Column("owner_id", String), Column("body", JSON), Column("hash", String))
         metadata.create_all(self.engine)
 
+    def transaction(self, *, read_only=False):
+        return self.connection(write=not read_only)
+
     @contextmanager
     def connection(self, *, write=False):
         borrowed = self._connection.get()

@@ -139,16 +139,25 @@ class FactoryAPI:
                 raise HTTPException(503, "Trusted remote execution is unavailable")
         return plan
 
-    async def instantiate(self, owner, body: InstanceRequest):
+    async def instantiate(self, owner, body: InstanceRequest, *, allocation_id=None, delivery_id=None):
         """Shared governed admission, including durable unknown-ack handling."""
+        if self.store._connection.get() is not None:
+            raise RuntimeError('Native admission requires a committed metadata boundary')
         # Trusted owner resources can require a synchronous remote health
         # check. Preserve fresh checks without blocking other ASGI requests.
         plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
         if body.executionTargetRef:
+            if allocation_id is not None or delivery_id is not None:
+                raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
             if self.remote is None:
                 raise HTTPException(503, "Trusted remote execution is unavailable")
             return await self.remote.instantiate(owner, plan["id"], body.executionTargetRef, body.requestId)
-        task, fresh = self.store.reserve_task(plan, body.requestId)
+        options = {}
+        if allocation_id is not None:
+            options['allocation_id'] = allocation_id
+        if delivery_id is not None:
+            options['delivery_id'] = delivery_id
+        task, fresh = self.store.reserve_task(plan, body.requestId, **options)
         if self.remote and self.remote.placed(task):
             raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
         if fresh:

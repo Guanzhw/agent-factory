@@ -165,6 +165,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_USAGE_LEDGER')
     if settings.fee_management_enabled:
         store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
+    from .local_budget_scopes import LocalBudgetScopes
+    store.local_budget_scopes = LocalBudgetScopes(store, getattr(store, 'usage_ledger', None))
+    store.register_execution_guard('local-budget-scopes', store.local_budget_scopes.require_current)
     from .owner_submission import OwnerSubmissions
     store.owner_submissions = OwnerSubmissions(store)
     at('PREPARATION_APP_REMOTE_BINDINGS')
@@ -247,6 +250,11 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .assistant_messages import AssistantMessages, assistant_messages_router
     assistant_messages = AssistantMessages(store, auth, assistant_endpoints, ApplicationRuns(factory_api))
     base.include_router(assistant_messages_router(auth, assistant_messages))
+    from .assistant_events import AssistantEvents
+    from .assistant_delivery import assistant_delivery_lifespan
+    assistant_events = AssistantEvents(store, auth, assistant_endpoints, application_content,
+        assistant_messages, store.local_budget_scopes)
+    store.assistant_events = assistant_events
     base.include_router(personal_model_router(auth, store.personal_models))
     from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
@@ -337,11 +345,12 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             try:
                 async with native_lifespan(app) as state:
                     async with observer.lifespan(app):
-                        async with lifespan_context(app) if lifespan_context else nullcontext():
-                            try:
-                                yield state or {}
-                            finally:
-                                begin_shutdown()
+                        async with assistant_delivery_lifespan(assistant_events):
+                            async with lifespan_context(app) if lifespan_context else nullcontext():
+                                try:
+                                    yield state or {}
+                                finally:
+                                    begin_shutdown()
             finally:
                 begin_shutdown()
                 native.state.factory.pop('begin_shutdown', None)
@@ -359,7 +368,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     native.state.factory.update(credential_vault=credential_vault, resources=resources,
         resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
         factory_api=factory_api, assistant_endpoints=assistant_endpoints,
-        assistant_messages=assistant_messages, application_content=application_content, http_app=native)
+        assistant_messages=assistant_messages, application_content=application_content,
+        assistant_events=assistant_events, local_budget_scopes=store.local_budget_scopes, http_app=native)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:

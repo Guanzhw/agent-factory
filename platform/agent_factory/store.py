@@ -67,6 +67,8 @@ class Store:
         self.personal_tools: Any = None
         self.owner_submissions: Any = None
         self.usage_ledger: Any = None
+        self.local_budget_scopes: Any = None
+        self.assistant_events: Any = None
         self.process_runtime: Any = None
         self.workflow: Any = None
         self.workflow_control: Any = None
@@ -261,7 +263,7 @@ class Store:
         return {'planId': row['plan_id'], 'taskId': row['id'], 'nativeRunId': row['run_id'],
                 'executionContract': 'personal-external-v1'}
 
-    def reserve_task(self, plan, request_id):
+    def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
         with self.transaction() as conn:
             # Serialize admission globally so simultaneous users cannot evade total quotas.
@@ -288,7 +290,15 @@ class Store:
             if old:
                 if old["fingerprint"] != fp:
                     raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request ID belongs to a different immutable plan")
+                if allocation_id is not None:
+                    bound = conn.execute(text('SELECT task_id FROM af_local_budget_allocations WHERE id=:id AND owner_id=:owner'),
+                        {'id': allocation_id, 'owner': owner}).scalar_one_or_none()
+                    if bound != old['id']:
+                        raise HTTPException(409, 'LOCAL_BUDGET_BINDING_CONFLICT')
+                    self.local_budget_scopes.bind_root(conn, owner, allocation_id, old['id'], digest(plan))
                 return dict(old), False
+            if delivery_id is not None:
+                self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, plan, allocation_id)
             count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
             user_count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal AND owner_id=:owner"), {"owner": owner}).scalar()
             if count >= self.settings.max_total_tasks or user_count >= self.settings.max_user_tasks:
@@ -299,6 +309,8 @@ class Store:
                                {"id": task_id, "owner": owner, "plan": plan["id"], "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
                 raise RuntimeError("Task reservation did not persist")
+            if allocation_id is not None:
+                self.local_budget_scopes.bind_root(conn, owner, allocation_id, task_id, digest(plan))
             if self.storage is not None:
                 self.storage.reserve(task_id, owner)
         self.event(task_id, "admission_reserved", "Scoped task reserved; native queue acceptance pending", {"planId": plan["id"]})
