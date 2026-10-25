@@ -59,7 +59,7 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
       if (typeof cap.enabled !== 'boolean') throw new Error('Invalid capability');
       const [servers, saved] = cap.enabled ? await Promise.all([personalSSHApi.list(ownerId, ctrl.signal), personalRemoteApi.credentials(ctrl.signal, ownerId)]) : [[], []];
       await verifyOwner();
-      if (!ctrl.signal.aborted && alive.current) { setRows(servers.map(serverReceipt)); setCredentials(saved.map(credentialReceipt).filter(c => c.providerId === SSH_CREDENTIAL_PROVIDER && c.status === 'active')); setEnabled(cap.enabled); setReady(true); }
+      if (!ctrl.signal.aborted && alive.current) { setRows(servers.map(serverReceipt)); setCredentials(saved.map(credentialReceipt).filter(c => c.providerId === SSH_CREDENTIAL_PROVIDER && c.status === 'active')); setEnabled(cap.enabled); setReady(true); if (cap.controllerDiagnostic) setError(sshMessages[cap.controllerDiagnostic] ?? '当前控制端不支持 SSH 执行。'); }
     })().catch(e => { if (!ctrl.signal.aborted && alive.current) { if (e instanceof RemoteRequestError && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else setError('暂时无法读取自己的服务器，请重新读取。原记录保留。'); } });
     return () => ctrl.abort();
   }, [ownerId, refresh, revision]);

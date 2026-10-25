@@ -111,3 +111,9 @@ Its remote shell has no Python or Docker on `PATH`. It checks real shared use,
 host-key mismatch, missing application dependencies, and retained-handle denial
 before another remote command. A missing SSH daemon causes an explicit test skip;
 that skip does not establish SSH acceptance.
+
+### SSH controller platform boundary
+
+The verified controller path is Linux. Native Windows controller SSH execution is **not implemented**: private agent custody currently relies on POSIX socket/ownership behavior, and verification/execution use subprocess pipes with select/selectors. Python documents that [Windows selectors support sockets, not pipes](https://docs.python.org/3/library/selectors.html). A Windows core import or static-check pass does not establish remote execution compatibility.
+
+Native Windows reports `SSH_CONTROLLER_PLATFORM_UNSUPPORTED` before resolving private key bytes or starting an agent. `/personal-ssh/capabilities` retains `enabled` for configuration management and includes `controllerDiagnostic`; existing configurations can still be listed and revoked. No credentials, bindings or system SSH service are changed. A null diagnostic elsewhere does not certify untested platforms such as Darwin. The remote process helper separately requires Linux. Running Factory in Linux or WSL would be a separate deployment choice and acceptance, not proof of native Windows support.

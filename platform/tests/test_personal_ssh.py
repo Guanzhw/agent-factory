@@ -449,6 +449,44 @@ class PersonalSSHTests(unittest.TestCase):
                 self.service.probe.assert_called_once()
         asyncio.run(observe())
 
+    def test_native_windows_agent_acquisition_rejects_before_secret_or_process(self):
+        agents = object.__new__(SSHAgents)
+        agents.vault = Mock()
+        guard = Mock()
+        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
+                patch('agent_factory.personal_ssh.subprocess.Popen') as process, \
+                patch('agent_factory.personal_ssh.base64.b64decode') as decode:
+            with self.assertRaisesRegex(RemoteConnectionError, '^SSH_CONTROLLER_PLATFORM_UNSUPPORTED$'):
+                agents.acquire(None, None, guard)
+        guard.assert_not_called()
+        agents.vault.resolve.assert_not_called()
+        decode.assert_not_called()
+        process.assert_not_called()
+
+    def test_native_windows_diagnostic_preserves_configuration_management(self):
+        server, _, _ = self.registered()
+        original_acquire = SSHAgents.acquire.__get__(self.service.agents, SSHAgents)
+        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
+                patch.object(self.service.agents, 'acquire', original_acquire), \
+                patch.object(self.vault, 'resolve') as resolve, \
+                patch('agent_factory.personal_ssh.subprocess.Popen') as process:
+            capabilities = self.client.get(self.root + '/capabilities', headers=self.headers).json()
+            self.assertTrue(capabilities['enabled'])
+            self.assertEqual(capabilities['controllerDiagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            response, request_id = self.command(server, 'verify')
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()['detail']['code'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            rows = self.client.get(self.root, headers=self.headers).json()
+            self.assertEqual(rows[0]['reference'], server['reference'])
+            self.assertEqual(rows[0]['diagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(rows[0]['lastCheckRequestId'], request_id)
+            revoked, _ = self.command(server, 'revoke')
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(revoked.json()['status'], 'revoked')
+            resolve.assert_not_called()
+            process.assert_not_called()
+        self.service.probe.assert_not_called()
+
     def test_stale_agent_expiry_callback_cannot_close_replacement_agent(self):
         agents = object.__new__(SSHAgents); agents.lock = threading.RLock()
         old, new, timer, folder = Mock(), Mock(), Mock(), Mock()

@@ -13,6 +13,7 @@ import secrets
 import select as io_select
 import shlex
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import threading
 import time
@@ -28,7 +29,7 @@ from .ssh_credentials import PROVIDER_ID, endpoint
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
 
-CODES = frozenset({'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
+CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
     'SSH_DIRECTORY_UNSAFE', 'SSH_DIRECTORY_PARENT_REQUIRED', 'SSH_CHECK_UNCONFIRMED',
     'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
@@ -76,6 +77,8 @@ class SSHAgents:
         return SSHAgentLease(item['lease'].socket, item['lease'].public_key, check)
 
     def acquire(self, server, destination, guard):
+        if sys.platform == 'win32':
+            raise RemoteConnectionError('SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
         scope = dict(owner=server.owner, reference=server.credential_ref,
             revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
         key = tuple(scope.values())
@@ -394,7 +397,8 @@ def personal_ssh_router(auth, service):
     @router.get('/capabilities')
     def capabilities(request: Request):
         auth.require_member(auth.user(request)['id'])
-        return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False}
+        return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False,
+                'controllerDiagnostic': 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED' if sys.platform == 'win32' else None}
 
     @router.post('/identity')
     async def identity(request: Request):

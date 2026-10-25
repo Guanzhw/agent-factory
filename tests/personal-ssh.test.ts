@@ -278,3 +278,13 @@ it('requires an explicit execution click and recovers its original receipt after
   expect(personalSSHApi.command).toHaveBeenCalledTimes(1);
   expect(localStorage.getItem(storage)).toBeNull();
 });
+
+it('shows the native Windows controller diagnostic while retaining saved server management', async () => {
+  vi.mocked(personalSSHApi.capabilities).mockResolvedValue({ enabled: true, controllerDiagnostic: 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED' });
+  vi.mocked(personalSSHApi.list).mockResolvedValue([server]);
+  await mount();
+  expect(host.textContent).toContain('当前原生 Windows 控制端尚不支持 SSH 连接检查或执行');
+  expect(host.textContent).toContain(server.name);
+  expect(button('撤销授权').disabled).toBe(false);
+  expect(personalSSHApi.command).not.toHaveBeenCalled();
+});
