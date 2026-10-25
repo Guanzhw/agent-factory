@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
@@ -200,7 +200,7 @@ class OwnedFactory:
         state = self.app.app.state.factory
         self.store, self.auth = state["store"], state["auth"]
         self.applications, self.composition = state["applications"], state["composition"]
-        self.client = TestClient(self.app).__enter__()
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()
 
     def stop(self):
         if self.client is not None:
@@ -233,7 +233,7 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
         self.assertEqual(receiver.applications.require_current(pin(snapshot)), source.applications.require_current(pin(snapshot)))
         plan = receiver.composition.create_plan("alice", "Checksum original independent receiver evidence", "literature", application_ref=pin(snapshot))
         self.assertEqual(plan["applicationRef"], pin(snapshot))
-        headers = {"Authorization": "Bearer " + receiver.auth.issue_demo_token("alice")}
+        headers = {"Authorization": "Bearer " + receiver.auth._issue_native_token("alice")}
         admitted = receiver.client.post("/api/factory/instances", headers=headers,
             json={"planId": plan["id"], "requestId": "receiver-native-instance"})
         self.assertEqual(admitted.status_code, 202, admitted.text)

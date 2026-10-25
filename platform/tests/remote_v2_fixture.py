@@ -23,11 +23,11 @@ from agno.tools import tool
 from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
-from agent_factory.config import Settings
-from agent_factory.main import create_app
+from fixture_settings import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 from agent_factory.remote_authority import OriginAuthorityTransport
-from core_native_fixture import SEEDS, fixture_v2_definitions as demo_v2_definitions
+from core_native_fixture import fixture_v2_definitions as demo_v2_definitions
 from core_native_fixture import fixture_bindings as default_bindings, fixture_zero_prices as default_zero_prices
 from core_native_fixture import build_tools
 from controlled_remote_worker import (ORIGIN_OWNER, RECEIVER_OWNER, MANAGER, ORIGIN_REF, TARGET_REF,
@@ -213,8 +213,8 @@ def main():
         registry._adapters[key] = replace(original, factory=factory)
         return registry
 
-    app = create_app(settings, bindings_factory=bindings, seed_materials=SEEDS,
-        demo_definitions=demo_v2_definitions, tool_catalog_factory=build_tools, queue_max_attempts=1)
+    app = create_app(settings, bindings_factory=bindings,
+        definitions=demo_v2_definitions, tool_catalog_factory=build_tools, queue_max_attempts=1)
     state = app.app.state.factory
     store = state['store']
     for subject in (ORIGIN_OWNER, RECEIVER_OWNER, MANAGER):
@@ -284,7 +284,7 @@ def main():
         return {'fixtureOnly': True, 'op': op}
 
     import uvicorn
-    uvicorn.run(LostReply(app, controls, path.parent / (role + '-fault.json')),
+    uvicorn.run(LostReply(state["http_app"], controls, path.parent / (role + '-fault.json')),
                 host='127.0.0.1', port=settings.port, log_level='warning', access_log=False)
 
 

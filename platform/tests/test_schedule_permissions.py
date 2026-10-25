@@ -1,4 +1,5 @@
 """Current native membership drive schedule writes and action projections."""
+from fixture_auth import initialize_members
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -20,10 +21,10 @@ class ScheduleMemberPermissionTests(unittest.TestCase):
         folder = self.enterContext(TemporaryDirectory())
         database = SqliteDb(db_file=str(Path(folder) / 'schedule-permissions.sqlite'))
         self.addCleanup(database.db_engine.dispose)
-        settings = SimpleNamespace(demo=True, jwt_key='synthetic-schedule-signing-key-0000000000',
+        settings = SimpleNamespace(jwt_key='synthetic-schedule-signing-key-0000000000',
             max_user_tasks=1, max_total_tasks=4)
         self.auth = AuthService(settings, database)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.service = object.__new__(SchedulingService)
         self.service.auth, self.service.settings = self.auth, settings
         self.plan = {'id': 'owned-plan', 'ownerId': 'alice', 'fingerprint': 'original-plan'}

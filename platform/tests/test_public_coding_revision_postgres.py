@@ -51,7 +51,7 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
                 tempfile.TemporaryDirectory(prefix="luna-revision-native-fixture-") as directory, \
                 patch.object(workflow.runner, "credential", self.credential), \
                 patch.object(workflow.runner, "create_fixture_app", side_effect=create_app), \
-                patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model):
+                patch("fixture_go_development.GoDevelopmentModel", side_effect=offline_model):
             args = argparse.Namespace(model="gpt-6-luna", database_url=database.url,
                                       evidence_directory=directory, luna_output_revision="2")
             result = workflow.runner.execute_product(self.campaign, args)

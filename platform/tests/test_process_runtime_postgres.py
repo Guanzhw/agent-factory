@@ -1,4 +1,5 @@
 """Native PG + real bounded cooperative processes, never host-capacity proof."""
+from fixture_identity import access_token
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -17,11 +18,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.main import create_app
 from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec
 from agent_factory.process_provider import ProcessResourceProvider
-from agent_factory.process_runtime_profile import process_settings, publish_process_application, TOOL_NAME
+from fixture_process_runtime_profile import process_settings, publish_process_application, TOOL_NAME
 from agent_factory.process_runtime import ProcessRuntimeService
 from agent_factory.resources import ComputePool, PersistentResourceService, RemoteTarget
 from agent_factory.store import Store
@@ -73,7 +74,7 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
         self.application = publish_process_application(self.state, target_ref=self.target_ref,
             author="manager")
         if start_client:
-            self.client = TestClient(self.app).__enter__()
+            self.client = TestClient(self.app, base_url="https://testserver").__enter__()
             self.addCleanup(self.client.__exit__, None, None, None)
         self.addCleanup(self.cleanup_processes)
 
@@ -91,7 +92,7 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
 
     def request(self, method, path, body=None, owner="alice"):
         response = self.client.request(method, "/api/factory" + path, json=body,
-            headers={"Authorization": "Bearer " + self.auth._issue_native_token(owner)})
+            headers={"Authorization": "Bearer " + access_token(owner)})
         self.assertTrue(response.is_success, response.text)
         return response.json()
 
@@ -160,7 +161,7 @@ class ProcessRuntimePostgresTests(unittest.TestCase):
             self.assertFalse(same["enforcement"][key])
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
         denied = self.client.get("/api/factory/jobs/" + task["id"],
-            headers={"Authorization": "Bearer " + self.auth._issue_native_token("bob")})
+            headers={"Authorization": "Bearer " + access_token("bob")})
         self.assertEqual(denied.status_code, 404)
         with self.assertRaises(ValueError):
             asyncio.run(reopened.inspect(lease["id"], "bob"))

@@ -1,5 +1,6 @@
 # pyright: reportMissingImports=false
 """Real PostgreSQL/Factory tasks; synthetic allocation effects, no host capacity claim."""
+from fixture_identity import access_token
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import copy
@@ -15,7 +16,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.resources import ComputePool, PersistentResourceService, RemoteTarget
 from pg_fixture import IsolatedPostgres
@@ -92,10 +93,10 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         application = create_app(self.settings)
         self.state = application.app.state.factory
         self.store, self.auth = self.state["store"], self.state["auth"]
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('alice', 'bob', 'manager')}
+        self.tokens = {owner: access_token(owner) for owner in ('alice', 'bob', 'manager')}
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(application).__enter__()  # type: ignore[arg-type]
+        self.client = TestClient(application, base_url="https://testserver").__enter__()  # type: ignore[arg-type]
         self.addCleanup(self.client.__exit__, None, None, None)
         self.addCleanup(self.stop_tasks)
         self.service = self.state["resources"]

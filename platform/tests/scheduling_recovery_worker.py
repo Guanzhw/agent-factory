@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import time
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 
 
@@ -67,7 +67,7 @@ def main():
             return result
     schedules.bridge = NativeBoundary()
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=settings.port, access_log=False)
+    uvicorn.run(state["http_app"], host="127.0.0.1", port=settings.port, access_log=False)
 
 
 if __name__ == "__main__":

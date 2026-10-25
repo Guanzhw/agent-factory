@@ -17,8 +17,8 @@ from uuid import uuid4
 import httpx
 from agno.models.message import Message
 
-from agent_factory.config import Settings
-from agent_factory.go_development import (CAPABILITY, REGISTRATION_REF, GoDevelopmentHandle,
+from fixture_settings import Settings
+from fixture_go_development import (CAPABILITY, REGISTRATION_REF, GoDevelopmentHandle,
     application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
 from agent_factory.opencode_go import BASE_URL, USER_AGENT, GoDevelopmentModel
@@ -92,7 +92,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
         self.assertIsNone(handle.async_transport)
         self.settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
             db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
-            development_profile="opencode-go", development_live_validation=True, max_workers=1, max_tool_calls=1,
+             max_workers=1, max_tool_calls=1,
             temporary_policy="member-self-service", policy_revision="go-live-mock-policy-v1",
             material_policy_revision="go-live-mock-material-v1", runtime_tool_contract="legacy-v1",
             usage_policy=UsagePolicy(revision="go-live-mock-usage-v1", task_amount_micros=1_000_000,
@@ -103,7 +103,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
             self.assertIs(kwargs["live_campaign"], self.campaign)
             self.assertEqual(kwargs["native_retries"], 0)
             return GoDevelopmentModel(**kwargs, async_transport=self.peer.transport)
-        self.enterContext(mock.patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model))
+        self.enterContext(mock.patch("fixture_go_development.GoDevelopmentModel", side_effect=offline_model))
         self.open_application()
         models = publish_go_development_models(self.state, author="manager")
         seeds = self.store.materials(published_only=True)

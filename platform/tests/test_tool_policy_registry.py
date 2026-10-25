@@ -10,7 +10,7 @@ from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, appli
 
 class ToolPolicyRegistryTests(unittest.TestCase):
     def setUp(self):
-        self.settings = SimpleNamespace(demo=False, runtime_tool_contract="legacy-v1")
+        self.settings = SimpleNamespace(runtime_tool_contract="legacy-v1")
         self.store = SimpleNamespace(settings=self.settings, personal_tools=None, plan_policy=None)
         self.bindings = ExecutionBindings(self.settings, self.store)
         self.store.execution_bindings = self.bindings

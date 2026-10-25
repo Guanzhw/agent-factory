@@ -26,7 +26,7 @@ from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import ConnectionService, TrustedConnectionBinding
 from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration, KnowledgeContext
@@ -269,7 +269,7 @@ def main():
         raise ValueError("Fixture workspace must remain below its owned configuration directory")
     # Explicit historical accounting fixture; installed providers are controlled.
     settings = Settings(fee_management_enabled=True, platform_paid_models_enabled=True,
-        db_url=configuration["dbUrl"], demo=False, jwt_key=configuration["jwtKey"], workspace=workspace,
+        db_url=configuration["dbUrl"], jwt_key=configuration["jwtKey"], workspace=workspace,
         port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24)
     settings.fixture_role = role
     if configuration.get("registeredTools"):
@@ -378,7 +378,7 @@ def main():
                 count = conn.execute(query).scalar()
         task = store.task(taskId, owner) if taskId else None
         native = db.get_job(task['run_id']) if task and task.get('run_id') else None
-        return {"fixtureOnly": True, "pid": os.getpid(), "mode": "production-policy-controlled-provider", "demo": settings.demo,
+        return {"fixtureOnly": True, "pid": os.getpid(), "mode": "production-policy-controlled-provider", "demo": False,
             "workspace": str(workspace), "applicationRef": application_ref, "applicationSnapshot": snapshot, "connection": connection_pin,
             "materials": {key: pin(value) for key, value in materials.items()}, "providerCreated": list(provider.created),
             "nativeTickets": count, "tasks": store.tasks(owner),
@@ -446,7 +446,7 @@ def main():
         return {"fixtureOnly": True, "op": op}
 
     import uvicorn
-    uvicorn.run(DropDispatchAcknowledgement(FixtureSessionBridge(application, configuration), controls, marker), host="127.0.0.1", port=settings.port,
+    uvicorn.run(DropDispatchAcknowledgement(FixtureSessionBridge(state["http_app"], configuration), controls, marker), host="127.0.0.1", port=settings.port,
                 access_log=False, log_level="warning")
 
 

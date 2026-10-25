@@ -1,4 +1,5 @@
 """Actual native auth/main/vault/remote wiring with synthetic credentials/probe."""
+from fixture_auth import authorize_client
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,7 +8,7 @@ import unittest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault, VaultSecretProvider
 from agent_factory.main import create_app
 from agent_factory.personal_remote_provider import PROVIDER_ID, OpenCodeServeProvider, origin
@@ -32,12 +33,12 @@ class CredentialVaultWiringPostgresTests(unittest.TestCase):
         store = state['store']
         self.addCleanup(store.engine.dispose)
         self.addCleanup(store.native_db.db_engine.dispose)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             credentials = '/api/factory/personal-credentials'
             remotes = '/api/factory/personal-remotes'
             bindings = '/api/factory/user-connections'
             self.assertEqual(client.get(credentials + '/capabilities').status_code, 401)
-            self.assertEqual(client.post('/api/factory/demo/login', json={'persona': 'alice'}).status_code, 200)
+            self.assertEqual(authorize_client(client, 'alice').status_code, 200)
             self.assertEqual(client.get(credentials + '/capabilities').json(), {'enabled': True, 'providerIds': [PROVIDER_ID]})
             request = {'requestId': 'save-request', 'providerId': PROVIDER_ID,
                 'destination': 'https://runtime.example.com', 'username': 'synthetic-user', 'password': 'synthetic-password'}
@@ -66,7 +67,7 @@ class CredentialVaultWiringPostgresTests(unittest.TestCase):
                 store.connections.resolve('alice', bound['ref'], 'environment', required_capabilities=['runtime:health'])
             self.assertNotIn('synthetic-password', str(store.sql('SELECT * FROM af_encrypted_credentials')))
             client.cookies.clear()
-            self.assertEqual(client.post('/api/factory/demo/login', json={'persona': 'bob'}).status_code, 200)
+            self.assertEqual(authorize_client(client, 'bob').status_code, 200)
             self.assertEqual(client.get(credentials + '/requests/save-request').status_code, 404)
             self.assertEqual(client.get(credentials).json(), [])
             self.assertEqual(client.get(remotes + '/requests/configure-request').status_code, 404)

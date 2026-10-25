@@ -1,5 +1,6 @@
 # pyright: reportMissingImports=false
 """Native schedule editor commands on isolated PG; no wall-clock cron waiting."""
+from fixture_identity import access_token
 import os
 from pathlib import Path
 import tempfile
@@ -11,7 +12,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.schedule_contract import preview_schedule
 from pg_fixture import IsolatedPostgres
@@ -33,13 +34,13 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         self.service = self.state['schedules']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(self.app).__enter__()  # pyright: ignore[reportArgumentType]
+        self.client = TestClient(self.app, base_url="https://testserver").__enter__()  # pyright: ignore[reportArgumentType]
         self.addCleanup(self.client.__exit__, None, None, None)
         assert self.client.portal is not None
         self.portal = self.client.portal
         self.auth.account_roles.unassign('manager', 'factory-manager')
         self.assertEqual(self.auth.identity('manager')['role'], 'user')
-        self.tokens = {owner: self.auth._issue_native_token(owner) for owner in ('manager', 'bob')}
+        self.tokens = {owner: access_token(owner) for owner in ('manager', 'bob')}
         # Future fixed preview avoids native due runs entirely; explicit trigger
         # still uses the real existing admission/native executor path.
         clock = patch('agent_factory.schedule_management.preview_schedule',

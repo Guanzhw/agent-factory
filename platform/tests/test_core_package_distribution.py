@@ -76,8 +76,11 @@ while not hasattr(getattr(native, 'state', None), 'factory'):
     native = native.app
 state = native.state.factory
 snapshots['assembled'] = tables()
+assert state['auth'].directory.get('alice') is None
+state['auth'].directory.upsert('alice', name='Explicit installed-core test member')
 try:
-    with TestClient(app) as client:
+    # Isolated installation checks the real native internal execution boundary.
+    with TestClient(native) as client:
         assert getattr(native.state, 'queue_worker', None) is not None
         headers = {'Authorization': 'Bearer ' + state['auth']._issue_native_token('alice')}
         for route in ('/api/factory/materials', '/api/factory/applications'):

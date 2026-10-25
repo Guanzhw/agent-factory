@@ -1,11 +1,11 @@
-"""Owned demo-only process faults; never imported by application startup."""
+"""Owned internal-native process faults; never imported by application startup."""
 import json
 import os
 from pathlib import Path
 
 import uvicorn
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.control_commands import ControlCommands
 from core_native_fixture import create_fixture_app as create_app
 
@@ -13,7 +13,7 @@ from core_native_fixture import create_fixture_app as create_app
 def main():
     configuration = json.loads(Path(os.environ["FACTORY_COMMAND_FIXTURE"]).read_text())
     root = Path(configuration["workspace"])
-    app = create_app(Settings(db_url=configuration["database"], workspace=root, max_workers=1))
+    app = create_app(Settings(db_url=configuration["database"], workspace=root, jwt_key=configuration["jwtKey"], max_workers=1))
     state = app.app.state.factory
     fault_path = root / "fault.json"
 
@@ -55,7 +55,7 @@ def main():
         fault("after-cancel")
         return result
     state["store"].delegation.cascade_cancel = cancel
-    uvicorn.run(app, host="127.0.0.1", port=configuration["port"], log_level="warning")
+    uvicorn.run(state["http_app"], host="127.0.0.1", port=configuration["port"], log_level="warning")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Actual portable governance/owner bindings; no provider or GPU calls."""
+from fixture_auth import initialize_members
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,7 +13,7 @@ from sqlalchemy import select, func
 
 from agent_factory.applications import ApplicationService
 from agent_factory.auth import AuthService
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.connections import ConnectionService
 from agent_factory.execution_bindings import ExecutionBindings
 from agent_factory.material_governance import MaterialGovernance
@@ -30,7 +31,7 @@ class ResearchSetupTests(unittest.TestCase):
         self.addCleanup(db.db_engine.dispose)
         settings = Settings(db_url='sqlite://', workspace=Path(directory.name))
         self.auth = AuthService(settings, db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.store = PortableCompositionStore(db, settings)
         self.bindings = ExecutionBindings(settings, self.store)
         self.store.execution_bindings = self.bindings

@@ -9,7 +9,7 @@ import unittest
 from fastapi import HTTPException
 
 from agent_factory.catalog import create_plan
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
 
@@ -79,7 +79,7 @@ class CatalogContractTests(ApplicationCompositionFixture):
         with self.assertRaises(ValueError):
             Settings(db_url="unused", temporary_policy="manual-review")
         with self.assertRaises(ValueError):
-            Settings(db_url="unused", demo=False, temporary_policy="unset")
+            Settings(db_url="unused", temporary_policy="unset")
 
 
 if __name__ == "__main__":

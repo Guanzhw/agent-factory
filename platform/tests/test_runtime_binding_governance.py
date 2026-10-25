@@ -3,6 +3,7 @@
 Portable SQLite tests do not claim PostgreSQL concurrency or live providers.
 The optional PG test uses a disposable DB and the actual governance HTTP routes.
 """
+from fixture_auth import authorize_client
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,7 +15,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import (
     GovernanceConfig, LICENSES, MaterialGovernance, RuntimeBinding, normalize_runtime_binding,
@@ -48,7 +49,7 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
         with self.store.engine.begin() as connection:
             connection.execute(self.service.configs.insert().values(revision=old_body["revision"], hash=expected, body=old_body))
             connection.execute(self.service.current_config.insert().values(id="current", revision=old_body["revision"]))
-        restarted = MaterialGovernance(self.store, self.fixture.auth, GovernanceConfig(), seed_materials=governance_fixture.SEEDS)
+        restarted = MaterialGovernance(self.store, self.fixture.auth, GovernanceConfig())
         self.assertEqual(restarted.current()["review_mode"], "member-self-service")
         with self.store.engine.connect() as connection:
             row = connection.execute(select(restarted.configs)).mappings().one()
@@ -56,7 +57,7 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
             self.assertEqual(row["hash"], expected)
         self.store.seed()
         before = [self.store.raw({"id": seed[0], "version": 1})["body"] for seed in governance_fixture.SEEDS]
-        restarted.adopt_demo_bootstrap()
+        self.assertFalse(hasattr(restarted, "adopt_demo_bootstrap"))
         after = [self.store.raw({"id": seed[0], "version": 1})["body"] for seed in governance_fixture.SEEDS]
         self.assertEqual(before, after)
         self.assertTrue(all("runtimeBinding" not in item for item in after))
@@ -163,8 +164,8 @@ class RuntimeBindingGovernancePostgresTests(unittest.TestCase):
             app = create_app(Settings(db_url=database.url, workspace=Path(workspace)))
             state = app.app.state.factory
             try:
-                with TestClient(app) as client:
-                    self.assertEqual(client.post("/api/factory/demo/login", json={"persona": "manager"}).status_code, 200)
+                with TestClient(app, base_url="https://testserver") as client:
+                    self.assertEqual(authorize_client(client, "manager").status_code, 200)
                     value = governance_fixture.definition(kind="model", id="registered-model-metadata", runtimeBinding=binding("fixture-model-v1", temperature=0.2))
                     body = {"definition": value, "requestId": "actual-runtime-binding"}
                     first = client.post("/api/factory/material-governance/drafts", json=body)

@@ -119,7 +119,7 @@ def attach_fixture_bindings(settings, store, plan):
 class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.settings = SimpleNamespace(demo=True, runtime_directory=Path(self.directory.name)/'runtime', max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)
+        self.settings = SimpleNamespace(runtime_directory=Path(self.directory.name)/'runtime', max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)
         self.db = SqliteDb(db_file=str(Path(self.directory.name)/'native.sqlite'), id='native-contract-db')
 
     async def asyncTearDown(self):

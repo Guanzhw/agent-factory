@@ -1,5 +1,7 @@
 """Actual TCP process exits at durable command boundaries, isolated PostgreSQL."""
 import json
+import secrets
+import jwt
 import os
 from pathlib import Path
 import subprocess
@@ -25,11 +27,19 @@ class CommandProcessTests(unittest.TestCase):
         self.workspace.mkdir()
         self.config = self.root / "server.json"
         port = loopback_port()
-        self.config.write_text(json.dumps({"database": self.database.url, "workspace": str(self.workspace), "port": port}))
+        self.jwt_key = secrets.token_urlsafe(48)
+        self.config.write_text(json.dumps({"jwtKey": self.jwt_key, "database": self.database.url, "workspace": str(self.workspace), "port": port}))
         self.client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=15, trust_env=False)
         self.log = (self.root / "server.log").open("ab")
         self.process = None
         self.start()
+
+    def headers(self, owner='alice'):
+        # This process fixture serves only the native internal execution boundary.
+        now = int(time.time())
+        token = jwt.encode({'sub': owner, 'aud': 'agent-factory', 'iat': now, 'exp': now + 3600},
+            self.jwt_key, algorithm='HS256')
+        return {'Authorization': 'Bearer ' + token}
 
     def start(self):
         project = Path(__file__).resolve().parents[2]
@@ -43,7 +53,8 @@ class CommandProcessTests(unittest.TestCase):
             try:
                 if self.client.get("/api/health").is_success:
                     self.client.cookies.clear()
-                    self.assertEqual(self.client.post("/api/factory/demo/login", json={"persona": "alice"}).status_code, 200)
+                    self.client.headers.update(self.headers('alice'))
+                    self.assertEqual(self.client.get('/api/factory/session').status_code, 200)
                     return
             except httpx.HTTPError:
                 pass

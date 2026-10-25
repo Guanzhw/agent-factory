@@ -99,7 +99,7 @@ class OpaqueConnections:
 class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.settings = SimpleNamespace(demo=True, runtime_directory=Path(self.directory.name) / "runtime",
+        self.settings = SimpleNamespace(runtime_directory=Path(self.directory.name) / "runtime",
             max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)
         self.store = MultiPlanStore()
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "native.sqlite"), id="material-binding-fixture")
@@ -385,17 +385,16 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("Metadata must not construct a provider")
         self.registry.register("model", "metadata-only-controlled-v1", "1", factory,
             connection_kind="model", required_capabilities=("model:invoke",), permissions=("model:invoke",))
-        self.registry.register("model", "metadata-synthetic-v1", "1", factory, demo_only=True)
-        self.settings.demo = False
+        self.registry.register("model", "metadata-synthetic-v1", "1", factory, )
         descriptors = self.registry.describe()
         self.assertEqual(descriptors, self.registry.describe())
-        fields = {"kind", "adapterId", "revision", "toolName", "connectionKind", "requiredCapabilities", "permissions", "demoOnly", "availableForMode"}
+        fields = {"kind", "adapterId", "revision", "toolName", "connectionKind", "requiredCapabilities", "permissions"}
         self.assertTrue(all(set(item) == fields for item in descriptors))
         provider = next(item for item in descriptors if item["adapterId"] == "metadata-only-controlled-v1")
         synthetic = next(item for item in descriptors if item["adapterId"] == "metadata-synthetic-v1")
         self.assertEqual(provider["requiredCapabilities"], ["model:invoke"])
-        self.assertTrue(provider["availableForMode"])
-        self.assertFalse(synthetic["availableForMode"])
+        self.assertNotIn("availableForMode", provider)
+        self.assertNotIn("availableForMode", synthetic)
         self.assertFalse(constructed)
         self.registry.withdraw("model", "metadata-only-controlled-v1", "1")
         self.assertFalse(any(item["adapterId"] == "metadata-only-controlled-v1" for item in self.registry.describe()))
@@ -408,7 +407,7 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         attach_fixture_bindings(self.settings, store, store.plan)
         registry = store.execution_bindings
         registry.register('tool', 'fixture-selected-process-v1', '1', selected_bounded_operation,
-            tool_name='fixture_operation', permissions=('fixture:operate',), demo_only=True)
+            tool_name='fixture_operation', permissions=('fixture:operate',), )
         material = next(item for item in store.plan['materials'] if item['kind'] == 'tool')
         material['runtimeBinding'] = {'adapterId': 'fixture-selected-process-v1', 'revision': '1', 'config': {}}
         material['sha256'] = digest({key: value for key, value in material.items() if key != 'sha256'})

@@ -20,7 +20,7 @@ from unittest.mock import patch
 from sqlalchemy import event
 
 from fastapi import HTTPException
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.personal_cli import cli_destination
@@ -243,7 +243,7 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
         self.settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=2,
             max_user_tasks=2, temporary_policy='member-self-service',
             runtime_adapters=[AdapterRegistration('model', native.MODEL, '1',
-                model_factory, demo_only=True),
+                model_factory, ),
                 AdapterRegistration('environment', native.ENVIRONMENT, '1', lambda _: EnvironmentLimits())],
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b't' * 32,
                 {'member-cli': DestinationPolicy(cli_destination), 'member-mcp': DestinationPolicy(mcp_url)}))

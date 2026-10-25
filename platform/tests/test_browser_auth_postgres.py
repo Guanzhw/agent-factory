@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.main import create_app
 from agent_factory.browser_oidc import BrowserCodeExchanger
 from agent_factory.browser_auth import BrowserSessionService
@@ -30,8 +30,7 @@ class BrowserAuthPostgresTests(unittest.TestCase):
         workspace = TemporaryDirectory(prefix="factory-browser-identity-")
         self.addCleanup(workspace.cleanup)
         self.idp = BrowserIdentityFixture()
-        self.settings = Settings(db_url=database.url, workspace=Path(workspace.name), demo=False,
-            jwt_key="synthetic-browser-native-signing-key-more-than-32bytes", browser_oidc=self.idp.config(),
+        self.settings = Settings(db_url=database.url, workspace=Path(workspace.name), jwt_key="synthetic-browser-native-signing-key-more-than-32bytes", browser_oidc=self.idp.config(),
             max_workers=1, storage_task_reserve_bytes=8 * 1024 * 1024)
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory

@@ -62,7 +62,7 @@ def configured(configuration, holder):
     settings.native_workflows = (NativeWorkflowRegistration(workflow, '1', ('fixture_prepare',), 'b' * 64),)
     settings.workflow_runtimes = {}
     settings.runtime_adapters = [entry for entry in settings.runtime_adapters if entry.kind != 'model']
-    settings.runtime_adapters.append(AdapterRegistration('model', fixture.MODEL, '1', DelegatedModel, demo_only=True))
+    settings.runtime_adapters.append(AdapterRegistration('model', fixture.MODEL, '1', DelegatedModel, ))
     def tools(ctx):
         @tool
         def child_compute(run_context: RunContext):
@@ -80,6 +80,8 @@ def configured(configuration, holder):
 
 
 def publish(state):
+    from fixture_auth import initialize_members
+    initialize_members(state['auth'])
     original = fixture.publish(state)
     value = {key: original[key] for key in definition_model(original).model_fields}
     material = state['material_governance'].create_draft('manager', {'id': 'delegated-compute-material',
@@ -140,7 +142,7 @@ def serve(configuration):
             'scope': store.local_budget_scopes.inspect('alice', 'fixture-scope') if task else None,
             'nativeSteps': fixture.persisted_steps(store, task, configuration) if task else [],
             'nativeCount': store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id', id=taskId)[0]['n'] if task else 0}
-    uvicorn.run(app, host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
+    uvicorn.run(state["http_app"], host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
 
 
 class Server(fixture.WorkflowServer):

@@ -18,7 +18,7 @@ from pg_fixture import IsolatedPostgres
 from test_go_live_product_postgres import SyntheticCampaignPeer
 import test_go_project_campaign as policy_helpers
 
-_RUNNER = Path(__file__).resolve().parents[2] / "scripts" / "run_go_project_workflow.py"
+_RUNNER = Path(__file__).with_name("fixture_run_go_project_workflow.py")
 spec = importlib.util.spec_from_file_location("go_project_workflow_pg", _RUNNER)
 assert spec is not None and spec.loader is not None
 runner = importlib.util.module_from_spec(spec)
@@ -67,7 +67,7 @@ class GoProjectWorkflowPostgresTests(unittest.TestCase):
             return GoDevelopmentModel(**kwargs, async_transport=self.peer.transport)
 
         with patch.object(runner, "credential", self.credential), \
-                patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model):
+                patch("fixture_go_development.GoDevelopmentModel", side_effect=offline_model):
             for model in runner.MODELS:
                 with self.subTest(model=model), \
                         IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \

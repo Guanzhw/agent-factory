@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from agent_factory.billing_mode import ledger_for_plan, require_available
 from agent_factory.byok_model import ADAPTER_ID
-from agent_factory.config import Settings
+from fixture_settings import Settings
 
 
 class BillingModeTests(unittest.TestCase):

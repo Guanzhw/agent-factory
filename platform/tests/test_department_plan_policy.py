@@ -1,4 +1,5 @@
 """Department submission, immutable migration, and current native identity."""
+from fixture_auth import initialize_members
 from pathlib import Path
 import secrets
 from tempfile import TemporaryDirectory
@@ -19,9 +20,9 @@ class DepartmentPlanPolicyTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.db = SqliteDb(db_file=str(Path(folder.name) / 'department.sqlite'))
         self.addCleanup(self.db.db_engine.dispose)
-        self.settings = SimpleNamespace(demo=True, jwt_key=secrets.token_urlsafe(48))
+        self.settings = SimpleNamespace(jwt_key=secrets.token_urlsafe(48))
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.store = MetadataFixture(self.db, self.settings)
 
     def test_default_accepts_every_application_and_workflow_without_review(self):

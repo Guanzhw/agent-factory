@@ -26,7 +26,7 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_execution import RemoteExecution
 from agent_factory.remote_handoff import (
@@ -90,9 +90,9 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         cls.receiver = PreparedHandoffService(cls.remote["store"], cls.remote["auth"], cls.remote["bridge"], {"origin-fixture": cls.trusted})
         cls.receiver.install_guard()
         cls.remote_app.app.include_router(cls.receiver.router)
-        cls.origin_client = TestClient(cls.origin_app).__enter__()
+        cls.origin_client = TestClient(cls.origin_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.origin_client.__exit__, None, None, None)
-        cls.remote_client = TestClient(cls.remote_app).__enter__()
+        cls.remote_client = TestClient(cls.remote_app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.remote_client.__exit__, None, None, None)
 
     def setUp(self):

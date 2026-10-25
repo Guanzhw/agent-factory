@@ -21,7 +21,7 @@ import httpcore
 import httpx
 
 from agent_factory.byok_model import OwnerChatModel, PinnedChatTransport
-from agent_factory.config import Settings
+from fixture_settings import Settings
 from agent_factory.application_environments import ApplicationEnvironments
 from agent_factory.environment_bindings import EnvironmentModelHandle
 from agent_factory.model_endpoint_policy import GO_CURRENT_BASE
