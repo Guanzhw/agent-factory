@@ -2,7 +2,9 @@
 
 依据[最终验收契约](research-platform-acceptance-contract.md)，审计源码 `f2dd047670f2efd1394ecf5dfe62c4cace342885`、任务板 `3184155`；本文从集成提交 `551f1bf` 创建。以下是已有运行记录的只读核对，没有为整理矩阵重跑测试。**局部通过不是整项 PASS，PR 数量不是产品完成度。**
 
-## 当前集成检查
+前几节为按时间保留的历史检查点；当前分层结论见本文“最终本地验收检查点”。历史“运行中”和“未通过”不描述最终状态。
+
+## 历史集成检查
 
 - 精确 `551f1bf` 的 [full 40206239436](https://github.com/Guanzhw/agent-factory/actions/runs/40206239436) **运行中，尚未通过**。
 - main `a877268` 的 [CI40205579401](https://github.com/Guanzhw/agent-factory/actions/runs/40205579401) 成功。
@@ -183,6 +185,10 @@ P0 独立 core 与移除接缝、P1 身份、P2 消息/离线 QA、P3 事件/有
 
 独立审查精确范围详见[集成验证的 review 记录](../../openspec/changes/restore-team-research-application/integration-verification.md)：core 围栏 `551f1bf→5fe414c`；P7 `3e73b724→030016aec28b79966d4e486083baf1cc4da8e512`；P8 初审与 recipe/source 整改、peer CLI `7377298→bb8d8a3`；集成至 `53b6be0`；追加 A06/A07 `931f7c3→2d7e816`、A04 `931f7c3→b024fe9`、A01 `931f7c3→7881c71`；UI 证据 `2f1fb74→55e1419`/等价发布 `0a5a1e4` 与纯 driver 清理 `0a5a1e4→f14bdae`，均有作者外 PASS。原锁序、来源截断/旁路、配方有效性等问题整改后复审；不按代码行数机械宣称简化。
 
-本轮 [#130](https://github.com/Guanzhw/agent-factory/pull/130)、[#131](https://github.com/Guanzhw/agent-factory/pull/131)、[#132](https://github.com/Guanzhw/agent-factory/pull/132)、[#133](https://github.com/Guanzhw/agent-factory/pull/133)、[#134](https://github.com/Guanzhw/agent-factory/pull/134)、[#135](https://github.com/Guanzhw/agent-factory/pull/135) 的最终合并/精确 head CI 核对 **pending**。上述组件评审和组合运行不能冒充每个 retarget 后 head 的审查/CI；最终 main SHA 和主线 CI **pending**。
+历史发布检查点（下方合并记录更新其状态）：本轮 [#130](https://github.com/Guanzhw/agent-factory/pull/130)、[#131](https://github.com/Guanzhw/agent-factory/pull/131)、[#132](https://github.com/Guanzhw/agent-factory/pull/132)、[#133](https://github.com/Guanzhw/agent-factory/pull/133)、[#134](https://github.com/Guanzhw/agent-factory/pull/134)、[#135](https://github.com/Guanzhw/agent-factory/pull/135) 的最终合并/精确 head CI 核对 **pending**。上述组件评审和组合运行不能冒充每个 retarget 后 head 的审查/CI；最终 main SHA 和主线 CI **pending**。
 
 仍需的真实输入沿用前节三组：正式任务/模型/预算/盲评与配对判据；实际可获取数据和复现容差；外部身份、部署/GPU 访问和目标机工作负载/SLO。参数在正式运行前冻结，结果不能反向修改通过线。
+
+### 发布收尾检查点
+
+截至 main `da783091a4fb77ee656383c57c1407d122dede05`，#104–133 均已合并。正式工作台 #125、问答界面 #130、主动关联 #131、精选成果/继续研究 #132 已合入；最终证据界面 #134 和本验收记录 #135 尚待合并。#134 精确 `505a316504157ce47c177bae38b1a71152bbd3cf` 的当前 main 完整 diff 与原审范围逐字节一致，独立复审 PASS；对应 fast 40215526281 尚待终态。部署没有执行，未配置实际目标主机或暴露入口。
