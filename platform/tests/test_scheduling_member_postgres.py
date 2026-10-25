@@ -129,14 +129,27 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.request('POST', '/schedules', {key: value for key, value in self.creation().items()
             if key != 'requestId'}, owner='bob', status=404)
         self.assertEqual(self.request('GET', '/schedule-management', owner='bob')['items'], [])
+        retained_native_token = self.auth._issue_native_token('alice')
+        original_tasks = self.store.sql('SELECT id, run_id FROM af_tasks ORDER BY id')
         self.auth.directory.set_disabled('alice', True)
         try:
             for method, path, body in [('GET', '/schedule-management/metadata', None),
                     ('POST', '/schedule-management', self.creation()), *operations]:
                 with self.subTest(owner='disabled-alice', path=path, method=method):
-                    self.request(method, path, body, status=403)
+                    denied = self.request(method, path, body, status=401)
+                    self.assertEqual(denied['detail'], 'OIDC_ACCESS_TOKEN_INVALID')
+                    # The public verifier rejects the disabled identity before
+                    # routing; the native boundary independently rejects it too.
+                    native_client = TestClient(self.state['http_app'], base_url='https://testserver')
+                    try:
+                        response = native_client.request(method, '/api/factory' + path, json=body,
+                            headers={'Authorization': 'Bearer ' + retained_native_token})
+                    finally:
+                        native_client.close()
+                    self.assertEqual(response.status_code, 403, response.text)
         finally:
             self.auth.directory.set_disabled('alice', False)
+        self.assertEqual(self.store.sql('SELECT id, run_id FROM af_tasks ORDER BY id'), original_tasks)
         self.assertEqual(self.request('GET', editor), schedule)
         self.assertFalse(self.enabled(schedule, False)['enabled'])
         self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_tasks')[0]['n'], 0)

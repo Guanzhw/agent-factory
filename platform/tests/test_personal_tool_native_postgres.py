@@ -1,5 +1,6 @@
 """Declared personal tools through real PG/Agno/vault; no provider network IO."""
 from fixture_identity import access_token
+from fixture_auth import initialize_members
 import asyncio
 from contextlib import ExitStack
 import json
@@ -173,6 +174,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         return response.json()
 
     def publish(self):
+        initialize_members(self.auth)
         # The same member publication path as ordinary declarative applications.
         governance, applications = self.state['material_governance'], self.state['applications']
         materials = []
