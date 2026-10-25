@@ -119,6 +119,28 @@ class OperationCustodyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found['handle']['id'], unknown['id'])
         self.assertEqual(len(self.runtime.starts), 1)
 
+    async def test_explicit_inputs_persist_before_dispatch_and_restart_cannot_replace_them(self):
+        inputs = {'inputs': {'seed': 7}, 'callId': 'original-call'}
+        def before_dispatch():
+            import json
+            row = self.store.sql('SELECT body FROM af_external_operations')[0]
+            self.assertEqual(json.loads(row['body'])['inputs'], inputs)
+            self.assertIsNone(self.store._connection.get())
+        self.runtime.on_start = before_dispatch
+        self.runtime.error = WorkflowAcknowledgementUnknown()
+        body = await self.service.start(self.ctx, 'input-step', 'one', PIN, inputs, retain_inputs=True)
+        inputs['inputs']['seed'] = 8
+        self.service = OperationCustody(self.store, self.auth, runtimes=self.runtimes)
+        self.assertEqual(self.service.read('alice', body['id'])['inputs']['inputs']['seed'], 7)
+        with self.assertRaises(HTTPException):
+            await self.service.start(self.ctx, 'input-step', 'one', PIN, inputs, retain_inputs=True)
+        self.assertEqual(len(self.runtime.starts), 1)
+
+    async def test_existing_callers_remain_hash_only(self):
+        original = await self.start()
+        self.assertNotIn('inputs', original)
+        self.assertIn('inputsSha256', original)
+
     async def test_ordinary_error_identity_preserved_and_no_replay(self):
         error = ConnectionError('synthetic')
         self.runtime.error = error

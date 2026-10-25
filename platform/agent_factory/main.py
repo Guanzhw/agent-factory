@@ -274,7 +274,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                 required_capabilities=entry.required_capabilities, permissions=entry.permissions,
                 validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
         store.application_runtime.register(RUNTIME_OWNER,
-            SSHOperationWaits(store, store.workflow, OPERATION_PIN, commands=factory_api.commands),
+            SSHOperationWaits(store, store.workflow, OPERATION_PIN, commands=factory_api.commands,
+                runs=ApplicationRuns(factory_api)),
             bindings=BINDINGS)
     resource_maintenance = ResourceMaintenance(resources)
     base.include_router(resource_router(auth, resources, resource_maintenance))
