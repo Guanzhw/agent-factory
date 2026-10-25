@@ -1,5 +1,6 @@
 """Stable member endpoints with immutable application defaults, not native sessions."""
 from copy import deepcopy
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import Boolean, Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
+from .local_budget_scopes import _caps
 from .material_governance import MaterialGovernance, PinnedRef
 from .store import digest, now
 
@@ -16,8 +18,16 @@ Identifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r'^[A-Za
 EndpointRequestId = Annotated[str, Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]+$')]
 
 
+class AutomaticBudget(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    scopeId: Identifier
+    caps: dict
+    deadline: float = Field(allow_inf_nan=False)
+
+
 class EndpointConfiguration(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    automaticBudget: AutomaticBudget | None = None
     name: str = Field(min_length=1, max_length=100)
     applicationRef: PinnedRef
     mode: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')
@@ -63,7 +73,9 @@ class AssistantEndpoints:
     @classmethod
     def _owned(cls, row):
         configuration = row['configuration']
-        return {**cls._summary(row), 'defaults': {
+        return {**cls._summary(row),
+            **({'automaticBudget': deepcopy(configuration['automaticBudget'])} if configuration.get('automaticBudget') else {}),
+            'defaults': {
             'application': configuration['applicationRef']['id'],
             **{key: deepcopy(configuration[key]) for key in
                ('applicationRef', 'mode', 'materialChoices', 'connectionRefs')}}}
@@ -80,9 +92,26 @@ class AssistantEndpoints:
             raise HTTPException(422, 'ASSISTANT_TEXT_INPUT_INCOMPATIBLE')
         return schema is not None
 
+    def require_budget(self, conn, owner, budget):
+        caps = _caps(budget['caps'])
+        if caps['rounds'] != 1:
+            raise HTTPException(422, 'LOCAL_BUDGET_ONE_ROUND_REQUIRED')
+        scope = self.store.local_budget_scopes._scope(conn, owner, budget['scopeId'])
+        if (scope['state'] != 'ACTIVE' or not time.time() < budget['deadline'] <= scope['body']['deadline']):
+            raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
+        total = scope['body']['caps']
+        if ((caps['tokenLimit'] is None) != (total['tokenLimit'] is None)
+                or caps['currency'] != total['currency']):
+            raise HTTPException(409, 'LOCAL_BUDGET_METERING_MISMATCH')
+        if any(caps[key] is not None and caps[key] > total[key]
+               for key in ('toolCalls', 'tokenLimit', 'amountMicros')):
+            raise HTTPException(422, 'LOCAL_BUDGET_CAPS_INVALID')
+
     def configure(self, owner, configuration: EndpointConfiguration, request_id):
         self.auth.require_member(owner)
         value = configuration.model_dump()
+        if value["automaticBudget"] is None:
+            value.pop("automaticBudget")
         MaterialGovernance._safe_data(value)
         fingerprint = digest({'action': 'configure', 'configuration': value})
         with self.db.write() as conn:
@@ -90,6 +119,8 @@ class AssistantEndpoints:
             if old is not None:
                 return old
             self._current(value)
+            if value.get("automaticBudget"):
+                self.require_budget(conn, owner, value["automaticBudget"])
             identifier = str(uuid4())
             conn.execute(self.endpoints.insert().values(id=identifier, owner_id=owner,
                 configuration=value, enabled=True, created_at=now()))

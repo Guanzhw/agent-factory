@@ -100,7 +100,12 @@ class AssistantEvents:
             old = self.db.old(conn, self.commands, owner, request_id, digest(value))
             if old:
                 return self._row(conn, self.subscriptions, old['id'])
-            self.endpoints.owned(owner, value['endpointId'])
+            endpoint = self.endpoints.owned(owner, value['endpointId'])
+            budget = endpoint.get('automaticBudget')
+            if budget and (budget['scopeId'] != value['scopeId'] or budget['caps'] != value['caps']):
+                raise HTTPException(409, 'ASSISTANT_MESSAGE_ALLOCATION_MISMATCH')
+            if budget:
+                self.endpoints.require_budget(conn, owner, budget)
             scope = self.scopes._scope(conn, owner, value['scopeId'])
             if scope['state'] != 'ACTIVE' or not time.time() < value['deadline'] <= scope['body']['deadline']:
                 raise HTTPException(409, 'ASSISTANT_SUBSCRIPTION_EXPIRED')
@@ -212,12 +217,11 @@ class AssistantEvents:
                 self.scopes.allocate(conn, owner, config['scopeId'], allocation_id,
                     digest({'event': event_id, 'endpoint': endpoint_id}), config['caps'])
                 message, _ = self.messages._reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
-                    requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']))
+                    requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']),
+                    allocation_id=allocation_id, delivery_id=identifier)
                 conn.execute(self.deliveries.insert().values(id=identifier, event_id=event_id, endpoint_id=endpoint_id,
                     subscription_id=subscription['id'], owner_id=owner, message_id=message['id'],
                     allocation_id=allocation_id, state='pending', attempted_at=0))
-                self.scopes.bind_request(conn, owner, allocation_id,
-                    'application-start:' + self.messages._request_id(message), delivery_id=identifier)
                 return self._row(conn, self.deliveries, identifier)
 
     def validate_admission(self, conn, owner, delivery_id, request_id, plan, allocation_id):
