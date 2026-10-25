@@ -21,6 +21,7 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         actions = []
         store = Mock()
         store.process_runtime = None
+        store.local_budget_scopes = None
         store.workflow = None
         store.application_runtime = ApplicationRuntimeRegistry(store)
         store.completion_context.side_effect = lambda current: Store.completion_context(store, current)

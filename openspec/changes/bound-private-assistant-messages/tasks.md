@@ -16,6 +16,8 @@
 - [ ] 3.3 独立完整base/head精简审查、必要整改及集成检查；QA零GPU与C03真实价值继续由应用验收，不外推本change通过。
 ## Core settlement follow-up
 
+- [x] Declare absent budget service explicitly in non-budget lifecycle fixtures; preserve completion-versus-cancellation assertions under the new budget-only fallback.
+
 - [x] Verify ordinary budgeted roots use the existing atomic completion path even without an application callback.
 - [x] Verify HELD rollback and subsequent original-root observation release the same allocation exactly once, without receipt mutations or re-dispatch.
 
