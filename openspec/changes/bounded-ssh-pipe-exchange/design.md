@@ -1,29 +1,23 @@
 ## Context
 
-两个实际消费者：probe 最多 8192 响应字节；SSHProcessTransport 请求最多32768字节、响应最多1MiB。当前 helper 在 stdin EOF 后才解释原请求，取消时不得先关闭 stdin 使未确认请求完成。远端进程 custody 与本地 SSH 客户端 I/O 是不同责任。
+现 personal_ssh.probe 与 SSHProcessTransport 是两个实际消费者，响应上限分别8192字节/1MiB，请求最多32768字节。项目Python>=3.12，官方明确[os.set_blocking新增Windows pipes支持](https://docs.python.org/3.12/library/os.html#os.set_blocking)。无需select、私有asyncio loop或reader线程。
 
 ## Goals / Non-Goals
 
-目标是用一个有界管道交换替代两处 select，保留 fresh authority、无新重试和原身份。非目标包括通用进程树监管、shell执行、JSON协议处理、自动安装、凭据后端、Windows agent实现及真实远端验收。
+一个窄的同步字节交换，保留原spawn/Job/凭据生命周期所有权。非目标：新spawn框架、协议parser、第二执行/恢复控制链、通用进程树监管或Windows凭据实现。
 
 ## Decisions
 
-- 单一公开同步入口 `exchange(argv, payload, *, env, max_output, before_effect, cancelled=None)`；输入是既有 pinned SSH 参数构造产生的 argv 和有限 bytes，stdin写块4096，响应逐块累计检查。stderr DEVNULL，无shell；helper不记录字节或argv。
-- 入口先核payload<=32768和合法响应上限<=1MiB，创建统一绝对工作deadline（默认30秒）。spawn、写、读、正常退出共享剩余时间，不能各自重置30秒。probe空输入允许；JSON/nonce和响应码仍调用方解释。
-- 每次调用在当前已有同步worker内使用私有 asyncio event loop；Windows明确使用Proactor loop，POSIX使用默认loop。不新增 reader/writer 线程，不使用communicate。loop内使用公开低层subprocess transport/protocol以便在deadline后关闭owned管道且独立观察process_exited，不依赖私有 `Process._transport` 或无限EOF等待。
-- 仅少量 I/O职责：protocol累加有界stdout、记录EOF和退出、提供写端背压通知；协程写payload、每块write与EOF前执行同步before_effect、等待响应EOF与退出。完整缓冲最多响应cap加单次回调块（超限立即终止，不返回截断成功）。spawn前也fresh检查。
-- cancelled是现allocate_bound已有threading.Event的窄输入；loop内有界短间隔检查，发现取消即中断传输。guard只能同步；不得把awaitable当授权通过。
-- 异常/超时/取消先kill本地子进程，再close transport管道，不先flush/EOF。总工作deadline外最多5秒清理额度用于reap/结束owned asyncio任务；无无界wait或join。若OS未确认退出，返回明确cleanup错误，不能声明成功清理。正常清理必须cancel并收回owned任务。显式管理loop生命周期而不使用Runner自动无限shutdown：清理期限到仍未收回的任务先记录cleanup错误，停止/关闭本私有loop，不能继续后台运行或宣称已完全reap。无default executor或新增I/O线程。
-- 原请求完整发送后丢回执仍交原消费者按UNKNOWN处理；helper不submit重试、不推断远端停止。清理只针对已拥有的本地OpenSSH进程，不添加孙进程扫描/kill树。
-- 后续集成必须保留worker引用，外部async取消设置event后等待本helper清理结果再传播CancelledError；仅cancel asyncio.to_thread await并返回不足以证明worker已清理。本切片不修改消费者。
-
-- spawn协程开始前创建protocol owner；`connection_made`立即登记transport，不等subprocess_exec返回才取得所有权。清理开始后若transport迟到，回调立即kill/close；对spawn任务的取消/有界收回与已登记transport共同处理，测试覆盖OS子进程已创建而spawn await尚未返回的窗口。
-- 绝对deadline不能抢占同步trusted guard或OS进程创建本身。前后检查期限，逾期后不再写/EOF；这些同步操作自身须遵守其既有有界契约。本helper的30秒+5秒界限只覆盖可调度I/O/退出等待，不声称能中止任意阻塞Python回调/OS调用，也不另加线程伪造抢占。
-
-## Risks / Trade-offs
-
-低层protocol比两个select循环稍多生命周期代码，但避免Windows匿名pipe select与清理时无限等待EOF。仅服务两个明确消费者，不做可插拔协议/传输框架。真实Windows CI验证Proactor路径，sys.platform mock不算。Windows身份/agent/private_directory/known_hosts路径仍单独阻塞。
+- 单入口 `exchange(process, payload, *, deadline, max_output, before_write=None, cancelled=None)`。process由现pinned SSH/受控Windows Job创建层拥有，带stdin/stdout管道；deadline由调用方在spawn前计算monotonic()+30。argv/凭据/JSON不进入helper，spawn前fresh由原调用方保留。
+- helper接管该次调用的管道交换及本地process收尾；创建层仍负责Job/凭据资源结束，不能在exchange仍运行时提前释放。调用方必须在spawn后立即进入helper，或自行处理进入前失败。
+- 入口try/finally包含输入验证、os.set_blocking(fd,False)和全部I/O。payload最多32768，max_output为1..1MiB。单轮stdout最多读取65536且不超过剩余额度+1，stdin最多写4096；两端轮流推进，避免任一端饥饿。无进展才用cancelled.wait最多10ms（没有event则time.sleep），不是busy loop。
+- 只将BlockingIOError视为暂不可用，不把其它OSError吞成重试；真实零长度read才是EOF。Windows no-data/短写/EOF行为必须真实runner验证，不能猜errno兼容。输出一旦超上限立即失败，不返回截断成功。
+- 每轮检查deadline/cancel；每次实际write与关闭stdin发送EOF前执行同步before_write并再次检查deadline/cancel。同步guard或OSspawn自身不能被抢占：其已有调用方须保证有界；本helper只保证返回后期限检查阻止继续effect。
+- 成功必须完整发送输入、收到stdout EOF及poll确认exit0；EOF后进程继续存活仍受原deadline限制。读取结束不等于进程退出。
+- 所有失败/取消先kill仍运行的本地进程，再进行最多5秒wait，最后关闭owned管道（stdin未写Python缓冲，全部走os.write）。不得在kill前用EOF/flush完成未授权请求。process已退出则直接reap；cleanup失败抛明确错误保留原因，不能宣称成功。没有无限wait、read线程、asyncio task或loop shutdown。
+- stdin/stdout继承给短命孙进程的测试只证明读端不会无界等EOF，不新增树清理。正常系统OpenSSH通过原禁用Proxy/Control配置运行；Windows Job由其原启动层拥有。
+- 消费者集成时async取消必须设置原cancel Event并等待持有的worker清理后再传播，不能只cancel to_thread的await就视作worker完成。原operation收到未知回执仍只inspect，不重submit。
 
 ## Verification
 
-真实本地Python子进程同时写输出和读输入；不读取stdin/输出超限/退出非零/EOF后存活/guard写中拒绝/取消等有限实验。检查原子进程退出与无新增线程。继承stdout的短命孙进程仅检验关闭owned pipe不无限等EOF，不提供通用树清理保证。Linux实跑；Windows留待runner，不能标已通过。
+真实Python子进程覆盖双向大流、短写/暂不可用、输出上限、无人读stdin、EOF后存活、非零退出、写/EOF前撤权和取消及实际reap。Linux先跑，Windows CI另跑同组pipe用例；不将平台mock或纯helper成功认定完整Windows SSH支持。

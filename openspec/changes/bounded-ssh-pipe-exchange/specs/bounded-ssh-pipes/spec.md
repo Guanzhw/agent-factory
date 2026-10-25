@@ -12,11 +12,11 @@
 - **THEN** 单一deadline或字节上限终止交换，本地进程kill并在最多5秒清理额度内reap、关闭owned管道；不能返回部分成功
 
 ### Requirement: 新鲜授权与取消清理
-系统 MUST 在spawn、每次请求写入及EOF前检查同步授权，取消后不留下owned I/O任务或新增后台读写线程。
+系统 MUST 在spawn、每次请求写入及EOF前检查同步授权，取消后不留下新增后台读写线程。
 
 #### Scenario: 部分请求后取消或撤权
 - **WHEN** 取消Event或fresh guard在请求发送过程中拒绝继续
-- **THEN** 不再写入或发送EOF，先kill本地SSH再关闭管道，收回owned任务并有界reap；不得启动替代操作
+- **THEN** 不再写入或发送EOF，先kill本地SSH再关闭管道，有界reap；不得启动替代操作
 
 #### Scenario: 已发送原请求回执未知
 - **WHEN** 原请求已完成发送但响应无法确认
@@ -26,9 +26,9 @@
 - **WHEN** Linux受控真实子进程测试通过但Windows runner尚未执行
 - **THEN** 只记录Linux管道能力，不能将mock平台或本helper通过记作完整Windows SSH控制端支持
 
-#### Scenario: spawn 返回前取消
-- **WHEN** OS子进程已创建但subprocess创建await尚未返回就收到取消或超时
-- **THEN** connection_made登记的transport仍被回收，迟到transport在清理状态立即kill/close；清理失败明确报告而非成功
+#### Scenario: 已拥有进程进入交换
+- **WHEN** 调用方以原受控spawn取得进程并传入spawn前已确定的deadline
+- **THEN** helper不另建进程，输入错误、管道配置失败及后续取消都走同一kill/reap/close清理；创建层保留Job和凭据生命周期责任
 
 #### Scenario: 同步guard跨过期限
 - **WHEN** 受信任的同步guard返回时工作期限已过

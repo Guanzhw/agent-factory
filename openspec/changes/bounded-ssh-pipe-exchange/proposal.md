@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- 新增 SSH 专用 bounded exchange 模块，使用 asyncio subprocess 管道并发读写，固定请求/响应字节上限及绝对期限，取消/异常均 kill、收尾、reap。
+- 新增 SSH 专用 bounded exchange 模块，使用 Python 3.12 nonblocking 管道轮流推进读写，固定请求/响应字节上限及绝对期限，取消/异常均 kill、收尾、reap。
 - 定义每次写与 EOF 前的同步 fresh guard 和取消传播；真实受控 Python 子进程验证 Linux 行为，Windows 实际 runner 另验。
 - 本切片仅实现新模块及测试。两个调用点与 pinned argv 构造由 coordinator 后续集成，原 JSON/nonce、lease、原 operation/UNKNOWN 语义不迁入 helper。
 
