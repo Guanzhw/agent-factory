@@ -32,6 +32,45 @@ def require(value, code):
         raise AssertionError(code)
 
 
+SAFE_CODES = frozenset({
+    'CLIENT_IMAGE', 'CLIENT_OWNER_OR_LIFETIME', 'DACL', 'LAUNCHER_IDENTITY',
+    'PROCESS_PARENT_QUERY', 'REPARSE', 'ROOT_IDENTITY', 'SSH_CREDENTIAL_UNAVAILABLE',
+    'SSH_SYSTEM_CLIENT_UNAVAILABLE', 'SSH_AGENT_CAPACITY', 'SSH_CHECK_UNCONFIRMED',
+    'PIPE_DEADLINE', 'PIPE_CANCEL_INCOMPLETE',
+})
+IDENTITY_CHECKS = ('parentIsHelper', 'parentIsVenvPython', 'parentAlive', 'parentBeforeClient',
+                   'redirectorParentIsHelper', 'redirectorParentAlive', 'redirectorParentBeforeChild')
+
+
+def safe_error(error):
+    result = {'errorType': type(error).__name__}
+    if error.args and isinstance(error.args[0], str) and error.args[0] in SAFE_CODES:
+        result['errorCode'] = error.args[0]
+    code = getattr(error, 'winerror', None)
+    if isinstance(code, int):
+        result['winerror'] = code
+    checks = getattr(error, 'checks', None)
+    if isinstance(checks, dict):
+        result['identityChecks'] = {key: checks[key] for key in IDENTITY_CHECKS
+                                    if isinstance(checks.get(key), bool)}
+    return result
+
+
+def ssh_log_summary(path):
+    if not path.exists():
+        return {'present': False}
+    with path.open('rb') as stream:
+        raw = stream.read(65537)
+    text = raw[:65536].lower()
+    return {'present': True, 'truncated': len(raw) > 65536,
+            'authenticatedPublicKey': b'authenticated to ' in text and b'using "publickey"' in text,
+            'permissionDenied': b'permission denied' in text,
+            'hostKeyRejected': b'host key verification failed' in text or b'host identification has changed' in text,
+            'remoteCommandStarted': b'sending command:' in text,
+            'askpassExecutionFailed': b'ssh_askpass:' in text,
+            'remoteCommandRejected': b'exec request failed' in text}
+
+
 def provenance(environment, checkout):
     import agent_factory
     from agent_factory import windows_ssh_askpass, windows_ssh_credentials
@@ -170,33 +209,83 @@ def exercise(root, report):
         engine = create_engine('sqlite:///' + str(root / 'vault.sqlite'), connect_args={'check_same_thread': False})
         stack.callback(engine.dispose)
         vault = EncryptedCredentialVault(engine, secrets.token_bytes(32), {PROVIDER_ID: SSHCredentialPolicy()})
+        tracked, handles, private_logs = [], [], []
+        events = report['events'] = []
+        event_lock = threading.Lock()
+        handshake = threading.local()
+        def event(phase, state, **fields):
+            with event_lock:
+                if len(events) < 64:
+                    events.append({'phase': phase, 'state': state, **fields})
+                else:
+                    report['eventsTruncated'] = True
+        def observe(phase, call, *args, **kwargs):
+            event(phase, 'begin')
+            try:
+                result = call(*args, **kwargs)
+            except BaseException as error:
+                event(phase, 'error', **safe_error(error))
+                raise
+            event(phase, 'completed')
+            return result
+        def collect():
+            report['clientExitCodes'] = [process.poll() for process in tracked]
+            report['brokerThreadPresentAfterCleanup'] = any(
+                thread.name == 'factory-ssh-askpass' for thread in threading.enumerate())
+            report['sshDiagnostics'] = []
+            for process, path in private_logs:
+                if process.poll() is None:
+                    report['sshDiagnostics'].append({'read': False, 'reason': 'CLIENT_STILL_RUNNING'})
+                    continue
+                try:
+                    report['sshDiagnostics'].append(ssh_log_summary(path))
+                except OSError as error:
+                    report['sshDiagnostics'].append(safe_error(error))
+        stack.callback(collect)
         manager = WindowsSSHCredentials(vault, max_agents=2, seconds=60)
         stack.callback(manager.close)
         manager_root = manager.root
         require(not str(manager_root).isascii(), 'UNICODE_CARRIER_PARENT_NOT_EXERCISED')
         require(manager.diagnostic() is None, 'INSTALLED_CLIENT_OR_HELPER_MISSING')
         report['unicodeCarrierParent'] = True
-        tracked, handles = [], []
         releases = []
         original_process, original_transfer, original_client = process_module.WindowsSSHProcess, w.transfer, w.check_client
+        original_connect = w.connect
         def track_process(*args, **kwargs):
-            process = original_process(*args, **kwargs)
+            argv, *rest = args
+            log = root / f'client-{len(tracked)}.log'
+            w.write_private(log, b'')
+            process = observe('PROCESS_CREATE', original_process,
+                              [argv[0], '-v', '-E', str(log), *argv[1:]], *rest, **kwargs)
             tracked.append(process)
+            private_logs.append((process, log))
+            resume = process.resume
+            process.resume = lambda: observe('PROCESS_RESUME', resume)
             current = w.win32api.GetCurrentProcess()
             held = w.win32api.DuplicateHandle(current, process.process_handle, current, 0, False,
                                              w.win32con.DUPLICATE_SAME_ACCESS)
             handles.append(held)
             return process
         def transfer(*args, **kwargs):
-            result = original_transfer(*args, **kwargs)
-            if kwargs.get('payload') is not None:
+            sending = kwargs.get('payload') is not None
+            phase = 'SECRET_WRITE' if sending else ('RECEIPT_READ' if getattr(handshake, 'released', False) else 'READY_READ')
+            result = observe(phase, original_transfer, *args, **kwargs)
+            if sending:
                 releases.append(True)
+                handshake.released = True
+                event(phase, 'observed', successfulRelease=True)
+            else:
+                event(phase, 'observed', markerMatched=result == (b'RECEIVED' if phase == 'RECEIPT_READ' else b'READY'))
             return result
         def client_check(*args, **kwargs):
-            result = original_client(*args, **kwargs)
+            result = observe('CHECK_CLIENT', original_client, *args, **kwargs)
             handles.append(w.win32api.OpenProcess(w.win32con.SYNCHRONIZE, False, result[1]))
             return result
         stack.enter_context(patch.object(process_module, 'WindowsSSHProcess', side_effect=track_process))
+        def connect(*args, **kwargs):
+            handshake.released = False
+            return observe('BROKER_CONNECT', original_connect, *args, **kwargs)
+        stack.enter_context(patch.object(w, 'connect', side_effect=connect))
         stack.enter_context(patch.object(w, 'transfer', side_effect=transfer))
         stack.enter_context(patch.object(w, 'check_client', side_effect=client_check))
         stack.callback(lambda: [handle.Close() for handle in handles])
@@ -207,19 +296,23 @@ def exercise(root, report):
                 username=username, password=private(client).decode())
             server = SSHServer('fixture', 'alice', 'v1', 'Installed core fixture', '127.0.0.1', port,
                 username, pin, '/controlled-fixture', value['credentialRef'], value['credentialRevision'])
-            lease = manager.acquire(server, identity['origin'], lambda: None)
+            lease = observe('ACQUIRE', manager.acquire, server, identity['origin'], lambda: None)
             return server, lease, identity['origin']
+        report['stage'] = 'ACQUIRE_NORMAL'
         server, lease, destination = connection(public(host))
         service = SimpleNamespace(agents=SimpleNamespace(root=manager.root), package=None, probe_source=None)
+        report['stage'] = 'NORMAL_PROBE'
         inspected = PersonalSSHServers.probe(service, server, lease, 'inspect')
         require(inspected['ok'] and inspected['directoryExists'], 'PROBE_PROTOCOL_MISMATCH')
         transport = SSHProcessTransport(server, lambda action: lease, interpreter='/controlled/python')
+        report['stage'] = 'NORMAL_TRANSPORT'
         reply = transport({'protocol': PROTOCOL, 'action': 'capabilities', 'root': server.allowed_root})
         require(reply == {'fixtureNonce': nonce}, 'TRANSPORT_NONCE_MISMATCH')
         require(len(releases) == 2, 'NORMAL_RELEASE_COUNT')
         require(all(p.poll() is not None for p in tracked), 'NORMAL_CLIENT_NOT_REAPED')
         report['cases']['twoConsumers'] = {'status': 'PASS', 'nonceMatched': True, 'successfulReleases': 2}
 
+        report['stage'] = 'WRONG_PIN'
         wrong, wrong_lease, _ = connection(public(Ed25519PrivateKey.generate()))
         before = len(releases)
         clients_before = len(tracked)
@@ -244,10 +337,12 @@ def exercise(root, report):
             'executionEffect': EFFECT, 'executionGuard': {'operationId': 'operation-1'},
             'limits': {'cpu': 1, 'memoryMb': 128, 'diskMb': 1, 'seconds': 33}}
         before = len(tracked)
+        report['stage'] = 'CANCEL_ORIGINAL'
         asyncio.run(cancel_original(provider, reservation, marker, tracked, manager))
         require(len(tracked) == before + 1, 'CANCEL_CREATED_REPLACEMENT')
         report['cases']['cancelOriginal'] = {'status': 'PASS', 'originalClientCount': 1, 'receivedOriginalRequest': True}
 
+        report['stage'] = 'EXPIRY_AND_REVOCATION'
         short = WindowsSSHCredentials(vault, max_agents=1, seconds=.1)
         stack.callback(short.close)
         expired = short.acquire(server, destination, lambda: None)
@@ -303,7 +398,7 @@ def main():
     except Blocked as error:
         report.update(status='BLOCKED', reason=str(error))
     except Exception as error:
-        report.update(status='FAIL', errorType=type(error).__name__)
+        report.update(status='FAIL', **safe_error(error))
         # Only fixture assertion identifiers are emitted; never exception text from providers.
         if isinstance(error, AssertionError) and re.fullmatch('[A-Z_]+', str(error)):
             report['assertion'] = str(error)
