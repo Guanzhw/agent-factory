@@ -100,7 +100,14 @@ class OwnerChatModel(Model):
             encoded.append(item)
         chat = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
         if tools:
-            chat.update(tools=tools, parallel_tool_calls=False)
+            provider_tools = []
+            for tool in tools:
+                function = tool.get('function') if type(tool) is dict else None
+                if type(function) is dict and type(function.get('external_execution')) is bool:
+                    function = {key: value for key, value in function.items() if key != 'external_execution'}
+                    tool = {**tool, 'function': function}
+                provider_tools.append(tool)
+            chat.update(tools=provider_tools, parallel_tool_calls=False)
         if tool_choice is not None:
             chat['tool_choice'] = tool_choice
         body = encode_request(self._protocol, chat, continuation=continuation)
