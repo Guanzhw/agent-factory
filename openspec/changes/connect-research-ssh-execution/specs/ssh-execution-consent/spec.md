@@ -1,5 +1,13 @@
 ## ADDED Requirements
 
+### Requirement: Omitted generic capabilities preserve preparation-only access
+The generic connection binding route SHALL NOT implicitly grant `ssh:execute` when a caller omits capabilities. Explicitly requested SSH execution SHALL still use the existing trusted-capability subset check. Existing preparation-only references SHALL NOT be upgraded.
+
+#### Scenario: An older generic client binds an SSH connection
+- **WHEN** a member binds an SSH registration without an explicit capability list
+- **THEN** the new reference permits preparation only and cannot authorize training
+- **AND** an explicit subsequent execution request is a separate original request
+
 ### Requirement: Execution requires an explicit scoped binding
 The SSH provider SHALL support `ssh:prepare` and `ssh:execute`. Existing `POST /personal-ssh/{reference}/bind` SHALL bind only `ssh:prepare`; verification or team sharing SHALL NOT grant execution. A member SHALL explicitly invoke `POST /personal-ssh/{reference}/bind-execution` with an original `requestId` to bind prepare and execute for their current identity. This action SHALL NOT open SSH or start a task.
 
