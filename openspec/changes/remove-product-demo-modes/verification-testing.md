@@ -128,3 +128,22 @@ A separately authorized **single** schema diagnostic run added only test-local o
 Command: `FACTORY_TEST_DATABASE_URL=<existing disposable loopback fixture> PYTHONPATH=platform:applications:deployment:platform/tests:applications/tests timeout 120 .venv/bin/python -m unittest test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests.test_schema_failure_releases_capacity_and_keeps_original_receipt_after_restart`. Result: **one passed, zero skipped, 16.872s, exit 0**, log `/tmp/af-no-demo-mcp-schema-diagnostic-once.log`; [instrumented phase evidence](evidence/mcp-schema-instrumented-single-run.json).
 
 This run's two initializes took 0.348s / 0.333s and list-tools took 0.902s / 0.958s; HTTP response latency after fixture receipt was approximately 1–7ms. Both tool calls completed and capacity released. This rules out a consistently broken handshake or persistently unresponsive server in that run only. It does **not** identify the earlier transport exception or close its failure. The earlier seconds-long authorization/credential callbacks remain a concrete hypothesis for a later controlled investigation; no timeout, GC setting, retry or success assertion was relaxed, and there was no repeat-until-green loop.
+
+### Read-only callback attribution
+
+Comparing the original failure with the instrumented single pass locates the slowdown **inside running callbacks**, without establishing its cause:
+
+| Seconds, median / maximum | Failure | Single pass |
+|---|---:|---:|
+| Authorization thread execution | 0.241 / 4.886 | 0.086 / 0.168 |
+| Credential thread execution | 3.404 / 5.593 | 0.202 / 0.325 |
+| Authorization executor queue | 0.000515 / 0.411083 | 0.000313 / 0.004622 |
+| Credential executor queue | 0.000253 / 0.003820 | 0.000123 / 0.002386 |
+| Authorization return-to-await | 0.000553 / 0.035117 | 0.000207 / 0.003599 |
+| Credential return-to-await | 0.001013 / 0.001828 | 0.000199 / 0.001287 |
+
+The failed trace contains 22 authorization / 7 credential callbacks, versus 49 / 16 across two successful invocations. Thread spans are wall time, not CPU time; overlapping spans must not be added. Callback execution overlaps almost the entire SDK window in both runs (failure 15.349 of 15.417s; success 2.016 of 2.054s and 2.020 of 2.050s), partly because the authorization monitor intentionally runs throughout. That overlap alone is not causation.
+
+Executor enqueue/return delays cannot account for most of the slowdown. Heartbeat-to-loop delay reached 0.913s in the failure versus 0.017s in the single pass, indicating some scheduling delay without locating SQL/pool/CPU contention. Gen1/2 collection **within** the failed SDK window totals only 0.0219s; the long generation-2 collection preceded submission. There is no evidence that this invocation directly spent its deadline in GC, that the native queue stopped progressing, or that an old fixture retained a specific pool/lock/thread.
+
+Per-engine acquisition/query timing, callback thread CPU and safe thread-stack locations were not recorded. SQL pool/lock delays, repeated current-authority reads and host scheduling therefore remain competing hypotheses. The next observation should first use already-running CI diagnostics; any additional authorized experiment should attribute time to concrete callback functions/SQL acquisition rather than repeat an unchanged schema test. No additional runtime experiment accompanied this comparison.
