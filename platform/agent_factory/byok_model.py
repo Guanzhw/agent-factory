@@ -138,13 +138,18 @@ class OwnerChatModel(Model):
                     value = await read_response_json(response, lease)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
-            return value
         except asyncio.CancelledError:
             raise
         except Exception:
             # Remote bodies, authentication values, URLs and transport errors do
             # not enter native persisted error events or product logs.
             raise rejected('PERSONAL_MODEL_REQUEST_FAILED') from None
+        result = self._parse_provider_response(value)
+        declared_tools = {tool['function']['name'] if self._protocol == 'chat-completions' else tool['name']
+            for tool in body.get('tools', [])}
+        if any(call['function']['name'] not in declared_tools for call in result.tool_calls or []):
+            raise rejected('PERSONAL_MODEL_TOOL_NOT_DECLARED')
+        return result
 
     def invoke(self, messages, **kwargs):
         with ThreadPoolExecutor(max_workers=1) as executor:
