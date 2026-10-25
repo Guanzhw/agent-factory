@@ -1,6 +1,7 @@
 """Synthetic keys and independent in-memory custody, never a real user/server."""
 import asyncio
 import base64
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import io
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -159,7 +161,8 @@ class PersonalSSHTests(unittest.TestCase):
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
         lease = SimpleNamespace(socket='/fixture/agent.sock', public_key=self.input['hostKey'])
         with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
-            pinned_ssh(server, lease, Path(folder), 'printf fixture')
+            with pinned_ssh(server, lease, Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
+                pass
             command = launch.call_args.args[0]
             self.assertEqual(command[-6:], ['-l', 'root', '-p', '2244', 'worker.internal', 'printf fixture'])
             self.assertIn('StrictHostKeyChecking=yes', command)
@@ -181,7 +184,9 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertIs(caught.exception, failure)
         spawn.assert_called_once()
         exchange.assert_called_once()
-        self.assertIs(exchange.call_args.args[0], spawn.return_value)
+        self.assertIs(exchange.call_args.args[0], spawn.return_value.__enter__.return_value)
+        spawn.return_value.__exit__.assert_called_once()
+        self.assertEqual(spawn.call_args.kwargs['deadline'], exchange.call_args.kwargs['deadline'])
 
     @unittest.skipUnless(os.name == 'posix', 'generic remote shell fixture requires POSIX pipes')
     def test_generic_ssh_check_runs_without_research_package_python_or_docker(self):
@@ -190,9 +195,18 @@ class PersonalSSHTests(unittest.TestCase):
         server = service.profile('alice', 'fixture', 'v1', {**self.input,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
         lease = SimpleNamespace(validate=lambda: None)
-        def local_shell(server, lease, folder, command):
+        @contextmanager
+        def local_shell(server, lease, folder, command, *, deadline):
             self.assertNotIn('python', command); self.assertNotIn('docker', command)
-            return subprocess.Popen(['/bin/sh', '-c', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            process = subprocess.Popen(['/bin/sh', '-c', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            try:
+                yield process
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                process.stdin.close()
+                process.stdout.close()
         with patch('agent_factory.personal_ssh.pinned_ssh', side_effect=local_shell):
             result = PersonalSSHServers.probe(service, server, lease, 'inspect')
         self.assertEqual(result['code'], 'SSH_CONNECTION_READY')
@@ -266,8 +280,9 @@ class PersonalSSHTests(unittest.TestCase):
         server = self.service.profile('alice', 'fixture', 'v1', values | identity | {
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
         with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
-            pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
-                Path(folder), 'printf fixture')
+            with pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
+                    Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
+                pass
             self.assertEqual(launch.call_args.args[0][-6:],
                 ['-l', 'member+lab@example', '-p', '2222', '127.0.0.1', 'printf fixture'])
 
