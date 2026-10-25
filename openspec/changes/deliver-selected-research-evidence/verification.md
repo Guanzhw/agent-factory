@@ -17,3 +17,7 @@
 - selection回滚目前便携事务证据，实际native artifact写后故障/完成出版回滚的P8专属PG尚未执行；既有通用完成事务证据不能冒充此具体消费者全部故障覆盖。
 - 模型是合成fixture，实际CLI仅证明执行/来源/复现机制；正式模型自主研究价值、科学容差、真实GPU/远端归档C04/D02仍未验收。无付费/新凭据/部署/UI改动。
 - 独立完整diff审查、精确head集成CI尚待执行；未推送/合并。不以子步骤或这些成功计数宣称完整P8交付已通过。
+
+## 精选采集实际故障回滚
+
+新增实际native单例首轮1/1通过、0跳过，13.199秒，exit0：`/tmp/research-delivery-capture-fault-first.log`。原parent结果步骤已实际写入首artifact后注入RuntimeError；原事务回滚artifact/selection，原root失败完成，closed child保持1个DONE CLI effect、总2task，没有重派。日志中的注入异常是测试预期，并未吞错转成成功。该证据关闭上述“实际artifact写后故障未执行”缺项；出版callback专属故障和peer来源集成仍需分开判断。

@@ -72,7 +72,7 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
         apps.publish('alice', application['id'], application['version'], 'evidence-app-publish')
         self.ref = {key: application[key] for key in ('id', 'version', 'sha256')}
 
-    def start(self):
+    def start(self, *, failed=False):
         project = self.client.post('/api/factory/research/projects', json={'requestId': 'evidence-project', 'title': 'Actual negative evidence'})
         self.assertEqual(project.status_code, 201, project.text)
         self.project = project.json()['id']
@@ -89,8 +89,20 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
             self.assertEqual(result.status_code, 200, result.text)
         result = self.client.post(self.url + '/start', json={'requestId': 'evidence-start', 'expectedVersion': 1})
         self.assertEqual(result.status_code, 202, result.text)
-        self.base.completed(result.json()['execution']['taskId'])
-        return result.json()['execution']['taskId']
+        task_id = result.json()['execution']['taskId']
+        if failed:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                status = self.client.get('/api/factory/jobs/' + task_id).json()['job']['status']
+                if status in {'completed', 'failed', 'cancelled'}:
+                    self.assertEqual(status, 'failed')
+                    break
+                time.sleep(.05)
+            else:
+                self.fail('Injected capture failure did not finalize original root')
+        else:
+            self.base.completed(task_id)
+        return task_id
 
     def test_real_cli_selected_evidence_and_other_member_reproduction(self):
         task_id = self.start()
@@ -203,3 +215,30 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
                     with self.assertRaises(HTTPException): snapshot.result(5)
             finally:
                 release.set()
+
+    def test_actual_capture_write_failure_rolls_back_artifact_and_selection_without_cli_replay(self):
+        rounds = self.state['research_rounds']
+        capture = rounds.evidence.capture
+        writes = []
+        def injected(conn, owner, attempt, operation, configured, context):
+            write = context.write_artifact
+            def fail_after_write(*args):
+                artifact = write(*args)
+                writes.append(artifact['id'])
+                raise RuntimeError('Synthetic failure after selected artifact write')
+            with patch.object(context, 'write_artifact', fail_after_write):
+                return capture(conn, owner, attempt, operation, configured, context)
+        with patch.object(rounds.evidence, 'capture', injected):
+            root_id = self.start(failed=True)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(self.state['store'].artifacts(root_id), [])
+        with self.state['store'].engine.connect() as conn:
+            attempt = conn.execute(select(rounds.legacy.attempts)).mappings().one()
+            self.assertIsNone(attempt['selection'])
+        operation = rounds.custody.read('alice', attempt['operation_id'])
+        self.assertTrue(operation['closed'])
+        child_id = operation['observation']['output']['taskId']
+        effects = self.state['store'].effects(child_id)
+        self.assertEqual(len(effects), 1)
+        self.assertEqual(effects[0]['status'], 'DONE')
+        self.assertEqual(len(self.state['store'].tasks('alice')), 2)
