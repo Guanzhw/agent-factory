@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import text
 
+from agent_factory.application_runs import ApplicationRuns
 from agent_factory.application_content import ApplicationContent, ContentPublication
 from agent_factory.assistant_messages import AssistantMessages
 from agent_factory.resource_sharing import ResourceSharing
@@ -97,3 +98,20 @@ class AssistantRepliesTests(unittest.TestCase):
             self.assertEqual(self.service.read('alice', self.message['id']), self.message)
         first = self.reply([self.source['id'], self.source['id']])
         self.assertEqual(first, self.reply([self.source['id']]))
+
+    def test_real_application_runs_preserves_receipt_when_recipient_disabled(self):
+        self.reply()
+        receipt_store = SimpleNamespace(
+            sql=lambda *args, **kwargs: [{'plan_id': 'original-plan'}],
+            plan=lambda identifier, owner: {'id': identifier, 'status': 'ready'},
+            task_for_request=lambda key, owner: {'id': self.task_id, 'admission': 'unknown', 'run_id': None})
+        runs = ApplicationRuns(SimpleNamespace(store=receipt_store, auth=self.auth))
+        self.service.runs = runs
+        self.auth.members.remove('bob')
+        with self.assertRaises(HTTPException):
+            runs.request('bob', self.service._request_id(self.message))
+        for value in (self.service.read('alice', self.message['id']),
+                self.service.request('alice', self.fixture.body.requestId), self.fixture.send()):
+            self.assertEqual(value['text'], self.fixture.body.text)
+            self.assertEqual(value['delivery'], {'state': 'unknown', 'taskId': self.task_id, 'runId': None})
+            self.assertEqual(value['reply'], {'state': 'source_unavailable'})

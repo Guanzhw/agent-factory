@@ -57,7 +57,7 @@ class Runs:
         self.receipts[(owner, body.requestId)] = {'state': 'unknown', 'taskId': 'original-task',
             'runId': None, 'handoff': {'secret': 'never-project'}, 'planId': 'private-plan'}
 
-    def request(self, owner, request_id):
+    def _request_receipt(self, owner, request_id):
         result = self.receipts.get((owner, request_id))
         if result is None:
             raise HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND')
