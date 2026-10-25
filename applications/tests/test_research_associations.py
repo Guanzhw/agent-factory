@@ -237,6 +237,31 @@ class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
         asyncio.run(self.service.launch(self.ctx, self.chosen()))
         self.assertEqual(self.custody.start.await_args.args[4]['goal'], self.chosen().goal)
 
+    def test_one_displayed_derived_record_keeps_more_than_eight_authority_dependencies(self):
+        with self.sources.db.write() as conn:
+            conn.execute(self.associations.analyses.delete())
+        self.content.set_visibility('bob', self.peer['id'], 'personal', 'hide-unused-original')
+        originals = []
+        for index in range(10):
+            original = self.content.publish('bob', ContentPublication(source={'application': 'research',
+                'record': str(uuid4()), 'revision': '1'}, visibility='team',
+                content={'hypothesis': 'astronomy telescope unrelated ' + str(index)}), 'dependency-' + str(index))
+            originals.append(original['id'])
+        derived = self.content.publish('bob', ContentPublication(source={'application': 'research',
+            'record': str(uuid4()), 'revision': '1'}, visibility='team', sourceContentIds=originals,
+            content={'hypothesis': self.agreement.objective}), 'one-displayed-derived-record')
+        context = self.service.context(self.ctx)
+        displayed = {source['id'] for item in context['peerEvidence'] for source in item['sources']}
+        self.assertEqual(displayed, {derived['id']})
+        self.assertEqual(set(self.sources.dependencies(self.row['id'])), {*originals, derived['id']})
+        decision = self.chosen().model_copy(update={'evidenceIds': [derived['id']], 'sourceAssessments': []}).model_dump()
+        decision['sourceAssessments'] = [{'contentId': derived['id'], 'disposition': 'reproduce', 'reason': 'Check displayed conditions'}]
+        self.service._assessments(self.row, decision)
+        decision['sourceAssessments'].append({'contentId': originals[0], 'disposition': 'use', 'reason': 'Not displayed'})
+        with self.assertRaises(HTTPException):
+            self.service._assessments(self.row, decision)
+        self.assertEqual(len(self.sources.dependencies(self.row['id'])), 11)
+
     def test_revoke_after_original_intent_admission_does_not_recall_authorized_operation(self):
         self.service.context(self.ctx)
         async def original_operation(*args):
