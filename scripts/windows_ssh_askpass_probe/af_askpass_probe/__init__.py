@@ -20,8 +20,17 @@ def save(root, name, value):
 
 
 def safe_error(stage, exc):
+    locations = []
+    frame = exc.__traceback__
+    owned = Path(__file__).parent
+    while frame is not None:
+        code = frame.tb_frame.f_code
+        source = Path(code.co_filename)
+        if source.parent == owned and source.name in ('__init__.py', 'windows.py'):
+            locations.append({'file': source.name, 'function': code.co_name, 'line': frame.tb_lineno})
+        frame = frame.tb_next
     return {'fixtureComplete': False, 'stage': stage, 'errorType': type(exc).__name__,
-            'winerror': getattr(exc, 'winerror', None)}
+            'winerror': getattr(exc, 'winerror', None), 'locations': locations}
 
 
 def helper_main():
@@ -136,7 +145,9 @@ def controller(root, mode):
             raise w.Reject('NOT_ENCRYPTED')
         stage = 'CREATE_PIPE_JOB'
         pipe_name = r'\\.\pipe\af-askpass-' + uuid.uuid4().hex
+        stage = 'CREATE_PIPE'
         pipe = w.server_pipe(pipe_name)
+        stage = 'CREATE_JOB'
         job = w.OwnedJob()
         system = Path(os.environ['SystemRoot']) / 'System32' / 'OpenSSH'
         helper = Path(sysconfig.get_path('scripts')) / 'af-windows-ssh-askpass-helper.exe'

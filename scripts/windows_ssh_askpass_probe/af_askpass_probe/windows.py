@@ -193,7 +193,12 @@ def client_pipe(name):
 
 class OwnedJob:
     def __init__(self):
-        self.handle = win32job.CreateJobObject(None, None)
+        create = ctypes.WinDLL('kernel32', use_last_error=True).CreateJobObjectW
+        create.argtypes, create.restype = [wt.LPVOID, wt.LPCWSTR], wt.HANDLE
+        raw = create(None, None)
+        if not raw:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self.handle = pywintypes.HANDLE(raw)
         limits = win32job.QueryInformationJobObject(self.handle, win32job.JobObjectExtendedLimitInformation)
         limits['BasicLimitInformation']['LimitFlags'] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         win32job.SetInformationJobObject(self.handle, win32job.JobObjectExtendedLimitInformation, limits)
