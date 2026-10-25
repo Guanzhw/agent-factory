@@ -78,7 +78,7 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.database = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         self.folder = Path(self.enterContext(TemporaryDirectory(prefix='ssh-native-')))
         self.remote = self.folder / 'remote'
-        self.remote.mkdir()
+        self.remote.mkdir(mode=0o700)
         self.release = self.folder / 'release'
         self.started = self.folder / 'starts'
         self.model_inputs = {'width': 1, 'label': 'first'}
