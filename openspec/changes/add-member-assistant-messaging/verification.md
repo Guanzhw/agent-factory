@@ -13,3 +13,9 @@ PR104 base a2e021c97ba2257d86c1ec484296bbeda0b6c05a / head ddc82b2642e8784099e55
 - 独立预审发现消息只传goal而required inputSchema仍允许配置，会导致永久未确认；先补spec文本入口边界，再修配置校验和消息inputValues映射。不是将失败放宽为通过。
 
 原始本地日志位于本任务 `/tmp/af-research-next-evidence/` 及 `/tmp/assistant-endpoints-*.log`，仅本地证据，不声称公开可下载。最终精确head审查/CI完成后追加结果；未运行的C/D保持NOTRUN/BLOCKED。
+
+## P2 验证
+
+- 便携消息6/6通过0.184s；真实PG/native3/3通过13.404s，覆盖并发重投dispatch一次、丢ACK重启保留原UNKNOWN、required goal schema实际入原任务。
+- 首轮受限sandbox asyncio唤醒停滞栈与20s有界退出保留；network权限后通过，未改产品超时。输入schema映射的首版kwargs静态类型错误已修正，最终Pyright0。
+- P1独立审查base d2090254 / head836f810d7fc45d8a269ca1926d2b8caa35046cb0完整19文件diff无阻断，包含文本schema整改复审。PR105 CI40184199282待终态，不能当已通过。

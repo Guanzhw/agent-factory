@@ -240,6 +240,10 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     base.include_router(schedule_management_router(auth, schedule_management))
     factory_api = (factory_api_type or FactoryAPI)(settings, store, auth, bridge)
     base.include_router(factory_api.router)
+    from .application_runs import ApplicationRuns
+    from .assistant_messages import AssistantMessages, assistant_messages_router
+    assistant_messages = AssistantMessages(store, auth, assistant_endpoints, ApplicationRuns(factory_api))
+    base.include_router(assistant_messages_router(auth, assistant_messages))
     base.include_router(personal_model_router(auth, store.personal_models))
     from .workflow_operations import OperationCustody
     from .workflow_control import WorkflowControl, workflow_router
@@ -351,7 +355,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
     native.state.factory.update(credential_vault=credential_vault, resources=resources,
         resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
-        factory_api=factory_api, assistant_endpoints=assistant_endpoints, http_app=native)
+        factory_api=factory_api, assistant_endpoints=assistant_endpoints,
+        assistant_messages=assistant_messages, http_app=native)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:

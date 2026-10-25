@@ -11,4 +11,10 @@
 
 文本入口接受无inputSchema的mode，或只要求string `goal`的schema；不能配置需要其他必填输入的mode。端点引用不会替代实际准入时的当前发布、成员和资源校验。接口不接受owner或凭据覆盖字段。
 
-后续消息单元由 `add-member-assistant-messaging` 规范跟踪；仅有端点不证明离线问答、自动订阅、QA零GPU或真实研究效果已实现。相关验收见[最终验收契约](plans/research-platform-acceptance-contract.md)。
+消息API：
+
+- `POST /api/factory/assistants/{id}/messages`：`requestId`与2–2000字符`text`；以接收者固定配置提交原生任务，发送者不能覆盖执行身份/配置。
+- `GET /api/factory/assistant-message-requests/{requestId}`：发送者丢响应后查询原消息。
+- `GET /api/factory/assistant-messages/{id}`：双方读取正文和限定delivery收据，第三方不可读。
+
+重复POST只读原收据，不重新提交。首次保存后、准入前崩溃显示`unconfirmed`，不猜测可重试；`prepared`或`unknown`不表示运行完成。浏览器离线不影响已配置端点准入；这不证明完整问答、自动订阅、QA零GPU或真实研究效果已实现。相关验收见[最终验收契约](plans/research-platform-acceptance-contract.md)。
