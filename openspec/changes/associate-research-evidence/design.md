@@ -66,7 +66,7 @@
 
 并集随原child、terminal、后继round及目标修订后沿用的旧结果传递；记录换id、压缩成摘要、模型未引用某来源、目标revision增加，都不能清掉原依赖。保留完整并集与有界模型显示窗口是不同职责；不截断集合为“最近8条”。无任何peer输入/继承输出的历史轮次仍走原路径。Decision/Evaluation仅为这些轮次提供`sourceAssessments:[{contentId,disposition:use|reproduce|not_applicable,reason}]`；使用或引用必须来自实际input，解释适用条件，可有理由独立复现，不强迫每轮复用。该选择与原实验hypothesis/conditions/goal及原operationId一起保存，形成可核对source→decision→action；仅引用或自称复用不能满足C02。
 
-launch前重新验证全部peer依赖及原goal/version/预算；来源撤回阻止**新**动作，不抹去原child/UNKNOWN效果或妨碍原身份观察取消。已有结果仍由原finalizer记录。所有实际受peer输入或其后继输出影响的字段按第4节保护；team start/terminal仅共享safe opaque IDs/固定状态和derivationRef，绝不把hypothesis/conditions/goal/child output重新标成无依赖事实。owner项目/ending/experiment/round API也逐源检查后才返回这些新派生字段。撤回后仅原状态/identity仍可见；新round即使只读上轮摘要或原child结果，也必须继承并核对完整并集，不能借摘要洗掉来源。旧无peer输入的历史记录不批量重写。
+launch的原attempt准备事务在core admission锁下重新验证全部peer依赖及原goal/version/预算，并原子固化本次授权输入和原attempt意图；此提交是本次操作的准入点。撤回先于准入则拒绝；准入先完成，则该已授权原操作可继续，不声称撤回能追回已读知识或取消已授权工作。重试只恢复原意图，不重新授权/派发；新后继round重新当前read，原child/UNKNOWN仍可按原身份观察取消。已有结果仍由原finalizer记录。所有实际受peer输入或其后继输出影响的字段按第4节保护；team start/terminal仅共享safe opaque IDs/固定状态和derivationRef，绝不把hypothesis/conditions/goal/child output重新标成无依赖事实。owner项目/ending/experiment/round API也逐源检查后才返回这些新派生字段。撤回后仅原状态/identity仍可见；新round即使只读上轮摘要或原child结果，也必须继承并核对完整并集，不能借摘要洗掉来源。旧无peer输入的历史记录不批量重写。
 
 不为新关联自动开始项目或触发GPU。运行中的项目只能在本来获准的下一round/launch决策边界消费证据；P3关联事件绝不路由到`round.continue`。任何原UNKNOWN不因收到新证据而重派。
 

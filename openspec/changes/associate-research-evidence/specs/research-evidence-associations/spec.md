@@ -72,8 +72,8 @@
 - **THEN** 来源访问、条件理由及真实执行goal/operation可关联；有理由复现允许，不能仅凭引用/自称复用/消息数通过价值验收
 
 #### Scenario: Revoked source before a new experiment
-- **WHEN** peer来源在context之后、launch之前撤回
-- **THEN** 阻止新动作；已存在child/UNKNOWN仍按原身份观察/取消，不能因关联重新派发，也不能让私问事件自动开始研究
+- **WHEN** peer来源在context之后、原attempt准备事务准入之前撤回
+- **THEN** 阻止新动作；准备事务在原admission锁下校验完整依赖并固化输入/意图。若该原准入先于撤回完成，允许已授权原操作继续；后继round重新当前read。已存在child/UNKNOWN仍按原身份观察/取消，不能因关联重新派发，也不能让私问事件自动开始研究
 
 ### Requirement: Honest independent acceptance layers
 验收 SHALL 分开确定性路由/权限机制、真实浏览器和真实模型团队价值，不以合成脚本或全部沉默代替C02/C03。
