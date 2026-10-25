@@ -7,7 +7,7 @@ import unittest
 from agno.db.postgres import PostgresDb
 from pg_fixture import IsolatedPostgres
 import test_research_setup as portable
-from applications.research.setup import PublishSetup
+from research.setup import PublishSetup
 
 
 @unittest.skipUnless(os.environ.get('FACTORY_TEST_DATABASE_URL'), 'requires disposable loopback PostgreSQL')
