@@ -32,3 +32,12 @@ not user-download links. CI status belongs to the precise PR head.
 Terminal research records, autonomous rounds, relevant peer selection and final
 reproducible delivery remain incomplete. This is neither full P6 nor real model,
 GPU, production identity or research-value acceptance. No UI changed.
+
+## First CI correction
+
+Fast run40193664932 failed Pyright: ContentPublication.source was passed as a
+plain dict rather than its declared ContentSource model. Use the explicit model;
+no authorization or data fields change. Portable nine cases passed again1.356s.
+Local Pyright initially resolved the shared venv's older editable core path;
+an ephemeral config preserving all repository options and adding this checkout's
+platform/deployment import roots checks the actual source. First logs are kept.
