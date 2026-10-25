@@ -56,7 +56,21 @@ ResourceService lease、准入、总额度与 PostgreSQL 记账始终留在 Fact
 
 ### 4. Research placement, budget and evidence
 
-研究 setup/已确认约定显式选择 SSH 计算资源及可用训练材料。该 placement 指计算位置，不是 root/child native queue 的迁移。对应材料精确绑定 SSH adapter/连接及可用参数 schema，旧未确认目标不能默默选默认远端。配置变更走现 goal revision/确认，不重置项目 scope。每轮与 child 复用原预算；ResourceService 单独约束实际 CPU/内存/磁盘/时限/GPU 资源声明，SSH检查不扩大预算。
+研究 setup/已确认约定显式选择 SSH 计算资源及可用训练材料。该 placement 指计算位置，不是 root/child native queue 的迁移。对应材料精确绑定 SSH adapter/连接及可用参数 schema，旧未确认目标不能默默选默认远端。配置变更走现 goal revision/确认，不重置项目 scope。每轮与 child 复用原预算；ResourceService 对 CPU/内存/磁盘/时限/GPU 资源声明作准入核对，实际远端强制执行另凭能力和证据确认；SSH检查不扩大预算。
+
+### 4a. Frozen first-slice protocol
+
+固定协议 `factory-ssh-process-v1`，operation adapter `ssh-process-operation-v1` revision `1`，空静态adapter配置的指纹沿现digest({})；每个operation实际target/config已包含在原inputs与lease，不能用此固定pin替代目标身份。工具adapter `ssh-process-launch-v1@1`（toolName `ssh_process_launch`）与 `ssh-process-wait-v1@1`（toolName `factory_wait_operations`）归唯一owner `core-ssh-process`。等待hooks签名 `SSHOperationWaits(store, custody)`，由composition显式将两个exact tool bindings注册一次；它不负责新提交、选目标或研究finalizer。
+
+应用/模型可见launch参数只含已声明训练参数；工具config固定 `targetRef`，首切片训练spec来自该目标上明确注册的不可变规格，不接受模型shell/host/key。launch调用原custody时inputs固定 `{targetRef}`；原native tool_call_id确定effect-slot（长度规整沿现digest），context绑定原child/run。operation handle.id为原operation UUID，不是SSH PID或远端URL。对lookup/inspect/cancel由原operation绑定找回唯一lease；无新allocate。
+
+helper通过已配置Python执行 `-I -B -m agent_factory.ssh_process_helper`，启动前核协议；只读依赖检查不自动安装。一次SSH调用输入一份有限JSON，stdout输出一份JSON，stderr不作为原操作证据。命令只有固定module与已验证解释器路径，输入不拼shell。可用actions为 `capabilities/submit/inspect/cancel/reclaim/output`。capabilities不写运行数据；其他请求含 `protocol/action/binding/spec/limits/root`，其中非submit携带同原规格只为核对，不授执行权。`binding`含 `leaseId/operationId/ownerId/taskId/runId/planId/planHash/requestId/targetFingerprint`；原endpoint/root与provider配置指纹仍由Factory保存并复核。spec/limits采用现ProcessSpec或ResearchProcessSpec和对应Limits的精确字段，不新增脚本语言或任意属性字典。
+
+远端每lease使用独立0700目录、唯一原custody.sqlite与不可变binding描述。目录/描述首次持久化后，重复submit只能inspect原journal；创建过目录但journal缺失/不完整视为UNKNOWN，不重建/重启。launch权仅首次create返回的BoundedProcessAdapter对象持有。操作串行锁沿原目录flock保护，原journal仍是唯一进程状态源；绑定描述不另建状态机。取消和读取不能创建目录或journal。
+
+response固定 `{protocol, binding, observation}` 或固定安全错误code；observation沿原snapshot的 `id/ownerId/taskId/requestId/specSha256/identitySha256/state/stoppedProof/stopReceipt/exitCode/enforcement` 及必要原process身份字段，响应限额与字段核对在接收端完成。`output`只在原停止与目录身份已确认后返回有限base64字节、字节数和sha256，不附私钥/环境变量；后续selected文件同原安全路径读取规则。Factory将原snapshot投影为现ResourceProvider receipt（processBinding/providerJobId/state/released/stopEvidence/enforcement）；未确认缺字段不得投影completed。custody RuntimeObservation沿既有schema，output仅含 `kind='ssh-process'`、原task/run/lease/job引用和已归档artifact引用；原stdout由artifact保持，不能把任意多行日志塞入受限observation格式。
+
+首实现CPU受界进程只用于机制证明；ResearchProcessSpec环境/目录、GPU绑定与真实分配/释放仍按完整任务逐步接入。没有GPU证据不输出GPU RELEASED。协议字段/文件身份、恶意response、重复submit和未知目录均有portable反例；真实helper、sshd与PG等root串行授权后执行。
 
 资源声明和平台准入上限不等于远端 kernel enforcement。preflight 必须返回实际可证明的隔离能力，不能把本机限制或环境变量当远端强制边界。GPU 运行需现 GpuBinding 绑定实际分配设备/namespace，并由可信目标适配器提供与原 lease/process 关联的占用及释放观察，经 validate_gpu_evidence 核对；CUDA_VISIBLE_DEVICES 仅进程选择，不是分配/独占/释放证明。现 GpuBinding 自身也明确 quotaEnforced/deviceIsolationEnforced=false；不得据此声称隔离外部进程。无实际 GPU 证明时可完成 CPU机制验证，但 GPU释放/D01仍 BLOCKED。
 
