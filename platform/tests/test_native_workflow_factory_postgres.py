@@ -323,6 +323,7 @@ def serve(configuration):
 
 
 class WorkflowServer:
+    module = 'test_native_workflow_factory_postgres'
     def __init__(self, database_url, root):
         self.root = Path(root)
         with socket.socket() as listener:
@@ -344,7 +345,7 @@ class WorkflowServer:
         environment['AGNO_TELEMETRY'] = 'false'
         self.log = (self.root / 'server.log').open('ab')
         self.process = subprocess.Popen([getattr(sys, '_base_executable', sys.executable), '-B',
-            '-m', 'test_native_workflow_factory_postgres', '--serve', str(self.config)], cwd=PROJECT,
+            '-m', self.module, '--serve', str(self.config)], cwd=PROJECT,
             env=environment, stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT)
         self.pids.append(self.process.pid)
         deadline = time.monotonic() + 40
