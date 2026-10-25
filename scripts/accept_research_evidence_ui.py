@@ -33,7 +33,7 @@ from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from browser_identity_fixture import BrowserIdentityFixture, private_tls_files
 from pg_fixture import IsolatedPostgres
-from test_research_workflow_postgres import DIGEST, ResearchModel, settings_for, PERMISSION
+from test_research_workflow_postgres import ResearchModel, settings_for
 
 
 hold_child = Event()
@@ -198,7 +198,6 @@ def scenario(browser, origin, output, mode, identity, viewport, state, material)
         assert manifest['missingEvidence'] == []
         assert 'UNSELECTED_PRIVATE_CANARY' not in json.dumps(manifest)
         page.screenshot(path=str(output / 'owner-delivery.png'), full_page=True)
-        deep_link = page.url
         page.reload()
         expect(page.get_by_role('heading', name='研究成果清单', exact=True)).to_be_visible()
         page.get_by_role('button', name='返回平台', exact=True).click()
