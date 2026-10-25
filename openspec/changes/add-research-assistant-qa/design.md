@@ -30,7 +30,7 @@ QA环境是应用显式注册的固定adapter，只返回已有EnvironmentLimits
 
 复用setup的owner草稿、明确publish、原子材料/应用治理及回执：新增窄`POST /api/factory/research/setup/qa/drafts`，body `{requestId,name,modelConnectionRef,budget}`，budget为现有core应用运行预算。环境和两个控制材料由已安装QA注册提供，不接受实验材料/环境/任意JSON。现有`GET /setup/{id}`、`GET /setup/requests/{requestId}`与`POST /setup/{id}/publish`处理此明确类型；preview及已发布结果增加`mode:'qa'`以供接线。内部复用治理流程，不引入purpose插件框架。发布只存符号model槽，个人连接留owner setup。
 
-助手配置另显式选择上述published applicationRef与本人connectionRefs，并提交总scope caps、每问caps和deadline。每问caps.rounds=1，总rounds/工具调用有界；metered模型必须指定有限tokenLimit/amountMicros/currency，沿现有_caps规则校验，不能把未配置视作无限。模型/连接不能由应用自选provider，不能按“余额零”假定可免费调用。单纯保存/发布/配置不调用模型。
+助手配置另显式选择上述published applicationRef与本人connectionRefs，并提交总scope caps、每问caps和deadline。每问caps.rounds=1，总rounds/工具调用有界；当前固定owner BYOK模型不进入平台UsageLedger；QA必须显式指定有限rounds/toolCalls/deadline，tokenLimit/amountMicros/currency必须为null。配置及界面明确“操作额度受限，token/费用未计量”。请求token/金额硬上限时明确拒绝，不回退为空预算、不开platform-paid开关。此前将BYOK合成定价等同可计量的前提已被两次实际失败推翻；硬token/费用预算对应验收仍未通过，不能以本操作额度路径解除。模型/连接不能由应用自选provider，不能按“余额零”假定可免费调用。单纯保存/发布/配置不调用模型。
 
 ### Original inputs and dependency set
 

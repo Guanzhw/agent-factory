@@ -88,3 +88,18 @@ P7后续交付 SHALL 包含少数相关记录的主动关联及来源对实际�
 #### Scenario: Original sender recovery after recipient disablement
 - **WHEN** 接收者禁用后，仍有效的sender以相同requestId和正文重读原问题
 - **THEN** core验证sender原消息权限后，应用只核对不可变历史endpoint归属并返回原回执，不要求recipient启用、不新派发；runtime配置读取仍拒绝禁用owner
+
+### Requirement: Honest BYOK operational bounds
+固定BYOK QA SHALL 显式限制rounds/toolCalls/deadline，tokenLimit/amountMicros/currency必须null，并显示“操作额度受限，token/费用未计量”。本路径不得宣称token或费用硬预算通过。
+
+#### Scenario: Unsupported monetary or token commitment
+- **WHEN** 用户为当前BYOK QA请求非null token或金额上限
+- **THEN** 配置明确拒绝且不创建scope/endpoint，不开启platform-paid、不静默移除上限
+
+#### Scenario: Model requests a forbidden training tool
+- **WHEN** 实际provider返回train tool_call而QA模型没有工具
+- **THEN** 无child/GPU/CLI/MCP派发，模型请求有界、不无限循环；失败不冒充成功回答
+
+#### Scenario: Original operational allowance exhausted
+- **WHEN** 原scope已消耗全部问题轮次后提交下一问题
+- **THEN** 准入拒绝、原模型请求数不增、不创建新task或scope、不自动续额
