@@ -31,3 +31,9 @@
 - **WHEN** 原科研阶段已物理停止，但成功所需的准备、checkpoint或evaluation证据尚未验证
 - **THEN** 保留原结果核对能力，不把缺失证据当作成功；存储围栏争用仅可返回明确标注的已验证历史证据
 - **AND** 已存在原drive intent时只观察原操作，不再次进入启动入口；失败和取消仍依据原停止证明收尾
+
+#### Scenario: 已准备远程任务的取消观察顺序
+- **WHEN** source 已请求取消，重复 prepare 因当前 source authority 被拒绝
+- **THEN** 拒绝本身不替换原 handoff/task/plan；尚未运行清理观察时保留 PREPARED
+- **AND** 可信观察可在原派发 CAS 之前收尾为 CANCELLED_NO_DISPATCH，仍保留同一身份且无 native ticket
+- **AND** 派发 CAS 已先获胜时不得以 ticket 暂不可见伪造未派发证明
