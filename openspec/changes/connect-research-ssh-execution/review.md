@@ -44,3 +44,21 @@ ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips,
 remain under investigation. GPU allocation/binding is still unimplemented and
 rejected, while external-network faults and actual target model/GPU/hardware
 acceptance remain unverified. Code-review PASS does not close those gates.
+
+
+## Remote POSIX path correction review
+
+Independent reviewer `foundation_review` returned PASS for exact cumulative base
+`1597fe8bbc29a2ba596db1e1f3878dd4da014c6c` through
+`ab9b4da8d0fd555498a04c263cd36bf177ec3d41`, and the incremental
+`d0e0239abfc9890267c732b95f9033463af14918 → ab9b4da` correction.
+The explicit construction-only POSIX path option avoids controller-dependent
+validation without altering serialized fields, original operation fingerprints,
+local custody types or local UV interpreter validation. Tests cover replacement,
+reconstruction, fixed serialization/hash and native-path preservation. No portable
+case is skipped or rewritten to use a fictional Windows remote executable.
+
+The subsequent merge of main `e7987e7` changes only three no-demo evidence files.
+Local 34 portable and 19 existing process tests passed; actual Windows CI for the
+correction remains required. This review does not claim the still-missing Windows
+credential/pipe client, GPU allocation or target acceptance is complete.
