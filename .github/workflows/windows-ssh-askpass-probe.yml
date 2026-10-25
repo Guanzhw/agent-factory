@@ -1,8 +1,14 @@
-name: Windows SSH authentication candidate experiment
+name: Windows SSH contracts
 on:
   pull_request:
     paths:
       - scripts/windows_ssh_askpass_probe/**
+      - scripts/accept_windows_ssh_core.py
+      - platform/agent_factory/*ssh*.py
+      - platform/tests/*ssh*.py
+      - pyproject.toml
+      - platform/pyproject.toml
+      - uv.lock
       - .github/workflows/windows-ssh-askpass-probe.yml
 permissions:
   contents: read
@@ -70,3 +76,33 @@ jobs:
                                                      'platform/tests', 'applications/tests'])
           result = subprocess.run(['.venv/Scripts/python.exe', '-c', code], timeout=120)
           sys.exit(result.returncode)
+
+  installed-core:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - name: Build the standalone core wheel
+        working-directory: platform
+        shell: pwsh
+        run: uv build --wheel --out-dir "$env:RUNNER_TEMP/core-wheel"
+      - name: Verify installed product SSH outside the checkout
+        shell: pwsh
+        run: |
+          $wheels = @(Get-ChildItem "$env:RUNNER_TEMP/core-wheel/*.whl")
+          if ($wheels.Count -ne 1) { throw "Expected one standalone core wheel" }
+          python scripts/accept_windows_ssh_core.py --wheel $wheels[0].FullName --output "$env:RUNNER_TEMP/windows-ssh-installed-core.json"
+          exit $LASTEXITCODE
+      - name: Preserve installed-product acceptance including the first failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-ssh-installed-core-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-ssh-installed-core.json
+          if-no-files-found: error
