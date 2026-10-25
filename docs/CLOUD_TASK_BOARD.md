@@ -1966,3 +1966,19 @@ P7定向经验问答/主动关联、P8可复现成果包、完整自主多轮仍
 | 私密peerQA预算基础 | assistant_messages；pr104_independent_review规范审查 | spec9de16ab，待补完整原start请求指纹绑定；复用scope/request/queue，不将私人问句发布team；root独占store/main钩子 |
 
 P5–P9仍未整体完成；真实C/D参数缺项继续BLOCKED/NOTRUN。当前云端PG串行，不新增公网服务、付费调用或凭据权限。历史MCP长尾与整套提速证据限制不因个别复验通过而关闭。
+
+### 14:30 已验证后端合并与正式工作台集成
+
+组合完整 CI [40199430407](https://github.com/Guanzhw/agent-factory/actions/runs/40199430407) 在精确 `69d798ba5d58a4ea6c9d25c45fa17f071f165388` 成功：PG 1941项、5跳过、0失败/错误，五组required全部实际通过；Windows 1941项、793跳过、0失败/错误。独立核心空库安装/启动/关闭、双前端和Chromium通过。原组合40196675940失败仍保留（PG8errors、Windows4errors），不以新结果覆盖。
+
+#111–#116均已合并：111→193bae7，112→715480e，113→8fce2da，114→9882675，115→00fa244，116→b701f2a。独立复核main `b701f2a41642745897bcd94b91d16b3c6bc2b0c2` 与上述full提交仅任务板17行差异，生产/测试/工作流字节一致；这是代码等价证据，不称main独自执行过该full。main CI40202325350当时运行中。
+
+#118 head ebb2149独立review及exactfast40198268420通过。#119材料事务修复head3e03f51独立review、exactfast40201202982通过；18材料portable及实际setup7portable/3PG通过，保留修前rollback失败。#120私有消息预算headc851204独立完整review通过，19PG组合通过（6native准入、13受控完成票据），32portable通过；exactfast40201872186运行中。后两者仍Draft。预算完成复用原observer事务，不增scanner/读取副作用。
+
+正式UI09a2eae独立完整review、466Web通过，修复POST成功后GET失败丢原request的P1；集成又发现operation.observation可为null导致崩溃，14b2bc0保留首红后修复、3targeted及TS通过，独立review关闭。产品集成30699a3正在实际backend/PG浏览器验收，不能以synthetic API浏览器代替。其当前组合不在此前1941项full范围内。
+
+研究native Workflow已采用Agno支持的扁平步骤；原嵌套步骤诊断/失败保留，未发布无必要的核心身份放宽补丁。真实stop零child、两轮原child结果/完成回滚、硬重启保留原root/child均通过；实际setup装配PG1通过且零dispatch。独立review通过，尚待当前集成完整验收。自动共享仍不包含任意原始产物。
+
+P7：assistant_messages拥有原消息reply独立core spec/实现；research_app_spec拥有单成员长期助手及tool-free QA spec；foundation_review独立审查。P8仅完成真实源码差距与精选证据/复现包草稿，未实现。root优先收敛既有PR、实际浏览器及精确CI，重PG串行。真实模型科学价值、真实GPU、生产身份/部署容量仍BLOCKED/NOTRUN，非所有后端停工理由。
+
+单HTML固定交付：[GitHub文件](https://github.com/Guanzhw/agent-factory/blob/b2a2460dbb18aab299a5a04bd5c5b85955486a24/docs/demos/research-workbench-demo.html)。Download raw file后双击即可，无真实backend/model/GPU；实际Linux Chromium file验收，不冒充Windows实跑。Library401未重试。
