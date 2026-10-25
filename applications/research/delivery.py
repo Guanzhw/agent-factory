@@ -64,12 +64,14 @@ class ResearchDelivery:
                 missing = ['round_not_terminal:' + row['id'] for row in rows if row['terminal'] is None]
         if records is not None:
             body = bounded_json({'schema': 1, 'kind': 'research.delivery', 'projectId': project_id,
-                'goalVersion': command.expectedVersion, 'sourceIds': [item['id'] for item in records],
+                'goalVersion': command.expectedVersion, 'sourceIds': sorted({identifier
+                    for item in records for identifier in [item['id'], *item.get('sourceContentIds', [])]}),
+                'recordIds': [item['id'] for item in records],
                 'records': [item['content'] for item in records],
                 'missingEvidence': sorted(set(missing + ([] if records else ['published_records']) + [
                     reason for item in records for reason in item['content'].get('selectedEvidence', {}).get(
                         'missingEvidence', ['selected_evidence'])])),
-                'verificationStatus': 'unverified',
+                'verificationStatus': 'unverified', 'remainingQuestions': {'status': 'not_provided'},
                 'evidenceFormat': 'JSON envelopes: role identifies the evidence; value contains the selected original output. Save source.value as the recipe command file and follow run_recipe.value with your own resources.',
                 'continuation': 'Use these records in a new project with a new confirmed budget; do not replay an unknown operation.'}, maximum=16384)
             with self._snapshot() as conn, self.db.write():
@@ -119,6 +121,8 @@ class ResearchDelivery:
             manifest = deepcopy(row['body'])
             selected = {}
             for record in records:
+                if record['id'] not in row['body']['recordIds']:
+                    continue
                 for item in record['content'].get('selectedEvidence', {}).get('items', []):
                     reference = item['reference']
                     if reference not in record['artifacts']:

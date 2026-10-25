@@ -21,3 +21,10 @@
 ## 精选采集实际故障回滚
 
 新增实际native单例首轮1/1通过、0跳过，13.199秒，exit0：`/tmp/research-delivery-capture-fault-first.log`。原parent结果步骤已实际写入首artifact后注入RuntimeError；原事务回滚artifact/selection，原root失败完成，closed child保持1个DONE CLI effect、总2task，没有重派。日志中的注入异常是测试预期，并未吞错转成成功。该证据关闭上述“实际artifact写后故障未执行”缺项；出版callback专属故障和peer来源集成仍需分开判断。
+
+## 配方审查整改与源权限依赖
+
+- 独立审查指出配方truthy判断不能证明dependencies/data/expected可用；规范81e8555先明确当前三角色字段契约，代码改为有限类型/非空expected/有限标量判定。无实际remainingQuestions字段时明确not_provided，不用空集合伪称没有疑问。
+- 30项便携通过、0跳过，17.859秒：`/tmp/research-delivery-recipe-fixed.log`。进一步实际capture负例验证坏配方不写artifact且保留缺项，5项通过、0跳过，1.593秒：`/tmp/research-delivery-recipe-capture.log`。Ruff通过。
+- 已摘取审定source authority四提交（本分支878e50f/e9d6d3a/30ecf97/0628996），未另改core。manifest保存全部原sourceContentIds权限并集，并单列recordIds标识本项目显式选择的出版物；不能因某内容仅是依赖就把其附件也偷偷打包。
+- P7 rich projection/完整peer union尚待应用接口最终集成与实际验证，不外推上述无peer运行已验证它。当前review整改后的精确head PG整组尚未重复，旧成功仍按各自版本记录。

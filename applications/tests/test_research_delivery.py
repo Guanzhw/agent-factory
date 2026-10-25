@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from research.delivery import ResearchDelivery
-from research.evidence import EvidenceSelection
+from research.evidence import EvidenceSelection, _valid_value
 from research.projects import ProjectCommand
 from research.workflow import Decision
 import test_research_rounds as fixtures
@@ -28,6 +28,7 @@ class ResearchDeliveryTests(unittest.TestCase):
     def test_empty_sources_owner_only_and_duplicate_manifest_has_no_generic_copy(self):
         first = self.delivery.create('alice', self.fixture.project, self.command)
         self.assertIn('published_records', first['missingEvidence'])
+        self.assertEqual(first['remainingQuestions'], {'status': 'not_provided'})
         self.assertEqual(self.delivery.create('alice', self.fixture.project, self.command), first)
         self.assertEqual(self.delivery.list('bob')['items'], [])
         with self.assertRaises(HTTPException): self.delivery.read('bob', first['id'])
@@ -88,6 +89,16 @@ class ResearchDeliveryTests(unittest.TestCase):
                 EvidenceSelection(toolMaterial={**pin, 'sha256': 'c' * 64}, fields={'metrics': 'measurement'}), context)
         self.assertEqual(mismatch.exception.detail, 'RESEARCH_EVIDENCE_MATERIAL_MISMATCH')
         self.assertEqual(recorded, [])
+        proof['receipts'][0]['output']['recipe'] = {
+            'command': ['python', 'source.py'], 'dependencies': True, 'data': None, 'expected': {}}
+        with self.assertRaisesRegex(RuntimeError, 'isolate recipe fixture'):
+            with f.store.transaction() as conn:
+                missing = self.rounds.evidence.capture(conn, 'alice', attempt, operation,
+                    EvidenceSelection(toolMaterial=pin, fields={'run_recipe': 'recipe'}), context)
+                self.assertIn('run_recipe', missing['missingEvidence'])
+                self.assertEqual(missing['artifacts'], [])
+                self.assertEqual(recorded, [])
+                raise RuntimeError('isolate recipe fixture')
         with self.assertRaisesRegex(RuntimeError, 'rollback'):
             with f.store.transaction() as conn:
                 self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context)
@@ -101,3 +112,11 @@ class ResearchDeliveryTests(unittest.TestCase):
         with f.store.transaction() as conn, patch.object(context, 'write_artifact', Mock(side_effect=AssertionError('duplicate write'))):
             self.assertEqual(self.rounds.evidence.capture(conn, 'alice', attempt, operation, config, context), selected)
         f.native.tool_results.assert_called_with('alice', 'child', 'child-run')
+
+    def test_current_recipe_prerequisites_are_explicit_and_not_truthy_placeholders(self):
+        valid = {'command': ['python', 'source.py'], 'dependencies': [], 'data': [1, 2], 'expected': {'value': 3}}
+        self.assertTrue(_valid_value('run_recipe', valid))
+        for changes in ({'dependencies': True}, {'dependencies': 1}, {'data': None}, {'data': True},
+                        {'expected': {}}, {'expected': {'value': float('nan')}}, {'command': ['']}):
+            with self.subTest(changes=changes):
+                self.assertFalse(_valid_value('run_recipe', {**valid, **changes}))

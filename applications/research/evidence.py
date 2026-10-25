@@ -1,5 +1,6 @@
 """Selected original CLI output, never model-granted publication authority."""
 import json
+import math
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
@@ -19,15 +20,26 @@ class EvidenceSelection(BaseModel):
     fields: dict[Role, FieldName] = Field(min_length=1, max_length=3)
 
 
+def _metrics(value):
+    return isinstance(value, dict) and bool(value) and all(
+        isinstance(key, str) and (type(item) in {str, bool, int}
+            or type(item) is float and math.isfinite(item)) for key, item in value.items())
+
+
 def _valid_value(role, value):
     if role == 'source':
         return isinstance(value, str) and bool(value.strip())
     if role == 'metrics':
-        return isinstance(value, dict) and bool(value) and all(
-            isinstance(key, str) and type(item) in {str, int, float, bool} for key, item in value.items())
-    return (isinstance(value, dict) and isinstance(value.get('command'), list) and bool(value['command'])
-            and all(isinstance(item, str) and item for item in value['command'])
-            and bool(value.get('dependencies')) and 'data' in value and isinstance(value.get('expected'), dict))
+        return _metrics(value)
+    if not isinstance(value, dict):
+        return False
+    command, dependencies, data = value.get('command'), value.get('dependencies'), value.get('data')
+    return (isinstance(command, list) and bool(command)
+            and all(isinstance(item, str) and item.strip() for item in command)
+            and (isinstance(dependencies, str) and bool(dependencies.strip())
+                 or isinstance(dependencies, list) and all(isinstance(item, str) and item.strip() for item in dependencies))
+            and (isinstance(data, (list, dict)) or isinstance(data, str) and bool(data.strip()))
+            and _metrics(value.get('expected')))
 
 
 class ResearchEvidence:
