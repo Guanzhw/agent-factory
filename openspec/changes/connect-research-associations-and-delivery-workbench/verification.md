@@ -16,6 +16,8 @@ Implemented the three consumer groups without backend changes: explicit bounded 
 
 New deterministic checks cover protected source shapes without missing-field crashes, old-body hiding, preservation of exact evidence through goal changes, explicit association activation versus old configurations, original delivery recovery after 408/remount, late owner/source responses, unavailable manifest and ZIP rejection/session switch. These synthetic frontend transports prove interactions only.
 
+Final frozen-source `npm run check` after browser evidence commit `5f79c84`: exit 0, 52 files / 490 tests / zero skipped (22.25s Vitest), including final source-assessment/callback/CSS changes; lint, TypeScript and core build passed. See `evidence/web-final-check.txt`. This closes the earlier full-check coverage gap; no production code changed after `2f1fb74`.
+
 ## Real backend browser evidence
 
 Production UI/backend snapshot: `2f1fb74db771d52e870d79fc72d2268148f95810` (base `7377298`). Author-independent complete base/head review passed with no required changes. The subsequent commit contains driver/evidence/documentation only. Backend prompt-only `030016a` was not part of this local browser snapshot; coordinator integration remains separate.
