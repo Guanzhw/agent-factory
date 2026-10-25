@@ -72,3 +72,37 @@ Final closure-only type fix verification: the first repeated group accidentally 
 Independent review found that the default ResearchProcessLimits 16 MiB output cap exceeded both the SSH helper's 256 KiB transfer cap and the default 65536-byte artifact allowance, potentially leaving a stopped process held because its complete output could not be archived. New launch now rejects unsupported caps before target registration/preflight/custody. This adapter explicitly requires a local artifact allowance of at least 65536 bytes to support both output and the original receipt; it does not alter core settings or truncate output. Original intent replay bypasses this new-admission check.
 
 First portable run had 2 fixture errors: the new accepted Research limits cases incorrectly paired with ordinary ProcessSpec, which the existing exact protocol correctly rejected (`/tmp/ssh-output-budget-portable-first.log`). Correcting the fixture to the genuine ResearchProcessSpec, without changing product validation, gave 40/40 pass, zero skips, 0.144s (`/tmp/ssh-output-budget-portable-final.log`). Cases cover local minimum minus one/exact, local/helper output bounds and plus one, default 16 MiB rejection, zero target/preflight/intent for rejection, and original UNKNOWN replay with a now-smaller local allowance. The same group retains existing complete archive/release tests; it does not claim a new real SSH/GPU run. Bounded targeted Pyright: 0 errors/warnings (`/tmp/ssh-output-budget-pyright.log`).
+
+## Final code validation — 860e460
+
+Exact `860e46090dc98f6b2160da4cbc3b7d9de17aa775`
+[full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220)
+completed **all seven jobs SUCCESS**.
+
+| Check | Actual result |
+|---|---|
+| Combined PostgreSQL discovery | 2188 total, 2183 passed, 5 skipped, zero failures/errors; 1581.818s. |
+| Required groups | SSH 6, BYOK 109, boundaries 16, native 10, self-service 19, invariants 5: all passed, zero skipped in all six groups. |
+| Windows discovery | 2188 total, 1317 passed, 871 skipped, zero failures/errors; 233.556s. |
+| Web / browser | 490 Web tests on each platform; two CI Chromium scenarios passed. |
+| Standalone core | Actual installed-core check passed. |
+
+[PG artifact12617398651](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220/artifacts/12617398651)
+retains the full result. Earlier failures and partial/cancelled runs remain their
+original results; this is a different exact code head, not retrospective repair
+of their evidence.
+
+`07c75a0` added review documentation only; this final follow-up also changes only
+documentation relative to 860e460. Production, tests, workflows and lockfiles are
+byte-identical, so the exact-code full is reusable without another full run.
+The new documentation head still requires independent review and exact fast CI.
+PR137 is not yet merged. PR136 is merged as `e7987e75`, with
+[main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611)
+successful.
+
+This accepts the implemented Linux CPU mechanism and bounded-pipe contracts,
+not GPU execution. GPU allocation/binding remains unimplemented and rejected.
+Production Windows credential integration remains unfinished in Draft PR138.
+Native continuation accepted-before-ACK-loss evidence is not SSH-wire submit
+ACK-loss evidence; actual target/network fault and real model/GPU acceptance
+remain open. Missing target inputs do not erase those implementation gaps.
