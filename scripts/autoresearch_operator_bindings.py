@@ -192,12 +192,13 @@ def _controller(config, settings, resolve):
     from dataclasses import replace
     from agent_factory_research.autoresearch_remote_children import AutoResearchRemoteChildren
     from agent_factory_research.autoresearch_runtime import AutoResearchRuntime
+    from agent_factory_research.services import ResearchFactory
     from agent_factory.remote_handoff import HandoffTarget
     from agent_factory_research.remote_scientific_origin import RemoteScientificOrigin
     from agent_factory.store import digest
     from autoresearch_scientific_preset import OperatorScientificConfig, make_preset
     from orx_research_runtime import Runtime, RuntimeConfig, BinaryPin, private_directory
-    project = project_descriptor(config); peer = project['receiver']; holder = {}
+    project = project_descriptor(config); peer = project['receiver']
     target = HandoffTarget(peer['targetRef'], peer['originRef'], peer['baseUrl'],
         {project['ownerId']: peer['ownerId']},
         lambda owner_id: {'Authorization': 'Bearer ' + resolve(config['handoffBearerRef'])}
@@ -210,23 +211,21 @@ def _controller(config, settings, resolve):
             and placement['scopeBinding']['originParentRunId'] == parent['run_id']
             and placement['scopeBinding']['candidateSha256'] == digest(placement['candidate']))
         return _variant(project, placement['candidate'])
-    def remote_factory(store, auth, resources, handoff_client, receiver, commands):
-        service = RemoteScientificOrigin(store, auth, project_validator=validate, handoff_client=handoff_client,
+    def remote_factory(store, auth, resources, handoff_client, receiver, commands, *, research):
+        service = RemoteScientificOrigin(store, auth, research=research, project_validator=validate, handoff_client=handoff_client,
             project_bindings={project['id']: {'targetRef': peer['targetRef'], 'projectPin': peer['projectPin'],
                 'manifest': project['manifest'], 'ownerId': project['ownerId']}})
-        holder['remote'] = service
         return service
-    def child_factory(store, auth, service, resources):
-        children = AutoResearchRemoteChildren(store, auth, service, target_ref=peer['targetRef'],
+    def child_factory(store, auth, service, resources, *, research):
+        children = AutoResearchRemoteChildren(store, auth, service, research=research, target_ref=peer['targetRef'],
             project_id=project['id'], project_pin=peer['projectPin'], manifest=project['manifest'])
-        holder['children'] = children
         return children
-    async def baseline():
-        return await holder['remote'].project_baseline(project['ownerId'], peer['targetRef'], project['id'], peer['projectPin'])
-    async def experiment(ctx, candidate, call_id, *, parent_guard):
-        return await holder['children'].experiment(ctx, candidate, call_id, parent_guard=parent_guard)
-    async def verify(ctx, result):
-        return await holder['children'].result_verifier(ctx, result)
+    async def baseline(ctx, research):
+        return await research.remote_scientific.project_baseline(project['ownerId'], peer['targetRef'], project['id'], peer['projectPin'])
+    async def experiment(ctx, research, candidate, call_id, *, parent_guard):
+        return await research.autoresearch_children.experiment(ctx, candidate, call_id, parent_guard=parent_guard)
+    async def verify(ctx, research, result):
+        return await research.autoresearch_children.result_verifier(ctx, result)
     def runtime(ctx, service):
         # The native parent's managed effect admits this per-original-run namespace.
         identifier(ctx.run_context.run_id)
@@ -241,9 +240,9 @@ def _controller(config, settings, resolve):
             billing_authorized=lambda: project['billingAuthorized'],
             max_requests=project['limits']['modelRequests'], max_output_tokens=project['limits']['modelOutputTokens'])
     preset = make_preset(OperatorScientificConfig(project['id'], project['name'], project['ownerId'],
-        project['defaultGoal'], project['manifest'], project['limits'], lambda: _upstream(project), baseline,
+        project['defaultGoal'], project['manifest'], project['limits'], lambda: _upstream(project), ResearchFactory(baseline),
         microbatch=project['microbatch']),
-        runtime_factory=runtime, subordinate_executor=experiment, result_verifier=verify)
+        runtime_factory=runtime, subordinate_executor=ResearchFactory(experiment), result_verifier=ResearchFactory(verify))
     preset = replace(preset, application_ref=project['applicationRef'] or {})
     return replace(settings, jwt_key=resolve(config['jwtRef']), handoff_targets={target.reference: target},
         autoresearch_presets={preset.id: preset}, autoresearch_children_factory=child_factory,
@@ -260,8 +259,8 @@ def _state(app):
 
 def prepare_publication(app, publication):
     """Publish exact shared versions as the requesting member."""
-    from agent_factory_research.services import services_for
     from agent_factory_research import remote_scientific_profile as profile
+    from agent_factory_research.services import bind_preset
     from agent_factory.store import digest
     from agent_factory_research.autoresearch_profile import material_drafts, application_definition
     state = _state(app); config = app.operator_config; project = project_descriptor(config)
@@ -303,7 +302,7 @@ def prepare_publication(app, publication):
         preset = next(iter(state['settings'].autoresearch_presets.values()))
         approved = replace(preset, application_ref=ref)
         state['settings'].autoresearch_presets[approved.id] = approved
-        services_for(state['store']).autoresearch.presets[approved.id] = approved
+        state['research'].autoresearch.presets[approved.id] = bind_preset(approved, state['research'])
     return {'applicationRef': ref, 'applicationSnapshot': deepcopy(row)}
 
 
@@ -360,7 +359,7 @@ def _receiver(config, settings, resolve, stack):
         target_ref=rebuilt['reference'], remote_targets={rebuilt['reference']: rebuilt['target']}))
     prep_state = stack.enter_context(open_state(prep_settings, full_verification=True))
     preparation = ResearchPreparationStore(prep_state['store'], prep_state['auth'], prep_state['resources'],
-        prep_state['store'].storage, preparation_manifest_sha256=prep_snapshot['preparationManifestSha256'],
+        prep_state['store'].storage, research=prep_state['research'], preparation_manifest_sha256=prep_snapshot['preparationManifestSha256'],
         source_sha256=rebuilt['driver'].configuration_fingerprint)
     origin = project['origin']
     authority = OriginAuthorityTransport(base_url=origin['baseUrl'], origin_ref=origin['originRef'],
@@ -374,7 +373,7 @@ def _receiver(config, settings, resolve, stack):
         budget={'toolCalls': project['limits']['toolCalls'], 'maxDepth': 1, 'maxChildren': 3,
             'experimentSeconds': project['limits']['experimentSeconds'], 'outputBytes': project['limits']['outputBytes']},
         configuration_revision=origin['revision'], tool_contract='autoresearch-session-v1')
-    def receiver_factory(store, auth, resources, handoff_client, receiver, commands):
+    def receiver_factory(store, auth, resources, handoff_client, receiver, commands, *, research):
         stages = {}
         for phase in ('training', 'evaluation'):
             roots = descriptor['stageRoots'][phase]
@@ -403,8 +402,8 @@ def _receiver(config, settings, resolve, stack):
         gpu = GpuBinding(original['receiverNamespaceSha256'], hashlib.sha256(original['deviceUuid'].encode()).hexdigest())
         observer = NvidiaSmiObserver(Path(original['nvidiaSmi']['executable']), original['nvidiaSmi']['sha256'],
             original['deviceUuid'], gpu, 'task-local-real-observer-v1')
-        checkpoints = ResearchCheckpointStore(store, auth, resources, store.storage)
-        assembler = ScientificPhaseAssembler({'store': store, 'auth': auth, 'resources': resources, 'settings': settings},
+        checkpoints = ResearchCheckpointStore(store, auth, resources, store.storage, research=research)
+        assembler = ScientificPhaseAssembler({'store': store, 'auth': auth, 'research': research, 'resources': resources, 'settings': settings},
             owner=project['ownerId'], upstream_files=_upstream(project), captured_inputs=snapshot['capturedInputs'],
             environment_pins=pins, stages=stages, limits=ResearchProcessLimits(**original['limits']),
             gpu_binding=gpu, device_observer=observer, preparation=preparation, checkpoints=checkpoints,
@@ -413,7 +412,7 @@ def _receiver(config, settings, resolve, stack):
             scientific_runtime=scientific_runtime, preparation_state=prep_state)
         registered = RemoteScientificProject(project['ownerId'], descriptor['projectPin'], assembler,
             preparation, checkpoints, project['manifest'], reader)
-        return RemoteScientificReceiver(store, auth, {project['id']: registered}, commands)
+        return RemoteScientificReceiver(store, auth, {project['id']: registered}, commands, research=research)
     return replace(settings, jwt_key=resolve(config['jwtRef']), handoff_origins={trusted.reference: trusted},
         remote_scientific_factory=receiver_factory)
 

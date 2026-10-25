@@ -270,9 +270,15 @@ class FactoryAPI:
                     "syntheticFixture": execution_classification(plan)["syntheticFixture"]}}
 
     def _waiting_control(self, task, snapshot):
+        registry = getattr(self.store, 'application_runtime', None)
+        if registry is not None:
+            return registry.waiting_control(self, task, snapshot)
         return None, False
 
     async def _project_detail(self, task, plan, snapshot, events, job, control_wait):
+        registry = getattr(self.store, 'application_runtime', None)
+        if registry is not None:
+            return await registry.project_detail(self, task, plan, snapshot, events, job, control_wait)
         return {}, None
 
     def routes(self):

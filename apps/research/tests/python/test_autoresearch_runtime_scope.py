@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from agent_factory_research.autoresearch_scientific_child import adapter_id
 from agent_factory.process_runtime import ProcessRuntimeService
 from agent_factory_research.research_runtime import ResearchProcessRuntimeService
+from agent_factory_research.services import ResearchServices
 
 
 class ScientificRuntimeScopeTests(unittest.TestCase):
@@ -23,7 +24,8 @@ class ScientificRuntimeScopeTests(unittest.TestCase):
                 store, task = self.fixture(phase)
                 with patch('agent_factory_research.autoresearch_scientific_child.child_pin', side_effect=ValueError('expired')):
                     with self.assertRaisesRegex(PermissionError, 'AUTORESEARCH_CHILD_AUTHORITY_ENDED'):
-                        ResearchProcessRuntimeService(store, Mock(), Mock())._config(task, {})
+                        ResearchProcessRuntimeService(store, Mock(), Mock(),
+                            research=ResearchServices(store, installed=True))._config(task, {})
 
     def test_maintenance_classifies_scientific_authority_loss_without_stop_claim(self):
         service = ProcessRuntimeService(Mock(), Mock(), Mock())

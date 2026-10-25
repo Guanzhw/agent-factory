@@ -3,7 +3,7 @@
 Deterministic orchestration requests one native phase action, never a scientific
 choice. Original receiver handoff authority is resolved on every bind/use.
 """
-from .services import services_for
+from .services import ResearchFactory
 from copy import deepcopy
 import json
 
@@ -40,7 +40,8 @@ def call_id(phase):
     return 'remote-scientific-' + phase + '-call'
 
 
-def phase_pin(ctx, phase, *, custody=False):
+def phase_pin(ctx, phase, *, research, custody=False):
+    research.require_store(ctx.store, ready=True)
     _require(phase in PHASES and ctx.settings.temporary_policy == 'member-self-service')
     config = ctx.spec['config']
     _require(type(config) is dict and set(config) == {'projectId', 'phase'} and config['phase'] == phase
@@ -50,17 +51,19 @@ def phase_pin(ctx, phase, *, custody=False):
              and ctx.plan.get('ownerId') == ctx.run_context.user_id
              and ctx.plan.get('tools') == [TOOLS[phase]] and ctx.plan.get('capabilities') == [CAPABILITIES[phase]]
              and type(ctx.plan.get('remoteHandoff')) is dict)
-    return services_for(ctx.store).remote_scientific_receiver.require_phase(ctx, phase, custody=custody)
+    return research.remote_scientific_receiver.require_phase(ctx, phase, custody=custody)
 
 
 class RemoteScientificControlModel(ResearchProcessFixtureModel):
-    def __init__(self, ctx, phase):
+    def __init__(self, ctx, phase, *, research):
+        research.require_store(ctx.store, ready=True)
+        self.research = research
         super().__init__()
         self.id, self.provider = MODEL_ID, PROVIDER_ID
         self._ctx, self._phase = ctx, phase
 
     def _response(self, messages):
-        phase_pin(self._ctx, self._phase)
+        phase_pin(self._ctx, self._phase, research=self.research)
         results = [m for m in messages if m.role == 'tool' and m.tool_name == TOOLS[self._phase]]
         if results:
             _require(len(results) == 1 and not results[0].tool_call_error
@@ -78,22 +81,22 @@ def registrations(project_id):
         expected = {'projectId': project_id, 'phase': phase}
         def config(value):
             _require(type(value) is dict and value == expected)
-        def checked(ctx):
+        def checked(ctx, research):
             config(ctx.spec['config'])
-            return phase_pin(ctx, phase)
-        def model(ctx):
-            checked(ctx)
-            return RemoteScientificControlModel(ctx, phase)
-        def environment(ctx):
-            checked(ctx)
+            return phase_pin(ctx, phase, research=research)
+        def model(ctx, research):
+            checked(ctx, research)
+            return RemoteScientificControlModel(ctx, phase, research=research)
+        def environment(ctx, research):
+            checked(ctx, research)
             return EnvironmentLimits(runtime_id='autoresearch-session-v1' if phase == 'preparation' else 'research-process-v1',
                 timeout_seconds=30, memory_bytes=128 * 1024**2, output_bytes=1024**2)
-        def knowledge(ctx):
-            pin = checked(ctx)
+        def knowledge(ctx, research):
+            pin = checked(ctx, research)
             return KnowledgeContext(json.dumps(pin['comparisonManifest'], sort_keys=True, separators=(',', ':')),
                                     {'evidenceKind': 'offline_research_experiment_manifest'})
-        def runner(ctx):
-            checked(ctx)
+        def runner(ctx, research):
+            checked(ctx, research)
             if phase == 'preparation':
                 def debit(run_context, fc):
                     try:
@@ -101,7 +104,7 @@ def registrations(project_id):
                                      for key in ('user_id', 'session_id', 'run_id'))
                                  and fc.call_id == call_id(phase) and fc.arguments in (None, {})
                                  and fc.function.name == TOOLS[phase])
-                        services_for(ctx.store).remote_scientific_receiver.consume_tool(ctx, phase, fc.call_id)
+                        research.require_store(ctx.store, ready=True).remote_scientific_receiver.consume_tool(ctx, phase, fc.call_id)
                     except Exception as error:
                         # Agno ignores ordinary pre-hook exceptions; guardrail errors abort.
                         raise InputCheckError('REMOTE_SCIENTIFIC_TOOL_DEBIT_DENIED') from error
@@ -109,18 +112,18 @@ def registrations(project_id):
                 async def research_preparation_verify(run_context: RunContext) -> str:
                     _require(all(getattr(run_context, key) == getattr(ctx.run_context, key)
                                  for key in ('user_id', 'session_id', 'run_id')))
-                    checked(ctx)
-                    result = await services_for(ctx.store).remote_scientific_receiver.verify_preparation(ctx)
-                    checked(ctx)
+                    checked(ctx, research)
+                    result = await research.remote_scientific_receiver.verify_preparation(ctx)
+                    checked(ctx, research)
                     return json.dumps(result, sort_keys=True, allow_nan=False)
                 return research_preparation_verify
             @tool(external_execution=True)
             def research_process_run(run_context: RunContext) -> str:
-                checked(ctx)
+                checked(ctx, research)
                 raise ValueError('RESEARCH_EXTERNAL_EXECUTION_REQUIRED')
             return research_process_run
         for kind, factory in (('model', model), ('environment', environment), ('knowledge', knowledge), ('tool', runner)):
-            entries.append(AdapterRegistration(kind, adapter_id(phase, kind), '1', factory, validator=config,
+            entries.append(AdapterRegistration(kind, adapter_id(phase, kind), '1', ResearchFactory(factory), validator=config,
                 demo_only=True, **({'tool_name': TOOLS[phase], 'permissions': (CAPABILITIES[phase],)} if kind == 'tool' else {})))
     for phase in PHASES:
         add_phase(phase)

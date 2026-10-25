@@ -25,7 +25,8 @@ def _require(value):
 
 
 class ResearchCheckpointStore:
-    def __init__(self, store, auth, resources, storage):
+    def __init__(self, store, auth, resources, storage, *, research):
+        self.research = research.require_store(store)
         self.store, self.auth, self.resources, self.storage = store, auth, resources, storage
 
     def _original(self, owner, lease_id, *, stopped):
@@ -35,7 +36,7 @@ class ResearchCheckpointStore:
         _require(lease['ownerId'] == owner and task['owner_id'] == owner and not task['cancel_requested'])
         plan = self.store.plan(lease['planId'], owner)
         from .autoresearch_custody import require_original_custody
-        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=stopped)
+        require_original_custody(self.store, owner, plan, runtime._context(task), research=self.research, stopped=stopped)
         self.resources._authorize(owner, lease['connectionRef'])
         _, manifest, variant = runtime._config(task, plan)
         _require(lease['executionGuard']['manifestSha256'] == manifest_fingerprint(manifest)

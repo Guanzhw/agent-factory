@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 
 from agent_factory_research.autoresearch import AutoResearchService, ResearchPreset
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.openresearch_workspace import (
     OpenResearchWorkspace, WorkspaceProjectCreate, WorkspaceSessionCreate,
 )
@@ -67,7 +68,10 @@ class WorkspacePreDispatchRejectionTests(unittest.IsolatedAsyncioTestCase):
             runtime_factory=self.runtime, context_reader=self.runtime,
             candidate_validator=self.runtime, experiment=self.runtime,
         )
-        self.research = MemoryResearchService(self.store, self.auth, self.bridge, {'controlled': self.preset})
+        self.graph = ResearchServices(self.store, installed=True)
+        self.research = MemoryResearchService(self.store, self.auth, self.bridge,
+            {'controlled': self.preset}, research=self.graph)
+        self.graph.autoresearch = self.research
         # Spies execute the actual implementations; neither injects the rejection.
         self.research.start = AsyncMock(wraps=self.research.start)
         self.research.recover = Mock(wraps=self.research.recover)

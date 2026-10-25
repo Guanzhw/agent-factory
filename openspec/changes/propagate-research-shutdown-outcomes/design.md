@@ -1,0 +1,7 @@
+# Design
+
+应用执行记录当前原task，close关闭入口并取消原controller/execution，等待同一cleanup，不替换或重复停止。receiver不无限gather；应用观察所有owner结果，无法确认完成即调用部署注入的非返回fatal策略。
+
+核心在lifespan yield退出时进入可选同步context护栏，直到native和依赖全部退出。部署使用35秒Timer及os._exit(1)，不做可能阻塞的flush/持久化；core库自身无硬退出默认。Python线程不是硬实时保证，持GIL的C扩展仍是限制。正常退出取消Timer。
+
+真实生产main子进程覆盖活动、已完成和清理超过期限；慢例验证实际exit1、退出前依赖仍可用、原UNKNOWN与身份/容量跨同PG重启保留，零新增派发。合成本地进程证明不了真实外部供应商停止协议。

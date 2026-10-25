@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
-from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text
+from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text, tuple_
 
 from .plan_policy import ToolContract, application_tool_catalog, tools_for_contract
 from .store import digest, now
@@ -343,8 +343,9 @@ class MaterialGovernance:
     def _immutable(body):
         return digest({key: value for key, value in body.items() if key != "published"})
 
-    def _material(self, conn, mid, version):
-        row = conn.execute(select(self.materials).where(self.materials.c.id == mid, self.materials.c.version == version)).mappings().first()
+    def _material(self, conn, mid, version, *, rows=None):
+        row = (rows.get((mid, version)) if rows is not None else
+               conn.execute(select(self.materials).where(self.materials.c.id == mid, self.materials.c.version == version)).mappings().first())
         if not row:
             raise HTTPException(404, "Material version not found")
         body = row["body"]
@@ -353,8 +354,9 @@ class MaterialGovernance:
             raise HTTPException(409, "Immutable material integrity mismatch")
         return dict(row)
 
-    def _version(self, conn, mid, version):
-        row = conn.execute(select(self.versions).where(self.versions.c.material_id == mid, self.versions.c.version == version)).mappings().first()
+    def _version(self, conn, mid, version, *, rows=None):
+        row = (rows.get((mid, version)) if rows is not None else
+               conn.execute(select(self.versions).where(self.versions.c.material_id == mid, self.versions.c.version == version)).mappings().first())
         if not row:
             raise HTTPException(409, "UNREVIEWED_MATERIAL: version has no trusted governance record")
         return dict(row)
@@ -364,11 +366,11 @@ class MaterialGovernance:
         if actor != version["author_id"]:
             raise HTTPException(404, "Scoped material governance record not found")
 
-    def _active(self, conn, material, config):
+    def _active(self, conn, material, config, *, versions=None):
         body = material["body"]
         if body.get("kind") == "tool":
             self._validate_tool(body, status_code=409)
-        version = self._version(conn, body["id"], body["version"])
+        version = self._version(conn, body["id"], body["version"], rows=versions)
         if version["material_sha"] != body["sha256"] or version["immutable_digest"] != self._immutable(body):
             raise HTTPException(409, "Material differs from reviewed immutable version")
         if version["state"] != "published" or not material["published"]:
@@ -378,7 +380,7 @@ class MaterialGovernance:
                 raise HTTPException(409, "Demo bootstrap approval cannot authorize production")
         return version
 
-    def _dependencies(self, conn, body, config, allowed_refs=None):
+    def _dependencies(self, conn, body, config, allowed_refs=None, *, materials=None, versions=None):
         visited, visiting = set(), set()
 
         def visit(ref, depth):
@@ -391,10 +393,10 @@ class MaterialGovernance:
                 raise HTTPException(409, "Pinned dependency closure exceeds bounds")
             if allowed_refs is not None and key not in allowed_refs:
                 raise HTTPException(409, "Plan omitted a pinned transitive material dependency")
-            material = self._material(conn, ref["id"], ref["version"])
+            material = self._material(conn, ref["id"], ref["version"], rows=materials)
             if material["body"]["sha256"] != ref["sha256"]:
                 raise HTTPException(409, "Pinned dependency digest differs from stored material")
-            self._active(conn, material, config)
+            self._active(conn, material, config, versions=versions)
             visiting.add(key)
             for child in material["body"].get("dependencies", []):
                 visit(PinnedRef.model_validate(child).model_dump(), depth + 1)
@@ -569,12 +571,29 @@ class MaterialGovernance:
         allowed = {(ref["id"], ref["version"], ref["sha256"]) for ref in pins}
         with self._read() as conn:
             config = self.config
+            # Every permitted transitive dependency is already an explicit pin:
+            # _dependencies rejects refs outside allowed before looking them up.
+            # These bounded rows live only for this invocation; the next guard
+            # call re-reads publication/withdrawal and immutable evidence.
+            keys = {(ref["id"], ref["version"]) for ref in pins}
+            rows = conn.execute(select(self.materials,
+                *(column.label("governance_" + column.name) for column in self.versions.c)).select_from(
+                    self.materials.outerjoin(self.versions,
+                        (self.materials.c.id == self.versions.c.material_id)
+                        & (self.materials.c.version == self.versions.c.version))).where(
+                    tuple_(self.materials.c.id, self.materials.c.version).in_(keys))).mappings()
+            materials, versions = {}, {}
+            for row in rows:
+                key = (row["id"], row["version"])
+                materials[key] = {column.name: row[column.name] for column in self.materials.c}
+                if row["governance_material_id"] is not None:
+                    versions[key] = {column.name: row["governance_" + column.name] for column in self.versions.c}
             for ref in pins:
-                material = self._material(conn, ref["id"], ref["version"])
+                material = self._material(conn, ref["id"], ref["version"], rows=materials)
                 if material["body"]["sha256"] != ref["sha256"]:
                     raise HTTPException(409, "Plan material differs from the exact pinned digest")
-                self._active(conn, material, config)
-                self._dependencies(conn, material["body"], config, allowed)
+                self._active(conn, material, config, versions=versions)
+                self._dependencies(conn, material["body"], config, allowed, materials=materials, versions=versions)
         return {"allowed": True, "materialRefs": pins, "policyRevision": config.revision}
 
     def filter_active(self, materials):

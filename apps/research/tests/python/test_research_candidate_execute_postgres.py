@@ -4,7 +4,6 @@ Baseline authentication, preparation and scientific/environment adaptation are
 explicit mocks. Controllers, admission, process custody, checkpoint import,
 independent evaluator verification, journal and final artifacts are real.
 """
-from agent_factory_research.services import services_for
 from contextlib import ExitStack, nullcontext
 from dataclasses import asdict
 import importlib
@@ -79,8 +78,8 @@ class CandidateExecutePostgresTests(unittest.TestCase):
         captured = {'comparisonManifest': self.manifest, 'manifestSha256': inputs['manifestSha256'], 'operatorInputs': {}}
         calls, publication_calls, saved_snapshots = [], [], []
         service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
-            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
-        services_for(self.store).research_evaluation = service
+            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity, research=self.state['research'])
+        self.state['research'].research_evaluation = service
         outer = self
 
         class Pending:

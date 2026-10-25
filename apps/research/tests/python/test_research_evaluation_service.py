@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.research_evaluation_service import ResearchEvaluationService
 from agent_factory.store import digest
 from agent_factory_research.research_manifest import manifest_fingerprint
@@ -59,7 +60,8 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.reader = Mock(side_effect=lambda *_: (deepcopy(self.metadata),
             {'sha256': hashlib.sha256(self.raw_checkpoint).hexdigest(), 'sizeBytes': len(self.raw_checkpoint)}))
         self.mapping = {digest(self.contract['comparisonManifest']['evaluator']): 'evaluation'}
-        self.service = ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping, checkpoint_reader=self.reader)
+        self.research = ResearchServices(self.store, installed=True)
+        self.service = ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping, research=self.research, checkpoint_reader=self.reader)
 
     async def test_repeat_original_reader_only_and_no_execution_claim(self):
         first = await self.service.verify('alice', self.contract)
@@ -148,7 +150,7 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_streaming_reader_and_no_large_artifact_materialization(self):
         self.store.artifact_identity = self.reader
-        service = ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping)
+        service = ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping, research=self.research)
         await service.verify('alice', self.contract)
         self.assertEqual(self.reader.call_args.args[2], len(self.raw_checkpoint))
         self.contract['comparisonManifest']['artifactLimits']['checkpointBytes'] = 2**40
@@ -160,11 +162,11 @@ class ResearchEvaluationServiceTests(unittest.IsolatedAsyncioTestCase):
 
     def test_operator_registration_and_reader_required(self):
         with self.assertRaisesRegex(ValueError, 'RESEARCH_CHECKPOINT_READER_REQUIRED'):
-            ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping)
+            ResearchEvaluationService(self.store, self.auth, self.resources, self.mapping, research=self.research)
         with self.assertRaises(ValueError):
-            ResearchEvaluationService(self.store, self.auth, self.resources, {'not-hash': 'evaluation'}, checkpoint_reader=self.reader)
+            ResearchEvaluationService(self.store, self.auth, self.resources, {'not-hash': 'evaluation'}, research=self.research, checkpoint_reader=self.reader)
         with self.assertRaises(ValueError):
-            ResearchEvaluationService(self.store, self.auth, self.resources, {next(iter(self.mapping)): 'missing'}, checkpoint_reader=self.reader)
+            ResearchEvaluationService(self.store, self.auth, self.resources, {next(iter(self.mapping)): 'missing'}, research=self.research, checkpoint_reader=self.reader)
 
 
     async def test_original_launch_must_bind_actual_checkpoint_and_contract(self):

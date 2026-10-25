@@ -562,7 +562,6 @@ def execute(config, workspace, progress):
                     assert client.portal is not None
                     portal = client.portal
                     def imported(owner, task, lease):
-                        from agent_factory_research.services import services_for
                         if stage == 'training':
                             artifact = bundle['checkpoints'].import_completed(owner, lease['id'])
                             _, checked = bundle['checkpoints'].identity(task['id'], artifact['id'], limits.file_size_bytes)
@@ -571,7 +570,7 @@ def execute(config, workspace, progress):
                                 ('nativeRunId', 'nativeRunId'), ('planId', 'planId'), ('leaseId', 'id'), ('providerJobId', 'providerJobId'))},
                                 'planFingerprint': plan['fingerprint'], 'variantSha256': lease['executionGuard']['variantSha256'],
                                 'checkpoint': {'artifactId': artifact['id'], **checked}}
-                        return portal.call(services_for(bundle['state']['store']).research_evaluation.verify,
+                        return portal.call(bundle['state']['research'].research_evaluation.verify,
                             owner, bundle['pending']['evaluationContract'])
                     progress.at(stage.upper() + '_RUN')
                     result = ResearchBootstrapController(bundle['state'], request_client(bundle, client), portal.call).run(

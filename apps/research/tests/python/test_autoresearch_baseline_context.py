@@ -18,6 +18,7 @@ subject = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = subject
 _spec.loader.exec_module(subject)
 from agent_factory_research.research_local_driver import ScientificRuntimePin
+from agent_factory_research.services import ResearchServices
 
 
 class BaselineContextTests(unittest.TestCase):
@@ -53,7 +54,8 @@ class BaselineContextTests(unittest.TestCase):
         events = []
         original_store = SimpleNamespace(storage=object())
         provider_state = object()
-        state = {'store': original_store, 'auth': object(), 'resources': object()}
+        research = ResearchServices(original_store, installed=True)
+        state = {'store': original_store, 'auth': object(), 'resources': object(), 'research': research}
         @contextmanager
         def opened(settings, *, full_verification=False):
             events.append(('open', full_verification))
@@ -80,11 +82,13 @@ class BaselineContextTests(unittest.TestCase):
              patch.object(subject, 'research_settings', return_value=settings), \
              patch.object(subject, 'process_settings', return_value=settings), \
              patch.object(subject, 'registrations', return_value=[]), \
-             patch.object(subject, 'ResearchCheckpointStore', return_value=checkpoints), \
+             patch.object(subject, 'ResearchCheckpointStore', return_value=checkpoints) as checkpoint_service, \
              patch.object(subject, 'ResearchEvaluationService') as service:
             with factory(captured) as result:
                 self.assertIs(result, service.return_value)
             self.assertEqual(rebuilt.call_count, 2)
             self.assertIs(service.call_args.args[0], original_store)
+            self.assertIs(service.call_args.kwargs['research'], research)
+            self.assertIs(checkpoint_service.call_args.kwargs['research'], research)
             self.assertIs(service.call_args.kwargs['checkpoint_reader'], checkpoints.identity)
         self.assertEqual(events, [('policy',), ('lineage',), ('open', False), ('open', True)])

@@ -1,5 +1,5 @@
 """Synthetic source-only wiring: no baseline data, provider, controller or GPU run."""
-from research_services_fixture import with_research_services
+from agent_factory_research.services import ResearchServices, ResearchFactory, bind_preset
 import asyncio
 import threading
 from dataclasses import replace
@@ -19,6 +19,9 @@ from test_research_training_adapter import synthetic_files
 
 class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.store = SimpleNamespace()
+        self.research = ResearchServices(self.store, installed=True)
+        self.ctx = SimpleNamespace(store=self.store)
         self.files = synthetic_files()
         self.manifest = example_manifest()
         self.observation = {'schema': 1, 'status': 'completed',
@@ -32,7 +35,7 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
             p.start(); self.addCleanup(p.stop)
 
     def preset(self, **kwargs):
-        return module.make_preset(self.config, runtime_factory=Mock(), **kwargs)
+        return bind_preset(module.make_preset(self.config, runtime_factory=Mock(), **kwargs), self.research)
 
     def candidate(self, preset):
         train = self.files['train.py'].decode().replace('EMBEDDING_LR = 0.5', 'EMBEDDING_LR = 0.25')
@@ -48,11 +51,11 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         preset = self.preset()
         self.assertTrue(preset.blockers)
         self.assertTrue(preset.external_session)
-        with self.assertRaises(ValueError): await preset.experiment(None, self.candidate(preset), 'call')
+        with self.assertRaises(ValueError): await preset.experiment(self.ctx, self.candidate(preset), 'call')
 
     async def test_real_eleven_literal_validator_context_and_fresh_baseline(self):
         preset = self.preset()
-        result = await preset.context_reader()
+        result = await preset.context_reader(self.ctx)
         self.assertEqual(result['programMd'], self.files['program.md'].decode())
         self.assertEqual(result['baselineObservation'], self.observation)
         valid = self.candidate(preset)['validated']
@@ -63,7 +66,7 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
                       self.files['train.py'].decode() + '\nimport arbitrary\n'):
             with self.assertRaises(ValueError): preset.candidate_validator(train)
         self.config.baseline_reader.return_value = {**self.observation, 'comparisonIdentitySha256': 'f'*64}
-        with self.assertRaises(ValueError): await preset.context_reader()
+        with self.assertRaises(ValueError): await preset.context_reader(self.ctx)
 
     async def test_compact_builder_rereads_verified_source_and_keeps_existing_validation(self):
         preset = self.preset()
@@ -73,7 +76,7 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generated, self.files['train.py'].decode().replace('\nEMBEDDING_LR = 0.5',
             '\nEMBEDDING_LR = 0.25').replace('ADAM_BETAS = (0.8, 0.95)', 'ADAM_BETAS = (0.8, 0.99)'))
         self.assertFalse(preset.candidate_validator(generated)['executionVerified'])
-        info = await preset.context_reader()
+        info = await preset.context_reader(self.ctx)
         self.assertNotIn('trainPy', info)
         self.assertEqual(len(info['candidateParameters']['allowedParameters']), 11)
         with patch.object(module, 'verify_upstream_source', side_effect=ValueError('original-source-changed')):
@@ -83,7 +86,8 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         executor, verifier = AsyncMock(return_value={'untrusted': 'receipt-reference'}), AsyncMock(return_value=self.result())
         preset = self.preset(subordinate_executor=executor, result_verifier=verifier)
         current = Mock(return_value=preset)
-        ctx = SimpleNamespace(store=with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(current=current)))
+        self.research.autoresearch = SimpleNamespace(current=current)
+        ctx = self.ctx
         candidate = self.candidate(preset)
         value = await preset.experiment(ctx, candidate, 'original-call')
         executor.assert_awaited_once(); verifier.assert_awaited_once_with(ctx, {'untrusted': 'receipt-reference'})
@@ -97,7 +101,8 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         executor, verifier = AsyncMock(), AsyncMock(return_value={'cleanupConfirmed': True, 'independentResult': True})
         preset = self.preset(subordinate_executor=executor, result_verifier=verifier)
         current = Mock(return_value=preset)
-        ctx = SimpleNamespace(store=with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(current=current)))
+        self.research.autoresearch = SimpleNamespace(current=current)
+        ctx = self.ctx
         candidate = self.candidate(preset)
         unknown = ValueError('ORIGINAL_CUSTODY_UNKNOWN'); executor.side_effect = unknown
         with self.assertRaises(ValueError) as caught: await preset.experiment(ctx, candidate, 'call')
@@ -119,9 +124,10 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
             return asyncio.run(verified())
         self.config = replace(self.config, baseline_reader=reader)
         preset = self.preset(subordinate_executor=AsyncMock(return_value={}), result_verifier=AsyncMock(return_value=self.result()))
-        await preset.context_reader()
-        await preset.context_reader()
-        ctx = SimpleNamespace(store=with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(current=Mock(return_value=preset))))
+        await preset.context_reader(self.ctx)
+        await preset.context_reader(self.ctx)
+        self.research.autoresearch = SimpleNamespace(current=Mock(return_value=preset))
+        ctx = self.ctx
         await preset.experiment(ctx, self.candidate(preset), 'original-call')
         self.assertEqual(len(calls), 3)
         self.assertTrue(all(thread != original_thread for thread in calls))
@@ -131,13 +137,40 @@ class ScientificPresetTests(unittest.IsolatedAsyncioTestCase):
         self.config = replace(self.config, baseline_reader=reader)
         executor = AsyncMock()
         preset = self.preset(subordinate_executor=executor, result_verifier=AsyncMock())
-        value = await preset.context_reader()
+        value = await preset.context_reader(self.ctx)
         self.assertEqual(value['baselineObservation'], self.observation)
         error = PermissionError('original baseline no longer readable')
         reader.side_effect = error
-        ctx = SimpleNamespace(store=with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(current=Mock(return_value=preset))))
+        self.research.autoresearch = SimpleNamespace(current=Mock(return_value=preset))
+        ctx = self.ctx
         with self.assertRaises(PermissionError) as caught:
             await preset.experiment(ctx, self.candidate(preset), 'same-call')
         self.assertIs(caught.exception, error)
         self.assertEqual(reader.await_count, 2)
         executor.assert_not_awaited()
+
+    async def test_shared_scientific_preset_rebinds_baseline_reader_to_each_graph(self):
+        async def read_original(ctx, research):
+            return await research.remote_scientific.project_baseline()
+        config = replace(self.config, baseline_reader=ResearchFactory(read_original))
+        template = module.make_preset(config, runtime_factory=Mock())
+        first = ResearchServices(self.store, installed=True,
+            remote_scientific=SimpleNamespace(project_baseline=AsyncMock(return_value=self.observation)))
+        second_store = SimpleNamespace()
+        second = ResearchServices(second_store, installed=True,
+            remote_scientific=SimpleNamespace(project_baseline=AsyncMock(return_value=self.observation)))
+        first_preset = bind_preset(template, first)
+        second_preset = bind_preset(first_preset, second)
+        await first_preset.context_reader(self.ctx)
+        first.release()
+        other_ctx = SimpleNamespace(store=second_store)
+        result = await second_preset.context_reader(other_ctx)
+        self.assertEqual(result['baselineObservation'], self.observation)
+        first.remote_scientific.project_baseline.assert_awaited_once()
+        second.remote_scientific.project_baseline.assert_awaited_once()
+        self.assertIsNone(template.context_reader.research)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            first_preset.context_reader(self.ctx)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            second_preset.context_reader(self.ctx)
+        second.remote_scientific.project_baseline.assert_awaited_once()

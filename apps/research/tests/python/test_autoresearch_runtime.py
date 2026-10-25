@@ -13,6 +13,7 @@ import httpx
 from agent_factory_research.autoresearch_runtime import AutoResearchRuntime, PROTOCOL
 from agent_factory_research.autoresearch_profile import TOOL_NAMES
 from agent_factory.usage_ledger import UsageEvidence
+from agent_factory_research.services import ResearchServices
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -25,6 +26,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.service = SimpleNamespace(current=Mock(return_value=SimpleNamespace(instructions='Only read research_context, then stop; no experiments authorized.', limits={'totalSeconds': 5, 'modelRequests': 3, 'modelOutputTokens': 512})),
             record=Mock(), change=self.change, row=lambda *args: {'body': self.body},
             commit_intent=self.commit, tool=AsyncMock(return_value={'original': True}))
+        self.service.research = ResearchServices(self.ctx.store, installed=True)
         self.launcher = SimpleNamespace(config=SimpleNamespace(cpus=1, memory_mb=1024, pids=64, max_output_tokens=512), start=Mock(return_value={'containerId': 'a' * 64, 'orxSocket': '/unused.sock', 'projectId': 'project_original'}),
             stop=Mock(return_value={'containerId': 'a' * 64, 'stopped': True, 'status': 'STOPPED', 'proofKind': 'docker-state-exited'}))
         self.launcher.reclaim = Mock(return_value={'reclaimed': True, 'containerId': 'a' * 64})

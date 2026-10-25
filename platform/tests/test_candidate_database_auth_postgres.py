@@ -72,7 +72,8 @@ class CandidateDatabaseAuthPostgresTests(unittest.TestCase):
         self.application = publish_research_application(self.state, target_ref='evaluator',
             comparison_manifest=self.manifest, author='manager', adapter_suffix='-evaluator')
         service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
-            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
+            {digest(self.manifest['evaluator']): 'evaluator'}, research=self.state['research'],
+            checkpoint_reader=self.checkpoints.identity)
         evaluation = self.run_stage(lambda owner, task, lease:
             self.portal.call(service.verify, owner, self.evaluation_contract))
         root = self.work.parent / 'ephemeral-auth-test'; root.mkdir(mode=0o700)

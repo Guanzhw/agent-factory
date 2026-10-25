@@ -1,5 +1,6 @@
 """Declared personal tools through real PG/Agno/vault; no provider network IO."""
 import asyncio
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -129,23 +130,38 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
                 {self.adapter.descriptor.credential_provider_id: origin}))
         self.client = None
         self.start()
-        self.addCleanup(self.stop)
         if self.pause:
             self.addCleanup(self.pause[1].set)
         self.publish()
 
     def start(self):
-        self.app = create_app(self.settings)
-        self.state = self.app.app.state.factory
-        self.store, self.auth = self.state['store'], self.state['auth']
-        self.addCleanup(self.store.engine.dispose)
-        self.addCleanup(self.store.native_db.db_engine.dispose)
-        self.client = TestClient(self.app).__enter__()
+        if getattr(self, '_generation_stack', None) is not None:
+            raise RuntimeError('Stop the current fixture generation before restarting')
+        if not getattr(self, '_generation_cleanup_registered', False):
+            # Register before entering lifespan so partial startup also has an
+            # idempotent case-level fallback; never retain per-generation engines.
+            self.addCleanup(self.stop)
+            self._generation_cleanup_registered = True
+        self.client = None
+        with ExitStack() as generation:
+            self.app = create_app(self.settings)
+            self.state = self.app.app.state.factory
+            self.store, self.auth = self.state['store'], self.state['auth']
+            generation.callback(self.store.engine.dispose)
+            generation.callback(self.store.native_db.db_engine.dispose)
+            # LIFO: lifespan/worker exit must finish before either pool disposal.
+            client = generation.enter_context(TestClient(self.app))
+            self._generation_stack = generation.pop_all()
+            self.client = client
 
     def stop(self):
-        if self.client is not None:
-            self.client.__exit__(None, None, None)
-            self.client = None
+        generation = getattr(self, '_generation_stack', None)
+        self._generation_stack = None
+        self.client = None
+        if generation is not None:
+            # The stack owns the original engines even if a test has replaced
+            # self.store with separately reopened services for receipt checks.
+            generation.close()
 
     def request(self, method, path, body=None, *, owner='alice', expected=200):
         response = self.client.request(method, '/api/factory' + path, json=body,

@@ -3,7 +3,6 @@
 No new queue, native ticket, provider launch or authority grant is created here.
 The operator derives variant identity; the native parent remains the mandate.
 """
-from .services import services_for
 from copy import deepcopy
 import inspect
 import re
@@ -56,8 +55,9 @@ def validate_source(plan: Any, envelope: Any):
 
 
 class RemoteScientificOrigin:
-    def __init__(self, store, auth, *, handoff_client, project_validator, project_bindings=None):
+    def __init__(self, store, auth, *, research, handoff_client, project_validator, project_bindings=None):
         require(callable(project_validator))
+        self.research = research.require_store(store)
         self.store, self.auth = store, auth
         self.handoff, self.project_validator = handoff_client, project_validator
         self.project_bindings: dict[str, Any] = deepcopy(project_bindings or {})
@@ -105,8 +105,8 @@ class RemoteScientificOrigin:
         ticket = self.store.lifecycle_observer._binding(actual)
         require(ticket and ticket['status'] == ticket['persistedRunStatus'] == 'paused')
         context = SimpleNamespace(run_context=self.store.process_runtime._context(actual))
-        preset = services_for(self.store).autoresearch.current(context)
-        session = services_for(self.store).autoresearch.row(owner, actual['id'])['body']
+        preset = self.research.autoresearch.current(context)
+        session = self.research.autoresearch.row(owner, actual['id'])['body']
         require(type(session['deadline']) in (int, float) and time.time() < session['deadline']
                 and any(digest(candidate) == digest(placement['candidate']) for candidate in session['candidates'].values()))
         plan = self.store.plan(actual['plan_id'], owner)

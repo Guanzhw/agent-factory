@@ -118,7 +118,7 @@ class AutoResearchRuntime:
         self._stop_proof = False
         self._stop_receipt: dict[str, Any] | None = None
         self._stop_recorded = False
-        self._model = ORXResearchModel(ctx)
+        self._model = ORXResearchModel(ctx, research=service.research)
         self.broker = ORXResearchBroker(capability=self.capability,
             session_id=digest({'task': ctx.run_context.session_id, 'run': ctx.run_context.run_id}),
             credential=credential, current_authority=self._broker_authority,

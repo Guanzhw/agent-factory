@@ -11,6 +11,27 @@ FAST_PYTHON_TESTS = {
         'test_remote_v2_bindings',
         'test_remote_v2_authority',
     ),
+    'shared_mcp_authority_regressions': (
+        'test_application_closure_authority.BoundedApplicationClosureTests',
+        'test_personal_mcp_callbacks',
+        'test_mcp_diagnostic_custody',
+        'test_mcp_phase_ring',
+        'test_native_fixture_lifecycle',
+        'test_personal_mcp_teardown_auth',
+    ),
+    'bounded_research_iterations': (
+        'test_research_iterations',
+        'test_research_iteration_driver',
+        'test_research_iteration_recipe',
+        'test_research_iteration_api',
+        'test_research_iteration_retirement',
+        'test_research_iteration_revocation_driver',
+        'test_native_workflow_bridge',
+    ),
+    'application_instance_ownership': (
+        'test_application_runtime.ApplicationRuntimeTests',
+        'test_application_assembly.ApplicationAssemblyTests',
+    ),
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',
@@ -64,6 +85,14 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'fresh_bounded_material_authority': (
+        'test_material_governance_bulk_postgres',
+    ),
+    'shared_local_budget_commitments': (
+        'test_local_budget_scopes_postgres',
+        'test_local_budget_scope_boundaries_postgres',
+        'test_research_iteration_retirement_postgres',
+    ),
     'history_background_finalization': (
         'test_task_history_postgres.TaskHistoryPostgresTests.test_z_native_completion_waits_for_background_finalization_without_read_side_effects',
     ),

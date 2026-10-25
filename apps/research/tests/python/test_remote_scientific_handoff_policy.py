@@ -1,6 +1,5 @@
 """Origin receipt admission with real validators; synthetic transport/SQL only."""
-from research_services_fixture import with_research_services
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from contextvars import ContextVar
 from copy import deepcopy
 from types import SimpleNamespace
@@ -45,13 +44,15 @@ class ScientificHandoffPolicyTests(unittest.TestCase):
         self.receipt['scientificEvidence'] = project_scientific_evidence(self.receipt, scope=self.scope)
         self.conn = Mock()
         self.conn.execute.return_value.mappings.return_value.first.side_effect = lambda: deepcopy(self.row)
-        self.store = with_research_services(SimpleNamespace(_connection=ContextVar('receipt-connection', default=None), engine=Mock(), observed=Mock(), task=Mock()), remote_scientific=SimpleNamespace(validate_received_native=Mock()))
+        self.store = SimpleNamespace(_connection=ContextVar('receipt-connection', default=None), engine=Mock(), observed=Mock(), task=Mock())
+        self.research = ResearchServices(self.store, installed=True,
+            remote_scientific=SimpleNamespace(validate_received_native=Mock()))
         self.store.engine.begin.return_value.__enter__ = Mock(return_value=self.conn)
         self.store.engine.begin.return_value.__exit__ = Mock(return_value=False)
         self.store.transaction = lambda: Store.transaction(self.store)
         self.client = object.__new__(ResearchHandoffClient)
         self.client.store = self.store
-        self.client.scientific_service = services_for(self.store).remote_scientific
+        self.client.scientific_service = self.research.remote_scientific
 
     def save(self):
         return self.client._save_receipt(self.row, self.target, self.receipt)
@@ -60,7 +61,7 @@ class ScientificHandoffPolicyTests(unittest.TestCase):
         def check(*args):
             with self.store.transaction() as borrowed:
                 self.assertIs(borrowed, self.conn)
-        services_for(self.store).remote_scientific.validate_received_native.side_effect = check
+        self.research.remote_scientific.validate_received_native.side_effect = check
         self.save()
         self.store.engine.begin.assert_called_once()
         self.store.observed.assert_called_once()
@@ -94,7 +95,7 @@ class ScientificHandoffPolicyTests(unittest.TestCase):
         self.store.observed.assert_not_called()
 
     def test_native_pin_denial_restores_connection_and_never_observes_release(self):
-        services_for(self.store).remote_scientific.validate_received_native.side_effect = HTTPException(409, 'PIN_CHANGED')
+        self.research.remote_scientific.validate_received_native.side_effect = HTTPException(409, 'PIN_CHANGED')
         with self.assertRaises(HTTPException): self.save()
         self.assertIsNone(self.store._connection.get())
         self.store.observed.assert_not_called()

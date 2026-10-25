@@ -4,7 +4,6 @@ Three phases remain on one pinned receiver project. A lost dispatch reply never
 creates a replacement. Final results are re-read through authenticated handoff
 custody, not accepted from provider completion flags.
 """
-from .services import services_for
 import asyncio
 from copy import deepcopy
 import hashlib
@@ -35,12 +34,15 @@ async def resolved(value):
 class AutoResearchRemoteChildren:
     _parent = AutoResearchChildren._parent
 
-    def __init__(self, store, auth, service, *, target_ref, project_id, project_pin, manifest,
+    def __init__(self, store, auth, service, *, research=None, target_ref, project_id, project_pin, manifest,
                  phase_evidence_reader=None, poll_seconds=.1):
         require(all(type(value) is str and 1 <= len(value) <= 200 for value in (target_ref, project_id)))
         require(type(project_pin) is str and re.fullmatch('[a-f0-9]{64}', project_pin))
         require(type(poll_seconds) in (int, float) and .01 <= poll_seconds <= 1)
         require(phase_evidence_reader is None or callable(phase_evidence_reader))
+        research = service.research if research is None else research
+        require(research is service.research)
+        self.research = research.require_store(store)
         self.store, self.auth, self.service = store, auth, service
         self.target_ref, self.project_id, self.project_pin = target_ref, project_id, project_pin
         self.manifest = validate_manifest(manifest)
@@ -116,7 +118,7 @@ class AutoResearchRemoteChildren:
         if self.reader is not None and not cleanup:
             observed = await resolved(self.reader(pin['ownerId'], child['id']))
         else:
-            observed = await services_for(self.store).remote_scientific.reconcile_phase(
+            observed = await self.research.remote_scientific.reconcile_phase(
                 pin['ownerId'], child['id'], cleanup=cleanup)
         require(type(observed) is dict and set(observed) == {'scope', 'receipt', 'status', 'allStopped'}
             and type(observed['allStopped']) is bool)
@@ -213,17 +215,17 @@ class AutoResearchRemoteChildren:
                 while True:
                     original = self._bound(ctx); body = deepcopy(original)
                     original_child = self._child(original, phase)
-                    scientific = services_for(self.store).remote_scientific
+                    scientific = self.research.remote_scientific
                     if scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
                         try:
-                            await services_for(self.store).remote_scientific.start_phase(task['owner_id'], original_child['id'])
+                            await self.research.remote_scientific.start_phase(task['owner_id'], original_child['id'])
                         except HTTPException as error:
                             if (error.status_code != 503 or error.detail !=
                                     'REMOTE_ACK_UNKNOWN: read the original owner-bound receipt'):
                                 raise
                             # This read validates the persisted original scope, receipt
                             # and native identity. It cannot grant or replay a dispatch.
-                            if services_for(self.store).remote_scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
+                            if self.research.remote_scientific.drive_outcome(task['owner_id'], original_child['id']) is None:
                                 raise
                     observed, evidence = await self._observe(body, phase)
                     require(observed['status'] not in {'failed', 'cancelled', 'canceled'})
@@ -257,7 +259,7 @@ class AutoResearchRemoteChildren:
                     stopped = True
                     for phase in body['phases']:
                         child = self._child(body, phase)
-                        await resolved(services_for(self.store).remote_scientific.cancel_original(run.user_id, child['id']))
+                        await resolved(self.research.remote_scientific.cancel_original(run.user_id, child['id']))
                         observed, _ = await self._observe(body, phase, cleanup=True)
                         positive = observed['allStopped'] is True and observed['status'] in {'completed', 'failed', 'cancelled', 'canceled'}
                         if phase != 'preparation':

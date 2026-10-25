@@ -6,7 +6,6 @@ Operator phase assembly authenticates concrete source/input-bound providers; it 
 completion booleans. Existing stores independently verify artifacts and evaluation.
 """
 from __future__ import annotations
-from .services import services_for
 
 import asyncio
 from copy import deepcopy
@@ -52,7 +51,7 @@ def positive_lease(lease: dict[str, Any], task: dict[str, Any], *, gpu):
 
 
 class AutoResearchChildren:
-    def __init__(self, store, auth, service, *, phase_config, preparation, checkpoints, poll_seconds=.1):
+    def __init__(self, store, auth, service, *, research=None, phase_config, preparation, checkpoints, poll_seconds=.1):
         require(callable(phase_config) and callable(getattr(phase_config, 'register_phase', None))
                 and callable(getattr(phase_config, 'verify_phase', None))
                 and callable(getattr(phase_config, 'verify_authority', None))
@@ -60,6 +59,9 @@ class AutoResearchChildren:
                 and callable(getattr(phase_config, 'evaluation_service', None))
                 and callable(getattr(phase_config, 'phase_target', None))
                 and callable(getattr(phase_config, 'restore_phase', None)) and type(poll_seconds) in {int, float} and .01 <= poll_seconds <= 1)
+        research = service.research if research is None else research
+        require(research is service.research)
+        self.research = research.require_store(store)
         self.store, self.auth, self.service = store, auth, service
         self.phase_config, self.preparation, self.checkpoints = phase_config, preparation, checkpoints
         self.poll_seconds = poll_seconds
@@ -270,7 +272,7 @@ class AutoResearchChildren:
 
     async def _drive(self, ctx, phase, entry):
         owner, parent = ctx.run_context.user_id, ctx.run_context.session_id
-        runtime = self.store.process_runtime if phase == 'preparation' else services_for(self.store).research_runtime
+        runtime = self.store.process_runtime if phase == 'preparation' else self.research.research_runtime
         while True:
             self._bound(ctx)
             child = self._child(owner, parent, entry)
@@ -442,7 +444,7 @@ class AutoResearchChildren:
                 require(self.store.process_runtime.resources._target_fingerprint(target) == entry['targetFingerprint'])
                 self._verify_phase(ctx, phase, body, target)
                 continue
-            runtime = services_for(self.store).research_runtime
+            runtime = self.research.research_runtime
             original = runtime._original(child['id']); require(original is not None)
             lease = runtime.resources.inspect(owner, original['lease_id'])
             positive_lease(lease, child, gpu=phase != 'preparation')
