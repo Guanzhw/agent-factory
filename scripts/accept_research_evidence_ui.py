@@ -99,13 +99,10 @@ def scenario(browser, origin, output, mode, identity, viewport, state, material)
         else:
             console_errors.append({'text': message.text, 'url': url.removeprefix(origin)})
     page.on('console', console)
-    login_name = '选择开发测试身份' if mode == 'demo' else '使用企业账号登录'
+    login_name = '使用企业账号登录'
     def login(owner):
-        if identity:
-            identity.subject = 'subject-' + owner
+        identity.subject = 'subject-' + owner
         page.get_by_role('button', name=login_name, exact=True).click()
-        if mode == 'demo':
-            page.locator(f'button[name="persona"][value="{owner}"]').click()
         expect(page.locator('.rw-identity')).to_be_visible()
         assert context.request.get(origin + '/api/factory/session').json()['id'] == owner
     def post(path, value, expected):
@@ -230,7 +227,7 @@ def scenario(browser, origin, output, mode, identity, viewport, state, material)
         assert context.request.get(origin + '/api/factory/research/deliveries/' + delivery_id + '/download').status == 404
         page.screenshot(path=str(output / 'withdrawn-delivery.png'), full_page=True)
         association_evidence = None
-        if mode != 'demo':
+        if mode == 'mobile':
             state['application_content'].set_visibility('alice', manifest['recordIds'][0], 'team', 'browser-restore-terminal')
             page.locator('.rw-identity > button').click()
             page.get_by_role('button', name='退出登录', exact=True).click()
@@ -293,24 +290,19 @@ def run_mode(browser, args, mode):
         app_socket = listener()
         stack.callback(app_socket.close)
         origin = 'https://127.0.0.1:' + str(app_socket.getsockname()[1])
-        identity = None
-        options = {'development_mock_login': True, 'development_public_origin': origin} if mode == 'demo' else {}
-        if mode != 'demo':
-            idp_socket = listener(); stack.callback(idp_socket.close)
-            identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
-            options['browser_oidc'] = identity.config()
-        settings = settings_for(database.url, scratch / 'workspace', demo=mode == 'demo',
+        idp_socket = listener(); stack.callback(idp_socket.close)
+        identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
+        settings = settings_for(database.url, scratch / 'workspace',
             jwt_key='synthetic-research-browser-signing-key-at-least-32bytes', web_directory=args.dist.resolve(),
-            owner_model_transport_factory=lambda: httpx.MockTransport(model_wire), **options)
+            owner_model_transport_factory=lambda: httpx.MockTransport(model_wire), browser_oidc=identity.config())
         app = create_app(settings); state = factory_state(app); store = state['store']
         stack.callback(store.engine.dispose); stack.callback(store.native_db.db_engine.dispose)
         stack.callback(store.dispose_root_locks)
-        if identity:
-            state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(),
-                transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
-            for owner in ('alice', 'bob'):
-                state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
-            serve(stack, identity.app, idp_socket, certificate, key)
+        state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(),
+            transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
+        for owner in ('alice', 'bob'):
+            state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
+        serve(stack, identity.app, idp_socket, certificate, key)
         serve(stack, app, app_socket, certificate, key)
         script = scratch / 'experiment.py'; script.write_text(PROGRAM)
         (scratch / 'private.txt').write_text('UNSELECTED_PRIVATE_CANARY')
@@ -325,7 +317,7 @@ def run_mode(browser, args, mode):
         governance.publish('alice', tool['id'], tool['version'], 'browser-tool-publish')
         material = {**{key: tool[key] for key in ('id', 'version', 'sha256')}, 'connectionRef': connection['ref']}
         child_entered.clear(); hold_child.clear(); association_calls.clear()
-        if mode != 'demo':
+        if mode == 'mobile':
             with browser.new_context(ignore_https_errors=True) as setup_context:
                 for owner in ('alice', 'bob'):
                     model = store.personal_models.configure(owner, {'provider': 'openai-compatible', 'baseURL': 'http://localhost:9/v1', 'model': 'synthetic-association'}, 'browser-association-model')
@@ -349,10 +341,10 @@ def run_mode(browser, args, mode):
                     setup_page.close()
             prior = state['application_content'].publish('bob', ContentPublication(source={'application': 'research', 'record': 'prior-measurement', 'revision': '1'}, content={'kind': 'research.experiment.start', 'hypothesis': 'Measure the specified actual bytes', 'conditions': {'comparison': 'Measure actual bytes once; previous measurement'}}, visibility='team'), 'browser-prior-source')
             material['peerSourceId'] = prior['id']
-        viewport = {'width': 1487, 'height': 1058} if mode == 'demo' else {'width': 390, 'height': 844}
+        viewport = {'width': 1487, 'height': 1058} if mode == 'desktop' else {'width': 390, 'height': 844}
         result = scenario(browser, origin, output, mode, identity, viewport, state, material)
         return {'mode': mode, 'database': database.name, 'businessAPIsMocked': False,
-            'identity': 'development-selector' if mode == 'demo' else 'local-synthetic-oidc', 'result': result}
+            'identity': 'local-synthetic-oidc', 'result': result}
 
 
 def main():
@@ -360,13 +352,13 @@ def main():
     parser.add_argument('--database-url', required=True)
     parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--mode', choices=('demo', 'production-local', 'both'), default='both')
+    parser.add_argument('--viewport', choices=('desktop', 'mobile', 'both'), default='both')
     args = parser.parse_args(); args.output.mkdir(parents=True, exist_ok=False)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', headless=True)
         try:
             results = []
-            for mode in (('demo', 'production-local') if args.mode == 'both' else (args.mode,)):
+            for mode in (('desktop', 'mobile') if args.viewport == 'both' else (args.viewport,)):
                 result = run_mode(browser, args, mode)
                 (args.output / mode / 'evidence.json').write_text(json.dumps(result, indent=2))
                 results.append(result)

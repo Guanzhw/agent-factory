@@ -37,12 +37,8 @@ def run(browser, args, mode):
         certificate, key = private_tls_files(scratch / 'tls')
         sock = listener(); stack.callback(sock.close)
         origin = 'https://127.0.0.1:' + str(sock.getsockname()[1])
-        identity = None
-        options = {'development_mock_login': True, 'development_public_origin': origin} if mode == 'demo' else {}
-        if mode != 'demo':
-            idp = listener(); stack.callback(idp.close)
-            identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
-            options['browser_oidc'] = identity.config()
+        idp = listener(); stack.callback(idp.close)
+        identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp.getsockname()[1]), redirect_uri=origin + '/api/factory/auth/callback')
         calls, training, source_ids = [], [], []
         def train(ctx):
             training.append(True)
@@ -56,19 +52,18 @@ def run(browser, args, mode):
             calls.append({'toolsPresent': False, 'bothSharedInputsPresent': True})
             answer = {'answer': 'Measurement evidence is limited; no training was started.', 'citations': source_ids[:1], 'evidenceLevel': 'agent_analysis'}
             return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': json.dumps(answer)}}], 'usage': {'prompt_tokens': 15, 'completion_tokens': 8, 'total_tokens': 23}})
-        settings = Settings(db_url=db.url, workspace=scratch / 'workspace', demo=mode == 'demo', max_workers=1,
+        settings = Settings(db_url=db.url, workspace=scratch / 'workspace', max_workers=1,
             jwt_key='synthetic-browser-qa-signing-key-at-least-32bytes', web_directory=args.dist.resolve(),
             runtime_adapters=[AdapterRegistration('tool', 'qa-browser-training-trap', '1', train, tool_name='train')],
-            owner_model_transport_factory=lambda: httpx.MockTransport(wire), **options)
+            owner_model_transport_factory=lambda: httpx.MockTransport(wire), browser_oidc=identity.config())
         app = create_app(settings); state = factory_state(app); store = state['store']
         stack.callback(store.engine.dispose); stack.callback(store.native_db.db_engine.dispose); stack.callback(store.dispose_root_locks)
-        if identity:
-            state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(), transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
-            for owner in ('alice', 'bob'):
-                state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
-            serve(stack, identity.app, idp, certificate, key)
+        state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(), transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
+        for owner in ('alice', 'bob'):
+            state['auth'].directory.upsert(owner, name='Synthetic ' + owner)
+        serve(stack, identity.app, idp, certificate, key)
         serve(stack, app, sock, certificate, key)
-        context = browser.new_context(ignore_https_errors=True, viewport={'width': 1487, 'height': 1058} if mode == 'demo' else {'width': 390, 'height': 844}, service_workers='block')
+        context = browser.new_context(ignore_https_errors=True, viewport={'width': 1487, 'height': 1058} if mode == 'desktop' else {'width': 390, 'height': 844}, service_workers='block')
         stack.callback(context.close)
         page = context.new_page()
         errors, console_errors, api = [], [], []
@@ -84,9 +79,8 @@ def run(browser, args, mode):
             else: console_errors.append(item)
         page.on('console', console)
         def login(owner):
-            if identity: identity.subject = 'subject-' + owner
-            page.get_by_role('button', name='选择开发测试身份' if mode == 'demo' else '使用企业账号登录', exact=True).click()
-            if mode == 'demo': page.locator(f'button[name="persona"][value="{owner}"]').click()
+            identity.subject = 'subject-' + owner
+            page.get_by_role('button', name='使用企业账号登录', exact=True).click()
             expect(page.locator('.rw-identity')).to_be_visible()
             assert context.request.get(origin + '/api/factory/session').json()['id'] == owner
         def logout():
@@ -95,14 +89,14 @@ def run(browser, args, mode):
             if dialog.count(): dialog.get_by_role('button', name='关闭', exact=True).click()
             page.locator('.rw-identity > button').click()
             page.get_by_role('button', name='退出登录', exact=True).click()
-            expect(page.get_by_role('button', name='选择开发测试身份' if mode == 'demo' else '使用企业账号登录', exact=True)).to_be_visible()
+            expect(page.get_by_role('button', name='使用企业账号登录', exact=True)).to_be_visible()
         def post(path, value, status=200):
             csrf = context.request.get(origin + '/api/factory/auth/session').json()['csrfToken']
             response = context.request.post(origin + '/api/factory' + path, data=value, headers={'X-Factory-CSRF': csrf, 'Origin': origin})
             assert response.status == status, (path, response.status, response.text())
             return response.json()
         def assistant_panel():
-            if mode != 'demo': expect(page.get_by_role('dialog', name='研究助手', exact=True)).to_be_visible()
+            if mode == 'mobile': expect(page.get_by_role('dialog', name='研究助手', exact=True)).to_be_visible()
         try:
             page.goto(origin + '/?tab=research&researchView=assistant')
             login('bob')
@@ -165,7 +159,7 @@ def run(browser, args, mode):
             expect(page.get_by_role('heading', name='原研究依据 · 尚未独立验证', exact=True)).to_be_visible()
             page.screenshot(path=str(output / 'private-answer-source.png'), full_page=True)
             deep_link = page.url
-            if mode != 'demo': page.get_by_role('dialog').get_by_role('button', name='关闭', exact=True).click()
+            if mode == 'mobile': page.get_by_role('dialog').get_by_role('button', name='关闭', exact=True).click()
             page.get_by_role('button', name='资源', exact=True).click()
             page.get_by_role('button', name='返回 AutoResearch', exact=True).click()
             assert page.evaluate("new URL(location.href).searchParams.get('researchQuestion')") == question_id
@@ -186,7 +180,7 @@ def run(browser, args, mode):
             assert len(store.tasks('bob')) == 1 and store.tasks('alice') == []
             assert store.sql('SELECT * FROM af_delegation_links') == []
             assert not errors and not console_errors, (errors, console_errors)
-            return {'mode': mode, 'database': db.name, 'assistantId': bob_id, 'questionId': question_id, 'taskId': result['delivery']['taskId'], 'sourceIds': source_ids, 'configurationRevision': 2, 'modelCalls': len(calls), 'trainingDispatches': 0, 'childLinks': 0, 'pageErrors': errors, 'consoleErrors': console_errors, 'expectedConsole': expected_console, 'apiResponses': api, 'businessAPIsMocked': False, 'modelConfiguredVia': 'actual core HTTP fixture, not model configuration UI', 'evidenceCreatedVia': 'actual content service fixture, not research publication UI', 'identity': 'development-selector' if mode == 'demo' else 'local synthetic HTTPS OIDC', 'realProviderOrGPU': False, 'lateResponseOwnerIsolation': 'deterministic UI tests; not timing-injected into browser'}
+            return {'mode': mode, 'database': db.name, 'assistantId': bob_id, 'questionId': question_id, 'taskId': result['delivery']['taskId'], 'sourceIds': source_ids, 'configurationRevision': 2, 'modelCalls': len(calls), 'trainingDispatches': 0, 'childLinks': 0, 'pageErrors': errors, 'consoleErrors': console_errors, 'expectedConsole': expected_console, 'apiResponses': api, 'businessAPIsMocked': False, 'modelConfiguredVia': 'actual core HTTP fixture, not model configuration UI', 'evidenceCreatedVia': 'actual content service fixture, not research publication UI', 'identity': 'local synthetic HTTPS OIDC', 'realProviderOrGPU': False, 'lateResponseOwnerIsolation': 'deterministic UI tests; not timing-injected into browser'}
         except BaseException:
             page.screenshot(path=str(output / 'first-failure.png'), full_page=True)
             (output / 'failure-page.txt').write_text(page.locator('body').inner_text())
@@ -199,13 +193,13 @@ def main():
     parser.add_argument('--database-url', required=True)
     parser.add_argument('--dist', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--mode', choices=('demo', 'production-local', 'both'), default='both')
+    parser.add_argument('--viewport', choices=('desktop', 'mobile', 'both'), default='both')
     args = parser.parse_args(); args.output.mkdir(parents=True, exist_ok=False)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', headless=True)
         try:
             results = []
-            for mode in (('demo', 'production-local') if args.mode == 'both' else (args.mode,)):
+            for mode in (('desktop', 'mobile') if args.viewport == 'both' else (args.viewport,)):
                 result = run(browser, args, mode)
                 (args.output / mode / 'evidence.json').write_text(json.dumps(result, indent=2))
                 results.append(result)

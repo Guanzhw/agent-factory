@@ -66,7 +66,7 @@ def main():
         origin = "https://127.0.0.1:" + str(app_socket.getsockname()[1])
         issuer = "https://127.0.0.1:" + str(idp_socket.getsockname()[1])
         identity = BrowserIdentityFixture(issuer=issuer, redirect_uri=origin + "/api/factory/auth/callback")
-        settings = Settings(db_url=database.url, workspace=scratch / "workspace", demo=False,
+        settings = Settings(db_url=database.url, workspace=scratch / "workspace",
             jwt_key="synthetic-browser-acceptance-signing-key-at-least-32bytes",
             browser_oidc=identity.config(), max_workers=1)
         app = create_app(settings)

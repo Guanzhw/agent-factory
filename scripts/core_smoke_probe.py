@@ -88,7 +88,7 @@ async def probe(timeout, summary):
     import uvicorn
 
     with ExitStack() as cleanup, TemporaryDirectory(prefix="workspace-", dir=Path.cwd()) as workspace, socket.socket() as listener:
-        settings = Settings(db_url=os.environ["FACTORY_CORE_SMOKE_DATABASE_URL"], demo=False,
+        settings = Settings(db_url=os.environ["FACTORY_CORE_SMOKE_DATABASE_URL"],
             jwt_key=secrets.token_urlsafe(48), workspace=Path(workspace), max_workers=1,
             web_directory=Path(workspace) / "no-web")
         if (settings.runtime_adapters or settings.usage_pricing or settings.native_workflows
