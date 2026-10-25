@@ -123,3 +123,9 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 #### Scenario: Original operation recovery does not become preflight or redispatch
 - **WHEN** an exact original launch is replayed or an UNKNOWN operation is inspected after restart
 - **THEN** the original identity/receipt and input-conflict checks apply without a new helper preflight or submit, even if the helper is currently unavailable; original holds remain until positive evidence
+
+#### Scenario: Output and original receipt must fit the supported archival contract
+- **WHEN** a new SSH launch uses a local archival allowance below 65536 bytes, or its guardian stdout cap exceeds the smaller of the helper's 256 KiB cap and the local allowance
+- **THEN** it fails with SSH_PROCESS_OUTPUT_LIMIT_UNSUPPORTED before target registration, preflight, operation intent or submit, without silently truncating output
+- **AND** exact supported upper bounds remain admissible and retain the existing complete output/receipt archive before release; a cap one byte above is rejected
+- **AND** an original UNKNOWN replay does not acquire this new-launch restriction or create a replacement operation
