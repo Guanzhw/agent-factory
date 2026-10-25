@@ -234,6 +234,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .assistant_endpoints import AssistantEndpoints, assistant_endpoints_router
     assistant_endpoints = AssistantEndpoints(store, auth, applications)
     base.include_router(assistant_endpoints_router(auth, assistant_endpoints))
+    from .application_content import ApplicationContent, application_content_router
+    application_content = ApplicationContent(store, auth, connections.sharing)
+    base.include_router(application_content_router(auth, application_content))
     base.include_router(composition_router(auth, composition))
     base.include_router(plan_policy_router(auth, policy))
     base.include_router(scheduling_router(auth, schedules))
@@ -356,7 +359,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     native.state.factory.update(credential_vault=credential_vault, resources=resources,
         resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
         factory_api=factory_api, assistant_endpoints=assistant_endpoints,
-        assistant_messages=assistant_messages, http_app=native)
+        assistant_messages=assistant_messages, application_content=application_content, http_app=native)
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:
