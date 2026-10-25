@@ -1,5 +1,9 @@
 # Design
 
+## Generic budget completion ownership
+
+Direct P2 messages have no P3 delivery scanner, so a budgeted ordinary root must not become terminal while its scope allocation remains held forever. Reuse the existing owned-native completion transaction: when no application completion callback exists but the original root has a bound allocation, core supplies a budget-only completion context. The existing observer marks stopped facts, settles the original task tree and usage, and commits terminal/reclaim together. HELD rolls the transaction back and retains the same root for the next observer tick. An application's existing completion callback still takes precedence and retains its outbox semantics. No new scanner, callback registry, queue, receipt-side mutation or remote stop assumption is introduced; membership withdrawal does not block original cleanup.
+
 ## Context
 
 参见proposal。P2消息有固定recipient、endpoint和sender幂等command；原应用request为`application-start:assistant-message:<messageId>`。LocalBudgetScopes已有allocate、bind_request、request_allocation/request_delivery与reserve原request/plan约束。endpoint配置当前创建后不修改，只有enable/disable。

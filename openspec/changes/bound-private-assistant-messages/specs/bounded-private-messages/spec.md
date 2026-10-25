@@ -1,5 +1,13 @@
 ## ADDED Requirements
 
+### Requirement: Ordinary budgeted roots finish through existing atomic settlement
+The system SHALL settle an original allocation through the existing native completion transaction even when no application completion callback is registered.
+
+#### Scenario: Stopped root retains an unresolved budget hold
+- **WHEN** the original native task tree is positively stopped but usage settlement remains HELD
+- **THEN** terminal/reclaim and settlement roll back together and the same observer can finish the original root later
+- **AND** no new dispatch, receipt-side mutation or application-specific completion owner is required
+
 ### Requirement: 接收者明确的有限消息预算
 
 系统 SHALL 允许owner为endpoint固定配置自己的scope/caps/deadline；每条新消息沿原request最多分配一个allocation。未配置endpoint保留已有行为，不为旧消息回填预算。
