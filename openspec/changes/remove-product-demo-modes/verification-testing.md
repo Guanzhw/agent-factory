@@ -276,3 +276,22 @@ root lock, invokes owned-runtime/workflow cleanup, native cancel, and group
 inspection. Source alone does not identify which stage consumed this timeout.
 The MCP callback chain still rechecks current authorization around credentials;
 no authority cache, callback removal, GC change or retry is proposed.
+
+### MCP diagnostic instrumentation prepared (not yet run)
+
+`test_reusable_tool_operations_postgres.py` retains at most 4096 callback
+metadata entries instead of 256, avoiding the observed fifth-run omission.
+Test-only `FACTORY_MCP_DIAGNOSTICS=1` additionally records a rolling, bounded
+8192-event window (with a discard count): actual pool-connect entry/exit,
+checkout/checkin on Store/native engines, callback SQL execution durations,
+SDK initialize/list-tools/call-tool boundaries and exception class. Callback
+thread CPU counters distinguish CPU work from wall-clock waits. No SQL text,
+parameters, HTTP body/headers, credential values or frame locals are recorded.
+
+During each original 20-second native wait, a test-owned timer at 15 seconds
+captures all Python thread stacks and schedules task-stack snapshots on the
+native and MCP server loops. The timer is canceled/joined when that wait ends;
+no test deadline, timeout, assertion, GC setting, production callback or retry
+policy changes. Pool and session wrappers invoke the original operation once.
+This instrumentation is observation overhead, not a performance benchmark;
+a successful instrumented run cannot close the prior timeout's root cause.

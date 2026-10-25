@@ -5,6 +5,7 @@ not an OS process crash. No resolver-only substitute for native workflow evidenc
 """
 import asyncio
 from concurrent.futures import Future
+from collections import deque
 from contextvars import ContextVar
 from copy import deepcopy
 import json
@@ -14,6 +15,7 @@ import sys
 from tempfile import TemporaryDirectory
 import threading
 import time
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -46,15 +48,63 @@ class CallbackTimings:
     """Bounded metadata only; wrap real callback execution without replacing it."""
     def __init__(self):
         self.rows = []
+        self.events = deque(maxlen=8192)
+        self.events_dropped = 0
+        self.detailed = os.environ.get("FACTORY_MCP_DIAGNOSTICS") == "1"
         self.dropped = 0
         self.lock = threading.Lock()
         self.active = ContextVar('reusable-mcp-callback-timing', default=None)
 
+    def record(self, phase, **details):
+        if self.detailed:
+            with self.lock:
+                if len(self.events) == self.events.maxlen:
+                    self.events_dropped += 1
+                self.events.append({'phase': phase, 'at': time.monotonic(),
+                    'thread': threading.get_ident(), **details})
+
+    def stacks(self, loops, run_id):
+        def frame_rows(frames):
+            return [{'file': frame.filename, 'line': frame.lineno, 'function': frame.name}
+                    for frame in frames]
+        threads = {str(identifier): frame_rows(traceback.extract_stack(frame))
+                   for identifier, frame in sys._current_frames().items()}
+        self.record('thread-stacks', runId=run_id, threads=threads)
+
+        def tasks(loop, label):
+            self.record('asyncio-stacks', runId=run_id, loop=label, tasks=[{
+                'done': task.done(), 'cancelled': task.cancelled(),
+                'frames': [{'file': frame.f_code.co_filename, 'line': frame.f_lineno,
+                            'function': frame.f_code.co_name} for frame in task.get_stack()]
+            } for task in asyncio.all_tasks(loop)])
+        for label, loop in loops:
+            loop.call_soon_threadsafe(tasks, loop, label)
+
     def attach_sql(self, engine, cleanup):
+        if self.detailed:
+            label = str(id(engine.pool))
+            original_connect = engine.pool.connect
+            def connect():
+                self.record('pool-acquire-enter', pool=label)
+                try:
+                    return original_connect()
+                finally:
+                    self.record('pool-acquire-exit', pool=label)
+            replacement = patch.object(engine.pool, 'connect', connect)
+            replacement.start()
+            cleanup(replacement.stop)
+            def checkout(*args):
+                self.record('pool-checkout', pool=label)
+            def checkin(*args):
+                self.record('pool-checkin', pool=label)
+            for name, callback in [('checkout', checkout), ('checkin', checkin)]:
+                event.listen(engine.pool, name, callback)
+                cleanup(event.remove, engine.pool, name, callback)
         def before(conn, cursor, statement, parameters, context, executemany):
             row = self.active.get()
             if row is not None:
                 context._reusable_callback_timing = (row, time.monotonic())
+                self.record('sql-enter', runId=row['runId'], callId=row['callId'])
                 with self.lock:
                     row['sqlCount'] += 1
 
@@ -63,6 +113,7 @@ class CallbackTimings:
             if timing is not None:
                 del context._reusable_callback_timing
                 row, began = timing
+                self.record('sql-exit', runId=row['runId'], callId=row['callId'], seconds=time.monotonic() - began)
                 with self.lock:
                     row['sqlSeconds'] += time.monotonic() - began
 
@@ -80,7 +131,7 @@ class CallbackTimings:
     def wrap(self, original):
         async def checked(state, callback):
             with self.lock:
-                if len(self.rows) >= 256:
+                if len(self.rows) >= 4096:
                     self.dropped += 1
                     row = None
                 else:
@@ -95,11 +146,13 @@ class CallbackTimings:
                 marker = self.active.set(row)
                 with self.lock:
                     row['startedAt'] = time.monotonic()
+                    row['threadCPUStarted'] = time.thread_time()
                 try:
                     return callback()
                 finally:
                     with self.lock:
                         row['endedAt'] = time.monotonic()
+                        row['threadCPUEnded'] = time.thread_time()
                     self.active.reset(marker)
             try:
                 return await original(state, measured)
@@ -115,7 +168,7 @@ class CallbackTimings:
     def snapshot(self, run_id):
         with self.lock:
             return {'callbacks': deepcopy([row for row in self.rows if row['runId'] == run_id]),
-                    'dropped': self.dropped}
+                    'dropped': self.dropped, 'events': deepcopy(list(self.events)) if self.detailed else [], 'eventsDropped': self.events_dropped}
 
 
 class OperationModel(native.InventoryModel):
@@ -141,6 +194,15 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
     stop = native.PersonalToolNativePostgresTests.stop
     def wait(self, started, owner, *, expected='completed'):
         began = time.monotonic()
+        watcher = None
+        if self.transport == 'mcp' and self.callback_timings.detailed:
+            async def current_loop():
+                return asyncio.get_running_loop()
+            loop = self.client.portal.call(current_loop)
+            original = self.store.task(started['job']['id'], owner)
+            watcher = threading.Timer(15, self.callback_timings.stacks, args=([('native', loop), ('mcp-server', self.mcp_loop)], original['run_id']))
+            watcher.daemon = True
+            watcher.start()
         try:
             # Keep the existing 20-second native wait and terminal assertions.
             return native.PersonalToolNativePostgresTests.wait(self, started, owner, expected=expected)
@@ -176,6 +238,10 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
                 diagnostics['mcp'] = {'calls': self.mcp.calls, 'requests': len(self.mcp.requests),
                     'closed': self.mcp.closed, 'serverTaskDone': self.mcp._task.done() if self.mcp._task else None}
             raise self.failureException(str(failure) + ': ' + json.dumps(diagnostics, default=str, sort_keys=True)) from failure
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                watcher.join()
 
     def request(self, *args, **kwargs):
         result = native.PersonalToolNativePostgresTests.request(self, *args, **kwargs)
@@ -192,6 +258,21 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
         if transport == 'mcp':
             from agent_factory.personal_mcp import _InvocationState
             self.callback_timings = CallbackTimings()
+            if self.callback_timings.detailed:
+                from mcp import ClientSession
+                def observed(original, name):
+                    async def invoke(session, *args, **kwargs):
+                        self.callback_timings.record(name + '-enter')
+                        try:
+                            return await original(session, *args, **kwargs)
+                        except BaseException as error:
+                            self.callback_timings.record(name + '-error', exception=type(error).__name__)
+                            raise
+                        finally:
+                            self.callback_timings.record(name + '-exit')
+                    return invoke
+                for name in ('initialize', 'list_tools', 'call_tool'):
+                    self.enterContext(patch.object(ClientSession, name, observed(getattr(ClientSession, name), name)))
             self.enterContext(patch.object(_InvocationState, 'checked_callback',
                 self.callback_timings.wrap(_InvocationState.checked_callback)))
         self.phases = {}
@@ -207,10 +288,24 @@ class ReusableToolOperationPostgresTests(unittest.TestCase):
             self.destination = sys.executable
         else:
             self.mcp = MCPProtocolServer()
+            if self.callback_timings.detailed:
+                original_http = self.mcp._authenticated
+                async def observed_http(scope, receive, send):
+                    self.callback_timings.record('mcp-http-enter', method=scope.get('method'))
+                    async def observed_send(message):
+                        if message['type'] == 'http.response.start':
+                            self.callback_timings.record('mcp-http-response', status=message['status'])
+                        await send(message)
+                    try:
+                        await original_http(scope, receive, observed_send)
+                    finally:
+                        self.callback_timings.record('mcp-http-exit')
+                self.mcp._authenticated = observed_http
             self.mcp.tokens.update({'synthetic-operation-token-' + name: name for name in ('alice', 'bob', 'alice-second')})
             ready, stopped = Future(), threading.Event()
             errors = []
             async def serve():
+                self.mcp_loop = asyncio.get_running_loop()
                 async with self.mcp:
                     ready.set_result(None)
                     await asyncio.to_thread(stopped.wait)
