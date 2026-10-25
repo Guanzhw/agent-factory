@@ -27,4 +27,4 @@
 
 ## A04 真实循环验收补充
 
-- [ ] 在独立真实 PG/native queue 用例中覆盖双端点完成后互发事件，分别耗尽 scope 和达到 depth；断言原 lineage、唯一 allocation、终态与继续扫描不新增。保留首次运行及独立审查证据。
+- [ ] 在独立真实 PG/native queue 用例中覆盖双端点完成后互发事件，以 scope 耗尽结束循环；断言实际递增 depth、原 lineage、唯一 allocation、终态与继续扫描不新增（depth 拒绝原语复用既有独立测试）。保留首次运行及独立审查证据。
