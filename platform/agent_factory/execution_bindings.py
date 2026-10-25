@@ -305,6 +305,9 @@ class ExecutionBindings:
             expected_revision=pin.get("revision"), expected_fingerprint=pin.get("fingerprint"), expected_version=pin.get("version"),
             required_capabilities=entry.required_capabilities, task_id=getattr(context, "session_id", None), expected_adapter_ref=entry.connection_adapter_ref or spec["adapterId"])
 
+    def require_execution(self, owner, plan, context, tool):
+        return self.recheck(plan, context)
+
     def recheck(self, plan: Mapping[str, Any], context: Any = None) -> dict[str, Any]:
         owner = plan["ownerId"]
         if context is not None:
