@@ -23,7 +23,8 @@ from agent_factory_server.research import create_app
 from fixture_auth import initialize_members
 from fixture_identity import access_token
 import test_ssh_native_postgres as ssh_native
-from test_research_workflow_postgres import ResearchModel
+from agno.models.response import ModelResponse
+from test_research_workflow_postgres import ResearchModel, objects
 
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL') and sys.platform == 'linux',
@@ -34,6 +35,8 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
         self.addCleanup(self.base.doCleanups)
         self.base.start = self.start_research_host
         self.model_calls = []
+        self.child_measurement = None
+        self.root_measurement = None
         self.base.setUp()
 
     def start_research_host(self):
@@ -78,11 +81,31 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
                 result.tool_calls[0]['function']['arguments'] = json.dumps({'inputs': {'sample': 1}})
             waits = [message for message in messages if message.role == 'tool' and message.tool_name == WAIT_TOOL]
             if waits:
-                # Pass the actual native wait observation onward; do not read private
-                # artifacts or inject measurements/answers into the model fixture.
-                result.content = str(waits[-1].content)
+                observed = json.loads(waits[-1].content)['operations']
+                self.assertEqual(len(observed), 1)
+                original = observed[0]
+                self.assertTrue(original['allStopped'])
+                self.assertEqual(original['exitCode'], 0)
+                self.assertTrue(original['output']['utf8Valid'])
+                self.assertFalse(original['output']['truncated'])
+                measured = json.loads(original['output']['text'])
+                self.child_measurement = {'operationId': original['operationId'],
+                    'executionStatus': original['executionStatus'], 'metrics': measured['metrics']}
+                result.content = json.dumps(self.child_measurement)
         else:
-            result = ResearchModel(SimpleNamespace(plan={'mode': 'research'}))._response(messages)
+            observed = next((value for value in objects(messages) if 'operation' in value and 'evidenceIds' in value), None)
+            if observed:
+                original = observed['operation']['output']['result']
+                child = json.loads(original) if isinstance(original, str) else original
+                metrics = child['metrics']
+                self.assertEqual(metrics['target'], 4)
+                self.root_measurement = child
+                result = ModelResponse(role='assistant', content=json.dumps({'action': 'stop',
+                    'outcome': 'met' if metrics['value'] >= metrics['target'] else 'not_met',
+                    'reason': 'Compared actual SSH child measurement with the agreed target',
+                    'evidenceIds': observed['evidenceIds']}))
+            else:
+                result = ResearchModel(SimpleNamespace(plan={'mode': 'research'}))._response(messages)
         message = {'role': 'assistant', 'content': result.content}
         if result.tool_calls:
             message['tool_calls'] = result.tool_calls
@@ -166,6 +189,9 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
         values = {item['role']: item['value'] for item in selected}
         self.assertEqual(set(values), {'metrics', 'source', 'run_recipe'})
         self.assertEqual(values['metrics'], {'value': 3, 'target': 4})
+        self.assertEqual(self.child_measurement, self.root_measurement)
+        self.assertEqual(self.root_measurement['metrics'], values['metrics'])
+        self.assertEqual(self.root_measurement['operationId'], original['operationId'])
         self.assertNotIn('PRIVATE_SSH_STDOUT_NOT_SELECTED', json.dumps(selected))
         self.assertTrue(all(item['provenance']['operationId'] == original['operationId'] for item in selected))
         base.state['application_content'].set_visibility('alice', manifest['sourceIds'][0], 'personal', 'withdraw-ssh-evidence')

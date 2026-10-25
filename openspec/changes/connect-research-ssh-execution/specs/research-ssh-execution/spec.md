@@ -113,7 +113,7 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 #### Scenario: Published setup to original SSH evidence in real native execution
 - **WHEN** an isolated PostgreSQL test publishes research through the actual ResearchSetup API using a personal model connection and exact SSH launch/wait materials, confirms a project agreement with explicit SSH evidence selection, and starts the root
 - **THEN** the unchanged child material-subset guard admits only the declared experiment tools, the child submits one original helper process with validated dynamic inputs, and native waiting resumes the same original root/child identities
-- **AND** actual process JSON supplies selected metrics/source/recipe artifacts, a controlled model records the original experimental terminal outcome, and a second member can read/download only selected team evidence; private stdout fields remain absent and withdrawing the source removes access
+- **AND** actual process JSON supplies selected metrics/source/recipe artifacts, the child consumes actual bounded stdout from its native wait, the controlled root model compares the returned actual measurement with the declared target and records the original experimental terminal outcome, and a second member can read/download only selected team evidence; private stdout fields remain absent and withdrawing the source removes access
 - **AND** model HTTP and local SSH transport substitution are labelled synthetic; PostgreSQL, owner adapters, native queue, custody, helper subprocess, governance and artifact authority are real; no remote GPU or live provider acceptance is inferred
 
 #### Scenario: Required helper preflight is exercised by actual launch
