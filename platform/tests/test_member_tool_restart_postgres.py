@@ -1,5 +1,6 @@
 """A published member command executes in a fresh native worker without tool registration."""
 from fixture_identity import access_token
+from fixture_auth import initialize_members
 import asyncio
 import json
 import os
@@ -115,6 +116,7 @@ class MemberToolRestartPostgresTests(unittest.TestCase):
         self.app = create_app(self.settings)
         self.state = self.app.app.state.factory
         self.store, self.auth = self.state['store'], self.state['auth']
+        initialize_members(self.auth)
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.client = TestClient(self.app, base_url="https://testserver").__enter__()

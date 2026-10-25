@@ -149,6 +149,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
             self.app = create_app(self.settings)
             self.state = self.app.app.state.factory
             self.store, self.auth = self.state['store'], self.state['auth']
+            initialize_members(self.auth)
             generation.callback(self.store.engine.dispose)
             generation.callback(self.store.native_db.db_engine.dispose)
             # LIFO: lifespan/worker exit must finish before either pool disposal.

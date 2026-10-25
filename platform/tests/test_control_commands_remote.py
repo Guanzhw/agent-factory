@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Dual-database command receipts across the real guarded Factory routes."""
 import os
 import json
@@ -181,9 +182,9 @@ class RemoteControlCommandPostgresTests(unittest.TestCase):
         headers = self.headers()
         self.origin["auth"].directory.set_disabled("alice", True)
         try:
-            denied = self.origin_client.post(f"/api/factory/jobs/{task}/commands", headers=headers, json=command)
+            denied = disabled_member_request(self, self.origin, self.origin_client, 'POST', f'/api/factory/jobs/{task}/commands', headers=headers, json=command)
             self.assertEqual(denied.status_code, 403, denied.text)
-            denied_read = self.origin_client.get(f'/api/factory/jobs/{task}/commands/{command["commandId"]}', headers=headers)
+            denied_read = disabled_member_request(self, self.origin, self.origin_client, 'GET', f'/api/factory/jobs/{task}/commands/{command["commandId"]}', headers=headers)
             self.assertEqual(denied_read.status_code, 403, denied_read.text)
         finally:
             self.origin["auth"].directory.set_disabled("alice", False)

@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 from fixture_identity import access_token
 """Public product HTTP contracts with two actual apps and native PostgreSQL queues.
 
@@ -391,7 +392,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
             for method, path, json_body in (("GET", "/requests/" + body["requestId"], None),
                 ("GET", "/jobs/" + job["id"], None),
                 ("POST", f'/jobs/{job["id"]}/cancel', {}), ("POST", "/instances", body)):
-                response = self.origin_client.request(method, "/api/factory" + path, headers=headers, json=json_body)
+                response = disabled_member_request(self, self.origin, self.origin_client, method, '/api/factory' + path, headers=headers, json=json_body)
                 self.assertEqual(response.status_code, 403, response.text)
             # Real lifecycle observation persists authority loss; reading a
             # receipt cannot create another receiver task or renew execution.
@@ -484,7 +485,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         headers = self.headers()
         self.origin["auth"].directory.set_disabled("alice", True)
         try:
-            denied = self.origin_client.get("/api/factory" + path, params={"limit": 2}, headers=headers)
+            denied = disabled_member_request(self, self.origin, self.origin_client, 'GET', '/api/factory' + path, params={'limit': 2}, headers=headers)
             self.assertEqual(denied.status_code, 403, denied.text)
         finally:
             self.origin["auth"].directory.set_disabled("alice", False)

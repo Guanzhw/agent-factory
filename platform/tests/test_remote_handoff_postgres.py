@@ -1,3 +1,4 @@
+from fixture_auth import internal_headers
 from fixture_identity import access_token
 """Two actual Factory apps and isolated PostgreSQL databases; synthetic models.
 
@@ -211,8 +212,12 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         forged = self.remote_client.post("/api/factory/remote-handoffs/prepare", headers=self.headers(self.remote, "bob"),
                                          json={**self.body(row).model_dump(mode="json"), "url": "http://user-chosen.invalid"})
         self.assertEqual(forged.status_code, 422, forged.text)
-        wrong_key = self.remote_client.get("/api/factory/remote-handoffs/" + receipt["id"], headers=self.headers(self.origin, "alice"))
+        wrong_key = self.remote_client.get("/api/factory/remote-handoffs/" + receipt["id"], headers=internal_headers(self.origin_settings.jwt_key, "alice"))
         self.assertEqual(wrong_key.status_code, 401)
+        self.assertEqual(wrong_key.json(), {"detail": "OIDC_ACCESS_TOKEN_INVALID"})
+        wrong_owner = self.remote_client.get("/api/factory/remote-handoffs/" + receipt["id"],
+            headers=self.headers(self.origin, "alice"))
+        self.assertEqual(wrong_owner.status_code, 404)
 
     def test_interrupted_receiver_preparation_projects_original_reconciliation_without_review(self):
         execution = RemoteExecution(self.origin["store"], self.handoff)

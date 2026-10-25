@@ -186,3 +186,44 @@ No product timeout, authentication boundary or business assertion was relaxed.
 The historical MCP transport failure remains unresolved; neither a fast green
 run nor this browser fixture correction establishes its cause. No real external
 IdP, paid model or GPU acceptance is added by this checkpoint.
+
+## Full PostgreSQL CI follow-up (2026-10-25)
+
+Run `40223312294`, PG job `121259401464`, did **not** pass: 2068 tests,
+36 failures, 9 errors, 5 skips in 1347.913 seconds. Original failure trace is
+preserved at `/tmp/no-demo-full-ci-failures.log`; it is not superseded by any
+later targeted result.
+
+The 32 failing IDs outside the separate OIDC/origin-authority review have these
+fixture migration causes:
+
+- Capacity/pressure fixtures create twenty directory accounts but omitted their
+  explicit external issuer subject mapping. The fixture now supplies those
+  exact subjects; product mapping remains closed.
+- Member-tool/reusable-tool fixtures send their first public configuration call
+  before their former publication helper initialized members. Startup now
+  explicitly initializes the disposable accounts, including reused fixtures.
+- Disabled-member assertions previously expected the native `403` at the
+  public OIDC boundary. The same request now must return exact public
+  `401/OIDC_ACCESS_TOKEN_INVALID`, then is exercised against the test-only native
+  app with a synthetic internal token and must still return `403`. This does
+  not alter production authorization or expose the internal listener.
+- The lost-ACK proxy forwarded the retired cookie instead of the client's
+  bearer header; its request never committed. Forwarding the actual header
+  restores the original commit-before-disconnect oracle.
+- Storage's borrowed subprocess fixture omitted its new `headers` helper.
+- Delegation's catalog mutation still used removed `seed=True`; it now uses
+  ordinary owner draft/publication and retains the immutable child-plan check.
+- The historical unbound plan is rejected first by `BINDING_MANIFEST_REQUIRED`;
+  the separate application check still explicitly rejects its missing pin.
+  The removed legacy adoption method is not reintroduced.
+- Receiver identity tests now separate a rejected internal signing token at
+  the public boundary from a valid external token belonging to the wrong
+  owner (`404`). The shared test issuer no longer implies separate app keys.
+
+`test_oidc_identity_postgres.py` (4 failures) and `test_remote_authority.py`
+(7 errors, 2 failures) are handled separately; this work does not claim those
+paths fixed. Owned targeted IDs are recorded in
+`/tmp/no-demo-owned-failed-ids.txt` (32 exact original failures). Ruff and diff
+whitespace checks pass; targeted PG execution is pending its exclusive slot.
+No production changes, weakened limits, assertion deletion, or new skips.

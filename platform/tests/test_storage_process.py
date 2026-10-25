@@ -28,6 +28,7 @@ def owned_directory(test, task):
 class StorageProcessTests(unittest.TestCase):
     setUp = fixture.CommandProcessTests.setUp
     tearDown = fixture.CommandProcessTests.tearDown
+    headers = fixture.CommandProcessTests.headers
     start = fixture.CommandProcessTests.start
     api = fixture.CommandProcessTests.api
     waiting = fixture.CommandProcessTests.waiting

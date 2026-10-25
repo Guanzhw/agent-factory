@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Native schedule editor commands on isolated PG; no wall-clock cron waiting."""
 from fixture_identity import access_token
@@ -208,7 +209,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
             self.assertEqual(unknown.calls, 1)
             self.auth.directory.set_disabled('manager', True)
             try:
-                self.post(path, self.command(), status=403)
+                disabled_member_request(self, self.state, self.client, 'POST', '/api/factory' + path, owner='manager', json=self.command())
             finally:
                 self.auth.directory.set_disabled('manager', False)
         finally:

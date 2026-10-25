@@ -134,7 +134,11 @@ class DelegationPostgresTests(unittest.TestCase):
         plan = self.store.plan(child["plan_id"])
         self.assertEqual(plan["budget"]["depth"], 1)
         pinned = copy.deepcopy(plan)
-        self.store.add_material({"id": "fixture-prompt", "kind": "prompt", "name": "Changed synthetic prompt", "description": "Fixture", "content": "Later catalog update", "dependencies": [], "permissions": [], "compatibility": ["agno:3.1.0", "mode:demo"], "archived": False}, "manager", seed=True)
+        replacement = self.store.material_governance.create_draft('manager',
+            {'id': 'fixture-prompt', 'kind': 'prompt', 'name': 'Changed synthetic prompt',
+             'content': 'Later catalog update'}, 'changed-fixture-prompt')
+        self.store.material_governance.publish('manager', replacement['id'], replacement['version'],
+                                               'publish-changed-fixture-prompt')
         self.assertEqual(self.store.plan(child["plan_id"]), pinned)
         recovered = DelegationService(self.settings, self.store, self.auth, self.bridge)
         recovered.initialize()

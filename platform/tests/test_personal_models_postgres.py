@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Real isolated PG, native AgentOS queue, owner identity and fake provider only."""
 from fixture_identity import access_token
 import json
@@ -434,7 +435,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('POST', '/personal-models', body | {'credentialRevision': rotated['credentialRevision'],
             'requestId': 'revoked-existing'}, expected_owner='alice', expected=403)
         self.auth.directory.set_disabled('alice', True)
-        self.request('POST', '/personal-models', body | {'requestId': 'permission-ended'}, expected_owner='alice', expected=403)
+        disabled_member_request(self, self.state, self.client, 'POST', '/api/factory/personal-models', json=body | {'requestId': 'permission-ended'})
         self.assertEqual(self.calls, [])
 
     def test_rejected_secret_input_destination_and_current_permission(self):
@@ -445,7 +446,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'requestId': 'wrong-destination'}
         self.request('POST', '/personal-models', body, expected=403)
         self.auth.directory.set_disabled('alice', True)
-        self.start({'goal': 'Permission revoked', 'requestId': 'revoked-grant'}, expected=403)
+        disabled_member_request(self, self.state, self.client, 'POST', '/api/factory/application-interface/v1/starts', json={'application': 'fixture-owner-checksum', 'mode': 'literature', 'goal': 'Permission revoked', 'requestId': 'revoked-grant', 'connectionRefs': {'ownerModel': self.selected_connections['alice']}})
         self.assertEqual(self.calls, [])
 
     def test_stale_tab_expected_owner_rejects_secret_and_metadata_before_any_write(self):

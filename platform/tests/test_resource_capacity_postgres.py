@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Real PostgreSQL/Factory tasks; synthetic allocation effects, no host capacity claim."""
 from fixture_identity import access_token
@@ -243,7 +244,7 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
         self.assert_capacity_denied("bob", bob)
         self.auth.directory.set_disabled('alice', True)
         for operation in ("cancel", "reclaim"):
-            self.request("alice", "POST", f"/resources/leases/{lease['id']}/{operation}", expected=403)
+            disabled_member_request(self, self.state, self.client, 'POST', f"/api/factory/resources/leases/{lease['id']}/{operation}")
         self.assertEqual(self.request('bob', 'POST', '/resources/maintenance').json()['scanned'], 0)
         self.assertEqual(self.request('manager', 'POST', '/resources/maintenance').json()['scanned'], 0)
         self.assertEqual((self.peer.cancellations, self.peer.reclaims), (0, 0))

@@ -567,11 +567,13 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.login("alice")
         rejected = self.client.post("/api/factory/instances", json={"planId": legacy["id"], "requestId": "legacy-native-instance"})
         self.assertEqual(rejected.status_code, 409, rejected.text)
-        self.assertIn("APPLICATION_PIN_REQUIRED", rejected.text)
+        self.assertIn("BINDING_MANIFEST_REQUIRED", rejected.text)
         self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
         for changed in ({"instructions": ["Changed after adoption"]}, {"unexpected": "silently stripped value"}):
-            with self.subTest(changed=changed), self.assertRaises(HTTPException):
-                self.apps.require_legacy_demo_plan({**legacy, **changed})
+            with self.subTest(changed=changed), self.assertRaises(HTTPException) as denied:
+                self.apps.require_plan_current({**legacy, **changed})
+            self.assertEqual(denied.exception.status_code, 409)
+            self.assertIn("APPLICATION_PIN_REQUIRED", denied.exception.detail)
         admitted = self.client.post("/api/factory/instances", json={"planId": original["id"], "requestId": "current-native-instance"})
         self.assertEqual(admitted.status_code, 202, admitted.text)
         detail = self.wait_job(admitted.json()["id"])

@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Governed template copy to native synthetic literature; disposable PG only."""
 from fixture_auth import authorize_client
@@ -135,7 +136,7 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.post(route, self.command(), 404)
         self.login('manager')
         self.auth.directory.set_disabled('manager', True)
-        self.post(route, self.command(), 403)
+        disabled_member_request(self, self.state, self.client, 'POST', '/api/factory' + route, owner='manager', json=self.command())
         self.auth.directory.set_disabled('manager', False)
         self.post(route, self.command(), 200)
         invalid = deepcopy(definition)
