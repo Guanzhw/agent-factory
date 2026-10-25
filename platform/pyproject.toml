@@ -18,10 +18,15 @@ dependencies = [
   "mcp==2.3.0",
   "pyjwt[crypto]==2.15.1",
   "cryptography==50.0.2",
+  "bcrypt==5.0.0; sys_platform == 'win32'",
+  "pywin32==312; sys_platform == 'win32'",
   "python-multipart==0.0.32",
   "croniter==6.2.4",
   "pytz==2026.4",
 ]
+
+[project.scripts]
+agent-factory-ssh-askpass = "agent_factory.windows_ssh_askpass:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_factory"]

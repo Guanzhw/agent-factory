@@ -29,7 +29,7 @@ from .ssh_exchange import SSHExchangeCleanupError, exchange as pipe_exchange
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
 
-CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
+CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_SYSTEM_CLIENT_UNAVAILABLE', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
     'SSH_DIRECTORY_UNSAFE', 'SSH_DIRECTORY_PARENT_REQUIRED', 'SSH_CHECK_UNCONFIRMED',
     'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
@@ -142,6 +142,9 @@ class SSHAgents:
             raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE') from None
         finally:
             raw = b''; private = None; secret = None
+
+    def controller_diagnostic(self):
+        return self.windows.diagnostic() if self.windows is not None else None
 
     def close(self):
         if self.windows is not None:
@@ -399,7 +402,7 @@ def personal_ssh_router(auth, service):
     def capabilities(request: Request):
         auth.require_member(auth.user(request)['id'])
         return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False,
-                'controllerDiagnostic': 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED' if sys.platform == 'win32' else None}
+                'controllerDiagnostic': service.agents.controller_diagnostic() if service is not None else None}
 
     @router.post('/identity')
     async def identity(request: Request):

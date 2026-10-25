@@ -341,6 +341,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "agno" },
+    { name = "bcrypt", marker = "sys_platform == 'win32'" },
     { name = "croniter" },
     { name = "cryptography" },
     { name = "fastapi" },
@@ -350,6 +351,7 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "pytz" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn" },
 ]
@@ -370,6 +372,7 @@ ssh-probe = [
 [package.metadata]
 requires-dist = [
     { name = "agno", specifier = "==3.1.0" },
+    { name = "bcrypt", marker = "sys_platform == 'win32'", specifier = "==5.0.0" },
     { name = "croniter", specifier = "==6.2.4" },
     { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = "==0.142.2" },
@@ -379,6 +382,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
     { name = "python-multipart", specifier = "==0.0.32" },
     { name = "pytz", specifier = "==2026.4" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = "==312" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.1.1" },
     { name = "uvicorn", specifier = "==0.54.0" },
 ]
