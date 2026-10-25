@@ -5,7 +5,6 @@ from functools import wraps
 import json
 import threading
 import time
-import traceback
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.pool import NullPool
@@ -85,7 +84,8 @@ def install(app):
         for task in asyncio.all_tasks():
             stacks.write('\nTASK ' + getattr(task.get_coro(), '__qualname__', type(task.get_coro()).__name__) + '\n')
             for frame in task.get_stack(limit=12):
-                traceback.print_stack(frame, limit=12, file=stacks)
+                stacks.write(json.dumps({'file': frame.f_code.co_filename,
+                    'line': frame.f_lineno, 'function': frame.f_code.co_name}) + '\n')
         stacks.flush()
 
     def sample(loop, done, task_id):
