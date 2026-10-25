@@ -151,6 +151,7 @@ class AssistantEvents:
         self.auth.require_member(owner)
         value = event.model_dump()
         fingerprint = digest({'event': value, 'parent': parent_delivery_id, 'task': task_id})
+        self.scopes.admission_lock(conn)
         with self.db.write():
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
             if old:
