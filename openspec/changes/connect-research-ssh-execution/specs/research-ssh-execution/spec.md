@@ -71,3 +71,10 @@
 - **WHEN** Research root delegates a child with the exact SSH launch/wait materials
 - **THEN** the child wait is named `factory_wait_ssh_process` while the root retains `factory_wait_operations`; existing child authority subset checks are unchanged
 - **AND** result lookup accepts only owner/child task/run and core requires one exact SSH custody operation; absent or ambiguous originals are rejected without dispatch or application SQL
+
+#### Scenario: Explicit SSH output selection for research delivery
+- **WHEN** the user selects evidence `kind: ssh-process`, the exact launch-material pin, and named metrics/source/run_recipe fields
+- **THEN** the application resolves the original delegated child through the core read port, including failed or cancelled children, and reads the original SSH receipt/output without dispatch
+- **AND** only non-truncated stdout of at most 16 KiB containing one strict JSON object is eligible for selected-field artifacts; unselected output and raw log artifacts are never automatically shared
+- **AND** absent child/output, truncated output, invalid JSON or invalid role values yield explicit missingEvidence while preserving original execution status, exit code and provenance; none is guessed or replaced with model text
+- **AND** omitted evidence kind remains the existing CLI contract, with its original tool_results checks unchanged
