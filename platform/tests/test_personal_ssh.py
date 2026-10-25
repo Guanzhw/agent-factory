@@ -326,6 +326,26 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertTrue(self.service.inspect('alice', server['reference'])['enabled'])
         self.assertFalse(self.service.inspect('alice', server['reference'])['executionEnabled'])
 
+    def test_native_resolve_returns_opaque_handle_with_original_execution_guard(self):
+        server, _, _ = self.enabled()
+        _, prepare_request = self.command(server, 'bind')
+        prepare = self.connections.request_result('alice', prepare_request)['connection']
+        with self.assertRaises(HTTPException):
+            self.connections.resolve('alice', prepare['ref'], 'environment', required_capabilities=['ssh:execute'])
+        handle = self.connections.resolve('alice', prepare['ref'], 'environment', required_capabilities=['ssh:prepare'])
+        handle.check_authorized()
+        with self.assertRaises(HTTPException): handle.check_authorized(['ssh:execute'])
+        _, execute_request = self.command(server, 'bind-execution')
+        execute = self.connections.request_result('alice', execute_request)['connection']
+        retained = self.connections.resolve('alice', execute['ref'], 'environment', required_capabilities=['ssh:execute'])
+        retained.check_authorized()
+        self.assertFalse(hasattr(retained, 'configuration'))
+        self.assertNotIn('credential', repr(retained))
+        with self.assertRaises(HTTPException):
+            self.connections.resolve('bob', execute['ref'], 'environment', required_capabilities=['ssh:execute'])
+        self.connections.revoke('alice', execute['ref'], 'revoke-resolved-execution')
+        with self.assertRaises(HTTPException): retained.check_authorized()
+
     def test_prepare_receipt_and_probe_cannot_authorize_execution(self):
         server, _, _ = self.enabled()
         _, request = self.command(server, 'bind')

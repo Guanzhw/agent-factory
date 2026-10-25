@@ -16,7 +16,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 import threading
 import time
-from typing import Protocol
+from typing import Callable, Protocol
 
 from cryptography.hazmat.primitives import serialization
 from fastapi import APIRouter, HTTPException, Request
@@ -139,6 +139,19 @@ class SSHAgents:
         self.folder.cleanup()
 
 
+@dataclass(frozen=True, repr=False)
+class SSHConnectionHandle:
+    _recheck: Callable | None = None
+
+    def guarded(self, recheck):
+        return SSHConnectionHandle(recheck)
+
+    def check_authorized(self, capabilities=()):
+        if self._recheck is None:
+            raise HTTPException(409, 'SSH_CONNECTION_NOT_BOUND')
+        self._recheck(capabilities)
+
+
 class SSHServerProvider:
     requires_credential_reference = True
     provider_id = PROVIDER_ID
@@ -174,7 +187,7 @@ class SSHServerProvider:
         self.service.probe(server, lease, 'inspect')
         return {'capabilities': sorted(self.capabilities), 'identityBasis': 'owner-confirmed-pinned-ssh-host-and-identity'}
 
-    def handle(self, owner, configuration): return dict(configuration)
+    def handle(self, owner, configuration): return SSHConnectionHandle()
 
 
 class PersonalSSHServers:
