@@ -216,10 +216,10 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.assertEqual(self.store.task(task_id, 'alice')['run_id'], run_id)
         self.assertEqual(self.started.read_text().splitlines(), ['started'])
         self.assertTrue(self.store.workflow.read('alice', operation_id)['closed'])
-        receipts = self.store.sql('SELECT command_id FROM af_control_commands WHERE task_id=:task', task=task_id)
+        receipts = self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task', task=task_id)
         self.assertEqual(len(receipts), 1)
         self.assertTrue(receipts[0]['command_id'].startswith('ssh-wait:'))
         for _ in range(2):
             self.client.portal.call(self.state['lifecycle_observer'].observe_root, task_id)
-        self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_id=:task', task=task_id), receipts)
+        self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task', task=task_id), receipts)
         self.assertEqual(self.started.read_text().splitlines(), ['started'])
