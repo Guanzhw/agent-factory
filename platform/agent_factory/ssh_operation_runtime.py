@@ -5,11 +5,12 @@ from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 
+from .input_schema import validate_input_schema, validate_input_values
 from .process_enforcement import ProcessSpec, ProcessLimits, ResearchProcessLimits
 from .process_runtime import ProcessRuntimeService, process_reservation
 from .resource_maintenance import ResourceMaintenance
 from .resources import TERMINAL, ComputePool, RemoteTarget
-from .ssh_process_contract import LAUNCH_ADAPTER_ID, LAUNCH_TOOL, OPERATION_PIN, REVISION
+from .ssh_process_contract import LAUNCH_ADAPTER_ID, LAUNCH_TOOL, OPERATION_PIN, REVISION, ssh_target_reference
 from .ssh_process_provider import EFFECT, SSHProcessProvider, SSHProcessTransport
 from .store import canonical, digest
 from .workflow_contracts import validate_runtime_observation
@@ -22,11 +23,32 @@ class SSHTrainingProfile:
     limits: ProcessLimits | ResearchProcessLimits
     interpreter: str
     pool: ComputePool
+    input_schema: dict | None = None
+    input_argument: str | None = None
+
+    def __post_init__(self):
+        require((self.input_schema is None) == (self.input_argument is None))
+        if self.input_schema is not None:
+            require(type(self.input_argument) is str and 1 <= len(self.input_argument) <= 128
+                    and '\x00' not in self.input_argument)
+            object.__setattr__(self, 'input_schema', validate_input_schema(self.input_schema))
+
+    def prepare(self, inputs):
+        require(type(inputs) is dict)
+        if self.input_schema is None:
+            require(not inputs)
+            return {}, self.spec
+        checked = validate_input_values(self.input_schema, inputs)
+        assert self.input_argument is not None
+        derived = replace(self.spec, argv=(*self.spec.argv, self.input_argument, canonical(checked)))
+        return checked, derived
 
     @property
     def fingerprint(self):
         return digest({'spec': asdict(self.spec), 'limits': asdict(self.limits),
-                       'interpreter': self.interpreter, 'pool': asdict(self.pool)})
+                       'interpreter': self.interpreter, 'pool': asdict(self.pool),
+                       **({'inputSchema': self.input_schema, 'inputArgument': self.input_argument}
+                          if self.input_schema is not None else {})})
 
 
 class SSHOperationRuntime(ProcessRuntimeService):
@@ -50,12 +72,13 @@ class SSHOperationRuntime(ProcessRuntimeService):
         profile = self.profiles.get(config['profileId'])
         require(isinstance(profile, SSHTrainingProfile) and profile.fingerprint == config['profileSha256'])
         assert isinstance(profile, SSHTrainingProfile)
-        target_ref = 'ssh-' + digest({'actor': task['owner_id'], 'material': spec['materialRef'],
-                                      'connection': spec['connection'], 'profile': profile.fingerprint})
-        return spec, profile, target_ref
+        return spec, profile
 
-    def ensure_target(self, task, plan):
-        spec, profile, reference = self._selected(task, plan)
+    def ensure_target(self, task, plan, inputs=None):
+        spec, profile = self._selected(task, plan)
+        checked, process_spec = profile.prepare({} if inputs is None else inputs)
+        reference = ssh_target_reference(task['owner_id'], spec['materialRef'], spec['connection'],
+                                         profile.fingerprint, checked)
         pin = spec['connection']
         connections = self.store.execution_bindings.connections
         connections.preflight(task['owner_id'], pin['ref'], expected_kind='environment',
@@ -71,7 +94,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
             lease = self._custody(lease_id)[0]
             require(lease['ownerId'] == owner)
             return lease
-        provider = SSHProcessProvider(server, target_ref=reference, spec=profile.spec, limits=profile.limits,
+        provider = SSHProcessProvider(server, target_ref=reference, spec=process_spec, limits=profile.limits,
                                       exchange=transport, read_lease=read_lease,
                                       archive_original=lambda owner, key: self._archive(read_lease(owner, key)))
         pool = replace(profile.pool, pool_id='ssh-host-' + provider.capacity_namespace)
@@ -91,10 +114,26 @@ class SSHOperationRuntime(ProcessRuntimeService):
         require(original['connectionRef'] == reference and original.get('executionEffect') == EFFECT)
         task = self.store.task(original['localTaskId'], owner)
         plan = self.store.plan(original['planId'], owner)
-        require(task['run_id'] == original['nativeRunId'] and digest(plan) == original['planHash']
-                and self._selected(task, plan)[2] == reference)
-        self.ensure_target(task, plan)
+        require(task['run_id'] == original['nativeRunId'] and digest(plan) == original['planHash'])
+        body = self.store.workflow._load(owner, original['executionGuard']['operationId'])
+        self.store.workflow._identity(body)
+        require(body['adapterPin'] == self.pin and body['taskId'] == task['id']
+                and body['nativeRunId'] == original['nativeRunId'])
+        inputs = self._inputs(body)
+        spec, profile = self._selected(task, plan)
+        checked, _ = profile.prepare(inputs)
+        require(ssh_target_reference(owner, spec['materialRef'], spec['connection'],
+                                      profile.fingerprint, checked) == reference)
+        self.ensure_target(task, plan, checked)
         return self.resources.targets[reference]
+
+    @staticmethod
+    def _inputs(body):
+        original = body.get('inputs')
+        require(type(original) is dict and set(original) == {'targetRef', 'callId', 'inputs'}
+                and digest(original) == body['inputsSha256'])
+        assert isinstance(original, dict)
+        return original['inputs']
 
     def _operation(self, context, operation_id):
         custody = self.store.workflow
@@ -122,7 +161,10 @@ class SSHOperationRuntime(ProcessRuntimeService):
         require(body['taskId'] == task['id'] and body['nativeRunId'] == task['run_id']
                 and body['planSha256'] == digest(plan) and body['adapterPin'] == self.pin
                 and not body['cancelRequested'] and not body['closed'])
-        require(self._selected(task, plan)[2] == target_ref)
+        spec, profile = self._selected(task, plan)
+        checked, _ = profile.prepare(self._inputs(body))
+        require(ssh_target_reference(owner, spec['materialRef'], spec['connection'],
+                                      profile.fingerprint, checked) == target_ref)
         self.store.authorize_tool(self._context(task), LAUNCH_TOOL)
 
     def guard_lease(self, lease):
@@ -154,18 +196,21 @@ class SSHOperationRuntime(ProcessRuntimeService):
             return 'OPERATION_CANCEL_REQUESTED'
         return super()._reason(lease, task, ticket)
 
-    async def launch(self, context, call_id):
+    async def launch(self, context, call_id, inputs=None):
         self.store.authorize_tool(context, LAUNCH_TOOL)
         task = self.store.task(context.session_id, context.user_id)
         plan = self.store.plan(task['plan_id'], context.user_id)
-        target_ref = self.ensure_target(task, plan)
+        _, profile = self._selected(task, plan)
+        checked, _ = profile.prepare({} if inputs is None else inputs)
+        target_ref = self.ensure_target(task, plan, checked)
         return await self.store.workflow.start(context, 'ssh-process-launch', 'ssh-process', self.pin,
-                                               {'targetRef': target_ref, 'callId': call_id})
+                                               {'targetRef': target_ref, 'callId': call_id, 'inputs': checked}, retain_inputs=True)
 
     async def start(self, context, operation_id, inputs):
         body = self._operation(context, operation_id)
-        require(type(inputs) is dict and set(inputs) == {'targetRef', 'callId'}
+        require(type(inputs) is dict and set(inputs) == {'targetRef', 'callId', 'inputs'}
                 and digest(inputs) == body['inputsSha256'] and not body['cancelRequested'] and not body['closed'])
+        require(self._inputs(body) == inputs['inputs'])
         target = self.resources._authorize(body['ownerId'], inputs['targetRef'])
         await self.resources.allocate(body['ownerId'], inputs['targetRef'], body['taskId'],
             'ssh-operation-' + operation_id, process_reservation(self.resources._provider(target)),

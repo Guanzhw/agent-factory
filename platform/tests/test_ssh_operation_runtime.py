@@ -95,7 +95,7 @@ class SSHPersonalTargetTests(unittest.TestCase):
         self.personal.lease.assert_called_once_with(self.server, required_capability='ssh:execute')
         self.assertEqual(target.owners, frozenset({'alice'}))
         self.assertEqual(self.resources.register_target.call_args.args[0], ref)
-        self.assertNotEqual(ref, self.runtime._selected({**self.task, 'owner_id': 'bob'}, {})[2])
+        self.assertNotEqual(ref, self.runtime.ensure_target({**self.task, 'owner_id': 'bob'}, {}))
 
     def test_changed_profile_or_revoked_connection_never_registers_target(self):
         self.spec['config']['profileSha256'] = 'e' * 64
@@ -107,6 +107,78 @@ class SSHPersonalTargetTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.ensure_target(self.task, {})
         self.resources.register_target.assert_not_called()
+
+
+    def input_profile(self, *, max_length=100, argv=()):
+        from dataclasses import replace
+        from agent_factory.ssh_operation_runtime import SSHTrainingProfile
+        profile = SSHTrainingProfile(replace(self.profile.spec, argv=argv), self.profile.limits,
+            self.profile.interpreter, self.profile.pool,
+            input_schema={'type': 'object', 'properties': {'condition': {'type': 'string', 'maxLength': max_length}},
+                          'required': ['condition'], 'additionalProperties': False}, input_argument='--experiment-json')
+        self.runtime.profiles['fixed'] = profile
+        self.spec['config']['profileSha256'] = profile.fingerprint
+        return profile
+
+    def test_distinct_experiment_inputs_reach_fixed_argv_without_shell_or_pool_split(self):
+        import json
+        profile = self.input_profile()
+        values = [{'condition': 'first'}, {'condition': '\"; $(not-a-command) \n second'}]
+        refs = [self.runtime.ensure_target(self.task, {}, item) for item in values]
+        targets = [call.args[1] for call in self.resources.register_target.call_args_list]
+        self.assertNotEqual(refs[0], refs[1])
+        self.assertEqual(targets[0].capacity_pool, targets[1].capacity_pool)
+        for target, value in zip(targets, values):
+            self.assertEqual(target.provider.spec.executable, profile.spec.executable)
+            self.assertEqual(target.provider.spec.argv[-2], '--experiment-json')
+            self.assertEqual(json.loads(target.provider.spec.argv[-1]), value)
+            self.assertEqual(len(target.provider.spec.argv), 2)
+
+    def test_input_schema_and_complete_argv_limits_fail_before_any_ssh_target(self):
+        from agent_factory.process_enforcement import ProcessEnforcementError
+        self.input_profile(max_length=16000)
+        for value in ({'unknown': 'field'}, {'condition': 1}, {'condition': 'x' * 9000}):
+            with self.subTest(value=str(value)[:40]), self.assertRaises((ValueError, ProcessEnforcementError)):
+                self.runtime.ensure_target(self.task, {}, value)
+        self.input_profile(argv=tuple('arg' for _ in range(31)))
+        with self.assertRaises(ProcessEnforcementError):
+            self.runtime.ensure_target(self.task, {}, {'condition': 'small'})
+        self.personal.server.assert_not_called()
+        self.resources.register_target.assert_not_called()
+
+    def test_profile_requires_schema_argument_pair_and_fixed_profile_rejects_input(self):
+        from dataclasses import replace
+        with self.assertRaises(HTTPException):
+            replace(self.profile, input_argument='--unexpected')
+        with self.assertRaises(HTTPException):
+            self.profile.prepare({'condition': 'not-declared'})
+
+    def test_restore_uses_persisted_original_inputs_and_rejects_modified_receipt(self):
+        from agent_factory.store import digest
+        self.input_profile()
+        values = {'condition': 'original'}
+        reference = self.runtime.ensure_target(self.task, {}, values)
+        original_input = {'targetRef': reference, 'callId': 'call-1', 'inputs': values}
+        operation = {'adapterPin': self.runtime.pin, 'taskId': self.task['id'],
+                     'nativeRunId': self.task['run_id'], 'inputs': original_input,
+                     'inputsSha256': digest(original_input)}
+        lease = {'connectionRef': reference, 'executionEffect': self.runtime.effect_key,
+            'localTaskId': self.task['id'], 'planId': 'plan', 'nativeRunId': self.task['run_id'],
+            'planHash': digest({}), 'executionGuard': {'operationId': 'operation'}}
+        self.store.sql = Mock(return_value=[{'body': lease}])
+        self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value={})
+        self.store.workflow = SimpleNamespace(_load=Mock(return_value=operation), _identity=Mock())
+        self.resources._body = lambda value: value
+        target = self.resources.register_target.call_args.args[1]
+        self.resources.targets = {reference: target}
+        self.assertIs(self.runtime.restore_target('alice', reference), target)
+        recovered = self.resources.register_target.call_args.args[1]
+        self.assertEqual(recovered.provider.spec.argv, target.provider.spec.argv)
+        operation['inputs']['inputs'] = {'condition': 'replacement'}
+        before = self.resources.register_target.call_count
+        with self.assertRaises(HTTPException):
+            self.runtime.restore_target('alice', reference)
+        self.assertEqual(self.resources.register_target.call_count, before)
 
 
 class SSHPreparedArchiveTests(unittest.IsolatedAsyncioTestCase):
