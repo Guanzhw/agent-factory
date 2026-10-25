@@ -490,7 +490,7 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
         before = self.receiver.facts()["nativeTickets"]
         task, _, receipt = self.prepare(self.plan())
         canceled = self.call(self.origin, "POST", "/jobs/" + task + "/cancel").json()
-        self.assertEqual(canceled["status"], "canceled")
+        self.assertIn(canceled["status"], {"canceling", "canceled"})
         command = canceled["commandReceipt"]
         self.assertEqual(command["state"], "STOP_CONFIRMED")
         self.assertEqual(command["evidence"]["kind"], "receiver-command")
@@ -504,6 +504,8 @@ class GovernedRemoteProcessPostgresTests(unittest.TestCase):
             self.assertEqual(evidence["remoteTaskId"], receipt["remoteTaskId"])
             self.assertIsNone(evidence["remoteRunId"])
             self.assertEqual(evidence["receiverBindingProof"], receipt["receiverBindingProof"])
+        # Receiver command proof precedes the origin observer's capacity release.
+        self.wait(self.origin, task, {"canceled"})
         self.assert_no_ticket(task, before)
         owned = next(row for row in self.origin.facts()["tasks"] if row["id"] == task)
         self.assertTrue(owned["terminal"])

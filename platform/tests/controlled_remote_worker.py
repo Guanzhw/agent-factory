@@ -7,6 +7,7 @@ All keys, users, registrations, workspaces and databases are generated test data
 from __future__ import annotations
 
 import copy
+import asyncio
 from dataclasses import replace
 import hmac
 from http.cookies import SimpleCookie
@@ -205,6 +206,22 @@ def install_dispatch_hold(state, controls):
     client.dispatch = staged_dispatch
 
 
+def install_origin_observation_hold(state, controls):
+    """Gate only background origin reconciliation; direct actions remain real."""
+    client = state['handoff_client']
+    observe = client.observe_pending
+    lock = asyncio.Lock()
+    state['fixture_origin_observation_lock'] = lock
+
+    async def staged_observe(*, limit=50):
+        async with lock:
+            if controls.get('holdOriginObservation'):
+                return {'checked': 0, 'reconciled': 0, 'errors': []}
+            return await observe(limit=limit)
+
+    client.observe_pending = staged_observe
+
+
 class FixtureSessionBridge:
     """Managed browser sessions ONLY for this authenticated fixture server."""
     def __init__(self, app, configuration):
@@ -346,7 +363,9 @@ def main():
                 {**copy.deepcopy(orx_source), "connection": settings.fixture_orx_pin})
     application = create_app(settings)
     state = application.app.state.factory
-    if role == 'origin': install_dispatch_hold(state, controls)
+    if role == 'origin':
+        install_dispatch_hold(state, controls)
+        install_origin_observation_hold(state, controls)
     application_ref, materials, snapshot = publish_fixture(state, configuration.get("sourceApplication"))
     marker = directory / (role + "-fault.json")
     if role == "origin":
@@ -436,6 +455,19 @@ def main():
             state['auth'].directory.set_disabled(owner, op == 'role-revoke')
         elif op in {'dispatch-hold', 'dispatch-release'} and role == 'origin':
             controls['holdDispatch'] = op == 'dispatch-hold'
+        elif op in {'origin-observation-hold', 'origin-observation-release'} and role == 'origin':
+            # Returning from hold acknowledges any earlier observation drained.
+            # Receiver observation, native workers and explicit reconcile run normally.
+            async with state['fixture_origin_observation_lock']:
+                controls['holdOriginObservation'] = op == 'origin-observation-hold'
+        elif op in {'receiver-observer-stop', 'receiver-observer-start'} and role == 'receiver':
+            # Isolate dispatch-boundary tests from legitimate autonomous cleanup.
+            # This drains only lifecycle observation, never the native worker.
+            observer = state['lifecycle_observer']
+            if op == 'receiver-observer-stop':
+                await observer.stop()
+            else:
+                await observer.start()
         elif op in {"connection-unavailable", "connection-restore", "connection-rotate"}:
             state["connections"].trusted_bindings[CONNECTION_REGISTRATION] = trusted if op == "connection-restore" else replace(trusted,
                 available=False, opaque_handle=None) if op == "connection-unavailable" else replace(trusted, revision="fixture-provider-v2")

@@ -63,6 +63,7 @@ class RemoteDisconnectReadTests(unittest.IsolatedAsyncioTestCase):
         row = {'task_id': task['id'], 'owner_id': 'alice', 'target_ref': 'receiver', 'state': 'RUNNING',
                'configuration_hash': target.fingerprint, 'manifest_hash': digest(plan),
                'body': {'receipt': deepcopy(receipt)}}
+        original_row = deepcopy(row)
 
         def sql(query, **params):
             self.assertTrue(query.startswith('SELECT * FROM af_remote_placements'), query)
@@ -87,10 +88,11 @@ class RemoteDisconnectReadTests(unittest.IsolatedAsyncioTestCase):
         client.admission_guard = None
         execution = RemoteExecution(store, client)
 
-        # Receipt persistence is an isolated in-memory seam, not a claim of PG
+        # Receipt validation is an isolated in-memory seam, not a claim of PG
         # receipt-validation coverage. All origin read/transport/projection code
         # above this seam remains real and must preserve the exact known receipt.
-        def save(original, bound_target, received):
+        def save(original, bound_target, received, *, persist=True):
+            self.assertIs(persist, False, 'Read must explicitly disable receipt persistence')
             self.assertEqual(original, row)
             self.assertIs(bound_target, target)
             self.assertEqual(received, receipt)
@@ -116,9 +118,12 @@ class RemoteDisconnectReadTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(restored['snapshot']['capacityHeld'])
                 self.assertNotIn('remoteUnavailable', restored['snapshot'])
             self.assertEqual(saved.call_count, 2)
+            for saved_call in saved.call_args_list:
+                self.assertEqual(saved_call.kwargs, {'persist': False})
             cancel.assert_not_called(); dispatch.assert_not_called(); prepare.assert_not_called()
         mutation.assert_not_called()
         self.assertEqual(task, original_task)
+        self.assertEqual(row, original_row)
         self.assertEqual(row['body']['receipt'], receipt)
         self.assertEqual(len(requests), 4)
         self.assertTrue(all(method == 'GET' for method, _ in requests))

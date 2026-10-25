@@ -20,7 +20,7 @@ class ResearchDelegationService(DelegationService):
         plan = self.store.plan(parent['plan_id'], owner)
         receiver_binding = plan.get('remoteHandoff')
         receiver = self.store.handoff_receiver
-        if receiver_binding and receiver is not None and receiver.scientific_service is not None:
+        if receiver_binding and getattr(receiver, 'scientific_service', None) is not None:
             receipt = receiver._row(receiver_binding['receiptId'], owner)
             if receipt['body'].get('scientificEnvelope') is not None:
                 raise HTTPException(409, 'Receiver scientific phases cannot delegate further')

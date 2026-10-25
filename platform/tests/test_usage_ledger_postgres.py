@@ -491,5 +491,236 @@ class UsageLedgerPostgresTests(unittest.TestCase):
         self.assertEqual(len(self.records), 1)
 
 
+
+    def test_20_remote_statement_read_validates_without_settlement_or_lock(self):
+        from sqlalchemy import event, select
+
+        source, _ = self.task(self.plan(tokens=20, amount=32))
+        receiver_plan = self.plan(tokens=20, amount=32)
+        receiver, _ = self.task(receiver_plan)
+        grant = self.ledger.allocate_remote('alice', source['id'], str(uuid4()),
+            origin_ref='controlled-origin', target_ref='controlled-target', receiver_owner='alice',
+            receiver_task_id=receiver['id'], receiver_plan_sha256=digest(receiver_plan),
+            receiver_commitment=receiver_plan['usageBudget'])
+        initial = {'schema': 1, 'grantId': grant['id'], 'grantSha256': grant['sha256'],
+            'receiverOwnerId': 'alice', 'receiverTaskId': receiver['id'],
+            'receiverPlanSha256': digest(receiver_plan),
+            'receiverCommitmentSha256': grant['receiverCommitmentSha256'],
+            'settledTokens': 3, 'settledAmountMicros': 4, 'heldTokens': 17,
+            'heldAmountMicros': 28, 'allStopped': False, 'sequence': 1}
+        def signed(value):
+            body = {k: v for k, v in value.items() if k != 'sha256'}
+            return {**body, 'sha256': digest(body)}
+        self.ledger.apply_remote_statement('alice', source['id'], signed(initial))
+        terminal = signed({**initial, 'settledTokens': 5, 'settledAmountMicros': 7,
+            'heldTokens': 0, 'heldAmountMicros': 0, 'allStopped': True, 'sequence': 2})
+        def snapshot():
+            with self.store.engine.connect() as conn:
+                return [[dict(row) for row in conn.execute(select(table).order_by(table.c.id)).mappings()]
+                        for table in (self.ledger.grants, self.ledger.accounts)]
+        before = snapshot()
+        statements = []
+        def capture(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement.upper())
+        event.listen(self.store.engine, 'before_cursor_execute', capture)
+        try:
+            result = self.ledger.apply_remote_statement('alice', source['id'], terminal, persist=False)
+            self.assertTrue(result['validated'])
+            self.assertEqual(result['state'], 'ALLOCATED')
+            for invalid in (
+                    {**terminal, 'sha256': '0' * 64},
+                    signed({**terminal, 'receiverTaskId': str(uuid4())}),
+                    signed({**terminal, 'sequence': 1}),
+                    signed({**terminal, 'settledTokens': 2})):
+                with self.subTest(statement=invalid), self.assertRaises(HTTPException):
+                    self.ledger.apply_remote_statement('alice', source['id'], invalid, persist=False)
+            with self.assertRaises(HTTPException):
+                self.ledger.apply_remote_statement('bob', source['id'], terminal, persist=False)
+            self.assertEqual(snapshot(), before)
+            self.assertFalse(any(s.lstrip().startswith(('UPDATE ', 'INSERT ', 'DELETE '))
+                                 or 'PG_ADVISORY' in s or 'FOR UPDATE' in s for s in statements), statements)
+        finally:
+            event.remove(self.store.engine, 'before_cursor_execute', capture)
+        # The same receipt can still settle once through the explicit writer.
+        self.assertTrue(self.ledger.apply_remote_statement('alice', source['id'], terminal)['releasedUnused'])
+        account = self.projection(source)['scopes'][0]
+        self.assertEqual((account['settledTokens'], account['heldTokens']), (5, 0))
+
+    def test_21_no_dispatch_read_validates_proof_without_releasing_hold(self):
+        from sqlalchemy import event, select
+
+        source, _ = self.task(self.plan(tokens=20, amount=32))
+        receiver_plan = self.plan(tokens=20, amount=32)
+        receiver, _ = self.task(receiver_plan)
+        quote = receiver_plan['usageBudget']
+        grant = self.ledger.allocate_remote('alice', source['id'], str(uuid4()),
+            origin_ref='controlled-origin', target_ref='controlled-target', receiver_owner='alice',
+            receiver_task_id=receiver['id'], receiver_plan_sha256=digest(receiver_plan), receiver_commitment=quote)
+        receipt = {'id': grant['id'], 'originOwnerId': 'alice', 'originTaskId': source['id'],
+            'remoteOwnerId': 'alice', 'remoteTaskId': receiver['id'], 'receiverPlanSha256': digest(receiver_plan),
+            'receiverUsageCommitment': quote, 'state': 'CANCELLED_NO_DISPATCH',
+            'remoteRunId': None, 'native': None, 'allStopped': True}
+        def snapshot():
+            with self.store.engine.connect() as conn:
+                return [[dict(row) for row in conn.execute(select(table).order_by(table.c.id)).mappings()]
+                        for table in (self.ledger.grants, self.ledger.accounts)]
+        before = snapshot()
+        statements = []
+        def capture(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement.upper())
+        event.listen(self.store.engine, 'before_cursor_execute', capture)
+        try:
+            result = self.ledger.reclaim_remote_no_dispatch('alice', source['id'], grant['id'], receipt, persist=False)
+            self.assertTrue(result['validated'])
+            for invalid in ({**receipt, 'allStopped': False}, {**receipt, 'remoteRunId': str(uuid4())}):
+                with self.assertRaises(HTTPException):
+                    self.ledger.reclaim_remote_no_dispatch('alice', source['id'], grant['id'], invalid, persist=False)
+            self.assertEqual(snapshot(), before)
+            self.assertFalse(any(s.lstrip().startswith(('UPDATE ', 'INSERT ', 'DELETE '))
+                                 or 'PG_ADVISORY' in s or 'FOR UPDATE' in s for s in statements), statements)
+        finally:
+            event.remove(self.store.engine, 'before_cursor_execute', capture)
+        self.assertEqual(self.projection(source)['scopes'][0]['heldTokens'], 20)
+
+
+    def test_22_history_read_does_not_wait_for_execution_ledger_lock(self):
+        task, context = self.task(self.plan())
+        self.invoke(self.selected(context))
+        expected = self.projection(task)
+
+        def read_with_deadline():
+            with self.store.transaction(read_only=True) as conn:
+                conn.exec_driver_sql("SET LOCAL lock_timeout = '1500ms'")
+                conn.exec_driver_sql("SET LOCAL statement_timeout = '2500ms'")
+                return self.projection(task)
+
+        # Hold the actual writer's advisory lock on an independent connection.
+        # Release it before executor shutdown even if a regressed read blocks.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with self.store.engine.begin() as blocker:
+                self.ledger._lock(blocker)
+                future = executor.submit(read_with_deadline)
+                result = future.result(timeout=4)
+                self.assertEqual(result, expected)
+
+    def test_23_history_read_keeps_one_snapshot_across_settlement_and_rejects_tampering(self):
+        from sqlalchemy import event
+
+        self.options['scenario'] = 'unknown'
+        task, context = self.task(self.plan())
+        self.invoke(self.selected(context))
+        before = self.projection(task)
+        attempt_id = before['attempts'][0]['id']
+        self.assertEqual(before['attempts'][0]['state'], 'UNKNOWN')
+        account_read, writer_done = Event(), Event()
+        intercepted = []
+
+        def pause_after_first_account(conn, cursor, statement, parameters, context, executemany):
+            if (statement.lstrip().upper().startswith('SELECT ')
+                    and 'FROM af_usage_accounts' in statement and not intercepted):
+                intercepted.append(statement)
+                account_read.set()
+                if not writer_done.wait(timeout=5):
+                    raise TimeoutError('Synthetic settlement did not finish within the read barrier')
+
+        event.listen(self.store.engine, 'after_cursor_execute', pause_after_first_account)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.projection, task)
+                try:
+                    self.assertTrue(account_read.wait(timeout=5), 'Reader never reached its first account')
+                    # Real settlement atomically changes task/user accounts and
+                    # the attempt while the reader is between its SELECTs.
+                    with self.store.transaction() as conn:
+                        conn.exec_driver_sql("SET LOCAL lock_timeout = '1500ms'")
+                        conn.exec_driver_sql("SET LOCAL statement_timeout = '2500ms'")
+                        self.ledger.finish_attempt(attempt_id, UsageEvidence(3, 2, 'snapshot-settlement'))
+                finally:
+                    writer_done.set()
+                during = future.result(timeout=5)
+        finally:
+            writer_done.set()
+            event.remove(self.store.engine, 'after_cursor_execute', pause_after_first_account)
+        self.assertEqual(during, before)
+        after = self.projection(task)
+        self.assertEqual(after['attempts'][0]['state'], 'SETTLED')
+        self.assertTrue(all(scope['settledTokens'] == 5 and scope['heldTokens'] == 0 for scope in after['scopes']))
+        self.assertNotEqual(after, before)
+        # MVCC does not bypass immutable evidence validation on subsequent reads.
+        with self.store.engine.begin() as conn:
+            conn.execute(self.ledger.attempts.update().where(self.ledger.attempts.c.id == attempt_id).values(hash='tampered'))
+        with self.assertRaises(HTTPException) as rejected:
+            self.projection(task)
+        self.assertIn('USAGE_ATTEMPT_INTEGRITY', str(rejected.exception.detail))
+
+
+    def test_24_unmigrated_legacy_history_and_ancestor_are_read_only(self):
+        from sqlalchemy import event, select
+
+        self.ledger = UsageLedger(self.store, default_zero_prices(), policy=self.policy)
+        self.store.usage_ledger = self.ledger
+        service = DelegationService(self.settings, self.store, self.auth, None)
+        service.initialize()
+        self.store.delegation = service
+        root_plan = self.plan(model_adapter='local-synthetic-model-v1', legacy=True)
+        root, _ = self.task(root_plan)
+        child_plan = self.plan(model_adapter='local-synthetic-model-v1', legacy=True,
+            extra={'delegation': {'parentTaskId': root['id'], 'rootTaskId': root['id'], 'depth': 1}})
+        child, _ = self.task(child_plan)
+        self.store.sql("INSERT INTO af_delegation_links VALUES(:owner,:parent,:request,:root,:depth,:fp,:plan,:child,:at)",
+            owner='alice', parent=root['id'], request=str(uuid4()), root=root['id'], depth=1,
+            fp='legacy-history-link', plan=child_plan['id'], child=child['id'], at=now())
+        plans_before = self.store.sql('SELECT id,body,hash FROM af_plans ORDER BY id')
+        statements = []
+        def capture(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement.upper())
+        event.listen(self.store.engine, 'before_cursor_execute', capture)
+        try:
+            standalone = self.projection(root)
+            descendant = self.projection(child)
+            self.assertIsNone(standalone['migration'])
+            self.assertIsNone(descendant['migration'])
+            self.assertTrue(standalone['zeroTariff'])
+            self.assertEqual([scope['scope'] for scope in descendant['scopes']], ['task', 'root', 'user'])
+            self.assertEqual(descendant['rootTaskId'], root['id'])
+            self.assertTrue(all(scope['heldTokens'] == scope['settledTokens'] == 0 for scope in descendant['scopes']))
+            self.assertEqual(self.store.sql('SELECT id,body,hash FROM af_plans ORDER BY id'), plans_before)
+            with self.store.engine.connect() as conn:
+                self.assertEqual(list(conn.execute(select(self.ledger.migrations))), [])
+                self.assertEqual(list(conn.execute(select(self.ledger.accounts))), [])
+            self.assertFalse(any(query.lstrip().startswith(('INSERT ', 'UPDATE ', 'DELETE ')) for query in statements), statements)
+        finally:
+            event.remove(self.store.engine, 'before_cursor_execute', capture)
+        # The explicit admission path still owns durable migration, and the
+        # history projection reports only the migration that actually exists.
+        self.ledger.require_current_commitment(child_plan)
+        self.assertEqual(self.projection(child)['migration']['sourcePlanSha256'], digest(child_plan))
+        self.assertIsNone(self.projection(root)['migration'])
+        self.ledger.require_current_commitment(root_plan)
+        with self.store.engine.connect() as conn:
+            original = dict(conn.execute(select(self.ledger.migrations).where(
+                self.ledger.migrations.c.plan_id == root_plan['id'])).mappings().one())
+        for field in ('source_hash', 'hash'):
+            with self.subTest(tampered=field):
+                with self.store.engine.begin() as conn:
+                    conn.execute(self.ledger.migrations.update().where(
+                        self.ledger.migrations.c.plan_id == root_plan['id']).values(**{field: 'tampered'}))
+                try:
+                    with self.assertRaises(HTTPException) as rejected:
+                        self.projection(child)
+                    self.assertIn('USAGE_MIGRATION_INTEGRITY', str(rejected.exception.detail))
+                finally:
+                    with self.store.engine.begin() as conn:
+                        conn.execute(self.ledger.migrations.update().where(
+                            self.ledger.migrations.c.plan_id == root_plan['id']).values(**{field: original[field]}))
+
+    def test_25_unmigrated_nonlocal_history_cannot_gain_provider_spending(self):
+        task, _ = self.task(self.plan(legacy=True))
+        with self.assertRaises(HTTPException) as rejected:
+            self.projection(task)
+        self.assertIn('USAGE_APPROVAL_REQUIRED', str(rejected.exception.detail))
+        self.assertEqual(self.store.sql('SELECT * FROM af_usage_plan_migrations'), [])
+
+
 if __name__ == "__main__":
     unittest.main()
