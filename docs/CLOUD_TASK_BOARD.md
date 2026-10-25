@@ -1994,3 +1994,13 @@ P7：assistant_messages拥有原消息reply独立core spec/实现；research_app
 P7 research_app_spec负责QA、acceptance_doc_review负责稳定身份、root装配、pr104_independent_review审查。正常真实native QA已通过，模型HTTP仍合成；当前BYOK只支持明确有限的轮次/工具/期限，不伪称token/费用计量。非空费用/token硬预算拒绝，界面明确未计量。恶意未声明工具暴露Agno继续请求问题；独立core修复Draft #124 headbb1d11b完整review PASS、17便携通过，精确CI及P7消费验证另计。最终PG小组首轮3通过/2失败，具体预算拒绝错误被全局Pydantic净化，正在将业务拒绝移到事务前；未覆盖首失败。
 
 P8 assistant_messages在隔离worktree先做精选真实CLI receipt/复现证据spec，尚未实现；模型正文不当作执行事实。P7主动关联、团队价值对照及P8另一成员复现仍未闭合。新增组合尚未运行必要完整验收，旧1941项full不替代这些新head。真实C/D任务/模型/预算/硬件参数仍待冻结，无真实provider/GPU、新凭据或公网部署。
+
+### 15:39 验收矩阵与完整组合首失败
+
+main a877268 的 daily fast40205579401成功。#121 head35a9783 fast40205859880、正式UI Draft #125 headb894b64 fast40205935827成功且精确独立review PASS，尚未合并。#124首次fast40205672388有9个旧协议夹具错误（首请求未声明预设返回工具），修正仅补工具声明；55目标通过、独立review PASS，head4a92f2c的fast40206226531成功。
+
+组合full40206239436运行于551f1bf：双前端及Linux静态通过，Windows2029项/7errors/822skip，PG尚在运行。所有Windows错误在生命周期竞态夹具：裸Mock伪造local_budget_scopes，进入新增budget-only完成路径；terminal KeyError是症状。fixture显式None与真实默认一致，生产/断言不变；本地首10项7errors→相关28项通过。独立review后的Draft #126 head631e0f1等待精确CI；不启动第二full追绿，先保留本轮PG结果。GitHub job日志通过既有连接器成功取得，没有下载或绕过之前被拒的artifact。
+
+[17项验收/P0–P9独立覆盖审计](https://github.com/Guanzhw/agent-factory/blob/e21c655/docs/plans/research-acceptance-progress-20261025.md)明确局部机制证据与最终门槛；不是完成声明。P7真实native正常/恶意QA在分次修复后通过，费用仍未计量。P7 UI owner=research_frontend，精确48fabd7独立review PASS，480Web通过，真实QA浏览器正在串行验收。P7主动关联owner=research_app_spec，规范314619e修复派生文本撤回旁路后独立PASS，开始实现；全部peer影响字段/后继消费继承完整来源集合，不能把推断洗成无依赖事实。
+
+P8 owner=assistant_messages，规范be534069经独立review PASS开始实现；派生manifest存应用记录，所有读取/导出委托core检查原来源，压缩在锁外。root拥有原CLI回执窄core接口be25678，独立review/6portable/Ruff/Pyright通过，实际CLI消费者仍待验。两应用worker独立worktree，rounds/projects/public重叠由root最终集成；本地PG仅一个重型窗口。P7完整协作、P8实际第二成员复现、P9最终组合及真实C/D仍未完成。
