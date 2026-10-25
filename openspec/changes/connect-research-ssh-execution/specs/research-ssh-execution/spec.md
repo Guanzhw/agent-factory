@@ -95,6 +95,13 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 - **WHEN** two experiments supply different schema-valid conditions to the same trusted training profile
 - **THEN** their derived argv contains the fixed input argument plus their respective canonical JSON as two separate entries, and each original operation stores its exact validated input and derived target identity while sharing the host capacity pool
 
+#### Scenario: Native PostgreSQL fixture preserves distinct original inputs
+- **GIVEN** the existing actual native queue/PostgreSQL fixture substitutes only the SSH transport with a local helper subprocess, and a controlled model calls the real registered launch/wait tools
+- **WHEN** two native child-shaped runs use different typed conditions and the controller is recreated while the first original wait is paused
+- **THEN** the actual helper program parses the fixed argv input argument and emits its received conditions; the controlled model reads that archived output from the actual wait function result, not a fabricated completion string
+- **AND** both runs retain distinct task/run/operation identities and their exact original inputs, the first resumes without adopting the later conditions, and each starts once
+- **AND** this fixture proves neither delegated Research parent orchestration, real SSH networking nor live model/GPU behavior; the separate loopback fixture covers the network mechanism
+
 #### Scenario: Parameter bounds and original recovery
 - **WHEN** inputs contain quoted/shell-like text, violate the declared schema or total argv bounds, or a restarted operation is presented different inputs
 - **THEN** quoted text remains inert data; invalid inputs cause zero SSH/target registration; restart reconstructs only the stored original inputs and changed replay conflicts without dispatch
