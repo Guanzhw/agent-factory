@@ -9,19 +9,21 @@ from fastapi import HTTPException
 from agent_factory.application_runtime import ApplicationRuntimeRegistry
 from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory.plan_policy import NativeMandateCompleted
+from agent_factory.store import Store
 
 
 class LifecycleTerminalRaceTests(unittest.TestCase):
     def fixture(self):
         task = {'id': 'synthetic-root', 'owner_id': 'alice', 'plan_id': 'synthetic-plan',
             'run_id': 'synthetic-run', 'request_id': 'synthetic-request',
-            'admission': 'accepted', 'cancel_requested': False}
+            'admission': 'accepted', 'cancel_requested': False, 'body': {}}
         failure = {'present': False}
         actions = []
         store = Mock()
         store.process_runtime = None
         store.workflow = None
         store.application_runtime = ApplicationRuntimeRegistry(store)
+        store.completion_context.side_effect = lambda current: Store.completion_context(store, current)
         store.task.side_effect = lambda *_: task.copy()
         store.plan.return_value = {'id': task['plan_id']}
         store.effects.return_value = []

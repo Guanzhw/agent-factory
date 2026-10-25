@@ -26,6 +26,7 @@ def native_call(adapter, lease, arguments):
     context = RunContext(user_id='alice', session_id='task-alice', run_id='run-alice', session_state={})
     plan = {'id': 'plan-alice', 'ownerId': 'alice'}
     store.contexts[context.run_id] = (context.user_id, context.session_id, plan['id'])
+    store.plans[context.run_id] = plan
     handle = Handle('alice', adapter, store.personal_tools)
     handle.lease = lease
     spec = {'connection': {'ref': 'connection-alice', 'revision': 'connection-v1'}}

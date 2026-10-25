@@ -181,8 +181,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_COMPOSITION')
     composition = CompositionService(store, auth, applications, bindings, connections)
     store.composition = composition
-    store.register_execution_guard("execution-bindings",
-        lambda owner, plan, context, tool: bindings.recheck(plan, context), tool_independent=True)
+    store.register_execution_guard("execution-bindings", bindings.require_execution, tool_independent=True)
     store.register_execution_guard("application-governance",
         lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
     at('PREPARATION_APP_NATIVE_GRAPH')
@@ -325,6 +324,11 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     observer = (lifecycle_observer_type or FactoryLifecycleObserver)(store, auth, native_db,
                                         lambda: getattr(native.state, "queue_worker", None))
     store.lifecycle_observer = observer
+    from .delegated_operations import DELEGATED_OPERATION_PIN, DelegatedOperations
+    delegated_key = tuple(DELEGATED_OPERATION_PIN[field] for field in ('adapterId', 'revision', 'configFingerprint'))
+    if delegated_key in store.workflow.runtimes:
+        raise ValueError('The built-in delegated operation pin cannot be replaced')
+    store.workflow.runtimes[delegated_key] = DelegatedOperations(delegation, observer, DELEGATED_OPERATION_PIN)
     native_lifespan = native.router.lifespan_context
 
     @asynccontextmanager

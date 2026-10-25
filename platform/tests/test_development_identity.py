@@ -175,7 +175,8 @@ class MockIdentityTests(unittest.IsolatedAsyncioTestCase):
         params = {key: value[0] for key, value in parse_qs(urlsplit(url).query).items()}
         form, _, _, _ = await self.begin(params=params)
         callback, _, _ = await self.select("alice", form=form)
-        opaque = await service.finish(callback["code"][0], callback["state"][0], binding)
+        opaque, return_to = await service.finish(callback["code"][0], callback["state"][0], binding)
+        self.assertEqual(return_to, "/")
         self.assertEqual(service.session(opaque)["owner"], "alice")
         self.assertEqual(len(service.csrf(opaque)), 43)
         enabled.remove("alice")

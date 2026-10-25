@@ -8,6 +8,11 @@ from sqlalchemy import func, select
 
 from research.projects import Agreement, CreateProject, EndProject, ProjectCommand, ResearchProjects, ReviseGoal
 from research.runs import ResearchRuns
+from research.records import ResearchRecords
+from agent_factory.application_content import ApplicationContent
+from agent_factory.resource_sharing import ResourceSharing
+from agent_factory.store import Store
+from types import MethodType
 from test_research_projects import agreement
 import test_applications_composition as fixtures
 
@@ -25,13 +30,14 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
         self.projects = ResearchProjects(self.store, self.auth, Mock())
         self.native = Mock()
         self.native.start = AsyncMock()
-        self.store.transaction = lambda read_only=False: self.store.connection(write=not read_only)
+        self.store.transaction = MethodType(Store.transaction, self.store)
         self.scopes = Mock()
         self.scopes.inspect.side_effect = lambda *_: {'allocations': [{
             'allocationId': self.scopes.allocate.call_args.args[3], 'taskId': 'original-task'}]}
         self.applications_port = Mock()
         self.applications_port.require_current.return_value = {'modes': {'literature': {}}}
-        self.runs = ResearchRuns(self.projects, self.native, self.scopes, self.applications_port)
+        self.content = ApplicationContent(self.store, self.auth, ResourceSharing(self.store, self.auth))
+        self.runs = ResearchRuns(self.projects, self.native, self.scopes, self.applications_port, ResearchRecords(self.content))
         self.project = self.projects.create('alice', CreateProject(requestId='runs-project-create', title='Research intent'))['id']
 
     def confirm(self, value=None):
