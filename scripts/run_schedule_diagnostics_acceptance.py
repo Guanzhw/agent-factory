@@ -71,7 +71,7 @@ def run(database_url, output, evidence):
         cert, key = stack.enter_context(temporary_development_tls(origin))
         identity = BrowserIdentityFixture(issuer=issuer, redirect_uri=origin + '/api/factory/auth/callback')
         config = identity.config()
-        config = replace(config, subject_owners={**config.subject_owners, (issuer, 'subject-manager'): 'manager'})
+        config = replace(config, jwks=identity.jwks, subject_owners={**config.subject_owners, (issuer, 'subject-manager'): 'manager'})
         settings = Settings(db_url=database.url, workspace=workspace,
                             temporary_policy='member-self-service', browser_oidc=config, max_workers=1)
         settings.schedule_poll_seconds = 3600  # Fixture-only explicit claim driver, not a timer test.

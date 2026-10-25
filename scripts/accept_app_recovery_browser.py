@@ -183,7 +183,7 @@ def recovery_fixture(database_url, dist):
         identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]),
             redirect_uri=base + '/api/factory/auth/callback')
         config = identity.config()
-        config = replace(config, subject_owners={**config.subject_owners, (identity.issuer, 'subject-manager'): 'manager'})
+        config = replace(config, jwks=identity.jwks, subject_owners={**config.subject_owners, (identity.issuer, 'subject-manager'): 'manager'})
         app = create_fixture_app(Settings(db_url=database.url, workspace=scratch / 'workspace',
             jwt_key='synthetic-recovery-browser-signing-key-at-least-32bytes',
             browser_oidc=config, web_directory=dist.resolve(), max_workers=1))
