@@ -132,7 +132,7 @@ class OperationCustodyTests(unittest.IsolatedAsyncioTestCase):
         inputs['inputs']['seed'] = 8
         self.service = OperationCustody(self.store, self.auth, runtimes=self.runtimes)
         self.assertEqual(self.service.read('alice', body['id'])['inputs']['inputs']['seed'], 7)
-        with self.assertRaises(HTTPException):
+        with self.assertRaisesRegex(ValueError, '^Effect fingerprint conflict$'):
             await self.service.start(self.ctx, 'input-step', 'one', PIN, inputs, retain_inputs=True)
         self.assertEqual(len(self.runtime.starts), 1)
 
