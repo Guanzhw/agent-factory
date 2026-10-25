@@ -5,7 +5,8 @@ HTTP verifies lost acknowledgements and owner isolation without native tasks.
 """
 import argparse
 from collections import Counter
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from dataclasses import replace
 import json
 from pathlib import Path
 import ssl
@@ -169,6 +170,34 @@ def scenario(browser, base, output, name, viewport, identity):
         foreign.close(); context.close()
 
 
+@contextmanager
+def recovery_fixture(database_url, dist):
+    """Owned loopback OIDC and explicit test catalog for browser consumers."""
+    with ExitStack() as stack:
+        database = stack.enter_context(IsolatedPostgres(database_url))
+        scratch = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='app-recovery-oidc-')))
+        certificate, key = private_tls_files(scratch / 'tls')
+        app_socket, idp_socket = listener(), listener()
+        stack.callback(app_socket.close); stack.callback(idp_socket.close)
+        base = 'https://127.0.0.1:' + str(app_socket.getsockname()[1])
+        identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]),
+            redirect_uri=base + '/api/factory/auth/callback')
+        config = identity.config()
+        config = replace(config, subject_owners={**config.subject_owners, (identity.issuer, 'subject-manager'): 'manager'})
+        app = create_fixture_app(Settings(db_url=database.url, workspace=scratch / 'workspace',
+            jwt_key='synthetic-recovery-browser-signing-key-at-least-32bytes',
+            browser_oidc=config, web_directory=dist.resolve(), max_workers=1))
+        state = app.app.state.factory
+        store = state['store']
+        stack.callback(store.engine.dispose); stack.callback(store.native_db.db_engine.dispose)
+        stack.callback(store.dispose_root_locks)
+        state['browser_auth'].exchanger = BrowserCodeExchanger(config,
+            transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
+        serve(stack, identity.app, idp_socket, certificate, key)
+        serve(stack, app, app_socket, certificate, key)
+        yield base, identity, state
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database-url', required=True)
@@ -179,26 +208,7 @@ def main():
     evidence = {'evidenceMode': 'controlled-fixture', 'realIdentityProviderVerified': False,
                 'servicesStarted': True, 'identity': 'local-synthetic-oidc', 'modelCalls': 0, 'screens': []}
     try:
-        with ExitStack() as stack, sync_playwright() as playwright:
-            database = stack.enter_context(IsolatedPostgres(args.database_url))
-            scratch = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='app-recovery-oidc-')))
-            certificate, key = private_tls_files(scratch / 'tls')
-            app_socket, idp_socket = listener(), listener()
-            stack.callback(app_socket.close); stack.callback(idp_socket.close)
-            base = 'https://127.0.0.1:' + str(app_socket.getsockname()[1])
-            identity = BrowserIdentityFixture(issuer='https://127.0.0.1:' + str(idp_socket.getsockname()[1]),
-                redirect_uri=base + '/api/factory/auth/callback')
-            app = create_fixture_app(Settings(db_url=database.url, workspace=scratch / 'workspace',
-                jwt_key='synthetic-recovery-browser-signing-key-at-least-32bytes',
-                browser_oidc=identity.config(), web_directory=args.dist.resolve(), max_workers=1))
-            state = app.app.state.factory
-            store = state['store']
-            stack.callback(store.engine.dispose); stack.callback(store.native_db.db_engine.dispose)
-            stack.callback(store.dispose_root_locks)
-            state['browser_auth'].exchanger = BrowserCodeExchanger(identity.config(),
-                transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(certificate)), retries=0))
-            serve(stack, identity.app, idp_socket, certificate, key)
-            serve(stack, app, app_socket, certificate, key)
+        with recovery_fixture(args.database_url, args.dist) as (base, identity, _state), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
                 for name, viewport in (('desktop', {'width': 1440, 'height': 1000}),
