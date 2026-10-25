@@ -23,3 +23,11 @@ The probe SHALL distinguish successful key loading from actual system ssh.exe au
 - **WHEN** an existing foreground loopback sshd can run without service or account changes
 - **THEN** correct pinned public-key authentication succeeds and wrong host pin or extra prompts do not execute a command or disclose a passphrase
 - **AND** missing prerequisites are BLOCKED rather than a simulated pass
+
+### Requirement: Explicit encrypted-fixture dependency
+The isolated probe SHALL install its pinned OpenSSH encryption KDF dependency before mechanism validation and SHALL NOT fall back to plaintext when encryption dependencies are missing.
+
+#### Scenario: Missing optional bcrypt dependency
+- **WHEN** encrypted serialization cannot load cryptography's optional bcrypt KDF
+- **THEN** report an incomplete fixture before invoking OpenSSH and retain the first failure
+- **AND** a separate locked probe dependency enables the same encrypted behavior without weakening its checks
