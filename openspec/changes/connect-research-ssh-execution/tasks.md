@@ -20,6 +20,8 @@
 - [ ] 4.2 QA 无训练工具负例与 browser 配置/缺项/未知状态验证通过；更新 P5/D01 覆盖说明，不把本机 SSH 或合成模型记成正式科研。
 
 ## 5. Review and target acceptance
+
+- [ ] 5.0 CI keeps one original native SSH wait/restart case and portable input/wait contracts in daily selections. Manual full discovery requires all native SSH cases and the Research setup-to-delivery integration to execute without skips. The separate real loopback SSH check reports its actual host prerequisites and evidence; a missing sshd is not GPU or network acceptance.
 - [ ] 5.1 对精确 base/head 完整 diff 做作者外精简审查，必要整改复审；串行组合适用 PG/独立 core/前端检查，保留首失败与清理记录。
 - [ ] 5.2 获取目标最小非秘密信息并冻结执行方式、环境、预算与允许故障实验；在已明确的目标执行方式下补实际适配/验收规范（若需 scheduler），否则 D01 保持 BLOCKED，不擅选 Slurm。
 - [ ] 5.3 正式目标真实训练/停止/恢复/证据验收按冻结参数完成或明确受阻；交付实际来源与限制，不能由受控测试推定 GPU、外部模型或部署通过。
