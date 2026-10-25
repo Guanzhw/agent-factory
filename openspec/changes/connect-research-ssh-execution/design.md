@@ -178,3 +178,7 @@ Before a new SSH operation intent, this adapter requires the local `experiment_o
 ### Cross-platform core, Linux-only remote helper
 
 Windows static checking in the final full run identified Linux-only os/fcntl symbols in the helper. Explicit `sys.platform != 'linux'` rejection at each OS entrypoint (`handle`, `directory`, `read_file`) both defines the runtime boundary and lets the type checker prune unreachable Linux code. No zero flag fallback, dynamic Any escape, ignored type errors, or weakened symlink/locking safeguards are introduced. Linux filesystem behavior tests are explicitly Linux-only; unsupported-platform no-I/O tests remain portable.
+
+### Native Windows controller limitation
+
+The helper's Linux guard is remote-side only. Controller custody still uses a private POSIX ssh-agent socket, Unix ownership checks and pipe select/selectors. Native Windows controller execution is unimplemented. One guard at `SSHAgents.acquire` rejects win32 before callbacks, secret resolution or process creation. The existing verification-code set and capabilities projection surface this known limitation; configuration list/revoke and bindings are unchanged. `controllerDiagnostic=null` elsewhere is not a support certificate. No Windows agent service, new credential transport, platform abstraction or ACL is added. UI reuses existing error presentation.

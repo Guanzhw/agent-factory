@@ -39,3 +39,15 @@ The SSH provider SHALL return an opaque handle supporting the existing Connectio
 #### Scenario: Native resolution and retained execution authority
 - **WHEN** the native connection registry resolves an explicitly execution-enabled SSH environment and retains its handle
 - **THEN** resolution succeeds without dispatch, and authorization checks reject an insufficient preparation scope or later execution-binding revocation using the original connection identity
+
+### Requirement: Native Windows controller reports unsupported SSH custody
+The service SHALL reject native Windows SSH agent acquisition with `SSH_CONTROLLER_PLATFORM_UNSUPPORTED` before authority callbacks, secret resolution/decoding or subprocess creation. Configuration management SHALL remain available; existing bindings and stored data SHALL NOT be deleted or rewritten by this capability boundary.
+
+#### Scenario: Windows controller requests verification or execution
+- **WHEN** native Windows reaches SSHAgents.acquire
+- **THEN** it receives the fixed unsupported-controller diagnostic before reading secret bytes or starting SSH; verification records the recognized diagnostic through the existing error mechanism
+
+#### Scenario: Unsupported controller still manages existing configuration
+- **WHEN** an authenticated member reads SSH capabilities on native Windows
+- **THEN** enabled continues to describe configuration-management availability and controllerDiagnostic reports the unsupported code; list and revoke remain usable, and the existing UI error presentation explains the limitation
+- **AND** absence of this known diagnostic on other platforms does not certify Darwin or any untested controller
