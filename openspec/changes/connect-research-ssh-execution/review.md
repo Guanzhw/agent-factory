@@ -19,3 +19,28 @@ The author recorded 40 portable cases passed, zero skips, targeted Pyright zero 
 - GPU allocation/execution remains **unimplemented in this CPU helper/provider**, which rejects GPU bindings. Target execution method, possible scheduler and hardware/resource parameters also remain to be frozen. D01 is not merely waiting for credentials or hardware access.
 
 Final integrated checks and exact-head publication remain separate gates. Earlier successful loopback and portable runs retain their documented scope; this review does not upgrade them to a combined final result.
+
+## Final cumulative code-review checkpoint: fa0b736
+
+Independent reviewer `foundation_review` reported **PASS** for exact base
+`5cde50a3e252b28e9f08863251724805267de840` → head
+`fa0b73663c9e173d4130060103f8dfc9defbd50f`: 72 changed files, with all 18
+production-file diffs byte-identical to the earlier reviewed production change.
+This supersedes the earlier review scope, without erasing the 13755c7 blocker
+or earlier failed fixtures. Production is frozen at this checkpoint.
+
+Exact [fast40231189473](https://github.com/Guanzhw/agent-factory/actions/runs/40231189473)
+succeeded. Targeted evidence now includes Research `9a048ca` 1/1 (25.758s),
+browser `b88499a` PASS, loopback `bb10f29` 1/1 (8.608s), and actual accepted
+continuation ACK loss plus controller SIGKILL at `a6552d2`, 2/2 (33.152s).
+The [native evidence](verification-native-inputs.md#accepted-ack-loss-and-actual-controller-sigkill)
+records the exact fault injection; it is not merely service-instance recreation.
+No final full-suite PASS is available.
+
+Both PR136 and PR137 remain Draft/unmerged. Dependency PR136's older
+[full40228654327](https://github.com/Guanzhw/agent-factory/actions/runs/40228654327)
+ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips,
+2091.848s. Four lifecycle errors were corrected at 5cde50a; the two failures
+remain under investigation. GPU allocation/binding is still unimplemented and
+rejected, while external-network faults and actual target model/GPU/hardware
+acceptance remain unverified. Code-review PASS does not close those gates.

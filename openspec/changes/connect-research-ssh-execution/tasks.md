@@ -13,7 +13,7 @@
 - [ ] 3.2 串行真实 loopback sshd + 透明 TCP 转发运行有限 CLI，验证最终 hostkey、submit 应答丢失、断线、控制器重启、原任务唯一、取消正向停止及不确定保留；仅隔离 fixture，无真实账号。
 - [ ] 3.3 实现独立SSH原结果只读port，保持tool_results唯一CLI证明不变；实际文件测试证明owner/run/operation错配拒绝、越根/symlink拒绝、归档失败不清理、来源撤回后共享失效，私有输出不默认外泄。
 
-- [ ] 3.4 Add original delegated-child read port and 16KiB private SSH output, wire exact SSH wait through it, and verify identity rejection, truncation and receipt replay without new dispatch.
+- [x] 3.4 Add original delegated-child read port and 16KiB private SSH output, wire exact SSH wait through it, and verify identity rejection, truncation and receipt replay without new dispatch.
 
 ## 4. Connect the research consumer
 - [ ] 4.1 setup/确认约定显式选择计算资源与训练材料，沿原 root→child 与预算绑定；实际研究集成测试证明 child 原等待、真实 CLI 输出到 root 评价、负结果保留、目标修订不重置资源/预算。
@@ -33,3 +33,20 @@
 - Output-budget admission correction: 40 portable passed, zero skipped; targeted Pyright zero errors/warnings and strict spec validation passed. Existing UNKNOWN replay retains its original rules.
 - 4.1 remains open: the first Research case failed (35.567s); model-fixture signature correction 9661db2 is implemented but not rerun at this checkpoint.
 - 5.1 remains open for combined applicable verification despite code-review PASS. D01 remains open for both missing GPU execution implementation and target-specific execution/scheduler/hardware acceptance; the CPU helper rejects GPU bindings.
+
+## Current checkpoint: fa0b736 (supersedes pending status, preserves failures)
+
+Completed evidence:
+- Independent cumulative review: exact `5cde50a → fa0b736` PASS (72 files; all 18 production-file diffs byte-identical to the earlier reviewed production change).
+- Exact [fast CI 40231189473](https://github.com/Guanzhw/agent-factory/actions/runs/40231189473) SUCCESS.
+- Private original output/read port (3.4) has portable identity/truncation/replay checks and actual native output integration; no replacement dispatch is used.
+- Research integration `9a048ca`: 1/1 passed, 25.758s, after the retained first failures. Browser `b88499a` PASS; latest loopback `bb10f29`: 1/1 passed, 8.608s.
+- Actual continuation accepted before ACK loss and actual controller SIGKILL at `a6552d2`: 2/2 passed, zero skips, 33.152s; evidence recorded by `fa0b736`. These now supplement, rather than merely restate, the earlier native 3/3 instance-reconstruction evidence.
+
+Open/partial obligations:
+- Mixed tasks 2.1–3.3 and 4.1–4.2 are not mechanically closed by these counts. Their implemented CPU/native/research mechanisms have the evidence above; external SSH network fault coverage and any assertions not mapped in the linked verification remain open. In particular, accepted native continuation ACK loss is not lost remote submit ACK or physical SSH disconnection.
+- 5.0/5.1 remain open for final combined full discovery and integration acceptance; review and fast success alone do not close them.
+- GPU binding/allocation remains UNIMPLEMENTED and is rejected. Target execution method/scheduler selection and actual model/GPU/hardware acceptance remain unresolved (5.2/5.3).
+- PR136 and PR137 remain Draft and unmerged. Dependency PR136's older 624 full CI40228654327 ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips, 2091.848s. The four lifecycle errors have fixes at 5cde50a; the two failures are under investigation. No successful replacement full is claimed.
+
+Details: [native fault evidence](verification-native-inputs.md), [Research integration](verification-research-native.md), [browser](verification-browser-ssh.md), [loopback](verification-loopback.md), [review](review.md).
