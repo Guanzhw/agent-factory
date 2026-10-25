@@ -10,7 +10,7 @@
 
 前缀/api/factory/research/setup，所有操作使用当前认证成员，拒绝额外字段。
 
-- GET /：{workflowPin, models, connections, environments, experimentMaterials}。读取不创建种子、不探测远端。
+- GET /：{workflowPin, models, connections, environments, experimentMaterials}。读取不创建种子、不探测远端。experimentMaterials各项增加connectionRequirements（依赖闭包实际adapter的name/kind/requiredCapabilities）、available及缺项unavailableReason，让表单无需推测连接类型。
 - POST /drafts：{requestId,name,modelConnectionRef,environment:{adapterId,revision,connectionRef?},experimentMaterialRefs:[{id,version,sha256}],connectionRefs:{slot:reference},budget:{toolCalls,maxDepth,maxChildren,operationSeconds,outputBytes}}。budget沿core v2规则。name与requestId沿既有长度。此操作仅保存本人setup intent与定义预览，不创建材料或应用版本、不发布、不运行。返回{id,state:'draft',applicationRef:null,connectionRefs,materialRefs:[],preview}；preview明确是待发布声明，不冒充真实应用pin。
 - GET /{id}：owner读取setup当前状态及原引用。
 - GET /requests/{requestId}：owner读取原prepare或publish收据；缺失返回404，不能据此换ID重做。
