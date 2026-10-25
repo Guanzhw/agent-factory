@@ -29,6 +29,10 @@ from .runtime_hooks import native_ended_reason, cancel_owned_runtime
 TERMINAL = {"completed", "cancelled", "failed"}
 
 
+class _FinalizationPending(Exception):
+    pass
+
+
 class FactoryLifecycleObserver:
     def __init__(self, store: Any, auth: Any, native_db: Any, worker_getter: Callable[[], Any],
                  *, interval: float = .5, batch_limit: int = 24):
@@ -104,6 +108,8 @@ class FactoryLifecycleObserver:
         return tasks, links
 
     def _reason(self, task: dict, ticket: dict | None) -> str | None:
+        if task['body'].get('stoppedStatus') is not None:
+            return None
         if task["cancel_requested"]:
             return "cancel-requested"
         if task["admission"] == "rejected":
@@ -221,8 +227,9 @@ class FactoryLifecycleObserver:
                 "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
                 "nativeStatus": ticket["status"] if ticket else None,
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
-                "failed": self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed"),
-                "displayStatus": self._display_status(task, ticket, effects_unknown)}
+                "failed": (task["body"]["stoppedStatus"] == "failed" if task["body"].get("stoppedStatus") is not None
+                           else self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed")),
+                "displayStatus": task["body"].get("stoppedStatus") or self._display_status(task, ticket, effects_unknown)}
 
     def _display_status(self, task, ticket, effects_unknown):
         if task["admission"] == "rejected":
@@ -329,6 +336,7 @@ class FactoryLifecycleObserver:
         service = self.store.delegation
         with service._root_lock(root["id"]):
             tasks, links = self._group(self.store.task(root["id"], root["owner_id"]))
+            completion = self.store.completion_context(tasks[0])
             facts = {task["id"]: self._facts(task) for task in tasks}
             for task in reversed(tasks):
                 direct = [link for link in links if link["parent_id"] == task["id"]]
@@ -353,10 +361,40 @@ class FactoryLifecycleObserver:
                         link["child_id"] and facts[link["child_id"]].get("groupFailed") for link in direct)
                     if stopped:
                         status = "failed" if facts[task["id"]]["groupFailed"] else "canceled" if task["cancel_requested"] or facts[task["id"]].get("nativeStatus") == "cancelled" else "completed"
-                        self.store.observed(task, status, True)
+                        if completion is not None:
+                            self.store.observe_stopped(task, status)
+                        else:
+                            self.store.observed(task, status, True)
+            if facts[root["id"]]["groupStopped"] and completion is not None:
+                facts[root['id']]['finalizationCommitted'] = self._finalize_group(tasks, completion)
+                return facts
             if facts[root["id"]]["groupStopped"]:
                 self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner", id=root["id"], owner=root["owner_id"])
         return facts
+
+    def _finalize_group(self, tasks, completion):
+        root = tasks[0]
+        try:
+            with self.store.transaction() as conn:
+                self.store.local_budget_scopes.admission_lock(conn)
+                root = self.store.task(root['id'], root['owner_id'])
+                if root['terminal']:
+                    return True
+                with completion(conn, root) as finalize:
+                    current = [self.store.task(task['id'], root['owner_id']) for task in tasks]
+                    for task in current:
+                        self.store.observed(task, task['body']['stoppedStatus'], True)
+                    if any(not self.store.task(task['id'])['terminal'] for task in current):
+                        raise _FinalizationPending()
+                    settlement = self.store.local_budget_scopes.settle_task(root['owner_id'], root['id'])
+                    if settlement is not None and settlement['state'] == 'HELD':
+                        raise _FinalizationPending()
+                    finalize({'task': root, 'group': current, 'settlement': settlement})
+                    self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner",
+                                   id=root['id'], owner=root['owner_id'])
+            return True
+        except _FinalizationPending:
+            return False
 
     async def tick(self) -> dict:
         async with self._tick_lock:

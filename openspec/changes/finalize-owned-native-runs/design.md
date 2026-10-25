@@ -16,7 +16,7 @@
 
 ### 1. 完成消费者是显式可信装配
 
-仅对明确声明完成责任的原计划运行应用完成动作。新增精确nativeComponent pin选择是当前消费者的实际需要：现有application(id,version)选择仅在没有binding owner时生效，研究Workflow带其他工具owner会漏选，且同一组件可被多个成员应用复用。组件选择须以既有完整pin(kind/id/revision/sha256)附加research owner，同时保留其他binding/effect owner，不另造摘要或证明链，不按用户app名称/前缀匹配。没有声明的core任务维持原有语义。旧pin声明仍存在但hooks缺失时保守保留；若删除全部声明，registry无法凭空识别旧责任，本change不声称具备这种识别能力，装配撤回必须保留旧声明。不能为完成流程移除其他effect/custody的正向停止要求。
+仅对register(finalizes=True)明确声明完成责任的原计划运行应用完成动作；责任声明独立于当前hooks，缺实现时保留原任务，普通tool owner不因没有finalizer被误认为缺失。新增精确nativeComponent pin选择是当前消费者的实际需要：现有application(id,version)选择仅在没有binding owner时生效，研究Workflow带其他工具owner会漏选，且同一组件可被多个成员应用复用。组件选择须以既有完整pin(kind/id/revision/sha256)附加research owner，同时保留其他binding/effect owner，不另造摘要或证明链，不按用户app名称/前缀匹配。没有声明的core任务维持原有语义。旧pin声明仍存在但hooks缺失时保守保留；若删除全部声明，registry无法凭空识别旧责任，本change不声称具备这种识别能力，装配撤回必须保留旧声明。不能为完成流程移除其他effect/custody的正向停止要求。
 
 采用单一同步接口 `finalization_context(conn, task)`：应用在传入的同一事务连接上获取自身/content/event锁并yield完成回调；core在该context内完成terminal/settle后调用该回调。context不得提交、吞异常或另外开启事务。只允许一个完成消费者，歧义明确拒绝，其他owner仍参与停止证明。只读完成事实含原owner/task/run/plan引用、原group结果、scope/allocation及settled statement。稳定完成身份使用原task/allocation，不额外制作hash链。回调只写自身领域记录和现有内容/outbox，不submit、取消、调用模型/网络或改写core事实。真正研究意图/是否发后继由应用核对；core不理解研究结论。暂用测试消费者验证事务，不能把它算作研究产品已交付。
 

@@ -275,6 +275,12 @@ class LocalBudgetScopes:
             conn.execute(self.scopes.update().where(self.scopes.c.id == scope_id).values(state='CANCELLED'))
         return self.inspect(owner, scope_id)
 
+    def settle_task(self, owner, task_id):
+        with self.store.transaction() as conn:
+            allocation = conn.execute(select(self.allocations.c.id).where(
+                self.allocations.c.owner_id == owner, self.allocations.c.task_id == task_id)).scalar_one_or_none()
+            return self.settle(owner, allocation) if allocation is not None else None
+
     def settle(self, owner, allocation_id):
         with self.store.transaction() as conn:
             self.lock(conn)
