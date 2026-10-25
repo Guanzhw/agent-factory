@@ -13,8 +13,7 @@ Example (synthetic local database credentials only):
     --fixture-database-url postgresql+psycopg://localhost/factory_test \
     --output-dir ./acceptance-output
 
-The ordinary accept_schedule_diagnostics_browser.py CLI remains available for an
-already prepared isolated Factory. This orchestrator prepares its own fixtures.
+Both schedule-diagnostics CLI entrypoints prepare their own isolated fixtures.
 """
 import argparse
 import asyncio
@@ -42,7 +41,12 @@ def run(database_url, output, evidence):
     from playwright.sync_api import sync_playwright
     from fixture_settings import Settings
     from core_native_fixture import create_fixture_app as create_app
-    from agent_factory.development_tls import temporary_development_tls
+    from development_tls_fixture import temporary_development_tls
+    from browser_identity_fixture import BrowserIdentityFixture
+    from agent_factory.browser_oidc import BrowserCodeExchanger
+    from dataclasses import replace
+    import httpx
+    import ssl
     from pg_fixture import IsolatedPostgres
     from accept_browser_auth import listener, serve
     from accept_schedule_diagnostics_browser import scenario
@@ -62,15 +66,23 @@ def run(database_url, output, evidence):
         workspace = Path(stack.enter_context(TemporaryDirectory(prefix='schedule-diagnostics-')))
         sock = listener(); stack.callback(sock.close)
         origin = 'https://127.0.0.1:' + str(sock.getsockname()[1])
+        idp_socket = listener(); stack.callback(idp_socket.close)
+        issuer = 'https://127.0.0.1:' + str(idp_socket.getsockname()[1])
         cert, key = stack.enter_context(temporary_development_tls(origin))
+        identity = BrowserIdentityFixture(issuer=issuer, redirect_uri=origin + '/api/factory/auth/callback')
+        config = identity.config()
+        config = replace(config, subject_owners={**config.subject_owners, (issuer, 'subject-manager'): 'manager'})
         settings = Settings(db_url=database.url, workspace=workspace,
-                            temporary_policy='member-self-service', development_mock_login=True,
-                            development_public_origin=origin, max_workers=1)
+                            temporary_policy='member-self-service', browser_oidc=config, max_workers=1)
         settings.schedule_poll_seconds = 3600  # Fixture-only explicit claim driver, not a timer test.
         app = create_app(settings)
         state = app.app.state.factory
         stack.callback(state['store'].engine.dispose)
         stack.callback(state['store'].native_db.db_engine.dispose)
+        stack.callback(state['store'].dispose_root_locks)
+        state['browser_auth'].exchanger = BrowserCodeExchanger(config,
+            transport=httpx.AsyncHTTPTransport(verify=ssl.create_default_context(cafile=str(cert)), retries=0))
+        serve(stack, identity.app, idp_socket, cert, key)
         serve(stack, app, sock, cert, key)
         service, store, auth = state['schedules'], state['store'], state['auth']
         def counts():
@@ -139,7 +151,7 @@ def run(database_url, output, evidence):
         browser = playwright.chromium.launch(headless=True); stack.callback(browser.close)
         for name, viewport in (('desktop', {'width': 1440, 'height': 1000}),
                                ('mobile', {'width': 390, 'height': 844})):
-            evidence['screens'].append(scenario(browser, origin, output, name, viewport, prepare=prepare_offloop))
+            evidence['screens'].append(scenario(browser, origin, output, name, viewport, identity=identity, prepare=prepare_offloop))
             assert counts() == [0, 0, 0]
         evidence['finalNativeEffects'] = {'tasks': 0, 'occurrences': 0, 'nativeJobs': 0}
         evidence['ok'] = True
@@ -160,7 +172,7 @@ def main(argv=None):
         if name not in allowed:
             del os.environ[name]
     evidence = {'evidenceMode': 'controlled-fixture', 'liveProviderVerified': False,
-                'productionSchedule': False, 'screens': [], 'ok': False,
+                'productionSchedule': False, 'identity': 'local-synthetic-oidc', 'realIdentityProviderVerified': False, 'screens': [], 'ok': False,
                 'cleanupComplete': False}
     try:
         args.output_dir.mkdir(parents=True, exist_ok=False)

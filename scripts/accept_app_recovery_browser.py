@@ -27,6 +27,15 @@ from pg_fixture import IsolatedPostgres
 PREFIX = '/api/factory'
 
 
+def origin(value):
+    parsed = urlsplit(value)
+    if (parsed.scheme != 'https' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1')
+            or parsed.username or parsed.password or not parsed.port
+            or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+        raise argparse.ArgumentTypeError('Use an explicit loopback HTTPS origin')
+    return value.rstrip('/')
+
+
 def login(page, base, owner, identity):
     identity.subject = 'subject-' + owner
     page.goto(base)
