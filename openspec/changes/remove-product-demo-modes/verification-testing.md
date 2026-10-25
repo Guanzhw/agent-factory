@@ -397,3 +397,33 @@ all required groups passed and `accepted=true`.
 Log: `/tmp/no-demo-fast-python-lifecycle-fixed.log`. This was one bounded,
 exclusive local run; the old complete CI run was left untouched. No live model,
 real external runtime or production identity acceptance is inferred.
+
+### Lost prepare ACK: control the observation boundary
+
+Full CI `40228654327` at `624bf82` failed with 2068 tests, 2 failures,
+4 lifecycle-unit errors and 5 skips in 2091.848s. The separate lifecycle fix
+does not explain `test_04_lost_prepare_reply_owner_request_lookup_has_no_execution`:
+its origin placement was `PREPARING`, not the expected pre-reconciliation
+`PREPARE_UNKNOWN`. Original traceback: `/tmp/af-no-demo-624-full-failures.txt`.
+
+Source shows an uncontrolled competing writer: origin lifecycle observation
+calls the existing handoff reconciliation and persists receiver state while
+the test expects the state before any reconciliation. The former fault wrapper
+also dropped arbitrary error responses, and the test asserted only an HTTP
+exception; that log does not prove successful receiver preparation or identify
+the exact historical interleaving.
+
+Spec `a8a41d9` clarifies the pre-reconciliation fault boundary. Test `fcfc3d3`
+stops/awaits the origin observer before reservation, restores transport and
+observer in finally, and records a successful original receiver response,
+exactly one prepare attempt and one discarded ACK. It preserves exact UNKNOWN,
+original receipt recovery, zero native tickets before explicit dispatch and
+one original ticket afterward. No production change or accepted-state widening.
+
+The first controlled run reached an actual original `PREPARED` reply but failed
+at a new test typo: expected 200 versus the route's explicit 201. It ran 1 case
+in 10.622s, exit 1; `/tmp/no-demo-prepare-ack-controlled-first.log` is retained.
+Test source was `fcfc3d3`; a disjoint removal-test commit `c424c84` occurred during
+execution, without changing this case or production bytes. `0513cbe` corrects
+only that exact expected status to 201. Ruff passed; next targeted runtime
+verification is pending its serial slot.
