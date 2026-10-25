@@ -26,7 +26,7 @@ def safe_error(stage, exc):
     while frame is not None:
         code = frame.tb_frame.f_code
         source = Path(code.co_filename)
-        if source.parent == owned and source.name in ('__init__.py', 'windows.py'):
+        if source.parent == owned and source.name in ('__init__.py', 'windows.py', 'stage_b.py'):
             locations.append({'file': source.name, 'function': code.co_name, 'line': frame.tb_lineno})
         frame = frame.tb_next
     return {'fixtureComplete': False, 'stage': stage, 'errorType': type(exc).__name__,
@@ -44,7 +44,9 @@ def helper_main():
         stage = 'VERIFY_FIXTURE_DIRECTORY'
         w.verify(folder)
         stage = 'EXACT_PROMPT'
-        if len(sys.argv) != 2 or sys.argv[1] != 'Enter passphrase: ':
+        expected_prompt = (f"Enter passphrase for key '{key_path[:100]}': "
+                           if os.environ.get('AF_PROBE_PHASE') == 'ssh' else 'Enter passphrase: ')
+        if len(sys.argv) != 2 or sys.argv[1] != expected_prompt:
             save(folder, 'helper-status', {'stage': stage, 'errorCode': 'PROMPT_MISMATCH'})
             return 1
         if os.environ.get('SSH_ASKPASS_PROMPT') in ('confirm', 'none'):
@@ -311,8 +313,13 @@ def main():
             return 0
         if sys.argv[1:] == ['--foreign']:
             return foreign_client()
-        result, code = experiment()
+        if sys.argv[1:] == ['--stage-b']:
+            from .stage_b import experiment as authenticate
+            result, code = authenticate()
+        else:
+            result, code = experiment()
     except Exception as exc:
-        result, code = {**safe_error('HARNESS', exc), 'stage': 'A', 'experimentCompleted': False, 'candidateAccepted': False}, 1
+        result, code = {**safe_error('HARNESS', exc), 'stage': 'B' if sys.argv[1:] == ['--stage-b'] else 'A',
+                       'experimentCompleted': False, 'candidateAccepted': False}, 1
     print(json.dumps(result, sort_keys=True))
     return code
