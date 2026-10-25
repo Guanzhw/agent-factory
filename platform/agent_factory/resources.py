@@ -5,10 +5,11 @@ UNKNOWN acknowledgements are reconciled with reads, never replayed or freed.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 import json
 import re
+import threading
 from typing import Any, Awaitable, Callable, Mapping, Protocol, cast
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -198,28 +199,49 @@ class PersistentResourceService:
     """Factory metadata in existing af_resources/af_leases, not remote scheduling."""
     def __init__(self, store: Any, auth: Any, targets: Mapping[str, RemoteTarget]):
         self.store, self.auth = store, auth
-        self.targets = dict(targets)
+        self.targets = {}
+        self._targets_lock = threading.RLock()
+        self.ssh_targets = None
         self.execution_runtimes: dict[str, Any] = {}
-        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", ref) for ref in self.targets):
+        for ref, target in targets.items():
+            self.register_target(ref, target)
+
+    def register_target(self, ref: str, target: RemoteTarget) -> RemoteTarget:
+        if not isinstance(ref, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", ref):
             raise ValueError("Configured connection references must be bounded identifiers")
-        pools = {}
-        namespaces = {}
-        for target in self.targets.values():
+        with self._targets_lock:
+            old = self.targets.get(ref)
+            if old is not None:
+                same = all(getattr(old, item.name) == getattr(target, item.name)
+                           for item in fields(RemoteTarget) if item.name != "provider")
+                pinned = (old.provider is target.provider or
+                          getattr(old.provider, "configuration_fingerprint", None) is not None)
+                if (not same or not pinned or self._target_fingerprint(old) != self._target_fingerprint(target)
+                        or self._provider_namespace(old) != self._provider_namespace(target)):
+                    raise ValueError("Conflicting definition of an existing resource target")
+                return old
             pool = target.capacity_pool
-            if pool is not None:
-                if pool.pool_id in pools and pools[pool.pool_id] != pool:
-                    raise ValueError("Conflicting definitions of the same compute pool")
-                pools[pool.pool_id] = pool
             namespace = self._provider_namespace(target)
-            if namespace is not None:
-                identity = pool.fingerprint if pool is not None else None
-                if namespace in namespaces and namespaces[namespace] != identity:
-                    raise ValueError("Aliases of one provider namespace must share one capacity pool")
-                namespaces[namespace] = identity
+            for registered in self.targets.values():
+                other = registered.capacity_pool
+                if pool is not None and other is not None and pool.pool_id == other.pool_id and pool != other:
+                    raise ValueError("Conflicting definitions of the same compute pool")
+                if namespace is not None and namespace == self._provider_namespace(registered):
+                    if (pool.fingerprint if pool else None) != (other.fingerprint if other else None):
+                        raise ValueError("Aliases of one provider namespace must share one capacity pool")
+            self.targets[ref] = target
+            return target
 
     def _authorize(self, owner: str, ref: str) -> RemoteTarget:
         self.auth.require_member(owner)
-        target = self.targets.get(ref)
+        with self._targets_lock:
+            target = self.targets.get(ref)
+        if target is None and self.ssh_targets is not None:
+            # Reconstruct only an existing SSH lease's original pinned target.
+            # Vault checks and reconstruction must not run under the map lock.
+            self.ssh_targets.restore_target(owner, ref)
+            with self._targets_lock:
+                target = self.targets.get(ref)
         if target is None or owner not in target.owners:
             raise HTTPException(404, "Authorized resource reference not found")
         return target
@@ -278,7 +300,9 @@ class PersistentResourceService:
 
     def discover(self, owner: str) -> list[dict]:
         self.auth.require_member(owner)
-        return [self._resource(owner, ref) for ref, target in self.targets.items() if owner in target.owners]
+        with self._targets_lock:
+            visible = [ref for ref, target in self.targets.items() if owner in target.owners]
+        return [self._resource(owner, ref) for ref in visible]
 
     async def attach(self, owner: str, connection_ref: str, task_id: str | None = None, request_id: str | None = None) -> dict:
         target = self._authorize(owner, connection_ref)
