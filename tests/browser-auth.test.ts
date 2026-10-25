@@ -5,7 +5,7 @@ import { authEpoch, assertAuthEpoch, authorizationDestination, browserAuthConfig
 const config = (enabled = true) => ({ enabled, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' });
 const token = 'a'.repeat(43);
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-beforeEach(() => { clearBrowserSession(); configureBrowserAuth(config()); });
+beforeEach(() => { clearBrowserSession(); configureBrowserAuth(config()); vi.stubGlobal('window', { location: new URL('https://factory.example/?tab=research&project=p1#evidence') }); });
 afterEach(() => { clearBrowserSession(); configureBrowserAuth(config(false)); vi.unstubAllGlobals(); });
 
 describe('browser SSO boundary', () => {
@@ -20,7 +20,7 @@ describe('browser SSO boundary', () => {
       .mockResolvedValueOnce(json({ detail: 'sensitive-provider-debug' }, 500));
     vi.stubGlobal('fetch', fetch);
     await expect(startBrowserLogin()).resolves.toBe('https://identity.example/authorize?state=public-fixture');
-    expect(fetch).toHaveBeenCalledWith('/api/factory/auth/login', expect.objectContaining({ method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } }));
+    expect(fetch).toHaveBeenCalledWith('/api/factory/auth/login', expect.objectContaining({ method: 'POST', body: JSON.stringify({ returnTo: '/?tab=research&project=p1#evidence' }), headers: { 'Content-Type': 'application/json' } }));
     await expect(startBrowserLogin()).rejects.toThrow('身份认证暂时不可用');
     expect(fetch).toHaveBeenCalledTimes(2);
   });
