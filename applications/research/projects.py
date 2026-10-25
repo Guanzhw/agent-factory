@@ -1,6 +1,6 @@
 """Owner research agreements; native tasks remain the execution authority."""
 from copy import deepcopy
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -107,7 +107,7 @@ def reject(code, message, status=409) -> NoReturn:
 class ResearchProjects:
     def __init__(self, store, auth, endpoints):
         self.auth, self.endpoints = auth, endpoints
-        self.execution = None
+        self.execution: Any = None
         self.db = GovernedStorage(store, 'research_projects_v1')
         metadata = MetaData()
         self.projects = Table('research_projects', metadata,
