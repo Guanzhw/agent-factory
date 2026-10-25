@@ -211,7 +211,8 @@ AllowUsers {pwd.getpwuid(os.getuid()).pw_name}
         with self.assertRaises(ValueError):
             wrong(value)
         self.assertEqual(list(self.runs.iterdir()), [])
-        capabilities = self.transport({'protocol': PROTOCOL, 'action': 'capabilities'})
+        capabilities = self.transport({'protocol': PROTOCOL, 'action': 'capabilities',
+                                       'root': self.server.allowed_root})
         self.assertTrue(capabilities['processCustody'])
         self.assertFalse(capabilities['gpuAllocation'])
         first = self.transport(value)['observation']
