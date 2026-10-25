@@ -25,3 +25,9 @@ Diagnostic implementation after independent design PASS: optional probe stderr r
 The narrow next change removes the redundant quoted nested cmd.exe from ForceCommand, leaving only `echo <synthetic nonce>` under the server's existing selected shell. Official Windows 9.5 w32-doexec.c already wraps the command in that shell (lines 399–432); spawning another cmd adds quoting/path resolution without adding test value. This is a source-backed simplification and a discriminating test of the nested-command hypothesis, not a retrospective claim that the first stderr proved it. Retain exactly the same nonce comparison, authentication, host-pin, release, timeout and cleanup checks.
 
 Independent review approved the single-line fixture simplification after spec 237c5f5. Only ForceCommand changed to `echo <nonce>`; all authentication, host pin, one-release, nonce, timeout and cleanup gates remain. Ruff/compile/diff passed. Actual Windows rerun is pending; no claim of having established the old stderr's exact cause.
+
+## First complete Stage B success
+
+Exact `8848b53cb3f8eb03e8112fee5aaceeda0ee44359`, [run40242397177](https://github.com/Guanzhw/agent-factory/actions/runs/40242397177), authentication job121316795919, artifact12617236560: all three cases PASS on Windows10.0.26100 / system OpenSSH9.5p2. Normal and repeat cases authenticated, returned the exact nonce with exit0 and one release; repeat refused the second request. Wrong pin exited255 with explicit host verification rejection and zero releases. All owned jobs stopped and fixture files removed.
+
+The one-line removal of the nested shell is the measured difference; preserve both earlier FAIL results. The diagnostic run established successful authentication before its command failure; no further precise shell-error explanation was captured. This is controlled Windows-loopback authentication, not Windows-to-Linux helper or GPU acceptance.
