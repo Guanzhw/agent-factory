@@ -62,3 +62,5 @@ The subsequent merge of main `e7987e7` changes only three no-demo evidence files
 Local 34 portable and 19 existing process tests passed; actual Windows CI for the
 correction remains required. This review does not claim the still-missing Windows
 credential/pipe client, GPU allocation or target acceptance is complete.
+
+Final metadata review by `assistant_messages` at `e7987e7 → a575f0f` found one remaining remote POSIX construction in the Linux direct-helper PostgreSQL fixture. It now explicitly selects `path_style='posix'`; independent single-line re-review PASS. Its five Linux PostgreSQL cases passed, zero skips, 1.574s. This is not Windows PostgreSQL/helper support: that fixture executes the Linux helper directly.
