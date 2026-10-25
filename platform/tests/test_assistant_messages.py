@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import MethodType, SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -56,7 +57,7 @@ class Runs:
         self.receipts[(owner, body.requestId)] = {'state': 'unknown', 'taskId': 'original-task',
             'runId': None, 'handoff': {'secret': 'never-project'}, 'planId': 'private-plan'}
 
-    def request(self, owner, request_id):
+    def _request_receipt(self, owner, request_id):
         result = self.receipts.get((owner, request_id))
         if result is None:
             raise HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND')
@@ -73,7 +74,7 @@ class AssistantMessagesTests(unittest.TestCase):
         self.store.transaction = MethodType(Store.transaction, self.store)
         self.auth, self.runs = Auth(), Runs()
         self.endpoints = Endpoints(self.auth)
-        self.service = AssistantMessages(self.store, self.auth, self.endpoints, self.runs)
+        self.service = AssistantMessages(self.store, self.auth, self.endpoints, self.runs, Mock())
         self.body = SendAssistantMessage(requestId='sender-request-001', text='What did the earlier experiment show?')
 
     def send(self, body=None):
@@ -81,7 +82,7 @@ class AssistantMessagesTests(unittest.TestCase):
 
     def test_duplicate_after_reopen_only_reads_original_unknown_admission(self):
         first = self.send()
-        self.service = AssistantMessages(self.store, self.auth, self.endpoints, self.runs)
+        self.service = AssistantMessages(self.store, self.auth, self.endpoints, self.runs, Mock())
         self.endpoints.enabled = False
         repeated = self.send()
         self.assertEqual(first, repeated)
