@@ -82,6 +82,17 @@
 ### Requirement: Private bounded original execution results
 Core SHALL expose a read-only original delegated-child lookup and bounded private SSH output without relying on successful child output or application SQL.
 
+#### Scenario: SSH continuation is accepted before its acknowledgement is lost
+- **WHEN** the actual native continue call has returned after persisting its original command proof, but the caller loses that response
+- **THEN** recovery checks the same run and command fingerprint and recognizes the persisted decision (DECISION_RECORDED or EXECUTION_CONTINUING), rather than requiring UNKNOWN despite positive proof
+- **AND** service reconstruction and repeated receipt reads do not send continue again or launch another helper; the separate before-send UNKNOWN case remains unchanged
+
+#### Scenario: Original SSH helper survives an actual controller kill
+- **GIVEN** the actual native job is PAUSED with its original SSH operation journal and running bounded helper child
+- **WHEN** the controller OS process is killed without shutdown callbacks, and a different controller PID opens the same isolated database/workspace
+- **THEN** the original helper child identity survives the kill, its retained inputs and task/run/operation/lease identities remain unchanged, and its completion resumes the original wait exactly once
+- **AND** tests reuse the existing process-worker lifecycle and local helper transport substitute; they do not claim real remote networking, provider or GPU acceptance
+
 #### Scenario: Failed child remains attributable
 - **WHEN** an owned original delegated operation failed or was cancelled
 - **THEN** its unique original delegation link identifies only the same owned child task/plan/run; absent or unbound child returns null and inconsistent identity rejects without creating or observing work
