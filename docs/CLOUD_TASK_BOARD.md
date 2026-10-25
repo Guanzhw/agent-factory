@@ -1949,3 +1949,20 @@ root保留API/生命周期/装配集成，重型PG串行。后续有效状态如
 | UI方案2原型 | research_frontend，pr104_independent_review | spec126b9cf，独立demo实现中；正式UI合并等用户体验确认 | 已下载实际看图；平台catalog→research→project→返回平台复用导航；synthetic数据，不启动模型/GPU |
 
 P7定向经验问答/主动关联、P8可复现成果包、完整自主多轮仍未完成，不因C/D缺项全部停工。正式模型、任务、数据/指标、预算、硬件/部署目标与负载容差仍须正式运行前冻结；真实C/D未执行。无新公开部署、付费调用或凭据grant。
+
+### 13:39 检查点：原型交付、真实闭环失败与修复验证
+
+- main仍为68df966（#109/#110已合并），main CI40194166699成功。#111尚未合并，head24fb82d、fast40196783893成功；原full40193918455明确失败：PG1912项7fail/21error/5skip，Windows1912项同7fail/21error/785skip。22目标精确复现后以真实task/context/completion契约修夹具，22通过；独立acceptance_doc_review完整增量及retarget等价审查通过。
+- 组合e477915的full40196675940仍运行；Windows已失败，check annotations定位三项member MCP夹具和一项旧登录返回值夹具。已保留初失败并修复：#114 head23378e4，51目标通过，exactfast40197661143成功；#113 head0ba103a，33目标通过，exactfast40197666147成功。均产品/原断言不变，foundation_review独立精确增量PASS。下一组合9af62ac已含修复，尚未启动第二full，等待原run完整终态，不覆盖原失败。
+- #112 head21907c3 fast40195034012、#115 head8820bc7 fast40194987448、#116 headf953118 fast40195221012均成功，均仍Draft。#115新增独立小型PG完成回执检查，避免日志截断被误当计数证明；旧#109 full的日志证据限制仍保留。
+- #117 headb2a2460 fast40197237395成功。独立设计/代码/包装复审通过；单HTML在docs/demos/research-workbench-demo.html，实际Raw HTTP200、与file模式验收字节相同。1487/390两视口file交互通过，实际core/PG/demo及本地合成OIDC四旅程通过；无真实模型/GPU、无外部IdP或Windows实跑声明。Library401后未重试，用户明确允许现GitHub PR交付。随后用户确认实际截图视觉/入口，正式UI接入门槛解除，不能以截图确认替代交互/精确CI。
+- #118原任务输入/原事件结果只读port，head ebb2149，foundation_review精确增量PASS；此前90f3a13 fast40196907542成功，新head检查另计。原事件投影12便携通过，受限网络首运行停滞并终止保留，不计通过；同源码环境许可运行通过不等于一般asyncio根因已定。
+
+| 当前工作 | 文件owner | 依赖/验收/阻碍 |
+| --- | --- | --- |
+| 研究固定native Workflow与真实PG | research_app_spec；root静态deployment装配 | spec先行，真实立即stop零child通过；child原计算完成，但嵌套pause恢复原step身份校验失败，保留两次失败并做有界metadata诊断，不放宽核心校验 |
+| ResearchRounds持久层/原finalizer | assistant_endpoints；最终独立完整review待冻结 | 10 portable通过；原scope/原custody/唯一后继事件，无第二执行链；精选共享不自动发布任意child raw聊天 |
+| 正式研究工作台 | research_frontend；pr104_independent_review后审 | 新spec085ebab先行，复用既有命令恢复，接真实项目/目标；demo与live数据分离，后端round/evidence契约未冻结处不假填 |
+| 私密peerQA预算基础 | assistant_messages；pr104_independent_review规范审查 | spec9de16ab，待补完整原start请求指纹绑定；复用scope/request/queue，不将私人问句发布team；root独占store/main钩子 |
+
+P5–P9仍未整体完成；真实C/D参数缺项继续BLOCKED/NOTRUN。当前云端PG串行，不新增公网服务、付费调用或凭据权限。历史MCP长尾与整套提速证据限制不因个别复验通过而关闭。
