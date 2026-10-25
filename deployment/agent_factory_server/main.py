@@ -27,9 +27,6 @@ def _abort_shared_store(store):
             except Exception:
                 pass  # Preserve the original constructor error.
 
-def native_queue_attempts(settings):
-    return 2
-
 
 def create_app(settings=None, *, diagnostics=None, applications=None):
     applications = validate_applications(() if applications is None else applications)
@@ -38,7 +35,7 @@ def create_app(settings=None, *, diagnostics=None, applications=None):
         lifespan_context=application_lifespan(applications),
         shutdown_callback=lambda state: release_applications(state, applications),
         shutdown_guard=shutdown_guard,
-        queue_max_attempts=native_queue_attempts(settings))
+        queue_max_attempts=2)
     state = factory_state(app)
     state.update(shutdown_failed=shutdown_failed)
     try:

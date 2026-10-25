@@ -148,7 +148,7 @@ class Settings:
             raise ValueError("FACTORY_DATABASE_URL must configure PostgreSQL; no SQLite queue fallback")
         key = os.getenv("FACTORY_JWT_KEY", "")
         if len(key.encode()) < 32:
-            raise ValueError("Production requires an operator-configured JWT key (at least 32 characters)")
+            raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
         return cls(db_url=url, jwt_key=key,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
