@@ -1,6 +1,6 @@
 # 团队研究应用分层交付规划
 
-2026-10-25，用户旅程已确认，实施尚未授权。本文是独立文档分支上的完整产品规划，不是 MVP 删减、已实现声明或真实跨用户数据共享许可。需求原文归纳见 [CONTEXT](../../CONTEXT.md)，概念见 [词汇表](../../GLOSSARY.md)，源码依据见 [底座差距分析](research-platform-core-gap-analysis.md)。依赖 PR104 验证版本，不能假定它已进入 main；不修改、推送或合并 PR104。
+2026-10-25，用户旅程已确认，实施尚未授权。本文是独立文档分支上的完整产品规划，不是 MVP 删减、已实现声明或真实跨用户数据共享许可。需求原文归纳见 [CONTEXT](../../CONTEXT.md)，概念见 [词汇表](../../GLOSSARY.md)，源码依据见 [底座差距分析](research-platform-core-gap-analysis.md)。依赖 PR104 验证版本，不能假定它已进入 main；本轮仅本地文档提交，不推送、合并、实施、调用付费模型或访问真实 GPU。
 
 ## 用户价值与完整旅程
 
@@ -19,25 +19,25 @@
 
 ## 当前选择：Factory 为执行基础，OR 为参考与可选适配
 
-主访谈方已决定不整体照搬/fork OpenResearch 应用、不将其 Rust executor 抽取为 core 库。优先验证现有 Factory 远程执行能力是否满足个人 GPU 场景，研究应用只拥有研究编排与证据模型。借鉴“实验节点与运行尝试分离”“保留负结果”“进程结果不等于科学结论”；不照抄固定失败次数阈值，遵循用户研究约定。
+根据用户委托的技术评估，规划选择不整体照搬/fork OpenResearch 应用、不将其 Rust executor 抽取为 core 库。优先验证现有 Factory 远程执行能力是否满足个人 GPU 场景，研究应用只拥有研究编排与证据模型。借鉴“实验节点与运行尝试分离”“保留负结果”“进程结果不等于科学结论”；不照抄固定失败次数阈值，遵循用户研究约定。
 
-依据为父线程提供的只读评估：OR `05d58d07d7392ad242120e2f3c6c3d422df6c0c0`，Cargo 0.2.21；本轮未独立运行 OR。上游仓库定位与完整评估报告由父线程补充，下面使用精确 revision 内路径，不虚构仓库 URL。
+基于固定版本的只读源码核对，未运行 OR：OpenResearch `05d58d07d7392ad242120e2f3c6c3d422df6c0c0`，Cargo 0.2.21。以下链接固定到该版本。
 
 | 固定版本观察 | 规划影响 |
 | --- | --- |
-| `Cargo.toml` 单 binary crate，无公开 lib target；`src/plane.rs` 直接依赖 LocalPlane/Store | 不能当作稳定 executor SDK；不以抽库作为主线前置 |
-| `src/local/model.rs:9–85` LocalProject/Experiment 无 team/member ACL；`src/commands/up.rs:834–877` 普通本地路由无团队 auth middleware | 这是 local 设计，不泛称不安全；不能直接成为 Factory 团队访问层，SSH callback bearer 不等于团队权限 |
-| `agent-skills/orx-agent-delegation/SKILL.md` spawn 为独立 chat，无父结果回传/父停级联，相关 harness/model/no-wake 参数不支持 | 不把它当作受控实验 child；Factory delegation 继续拥有父子执行边界 |
-| `src/commands/runs.rs` 人类表格，`src/plane/local_plane.rs:260–325` launch 输出文本；`src/commands/up.rs:551–562` 内部 runs JSON 未证实为版本化外部契约 | 若用适配器，锁版本并测协议，不能依赖“有 JSON 就稳定” |
-| `agent-skills/orx-compute/references/ssh.md` SSH/Slurm 默认每项目保留最新 3 runs，收日志后可清旧远端 repo；可 override | 证据归档先于清理；明确 retention，不允许工具默认行为丢失研究成果 |
-| `agent-skills/orx-experiment-tree/SKILL.md` 区分假设节点/运行；`src/commands/supervise.rs`、`src/local/agent_lifecycle.rs` 有恢复与空闲释放 | 借鉴概念；不能推定已提供多租户长期助手 |
-| `src/local/trackio.rs`、`src/plane/local_plane.rs:577–591` 指标需埋点，远端指标可能留远端 | 必须显式采集、保留来源；不自动等同科学报告 |
+| [Cargo.toml](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/Cargo.toml) 单 binary crate，无公开 lib target；[src/plane.rs](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/plane.rs) 直接依赖 LocalPlane/Store | 不能当作稳定 executor SDK；不以抽库作为主线前置 |
+| [src/local/model.rs:9–85](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/local/model.rs#L9-L85) LocalProject/Experiment 无 team/member ACL；[src/commands/up.rs:834–877](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/commands/up.rs#L834-L877) 普通本地路由无团队 auth middleware | 这是 local 设计，不泛称不安全；不能直接成为 Factory 团队访问层，SSH callback bearer 不等于团队权限 |
+| [agent-skills/orx-agent-delegation/SKILL.md](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/agent-skills/orx-agent-delegation/SKILL.md) spawn 为独立 chat，无父结果回传/父停级联，相关 harness/model/no-wake 参数不支持 | 不把它当作受控实验 child；Factory delegation 继续拥有父子执行边界 |
+| [src/commands/runs.rs](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/commands/runs.rs) 人类表格，[src/plane/local_plane.rs:260–325](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/plane/local_plane.rs#L260-L325) launch 输出文本；[src/commands/up.rs:551–562](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/commands/up.rs#L551-L562) 内部 runs JSON 未证实为版本化外部契约 | 若用适配器，锁版本并测协议，不能依赖“有 JSON 就稳定” |
+| [agent-skills/orx-compute/references/ssh.md](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/agent-skills/orx-compute/references/ssh.md) SSH/Slurm 默认每项目保留最新 3 runs，收日志后可清旧远端 repo；可 override | 证据归档先于清理；明确 retention，不允许工具默认行为丢失研究成果 |
+| [agent-skills/orx-experiment-tree/SKILL.md](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/agent-skills/orx-experiment-tree/SKILL.md) 区分假设节点/运行；[src/commands/supervise.rs](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/commands/supervise.rs)、[src/local/agent_lifecycle.rs](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/local/agent_lifecycle.rs) 有恢复与空闲释放 | 借鉴概念；不能推定已提供多租户长期助手 |
+| [src/local/trackio.rs](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/local/trackio.rs)、[src/plane/local_plane.rs:577–591](https://github.com/alphaXiv/OpenResearch/blob/05d58d07d7392ad242120e2f3c6c3d422df6c0c0/src/plane/local_plane.rs#L577-L591) 指标需埋点，远端指标可能留远端 | 必须显式采集、保留来源；不自动等同科学报告 |
 
 OR 隔离适配器不是主链依赖。只有固定版本通过两用户隔离/无秘密泄漏、SSH 断线与控制器重启后原 job 唯一、取消及重新附着、证据归档与复现，并且相对扩展现有后端显著降低接入和维护成本，才建议采用。成本比较包含协议解析、恢复、升级和证据清理，不只代码行数。任何后端每次运行只允许一个 submit/monitor/cancel/reattach 控制者；应用只保留证据和只读状态投影。
 
 ## 状态与责任
 
-以下是实施建议，不新增 accepted ADR 或伪称已有接口。
+以下区分现有职责与规划新增契约。
 
 | 状态/职责 | 所有者 | 接入约束 |
 | --- | --- | --- |
@@ -45,8 +45,8 @@ OR 隔离适配器不是主链依赖。只有固定版本通过两用户隔离/�
 | 稳定 agent 端点及 owner/app 关联 | core 新增 | 端点指向允许调用的组件/版本及启用状态；不是常驻推理进程，也不取代 task/run 身份 |
 | 研究助手人格、记忆内容与项目关系 | 应用 | 持久关系跨多次有界任务；记忆按来源和可见范围读取，具体检索策略待验证 |
 | 消息投递、关联、收件准入和通用事件订阅 | core 新增 | 消息不是执行授权；送达/接纳/执行/停止分开，领域 payload 由应用解释 |
-| native task、effect、receipt、预算、租约及原操作恢复 | 现有 core/native runtime/选定后端 | 不加第二 worker、调度恢复循环或凭据系统；UNKNOWN 查询原身份，不生成替代运行 |
-| 项目、目标版本、实验、运行引用、共享记录、解释和停止理由 | 应用 | 运行记录引用 core task/run/effect，不复制其权威状态机；实验/运行是规划工作术语，尚非用户最终确认的数据模型 |
+| native task、effect、receipt、预算、租约及原操作恢复 | 现有 core/native runtime/选定后端 | 复用现有执行队列与 worker 机制，不建立竞争的第二套执行/恢复控制链；UNKNOWN 查询原身份，不生成替代运行 |
+| 项目、目标版本、实验、运行引用、共享记录、解释和停止理由 | 应用 | 运行记录引用 core task/run/effect，不复制其权威状态机；实验与运行按假设/尝试和具体执行分开建模，字段及粒度在契约阶段验证 |
 | 产物字节、完整性、存储准入与安全清理 | core | 应用定义哪些证据发布及保留目的；复用受控存储，不自建绕过归属的文件服务 |
 | 研究内容 schema、默认团队可读、作者编辑及关联策略 | 应用策略，core 执行权限约束 | 非作者不能覆盖原内容；授权的出处读取不扩大为读取作者全部任务或使用其资源 |
 
@@ -54,7 +54,7 @@ OR 隔离适配器不是主链依赖。只有固定版本通过两用户隔离/�
 
 **身份与消息。** 设计稳定端点 ID，关联成员、应用和可调用组件；一条消息包含不可伪造的发送者/接收者、幂等键与内容摘要、correlation/reply/source 引用、期限、有限 payload。重复同键同内容返回原收据，同键异内容拒绝。传输允许重投，业务准入必须幂等；不宣称跨系统 exactly-once。先落消息及原 request 关联，再经现有准入进入 native queue；丢接纳响应时查原收据，缺失或未知不触发新的执行身份。
 
-**离线唤醒与事件。** 建议事件驱动有界任务，不为每个助手常开轮询/推理循环。用户离线不影响已配置范围内的 QA 准入，执行主体仍是接收者。新增持久订阅游标、去重和交付状态，复用 task events 作为事件来源；研究相关性与收件人选择留应用。建议同一 PG 事务承接领域记录提交与通用 outbox 写入，接口只接收不透明应用引用与事件，不把 project/experiment 字段加进 core。实施前通过提交/回滚/崩溃窗口验证原子性，不能假设两个 service 调用天然原子。
+**离线唤醒与事件。** 规划默认采用事件驱动有界任务，不为每个助手常开轮询/推理循环。用户离线不影响已配置范围内的 QA 准入，执行主体仍是接收者。新增持久订阅游标、去重和交付状态，复用 task events 作为事件来源；研究相关性与收件人选择留应用。建议同一 PG 事务承接领域记录提交与通用 outbox 写入，接口只接收不透明应用引用与事件，不把 project/experiment 字段加进 core。实施前通过提交/回滚/崩溃窗口验证原子性，不能假设两个 service 调用天然原子。
 
 **权限和预算。** 每次送达、读取和工具调用重查当前权限；引用他人记录不复制其连接授权。接收者自动 QA 使用其已配置模型和受限预算，禁止绑定训练/GPU 操作，从工具/执行入口检验，不能仅写提示词。建议为自动 QA 设有限并发、token/调用额度、TTL、关联深度及去重，防止助手互问成环；具体数值需测量。预算建议由接收者自有 scope 记账，不新增团队钱包；金额不可计量时明确限制，UNKNOWN 用量继续占用承诺。资源不足时可拒绝/延迟并保留可读状态，不隐式充值或借用同事 GPU。
 
@@ -72,7 +72,7 @@ OR 隔离适配器不是主链依赖。只有固定版本通过两用户隔离/�
 
 最终成果清单建议包含目标版本、源码 commit、依赖锁、非秘密模型/材料/连接标识、运行命令、数据引用及 hash、环境与 seed、指标和证据、负结果、局限与待研究问题。缺失数据/不可重分发依赖明确列出，不保证任意环境逐位复现。继续研究建立新尝试并使用新授权预算，不把 UNKNOWN 原操作当作“重跑”入口。
 
-前端围绕助手与项目概览，详情提供目标版本、实验/运行、指标、证据和协作下钻。明确区分进行中、进程终态、agent 分析、已验证结论、待核对操作；提供空状态、资源入口、退出重登、直接 URL 和刷新路径。通知筛选与频率尚待确定，不将访谈方偏好变成所有用户的固定规则。
+前端围绕助手与项目概览，详情提供目标版本、实验/运行、指标、证据和协作下钻。明确区分进行中、进程终态、agent 分析、已验证结论、待核对操作；提供空状态、资源入口、退出重登、直接 URL 和刷新路径。通知筛选与频率尚待确定，不将个人偏好变成所有用户的固定规则。
 
 ## 依赖顺序与可证伪验收
 
@@ -100,12 +100,12 @@ P2/P3 通用能力与 P4 应用入口可在 P1 契约稳定后分工；核心接
 | 事项 | 当前规划方向 | 尚需证据/决定 |
 | --- | --- | --- |
 | 运行拓扑 | 建议集中 server agents + 个人 remote GPU，单 PG/native runtime | 未测硬件；不能承诺 20 人并发。区分在线人数、QA 并发、训练并发，测 CPU/RAM/队列/磁盘/恢复及失败隔离 |
-| 长期助手 | 建议持久身份与记忆 + 事件唤醒有界推理 | 用户未规定 24h 推理；验证唤醒延迟、预算和停用行为，不让“长期”变成常驻重实例 |
-| 通信协议 | 先做本服务内持久消息/关联，接口可版本化 | 外部 A2A 协议映射待真实接入需要；不预先选复杂网络栈 |
+| 长期助手 | 规划默认：持久身份与记忆 + 事件唤醒有界推理 | 验证唤醒延迟、预算和停用行为，不让“长期”变成常驻重实例 |
+| 通信协议 | 规划默认：本服务内持久消息/关联，接口可版本化 | 外部 A2A 协议映射待真实接入需要；不预先选复杂网络栈 |
 | 内容与权限 | 实验条件/证据/结论默认团队读，作者编辑，自己的来源分析可追加 | 原始数据、私聊、评论/复核/分支的其他权限未定；保持最小已确认范围，不自行扩张 |
 | 记忆与检索 | 有出处、按当前权限过滤的研究内容检索 | 索引/向量方案及删除失效传播需测量；不为“长期”复制所有对话到团队索引 |
 | GPU 后端 | 先复用 Factory remote/process/resource，必要扩展 | 真实 SSH/GPU 环境、驱动/数据/指标收集、恢复与停止验证需目标机器和授权；OR 仅满足上述门槛后采用 |
-| 模型与费用 | 用底座既有成员模型配置，QA/实验分别有界 | 无付费调用授权；金额未知和 BYOK 限制不能隐藏。生产模型选择与开发订阅偏好分开 |
+| 模型与费用 | 用底座既有成员模型配置，QA/实验分别有界 | 金额未知和 BYOK 限制必须明确。生产模型选择与开发订阅偏好分开 |
 | 通知 | 主动相关通知和关联已获确认 | 频率、合并、用户静默偏好需验证/确认，不固定成全局产品决定 |
 
-实施后的最终容量验证应覆盖约 20 名成员的实际使用组合并记录目标机配置；当前云端 4 CPU/16 GiB、历史目标 32 核/64 GB 或 54 核/192 GB 和“可能几百 GB 内存”的设想不互相替代。真实组织登录、模型和 GPU 验收需届时提供实际环境与权限；这些是未来验收依赖，不阻塞当前文档规划，也不授权现在访问外部资源。
+实施后的最终容量验证应覆盖约 20 名成员的实际使用组合并记录目标机配置；当前云端 4 CPU/16 GiB、历史目标 32 核/64 GB 或 54 核/192 GB 和“可能几百 GB 内存”的设想不互相替代。真实组织登录、模型和 GPU 验收需届时提供实际环境与权限；这些是未来验收依赖，不阻塞当前文档规划。
