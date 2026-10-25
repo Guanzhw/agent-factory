@@ -114,8 +114,8 @@ class ResearchWorkflow:
             operation = await self._service().launch(run_context, chosen)
             return StepOutput(content=json.dumps({'operationIds': [operation['id']]}))
 
-        async def results(step_input: StepInput, run_context: RunContext):
-            result = await asyncio.to_thread(self._service().results, run_context)
+        async def results(step_input: StepInput, run_context: RunContext, application_context=None):
+            result = await asyncio.to_thread(self._service().results, run_context, application_context)
             return StepOutput(content=json.dumps(result, ensure_ascii=False))
 
         async def record(step_input: StepInput, run_context: RunContext):
