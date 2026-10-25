@@ -49,3 +49,5 @@ No timeout extension or repeated-until-green explanation is used.
 The older d3 full run's PG job is still running at this checkpoint. Its failed
 Windows job cannot be relabelled PASS because a later bounded-pipe job succeeded.
 ASKPASS/credential behavior remains a separate open gate.
+
+At 1448bb9 the first post-integration actual Linux loopback/onboarding group ran four cases in 8.668s: three onboarding cases passed, the wrong-pin portion of the helper case errored because the new low-level CalledProcessError escaped instead of the existing ValueError protocol rejection. This was an error-contract regression, not evidence that the bad host pin was accepted. The original failure log remains `/tmp/af-ssh-bounded-real-loopback.log`; the existing rejection/no-journal assertions are retained for the correction.
