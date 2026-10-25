@@ -2,7 +2,7 @@
 
 | Owner / scope | Current evidence | Open gate |
 |---|---|---|
-| root — integration | Linux worktree loopback/onboarding 4/4, zero skips, 10.702s; scoped-process/packaging changes stable, not a final exact-head result. Web 490/53 files (22.75s), typecheck/build and both npm audits passed. | Native PG four-case session22598 running; first unfrozen Pyright 46 errors/8 warnings retained, final check pending. |
+| root — integration | Linux worktree loopback/onboarding 4/4, zero skips, 10.702s; scoped-process/packaging changes stable, not a final exact-head result. Web 490/53 files (22.75s), typecheck/build and both npm audits passed. | Native PG 4/4, zero skips, 100.623s passed (synthetic local transport, not Windows/network fault proof); slot released. First unfrozen Pyright 46 errors/8 warnings retained, final check pending. |
 | assistant_endpoints — credentials | Stage B `8848b53` actual three PASS in [40242397177](https://github.com/Guanzhw/agent-factory/actions/runs/40242397177), after two preserved failures. Product implementation in progress. | Manager cleanup review BLOCKED and being corrected; probe success is not product acceptance. |
 | research_frontend — low-level Windows diagnosis | Actual group 58/59 passed; strict failure `251 != 244` preserved. | `0aba479` diagnostic CI pending; no assumed cause or relaxed expectation. |
 | assistant_messages — installed wheel | New installed-wheel tests/workflow prepared. | Independent review and actual execution pending. |

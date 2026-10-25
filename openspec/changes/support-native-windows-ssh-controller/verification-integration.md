@@ -7,7 +7,7 @@ These are coordinator observations of the evolving integration worktree, not a f
 | Linux loopback and onboarding after scoped-process integration | 4 passed, zero skipped, 10.702s; `/tmp/af-windows-scope-linux-loopback.log`. Scope integration `beba` and packaging `b039` were stable during this working-tree run; no claim that the entire tested worktree equals one commit. |
 | Web `npm run check` | 490 tests / 53 files, 22.75s; lint/typecheck/build passed. `/tmp/af-windows-ssh-web-check.log`. Production and all-dependency npm audits: zero findings. |
 | First local Pyright | 46 errors, 8 warnings during the unfrozen implementation stage. Retained as a failed/incomplete check; final static verification remains required. |
-| Native PostgreSQL group | Four-case run still active in coordinator session22598 at this checkpoint. No result or PASS yet. |
+| Native PostgreSQL group | Coordinator session22598 exited 0: 4 passed, zero skips, 100.623s; `/tmp/af-windows-scope-native-pg.log`. Original native wait/restart, uncertain continuation, accepted continuation ACK loss and distinct inputs through the real helper passed. Transport is a synthetic local fixture, not Windows execution or SSH-network ACK-loss proof. Heavy test slot released. |
 | Installed-wheel tests/workflow | Added but awaiting independent review and actual run. Source imports or packaging edits alone are not installed-wheel acceptance. |
 | Credential manager review | Cleanup review BLOCKED; correction in progress. No complete product credential acceptance. |
 
