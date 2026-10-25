@@ -46,3 +46,7 @@ POST start沿原requestId/expectedVersion返回准入或续接事件收据。UI�
 在同一正式应用中用可视表单读取GET research/setup候选，model必须选择实际可用connectionRef（不能把registrationRef/reference当连接）。环境与工具连接由候选实际kind/capabilities限制；缺环境/模型绑定/工具清楚阻断且不假填。POST drafts只保存private intent+preview，applicationRef=null不作为已发布定义；成功后researchSetup URL指针保留owner可读GET/{id}刷新恢复。用户检查选择及预算后显式POST publish；仅其成功真实pin交给约定执行配置，仍需填deadline/perRoundCaps并确认新版本。
 
 两个实际consumer（project mutation与setup draft/publish）共享同应用轻量命令恢复hook；不扩成core通用状态机。原owner+request/payload在HTTP408/未知应答时保留，同键恢复；不通过新的requestId重发发布。资源页往返保留researchSetup/project，平台应用入口清空这些指针。
+
+## 启动已响应但刷新失败
+
+独立review发现首个start的POST已成功、随后GET project返回403/404时，旧分类会误把读取拒绝当作写入失败并清原意图。明确边界：POST未成功的4xx仍沿原命令错误分类；POST已响应后，任何后续project读取失败都不能撤销启动事实。客户端将其表达为“启动已响应、项目状态尚未核对”的复合错误，保留原原因；同一恢复hook保留原request/payload，刷新与重试都使用原键，不增加执行控制链。

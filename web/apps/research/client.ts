@@ -26,7 +26,11 @@ export async function sendProjectCommand(owner: string, projectId: string | unde
     case 'confirm': return researchApi.confirm(owner, projectId!, command.body);
     case 'start':
       await researchApi.start(owner, projectId!, command.body);
-      return researchApi.project(owner, projectId!);
+      try { return await researchApi.project(owner, projectId!); }
+      catch (cause) {
+        const detail = cause instanceof Error ? cause.message : '项目读取失败';
+        throw new Error(`启动请求已响应，但项目状态尚未核对。请保留原请求并核对原运行。${detail}`, { cause });
+      }
     case 'end': return researchApi.end(owner, projectId!, command.body);
   }
 }

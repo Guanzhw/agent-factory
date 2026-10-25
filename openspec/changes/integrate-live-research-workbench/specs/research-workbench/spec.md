@@ -33,6 +33,10 @@
 - **WHEN** 真实助手响应或团队记录可读取
 - **THEN** 展示真实来源和事实/agent分析区别，未接入接口时不伪造消息、记录或指标
 
+#### Scenario: Start acknowledged but refresh denied
+- **WHEN** start POST已成功响应，随后项目GET返回403或404
+- **THEN** 页面保留原启动意图并禁用新启动；刷新后仍使用原requestId核对，不将读取拒绝误判为写入未发生
+
 ### Requirement: Complete journey verification
 系统 SHALL 保留桌面/窄屏/键盘行为及真实API端到端验证，合成transport不替代真实模型/GPU。
 
