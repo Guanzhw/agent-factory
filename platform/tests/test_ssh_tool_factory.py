@@ -14,13 +14,13 @@ class SSHNativeToolTests(unittest.IsolatedAsyncioTestCase):
         self.context = SimpleNamespace(user_id='alice', session_id='child', run_id='native-run')
         self.registration, self.wait = ssh_tool_registrations(self.runtime)
         self.function = self.registration.factory(SimpleNamespace(run_context=self.context,
-            spec={'config': {'targetRef': 'personal-training'}}))
+            spec={'config': {'connectionName': 'training', 'profileId': 'fixed', 'profileSha256': 'a' * 64}}))
         self.function._run_context = self.context
         self.call = FunctionCall(function=self.function, call_id='original-call', arguments={})
 
     async def test_native_identity_and_configured_target_are_forwarded_without_model_fields(self):
         result = await self.function.entrypoint(run_context=self.context, fc=self.call)
-        self.runtime.launch.assert_awaited_once_with(self.context, 'personal-training', 'original-call')
+        self.runtime.launch.assert_awaited_once_with(self.context, 'original-call')
         self.assertEqual(result['operationId'], 'original-operation')
         self.assertEqual(self.function.parameters['properties'], {})
         self.assertTrue(self.wait.factory(None).external_execution)
