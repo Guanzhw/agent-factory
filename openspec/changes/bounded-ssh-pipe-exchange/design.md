@@ -21,3 +21,11 @@
 ## Verification
 
 真实Python子进程覆盖双向大流、短写/暂不可用、输出上限、无人读stdin、EOF后存活、非零退出、写/EOF前撤权和取消及实际reap。Linux先跑，Windows CI另跑同组pipe用例；不将平台mock或纯helper成功认定完整Windows SSH支持。
+
+## 既有消费者集成接缝（coordinator 实施）
+
+1. `personal_ssh.probe` 在 lease 校验和 spawn 前创建30秒绝对deadline；spawn前 `lease.validate()`，exchange每write/EOF再次调用同一fresh lease校验。inspect用空payload，prepare保持原nonce/root/action JSON加换行；响应仍8192上限。原nonce、ok、directoryExists、代码/JSON/换行校验及SSH_CHECK_UNCONFIRMED映射仍由probe负责。exchange返回已确认exit0的完整bytes，成功后仍校验lease。Job/临时身份文件只在exchange清理完成后释放。
+2. `SSHProcessTransport` 保留request schema/MAX_REQUEST_BYTES编码、lease_for(action)、原pinned command，spawn前创建deadline并执行fresh；将同一deadline/payload/MAX_RESPONSE_BYTES交exchange。每write/EOF的guard组合lease.validate和before_effect，成功后再次lease.validate再解析JSON。原operation/receipt解析、UNKNOWN和归档均不移入helper。
+3. `SSHProcessProvider.allocate_bound` 保留原同步fresh回调与取消Event，并保存明确的worker Task。正常await使用shield防止取消丢失worker引用；取消后set Event，将其通过显式 `cancelled` 参数从exchange调用传至实际管道read循环（只在write fresh里检查不够）。等待同一个worker完成kill/reap/close才传播原CancelledError；重复取消仍只标记同一Event并等待原worker，不创建另一次任务/submit。
+4. cleanup失败不得吞成普通取消。原worker若报告SSHExchangeCleanupError，向上报告该错误并保留取消/原错误cause；正常因cancel Event退出并已清理则传播原取消。不能catch所有异常然后假定清理成功。所有真实与测试exchange实现统一显式 `cancelled` 参数；不使用签名反射、TypeError重试或动态fallback。
+5. 集成验收覆盖async cancellation在stdout等待期间，验证caller返回前worker已结束且process已reap；保留既有部分写/EOF前撤权和UNKNOWN不重派用例。模块单测不能替代这项调用生命周期测试。
