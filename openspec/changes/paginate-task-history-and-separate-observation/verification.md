@@ -116,3 +116,7 @@ full40112603820（PGjob120927320891）终态失败：3265项，3195通过、4失
 修复仅处理两种精确晚到origin拒绝（直接409/真实transport403），重新授权仍须拒绝，再只读核对原binding/native/正向已释放lease与完整retained claims。仍授权、身份变化、缺claims、held custody或其他evaluator异常保持原失败。不证明source正常完成、当前credential或artifact保留期仍有效，不新读artifact、不执行、不写journal；与初次custody_only历史证据语义保持一致。独立review无具体阻断；真实凭据轮换/保留期到期未由新mock单元测试覆盖。
 
 新增Event确定性交错3项含两error形态及负例；combined16纯测试通过。原`history-late-authority-scientific`实际三阶段通过572.256s（driver576.205s）。旧guardian ResourceWarnings保留。不是全部full通过，也不能关闭历史MCP第二任务等待问题。未重新启动整套追绿；后续以修复提交的fastCI和本定向证据报告。
+
+## Follow-up read-purity fixture isolation
+
+The downstream #101 d1ec7e9 full40123407895 PG run (3385tests3316pass1fail68skip2554.347s,all7requiredgroupspassed) exposed one remaining fixture race in remote_handoff test23: receiver observer was stopped but origin background observation changed body.observedAt by35ms while repeated receipt GETs compared full rows. Now both observers are stopped/joined before the controlled scenario and restarted in finally. Original full task/event/effect/artifact/native identity assertions are unchanged; an origin observed() spy additionally rejects writes by the reads. No production change or timeout increase. The exact original failed case passed18.805s/24.471sdriver, exit0 (history-origin-observer-isolation); concurrent lightweight Pyright means this is functional evidence, not a performance comparison. Original failedfull logs retained in cloud-delivery-20261024/iterations-d1-full-pg.log. No full rerun.
