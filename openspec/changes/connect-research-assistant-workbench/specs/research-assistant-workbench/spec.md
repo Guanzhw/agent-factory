@@ -32,6 +32,10 @@
 - **WHEN** 已收到问题ID而后续GET失败
 - **THEN** 保留原问题URL并仅核对原问题，不重新发送；delivery状态与reply状态分开呈现
 
+#### Scenario: Acknowledgement arrives after leaving the sender view
+- **WHEN** 原问题已发送，成员离开或切换账号后成功回执才到达
+- **THEN** 不在新视图显示答案或改变路由；保留原owner尚未处理的请求，回到原视图以同键恢复，不失去原问题入口
+
 #### Scenario: Selected peer and absent history
 - **WHEN** 成员浏览分页助手目录、提问并重新访问原问题
 - **THEN** 只使用真实目录与原消息，不能广播给所有成员或编造历史对话/相关性推荐；同事配置/凭据不出现在目录
