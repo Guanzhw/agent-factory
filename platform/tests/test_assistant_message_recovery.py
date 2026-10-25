@@ -61,7 +61,7 @@ class AssistantMessageRecoveryTests(unittest.TestCase):
 
     def test_database_or_unrelated_missing_receipt_errors_do_not_authorize_start(self):
         for error in (TimeoutError('synthetic DB failure'), HTTPException(404, 'OTHER_NOT_FOUND')):
-            with self.subTest(error=error), patch.object(self.fixture.runs, 'request', side_effect=error), \
+            with self.subTest(error=error), patch.object(self.fixture.runs, '_request_receipt', side_effect=error), \
                     patch.object(self.fixture.runs, 'start', AsyncMock()) as start:
                 with self.assertRaises(type(error)): self.recover()
                 start.assert_not_called()
