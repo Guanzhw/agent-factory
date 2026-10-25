@@ -1,0 +1,4 @@
+- [ ] Reproduce outer transaction rollback failure before the production repair.
+- [ ] Borrow the existing connection while retaining governance locks.
+- [ ] Verify standalone and nested publication/receipt behavior.
+- [ ] Independently review exact diff and verify the actual setup consumer.
