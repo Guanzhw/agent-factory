@@ -1,4 +1,6 @@
-# A01 same-database app removal — failing acceptance evidence
+# A01 same-database app removal — reviewed contract passes
+
+Current result: **1/1 PASS, 0 skipped, 14.488 seconds, exit 0** after independent review corrected the new oracle to the existing positive-stop contract. No production change. Earlier failures below remain evidence, not overwritten passes.
 
 Base: `931f7c3`. Only specification and test fixtures changed. No production fix, no paid model or GPU.
 
@@ -12,4 +14,14 @@ The actual Research service created an original native workflow, paused on its o
 
 The failure does not demonstrate redispatch or a false native completion: the observed native state is cancelled. It exposes the distinction between missing hooks for a still-declared owner and complete removal of all owner declarations. `ApplicationRuntimeRegistry.finalization_context` can preserve the former, but returns no application completion responsibility for the latter. The generic scope finalizer then settles a positively stopped group. Product changes or adjustment of the requested acceptance boundary require coordinator judgment; neither was silently applied here.
 
-The health/routes/resource assertions after this failed assertion were not reached and are NOT RUN, not passed. Both fixture processes terminated, the isolated database context cleaned up, and the PostgreSQL slot was released. No existing user database or archive was modified. This case remains FAIL pending disposition and independent review.
+In that failed execution, health/routes/resource assertions were not reached. Both fixture processes terminated, the isolated database context cleaned up, and the PostgreSQL slot was released. No existing user database or archive was modified.
+
+## Independent disposition and final verification
+
+Two independent reviewers found the retained-UNKNOWN assertion after positive native stop exceeded the existing A01/D02 and `owned-native-finalization` contract. Missing hooks for a declared owner differ from removing all declarations. The revised spec (`cf81e90`) allows failed/SETTLED only after positive original root/child/custody stop evidence. It still forbids new tasks, scientific success, or invented application finalization. The fixture disables only the observer background poller through the existing test injection port and explicitly calls its real observer, making the before/after phases deterministic.
+
+Command: `FACTORY_TEST_DATABASE_URL=<isolated loopback fixture> PYTHONPATH=platform:platform/tests:deployment:applications:applications/tests timeout 150 <venv>/bin/python -m unittest test_research_removal_postgres.ResearchRemovalPostgresTests.test_original_task_stops_without_replay_or_research_completion_after_app_removal -v`.
+
+Result: **1 test passed, zero skipped, 14.488 seconds, exit 0**. Log: `/tmp/research-removal-reviewed-oracle.log`. The existing AuthorityCheck field-shadow warning remains visible. The final fixture executes all health/resource/no-app assertions. Original identity and task count are unchanged; unknown-phase holds remain BOUND; actual cancelled root and stopped child produce FAILED/allStopped custody and SETTLED allocation. Every row of research rounds/projects, assistant events and curated content is unchanged, including decision, terminalRecord, terminal and project ending. Bounded identity/state evidence: `evidence/reviewed-contract-pass.json`.
+
+Ruff, diff whitespace checks and revised strict OpenSpec validation pass. Temporary processes and the isolated database were cleaned up; PG slot released. This proves core mechanics with a synthetic model, not production identity, real model research or GPU behavior. Complete removal of owner declarations does not promise automatic business terminal/outbox repair on reinstall; no research completion is claimed. Final exact diff review remains required.

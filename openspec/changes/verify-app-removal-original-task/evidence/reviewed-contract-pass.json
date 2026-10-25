@@ -1,0 +1,36 @@
+{
+  "test": "test_original_task_stops_without_replay_or_research_completion_after_app_removal",
+  "result": "PASS",
+  "seconds": 14.488,
+  "taskId": "26a4f169-9e23-423d-8307-79a7029c1106",
+  "runId": "ae8261e3-2b5a-42dc-b4b6-05fbc14d3874",
+  "operationId": "a2dbf8d6-7cd3-4012-a7d7-55a3f1ae42f5",
+  "taskIds": [
+    "02b999ae-395d-4ab0-8df0-db78a70c4f66",
+    "26a4f169-9e23-423d-8307-79a7029c1106"
+  ],
+  "initial": {
+    "nativeStatus": "paused",
+    "terminal": false,
+    "custodyClosed": false,
+    "heldToolCalls": 32,
+    "allocationState": "BOUND"
+  },
+  "final": {
+    "nativeStatus": "cancelled",
+    "terminal": true,
+    "taskStatus": "failed",
+    "custodyState": "FAILED",
+    "allStopped": true,
+    "allocationState": "SETTLED",
+    "heldToolCalls": 0
+  },
+  "assertionsPassed": [
+    "original identities and task count unchanged",
+    "all research_rounds, research_projects, af_assistant_events, af_application_content rows unchanged",
+    "health and generic resources 200",
+    "research routes 404",
+    "no research or deployment imports",
+    "no registered application owners or research runtime configuration"
+  ]
+}

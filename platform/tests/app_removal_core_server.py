@@ -2,17 +2,27 @@
 import json
 from pathlib import Path
 import sys
+from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, Request
 import uvicorn
 
 from agent_factory.config import Settings
 from agent_factory.main import create_app
+from agent_factory.lifecycle_observer import FactoryLifecycleObserver
+
+
+class ExplicitObserver(FactoryLifecycleObserver):
+    @asynccontextmanager
+    async def lifespan(self, app):
+        # Keep phase assertions deterministic; the HTTP probe calls the real observer.
+        yield
 
 
 def serve(configuration):
     app = create_app(Settings(db_url=configuration['dbUrl'], workspace=Path(configuration['workspace']),
-        jwt_key=configuration['jwtKey'], demo=True, max_workers=1))
+        jwt_key=configuration['jwtKey'], demo=True, max_workers=1),
+        lifecycle_observer_type=ExplicitObserver)
     native = app
     while not hasattr(getattr(native, 'state', None), 'factory'):
         native = native.app

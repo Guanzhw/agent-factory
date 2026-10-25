@@ -13,13 +13,20 @@ from test_research_workflow_restart_postgres import ResearchServer
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'requires isolated PostgreSQL')
 class ResearchRemovalPostgresTests(unittest.TestCase):
-    def test_unfinished_original_task_is_not_replayed_or_released_after_app_removal(self):
+    def test_original_task_stops_without_replay_or_research_completion_after_app_removal(self):
         database = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory(prefix='research-removal-'))
         server = ResearchServer(database.url, directory)
         self.addCleanup(server.stop)
         engine = create_engine(database.url)
         self.addCleanup(engine.dispose)
+
+        def domain_state():
+            with engine.connect() as conn:
+                return {table: [dict(row) for row in conn.execute(text('SELECT * FROM ' + table + ' ORDER BY id')).mappings()]
+                        for table in ('research_rounds', 'research_projects',
+                                      'af_assistant_events', 'af_application_content')}
+
         server.start()
         reference = server.facts()['application']
         created = server.request('POST', '/api/factory/research/projects',
@@ -55,6 +62,11 @@ class ResearchRemovalPostgresTests(unittest.TestCase):
         self.assertEqual(len(original_ops), 1)
         self.assertFalse(original_ops[0]['closed'])
         self.assertGreater(original_holds, 0)
+        original_domain = domain_state()
+        self.assertEqual(len(original_domain['research_rounds']), 1)
+        for field in ('decision', 'terminal', 'terminal_record'):
+            self.assertIsNone(original_domain['research_rounds'][0][field])
+        self.assertIsNone(original_domain['research_projects'][0]['ending'])
         catalog = server.request('GET', '/api/factory/applications').json()
         original_pids = list(server.pids)
         server.process.kill()
@@ -84,11 +96,21 @@ class ResearchRemovalPostgresTests(unittest.TestCase):
             self.assertEqual(phase['task']['run_id'], before['task']['run_id'])
             self.assertEqual(set(phase['taskIds']), {task_id, before['children'][0]['id']})
             self.assertEqual([item['id'] for item in phase['operations']], [original_ops[0]['id']])
-            self.assertFalse(phase['task']['terminal'], evidence)
-            self.assertFalse(phase['operations'][0]['closed'], evidence)
-            self.assertEqual(phase['scope']['heldToolCalls'], original_holds)
-            self.assertEqual(phase['scope']['allocations'][0]['state'], 'BOUND')
-        self.assertFalse(observed.json()['allStopped'], observed.json())
+        self.assertFalse(after['task']['terminal'], evidence)
+        self.assertFalse(after['operations'][0]['closed'], evidence)
+        self.assertEqual(after['scope']['heldToolCalls'], original_holds)
+        self.assertEqual(after['scope']['allocations'][0]['state'], 'BOUND')
+        self.assertEqual(final['native']['status'], 'cancelled')
+        self.assertTrue(final['task']['terminal'])
+        self.assertEqual(final['task']['body']['lastStatus'], 'failed')
+        self.assertTrue(final['operations'][0]['closed'])
+        self.assertEqual(final['operations'][0]['observation']['state'], 'FAILED')
+        self.assertTrue(final['operations'][0]['observation']['allStopped'])
+        self.assertTrue(observed.json()['allStopped'], observed.json())
+        self.assertTrue(all(fact['stopped'] and not fact['unknown'] for fact in observed.json()['facts']))
+        self.assertEqual(final['scope']['allocations'][0]['state'], 'SETTLED')
+        self.assertEqual(final['scope']['heldToolCalls'], 0)
+        self.assertEqual(domain_state(), original_domain)
         self.assertEqual(server.request('GET', '/api/health').status_code, 200)
         self.assertEqual(server.request('GET', '/api/factory/jobs/' + task_id).status_code, 200)
         self.assertEqual(server.request('GET', '/api/factory/research/projects').status_code, 404)
