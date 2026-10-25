@@ -366,7 +366,9 @@ class PostgresCheckTests(unittest.TestCase):
                     self.assertEqual(checked.returncode == 0, accepted, checked.stderr)
                     if accepted:
                         self.assertEqual(json.loads(checked.stdout), summary)
-                        self.assertIn('postgres_acceptance', (folder / 'step.md').read_text())
+                        self.assertEqual((folder / 'step.md').read_text(),
+                            '### PostgreSQL completion\n\n```json\n'
+                            + json.dumps(summary, sort_keys=True) + '\n```\n')
 
     def test_ci_rejects_exit_zero_without_completion_or_invalid_json(self):
         with tempfile.TemporaryDirectory() as temporary:
