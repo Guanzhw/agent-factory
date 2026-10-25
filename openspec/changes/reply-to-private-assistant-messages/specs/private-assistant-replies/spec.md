@@ -43,6 +43,10 @@
 - **WHEN** 同一来源恢复共享且双方当前可读
 - **THEN** 原回复重新可读，不生成新任务或新回复
 
+#### Scenario: Disabled receiver preserves sender original receipt
+- **WHEN** 已回复后接收者禁用，仍有效的发送者读取原消息、原请求或重复发送原命令
+- **THEN** 原问句及原执行收据可读，回复source_unavailable且零dispatch；公开应用运行接口仍拒绝被禁用接收者，不能伪造unconfirmed
+
 ### Requirement: Preserve old message data
 系统 SHALL 对既有数据进行非破坏性可重复迁移，未回复消息保持原问句/收据及幂等身份，增加空回复投影。
 
