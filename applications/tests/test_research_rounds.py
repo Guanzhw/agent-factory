@@ -350,4 +350,4 @@ class ResearchRoundsMigrationTests(fixtures.ApplicationCompositionFixture):
         self.assertEqual(set(experiments), {'old-experiment', 'second-experiment'})
         self.assertEqual(set(attempts), {'old-attempt', 'second-attempt'})
         self.assertEqual(experiments['old-experiment'], {**original_experiment, 'round_id': None})
-        self.assertEqual(attempts['old-attempt'], {**original_attempt, 'round_id': None, 'operation_id': None})
+        self.assertEqual(attempts['old-attempt'], {**original_attempt, 'round_id': None, 'operation_id': None, 'selection': None})

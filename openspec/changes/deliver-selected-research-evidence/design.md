@@ -68,3 +68,7 @@ HTTP仅应用router：POST `/projects/{id}/deliveries` owner生成；GET `/deliv
 ## Migration Plan
 
 Agreement新增可选字段，旧值无配置；attempt仅加nullable selection。旧记录、原task/预算/消息不变，无数据清空。移除应用仍保持core可用。回退代码忽略新增列，不删除artifact或历史内容。
+
+### 跨应用集成中的真实来源权限接缝
+
+P7实际consumer会让选中证据依赖peer来源；仅应用manifest检查不够，因为精选artifact自身也可能通过generic content访问。coordinator为此另立最小固定sourceContentIds契约（de32456，独立review/实现中），所有core read/list/artifact统一核对原来源，非通用任意DAG框架。P8的精选publication需继承P7实际使用来源并集；manifest仍应用持有，逐次检查所有来源，不能只取安全public shell丢掉依赖。未接入该已审定端口前只验无peer路径，不声称peer派生附件权限通过。应用之间以实际peer_sources服务读口衔接，禁止以owner代理整job下载弥补授权缺口。

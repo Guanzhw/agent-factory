@@ -10,6 +10,7 @@ from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
 from agent_factory.applications import GovernedStorage
 from agent_factory.material_governance import PinnedRef
 from agent_factory.store import digest, now
+from .evidence import EvidenceSelection
 
 RequestId = Annotated[str, Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]+$')]
 Reference = Annotated[str, Field(min_length=1, max_length=200, pattern=r'^[A-Za-z0-9_.:-]+$')]
@@ -58,6 +59,7 @@ class Agreement(BaseModel):
     resourceRefs: dict[Reference, Reference] = Field(default_factory=dict, max_length=30)
     budget: Budget
     execution: ExecutionConfiguration | None = None
+    evidence: EvidenceSelection | None = None
 
     def execution_goal(self):
         return f'研究目标：{self.objective}\n评价标准：{self.evaluation}\n停止条件：{self.stopConditions}'

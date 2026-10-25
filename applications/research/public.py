@@ -30,6 +30,10 @@ def install(state, *, workflow=None):
             finalizes=True)
         projects.execution = rounds
         state['research_rounds'] = rounds
+        from .delivery import ResearchDelivery, delivery_router
+        delivery = ResearchDelivery(rounds)
+        state['research_delivery'] = delivery
+        state['http_app'].include_router(delivery_router(state['auth'], delivery))
         runs = rounds
     state['http_app'].include_router(runs_router(state['auth'], runs))
     state['research_runs'] = runs
