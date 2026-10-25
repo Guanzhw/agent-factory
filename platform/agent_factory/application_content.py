@@ -1,5 +1,6 @@
 """Curated member publications grant access to exact artifacts, never whole jobs."""
 from copy import deepcopy
+from contextlib import contextmanager
 from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import uuid4
@@ -39,6 +40,7 @@ class ContentPublication(BaseModel):
     content: dict
     artifacts: list[ContentArtifact] = Field(default_factory=list, max_length=20)
     visibility: Literal['personal', 'team'] = 'personal'
+    sourceContentIds: list[ObjectId] = Field(default_factory=list)
 
 
 class PublishContent(ContentPublication):
@@ -66,6 +68,32 @@ class ApplicationContent:
     def _readable(self, conn, actor, row):
         self.sharing.owner(conn, actor, row['reference'], row['owner_id'])
         self.auth.require_member(row['owner_id'])
+        for identifier in row['body'].get('sourceContentIds', []):
+            source = self._row(conn, identifier)
+            self.sharing.owner(conn, actor, source['reference'], source['owner_id'])
+            self.auth.require_member(source['owner_id'])
+
+    @contextmanager
+    def _access(self, *, write=False):
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+            if write:
+                with self.db.write():
+                    yield conn
+            else:
+                yield conn
+
+    def _sharing_receipt(self, conn, owner, row):
+        try:
+            self._readable(conn, owner, row)
+        except HTTPException as error:
+            if error.status_code not in {403, 404}:
+                raise
+            return {'id': row['id'], 'ownerId': row['owner_id'], 'createdAt': row['created_at'],
+                    'contentState': 'source_unavailable',
+                    **self.sharing.projection(conn, owner, row['reference'], row['owner_id'])}
+        return self._project(conn, owner, row)
 
     def _project(self, conn, actor, row):
         return {'id': row['id'], 'ownerId': row['owner_id'], **deepcopy(row['body']),
@@ -92,16 +120,32 @@ class ApplicationContent:
     def publish(self, owner, body: ContentPublication, request_id):
         self.auth.require_member(owner)
         value = body.model_dump()
+        if not value['sourceContentIds']:
+            value.pop('sourceContentIds')
         MaterialGovernance._safe_data(value)
         try:
             bounded_json(value['content'], maximum=16384)
+            bounded_json(value.get('sourceContentIds', []), maximum=16384)
         except ValueError as error:
             raise HTTPException(422, 'APPLICATION_CONTENT_INVALID') from error
         fingerprint = digest({'action': 'publish', **value})
-        with self.db.write() as conn:
+        with self._access(write=True) as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
             if old is not None:
-                return self._project(conn, owner, self._row(conn, old['id']))
+                row = self._row(conn, old['id'])
+                self._readable(conn, owner, row)
+                return self._project(conn, owner, row)
+            sources = set(value.get('sourceContentIds', []))
+            for identifier in tuple(sources):
+                source = self._row(conn, identifier)
+                self._readable(conn, owner, source)
+                sources.update(source['body'].get('sourceContentIds', []))
+            if sources:
+                value['sourceContentIds'] = sorted(sources)
+                try:
+                    bounded_json(value['sourceContentIds'], maximum=16384)
+                except ValueError as error:
+                    raise HTTPException(422, 'APPLICATION_CONTENT_SOURCES_TOO_LARGE') from error
             for reference in value['artifacts']:
                 self._artifact(owner, reference)
             identifier = str(uuid4())
@@ -116,14 +160,14 @@ class ApplicationContent:
 
     def read(self, actor, identifier):
         self.auth.require_member(actor)
-        with self.db.read() as conn:
+        with self._access() as conn:
             row = self._row(conn, identifier)
             self._readable(conn, actor, row)
             return self._project(conn, actor, row)
 
     def list(self, actor, *, after='', limit=50):
         self.auth.require_member(actor)
-        with self.db.read() as conn:
+        with self._access() as conn:
             rows = conn.execute(select(self.contents).where(self.contents.c.id > after,
                 or_(self.contents.c.owner_id == actor,
                     self.contents.c.reference.in_(self.sharing.visible_refs(conn, actor))))
@@ -153,11 +197,11 @@ class ApplicationContent:
                 if old is None:
                     self.sharing.set(conn, owner, row['reference'], visibility)
                     self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.sharing', {'id': identifier})
-                return self._project(conn, owner, row)
+                return self._sharing_receipt(conn, owner, row)
 
     def artifact(self, actor, identifier, artifact_id):
         self.auth.require_member(actor)
-        with self.db.read() as conn:
+        with self._access() as conn:
             row = self._row(conn, identifier)
             self._readable(conn, actor, row)
             reference = next((item for item in row['body']['artifacts'] if item['artifactId'] == artifact_id), None)
