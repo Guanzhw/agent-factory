@@ -32,3 +32,9 @@ Before first Windows execution, helper diagnostics were narrowed to a fixed fixt
 ```
 
 Root cause verified against installed cryptography source and a local synthetic serialization reproduction: OpenSSH encrypted private-key serialization calls `bcrypt.kdf`; the optional import is absent and cryptography's stub raises `UnsupportedAlgorithm("Need bcrypt module")`. The installed distribution's metadata declares `bcrypt>=3.1.5` under the `ssh` extra. The frozen project had no bcrypt package. This is not an OpenSSH/ASKPASS candidate rejection. No plaintext fallback or mechanism retry was made.
+
+## Dependency repair verification
+
+Spec `d57cf00` preceded the repair. The isolated `ssh-probe` group now pins bcrypt 5.0.0; existing locked package versions and runtime dependencies are unchanged. The first lock command could not write the default read-only cache; using a task-owned `/tmp` cache resolved the environment issue without modifying the shared environment.
+
+Installed the hash-checked export of only this group into a separate `/tmp` target, then used the existing cryptography environment: encrypted OpenSSH serialization/round-trip passed, missing password rejected, wrong password rejected (three checks, no key output). `uv lock --check --offline` and `git diff --check` passed. This confirms the fixture encryption prerequisite only; Windows OpenSSH/ASKPASS mechanism is still unvalidated. The probe job must use `uv sync --frozen --group ssh-probe`; product adoption would separately require an explicit production dependency.

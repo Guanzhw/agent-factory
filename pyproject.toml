@@ -31,6 +31,7 @@ agent-factory-research = "agent_factory_server.research:main"
 packages = ["platform/agent_factory", "deployment/agent_factory_server", "applications/research"]
 
 [dependency-groups]
+ssh-probe = ["bcrypt==5.0.0"]
 browser = [
     "playwright==1.58.0",
 ]
