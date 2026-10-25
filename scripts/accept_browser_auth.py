@@ -54,8 +54,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dist", type=Path, default=Path("dist"), help="Built core-only frontend directory")
+    parser.add_argument("--browser-executable", type=Path, help="Use an explicitly installed Chromium binary")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    print(json.dumps({"composition": "core-only", "webDirectory": str(args.dist.resolve())}), flush=True)
     with ExitStack() as stack:
         database = stack.enter_context(IsolatedPostgres(args.database_url))
         scratch = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="browser-auth-https-")))
@@ -68,7 +71,7 @@ def main():
         identity = BrowserIdentityFixture(issuer=issuer, redirect_uri=origin + "/api/factory/auth/callback")
         settings = Settings(db_url=database.url, workspace=scratch / "workspace",
             jwt_key="synthetic-browser-acceptance-signing-key-at-least-32bytes",
-            browser_oidc=identity.config(), max_workers=1)
+            browser_oidc=identity.config(), web_directory=args.dist.resolve(), max_workers=1)
         app = create_app(settings)
         state = app.app.state.factory
         store, auth = state["store"], state["auth"]
@@ -83,7 +86,7 @@ def main():
         serve(stack, identity.app, idp_socket, certificate, key)
         serve(stack, app, app_socket, certificate, key)
         playwright = stack.enter_context(sync_playwright())
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, executable_path=str(args.browser_executable) if args.browser_executable else None)
         stack.callback(browser.close)
         evidence = {"identityMode": "synthetic-loopback-https", "realIdentityProviderVerified": False,
                     "hostTrustChanged": False, "screens": []}
