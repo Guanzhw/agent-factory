@@ -93,3 +93,5 @@ P6仍支持的selected-app首root入口也使用`ResearchRecords.start`，不能
 ### 依赖绑定publication接入
 
 依赖独立审查的`bind-content-source-authority`核心变更：将实际完整来源集合传入`ContentPublication.sourceContentIds`，复用统一read/list/artifact/旧回执当前权限。应用仍只向普通content写safe IDs/状态壳，富正文在研究表；`read_publication`先核原publication及完整来源。P8明确精选附件使用同一个source-bound publication的artifact口，不代理owner整job下载。来源在finalization前已不可读时仍持久化原终态，但sharing/source continuation标为不可用，不发布新正文或后继。原快照准入语义不变，未撤销原已授权运行。
+
+普通私问reply保留模型实际选中的全部publication IDs（最多8，绝非最终citations）；每个source-bound publication已由core强制检查完整原source集合，无需把同一内部依赖重复展开塞进reply的20输入ID限制。association/round仍保存完整平面依赖并集，不削减权限语义或扩大core接口。
