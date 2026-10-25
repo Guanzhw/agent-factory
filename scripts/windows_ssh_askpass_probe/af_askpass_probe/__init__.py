@@ -167,7 +167,7 @@ def controller(root, mode):
             foreign, _, _ = job.spawn([sys.executable, '-m', 'af_askpass_probe', '--foreign'], env, folder / 'foreign-output')
             w.connect(pipe, deadline)
             try:
-                w.check_client(pipe, proc, pid, helper, w.image(w.win32api.GetCurrentProcess()))
+                w.check_client(pipe, proc, pid, helper, w.image(w.win32api.GetCurrentProcess()), sys.executable)
             except w.Reject:
                 rejected = True
             if not rejected:
@@ -178,7 +178,7 @@ def controller(root, mode):
         w.win32process.ResumeThread(thread)
         stage = 'ACCEPT_HELPER'
         w.connect(pipe, deadline)
-        shape, client_pid = w.check_client(pipe, proc, pid, helper, w.image(w.win32api.GetCurrentProcess()))
+        shape, client_pid = w.check_client(pipe, proc, pid, helper, w.image(w.win32api.GetCurrentProcess()), sys.executable)
         try:
             if w.transfer(pipe, deadline, size=16) != b'READY':
                 raise w.Reject('HELPER_NOT_READY')
@@ -222,6 +222,8 @@ def controller(root, mode):
              'keyAbsentAfterClose': not key_path.exists(), 'jobStopped': True})
     except Exception as exc:
         result = safe_error(stage, exc)
+        if isinstance(exc, w.Reject) and exc.checks is not None:
+            result['identityChecks'] = exc.checks
         helper_status = root / mode / 'helper-status.json'
         if helper_status.is_file():
             result['helper'] = json.loads(helper_status.read_text(encoding='utf-8'))

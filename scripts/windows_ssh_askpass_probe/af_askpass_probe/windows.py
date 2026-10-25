@@ -17,7 +17,9 @@ import win32security
 
 
 class Reject(Exception):
-    pass
+    def __init__(self, code, checks=None):
+        super().__init__(code)
+        self.checks = checks
 
 
 def sid(process=None):
@@ -111,7 +113,7 @@ def pipe_pid(handle, client):
     return pid.value
 
 
-def check_client(pipe, root, root_pid, helper_path, python_path):
+def check_client(pipe, root, root_pid, helper_path, python_path, venv_path):
     client = process(pipe_pid(pipe, True))
     handles = [client]
     try:
@@ -119,15 +121,34 @@ def check_client(pipe, root, root_pid, helper_path, python_path):
             raise Reject('CLIENT_OWNER_OR_LIFETIME')
         expected_helper = os.path.normcase(os.path.realpath(helper_path))
         expected_python = os.path.normcase(os.path.realpath(python_path))
+        expected_venv = os.path.normcase(os.path.realpath(venv_path))
         if image(client) == expected_helper:
             launcher = client
             shape = 'direct'
         elif image(client) == expected_python:
             launcher = process(parent_pid(client))
             handles.append(launcher)
-            if image(launcher) != expected_helper or not alive(launcher) or created(launcher) > created(client):
-                raise Reject('LAUNCHER_IDENTITY')
-            shape = 'launcher-python'
+            checks = {'parentIsHelper': image(launcher) == expected_helper,
+                      'parentIsVenvPython': image(launcher) == expected_venv,
+                      'parentAlive': alive(launcher),
+                      'parentBeforeClient': created(launcher) <= created(client)}
+            if not checks['parentAlive'] or not checks['parentBeforeClient']:
+                raise Reject('LAUNCHER_IDENTITY', checks)
+            if checks['parentIsHelper']:
+                shape = 'launcher-python'
+            elif checks['parentIsVenvPython'] and expected_venv != expected_python:
+                redirector = launcher
+                launcher = process(parent_pid(redirector))
+                handles.append(launcher)
+                checks.update({'redirectorParentIsHelper': image(launcher) == expected_helper,
+                               'redirectorParentAlive': alive(launcher),
+                               'redirectorParentBeforeChild': created(launcher) <= created(redirector)})
+                if not all(checks[key] for key in ('redirectorParentIsHelper', 'redirectorParentAlive',
+                                                  'redirectorParentBeforeChild')):
+                    raise Reject('LAUNCHER_IDENTITY', checks)
+                shape = 'launcher-venv-python'
+            else:
+                raise Reject('LAUNCHER_IDENTITY', checks)
         else:
             raise Reject('CLIENT_IMAGE')
         if parent_pid(launcher) != root_pid or created(root) > created(launcher):
