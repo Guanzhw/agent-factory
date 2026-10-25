@@ -1,3 +1,21 @@
+# Active: standalone core after Research removal — 2026-10-25
+
+Base main a2e021c97ba2257d86c1ec484296bbeda0b6c05a. PR97–103 merged with successful main CI40164609318. This new phase is authorized for an independent Draft, not merge or deployment. Exact old-data manifest confirmed at05:40UTC:5files,52emptydirectories,old stopped container/volume deleted and absence verified; no other targets touched. Isolated empty acceptance fixtures remain separate.
+
+| Owner | Scope | Status / dependency |
+|---|---|---|
+| root | core API/schema, selectors, integration, isolated PG/browser, exact CI | known regressions repaired; final full PG/exact CI pending |
+| core_frontend | web/shared/frontend tests | 431 Web checks plus final real empty-PG browser both identity modes/viewports passed |
+| core_deployment | deployment/package/scripts | empty core wheel startup/shutdown passed; Go default no-queue-replay restored |
+| core_test_audit | generic platform test migration | shared operation/governance/cleanup migration repaired; final full pending |
+| core_remote_tests | remote fixtures and remote_handoff scientific extension removal | legacy guards30 portable pass; real scoped remote control5 PG pass |
+| core_model_tests | personal model and proxy PG tests | 17 model/proxy PG cases passed in initial36-case group |
+| data_inventory | existing Factory data, read-only metadata | exact manifest confirmed; deletion/absence verified |
+
+Retain generic process execution, budgets, vault, owner model connections, CLI/MCP/SSH, immutable plans and UNKNOWN original-operation recovery. Remove Research-only algorithms/UI/routes/seeds. Historical test timing failures remain unresolved unless demonstrated otherwise; no whole-suite speedup claim. Heavy verification is serialized on the 4 CPU / 16 GiB environment. Historical entries below are not current installed-app claims.
+
+---
+
 # Semantic continuation correction — 2026-10-08
 
 PR62 is still Draft. Head `47819a12755abbf3d75ca8dbfe77f23d2b9269df` is

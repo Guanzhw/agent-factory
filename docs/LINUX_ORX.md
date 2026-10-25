@@ -1,5 +1,7 @@
 # Pinned Linux ORX toy profile
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The Linux profile executes the same fixed upstream ORX 0.2.13 source and the
 same four original sealed toy evaluator files as the Windows profile. It uses
 real ORX project/experiment/run rows and commands. No provider/model, cloud job,

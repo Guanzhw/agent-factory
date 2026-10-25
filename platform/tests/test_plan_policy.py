@@ -8,6 +8,7 @@ import secrets
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
+from typing import cast
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -21,10 +22,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, JSON, MetaData, String, Table, create_engine, select
 
 from agent_factory.auth import AuthService
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_research.demo_model import DemoModel
-from agent_factory_server.main import create_app
-from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, plan_policy_router
+from agent_factory.config import Settings
+from core_native_fixture import FixtureModel as DemoModel
+from core_native_fixture import create_fixture_app as create_app
+from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, ToolContract, plan_policy_router
 from agent_factory.store import Store, digest
 from pg_fixture import IsolatedPostgres
 
@@ -38,11 +39,11 @@ class MetadataFixture:
         self.table.metadata.create_all(self.engine)
 
     def add(self, owner="alice", *, experiment=False, delegation=None, **changes):
-        tools = ["literature_search", "ask_scope"]
-        caps = ["research:read", "question:ask"]
+        tools = ["checksum", "ask_scope"]
+        caps = ["checksum:read", "question:ask"]
         if experiment:
-            tools.append("run_experiment")
-            caps.append("experiment:synthetic")
+            tools.append("fixture_operation")
+            caps.append("fixture:operate")
         plan = {"id": str(uuid4()), "ownerId": owner, "tools": tools, "capabilities": caps,
                 "mode": "experiment" if experiment else "literature", "status": "ready", "missing": [],
                 "policy": "bounded-synthetic", "syntheticFixture": True,
@@ -79,6 +80,12 @@ def historical_review(service, plan, *, decision=None):
                 request_id=str(uuid4()), intent_hash="original-decision", decision=decision,
                 decided_at="2026-01-01T00:30:00+00:00"))
     return value
+
+
+class PlanPolicyConfigurationTests(unittest.TestCase):
+    def test_unknown_tool_contract_is_rejected(self):
+        with self.assertRaises(ValueError):
+            PlanPolicyConfig(tool_contract=cast(ToolContract, "unknown-fixture-contract"))
 
 
 class PlanPolicyTests(unittest.TestCase):
@@ -218,7 +225,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         response = self.client.post("/api/factory/demo/login", json={"persona": owner})
         self.assertEqual(response.status_code, 200, response.text)
 
-    def plan(self, *, mode="literature", goal="Controlled policy research comparison", application="research"):
+    def plan(self, *, mode="literature", goal="Controlled policy research comparison", application="fixture-text"):
         response = self.client.post("/api/factory/plans", json={"topic": goal, "mode": mode,
                                     "application": application, "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
@@ -243,7 +250,7 @@ class PlanPolicyPostgresTests(unittest.TestCase):
         self.fail(str(detail))
 
     def test_repeated_submission_reuses_original_native_task_and_effect(self):
-        plan = self.plan(application="checksum", mode="literature")
+        plan = self.plan(application="fixture-checksum", mode="literature")
         request_id = str(uuid4())
         body = {"planId": plan["id"], "requestId": request_id}
         first = self.client.post("/api/factory/instances", json=body)

@@ -1,5 +1,7 @@
 # 私有开发控制面：存储确定后的最小执行计划
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 本阶段只交付安装计划和独立资源 probe，不安装目标依赖、不启动数据库或三阶段训练。
 已有研究环境、共享 uv 缓存、硬链接和用户文件保持原状。空间不足或 CoW 不可用时停止，
 不清理用户文件、不缩减完整 inventory，也不把硬链接改成“已隔离”。

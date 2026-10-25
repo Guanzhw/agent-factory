@@ -30,13 +30,13 @@ class OnlineRestorePostgresTests(unittest.TestCase):
 
     def test_exported_snapshot_with_live_artifact_writes_and_uncertain_admission(self):
         client, store, state = self.app(self.source, "online-source")
-        plan, _ = self.historical_plan(client, state["plan_policy"], "checksum")
+        plan, _ = self.historical_plan(client, state["plan_policy"], "fixture-checksum")
         accepted = client.post("/api/factory/instances", json={"planId": plan, "requestId": uuid4().hex})
         self.assertEqual(accepted.status_code, 202)
         task = accepted.json()["id"]
         self.wait_completed(client, task)
         before = store.artifact_write(task, "confirmed-before.txt", b"Confirmed before snapshot", "text/plain")
-        unknown_plan, _ = self.historical_plan(client, state["plan_policy"], "research")
+        unknown_plan, _ = self.historical_plan(client, state["plan_policy"], "fixture-text")
         unknown, _ = store.reserve_task(store.plan(unknown_plan, "alice"), uuid4().hex)
         store.admission_unknown(unknown["id"])
         engine = create_engine(self.source.url, isolation_level="REPEATABLE READ")

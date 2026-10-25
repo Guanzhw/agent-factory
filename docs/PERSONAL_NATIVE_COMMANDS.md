@@ -1,5 +1,7 @@
 # Ordinary personal commands through native Factory tasks
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The research application installs the personal command capability with
 `ResearchSettings(db_url=..., personal_agent_commands_enabled=True)` and an
 explicit `opencode-personal-session-v1` provider. Existing verification-only

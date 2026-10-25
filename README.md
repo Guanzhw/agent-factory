@@ -1,21 +1,16 @@
 # Agent Factory
 
-An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. Auto-Research is the first application. New published applications use the same composition API and registered executor through the generic composition path. The explicitly selected Go coding fixture has an additional narrow scope guard.
+An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. The default deployment contains no installed applications or seeded materials. Members publish explicit application definitions and use the generic composition API and registered executors.
 
-This is a **verified implementation stage toward the complete factory/v0.3 scope**, not a completed production/scientific release: native authorization, PostgreSQL queue, questions, native operation confirmations, cancellation, events, artifacts and a Chinese research frontend. The deterministic model and invented research corpus are clearly labeled demo data. No paid model, production remote host or deployment is enabled by default. Historical live and failed retrieval evidence stays scoped to its recorded run; controlled fixtures do not establish scientific validity. Full production acceptance remains open.
+The current core-only change removes the former Research application, its pages and default registrations. Login, the application catalog, tasks and owner-managed resources remain in the shared workspace. A new database starts with an empty application catalog; resources and member publication remain available. Synthetic native fixtures are installed explicitly by tests, never by default startup.
 
-For the persistent Linux mock-login instance with synthetic source → synthesis,
-fixed baseline/candidate comparisons and schedule diagnostics, use the
-[runnable development checkpoint](docs/DEVELOPMENT_IMPLEMENTATION_CHECKPOINT.md).
-The [final requirements audit](docs/V03_FINAL_REQUIREMENT_AUDIT.md) distinguishes
-implemented development flows from input-dependent code and real acceptance.
+This change's runtime, browser and CI acceptance must be recorded against its exact revision; earlier Research results do not establish core-only acceptance. Real external identity providers, paid models, remote hosts and scientific workflows are not validated by local synthetic checks. Historical implementation and acceptance records remain linked below.
 
 ## Build a new application
 
 Start with the [application development guide](docs/APPLICATION_DEVELOPMENT.md).
 Use the [public application interface](docs/APPLICATION_INTERFACE.md) for scoped
 inputs/resources, native step output, task lifecycle, events and artifacts.
-For an existing owner's research environment, see the [explicit continuation guide](docs/ENVIRONMENT_CONTINUATION.md).
 It separates business implementation, trusted deployment registration and member publication,
 and covers the smallest material-driven application, trusted tool/model/runtime
 factories, bounded Pydantic inputs, native Agno Workflow/HITL, permissions, budgets
@@ -26,25 +21,23 @@ user-implemented local application, not a bundled or live-validated backend.
 
 ## Source and deployment boundaries
 
-The Factory core and the research application have separate source ownership:
+The default source and deployment boundaries are:
 
 | Path | Owns |
 | --- | --- |
 | `platform/agent_factory/` | Shared identity, credentials, resources, material/application contracts, task admission, native execution, events and artifacts |
-| `apps/research/agent_factory_research/` | Research services, settings, materials, executor adapters and `runtime_packages/openresearch_v1/` |
-| `apps/research/web/` and `apps/research/tests/` | Research pages/API state and application regressions (`python/`, `web/`, `browser/`) |
-| `deployment/agent_factory_server/main.py` | Explicit Python assembly of the core and research application |
+| `deployment/agent_factory_server/main.py` | Core startup with an empty default application registration list |
 | `web/composition.tsx` | Explicit frontend assembly; shared shell and generic UI remain in `web/` |
 
-OpenResearch and the existing AutoResearch execution paths belong to one research
-application. They retain their native executors and existing session/project
-journeys. The deployment installs its material definitions and trusted adapters explicitly;
-creating the core alone does not seed research materials or install research
-routes. There is no dynamic application discovery. An application that only
-combines existing tools still needs only a published declaration and materials,
-without a core code change.
+There is no dynamic application discovery. Applications that combine installed
+adapters need published declarations and materials; new trusted code requires
+explicit deployment registration. The former `apps/research` source is removed.
+Removing it does not delete stored applications, task history, credentials, vault
+keys, artifacts or backups. Existing Research tasks cannot resume without their
+application code. Permanent deletion of old data requires a separate exact target
+inventory and confirmation; core-only checks use newly created isolated fixtures.
 
-The root [`pyproject.toml`](pyproject.toml) builds the complete
+The root [`pyproject.toml`](pyproject.toml) builds the core-only
 `department-agent-factory` deployment wheel and retains the `agent-factory`
 command. [`platform/pyproject.toml`](platform/pyproject.toml) builds the standalone
 `department-agent-factory-core` distribution, containing only `agent_factory`.
@@ -71,11 +64,10 @@ Open http://127.0.0.1:3100 and choose an explicit demo persona: Alice, Bob or ac
 
 For an operator-provided database, set `FACTORY_DATABASE_URL` and run `npm run start:configured` (or `uv run python -m agent_factory_server`). The URL is server configuration, never agent input. Production mode (`FACTORY_MODE=production`) requires a configured JWT key, a separate database and existing member accounts; it provisions no identities. Active members use ordinary components and workflows; account administrators manage accounts. Execution checks published applications/materials, installed adapters, owner/shared resource access and task bounds. Real provider SDK attempt/retry enforcement and production OS acceptance remain integration work. The frontend dev command is `npm run dev:web`, proxying `/api` to loopback port 3100.
 
-Normal entrypoints use `Settings.from_env()` / `ResearchSettings.from_env()` with
+Normal entrypoints use core `Settings.from_env()` with
 `member-self-service` for task admission and material/application publication.
 Members publish their versions directly and submit new tasks without ordinary
-plan approval. Native hazardous-tool and exact project-creation confirmations
-remain. Historical reviews stay readable and do not authorize new tasks.
+plan approval. Native tool confirmations remain when declared by installed tools. Historical reviews stay readable and do not authorize new tasks.
 Plans without explicit execution bindings must be regenerated. An unknown original outcome still
 requires original-request reconciliation. Retired plan/publication modes and
 review TTL settings must be removed from startup configuration.
@@ -98,15 +90,14 @@ access to the service account. An injected organizational vault remains supporte
 - Personal CLI/MCP adapters are installed statically; members register them with matching owner credentials and bind connections for on-demand calls ([setup and lifecycle](docs/PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)).
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
 - Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicit demo identity with HttpOnly cookie.
-- Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation including bounded experiment process trees, persistent application events and artifact hashes.
+- Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation and bounded local process custody, persistent application events and artifact hashes.
 - Bounded native child delegation: independent tickets, inherited scope, depth/count and durable shared tool budgets, group inspection and cascading cancellation.
 - Guarded native schedule poller: owner-scoped immutable-plan definitions, per-occurrence admission, current rights/quotas, no blind UNKNOWN replay.
-- Original research frontend: preflight, submission, polling, questions, native operation confirmations, cancellation acknowledgements, evidence and member material/application management. API facts bypass the model queue.
+- Shared workspace: login/logout, empty application catalog, task history, owner models/connections, member material/application management and generic composition. API facts bypass the model queue.
 - Remote target/lease API and selected Agno HTTP adapter: trusted references, version/auth checks, UNKNOWN reconciliation, disconnect/cancel distinction and guarded reclaim. Actual native tests cover metadata attachment; lifecycle tests use explicit synthetic fixtures.
 - Governed remote Factory execution: exact immutable receiver adapter/connection mapping proofs, current source authorization over trusted HTTP, receiver admission checks and inherited receiver-owned children; default startup configures no remote access. See [remote bindings](docs/REMOTE_BINDINGS.md).
-- Registered OpenResearch discovery and revision-2 paper/text/evidence tools: controlled transport is tested through native composition/queue/artifacts; actual public connectivity and model-driven research remain unverified. Operator registration, reviewed tool contract, owner connection and exact binary pin are required. Its pinned source is `f336b121525d99364e2dee4fe90b2784894a54e6` (ORX 0.2.13); an installed 0.2.10 is not assumed compatible. Factory retains session ownership.
-
-Experiment metrics are computed by an actual bounded synthetic subprocess with evaluator/version/dataset/runtime hashes. They prove the integration pipeline, not scientific improvement. A native COMPLETED response alone never validates research or an uncertain effect.
+A native COMPLETED response alone does not validate an application's results or
+prove that an uncertain external effect stopped.
 
 ## Checks
 
@@ -119,13 +110,35 @@ $env:FACTORY_TEST_DATABASE_URL = 'postgresql+psycopg://test-user@127.0.0.1:5432/
 uv run python scripts/check_python.py
 ```
 
-`npm run check` includes shared and research frontend lint, type checks, tests and the composed build. `npm run check:python` runs Ruff and Pyright across core, application and deployment code, then `scripts/check_python.py` discovers both `platform/tests` and `apps/research/tests/python` with shared fixtures available. Either suite failing makes the command fail. Without a test database, PostgreSQL cases explicitly skip. The opt-in loopback test identity needs CREATEDB on a disposable server: each test class creates and removes only its own randomly named database; supplied database tables are never cleared. CI runs frontend and Python checks on Windows/Linux and a separate pinned PostgreSQL integration job. All tests use synthetic input and make no paid provider calls.
+`npm run check` includes shared frontend lint, type checks, tests and the composed build. `npm run check:python` runs Ruff and Pyright across core, deployment and scripts, then `scripts/check_python.py` discovers `platform/tests` with explicit synthetic fixtures. Any test failure makes the command fail. Without a test database, PostgreSQL cases explicitly skip. The opt-in loopback test identity needs CREATEDB on a disposable server: each test class creates and removes only its own randomly named database; supplied database tables are never cleared. CI runs frontend and Python checks on Windows/Linux and a separate pinned PostgreSQL integration job. All tests use synthetic input and make no paid provider calls.
 
-The opt-in actual ORX application and its reviewed evaluator are described in [ORX_LOCAL_EXPERIMENTS.md](docs/ORX_LOCAL_EXPERIMENTS.md). Its deterministic baseline/candidate MSE values are 16 and 0 on seven original examples. This verifies real local CLI execution and evidence delivery; it does not certify live model science. [TOKEN_LEDGER.md](docs/TOKEN_LEDGER.md) describes immutable model/price approval and transactional reservations for every provider attempt, including retries, streaming, child tasks and remote allocation. Defaults install only explicit no-provider local contracts; unpriced models fail closed.
-
-See [architecture decision](docs/decisions/0001-native-plan-envelope.md), [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [delegation](docs/DELEGATION.md), [scheduling](docs/SCHEDULING.md), [remote resources](docs/REMOTE_RESOURCES.md), [OpenResearch](docs/OPENRESEARCH.md), [acceptance](docs/ACCEPTANCE.md) and [verification](docs/VERIFICATION.md).
+[TOKEN_LEDGER.md](docs/TOKEN_LEDGER.md) describes provider-attempt accounting and
+transactional reservations. BYOK and host-paid execution retain their distinct
+accounting contracts. See [architecture](ARCHITECTURE.md),
+[development checks](docs/DEVELOPMENT_CHECKS.md), [security](docs/SECURITY.md),
+[delegation](docs/DELEGATION.md), [scheduling](docs/SCHEDULING.md) and
+[remote resources](docs/REMOTE_RESOURCES.md) for shared mechanisms.
 
 ## Current acceptance and remaining work
+
+Core-only acceptance requires login, logout/relogin, direct URLs and refresh,
+empty catalog/task states, resource management, explicitly published synthetic
+applications, native queue behavior and independent core installation. Demo
+personas and production-mode local synthetic identity must be checked separately;
+neither establishes compatibility with an external production identity provider.
+Use fresh isolated databases/workspaces and run heavy PostgreSQL/browser checks
+serially. Results for this change belong in its Draft PR, not in historical counts.
+
+## Historical Research acceptance
+
+The records below describe earlier revisions with the now-removed application.
+They preserve measured successes, failures and UNKNOWN outcomes; their commands,
+paths and backlog are not current installation instructions. The
+[development checkpoint](docs/DEVELOPMENT_IMPLEMENTATION_CHECKPOINT.md),
+[requirements audit](docs/V03_FINAL_REQUIREMENT_AUDIT.md),
+[ORX experiments](docs/ORX_LOCAL_EXPERIMENTS.md) and
+[environment continuation](docs/ENVIRONMENT_CONTINUATION.md) are also historical
+Research references pending documentation cleanup.
 
 On 2026-10-07 the local owner verified the [first real autoresearch baseline](docs/RESEARCH_BASELINE_ACCEPTANCE.md):
 302.587995 counted training seconds, independent fixed evaluation
@@ -144,12 +157,12 @@ The preceding exact-head baseline is `45eeb6b88046a40f8743e01e69d10353be386499`
 ([Draft PR15](https://github.com/Guanzhw/agent-factory/pull/15)): push/PR CI passed
 all ten jobs, observed twice 106.515 seconds apart; each PG suite ran 650 tests
 with 63 explicit skips. Its first real DeepSeek smoke attempt stopped UNKNOWN;
-GPT-6-Luna was not called. The current offline-only continuation adds durable safe
+GPT-6-Luna was not called. That offline-only continuation added durable safe
 diagnostics and corrects the unexplained version selection for `deepseek-flash`;
 it does not change the old outcome or send another request. See
 [current matrix](docs/ACCEPTANCE.md#current-matrix),
 [diagnostic boundaries](docs/GO_SAFE_DIAGNOSTICS.md) and
-[delivery index](docs/DELIVERY_INDEX.md). New-head CI is in its draft PR.
+[delivery index](docs/DELIVERY_INDEX.md). Its exact-head CI was recorded in that Draft PR.
 
 | Available and measured | Boundary still open |
 |---|---|
@@ -160,7 +173,7 @@ it does not change the old outcome or send another request. See
 | Governed Factory receiver execution, runtime attachment and resource lifecycle contracts | No real compute allocator/environment provisioning implementation; production remote TLS/identity/host setup is absent |
 | Storage quarantine, finite twenty-user pressure and online PostgreSQL snapshot/restore | Measured **4 CPU / 16 GiB**; target **32 cores / 64 GB** or **54 cores / 192 GB** is unmeasured. Single active scheduler only |
 
-The default AutoResearch application still selects **synthetic** materials and a
+At that historical stage, the default AutoResearch application selected **synthetic** materials and a
 deterministic model. Its successful demo output is not a real research result.
 Independent code remains for production browser identity/session integration;
 a specific production research provider's adapter, usage/retry/request/pricing

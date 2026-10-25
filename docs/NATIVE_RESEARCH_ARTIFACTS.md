@@ -1,5 +1,7 @@
 # Native research text artifacts
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The selected platform OpenResearch session writes into its own chat worktree,
 not the project's hub checkout. Previously Factory displayed the native reply
 and tool output while its artifact list stayed empty, even when files existed.

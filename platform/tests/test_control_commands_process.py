@@ -34,7 +34,7 @@ class CommandProcessTests(unittest.TestCase):
     def start(self):
         project = Path(__file__).resolve().parents[2]
         environment = {**os.environ, "FACTORY_COMMAND_FIXTURE": str(self.config),
-                       "PYTHONPATH": os.pathsep.join(str(project / part) for part in ("platform", "apps/research", "deployment", "platform/tests", "apps/research/tests/python"))}
+                       "PYTHONPATH": os.pathsep.join(str(project / part) for part in ("platform", "deployment", "platform/tests"))}
         self.process = subprocess.Popen([sys.executable, "-m", "controlled_command_worker"],
             env=environment, cwd=project, stdout=self.log, stderr=self.log)
         deadline = time.monotonic() + 25
@@ -69,7 +69,7 @@ class CommandProcessTests(unittest.TestCase):
         return response.json()
 
     def waiting(self, action):
-        plan = self.api("POST", "/plans", {"topic": "sort" if action == "answer" else "Evaluate synthetic sorting", "mode": "literature" if action == "answer" else "experiment", "application": "research", "requestId": str(uuid4())})
+        plan = self.api("POST", "/plans", {"topic": "sort" if action == "answer" else "Evaluate synthetic sorting", "mode": "literature" if action == "answer" else "experiment", "application": "fixture-text", "requestId": str(uuid4())})
         task = self.api("POST", "/instances", {"planId": plan["id"], "requestId": str(uuid4())})["id"]
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:

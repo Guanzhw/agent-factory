@@ -129,7 +129,7 @@ class PostgresCheckTests(unittest.TestCase):
             (directory / (module + '.py')).write_text('VALUE = True\n')
             imports.append(module)
         command = '; '.join('import ' + name for name in imports)
-        trees = [root / 'platform/tests', root / 'apps/research/tests/python']
+        trees = [root / 'platform/tests']
         modules = []
         for index, directory in enumerate(trees):
             module = f'test_entrypoint_{index}_{suffix}'

@@ -10,8 +10,8 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from agent_factory.schedule_contract import preview_schedule
-from agent_factory_research.config import ResearchSettings
-from agent_factory_server.main import create_app, factory_state
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from pg_fixture import IsolatedPostgres
 
 
@@ -20,10 +20,10 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
     def setUp(self):
         database = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         workspace = self.enterContext(TemporaryDirectory(prefix='member-schedules-'))
-        settings = ResearchSettings(db_url=database.url, workspace=Path(workspace), max_workers=1,
+        settings = Settings(db_url=database.url, workspace=Path(workspace), max_workers=1,
             max_user_tasks=1, temporary_policy='member-self-service')
         app = create_app(settings)
-        self.state = factory_state(app)
+        self.state = app.app.state.factory
         self.store, self.auth, self.service = (self.state[key] for key in ('store', 'auth', 'schedules'))
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
@@ -33,7 +33,7 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         self.enterContext(patch('agent_factory.schedule_management.preview_schedule',
             side_effect=lambda cron, zone: preview_schedule(cron, zone, now_epoch=1893456000)))
         self.plan = self.request('POST', '/plans', self.command(topic='Offline scheduled checksum',
-            application='checksum', mode='literature'), status=201)
+            application='fixture-checksum', mode='literature'), status=201)
         self.assertTrue(self.plan['authorization']['executionAllowed'])
         self.assertFalse(self.plan['authorization']['reviewRequired'])
         for owner in ('alice', 'bob'):

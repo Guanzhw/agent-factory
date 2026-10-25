@@ -1,5 +1,7 @@
 # Backend contract for the OpenResearch workspace UI
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The independently authorized UI now follows this additive backend contract. Existing application, task, preset and connection endpoints remain compatible. Changes are confined to this development branch; no user-local files were edited.
 
 ## Product navigation

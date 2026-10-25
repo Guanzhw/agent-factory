@@ -1,7 +1,6 @@
 """Owner-funded protocol boundary for a private application runtime.
 
-No research controller lives here. Original ORX and its declared harness own the
-tool loop. Only a short-lived local capability enters that container; each model
+The selected application runtime and its declared harness own the tool loop. Only a short-lived local capability enters that container; each model
 call resolves the original owner/vault revision outside it, without fallback.
 """
 import asyncio

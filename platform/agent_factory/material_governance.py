@@ -142,12 +142,9 @@ class GovernanceConfig:
     review_mode: Literal["member-self-service"] = "member-self-service"
     revision: str = "material-department-v1"
     tool_contract: ToolContract = "legacy-v1"
-    source_synthesis_enabled: bool = False
 
     def __post_init__(self):
         tools_for_contract(self.tool_contract)
-        if type(self.source_synthesis_enabled) is not bool:
-            raise ValueError("Source synthesis requires an explicit boolean contract")
         if self.review_mode != "member-self-service":
             raise ValueError("Unsupported material publication review mode")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.revision):
@@ -156,8 +153,6 @@ class GovernanceConfig:
     @property
     def fingerprint(self):
         body = asdict(self)
-        if not self.source_synthesis_enabled:
-            del body["source_synthesis_enabled"]
         if self.tool_contract == "legacy-v1":
             del body["tool_contract"]
         return digest({**body, "licenses": LICENSES, "toolBindings": self.known_tools,
@@ -165,7 +160,7 @@ class GovernanceConfig:
 
     @property
     def known_tools(self) -> dict[str, str]:
-        return {**tools_for_contract(self.tool_contract), **({"save_literature_synthesis": "research:read"} if self.source_synthesis_enabled else {})}
+        return tools_for_contract(self.tool_contract)
 
 
 class MaterialGovernance:

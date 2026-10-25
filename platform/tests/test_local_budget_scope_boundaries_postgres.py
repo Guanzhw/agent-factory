@@ -1,14 +1,9 @@
 """Additional PG allocation boundaries, using controlled usage, not live ORX."""
-import asyncio
 import os
-from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import select
 
-from agent_factory.store import digest
 from agent_factory.usage_ledger import UsageEvidence
 import test_local_budget_scopes_postgres as scopes_fixture
 import test_usage_ledger_postgres as usage_fixture
@@ -77,65 +72,3 @@ class LocalBudgetScopeBoundaryPostgresTests(unittest.TestCase):
         self.assertEqual(self.provider.records, ['success'])
         self.assertEqual(self.scopes.inspect('alice', 'scope'), before)
         self.assertEqual(before['usage']['held_tokens'], 0)
-
-    def test_successor_budget_and_deadline_rejection_leave_no_free_intent(self):
-        # Synthetic driver evidence isolates the PG activity/allocation transaction.
-        # Actual recipe artifacts are covered by test_research_iterations_postgres.
-        from agent_factory_research.research_iterations import IterationPreset, ResearchIterations
-        from agent_factory_research.services import ResearchServices
-        from agent_factory_research import research_iterations as iterations_module
-
-        contexts, reservations = {}, []
-        def reserve(owner, activity, round):
-            plan = self.provider.plan()
-            task, context = self.provider.task(plan, accepted=False)
-            contexts[task['id']] = context
-            reservations.append(task['id'])
-            return dict(taskId=task['id'], planId=plan['id'], planSha256=digest(plan))
-
-        async def dispatch(owner, round):
-            self.store.accept(round['taskId'], contexts[round['taskId']].run_id)
-
-        async def observe(owner, round):
-            baseline = round['baselineSource']
-            pins = {key: baseline[key] for key in ('datasetSha256', 'evaluatorSha256')}
-            return dict(state='stopped', taskId=round['taskId'], runId=contexts[round['taskId']].run_id,
-                evaluation=dict(pins, artifactId='controlled-evaluation', sha256='e' * 64,
-                    metric='mean_squared_error', baselineValue=16, candidateValue=0,
-                    baselineSourceSha256=baseline['sha256'], candidateSourceSha256='f' * 64),
-                sourcePin=dict(pins, kind='sourceArtifact', ownerId=owner, taskId=round['taskId'],
-                    artifactId='controlled-source', sha256='f' * 64))
-
-        async def cancel(owner, round):
-            self.fail('No running successor exists to cancel')
-
-        preset = IterationPreset('controlled', 'alice', 'controlled-preset', {},
-            dict(kind='reviewedSeed', sha256='a' * 64, datasetSha256='b' * 64,
-                 evaluatorSha256='c' * 64, metricValue=16), self.base.caps(), 10)
-        service = ResearchIterations(self.store, self.provider.auth,
-            research=ResearchServices(factory_store=self.store, installed=True), presets={'controlled': preset},
-            round_driver=SimpleNamespace(reserve=reserve, dispatch=dispatch, observe=observe, cancel=cancel))
-        initial = asyncio.run(service.start('alice', 'controlled', 'Improve controlled fixture', 'original-request',
-            caps=self.base.caps(rounds=2, tools=4, tokens=14, amount=23), deadline=self.base.deadline))
-        activity, round = initial['activity']['id'], initial['rounds'][0]
-        self.provider.invoke(self.provider.selected(contexts[round['taskId']]))
-        self.base.ended(self.store.task(round['taskId']))
-        ready = asyncio.run(service.reconcile('alice', activity))
-        self.assertEqual(ready['activity']['status'], 'ready')
-        original_tasks = self.store.sql('SELECT id FROM af_tasks ORDER BY id')
-        with self.assertRaises(HTTPException) as caught:
-            asyncio.run(service.advance('alice', activity, round['id'], 'insufficient-budget'))
-        self.assertEqual(caught.exception.status_code, 429)
-        self.assertEqual(service.inspect('alice', activity), ready)
-        self.assertEqual(self.store.sql('SELECT id FROM af_tasks ORDER BY id'), original_tasks)
-        with self.store.transaction(read_only=True) as conn:
-            self.assertEqual(len(conn.execute(select(service.rounds)).all()), 1)
-            self.assertEqual(len(conn.execute(select(self.scopes.allocations)).all()), 1)
-        with patch.object(iterations_module, 'time', SimpleNamespace(time=lambda: self.base.deadline - 1)):
-            final = asyncio.run(service.advance('alice', activity, round['id'], 'deadline-boundary'))
-        self.assertEqual(final['activity']['stopReason'], 'deadline')
-        self.assertEqual(final['activity']['deadline'], self.base.deadline)
-        self.assertEqual(final['rounds'], ready['rounds'])
-        self.assertEqual(final['budget'], ready['budget'])
-        self.assertEqual(reservations, [round['taskId']])
-        self.assertEqual(self.store.sql('SELECT id FROM af_tasks ORDER BY id'), original_tasks)

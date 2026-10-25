@@ -11,8 +11,8 @@ from uuid import uuid4
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.schedule_contract import preview_schedule
 from pg_fixture import IsolatedPostgres
 
@@ -46,7 +46,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
             side_effect=lambda cron, zone: preview_schedule(cron, zone, now_epoch=1893456000))
         clock.start(); self.addCleanup(clock.stop)
         self.plan = self.post('/plans', {'topic': 'Scheduled original checksum fixture',
-            'application': 'checksum', 'mode': 'literature', 'requestId': str(uuid4())}, status=201)
+            'application': 'fixture-checksum', 'mode': 'literature', 'requestId': str(uuid4())}, status=201)
 
     def command(self, **body):
         return {'requestId': str(uuid4()), **body}
@@ -214,7 +214,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
             self.service.bridge = real
 
     def test_pending_editor_does_not_block_original_paused_occurrence_history_or_cancel(self):
-        self.plan = self.post('/plans', {'topic': 'sort', 'application': 'research',
+        self.plan = self.post('/plans', {'topic': 'sort', 'application': 'fixture-text',
             'mode': 'literature', 'requestId': str(uuid4())}, status=201)
         schedule, _ = self.create()
         schedule = self.enabled(schedule, True)

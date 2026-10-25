@@ -20,10 +20,10 @@ from uuid import uuid4
 import httpx
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
-    for part in ('platform', 'apps/research', 'deployment')]
+    for part in ('platform', 'deployment')]
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_remote_provider import SecretLease
-from agent_factory_research.runtime_packages.openresearch_v1.entry import environment
+from owner_model_native_fixture import environment
 
 PIN = '77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa'
 CASES = ('disconnect', 'provider_502', 'downstream_response_lost', 'normal_two_turns',
@@ -147,7 +147,7 @@ def main():
     if not args.image.startswith('sha256:') or len(args.image) != 71:
         raise ValueError('NATIVE_IMAGE_PIN_REQUIRED')
     root = Path(__file__).resolve().parents[1]
-    package = root / 'apps/research/agent_factory_research/runtime_packages/openresearch_v1'
+    bridge = root / 'scripts/owner_model_native_fixture.py'
     results = []
     for outcome in ((args.case,) if args.case else CASES):
         with TemporaryDirectory(prefix='af-native-retry-') as folder:
@@ -217,7 +217,7 @@ def main():
                 '--tmpfs', '/tmp:rw,nosuid,nodev,size=134217728', '--workdir', '/session/work',
                 '--mount', f'type=bind,src={private},dst=/session',
                 '--mount', f'type=bind,src={binary},dst=/trusted/opencode-real,readonly',
-                '--mount', f'type=bind,src={package / "bridge.py"},dst=/trusted/bridge.py,readonly']
+                '--mount', f'type=bind,src={bridge},dst=/trusted/bridge.py,readonly']
             for key in env: command += ['--env', key]
             # No retry flags, request rewriting or alternate research controller.
             if compact_case:

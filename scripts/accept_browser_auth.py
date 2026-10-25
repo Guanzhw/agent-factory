@@ -77,11 +77,9 @@ def main():
         tls = ssl.create_default_context(cafile=str(certificate))
         state["browser_auth"].exchanger = BrowserCodeExchanger(identity.config(),
             transport=httpx.AsyncHTTPTransport(verify=tls, retries=0))
-        auth.authorization.define_role("browser-fixture-user", ["agents:factory-executor:read",
-            "agents:factory-executor:run", "components:read", "registry:read", "sessions:read", "filesystem:read"])
+        # Active synthetic accounts use the core trusted-team authorization provider.
         for owner in ("alice", "bob"):
             auth.directory.upsert(owner, name="Synthetic " + owner)
-            auth.authorization.assign(owner, "browser-fixture-user")
         serve(stack, identity.app, idp_socket, certificate, key)
         serve(stack, app, app_socket, certificate, key)
         playwright = stack.enter_context(sync_playwright())
@@ -98,7 +96,7 @@ def main():
                 login = page.get_by_role("button", name="使用企业账号登录", exact=True)
                 login.wait_for()
                 expect(login).to_be_enabled()
-                assert page.get_by_role("button", name="研究员 Alice", exact=True).count() == 0
+                assert page.get_by_role("button", name="成员 Alice", exact=True).count() == 0
                 page.screenshot(path=str(args.output / (name + "-login.png")), full_page=True)
                 identity.subject = "subject-alice"
                 # A tab may abandon one flow before clicking sign-in again.
@@ -120,7 +118,7 @@ def main():
                 page.reload()
                 logout.wait_for()
                 assert context.request.get(origin + "/api/factory/session").json()["id"] == "alice"
-                page.get_by_text("尚无任务。先描述一个研究问题。", exact=True).wait_for()
+                page.get_by_text("暂无已接入的应用。", exact=True).wait_for()
                 overflow = page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
                 assert not overflow
                 page.screenshot(path=str(args.output / (name + "-signed-in.png")), full_page=True)

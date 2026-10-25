@@ -1,5 +1,7 @@
 # OpenResearch tool adapter (legacy CLI boundary)
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This document describes the narrow CLI adapter only. It does not describe the
 current ORX-owned research session loop; see [AUTORESEARCH_SESSION.md](AUTORESEARCH_SESSION.md)
 and the [platform/application/workload contract](FACTORY_OPENRESEARCH_CONTRACT.md).

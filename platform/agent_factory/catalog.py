@@ -11,7 +11,7 @@ def seed_catalog(store, seeds=()):
                 "permissions": permissions, "inputSchema": {}, "outputSchema": {}, "archived": False}, "demo-bootstrap", seed=True)
 
 
-def create_plan(store, owner, goal, mode, application="research", *,
+def create_plan(store, owner, goal, mode, application=None, *,
                 application_ref=None, material_choices=None, connection_refs=None, input_values=None):
     """Use governed composition and preserve trusted child-plan storage hooks."""
     service = getattr(store, "composition", None)

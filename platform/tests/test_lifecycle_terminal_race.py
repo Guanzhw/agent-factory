@@ -145,20 +145,20 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
 
     def test_typed_completion_rechecks_fresh_failure_cancel_and_unresolved_effect(self):
         for fault, reason in (('failure', 'protected-failure'), ('cancel', 'cancel-requested'),
-                              ('unresolved', 'native-ended-unresolved-experiment')):
+                              ('unresolved', 'native-ended-unresolved-fixture')):
             with self.subTest(fault=fault):
                 observer, store, task, failure, _ = self.fixture()
                 if fault == 'unresolved':
-                    from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
-                    store.application_runtime.register('research-fixture', SimpleNamespace(
-                        effect_held=ResearchRuntimeHooks.effect_held, ended_reason=ResearchRuntimeHooks.ended_reason),
-                        effects=('orx-experiment-launch-v1',))
+                    store.application_runtime.register('controlled-fixture', SimpleNamespace(
+                        effect_held=lambda effect: effect.get('status') == 'UNKNOWN',
+                        ended_reason=lambda store, task: 'native-ended-unresolved-fixture' if any(e.get('status') == 'UNKNOWN' for e in store.effects(task['id'])) else None),
+                        effects=('fixture-original-operation-v1',))
                 observer._binding.side_effect = [{'status': 'running'}, {'status': 'completed'}]
                 def deny(*args, **kwargs):
                     if fault == 'failure': failure['present'] = True
                     elif fault == 'cancel': task['cancel_requested'] = True
                     else:
-                        store.effects.return_value = [{'effect_key': task['run_id'] + ':orx-experiment-launch-v1',
+                        store.effects.return_value = [{'effect_key': task['run_id'] + ':fixture-original-operation-v1',
                                                        'status': 'UNKNOWN'}]
                     raise NativeMandateCompleted(task['id'], task['run_id'])
                 store.require_plan_execution.side_effect = deny

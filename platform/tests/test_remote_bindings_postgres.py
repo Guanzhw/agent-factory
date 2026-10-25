@@ -19,12 +19,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_factory.catalog import create_plan
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.connections import TrustedConnectionBinding
-from agent_factory_research.demo_model import DemoModel
-from agent_factory_research.synthetic_runtime import default_bindings
+from core_native_fixture import FixtureModel as DemoModel
+from core_native_fixture import fixture_bindings as default_bindings
 from agent_factory.usage_ledger import PricingRevision, UsageLedger
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_bindings import RemoteBindingService, TrustedRemoteBindingMapping
 from agent_factory.remote_handoff import TrustedOrigin, plan_manifest
 from agent_factory.store import digest, now
@@ -47,11 +47,11 @@ class RemoteBindingPostgresTests(unittest.TestCase):
                 "origin-connection-v1", available=True, opaque_handle=self.source_handle, handle_ref="origin-handle-v1"),
             "receiver-fixture": TrustedConnectionBinding("bob", "model", "receiver-fixture-model", frozenset({"checksum:read"}),
                 "receiver-connection-v1", available=True, opaque_handle=self.local_handle, handle_ref="receiver-handle-v1"),
-            "origin-tool-fixture": TrustedConnectionBinding("alice", "model", "origin-fixture-tool", frozenset({"checksum:read", "experiment:synthetic"}),
+            "origin-tool-fixture": TrustedConnectionBinding("alice", "model", "origin-fixture-tool", frozenset({"checksum:read", "fixture:extra"}),
                 "origin-tool-connection-v1", available=True, opaque_handle=self.source_tool_handle, handle_ref="origin-tool-handle-v1"),
             "receiver-tool-narrow": TrustedConnectionBinding("bob", "model", "receiver-fixture-tool", frozenset({"checksum:read"}),
                 "receiver-tool-connection-v1", available=True, opaque_handle=self.local_tool_handle, handle_ref="receiver-tool-handle-v1"),
-            "receiver-tool-wide": TrustedConnectionBinding("bob", "model", "receiver-fixture-tool", frozenset({"checksum:read", "experiment:synthetic"}),
+            "receiver-tool-wide": TrustedConnectionBinding("bob", "model", "receiver-fixture-tool", frozenset({"checksum:read", "fixture:extra"}),
                 "receiver-tool-wide-connection-v1", available=True, opaque_handle=self.local_wide_tool_handle, handle_ref="receiver-tool-wide-handle-v1")})
         app = create_app(settings)
         self.state = app.app.state.factory
@@ -70,7 +70,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         self.creations = []
         def local_model(context):
             self.creations.append(context.connection)
-            from agent_factory_research.demo_model import DemoModel
+            from core_native_fixture import FixtureModel as DemoModel
             return DemoModel(id="receiver-proof-fixture-model")
         self.bindings.register("model", "receiver-fixture-model", "receiver-adapter-v2", local_model,
             connection_kind="model", required_capabilities=("checksum:read",))
@@ -80,7 +80,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
         origin_bindings = default_bindings(settings, self.store, self.connections)
         origin_bindings.register("model", "origin-fixture-model", "origin-adapter-v1", lambda context: None,
             connection_kind="model", required_capabilities=("checksum:read",))
-        self.source = create_plan(self.store, "alice", "controlled remote proof fixture", "literature", "checksum")
+        self.source = create_plan(self.store, "alice", "controlled remote proof fixture", "literature", "fixture-checksum")
         self.source = copy.deepcopy(self.source)
         model = next(item for item in self.source["materials"] if item["kind"] == "model")
         model.update(id="owned-source-model-fixture", content="Inert source connection model metadata",
@@ -203,7 +203,7 @@ class RemoteBindingPostgresTests(unittest.TestCase):
 
     def test_03_local_connection_owner_pin_adapter_and_scope_are_exact(self):
         for pin_change in ({"connection": self.source_pin}, {"connection": {**self.local_pin, "fingerprint": "b" * 64}},
-                           {"adapterId": "local-synthetic-model-v1", "revision": "1"}):
+                           {"adapterId": "fixture-model-v1", "revision": "1"}):
             with self.subTest(fields=list(pin_change)):
                 mapping = replace(self.mapping, reference="variant-" + uuid4().hex, effective_spec={**self.effective_spec, **pin_change})
                 self.service = RemoteBindingService(self.store, self.auth, self.bindings, self.connections, {mapping.reference: mapping})
@@ -211,10 +211,10 @@ class RemoteBindingPostgresTests(unittest.TestCase):
                     self.prepare()
         with self.assertRaises(ValueError):
             replace(self.mapping, effective_spec={**self.effective_spec,
-                "connection": {**self.local_pin, "capabilities": ["checksum:read", "experiment:synthetic"]}})
+                "connection": {**self.local_pin, "capabilities": ["checksum:read", "fixture:extra"]}})
 
     def test_09_tool_connection_capabilities_are_bounded_by_exact_material_permissions(self):
-        material = next(item for item in self.source["materials"] if item["id"] == "checksum-tool")
+        material = next(item for item in self.source["materials"] if item["id"] == "fixture-checksum-tool")
         material_ref = {key: material[key] for key in ("id", "version", "sha256")}
         source_spec = {"materialRef": material_ref, "adapterId": "origin-fixture-tool", "revision": "origin-tool-v1",
             "config": {"connectionName": "toolProvider"}, "connection": self.source_tool_pin, "toolName": "checksum"}

@@ -14,9 +14,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
-from agent_factory_research.demo_model import DemoModel
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory.usage_ledger import PricingRevision
 from pg_fixture import IsolatedPostgres
@@ -139,8 +139,8 @@ class OIDCIdentityPostgresTests(RSAFixture, unittest.TestCase):
         refs = []
         for kind, adapter, permission in (
             ("model", "oidc-native-local-fixture-v1", []),
-            ("environment", "local-bounded-environment-v1", []),
-            ("tool", "native-checksum-v1", ["checksum:read"]),
+            ("environment", "fixture-environment-v1", []),
+            ("tool", "fixture-checksum-v1", ["checksum:read"]),
         ):
             identifier = "oidc-fixture-" + kind
             item = governance.create_draft("fixture-author", {

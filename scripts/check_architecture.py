@@ -159,8 +159,8 @@ def dependency_graph(modules: dict[str, Module]) -> tuple[dict[str, list[Edge]],
 def validate_map(config: dict, modules: dict[str, Module], root: Path):
     core, apps = config["core"], config["apps"]
     packages = [*core, *(app["package"] for app in apps.values())]
-    if not core or not apps:
-        raise ValueError("Declare at least one core package and one application; an empty map proves no boundary")
+    if not core:
+        raise ValueError("Declare at least one core package; an empty core map proves no boundary")
     for package in packages:
         if not package or any(not part.isidentifier() for part in package.split(".")):
             raise ValueError(f"Use exact dotted packages, not wildcards: {package}")

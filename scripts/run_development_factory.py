@@ -10,16 +10,15 @@ import sys
 from urllib.parse import urlsplit
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / part)
-    for part in ('platform', 'apps/research', 'deployment')]
+    for part in ('platform', 'deployment')]
 
 from sqlalchemy.engine import make_url
 import uvicorn
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.development_identity import validate_development_origin
 from agent_factory.development_tls import temporary_development_tls
 from agent_factory_server.main import create_app
-from agent_factory_research.development_workflows import controlled_workflow_settings, initialize_controlled_fixtures
 
 
 class _Arguments(argparse.ArgumentParser):
@@ -32,14 +31,8 @@ def main(argv=None):
     parser.add_argument("--public-origin", required=True, help="Explicit HTTPS loopback origin including port")
     parser.add_argument("--workspace", required=True, help="Dedicated development workspace")
     parser.add_argument("--database-url", help="Existing PostgreSQL database; alternatively FACTORY_DATABASE_URL")
-    parser.add_argument("--profile", choices=("basic", "controlled-workflows"), default="basic",
-                        help="Explicit controlled-workflows adds synthetic source/synthesis and fixed local comparisons")
-    parser.add_argument("--initialize-controlled-fixtures", action="store_true",
-                        help="Publish controlled fixtures as their owner and create initial owner connection bindings")
     args = parser.parse_args(argv)
     try:
-        if args.initialize_controlled_fixtures and args.profile != "controlled-workflows":
-            raise ValueError()
         origin = validate_development_origin(args.public_origin)
         parsed = urlsplit(origin)
         if parsed.port is None:
@@ -60,23 +53,11 @@ def main(argv=None):
             temporary_policy="member-self-service", material_review_mode="member-self-service",
             max_workers=1, host=bind_host, port=parsed.port)
         with ExitStack() as lifecycle:
-            if args.profile == "controlled-workflows":
-                settings = lifecycle.enter_context(controlled_workflow_settings(settings))
             application = create_app(settings)
-            if args.profile == "controlled-workflows":
-                factory = application.app.state.factory
-                lifecycle.callback(factory["store"].engine.dispose)
-                lifecycle.callback(factory["store"].native_db.db_engine.dispose)
-                if args.initialize_controlled_fixtures:
-                    initialize_controlled_fixtures(factory)
             certificate, key = lifecycle.enter_context(temporary_development_tls(origin))
             print("DEVELOPMENT MOCK ONLY — synthetic Alice/Bob/manager/manager2; no real unified login.", flush=True)
             print("Base URL: " + origin, flush=True)
             print("Temporary self-signed TLS; no system trust changes. Use only this dedicated development database/workspace.", flush=True)
-            print("Development profile: " + args.profile, flush=True)
-            if args.profile == "controlled-workflows":
-                print("Synthetic sources and controlled synthesis; fixed Linux comparison processes. No live retrieval/model, remote host or aggregate isolation.", flush=True)
-                print("Fixture publication is explicit; members submit their own plans directly.", flush=True)
             uvicorn.run(application, host=bind_host, port=parsed.port, ssl_certfile=str(certificate), ssl_keyfile=str(key),
                         access_log=False, log_level="warning")
         return 0

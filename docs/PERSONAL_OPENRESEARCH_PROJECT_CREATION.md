@@ -1,5 +1,7 @@
 # Ordinary native OpenResearch project creation
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This implementation connects **preview → per-request owner consent → existing
 Factory plan review/native Agno task → native project ID → native session →
 approved research message → observed result**. It does not install a runtime,

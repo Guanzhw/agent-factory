@@ -1,0 +1,121 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "mode": "demo",
+      "database": "af_test_aaf53fadd633471687d91e46b5c8d756",
+      "newIsolatedDatabase": true,
+      "identity": "development-selector",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "screenshots": [
+            "login.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        },
+        "mobile": {
+          "screenshots": [
+            "login.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        }
+      }
+    },
+    {
+      "mode": "production-local",
+      "database": "af_test_6abb20917723420196d8ae2a58b4b79f",
+      "newIsolatedDatabase": true,
+      "identity": "local-synthetic-oidc-over-https",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "screenshots": [
+            "login.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        },
+        "mobile": {
+          "screenshots": [
+            "login.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        }
+      }
+    }
+  ]
+}

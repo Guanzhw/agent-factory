@@ -36,7 +36,7 @@ class ReusableToolProcessPostgresTests(unittest.TestCase):
                             shutil.copy2(source, destination / source.name)
         root = Path(__file__).resolve().parents[2]
         environment = {**os.environ, 'REUSABLE_PROCESS_DATABASE_URL': database.url,
-            'PYTHONPATH': os.pathsep.join(str(path) for path in (root / 'platform', root / 'apps/research',
+            'PYTHONPATH': os.pathsep.join(str(path) for path in (root / 'platform',
                                                               root / 'deployment', root / 'platform/tests'))}
         environment.pop('FACTORY_TEST_DATABASE_URL', None)
         worker = Path(__file__).with_name('reusable_tool_process_worker.py')

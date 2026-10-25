@@ -123,18 +123,18 @@ describe('bounded owner-scoped Factory event replay', () => {
 });
 
 describe('trusted user connection lifecycle boundary', () => {
-  const connection = () => ({ ref: 'owned-reference', ownerId: 'alice', version: 1, fingerprint: 'a'.repeat(64), kind: 'tool', revision: 'test-1', capabilities: ['research:read'], taskId: null, registrationRef: 'operator-installed', expiresAt: null, createdAt: '2026-10-02T00:00:00Z', revokedAt: null, status: 'active', available: true, allowedActions: ['inspect', 'revoke'] });
+  const connection = () => ({ ref: 'owned-reference', ownerId: 'alice', version: 1, fingerprint: 'a'.repeat(64), kind: 'tool', revision: 'test-1', capabilities: ['fixture:read'], taskId: null, registrationRef: 'operator-installed', expiresAt: null, createdAt: '2026-10-02T00:00:00Z', revokedAt: null, status: 'active', available: true, allowedActions: ['inspect', 'revoke'] });
   it('binds only a trusted registration with an explicit narrowed scope and retained request ID', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(connection()), { status: 201 })));
     vi.stubGlobal('fetch', fetch);
-    await api.bindConnection('operator-installed', 'same-key', ['research:read']);
-    await api.bindConnection('operator-installed', 'same-key', ['research:read']);
-    expect(fetch.mock.calls.map(call => JSON.parse(call[1].body))).toEqual([{ registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['research:read'] }, { registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['research:read'] }]);
+    await api.bindConnection('operator-installed', 'same-key', ['fixture:read']);
+    await api.bindConnection('operator-installed', 'same-key', ['fixture:read']);
+    expect(fetch.mock.calls.map(call => JSON.parse(call[1].body))).toEqual([{ registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['fixture:read'] }, { registrationRef: 'operator-installed', requestId: 'same-key', capabilities: ['fixture:read'] }]);
   });
   it('rejects changed registration or task confirmation and contradictory availability', async () => {
     for (const changed of [{ ...connection(), registrationRef: 'other' }, { ...connection(), taskId: 'other-task' }, { ...connection(), status: 'revoked' }]) {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(changed))));
-      await expect(api.bindConnection('operator-installed', 'key', ['research:read'])).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+      await expect(api.bindConnection('operator-installed', 'key', ['fixture:read'])).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
     }
   });
   it('does not turn a foreign or unconfirmed revoke acknowledgement into success', async () => {
@@ -157,12 +157,12 @@ describe('governed application and immutable proposal boundary', () => {
   const pin = { id: 'application', version: 1, sha256: 'a'.repeat(64) };
   const material = { id: 'prompt', version: 1, sha256: 'b'.repeat(64) };
   const budget = { toolCalls: 8, maxDepth: 2, maxChildren: 4, experimentSeconds: 8, outputBytes: 65536 };
-  const application = () => ({ ...pin, name: 'Synthetic application', description: 'Synthetic fixture', discoveryKeywords: ['fixture'], defaultForDiscovery: false, defaultMode: 'literature', modes: { literature: { materialRefs: [material], materialChoices: {}, capabilities: ['research:read'], budget, config: {}, toolOrder: ['literature_search'], connectionRequirements: [] } } });
-  const proposal = () => ({ id: 'proposal', ownerId: 'alice', createdAt: '2026-10-02T00:00:00Z', parentId: null, input: { goal: 'Bounded fixture' }, candidate: { ownerId: 'alice', application: 'application', applicationRef: pin, mode: 'literature', normalizedGoal: 'Bounded fixture', materialRefs: [material], materials: [material], tools: ['literature_search'], capabilities: ['research:read'], budget, config: {}, instructions: 'Synthetic', status: 'ready', missing: [], policy: {}, syntheticFixture: true, executionBindings: {}, bindingManifest: {}, fingerprint: 'c'.repeat(64) }, selection: { method: 'explicit-application', matchedKeywords: [] }, fingerprint: 'd'.repeat(64), state: 'pending', planId: null, allowedActions: ['revise', 'reject', 'accept'] });
+  const application = () => ({ ...pin, name: 'Synthetic application', description: 'Synthetic fixture', discoveryKeywords: ['fixture'], defaultForDiscovery: false, defaultMode: 'fixture', modes: { fixture: { materialRefs: [material], materialChoices: {}, capabilities: ['fixture:read'], budget, config: {}, toolOrder: ['fixture_tool'], connectionRequirements: [] } } });
+  const proposal = () => ({ id: 'proposal', ownerId: 'alice', createdAt: '2026-10-02T00:00:00Z', parentId: null, input: { goal: 'Bounded fixture' }, candidate: { ownerId: 'alice', application: 'application', applicationRef: pin, mode: 'fixture', normalizedGoal: 'Bounded fixture', materialRefs: [material], materials: [material], tools: ['fixture_tool'], capabilities: ['fixture:read'], budget, config: {}, instructions: 'Synthetic', status: 'ready', missing: [], policy: {}, syntheticFixture: true, executionBindings: {}, bindingManifest: {}, fingerprint: 'c'.repeat(64) }, selection: { method: 'explicit-application', matchedKeywords: [] }, fingerprint: 'd'.repeat(64), state: 'pending', planId: null, allowedActions: ['revise', 'reject', 'accept'] });
   it('sends bounded exact choices and connection references; revision has a distinct immutable parent', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(proposal()), { status: 201 })));
     vi.stubGlobal('fetch', fetch);
-    const input = { goal: 'Bounded fixture', applicationRef: pin, materialChoices: { prompt: material }, connectionRefs: { research: 'owned-reference' } };
+    const input = { goal: 'Bounded fixture', applicationRef: pin, materialChoices: { prompt: material }, connectionRefs: { fixture: 'owned-reference' } };
     await api.propose(input, 'propose-key'); await api.reviseProposal('old/proposal', input, 'revision-key');
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ ...input, requestId: 'propose-key' });
     expect(fetch.mock.calls[1][0]).toBe('/api/factory/compositions/proposals/old%2Fproposal/revise');

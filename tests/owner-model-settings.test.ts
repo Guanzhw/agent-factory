@@ -108,7 +108,7 @@ beforeEach(() => {
   vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue(credential);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function mount() { await act(async () => root.render(createElement(ModelSettings, { ownerId: 'alice', onResearch: vi.fn() }))); }
+async function mount() { await act(async () => root.render(createElement(ModelSettings, { ownerId: 'alice', onBack: vi.fn() }))); }
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find(b => b.textContent === name)!;
 async function fill(name: string, value: string) {
   await act(async () => {
@@ -183,7 +183,7 @@ it('uses one Save to custody a secret, configure metadata and confirm the owner 
   expect(JSON.stringify(vi.mocked(ownerModelApi.configure).mock.calls)).not.toContain(secret);
   expect(JSON.stringify(localStorage)).not.toContain(secret); expect(localStorage.getItem(storage)).toBeNull();
   expect(host.textContent).toContain('模型已保存并设为默认'); expect(host.textContent).not.toContain(secret);
-  expect(host.textContent).toContain('已有远端 OpenResearch 服务继续使用其自身配置。');
+  expect(host.textContent).toContain('已有远端服务继续使用其自身配置。');
 });
 it('recovers an uncertain vault save after remount without replaying the key or changing configuration', async () => {
   vi.mocked(personalRemoteApi.saveCredential).mockRejectedValue(new Error(secret + ' unsafe transport echo'));

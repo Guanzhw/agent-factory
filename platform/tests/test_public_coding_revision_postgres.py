@@ -1,5 +1,5 @@
 # pyright: reportMissingImports=false
-"""Native public coding research uses a newly pinned Luna output revision."""
+"""Native synthetic coding uses a newly pinned Luna output revision."""
 import argparse
 import os
 import tempfile
@@ -11,8 +11,15 @@ from agent_factory.go_usage import luna_512_pricing
 from agent_factory.opencode_go import GoDevelopmentModel
 from pg_fixture import IsolatedPostgres
 import test_go_project_workflow_postgres as workflow
-from test_public_coding_research_postgres import ResearchPeer
-from test_public_code_knowledge import snapshot
+import json
+
+class CodingPeer(workflow.CodingPeer):
+    def __init__(self):
+        super().__init__()
+        self.bodies = []
+    def reply(self, request):
+        self.bodies.append(json.loads(request.content))
+        return super().reply(request)
 
 
 @unittest.skipUnless(os.name == "posix" and os.getenv("FACTORY_TEST_DATABASE_URL"),
@@ -24,13 +31,13 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
 
     def setUp(self):
         workflow.GoProjectWorkflowPostgresTests.setUp(self)
-        self.peer = ResearchPeer()
+        self.peer = CodingPeer()
 
     def test_luna_revision_two_pins_512_wire_cap_material_and_pricing(self):
         captured = {}
-        original_create = workflow.runner.create_app
-        def create_app(settings):
-            app = original_create(settings)
+        original_create = workflow.runner.create_fixture_app
+        def create_app(settings, **kwargs):
+            app = original_create(settings, **kwargs)
             captured["state"] = app.app.state.factory
             return app
         def offline_model(**kwargs):
@@ -43,15 +50,13 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
         with IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \
                 tempfile.TemporaryDirectory(prefix="luna-revision-native-fixture-") as directory, \
                 patch.object(workflow.runner, "credential", self.credential), \
-                patch.object(workflow.runner, "create_app", side_effect=create_app), \
+                patch.object(workflow.runner, "create_fixture_app", side_effect=create_app), \
                 patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model):
             args = argparse.Namespace(model="gpt-6-luna", database_url=database.url,
                                       evidence_directory=directory, luna_output_revision="2")
-            result = workflow.runner.execute_product(self.campaign, args, research_snapshot=snapshot())
+            result = workflow.runner.execute_product(self.campaign, args)
             self.assertEqual(result["status"], "completed", result)
             self.assertTrue(result["receiptVerified"])
-            self.assertTrue(result["research"]["citationPresenceVerified"])
-            self.assertEqual(result["research"]["sourceEvidenceMode"], "controlled-fixture")
             self.assertEqual(result["nativeAttempts"], 1)
             self.assertEqual(len(self.peer.bodies), 2)
             self.assertEqual([body["max_output_tokens"] for body in self.peer.bodies], [512, 512])

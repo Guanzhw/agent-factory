@@ -21,7 +21,7 @@ import httpx
 
 from controlled_remote_worker import OTHER_OWNER, RECEIVER_OWNER, TARGET_REF
 from pg_fixture import IsolatedPostgres
-from test_governed_remote_process_postgres import OwnedServer, loopback_port, PROJECT
+from controlled_remote_server import OwnedServer, loopback_port, PROJECT
 
 
 class ProcessRuntimeServer(OwnedServer):
@@ -46,7 +46,7 @@ class ProcessRuntimeServer(OwnedServer):
         environment = {"PATH": os.defpath, "LANG": "C.UTF-8", "AGNO_TELEMETRY": "false",
             "FACTORY_REMOTE_PROCESS_CONFIG": str(self.path),
             "PYTHONPATH": os.pathsep.join([str(PROJECT / path) for path in
-                ("platform", "platform/tests", "apps/research", "deployment")] + [sysconfig.get_path("purelib")])}
+                ("platform", "platform/tests", "deployment")] + [sysconfig.get_path("purelib")])}
         self.process = subprocess.Popen([getattr(sys, "_base_executable", sys.executable),
             "-m", "controlled_remote_process_worker"], cwd=PROJECT, env=environment,
             stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT)

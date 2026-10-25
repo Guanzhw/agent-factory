@@ -24,7 +24,7 @@ def rehash(plan):
 
 class V2ManifestFixture(ApplicationCompositionFixture):
     def make_plan(self):
-        seed = self.composition.create_plan('alice', 'Checksum exact neutral evidence', 'execute', 'checksum-neutral')
+        seed = self.composition.create_plan('alice', 'Checksum exact neutral evidence', 'execute', 'fixture-checksum-v2')
         original = self.applications.require_current(seed['applicationRef'])
         definition = {key: copy.deepcopy(original[key]) for key in ApplicationDefinitionV2.model_fields}
         definition['id'] = 'wire-neutral'
@@ -96,7 +96,6 @@ class RemoteV2ManifestTests(V2ManifestFixture):
         for field in ('delegation', 'remoteHandoff', 'nativeComponent', 'scientificEnvelope', 'sourceSnapshotRef'):
             plan = rehash({**copy.deepcopy(original), field: {}})
             with self.subTest(field=field), self.assertRaises(HTTPException): self.read(self.envelope(plan))
-        with self.assertRaises(HTTPException): self.read(envelope, scientific_envelope={})
         plan = copy.deepcopy(original)
         plan['budget']['depth'] = 1
         with self.assertRaises(HTTPException): self.read(self.envelope(rehash(plan)))
@@ -132,13 +131,13 @@ class RemoteV2ManifestTests(V2ManifestFixture):
         receiver.origins['origin'].authorize.assert_not_called()
 
     def test_v1_wire_and_hash_remain_exact(self):
-        plan = self.composition.create_plan('alice', 'Frozen checksum fixture', 'literature', 'checksum')
+        plan = self.composition.create_plan('alice', 'Frozen checksum fixture', 'literature', 'fixture-checksum')
         envelope = plan_manifest(plan)
         self.assertEqual(envelope, {'plan': plan, 'sha256': digest(plan)})
         self.assertEqual(_manifest(envelope, self.store, 'alice'), plan)
         self.assertNotIn('contractVersion', envelope['plan'])
         self.assertEqual(self.applications.require_current(plan['applicationRef'])['sha256'],
-                         'f32c6e0a187966fd67632cf0b031a2527bcc60906ae6ccdfc93a1e85e3bf85a6')
+                         '298bbb566460389093987a9720fe342933ab08f5072cdf16c68493d0cdaf0ac8')
 
 
 class RemoteV2ConfigurationTests(unittest.TestCase):

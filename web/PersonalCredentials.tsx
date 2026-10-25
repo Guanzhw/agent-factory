@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
 import { credentialDestination, credentialReceipt, matchCredentialReceipt, readCredentialCommand, readUnresolvedCommands, SSH_CREDENTIAL_PROVIDER, type CredentialCommand } from './credentialManagement.js';
 
-const providerName = (id: string) => ({ 'byok-chat-v1': 'Agno 模型 API', 'openresearch-personal-session-v1': 'OpenResearch 服务', 'opencode-serve-v1': 'OpenCode 服务（可选）', 'owner-ssh-server-v1': '个人服务器 SSH 身份' })[id] ?? id;
+const providerName = (id: string) => ({ 'byok-chat-v1': 'Agno 模型 API', 'opencode-serve-v1': 'OpenCode 服务（可选）', 'owner-ssh-server-v1': '个人服务器 SSH 身份' })[id] ?? id;
 export function PersonalCredentials({ ownerId, onChanged, onModels, revision = 0 }: { ownerId: string; onChanged: () => void; onModels?: () => void; revision?: number }) {
   const storage = `factory-credential-management:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState(() => { try { return readCredentialCommand(localStorage.getItem(storage), ownerId); } catch { return null; } });

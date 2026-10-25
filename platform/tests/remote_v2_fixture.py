@@ -1,7 +1,7 @@
 """Owned two-process neutral v2 fixture; never imported by production startup.
 
 Reuses the existing TCP server helpers and observer/dispatch gates. The worker
-installs the existing checksum demo bindings explicitly into independent core.
+installs explicit test checksum bindings into independent core.
 """
 import asyncio
 from dataclasses import replace
@@ -27,15 +27,15 @@ from agent_factory.config import Settings
 from agent_factory.main import create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
 from agent_factory.remote_authority import OriginAuthorityTransport
-from agent_factory_research.bootstrap_catalog import SEEDS, demo_v2_definitions
-from agent_factory_research.synthetic_runtime import default_bindings, default_zero_prices
-from agent_factory_research.tools import build_tools
+from core_native_fixture import SEEDS, fixture_v2_definitions as demo_v2_definitions
+from core_native_fixture import fixture_bindings as default_bindings, fixture_zero_prices as default_zero_prices
+from core_native_fixture import build_tools
 from controlled_remote_worker import (ORIGIN_OWNER, RECEIVER_OWNER, MANAGER, ORIGIN_REF, TARGET_REF,
     token, install_dispatch_hold, install_origin_observation_hold)
-from test_governed_remote_process_postgres import OwnedServer, loopback_port
+from controlled_remote_server import OwnedServer, loopback_port
 from pg_fixture import IsolatedPostgres
 
-APP_ID = 'checksum-neutral-inputs-v2'
+APP_ID = 'fixture-neutral-inputs-v2'
 BUDGET = {'toolCalls': 3, 'maxDepth': 1, 'maxChildren': 1, 'operationSeconds': 7, 'outputBytes': 65536}
 PLAN_BUDGET = {**BUDGET, 'depth': 0}
 CONFIG_SCHEMA = {'type': 'object', 'properties': {'label': {'type': 'string', 'maxLength': 60}},
@@ -53,7 +53,7 @@ class V2Server(OwnedServer):
         env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TMPDIR') if key in os.environ}
         env.update(FACTORY_REMOTE_PROCESS_CONFIG=str(self.path), AGNO_TELEMETRY='false',
             PYTHONPATH=os.pathsep.join(str(project / name) for name in
-                ('platform', 'platform/tests', 'apps/research', 'deployment')))
+                ('platform', 'platform/tests', 'deployment')))
         if self.log is not None:
             self.log.close()
         self.log = (self.directory / (self.configuration['role'] + '-server.log')).open('ab')
@@ -169,7 +169,7 @@ def main():
 
     def bindings(settings, store, connections):
         registry = default_bindings(settings, store, connections)
-        key = ('tool', 'native-checksum-v1', '1')
+        key = ('tool', 'fixture-checksum-v1', '1')
         original = registry._adapters[key]
         def factory(ctx):
             actual_checksum = original.factory(ctx)

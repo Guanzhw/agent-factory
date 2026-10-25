@@ -1,6 +1,6 @@
 # Development checks
 
-Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform apps/research deployment scripts`, `uv run pyright` and the relevant tests for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
+Run `npm run check` and the relevant dependency audit for frontend changes; run `uv run ruff check platform deployment scripts`, `uv run pyright` and the relevant tests for Python changes. Preserve honest live/unverified labels. The [PR template](../.github/pull_request_template.md) is also a short handoff format; small changes do not need a separate specification.
 
 CI uses Node 24. When reproducing the frontend checks on Node 26, set
 `NODE_OPTIONS=--no-experimental-webstorage` for the check process. The pinned DOM
@@ -29,7 +29,7 @@ uv run python scripts/check_fast.py --suite postgres
 uv run python scripts/check_core_install.py
 ```
 
-[Explicit groups](../scripts/fast_test_groups.py) retain model selection and current owner/permission checks, real PostgreSQL/process UNKNOWN and lost-acknowledgement recovery, stop evidence, size-one-pool receipt reopening, member publication through HTTP and persistence, and small-tree tamper/deletion checks. Large inventories, multi-service accounting, scientific multi-database campaigns and the remaining regressions still run in full. Both lanes validate selectors against complete discovery, reject empty/missing or cross-lane duplicate selections, execute only selected IDs, and require every selected ID to succeed; skip or expected failure cannot satisfy them. Output reports selected/deferred counts and actual time. `--collect-only` validates selection without claiming execution. Newly discovered tests remain in full even before a fast group selects them.
+[Explicit groups](../scripts/fast_test_groups.py) retain model selection and current owner/permission checks, real PostgreSQL/process UNKNOWN and lost-acknowledgement recovery, stop evidence, size-one-pool receipt reopening, member publication through HTTP and persistence, and small-tree tamper/deletion checks. Large inventories, multi-service accounting and the remaining regressions still run in full. Both lanes validate selectors against complete discovery, reject empty/missing or cross-lane duplicate selections, execute only selected IDs, and require every selected ID to succeed; skip or expected failure cannot satisfy them. Output reports selected/deferred counts and actual time. `--collect-only` validates selection without claiming execution. Newly discovered tests remain in full even before a fast group selects them.
 
 [Routing](../scripts/ci_scope.py) permits only named root Markdown documents, the PR template and `docs/**/*.md` to take the docs path. Code renamed into docs still requires fast checks; unknown paths, empty diffs and unavailable comparison metadata also use fast. The workflow does not use `paths-ignore`, so **CI summary** always reports the selected mode and checks the expected job results. Failed, cancelled, unexpectedly skipped or missing jobs fail the summary. If branch protection requires the old Windows matrix jobs, its owner should replace those required contexts with **CI summary** before relying on daily routing; this change does not edit protection settings.
 
@@ -41,7 +41,7 @@ With `FACTORY_TEST_DATABASE_URL` pointing to disposable PostgreSQL on Linux, run
 uv run python scripts/check_postgres.py
 ```
 
-This uses the same discovery as the ordinary Python entrypoint, covering `platform/tests` and `apps/research/tests/python`. It rejects ambiguous module names, duplicate full test IDs and import errors in either tree, executes each discovered ID once and releases completed test instances. Fixture subprocesses receive the same core/app/deployment import roots. [Required selectors](../scripts/postgres_requirements.py) preserve the five former acceptance groups, add the department self-service classes and pin model/permission/UNKNOWN behavior anchors. Each selector must find tests in discovery; every required ID must actually succeed. A skipped test, skipped class/module, skipped subtest or expected failure cannot satisfy required acceptance. All ordinary failures/errors still fail the run. Other platform skips remain visible and allowed. Counts are diagnostic, never a fixed historical target.
+This uses the same discovery as the ordinary Python entrypoint, covering `platform/tests`. It rejects ambiguous module names, duplicate full test IDs and import errors, executes each discovered ID once and releases completed test instances. Fixture subprocesses receive the same core/deployment/test-fixture import roots. [Required selectors](../scripts/postgres_requirements.py) preserve the five former acceptance groups, add the department self-service classes and pin model/permission/UNKNOWN behavior anchors. Each selector must find tests in discovery; every required ID must actually succeed. A skipped test, skipped class/module, skipped subtest or expected failure cannot satisfy required acceptance. All ordinary failures/errors still fail the run. Other platform skips remain visible and allowed. Counts are diagnostic, never a fixed historical target.
 
 The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Manual full verification retains a separate Windows compatibility environment; Linux ordinary and database tests execute together in the PostgreSQL job. Its complete log retains case results and skip reasons. Run `uv run python scripts/check_python.py` for complete local Python discovery without a database.
 
@@ -86,7 +86,7 @@ include personal tool connection regressions. For focused adapter/assembly check
 on Linux, without PostgreSQL or live providers:
 
 ```sh
-PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
+PYTHONPATH=platform:deployment:platform/tests uv run python -m unittest \
   test_personal_cli test_personal_cli_process test_personal_mcp \
   test_personal_tools test_personal_tool_execution test_personal_tool_adapter_integration test_member_tool_resources \
   test_personal_tool_assembly.PersonalToolSettingsTests -v
@@ -109,7 +109,7 @@ that verifies DONE receipt replay sends no new process or protocol call.
 With an authorized disposable **loopback** `FACTORY_TEST_DATABASE_URL`, run:
 
 ```sh
-PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m unittest \
+PYTHONPATH=platform:deployment:platform/tests uv run python -m unittest \
   test_personal_tool_assembly.PersonalToolAssemblyPostgresTests \
   test_personal_tool_native_postgres.PersonalToolNativePostgresTests \
   test_member_tool_restart_postgres.MemberToolRestartPostgresTests \
@@ -117,7 +117,7 @@ PYTHONPATH=platform:apps/research:deployment:platform/tests uv run python -m uni
 ```
 
 These classes create and remove their own random databases. Assembly checks run
-both independent core and research composition, including authenticated routes,
+both independent core and default deployment composition, including authenticated routes,
 owner isolation, exact connection pins and retained handles after revocation.
 Native tests publish and invoke a declared application through real PostgreSQL,
 Agno and the encrypted owner vault, using a deterministic model and inert tool
@@ -163,7 +163,7 @@ Resources → connections → personal-tools entry, covering saved-credential se
 configuration/binding lost-ack recovery, a revoked receipt and an owner change.
 It also checks ending a demonstrably unsent binding after descriptor withdrawal,
 and settling an explicit credential refusal while preserving the configured tool.
-The real core/research HTTP tests verify the same structured error codes; browser
+The real core/deployment HTTP tests verify the same structured error codes; browser
 fixtures must preserve those actual envelopes. A missing recovery receipt remains
 unknown and cannot enable a replacement POST. `--scenario` selects a named flow;
 omitting `--desktop-only` retains the optional narrow-viewport cases.
@@ -216,21 +216,42 @@ The frontend checker uses the TypeScript parser and module resolver with one `ts
 
 With disposable `FACTORY_TEST_DATABASE_URL`, run `uv run python scripts/check_core_install.py`. This builds `platform/pyproject.toml` from a temporary stage containing only the core package and its build metadata, installs the wheel and declared dependencies into a new venv, then runs from an empty directory with `python -I`. The runtime receives no provider credentials or checkout import paths. It checks actual Uvicorn lifespan readiness, PostgreSQL health, native worker presence, empty material/application catalogs, absence of research routes/tables, and clean shutdown. Acceptance requires disposable database cleanup too. The probe sends only local GET requests; it never submits a task or requests a model.
 
-This gate passed against the split core wheel. It cannot independently prove that every generic-looking implementation belongs in core; pair it with ownership maps and code review.
+Earlier results against the split core wheel are historical; rerun this gate for the core-only revision. It cannot independently prove that every generic-looking implementation belongs in core; pair it with ownership maps and code review.
 
 ## Static assembly and compatibility
 
-Both ownership maps pass after the split. Research preparation/training assembly requires an explicit `app_factory`; the deployment CLI supplies `agent_factory_server.main.create_app`. Reusable research code never imports the server. Browser mounting and component assembly remain two exact startup files, `web/main.tsx` and `web/composition.tsx`; ordinary core/app callers cannot use either as a boundary bypass.
+The default deployment uses core `Settings` and an empty application registration
+list. Browser mounting and component assembly remain exact startup files,
+`web/main.tsx` and `web/composition.tsx`; ordinary core/application callers cannot
+use either as a boundary bypass. Research source, routes, pages, seeds and its
+application-only test tree are removed. Generic tests publish explicit checksum
+applications and register synthetic adapters through `platform/tests/core_native_fixture.py`.
+BYOK and proxy tests retain real native execution with fake provider transports.
 
-The full PostgreSQL run also exercises dynamic service wiring, which import maps
-cannot prove. Research delegation/cleanup live in application subclasses selected
-by static composition; the core has no research-table fallback. Regression cases
-cover original scientific placement receipts, member-source handoffs that retain
-receiver approval, and cancellation between effect reservation and storage
-preparation. Only positive never-dispatched and cleanup evidence can settle that
-cancellation; an ambiguous launch remains UNKNOWN.
+Ownership maps cannot prove dynamic wiring; PostgreSQL checks must still exercise
+owner/model selection, credential scope/rotation/revocation, original request
+identity, UNKNOWN reconciliation, cancellation, usage and restart behavior.
+Synthetic credentials and local transports do not establish live provider or
+remote compatibility. Historical Research/ORX/Go campaign evidence remains in its
+recorded documents and Git history; removed application commands are not current
+acceptance steps.
 
-Ordinary model/ORX fixtures and Go diagnostics use member self-service while retaining owner, selected-model, revocation, UNKNOWN and stop-proof checks. Explicit historical approval tests remain compatibility coverage. Legacy Go preflight and failure recovery stay in the research adapter; shared model dispatch does not load a campaign. Deterministic acceptance uses local transports and synthetic credentials, and does not establish live model/remote compatibility or encode a permanent provider/model ban.
+## Core-only workspace acceptance
+
+Record exact-revision results separately from previous split-core or Research
+passes. Check actual login, logout/relogin, direct URLs and refresh, an empty
+application catalog/task list, owner resources and explicitly published test
+applications. Old Research URLs must not expose the removed application or leave
+a broken workspace. Run demo identity and production-mode local synthetic
+authentication separately; real external production identity remains unverified
+unless exercised with its actual protocol/provider.
+
+Use newly created isolated PostgreSQL databases and workspaces, and serialize
+heavy database/browser checks. Do not reuse old deployment data for this removal
+verification. Source removal is not authorization to delete old records,
+credentials, vault keys, artifacts or backups; permanent deletion awaits a precise
+target inventory and confirmation. No current pass is implied by the commands in
+this guide; record executed checks and unresolved failures in the Draft PR.
 
 ## Why this small scope
 

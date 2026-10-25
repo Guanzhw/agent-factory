@@ -16,7 +16,24 @@ import httpx
 
 from agent_factory.owner_runtime_broker import OwnerRuntimeBroker
 from agent_factory.personal_remote_provider import SecretLease
-from agent_factory_research.platform_openresearch import _UnixHTTP
+from http.client import HTTPConnection
+
+class _UnixHTTP(HTTPConnection):
+    """Local transport for the actual broker's bounded HTTP protocol."""
+    def __init__(self, path, *, timeout=10):
+        super().__init__('localhost', timeout=timeout)
+        self.socket_path = Path(path)
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        # Match the real broker's directory-relative AF_UNIX address while
+        # retaining private directory inode custody for long workspace paths.
+        descriptor = os.open(self.socket_path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            self.sock.connect(f'/proc/self/fd/{descriptor}/{self.socket_path.name}')
+        finally:
+            os.close(descriptor)
+
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Process policy for the runnable research server, not the reusable core."""
+"""Process policy for the runnable Factory server, not the reusable core."""
 from contextlib import contextmanager
 import os
 import time

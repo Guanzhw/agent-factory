@@ -6,6 +6,7 @@ These tests do not prove live Go entitlement, billing, or API compatibility.
 from __future__ import annotations
 
 import hashlib
+from copy import copy
 import json
 import os
 from pathlib import Path
@@ -16,11 +17,14 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.go_development import (CAPABILITY, CONNECTION_NAME, REGISTRATION_REF,
     GoDevelopmentHandle, application_definition, publish_go_development_models, trusted_model_binding)
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.usage_ledger import UsagePolicy
+from agent_factory.go_development import model_registrations, MODEL_ADAPTER_IDS
+from agent_factory.go_usage import pricing_registrations
+from agent_factory_server.main import native_queue_attempts
 from go_http_fixture import GoHTTPFixture
 from pg_fixture import IsolatedPostgres
 
@@ -42,7 +46,7 @@ class GoProductPostgresTests(unittest.TestCase):
             db_url=self.database.url, workspace=Path(self.workspace.name),
             development_profile="opencode-go", max_workers=1, max_tool_calls=3,
             temporary_policy="member-self-service", policy_revision="go-test-policy-v1",
-            material_policy_revision="go-test-material-v1", runtime_tool_contract="registered-runtime-v1",
+            material_policy_revision="go-test-material-v1", runtime_tool_contract="legacy-v1",
             usage_policy=UsagePolicy(revision="go-fixture-usage-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
             trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
@@ -50,7 +54,7 @@ class GoProductPostgresTests(unittest.TestCase):
         models = publish_go_development_models(self.state, author="manager")
         seeds = self.store.materials(published_only=True)
         checksum = next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum")
-        environment = next(row for row in seeds if row["id"] == "local-environment")
+        environment = next(row for row in seeds if row["id"] == "fixture-environment")
         self.login("bob")
         app = self.post("/api/factory/applications/drafts", {
             "definition": application_definition(models, checksum, environment), "requestId": str(uuid4())}, 201)
@@ -63,7 +67,12 @@ class GoProductPostgresTests(unittest.TestCase):
         self.assertEqual(self.peer.requests, [], "publication/preflight must not dispatch HTTP")
 
     def open_application(self):
-        application = create_app(self.settings)
+        # The fixture explicitly composes the selected development adapters;
+        # the application-free core never installs them from a profile name.
+        settings = copy(self.settings)
+        settings.runtime_adapters = [*settings.runtime_adapters, *model_registrations()]
+        settings.usage_pricing = (*pricing_registrations(MODEL_ADAPTER_IDS), *settings.usage_pricing)
+        application = create_app(settings, queue_max_attempts=native_queue_attempts(settings))
         self.state = application.app.state.factory
         self.store = self.state["store"]
         self.addCleanup(self.store.engine.dispose)
@@ -149,10 +158,17 @@ class GoProductPostgresTests(unittest.TestCase):
                 offset = len(self.peer.requests)
                 self.assert_roundtrip(self.submit(model), offset=offset)
 
+    def assert_single_queue_attempt(self, task):
+        native_task = self.store.task(task, "alice")
+        job = self.store.native_db.get_job(native_task["run_id"], strict=True)
+        self.assertEqual(job["max_attempts"], 1)
+        self.assertEqual(job["attempt"], 1)
+
     def assert_unknown(self, task):
         detail = self.wait(task)
         self.assertNotEqual(detail["job"]["status"], "completed", detail)
         self.assertEqual(detail["artifacts"], [])
+        self.assert_single_queue_attempt(task)
         usage = self.usage(task)
         self.assertEqual([row["state"] for row in usage["attempts"]], ["UNKNOWN"])
         self.assertGreater(next(row for row in usage["scopes"] if row["scope"] == "task")["heldTokens"], 0)
@@ -203,6 +219,7 @@ class GoProductPostgresTests(unittest.TestCase):
         detail = self.wait(task)
         self.assertNotEqual(detail["job"]["status"], "completed", detail)
         self.assertEqual(detail["artifacts"], [])
+        self.assert_single_queue_attempt(task)
         usage = self.usage(task)
         self.assertEqual([row["state"] for row in usage["attempts"]], ["UNKNOWN", "UNKNOWN"])
         self.assertEqual(len({row["id"] for row in usage["attempts"]}), 2)

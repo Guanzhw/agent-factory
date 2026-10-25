@@ -12,11 +12,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_factory.byok_model import PROVIDER_ID
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.credential_vault import EncryptedCredentialVault
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.personal_remote_provider import origin
-from agent_factory_research.personal_research import publish_application
+from core_native_fixture import publish_owner_application
+from agent_factory.application_runs import factory_request_id
 from pg_fixture import IsolatedPostgres
 from test_trusted_model_proxy import GatewayBackend, GENERIC_BASE, IP, PROTOCOL_PATHS, grant
 
@@ -36,7 +37,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
         self.store, self.auth = self.state['store'], self.state['auth']
         self.addCleanup(self.store.engine.dispose)
         self.addCleanup(self.store.native_db.db_engine.dispose)
-        publish_application(self.state, author='manager')
+        publish_owner_application(self.state, author='manager')
         self.client = TestClient(self.app)
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
@@ -74,9 +75,11 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
                 request_id = 'fixture-generic-proxy-research-' + protocol
                 with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses', return_value=[IP]), \
                         patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
-                    self.request('POST', '/personal-research', {'topic': 'Synthetic scoped model flow',
+                    self.request('POST', '/application-interface/v1/starts', {
+                        'application': 'fixture-owner-checksum', 'mode': 'literature',
+                        'connectionRefs': {'ownerModel': model['connectionRef']}, 'goal': 'Synthetic scoped model flow',
                         'requestId': request_id}, status=202)
-                    task = self.store.task_for_request(request_id, 'alice')
+                    task = self.store.task_for_request(factory_request_id(request_id), 'alice')
                     deadline = time.monotonic() + 30
                     while time.monotonic() < deadline:
                         native = self.store.native_db.get_job(task['run_id']) or {}
@@ -135,9 +138,11 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
         backend = GatewayBackend(configuration)
         with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses',return_value=[IP]), \
                 patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend',return_value=backend):
-            self.request('POST','/personal-research',{'topic':'Synthetic scoped model flow',
+            self.request('POST','/application-interface/v1/starts', {
+                'application': 'fixture-owner-checksum', 'mode': 'literature',
+                'connectionRefs': {'ownerModel': model['connectionRef']}, 'goal': 'Synthetic scoped model flow',
                 'requestId':'fixture-proxy-research'},status=202)
-            task = self.store.task_for_request('fixture-proxy-research','alice')
+            task = self.store.task_for_request(factory_request_id('fixture-proxy-research'),'alice')
             deadline = time.monotonic()+30
             while time.monotonic()<deadline:
                 native = self.store.native_db.get_job(task['run_id']) or {}

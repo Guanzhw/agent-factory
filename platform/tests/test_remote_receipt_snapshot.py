@@ -33,8 +33,6 @@ class RemoteReceiptSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.service._public = Mock(side_effect=lambda row, native=None: {
             'id': row['id'], 'remoteTaskId': self.task['id'], 'remotePlanId': self.task['plan_id'],
             'remoteRunId': self.task['run_id'], 'native': deepcopy(native)})
-        self.service._placement_stopped = Mock(return_value=True)
-        self.service._refresh_placement_evidence = AsyncMock()
         self.service.dispatch = AsyncMock(side_effect=AssertionError('Reconcile cannot dispatch'))
         self.service.bridge = SimpleNamespace(
             find_run=AsyncMock(return_value={'run_id': 'original-run'}),
@@ -96,12 +94,13 @@ class RemoteReceiptSnapshotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_overtaken_snapshot_refreshes_original_once_and_keeps_closed_statement(self):
         captured, release = asyncio.Event(), asyncio.Event()
-        async def refresh(row, task, result, *, reconcile=False):
-            self.assertTrue(reconcile)
-            if result['native']['queue']['status'] == 'running':
+        async def inspect_group(owner, task):
+            snapshot = await self.group(owner, task)
+            if not snapshot['allStopped']:
                 captured.set()
                 await release.wait()
-        self.service._refresh_placement_evidence.side_effect = refresh
+            return snapshot
+        self.service.store.delegation.inspect_group.side_effect = inspect_group
         older = asyncio.create_task(self.service.reconcile('bob', 'original-receipt'))
         try:
             await asyncio.wait_for(captured.wait(), 2)

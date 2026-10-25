@@ -1,5 +1,7 @@
 # Remote AutoResearch operator handoff
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This entrypoint assembles a controller and a scientific receiver from fixed,
 reviewed Python modules. JSON cannot name arbitrary factories or import modules.
 It does **not** initialize databases, install scientific dependencies, approve a

@@ -487,4 +487,3 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
         self.assertEqual(str(calls[0].url), 'https://93.184.216.34/inference/go/v1/responses')
         self.assertEqual(calls[0].headers['host'], 'opencode.ai')
         self.assertEqual(calls[0].extensions['sni_hostname'], 'opencode.ai')
-

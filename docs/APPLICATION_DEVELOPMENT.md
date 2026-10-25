@@ -10,62 +10,43 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 
 ## 源码归属与静态装配
 
-仓库中的 Research 是一个应用：OpenResearch 原生会话/项目入口与现有 AutoResearch
-执行路径属于同一应用的内部模块，不要求用户安装或嵌套两个应用。业务模块保留原生
-OpenResearch/OpenCode 执行器，底座继续使用 Agno/AgentOS 的执行、队列和持久化机制。
+默认发行包只安装底座与部署入口，应用注册列表为空。旧 Research 源码、页面和种子已移除。
+需要组合现有能力的应用可由成员显式发布材料和声明；新增可信代码则由部署方显式注册，
+不向底座增加应用业务分支，也不通过 HTTP 安装代码。
 
 | 目录或入口 | 职责 |
 | --- | --- |
-| [`platform/agent_factory/`](../platform/agent_factory/) | 公共身份、凭据、资源、素材/应用契约、任务准入、原生执行、事件与产物 |
-| [`apps/research/agent_factory_research/`](../apps/research/agent_factory_research/) | 研究业务服务、`ResearchSettings`、材料声明、执行适配和 `runtime_packages/openresearch_v1/` |
-| [`apps/research/web/`](../apps/research/web/) | 研究页面、导航项、业务 API 与状态投影 |
-| [`apps/research/tests/`](../apps/research/tests/) | 应用的 `python/`、`web/` 与浏览器合成回归 |
-| [`deployment/agent_factory_server/main.py`](../deployment/agent_factory_server/main.py) | 显式选择底座构造参数、研究材料/适配器及应用装配函数 |
-| [`web/composition.tsx`](../web/composition.tsx) | 显式向公共壳传入页面、导航和业务展示组件 |
+| `platform/agent_factory/` | 公共身份、凭据、资源、素材/应用契约、任务准入、原生执行、事件与产物 |
+| `deployment/agent_factory_server/main.py` | 底座启动与显式应用注册；默认无应用 |
+| `web/composition.tsx` | 公共壳与显式页面装配；默认应用目录为空 |
+| `platform/tests/core_native_fixture.py` | 测试显式安装的合成应用与适配器，不是启动种子 |
 
-Python 装配调用公共底座的 `create_app`，再由应用的
-[`assembly.py`](../apps/research/agent_factory_research/assembly.py) 安装业务服务与路由。
-`ResearchSettings` 承载研究专用配置；应用服务集合由研究包内部维护，不能作为普通
-应用访问底座的公共 SDK。公共壳消费传入的导航/组件，业务页面使用应用自己的 API 模块。
-这些是静态部署接线，不是动态发现、插件安装协议或新的生命周期引擎。
+`agent_factory.main.create_app` 与 `agent_factory_server.main.create_app` 均不安装旧研究应用。
+应用函数与客户端优先使用下文 Application Interface；部署工厂内部接线上下文不是稳定公共 SDK。
+新空库可使用登录、资源和成员发布入口。移除源码不删除旧记录、凭据、vault key、产物或备份；
+旧应用任务需要原代码才能继续，永久删除旧数据仍需准确清单与单独确认。
 
-研究专用的科学子任务放置、回执/停止事实与原实验连接回收由应用的兼容子类实现；
-部署入口显式选择委派和连接服务类型。底座的普通委派仍负责原请求身份、共享预算与
-原生任务生命周期。科研专用准备与业务工具留在应用中；通用 SSH、工具、模型与远程资源
-接入由底座提供。公共服务不按研究应用 ID 查找业务服务或读取研究表。历史数据保留原身份。
-
-`agent_factory.main.create_app` 是不预装研究材料/路由的底座入口；完整研究部署使用
-`agent_factory_server.main.create_app`。需要组合现有能力的新应用，仍可仅发布声明与
-素材；只有新增业务代码、页面或可信执行能力时，才在应用目录实现并在部署入口显式装配，
-不向公共底座增加某个应用的业务分支。应用函数与客户端优先使用下文的 Application
-Interface；可信部署工厂的内部接线上下文不等同于稳定公共应用接口。
-
-根 [`pyproject.toml`](../pyproject.toml) 生成包含底座、研究包和部署入口的兼容部署 wheel，
-`agent-factory` 命令指向该入口。独立底座构建由
-[`platform/pyproject.toml`](../platform/pyproject.toml) 提供，仅包含 `agent_factory`：
+根 `pyproject.toml` 生成底座加部署入口的 wheel，保留 `agent-factory` 命令；
+`platform/pyproject.toml` 生成仅包含 `agent_factory` 的独立底座：
 
 ```bash
 uv build platform --out-dir /tmp/agent-factory-core-dist
 uv build --out-dir /tmp/agent-factory-deployment-dist
 ```
 
-两种 distribution 是不同安装选择，不要在同一环境叠装两个都提供 `agent_factory` 的包。
-安装独立底座后，由部署方提供已审能力与应用装配；研究部署保留原有 HTTP 路由和数据契约，
-源码迁移不授权重写旧计划、运行 pin 或请求身份。
-
-仓库根目录执行 `uv sync --frozen` 后，可用 `uv run python -m agent_factory_server`
-启动完整部署；数据库和鉴权配置沿用现有要求。直接从源码运行且未安装项目时，三个
-Python 源码根必须同时可见：
+两种 distribution 不应叠装到同一环境。仓库根运行 `uv sync --frozen` 后，
+可用 `uv run python -m agent_factory_server` 启动；数据库与鉴权配置要求不变。
+未安装项目而直接运行源码时：
 
 ```bash
-# POSIX shells; PowerShell/Windows uses ';' between the same three paths.
-export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment"
+# POSIX shells; PowerShell/Windows uses ';' between these paths.
+export PYTHONPATH="$PWD/platform:$PWD/deployment"
 python -m agent_factory_server
 ```
 
 ## 部门成员的默认流程
 
-普通启动入口的 `Settings.from_env()` / `ResearchSettings.from_env()` 默认使用
+普通启动入口的 `Settings.from_env()` 默认使用
 `temporary_policy=member-self-service`、`policy_revision=department-member-v1`，以及
 `material_review_mode=member-self-service`、`material_policy_revision=material-department-v1`。
 成员自行创建、配置和发布材料/应用的新版本，并直接提交新任务；普通任务不经过 plan 审批。
@@ -287,7 +268,7 @@ SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
 ### 1. 安装可信能力
 
 部署方在 `create_app(settings)` 前安装所需的同进程注册；普通配置从 `Settings.from_env()`
-或研究部署的 `ResearchSettings.from_env()` 读取，HTTP 不提供安装代码接口：
+读取，HTTP 不提供安装代码接口：
 
 - `runtime_adapters`：上述模型、工具、知识和环境工厂。
 - `native_workflows`：上述四参数 NativeWorkflowRegistration；函数步骤名称必须精确列入
@@ -428,37 +409,31 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 ```bash
 uv sync --frozen
 npm ci --ignore-scripts
-# Shared test fixtures are importable from both owned test trees.
-export PYTHONPATH="$PWD/platform:$PWD/apps/research:$PWD/deployment:$PWD/platform/tests:$PWD/apps/research/tests/python"
+# Explicit synthetic fixtures remain in the platform test tree.
+export PYTHONPATH="$PWD/platform:$PWD/deployment:$PWD/platform/tests"
 uv run python -m unittest discover -s platform/tests -p 'test_application_inputs.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_application_contract_v2.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_tool_policy_registry.py' -v
 uv run python -m unittest discover -s platform/tests -p 'test_native_workflows.py' -v
-uv run ruff check platform apps/research deployment scripts
+uv run ruff check platform deployment scripts
 uv run pyright
 npm run check
 npm audit
 ```
 
-完整 Python 回归需要分别发现公共底座与应用测试；只运行原 `platform/tests` 不再覆盖研究业务。
-纯研究被测对象（包括 ORX 本地日志、研究等待恢复、个人原生会话重绑定）归入应用测试。
-`platform/tests` 仍包含公共机制的装配测试和明确的跨服务集成测试，例如
-`test_actual_orx_receiver.py`、`test_actual_inference_tree.py`；其中使用应用 fixture 的测试
-需要完整部署依赖，不能把整个目录当作无应用依赖的测试集。
-独立底座边界由 `test_core_package_distribution.py` 的隔离 wheel 验证，以及
-`test_core_runtime_boundaries.py` 禁止导入应用包的公共模块/Store 测试收集与执行验证负责。
-保留上面的测试 `PYTHONPATH` 后可分别运行：
+完整 Python 回归发现 `platform/tests`，通用执行测试显式安装合成应用。
+独立 wheel 生命周期与 import 边界仍需单独检查；测试收集成功不等于执行通过。
 
 ```bash
-uv run python -m unittest discover -s platform/tests -v
-uv run python -m unittest discover -s apps/research/tests/python -v
+uv run python scripts/check_python.py
+# 使用可销毁 PostgreSQL 后执行独立底座生命周期：
+uv run python scripts/check_core_install.py
 ```
 
-也可直接运行 `npm run check:python`：它执行全部 Python lint/type 检查，并通过
-`scripts/check_python.py` 自动设置源码/fixture 路径、运行两次 discovery；任一测试集失败都会返回失败。
-
-`npm run check` 已覆盖 `web/`、`apps/research/web/` 以及两处前端测试目录，并构建静态装配后的页面。
-浏览器合成回归位于 `apps/research/tests/browser/`；其结果与真实数据库、执行器及模型验收分别记录。
+`npm run check:python` 执行 Python lint/type 检查及完整 discovery；
+`npm run check` 检查公共前端并构建静态装配页面。浏览器 fixtures 位于
+`platform/tests/browser/`，合成浏览器、真实数据库及外部身份/模型验收分别记录。
+当前 core-only revision 的通过情况以其实际检查结果为准，旧研究验收不能替代。
 
 真实队列/恢复测试使用管理员提供的**可销毁测试服务器**，设置
 `FACTORY_TEST_DATABASE_URL`，身份需有 CREATEDB；fixture 创建并清理自己随机命名的数据库。

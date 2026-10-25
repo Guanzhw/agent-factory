@@ -9,6 +9,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import sys
 from types import SimpleNamespace
 import unittest
 
@@ -19,9 +20,9 @@ from agno.run import RunContext
 from agno.run.base import RunStatus
 from fastapi import HTTPException
 
-from agent_factory_research.demo_model import DemoModel
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import KnowledgeContext
-from agent_factory_research.synthetic_runtime import default_bindings
+from core_native_fixture import fixture_bindings as default_bindings
 from agent_factory.runtime import build_runtime
 from agent_factory.store import digest
 from test_runtime_contract import ContractStore, attach_fixture_bindings
@@ -29,7 +30,7 @@ from test_runtime_contract import ContractStore, attach_fixture_bindings
 
 class MultiPlanStore(ContractStore):
     def __init__(self):
-        super().__init__(application="checksum")
+        super().__init__(application="fixture-checksum")
         self.plans = {}
         self.model_revoked = False
 
@@ -115,11 +116,11 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         value["sha256"] = digest(value)
         return value
 
-    def plan(self, identifier, model_adapter="local-synthetic-model-v1", *, owner="test-user", connection=None, knowledge=None,
-             tool_adapter="native-checksum-v1", environment=None):
+    def plan(self, identifier, model_adapter="fixture-model-v1", *, owner="test-user", connection=None, knowledge=None,
+             tool_adapter="fixture-checksum-v1", environment=None):
         materials = [self.material(identifier + "-model", "model", model_adapter,
                                   config={"connectionName": "provider"} if connection else {}),
-                     self.material(identifier + "-environment", "environment", "local-bounded-environment-v1", config=environment),
+                     self.material(identifier + "-environment", "environment", "fixture-environment-v1", config=environment),
                      self.material(identifier + "-tool", "tool", tool_adapter, permissions=("checksum:read",))]
         if knowledge is not None:
             materials.append(self.material(identifier + "-knowledge", "knowledge", "fixture-inline-knowledge-v1", content=knowledge))
@@ -156,8 +157,8 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_preflight_identifies_only_missing_binding_and_never_constructs_adapters(self):
         materials = [self.material("absent-provider", "model", "operator-model-not-installed"),
-            self.material("healthy-environment", "environment", "local-bounded-environment-v1"),
-            self.material("healthy-tool", "tool", "native-checksum-v1", content="checksum", permissions=("checksum:read",))]
+            self.material("healthy-environment", "environment", "fixture-environment-v1"),
+            self.material("healthy-tool", "tool", "fixture-checksum-v1", content="checksum", permissions=("checksum:read",))]
         missing = self.registry.preflight(materials, "test-user")
         self.assertEqual(len(missing), 1)
         self.assertEqual(missing[0]["code"], "BINDING_ADAPTER_UNAVAILABLE")
@@ -399,31 +400,51 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.registry.withdraw("model", "metadata-only-controlled-v1", "1")
         self.assertFalse(any(item["adapterId"] == "metadata-only-controlled-v1" for item in self.registry.describe()))
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Core bounded process guardian requires Linux')
     async def test_selected_environment_limits_actual_fixed_process_and_retains_unknown_outcome(self):
-        store = ContractStore(mode="experiment", config={"experimentDurationSeconds": 3})
+        from core_native_fixture import selected_bounded_operation
+        from agent_factory.process_enforcement import valid_stop
+        store = ContractStore(mode="experiment", tools=['fixture_operation'])
         attach_fixture_bindings(self.settings, store, store.plan)
+        registry = store.execution_bindings
+        registry.register('tool', 'fixture-selected-process-v1', '1', selected_bounded_operation,
+            tool_name='fixture_operation', permissions=('fixture:operate',), demo_only=True)
+        material = next(item for item in store.plan['materials'] if item['kind'] == 'tool')
+        material['runtimeBinding'] = {'adapterId': 'fixture-selected-process-v1', 'revision': '1', 'config': {}}
+        material['sha256'] = digest({key: value for key, value in material.items() if key != 'sha256'})
         environment = next(item for item in store.plan["materials"] if item["kind"] == "environment")
-        environment["runtimeBinding"] = {"adapterId": "local-bounded-environment-v1", "revision": "1",
+        environment["runtimeBinding"] = {"adapterId": "fixture-environment-v1", "revision": "1",
             "config": {"runtimeId": "selected-tight-fixture", "timeoutSeconds": .15, "outputBytes": 4096,
-                       "memoryBytes": 64 * 1024 * 1024, "processLimit": 1, "cpuPercent": 5}}
+                       "memoryBytes": 64 * 1024 * 1024}}
         environment["sha256"] = digest({key: value for key, value in environment.items() if key != "sha256"})
-        store.plan["executionBindings"] = store.execution_bindings.build(store.plan["materials"], store.plan["ownerId"])
+        store.plan["executionBindings"] = registry.build(store.plan["materials"], store.plan["ownerId"])
         agent, _ = build_runtime(self.settings, store, self.db)
-        initial = await agent.arun("Controlled fixed experiment", user_id="test-user", session_id="environment-session")
+        initial = await agent.arun("Controlled original bounded operation", user_id="test-user", session_id="environment-session")
         self.assertEqual(initial.status, RunStatus.paused)
+        self.assertFalse(store.effects, 'Native confirmation must precede any original operation reservation')
         initial.requirements[0].confirm()
         resumed = await agent.acontinue_run(run_id=initial.run_id, session_id="environment-session", user_id="test-user", requirements=initial.requirements)
         self.assertEqual(json.loads(resumed.content)["status"], "failed")
-        started = next(event for event in store.events if event["type"] == "compute_started")["data"]
-        self.assertEqual(started["runtimeId"], "selected-tight-fixture")
-        self.assertEqual(started["wallClockLimitSeconds"], .15)
-        self.assertEqual(started["memoryLimitBytes"], 64 * 1024 * 1024)
-        self.assertEqual(started["processLimit"], 1)
-        self.assertEqual(started["outputLimitBytes"], 4096)
-        stopped = next(event for event in store.events if event["type"] == "compute_stopped")["data"]
-        self.assertTrue(stopped["cleanupComplete"])
-        self.assertEqual(store.effects[(initial.run_id, "experiment:bounded-sort-v1")]["status"], "unknown")
-        self.assertFalse(any(artifact["name"] == "synthetic-experiment.json" for artifact in store.artifacts))
+        stopped = next(event for event in store.events if event['type'] == 'bounded_operation_stopped')['data']
+        self.assertEqual(stopped['runtimeId'], 'selected-tight-fixture')
+        observation = stopped['observation']
+        self.assertEqual(observation['limits'], {'cpu_seconds': 1, 'address_space_mb': 64,
+            'file_size_bytes': 4096, 'wall_seconds': .15})
+        self.assertEqual(stopped['kernelLimits'], {'memoryBytes': 64 * 1024 * 1024,
+            'outputBytes': 4096, 'cpuSeconds': 1})
+        self.assertEqual(observation['state'], 'LIMIT_STOPPED')
+        self.assertEqual(observation['exitCode'], -9)
+        self.assertTrue(valid_stop(observation))
+        self.assertFalse(observation['capacityHeld'])
+        self.assertFalse(observation['enforcement']['aggregateQuota'])
+        self.assertEqual(store.effects[(initial.run_id, 'fixture-selected-process-v1')]['status'], 'unknown')
+        self.assertEqual(store.artifacts, [])
+        # Positive process cleanup does not authorize a second business dispatch.
+        context = RunContext(run_id=initial.run_id, session_id='environment-session', user_id='test-user', session_state={})
+        retained = registry.tools_for(store.plan, context)[0]
+        with self.assertRaisesRegex(RuntimeError, 'UNKNOWN original bounded operation'):
+            await retained.entrypoint(run_context=context)
+        self.assertEqual(len([event for event in store.events if event['type'] == 'bounded_operation_stopped']), 1)
 
 
 if __name__ == "__main__":

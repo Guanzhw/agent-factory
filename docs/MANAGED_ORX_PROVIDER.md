@@ -1,5 +1,7 @@
 # Managed native attachment: bounded turn contract
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 This implements a **single text-only turn probe**, not full research-agent tool
 execution or live remote verification. It retains the original native project and
 session. No model, server, credential, process supervisor or firewall is installed

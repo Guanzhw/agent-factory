@@ -19,8 +19,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import MetaData, Table, create_engine, func, inspect, select, text
 
 from pg_fixture import IsolatedPostgres
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
@@ -61,7 +61,7 @@ class CapacityPostgresTests(unittest.TestCase):
 
     def plan(self, owner):
         response = self.request(owner, "POST", "/plans", expected=201,
-                                json={"topic": "sort", "mode": "literature", "application": "research",
+                                json={"topic": "sort", "mode": "literature", "application": "fixture-text",
                                       "requestId": str(uuid4())})
         self.assertEqual(response.json()["status"], "ready", response.text)
         return response.json()

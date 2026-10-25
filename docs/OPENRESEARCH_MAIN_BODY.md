@@ -1,5 +1,7 @@
 # Ordinary OpenResearch main page
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The ordinary native research page presents the goal and next message beside observed progress, with results and tool evidence below. At narrow widths it follows the same reading order in one column. Existing research remains a visible separate section; project setup, original output and connection lifecycle actions remain available below it.
 
 Evidence comes only from the selected native session's recorded tool events. Text replies are not promoted to verified citations or scientific conclusions. Pending requests can display older replies; the progress panel states that those replies may belong to an earlier turn. Reading failure has an explicit retry state rather than remaining indefinitely in the loading state. Existing owner, request custody, generation and dispatch conditions are retained.

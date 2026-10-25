@@ -28,15 +28,16 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 from agent_factory.applications import ApplicationService, application_router
 from agent_factory.auth import AuthService
 from agent_factory.catalog import create_plan, seed_catalog
-from agent_factory_research.bootstrap_catalog import SEEDS, all_demo_definitions
+from core_native_fixture import governed_fixture_definitions
+from core_native_fixture import SEEDS, all_fixture_definitions as all_demo_definitions
 from agent_factory.composition import CompositionService, composition_router
 from agent_factory.connections import ConnectionService
 from agent_factory.personal_tools import ConfigureResourceRequest, PersonalTools
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_research.demo_model import DemoModel
+from agent_factory.config import Settings
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.execution_bindings import AdapterRegistration
-from agent_factory_research.synthetic_runtime import default_bindings
-from agent_factory_server.main import create_app
+from core_native_fixture import fixture_bindings as default_bindings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
 from agent_factory.store import digest, now
 from pg_fixture import IsolatedPostgres
@@ -50,7 +51,7 @@ def app_definition(store, identifier="synthetic-text-audit", **changes):
     seeds = {item["id"]: item for item in store.materials(published_only=True)}
     return {"id": identifier, "name": "Original synthetic text audit", "description": "Owned deterministic fixture.",
             "discoveryKeywords": ["text audit"], "modes": {"literature": {
-                "materialRefs": [pin(seeds[mid]) for mid in ("demo-model", "local-environment", "research-skill", "research-prompt", "synthetic-knowledge", "checksum-tool")],
+                "materialRefs": [pin(seeds[mid]) for mid in ("fixture-model", "fixture-environment", "fixture-skill", "fixture-prompt", "fixture-knowledge", "fixture-checksum-tool")],
                 "capabilities": ["checksum:read"], "toolOrder": ["checksum"]}}, **changes}
 
 
@@ -127,11 +128,11 @@ class ApplicationCompositionFixture(unittest.TestCase):
         seed_catalog(self.store, SEEDS)
         self.store.material_governance = MaterialGovernance(self.store, self.auth, GovernanceConfig(
             review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS)
-        self.applications = ApplicationService(self.store, self.auth)
-        self.applications.seed_demo(all_demo_definitions)
-        self.store.applications = self.applications
         self.bindings = default_bindings(self.settings, self.store, None)
         self.store.execution_bindings = self.bindings
+        self.applications = ApplicationService(self.store, self.auth)
+        self.applications.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
+        self.store.applications = self.applications
         self.composition = CompositionService(self.store, self.auth, self.applications, self.bindings, None)
         self.store.composition = self.composition
 
@@ -197,14 +198,14 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         self.applications.require_plan_current(before)
         unchanged = self.composition.create_plan("bob", "Checksum built-in after another member tool", "literature", application_ref=pin(original))
         self.assertEqual(unchanged["capabilities"], ["checksum:read"])
-        self.assertEqual(unchanged["executionBindings"]["tools"][0]["adapterId"], "native-checksum-v1")
+        self.assertEqual(unchanged["executionBindings"]["tools"][0]["adapterId"], "fixture-checksum-v1")
         material = self.store.material_governance.create_draft("alice", {
             "kind": "tool", "name": "Member checksum", "content": "checksum", "permissions": ["tool:invoke"],
             "runtimeBinding": {**resource["runtimeBinding"], "config": {"connectionName": "memberCommand"}}}, "same-name-tool-draft")
         self.store.material_governance.publish("alice", material["id"], 1, "same-name-tool-publish")
         definition = app_definition(self.store, identifier="member-checksum-application")
         mode = definition["modes"]["literature"]
-        mode["materialRefs"] = [pin(material) if item["id"] == "checksum-tool" else item for item in mode["materialRefs"]]
+        mode["materialRefs"] = [pin(material) if item["id"] == "fixture-checksum-tool" else item for item in mode["materialRefs"]]
         mode["capabilities"] = ["tool:invoke"]
         mode["connectionRequirements"] = [{"name": "memberCommand", "kind": "tool", "requiredCapabilities": ["tool:invoke"]}]
         application = self.applications.create_draft("alice", definition, "member-same-name-app")
@@ -246,17 +247,17 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
                          {"model", "environment", "skill", "prompt", "knowledge", "tool"})
         bindings = proposal["candidate"]["executionBindings"]
         self.assertEqual(bindings["tools"][0]["toolName"], "checksum")
-        self.assertEqual(bindings["knowledge"][0]["materialRef"]["id"], "synthetic-knowledge")
+        self.assertEqual(bindings["knowledge"][0]["materialRef"]["id"], "fixture-knowledge")
         plan = self.composition.accept("alice", proposal["id"], "accept-one")
         self.applications.require_plan_current(plan)
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
         self.assertEqual(plan["fingerprint"], digest({k: v for k, v in plan.items() if k not in {"id", "createdAt", "fingerprint"}}))
 
     def test_semantic_keys_reject_changed_intent_and_accept_recovery_creates_one_plan(self):
-        first = self.composition.propose("alice", "Checksum the controlled fixture", application="checksum", request_id="same")
-        self.assertEqual(first, self.composition.propose("alice", "Checksum the controlled fixture", application="checksum", request_id="same"))
+        first = self.composition.propose("alice", "Checksum the controlled fixture", application="fixture-checksum", request_id="same")
+        self.assertEqual(first, self.composition.propose("alice", "Checksum the controlled fixture", application="fixture-checksum", request_id="same"))
         with self.assertRaises(HTTPException) as conflict:
-            self.composition.propose("alice", "Checksum a changed goal", application="checksum", request_id="same")
+            self.composition.propose("alice", "Checksum a changed goal", application="fixture-checksum", request_id="same")
         self.assertEqual(conflict.exception.status_code, 409)
         accepted = self.composition.accept("alice", first["id"], "one-accept")
         self.assertEqual(self.composition.accept("alice", first["id"], "one-accept"), accepted)
@@ -269,23 +270,23 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         self.assertEqual(scoped.exception.status_code, 404)
 
     def test_reject_revise_receipts_and_restart_preserve_all_immutable_evidence(self):
-        proposal = self.composition.propose("alice", "Checksum original", application="checksum", request_id="initial")
+        proposal = self.composition.propose("alice", "Checksum original", application="fixture-checksum", request_id="initial")
         self.composition.reject("alice", proposal["id"], "reject-first")
-        revised = self.composition.revise("alice", proposal["id"], "Checksum revised", application="checksum", request_id="revise-first")
+        revised = self.composition.revise("alice", proposal["id"], "Checksum revised", application="fixture-checksum", request_id="revise-first")
         self.assertEqual(self.composition.inspect("alice", proposal["id"])["state"], "revised")
         self.assertEqual(self.composition.inspect("alice", proposal["id"])["revisedBy"], revised["id"])
         self.assertEqual(revised["parentId"], proposal["id"])
         self.composition = CompositionService(self.store, self.auth, self.applications, self.bindings, None)
-        self.assertEqual(revised, self.composition.revise("alice", proposal["id"], "Checksum revised", application="checksum", request_id="revise-first"))
+        self.assertEqual(revised, self.composition.revise("alice", proposal["id"], "Checksum revised", application="fixture-checksum", request_id="revise-first"))
         self.assertEqual(self.composition.inspect("alice", proposal["id"])["candidate"], proposal["candidate"])
         with self.assertRaises(HTTPException):
-            self.composition.revise("alice", proposal["id"], "Changed revision", application="checksum", request_id="revise-first")
+            self.composition.revise("alice", proposal["id"], "Changed revision", application="fixture-checksum", request_id="revise-first")
 
     def test_approved_variants_pin_actual_instructions_and_inherit_default_choices(self):
         alternate = self.material()
         definition = app_definition(self.store)
         mode = definition["modes"]["literature"]
-        original = next(ref for ref in mode["materialRefs"] if ref["id"] == "research-prompt")
+        original = next(ref for ref in mode["materialRefs"] if ref["id"] == "fixture-prompt")
         mode["materialChoices"] = {"instructions": {"kind": "prompt", "defaultRef": original, "allowedRefs": [original, pin(alternate)]}}
         application = self.publish(definition)
         default = self.composition.create_plan("alice", "Text audit default selection", "literature", application_ref=pin(application))
@@ -327,11 +328,11 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.composition.propose("alice", "No raw URL", connection_refs={"owner-model": "https://fixtures.invalid/credential"}, request_id="no-url")
 
     def test_variant_dependency_cannot_hide_transitive_capability_expansion(self):
-        literature = next(item for item in self.store.materials(published_only=True) if item["id"] == "literature-tool")
+        literature = next(item for item in self.store.materials(published_only=True) if item["id"] == "fixture-question-tool")
         alternate = self.material(dependencies=[pin(literature)])
         definition = app_definition(self.store)
         mode = definition["modes"]["literature"]
-        original = next(ref for ref in mode["materialRefs"] if ref["id"] == "research-prompt")
+        original = next(ref for ref in mode["materialRefs"] if ref["id"] == "fixture-prompt")
         mode["materialChoices"] = {"instructions": {"kind": "prompt", "defaultRef": original, "allowedRefs": [original, pin(alternate)]}}
         with self.assertRaises(HTTPException) as denied:
             self.applications.create_draft("manager", definition, "transitive-variant-denied")
@@ -351,7 +352,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
         self.assertEqual(self.applications.inspect("manager", application["id"], 1)["application"], application)
         restarted = ApplicationService(self.store, self.auth)
-        restarted.seed_demo(all_demo_definitions)
+        restarted.seed_demo(governed_fixture_definitions(self.store, all_demo_definitions))
         with self.assertRaises(HTTPException):
             restarted.require_current(pin(application))
 
@@ -373,18 +374,18 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.applications.request_publication("manager", draft["id"], 1, "inactive-review")
 
     def test_forged_tools_caps_budget_anchor_config_and_current_policy_are_denied(self):
-        plan = create_plan(self.store, "alice", "Checksum exact governed fixture", "literature", "checksum")
-        for field, value in (("tools", ["checksum", "run_experiment"]), ("capabilities", ["agent_os:admin"]),
+        plan = create_plan(self.store, "alice", "Checksum exact governed fixture", "literature", "fixture-checksum")
+        for field, value in (("tools", ["checksum", "fixture_operation"]), ("capabilities", ["agent_os:admin"]),
                              ("budget", {**plan["budget"], "toolCalls": 9}), ("config", {**plan["config"], "experimentDurationSeconds": 600}),
                              ("bindingManifest", {**plan["bindingManifest"], "sha256": "0" * 64})):
             with self.subTest(field=field), self.assertRaises(HTTPException):
                 self.applications.require_plan_current({**plan, field: value})
         self.settings.max_tool_calls = 3
-        narrowed = create_plan(self.store, "alice", "Checksum current ceiling", "literature", "checksum")
+        narrowed = create_plan(self.store, "alice", "Checksum current ceiling", "literature", "fixture-checksum")
         self.assertEqual(narrowed["budget"]["toolCalls"], 3)
         with self.assertRaises(HTTPException):
             self.applications.require_plan_current(plan)
-        proposal = self.composition.propose("alice", "Checksum before config revocation", application="checksum", request_id="before-unset")
+        proposal = self.composition.propose("alice", "Checksum before config revocation", application="fixture-checksum", request_id="before-unset")
         self.settings.temporary_policy = "unset"
         self.assertEqual(self.composition.accept("alice", proposal["id"], "after-unset")["ownerId"], "alice")
         self.auth.directory.set_disabled("alice", True)
@@ -392,8 +393,9 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.composition.accept("alice", proposal["id"], "after-rights-revoked")
 
     def test_legacy_pin_is_explicit_exact_demo_only_and_never_implicitly_adopted(self):
-        plan = create_plan(self.store, "alice", "Checksum historical fixture", "literature", "checksum")
+        plan = create_plan(self.store, "alice", "Checksum historical fixture", "literature", "fixture-checksum")
         legacy = {k: v for k, v in plan.items() if k not in {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}}
+        legacy["syntheticFixture"] = True
         legacy["id"] = str(uuid4())
         self.store.save_plan(legacy)
         with self.assertRaises(HTTPException):
@@ -518,7 +520,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
     def test_postgres_concurrent_identical_accept_single_native_ticket_and_restart_receipt(self):
         self.store.engine.dispose()
         self.store.engine = __import__("sqlalchemy").create_engine(self.database.url, pool_size=1, max_overflow=0, pool_timeout=3)
-        proposal = self.composition.propose("alice", "Checksum concurrent owned fixture", application="checksum", request_id="concurrent-propose")
+        proposal = self.composition.propose("alice", "Checksum concurrent owned fixture", application="fixture-checksum", request_id="concurrent-propose")
         with ThreadPoolExecutor(max_workers=4) as workers:
             plans = list(workers.map(lambda _: self.composition.accept("alice", proposal["id"], "concurrent-accept"), range(4)))
         self.assertTrue(all(plan == plans[0] for plan in plans))
@@ -549,7 +551,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                     first = {application["id"]: pin(application) for application in self.apps.list_active("alice")}
                     second = {application["id"]: pin(application) for application in other_state["applications"].list_active("alice")}
                     self.assertEqual(first, second)
-                    plan = other_state["composition"].create_plan("alice", "Checksum narrowed deployment ceiling", "literature", "checksum")
+                    plan = other_state["composition"].create_plan("alice", "Checksum narrowed deployment ceiling", "literature", "fixture-checksum")
                     self.assertEqual(plan["budget"]["toolCalls"], 3)
                     self.assertEqual(plan["budget"]["experimentSeconds"], 5)
             finally:
@@ -557,8 +559,9 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                 other_state["store"].native_db.db_engine.dispose()
 
     def test_historical_legacy_plan_remains_readable_and_new_composition_executes(self):
-        original = self.composition.create_plan("alice", "Checksum exact historical synthetic fixture", "literature", "checksum")
+        original = self.composition.create_plan("alice", "Checksum exact historical synthetic fixture", "literature", "fixture-checksum")
         legacy = {key: value for key, value in original.items() if key not in {"applicationRef", "executionBindings", "bindingManifest", "compositionProposalId"}}
+        legacy["syntheticFixture"] = True
         legacy["id"] = str(uuid4())
         legacy["fingerprint"] = digest({key: value for key, value in legacy.items() if key not in {"id", "createdAt", "fingerprint"}})
         self.store.save_plan(legacy)
@@ -579,17 +582,17 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.plan(legacy["id"], "alice"), legacy)
 
     def test_actual_factory_restart_withdrawn_seed_keeps_history_and_blocks_current_execution(self):
-        plan = self.composition.create_plan("alice", "Investigate owned historical evidence", "literature", "research")
+        plan = self.composition.create_plan("alice", "Investigate owned historical evidence", "literature", "fixture-text")
         with self.store.engine.begin() as conn:
             conn.execute(self.store.material_governance.versions.update().where(
-                self.store.material_governance.versions.c.material_id == "synthetic-knowledge").values(author_id="manager"))
-        self.store.material_governance.withdraw("manager", "synthetic-knowledge", 1, "withdraw-seed", "Owned inactive fixture")
+                self.store.material_governance.versions.c.material_id == "fixture-knowledge").values(author_id="manager"))
+        self.store.material_governance.withdraw("manager", "fixture-knowledge", 1, "withdraw-seed", "Owned inactive fixture")
         self.stop()
         self.start()
-        version = self.store.material_governance.inspect_version("manager", "synthetic-knowledge", 1)
+        version = self.store.material_governance.inspect_version("manager", "fixture-knowledge", 1)
         self.assertEqual(version["governance"]["state"], "withdrawn")
         self.assertEqual(self.store.plan(plan["id"], "alice"), plan)
-        blocked = self.composition.create_plan("alice", "Investigate withdrawn evidence", "literature", "research")
+        blocked = self.composition.create_plan("alice", "Investigate withdrawn evidence", "literature", "fixture-text")
         self.assertEqual(blocked["status"], "blocked")
         self.login("alice")
         response = self.client.post("/api/factory/instances", json={"planId": plan["id"], "requestId": "no-reactivation"})

@@ -1,5 +1,7 @@
 # Factory, OpenResearch, and research workloads
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 Status: reviewable implementation in this branch, based on `f869ab5`. This is the authoritative product boundary; implementation, controlled integration evidence, and live acceptance are separate. Historical acceptance reports remain historical evidence.
 
 ## Ownership

@@ -17,9 +17,9 @@ from agno.workflow.types import HumanReview, OnError, StepInput, StepOutput
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.input_schema import input_model
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.native_workflows import NativeWorkflowRegistration
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import app_definition, pin
@@ -80,7 +80,7 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text)
         return response.json()
 
-    def plan(self, application='checksum', **values):
+    def plan(self, application='fixture-checksum', **values):
         return self.request('POST', '/plans', {'requestId': str(uuid4()), 'application': application,
             'topic': 'Department synthetic task with original request identity', 'mode': 'literature',
             **values}, expected=201)
@@ -143,7 +143,7 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
             {'requestId': str(uuid4()), 'reason': 'Synthetic author archival'}, expected=200)
 
     def test_member_self_service_keeps_native_confirmation_before_dangerous_tool(self):
-        plan = self.plan(application='research', mode='experiment')
+        plan = self.plan(application='fixture-text', mode='experiment')
         authorization = self.request('GET', f'/plans/{plan["id"]}/authorization')
         self.assertTrue(authorization['executionAllowed'], authorization)
         self.assertFalse(authorization['reviewRequired'], authorization)
@@ -154,7 +154,7 @@ class DepartmentAdmissionPostgresTests(unittest.TestCase):
             self.assertEqual(detail['job']['status'], 'waiting_approval', detail)
             self.assertTrue(detail['job']['approvalDetail'])
             self.assertEqual(detail['snapshot']['effects'], [])
-            self.assertFalse(any(event['type'] == 'compute_started' for event in detail['events']))
+            self.assertFalse(any(event['type'] == 'operation_started' for event in detail['events']))
             self.assertEqual(self.store.sql('SELECT count(*) AS n FROM af_plan_review_decisions')[0]['n'], 0)
             self.request('POST', '/jobs/' + task['id'] + '/cancel', {})
             stopped = self.wait(task['id'], {'canceled', 'cancelled', 'failed'})

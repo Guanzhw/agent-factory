@@ -10,7 +10,6 @@ type Provenance = { kind: 'original' | 'upstream'; source?: string | null; revis
 type Draft = MaterialDraft & { runtimeBinding?: FactoryMaterial['runtimeBinding']; license: string; provenance: Provenance; compatibility: string[]; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type StatusIntent = { material: FactoryMaterial; action: 'archive' | 'withdraw'; reason: string };
 const licenses = ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0', 'CC-BY-4.0'];
-const builtInTools: Record<string, string> = { literature_search: 'research:read', ask_scope: 'question:ask', checksum: 'checksum:read', run_experiment: 'experiment:synthetic' };
 const stateNames: Record<string, string> = { draft: '草稿', published: '已发布', withdrawn: '已撤回', archived: '已归档' };
 const decisionNames: Record<string, string> = { pending: '等待审核', approved: '已同意', denied: '已拒绝' };
 const describe = (error: unknown) => error instanceof Error ? error.message : '素材治理状态无法确认，请刷新后重试。';
@@ -112,7 +111,7 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
   const commands = useCommands(user.id);
   const disabled = !!busy || !authorityCurrent;
   const visible = materials.filter(material => (stateOf(material) === 'published' || isOwner(material)) && (filter === 'all' || material.kind === filter));
-  const tools = { ...builtInTools, ...Object.fromEntries(materials.filter(material => material.kind === 'tool').map(material => [material.content, material.permissions[0] ?? ''])) };
+  const tools: Record<string, string> = Object.fromEntries(toolDeclarations.map(tool => [tool.toolName, tool.permission]));
   const dependencies = materials.filter(material => active(material) && material.id !== draft.id);
   const unavailable = draft.dependencies.filter(ref => !dependencies.some(material => materialKey(material) === materialKey(ref) && material.sha256 === ref.sha256));
 
@@ -177,12 +176,13 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
     setDraft(current => ({ ...current, dependencies: checked ? [...current.dependencies.filter(ref => materialKey(ref) !== materialKey(material)), { id: material.id, version: material.version, sha256: material.sha256 }] : current.dependencies.filter(ref => materialKey(ref) !== materialKey(material)) }));
   }
   function chooseKind(kind: Draft['kind']) {
-    const tool = kind === 'tool' ? 'literature_search' : undefined;
-    setDraft(current => ({ ...current, kind, content: tool ?? current.content, permissions: tool ? [tools[tool]] : [] }));
-    setPermissionText(tool ? tools[tool] : '');
+    setDraft(current => ({ ...current, kind, content: kind === 'tool' || current.kind === 'tool' ? '' : current.content,
+      permissions: [], runtimeBinding: undefined }));
+    setPermissionText('');
   }
   async function saveDraft() {
     await act('governance-draft', async () => {
+      if (draft.kind === 'tool' && !draft.content.trim()) throw new Error('请选择已接入工具或填写注册工具名称。');
       await verifyActor();
       const definition: Record<string, unknown> = { ...draft, name: draft.name.trim(), description: draft.description.trim(),
         permissions: [...new Set(permissionText.split('\n').map(value => value.trim()).filter(Boolean))],
@@ -241,7 +241,7 @@ export function MaterialGovernancePanel({ user, materials, busy, act, onNotice }
       <div className="editor-grid"><label>名称<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required maxLength={120} disabled={disabled}/></label><label>类型<select value={draft.kind} onChange={event => chooseKind(event.target.value as Draft['kind'])} disabled={disabled || !!draft.id}>{Object.entries(kindNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div>
       <label>用途说明<input value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} maxLength={2000} disabled={disabled}/></label>
       {draft.kind === 'tool' ? <><label>选择已接入工具<select aria-label="选择已接入工具" value={toolDeclarations.some(item => item.adapterId === draft.runtimeBinding?.adapterId && item.revision === draft.runtimeBinding?.revision) ? `${draft.runtimeBinding!.adapterId}@${draft.runtimeBinding!.revision}` : ''} disabled={disabled} onChange={event => selectTool(event.target.value)}><option value="">手动填写或保留原声明</option>{toolDeclarations.map(item => <option key={`${item.adapterId}@${item.revision}`} value={`${item.adapterId}@${item.revision}`}>{item.toolName} · {item.transport.toUpperCase()} · {item.adapterId}</option>)}</select></label>{toolError && <p role="alert" className="error-message">工具声明读取失败：{toolError}</p>}<label>注册工具名称<input list="material-registered-tools" value={draft.content} required maxLength={16000} disabled={disabled} onChange={event => { const content = event.target.value; setDraft(current => ({ ...current, content, ...(content !== current.content ? { runtimeBinding: undefined } : {}) })); if (tools[content]) setPermissionText(tools[content]); }}/></label><datalist id="material-registered-tools">{Object.keys(tools).map(name => <option key={name} value={name}/>)}</datalist>{draft.runtimeBinding && ('connectionName' in draft.runtimeBinding.config || toolDeclarations.some(item => item.adapterId === draft.runtimeBinding?.adapterId && item.revision === draft.runtimeBinding?.revision)) && <label>应用中的工具连接名称<input aria-label="应用中的工具连接名称" value={String(draft.runtimeBinding.config.connectionName ?? '')} required pattern="[A-Za-z][A-Za-z0-9_-]{0,99}" disabled={disabled} onChange={event => setDraft(current => ({ ...current, runtimeBinding: current.runtimeBinding ? { ...current.runtimeBinding, config: { ...current.runtimeBinding.config, connectionName: event.target.value } } : undefined }))}/><span className="quiet">应用装配时，用此名称选择个人或团队工具连接。</span></label>}</> : <label>材料内容<textarea value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} rows={6} required maxLength={16000} disabled={disabled}/></label>}
-      <label>声明能力（每行一项）<textarea value={permissionText} onChange={event => setPermissionText(event.target.value)} rows={2} disabled={disabled} placeholder="research:read"/></label><p className="quiet">填写注册工具声明的能力，服务端会核对当前注册信息。连接凭据由资源连接提供。</p>
+      <label>声明能力（每行一项）<textarea value={permissionText} onChange={event => setPermissionText(event.target.value)} rows={2} disabled={disabled} placeholder="填写工具声明的能力"/></label><p className="quiet">填写注册工具声明的能力，服务端会核对当前注册信息。连接凭据由资源连接提供。</p>
       <div className="editor-grid"><label>许可证<select value={draft.license} disabled={disabled} onChange={event => setDraft({ ...draft, license: event.target.value })}>{licenses.map(license => <option key={license}>{license}</option>)}</select></label><label>来源类型<select value={draft.provenance.kind} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, kind: event.target.value as Provenance['kind'] } })}><option value="original">作者原创</option><option value="upstream">上游引用</option></select></label></div>
       {draft.provenance.kind === 'upstream' && <><label>上游来源（HTTPS）<input type="url" value={draft.provenance.source ?? ''} required maxLength={1000} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, source: event.target.value } })}/></label><label>固定修订版本<input value={draft.provenance.revision ?? ''} required maxLength={200} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, revision: event.target.value } })}/></label></>}
       <label>来源及版权声明<textarea value={draft.provenance.notice} required maxLength={4000} rows={3} disabled={disabled} onChange={event => setDraft({ ...draft, provenance: { ...draft.provenance, notice: event.target.value } })}/></label>

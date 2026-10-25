@@ -29,7 +29,7 @@ describe('exact approved material catalog selection', () => {
   });
   it('returns only public exact references with no automatic dependency or permission changes', () => {
     const dependency = materialReference(material({ id: 'dependency' }));
-    const source = material({ dependencies: [dependency], permissions: ['research:read'] });
+    const source = material({ dependencies: [dependency], permissions: ['fixture:read'] });
     const selected = toggleMaterialSelection([], source, true);
     expect(selected).toEqual([materialReference(source)]);
     expect(Object.keys(selected[0]!)).toEqual(['id', 'version', 'sha256']);

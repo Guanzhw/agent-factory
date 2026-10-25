@@ -56,13 +56,17 @@ class GoLiveRunnerTests(unittest.TestCase):
 
     def test_member_settings_reach_local_app_boundary_without_provider_access(self):
         with tempfile.TemporaryDirectory() as directory, \
-             patch.object(runner, 'create_app', side_effect=RuntimeError('local-boundary')) as app, \
+             patch.object(runner, 'create_fixture_app', side_effect=RuntimeError('local-boundary')) as app, \
              patch.object(runner, 'credential', side_effect=AssertionError) as credential:
             result = runner.run(self.arguments(directory))
         app.assert_called_once()
         settings = app.call_args.args[0]
         self.assertEqual(settings.temporary_policy, 'member-self-service')
         self.assertEqual(settings.max_tool_calls, 1)
+        self.assertTrue(settings.fee_management_enabled)
+        self.assertEqual(settings.runtime_tool_contract, 'legacy-v1')
+        self.assertTrue(settings.runtime_adapters)
+        self.assertEqual(app.call_args.kwargs['queue_max_attempts'], 1)
         self.assertEqual(settings.usage_policy.task_token_limit, 500_000)
         self.assertEqual(result['status'], 'stopped')
         credential.assert_not_called()
@@ -109,16 +113,16 @@ class GoLiveRunnerTests(unittest.TestCase):
     @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
     def test_member_publication_reaches_first_smoke_without_review_or_privilege_escalation(self):
         states = []
-        original_create = runner.create_app
+        original_create = runner.create_fixture_app
 
-        def capture_application(settings):
-            application = original_create(settings)
+        def capture_application(settings, **kwargs):
+            application = original_create(settings, **kwargs)
             states.append(application.app.state.factory)
             return application
 
         with tempfile.TemporaryDirectory() as directory, \
                 IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \
-                patch.object(runner, "create_app", side_effect=capture_application), \
+                patch.object(runner, "create_fixture_app", side_effect=capture_application), \
                 patch.object(runner, "credential", side_effect=AssertionError("No provider credential needed")) as credential, \
                 patch.object(runner, "GoDevelopmentModel", side_effect=RuntimeError("Synthetic stop before dispatch")) as model:
             result = runner.run(self.arguments(directory, database_url=database.url))
@@ -168,3 +172,18 @@ class GoLiveRunnerTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'stopped')
                 campaign.stop.assert_called_once_with('UNKNOWN')
                 self.assertNotIn('private', json.dumps(result))
+
+
+class CoreGoQueueBoundaryTests(unittest.TestCase):
+    def test_direct_core_go_rejects_queue_amplification_before_database_or_workspace(self):
+        from agent_factory.config import Settings
+        from agent_factory.main import create_app
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / 'untouched'
+            settings = Settings(db_url='postgresql://synthetic', workspace=workspace, development_profile='opencode-go')
+            with patch('agent_factory.main.PostgresDb') as database:
+                for options in ({}, {'queue_max_attempts': 2}, {'queue_max_attempts': True}):
+                    with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'exactly one native queue attempt'):
+                        create_app(settings, **options)
+                database.assert_not_called()
+                self.assertFalse(workspace.exists())

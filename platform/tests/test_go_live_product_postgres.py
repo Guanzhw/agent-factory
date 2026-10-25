@@ -17,7 +17,7 @@ from uuid import uuid4
 import httpx
 from agno.models.message import Message
 
-from agent_factory_research.config import ResearchSettings as Settings
+from agent_factory.config import Settings
 from agent_factory.go_development import (CAPABILITY, REGISTRATION_REF, GoDevelopmentHandle,
     application_definition, publish_go_development_models, trusted_model_binding)
 from agent_factory.go_live import GoLiveCampaign, MODELS
@@ -94,7 +94,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
             db_url=self.database.url, workspace=Path(self.workspace.name) / "factory",
             development_profile="opencode-go", development_live_validation=True, max_workers=1, max_tool_calls=1,
             temporary_policy="member-self-service", policy_revision="go-live-mock-policy-v1",
-            material_policy_revision="go-live-mock-material-v1", runtime_tool_contract="registered-runtime-v1",
+            material_policy_revision="go-live-mock-material-v1", runtime_tool_contract="legacy-v1",
             usage_policy=UsagePolicy(revision="go-live-mock-usage-v1", task_amount_micros=1_000_000,
                 user_amount_micros=10_000_000, task_token_limit=500_000, user_token_limit=2_000_000),
             trusted_connections={REGISTRATION_REF: trusted_model_binding("alice", handle)})
@@ -108,7 +108,7 @@ class GoLiveProductPostgresTests(unittest.TestCase):
         models = publish_go_development_models(self.state, author="manager")
         seeds = self.store.materials(published_only=True)
         checksum = next(row for row in seeds if row["kind"] == "tool" and row["content"] == "checksum")
-        environment = next(row for row in seeds if row["id"] == "local-environment")
+        environment = next(row for row in seeds if row["id"] == "fixture-environment")
         definition = application_definition(models, checksum, environment)
         for mode in definition["modes"].values():
             mode["budget"]["toolCalls"] = 1

@@ -57,8 +57,8 @@ function compilerOptions(root, config) {
 
 function ownershipMap(root, config, modules) {
   if (!Array.isArray(config.core) || !config.core.length || !config.apps || typeof config.apps !== 'object'
-      || Array.isArray(config.apps) || !Object.keys(config.apps).length) {
-    throw new Error('Declare nonempty core and apps ownership');
+      || Array.isArray(config.apps)) {
+    throw new Error('Declare nonempty core ownership and an apps map (which may be empty)');
   }
   const contains = (file, prefix) => prefix === '.' || within(file, prefix);
   function checkedPrefix(value) {

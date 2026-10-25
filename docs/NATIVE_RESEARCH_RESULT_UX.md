@@ -1,5 +1,7 @@
 # Native research command and result presentation
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 Reproduced on main `a3fe4a3a2b113d73979226399b96fe9f321dc77b`,
 2026-10-11, using Chromium 151 and controlled local fixtures:
 

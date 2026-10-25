@@ -1,5 +1,7 @@
 # karpathy/autoresearch integration milestone
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 The new [goal-driven ORX session checkpoint](AUTORESEARCH_SESSION.md) separates
 autonomous research from the existing controlled baseline/candidate execution.
 Real model-driven end-to-end acceptance remains outstanding.

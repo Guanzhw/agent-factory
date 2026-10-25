@@ -1,9 +1,9 @@
 # Owner model boundaries and compatibility
 
-This change keeps two execution paths. Agno uses `OwnerChatModel` and its native
-tool loop. The native ORX runtime uses its existing OpenAI-compatible local
-Chat Completions route to `OwnerRuntimeBroker`. Only the broker's upstream wire
-protocol changes with owner configuration; ORX does not receive the owner's key.
+Agno uses `OwnerChatModel` and its native tool loop. `OwnerRuntimeBroker` retains
+the scoped native-runtime boundary and protocol conversion contracts. The former
+ORX application that used this broker is not installed in the core-only deployment;
+its recorded integration results below are historical, not a default execution path.
 
 | Responsibility | Existing or shared boundary |
 | --- | --- |
@@ -179,15 +179,23 @@ including reasoning-item continuation with tool outputs. This is a protocol
 implementation reference, not evidence of provider parity. Real model acceptance
 must be separately arranged by the parent task with approved credentials.
 
-Local validation on 2026-10-13: `npm run check` passed (539 tests, lint,
+## Historical validation
+
+These results and native executable commands describe earlier revisions. The
+removed Research-only test module is omitted from the updated command below;
+recorded totals remain unchanged as history. Rerun current selectors for core-only
+acceptance.
+
+Historical validation on 2026-10-13 (not core-only acceptance): `npm run check` passed (539 tests, lint,
 TypeScript and production build); `npm audit` reported zero vulnerabilities.
-Repository Ruff and Pyright passed. The selected Python suites passed 140 tests:
+Repository Ruff and Pyright passed. The then-selected Python suites passed 140 tests.
+Current import paths are shown below; historical counts are not new-head results:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:apps/research:deployment:platform/tests:apps/research/tests/python .venv/bin/python -m unittest -v \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:deployment:platform/tests .venv/bin/python -m unittest -v \
   test_model_command_recovery test_model_endpoint_policy test_model_protocol \
   test_model_protocol_execution test_byok_model test_owner_runtime_broker \
-  test_trusted_model_proxy test_go_legacy_boundary test_billing_mode \
+  test_trusted_model_proxy test_billing_mode \
   test_go_development_profile test_go_luna_output_revision test_execution_bindings
 ```
 
@@ -201,7 +209,7 @@ to that disposable service:
 ```sh
 AGNO_TELEMETRY=false .venv/bin/python scripts/check_owner_byok_postgres.py
 AGNO_TELEMETRY=false .venv/bin/python scripts/check_boundaries_postgres.py
-AGNO_TELEMETRY=false PYTHONPATH=platform:apps/research:deployment:platform/tests:apps/research/tests/python .venv/bin/python -m unittest -v \
+AGNO_TELEMETRY=false PYTHONPATH=platform:deployment:platform/tests .venv/bin/python -m unittest -v \
   test_model_command_recovery_postgres
 ```
 
@@ -214,8 +222,7 @@ The standalone `61859f2` [CI run](https://github.com/Guanzhw/agent-factory/actio
 then stopped before PostgreSQL test execution because the old owner runner still
 required exactly 109 cases after three broker regressions were added. This was
 a collection-gate failure, not a passing run or evidence of a database defect.
-The integrated runner is `scripts/check_postgres.py`: it discovers both source
-trees once and requires the selected semantic cases to succeed without skips;
+The integrated runner is `scripts/check_postgres.py`: it discovers the platform test tree once and requires the selected semantic cases to succeed without skips;
 it has no fixed historical case count.
 For the initial head `19ca4d532c926c1db59f8efccd21e955bc7b1581`, the
 [PR PostgreSQL job](https://github.com/Guanzhw/agent-factory/actions/runs/38383491119/job/115249437827)

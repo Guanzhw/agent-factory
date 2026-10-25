@@ -1,105 +1,9 @@
-# Personal research: owner BYOK and disabled Factory billing
+# Owner BYOK and disabled Factory billing
 
-Backend contract for the two-step journey: save an owner model/default, then
-submit a research goal. The backend uses Agno 3.1.0's native Model, tool loop,
-durable AgentOS queue, immutable plans, and existing owner authorization.
-OpenCode/OpenResearch remote runtimes remain optional, separate integrations.
-
-**Product scope:** `/personal-research` is an optional generic native Agno
-template submission service, not the native ORX application. Its bundled
-installer is a synthetic literature demo with no internet retrieval or research
-experiment. Do not use this endpoint as the default AutoResearch/OpenResearch
-product entrypoint or fall back to it when an ORX connection is unavailable.
-The existing `/personal-agent/project-commands` and `/personal-agent/commands`
-paths retain native ORX project/session execution. This BYOK model registration
-does not configure or transfer a key to an ORX remote harness. Actual owner BYOK
-integration into that harness/workload and real research tools are not delivered
-by this template; native remote compatibility remains unverified.
-
-## Ordinary native ORX owner submission
-
-Use the existing ORX connection/project/session path for the product journey.
-After one-time resource setup, daily use is two steps: select the existing
-project/session, then enter a goal and Submit. No owner needs to operate
-prepare/request-review/admin-decision/start as separate screens.
-
-`GET /api/factory/personal-agent/capabilities` includes
-`ownerSubmit:"/api/factory/personal-agent/commands/submit"`,
-`modelConfiguration:"remote-configured-model"`, and `factoryBYOKForwarded:false`.
-This connection uses the model/account already configured on its remote ORX
-harness. The Factory BYOK/default saved below is a separate native Agno binding;
-it is not transferred to the remote harness. Model charges may occur on the
-remote owner's account; Factory hard external money limits are not enforced.
-
-`POST /api/factory/personal-agent/commands/submit` (202) transparently performs
-the existing prepare and start for **one** explicitly submitted business action.
-It takes the unchanged prepare schema:
-
-```json
-{"requestId":"owner-orx-prompt-001","action":"prompt","sessionId":"personal-session-ref","text":"Investigate this goal on the original ORX project"}
-```
-
-`action:"create"` instead takes `{requestId,action,connectionRef,nativeProjectId,title?}`;
-`action:"interrupt"` takes `{requestId,action,sessionId}`. This endpoint does not
-chain create with prompt, choose a different harness/model, or invent a project.
-The response is the existing job shape (`id`, `planId`, status, etc.).
-Read `GET /personal-agent/commands/requests/{requestId}` for the persisted
-`{requestId,plan,authorization,job,receipt,nativeRunId}` and existing `/jobs/{id}`
-for progress/results. An acknowledged command is not a verified scientific result
-or remote process stop; the existing native transcript carries observed results.
-
-For an existing native session, the UI can transparently call the existing
-read-only `/sessions/attach` while selecting it, then submit the goal once with
-`action:"prompt"`. If an existing project needs a new session, one explicitly
-labelled "Create session and submit goal" user action may transparently combine
-two ordinary owner commands: submit `action:"create"` with a stable
-`<journeyId>:create` requestId, recover its acknowledged receipt/native session
-identity, then submit `action:"prompt"` with `<journeyId>:prompt` and the returned
-Factory sessionId. Each ID must fit the existing 100-character limit. Stop at an
-UNKNOWN/missing creation acknowledgment; do not invent an ID or recreate the
-session. Recover the prompt request first if its response was lost. The two
-commands retain distinct plans/tasks/effects and do not form an atomic workflow;
-a crash between them can leave the acknowledged session without a prompt. This
-combination uses the owner's native permissions and does not call admin decisions.
-
-Project creation remains a two-step exact owner-consent journey:
-`POST /personal-agent/project-commands/prepare` with the existing
-`{requestId,connectionRef,project}` returns its immutable preview/disclosure.
-After the user sees those writes and possible remote-model charges, a single
-explicit confirmation invokes
-`POST /personal-agent/project-commands/{requestId}/submit` (202) with
-`{previewHash,approved:true}`. The server records that owner's exact consent and
-starts the original plan. A wrong hash/owner, cancelled consent, expired binding,
-or revoked authority denies dispatch. `approved:false` is not a submit; use the
-existing decision endpoint to decline. Existing decision/start APIs remain
-compatible and can also be transparently combined after the same owner action.
-Connecting the created project retains its existing `/connect` contract and
-explicit remote harness/model selection.
-
-The approval shortcut covers owner-created `remote-*` registrations only.
-Operator/shared registrations stay under their existing plan review/policy;
-the server does not assign an administrator role or submit administrator
-decisions on behalf of the user. Shared publication follows the configured
-material/application policy: members publish their declarations directly in
-default `member-self-service` mode; independent review applies only to an
-explicitly selected historical review policy. Identity, connection revision, organization scope limits, exact
-plan/effect hashes, request fingerprints, capacity and cancellation guards remain.
-
-The facade is **not one transaction covering remote side effects**. Plan admission,
-owner consent/submission, task reservation and the native effect each keep their
-existing durable boundary. A crash after preparation can leave a plan with no
-task; GET exposes it without dispatch, and retrying the exact submit can continue
-the original admission. The same requestId with changed inputs conflicts. After
-a task/effect crosses native or remote submission, a replay uses the original
-task/custody and never blind-resends an UNKNOWN remote operation. A lost response
-should first be recovered with GET; a revoked/expired original pin still denies
-a new execution attempt. Concurrent double-clicks use the existing admission
-locks and effects. No extra queue, remote retry or replacement model is added.
-The owner-submission row itself is serialized per plan with a PostgreSQL
-transaction advisory lock before its existence check/insert. Independent API
-workers cannot race that approval before task admission. The required boundary
-suite holds the first approval read while a second independent app/worker waits
-in PostgreSQL, then verifies both return the original task and one remote effect.
+Save an owner model, then explicitly select its connection in a published application.
+Core uses native Agno execution, immutable bindings and current owner authorization.
+The default application catalog is empty. The former Research/ORX application and
+its `/personal-research` and `/personal-agent` routes are not installed.
 
 ## Setup and capabilities
 
@@ -129,51 +33,16 @@ Factory hard external money limit**.
 }
 ```
 
-`enabled:false` means a trusted vault with the `byok-chat-v1` destination policy
-has not been installed. There is no default vault encryption key, environment
-model API key, or platform-key fallback. Operators reuse
-`Settings.credential_vault_factory`, supplying the existing vault's encryption
-key through trusted deployment configuration and including `byok-chat-v1` in its
-provider destination policies. The standard `origin` policy accepts normalized
-HTTPS origins; the adapter additionally resolves and pins only public addresses
-for every inference request. No configuration request probes a provider.
-
-The ordinary `agent-factory` / `python -m agent_factory_server` entrypoint uses
-`ResearchSettings.from_env()`: it registers the model API and adapter, but does
-not install a vault or load a settings-factory module. A trusted Python deployment
-passes `ResearchSettings(..., credential_vault_factory=...)` to
-`agent_factory_server.main.create_app`. The vault factory receives the SQL engine and
-may return `agent_factory.credential_vault.EncryptedCredentialVault` with an
-operator-supplied 32-byte master key and
-`{"byok-chat-v1": agent_factory.personal_remote_provider.origin}` destination
-policy. Keep the deployment's existing identity settings. Reading model settings
-requires the owner's `read` capability; saving credentials/models and choosing
-the default require `run`. No published application or model material is needed
-just to enable this settings page.
-
-`GET /api/factory/personal-research/capabilities` reports
-`applicationAvailable`, `applicationId:"personal-research-v1"`, `nativeQueue:true`,
-and the model setup path. Installing executable adapters is trusted deployment
-configuration. Publishing template declarations follows the active governance
-policy: `personal_research.publish_application(state, author=...)` lets an
-authenticated member with `run` publish in default `member-self-service` mode.
-Only an explicitly selected historical review policy needs a distinct authorized
-`reviewer`. Its minimal bundled literature tools are **synthetic fixtures**, as
-their evidence states.
-It requires the approved research skill/prompt/literature/question/environment
-materials; it does not install arbitrary code or silently publish materials.
-Production deployments can publish their approved read-only research materials
-with the `owner-chat-completions-v1@1` model adapter and a declared owner model
-connection. Live provider and real scientific research compatibility remain
-unverified.
-The bundled demo installer explicitly refuses production (`demo=False`) with
-`PERSONAL_RESEARCH_DEMO_TEMPLATE_ONLY`. It is never run automatically at startup.
-If a production database retains that synthetic template, capabilities report
-`supported:false`, `templateKind:"synthetic-demo"`, and
-`unsupportedReason:"PERSONAL_RESEARCH_REAL_TOOLS_REQUIRED"`; submit returns that
-409 code before a model/provider call. `applicationAvailable` alone indicates
-publication metadata, not actual research support. No synthetic template is
-silently selected as an ORX fallback.
+`enabled:false` means the configured vault does not support this provider.
+Normal core `Settings.from_env()` startup installs a local encrypted vault with
+its persistent key at `FACTORY_WORKSPACE/runtime/credential-vault.key`; back up
+that key together with its database. Trusted deployments can override
+`Settings.credential_vault_factory`. No model API key or platform-key fallback
+is inferred from the environment. The `byok-chat-v1` destination policy binds
+credentials to normalized HTTPS origins; provider configuration performs no call.
+Model settings do not require publishing an application. Execution does: publish
+materials using `owner-chat-completions-v1@1` and declare the model connection
+requirement, then supply that exact connection reference at start.
 
 For a generic task in the current UI, open **Developer assembly**, select a
 published application whose model material binds `owner-chat-completions-v1@1`,
@@ -181,11 +50,8 @@ and select the saved owner's model connection for that application's declared
 model requirement. Generate the proposal, confirm the plan, then start the task.
 All selected materials must be published; executable bindings must resolve to
 installed adapters.
-The composer sends explicit `connectionRefs`; setting a default does not replace
-an arbitrary application's model. The optional `/personal-research` API below
-selects the default only for its supported published template. Native ORX instead
-requires its own existing project/service binding or an explicitly installed
-[platform runtime package](platform-openresearch-environments.md).
+The composer sends explicit `connectionRefs`; choosing a default does not replace
+an application's model or automatically select a connection for generic starts.
 
 ## Step 1: save a model and choose the default
 
@@ -259,53 +125,34 @@ that model/its retained handles and clears its default. The existing vault
 calls the provider. Reads and cleanup remain owner scoped. Another owner's refs
 are never valid authority.
 
-## Step 2: submit the research goal
+## Step 2: start the published application
 
-`POST /api/factory/personal-research` (202):
-
-```json
-{"topic":"My bounded research question", "requestId":"owner-research-submit-001"}
-```
-
-The backend pins the current default owner connection into the approved
-`personal-research-v1/literature` template, persists the exact plan and owner
-submission, and uses existing Factory instance admission and Agno's native
-queue. The response is the existing instance/job shape plus `planId` and:
+`POST /api/factory/application-interface/v1/starts` (202) accepts the published
+application's actual mode and its declared connection name, for example:
 
 ```json
-{"billing":{"payer":"owner-provider-account", "platformBillingEnabled":false, "hardExternalBudgetEnforced":false}}
+{
+  "requestId": "owner-application-start-001",
+  "application": "your-published-application",
+  "mode": "execute",
+  "goal": "Run the declared operation",
+  "connectionRefs": {"ownerModel": "saved-owner-connection-reference"}
+}
 ```
 
-No default returns HTTP 409 with `code:"PERSONAL_MODEL_SETUP_REQUIRED"` and the
-settings path in the message. A stale/revoked model denies admission; a missing
-approved application is a distinct setup failure. There are no required money
-budgets, usage price registrations, fee reviews, or ledger configuration for
-ordinary tasks. Computational capacity/tool/time/data limits remain enforced.
+The identifiers above are placeholders, not an installed application. Core pins
+the declared materials and selected connection, persists the original plan/task,
+and submits through Agno's native queue. The response contains `interfaceVersion`,
+`requestId`, `planId` and `job`. Missing or unavailable required connections block
+admission; an unpublished application returns 404. BYOK does not require a host
+price or fee review. Current permissions, revocation and task bounds still apply.
 
-Repeating the same requestId retains the original immutable plan/model pin and
-original native task. Changed request intent fails. It never selects a different
-default to recover the original request.
-`GET /personal-research/requests/{requestId}` returns owner-scoped
-`{requestId,taskId,planId,nativeRunId,admission}`; it performs no submission.
-Existing `/jobs/{taskId}` provides progress, native requirements and results.
-Unknown acknowledgements use original custody/recovery, not a new task/model key.
-
-The existing `/instances` and personal `/commands/start` similarly treat the
-normal authenticated owner submit as the approval for eligible personal actions.
-Preparation/status reports `ownerSubmissionSupported:true`, `reviewRequired:false`,
-and `reviewRequestSupported:false` for these scopes, so the UI can show a direct
-Start action. `executionAllowed` becomes true after the exact owner submission;
-project side effects still require the existing exact owner consent.
-Owner submissions bind the exact plan digest; current identity/material/resource
-permissions, cancellation, revocation, task depth/capacity and native tool guards
-still run. Administrators retain shared/public resource withdrawal and deletion;
-executable/provider installation remains trusted deployment configuration.
-Members can publish their declarations under the default governance policy.
-Read-only BYOK research and existing owner personal commands qualify; arbitrary
-code/writes/shared connections/remote Factory placement do not gain approval.
-ORX project creation retains its existing immutable preview/owner consent and
-never enables remote clone/model execution merely from configuration. Its UI can
-submit the existing exact consent as part of the user's normal business action.
+An identical request retains its original plan/task; changed intent returns 409.
+`GET /api/factory/application-interface/v1/starts/{requestId}` reads its owner-scoped
+`planId`, `taskId`, `runId`, `state` and handoff without dispatch; `createsExecution`
+and `automaticReplay` are false. Use `/api/factory/jobs/{taskId}` for results.
+Recover an UNKNOWN acknowledgement through the original receipt, without changing
+the request, model or connection. See [Application Interface](APPLICATION_INTERFACE.md).
 
 ## Compatibility and verification
 
@@ -318,11 +165,10 @@ old plan bodies intact; no destructive migration runs. Historical accounting can
 be exercised by trusted, explicitly enabled compatibility fixtures. The separate
 `platform_paid_models_enabled` also defaults false and requires actual accounting
 when explicitly configured. Profiles whose actual model path requires managed
-accounting are denied while disabled, including managed ORX and AutoResearch's
-platform-paid profile; disabling the ledger is not a claim of a preserved hard
-budget. Owner BYOK stays outside that ledger even on an enabled legacy host.
+accounting are denied while disabled. Disabling the ledger is not a claim of a
+preserved hard budget. Owner BYOK stays outside that ledger even on an enabled legacy host.
 
-Required acceptance: `scripts/check_owner_byok_postgres.py` (15 cases, zero skips)
+Required acceptance: `scripts/check_owner_byok_postgres.py` (required selectors must succeed without skips)
 and existing `scripts/check_boundaries_postgres.py`. Supply only an independent,
 disposable loopback PG server through `FACTORY_TEST_DATABASE_URL`; fixtures create
 and remove their own unique databases. Tests use static synthetic secret fixtures
@@ -349,12 +195,9 @@ rejected. UI regressions cover account changes before saving, between custody
 and metadata, and a mismatch returned after preflight. These tests use no real
 keys or live provider requests.
 
-This PR completes the current foundation scope: disabled-by-default Factory
-billing, owner BYOK for native Agno tasks, owner-scoped resource submission, and
-existing native ORX project/session entrypoints. The next application phase can
-organize research goals, progress, readable results and user decisions around
-actual supplied research data. Structured scientific findings/stages, actual
-research tools and real remote/provider compatibility remain undelivered or
-unverified; synthetic replies are protocol evidence only.
+Current core-only acceptance must be rerun against the exact revision. Controlled
+native execution proves protocol and custody boundaries, not external provider
+compatibility, costs or a scientific application. Historical Research behavior is
+retained in Git history and the explicitly historical guides.
 
 统一凭据的添加、更换、撤销与显式重新绑定入口见 [个人凭据与连接](PERSONAL_CREDENTIALS.md)。

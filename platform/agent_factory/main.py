@@ -79,6 +79,8 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             diagnostics.at(stage)
     at('PREPARATION_APP_SETTINGS')
     settings = settings or Settings.from_env()
+    if settings.development_profile == 'opencode-go' and (type(queue_max_attempts) is not int or queue_max_attempts != 1):
+        raise ValueError('Go profile requires exactly one native queue attempt; provider retries retain original usage custody')
     settings.runtime_directory.mkdir(parents=True, exist_ok=True)
     at('PREPARATION_APP_NATIVE_DB')
     native_db = PostgresDb(db_url=settings.db_url, id="factory-native-postgres")
@@ -220,9 +222,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     if receiver:
         base.include_router(receiver.router)
     if settings.handoff_targets:
-        base.include_router(origin_authority_router(auth, handoff_client,
-            scientific_call=getattr(handoff_client, "consume_scientific_tool", None),
-            scientific_custody=getattr(handoff_client, "authorize_scientific_custody", None)))
+        base.include_router(origin_authority_router(auth, handoff_client))
     base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
     base.include_router(personal_tool_router(auth, store.personal_tools))

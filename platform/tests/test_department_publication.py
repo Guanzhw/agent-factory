@@ -13,9 +13,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_research.bootstrap_catalog import SEEDS
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import SEEDS
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin

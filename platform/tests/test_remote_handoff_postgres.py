@@ -26,8 +26,8 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_execution import RemoteExecution
 from agent_factory.remote_handoff import (
     HandoffCancellationRequested, HandoffTarget, PrepareBody, PreparedHandoffService, TrustedHandoffClient, TrustedOrigin, plan_manifest,
@@ -132,7 +132,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
     def headers(self, state, owner):
         return {"Authorization": "Bearer " + state["auth"]._issue_native_token(owner)}
 
-    def reserve(self, goal="sort", mode="literature", request=None, application="research"):
+    def reserve(self, goal="sort", mode="literature", request=None, application="fixture-text"):
         response = self.origin_client.post("/api/factory/plans", headers=self.headers(self.origin, "alice"),
                                            json={"topic": goal, "mode": mode, "application": application, "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
@@ -371,16 +371,12 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
 
     def test_06_current_origin_and_remote_revocation_block_native_and_direct_effects(self):
-        # Isolate the real tool-entry guard from autonomous native cancellation.
-        # An observer tick can correctly cancel the ticket before the runner
-        # records the tool denial. Test 17 separately requires observer cleanup
-        # and failure provenance, followed by restored-member scoped reads.
         self.call(self.origin["lifecycle_observer"].stop)
         self.call_remote(self.remote["lifecycle_observer"].stop)
         try:
             for scenario in ("origin", "receiver"):
                 with self.subTest(scenario=scenario):
-                    row = self.reserve("Controlled sorting experiment fixture", "experiment")
+                    row = self.reserve()
                     self.call(self.handoff.prepare, "alice", row["task_id"])
                     receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
                     self.wait_native(receipt, {"paused"})
@@ -389,33 +385,33 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                     requirements = native.get("requirements") or native.get("run", {}).get("requirements") or []
                     self.assertTrue(requirements)
                     for requirement in requirements:
-                        requirement["tool_execution"]["confirmed"] = True
+                        fields = requirement.get("user_input_schema") or requirement["tool_execution"].get("user_input_schema", [])
+                        for field in fields:
+                            field["value"] = "Controlled scope"
+                        requirement["user_input_schema"] = fields
+                        requirement["tool_execution"].update(user_input_schema=fields, answered=True)
                     artifacts = self.remote["store"].artifacts(task["id"])
                     effects = self.remote["store"].effects(task["id"])
                     original = self.remote["store"].authorize_tool
                     revoked = []
                     def revoke_at_boundary(ctx, name):
-                        if name == "run_experiment" and not revoked:
+                        if name == "ask_scope" and not revoked:
                             revoked.append(scenario)
                             state, owner = (self.origin, "alice") if scenario == "origin" else (self.remote, "bob")
                             state["auth"].directory.set_disabled(owner, True)
                         return original(ctx, name)
                     try:
-                        with mock.patch("agent_factory_research.tools.subprocess.Popen", side_effect=AssertionError("Denied remote experiment attempted compute")) as spawn:
-                            with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
-                                self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
-                                self.wait_native(receipt, {"completed", "failed"})
-                            self.assertEqual(revoked, [scenario])
-                            registered = next(tool for tool in self.registry.tools if tool.name == "run_experiment")
-                            ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
-                            async def entrypoint():
-                                return await registered.entrypoint(run_context=ctx, experiment="bounded-sort-v1")
-                            with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
-                                self.call_remote(entrypoint)
-                            spawn.assert_not_called()
-                            self.assertEqual(self.remote["store"].effects(task["id"]), effects)
-                            self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
-                            self.assertFalse(any(event["type"] == "compute_started" for event in self.remote["store"].events(task["id"])))
+                        with mock.patch.object(self.remote["store"], "authorize_tool", side_effect=revoke_at_boundary):
+                            self.call_remote(self.remote["bridge"].continue_run, task["run_id"], task["id"], "bob", requirements)
+                            self.wait_native(receipt, {"completed", "failed"})
+                        self.assertEqual(revoked, [scenario])
+                        from core_native_fixture import build_tools
+                        ctx = RunContext(run_id=task["run_id"], session_id=task["id"], user_id="bob", session_state={})
+                        with self.assertRaises((HTTPException, PermissionError, RuntimeError, RunCancelledException)):
+                            build_tools(self.remote_settings, self.remote["store"])["checksum"]("forbidden", ctx)
+                        self.assertEqual(self.remote["store"].effects(task["id"]), effects)
+                        self.assertEqual(self.remote["store"].artifacts(task["id"]), artifacts)
+                        self.assertFalse(any(event["type"] == "checksum_completed" for event in self.remote["store"].events(task["id"])))
                     finally:
                         self.origin["auth"].directory.set_disabled("alice", False)
                         self.remote["auth"].directory.set_disabled("bob", False)
@@ -470,7 +466,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                 # stop() drained observer work, so this first boundary checks
                 # direct current-authority denial before any cleanup is written.
                 with self.assertRaises(HTTPException) as denied:
-                    store.authorize_tool(ctx, "literature_search")
+                    store.authorize_tool(ctx, "checksum")
                 self.assertIn(denied.exception.status_code, {403, 409})
             finally:
                 self.origin["auth"].directory.set_disabled("alice", False)
@@ -504,7 +500,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             with mock.patch.object(store.plan_policy, "require_execution", side_effect=policy_passed), \
                  mock.patch.object(bindings, "recheck", side_effect=cancel_before_recheck):
                 with self.assertRaises(RunCancelledException):
-                    store.authorize_tool(ctx, "literature_search")
+                    store.authorize_tool(ctx, "checksum")
             self.assertEqual(phases, ["policy-passed", "cancel-committed"])
             current = store.task(task["id"], "bob")
             self.assertEqual(current["run_id"], task["run_id"])
@@ -534,7 +530,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
 
     def test_10_positive_native_checksum_provenance_and_origin_capacity_release(self):
         sample = "Controlled remote checksum acceptance fixture"
-        row = self.reserve(sample, application="checksum")
+        row = self.reserve(sample, application="fixture-checksum")
         self.call(self.handoff.prepare, "alice", row["task_id"])
         receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
         self.wait_native(receipt, {"completed"})
@@ -665,68 +661,6 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         self.assertEqual(self.ticket_count(self.origin), 0)
         self.assertTrue(self.call(self.handoff.receipt, "alice", row["task_id"])["allStopped"])
 
-    def test_14_cancel_after_established_member_failure_preserves_failure_and_reconciles(self):
-        row = self.reserve("Controlled remote experimental sorting fixture", "experiment")
-        self.call(self.handoff.prepare, "alice", row["task_id"])
-        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
-        self.wait_native(receipt, {"paused"})
-        child = self.call(self.handoff.delegate, "alice", row["task_id"], "sort", "literature", str(uuid4()))
-        self.wait_native({"remoteTaskId": child["childTask"]["id"]}, {"paused"})
-        detail = self.call(self.handoff.detail, "alice", row["task_id"])
-        approval = detail["job"]["approvalDetail"]
-        self.call(self.handoff.approve, "alice", row["task_id"], {"requirementId": approval["id"], "version": approval["version"], "approved": True})
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if any(event["type"] == "compute_started" for event in self.remote["store"].events(receipt["remoteTaskId"])):
-                break
-            time.sleep(.02)
-        else:
-            self.fail("Actual receiver experiment did not start")
-        self.origin["auth"].directory.set_disabled("alice", True)
-        self.remote["auth"].directory.set_disabled("bob", True)
-        # Establish actual persisted authority failure before user cancellation.
-        # Both native compute and the trusted observer notice disabled members;
-        # cancellation must preserve that genuine earlier failure provenance.
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if (self.remote["store"].has_failures(receipt["remoteTaskId"]) and
-                    self.remote["store"].failure_cleanup_requested(receipt["remoteTaskId"])):
-                break
-            time.sleep(.02)
-        self.assertTrue(self.remote["store"].has_failures(receipt["remoteTaskId"]))
-        self.assertTrue(self.remote["store"].failure_cleanup_requested(receipt["remoteTaskId"]))
-        self.assertTrue(any(event["type"] == "protected_denied"
-                            for event in self.remote["store"].events(receipt["remoteTaskId"])))
-        self.origin["auth"].directory.set_disabled("alice", False)
-        self.remote["auth"].directory.set_disabled("bob", False)
-        result = self.call(self.handoff.cancel, "alice", row["task_id"])
-        self.assertTrue(self.origin["store"].task(row["task_id"])["cancel_requested"])
-        # The autonomous observer may already have issued the child's native
-        # cancel. Current durable intent and positive whole-tree stop are the
-        # contract; this request's newly-signaled subset depends on timing.
-        for identifier in (receipt["remoteTaskId"], child["childTask"]["id"]):
-            self.assertTrue(self.remote["store"].task(identifier, "bob")["cancel_requested"])
-        self.assertEqual(result["errors"], [])
-        deadline = time.monotonic() + 15
-        observed = {}
-        while time.monotonic() < deadline:
-            observed = self.call(self.handoff.reconcile, "alice", row["task_id"])
-            if observed["allStopped"] and all(self.remote["store"].task(identifier, "bob")["terminal"]
-                    for identifier in (receipt["remoteTaskId"], child["childTask"]["id"])):
-                break
-            time.sleep(.03)
-        self.assertTrue(observed["allStopped"], observed)
-        self.assertEqual(observed["applicationStatus"], "failed")
-        for identifier in (receipt["remoteTaskId"], child["childTask"]["id"]):
-            task = self.remote["store"].task(identifier, "bob")
-            self.assertTrue(task["cancel_requested"])
-            self.assertTrue(task["terminal"])
-            self.assertEqual(self.remote["store"].native_db.get_job(task["run_id"], strict=True)["status"], "cancelled")
-        effects = self.remote["store"].effects(receipt["remoteTaskId"])
-        self.assertEqual([effect["status"] for effect in effects], ["CANCELLED"])
-        self.assertTrue(any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete") for event in self.remote["store"].events(receipt["remoteTaskId"])))
-        self.assertFalse(any(event["type"] == "experiment_completed" for event in self.remote["store"].events(receipt["remoteTaskId"])))
-        self.assertTrue(self.origin["store"].task(row["task_id"])["terminal"])
 
     def test_15_cancel_before_dispatch_has_positive_no_execution_proof(self):
         row = self.reserve()
@@ -1152,7 +1086,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         from collections import Counter
         import re
         from sqlalchemy import event
-        row = self.reserve("Read-only remote checksum", application="checksum")
+        row = self.reserve("Read-only remote checksum", application="fixture-checksum")
         self.call(self.handoff.prepare, "alice", row["task_id"])
         receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
         self.wait_native(receipt, {"completed"})
@@ -1218,7 +1152,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_remote_observer_settles_without_receipt_or_detail_reads(self):
-        row = self.reserve("Observer remote checksum", application="checksum")
+        row = self.reserve("Observer remote checksum", application="fixture-checksum")
         self.call(self.handoff.prepare, "alice", row["task_id"])
         receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
         self.wait_native(receipt, {"completed"})

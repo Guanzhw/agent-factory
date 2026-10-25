@@ -26,11 +26,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, create_engine, select
 
 from agent_factory.auth import AuthService
-from agent_factory_research.bootstrap_catalog import SEEDS
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_research.demo_model import DemoModel
-from agent_factory_research.synthetic_runtime import default_bindings
-from agent_factory_server.main import create_app
+from core_native_fixture import SEEDS
+from agent_factory.config import Settings
+from core_native_fixture import FixtureModel as DemoModel
+from core_native_fixture import fixture_bindings as default_bindings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance, material_governance_router
 from agent_factory.store import digest, now
 from pg_fixture import IsolatedPostgres
@@ -195,9 +195,9 @@ class MaterialGovernanceTests(unittest.TestCase):
 
     def test_registered_tool_binding_and_reserved_identity_cannot_expand(self):
         for value in [definition(kind="tool", content="arbitrary_shell", permissions=["checksum:read"]),
-                      definition(kind="tool", content="checksum", permissions=["experiment:synthetic"]),
-                      definition(id="checksum-tool", kind="tool", content="run_experiment", permissions=["experiment:synthetic"]),
-                      definition(id="checksum-tool", kind="knowledge")]:
+                      definition(kind="tool", content="checksum", permissions=["fixture:operate"]),
+                      definition(id="fixture-checksum-tool", kind="tool", content="fixture_operation", permissions=["fixture:operate"]),
+                      definition(id="fixture-checksum-tool", kind="knowledge")]:
             with self.assertRaises(HTTPException):
                 self.service.create_draft("manager", value, str(uuid4()))
 
@@ -342,19 +342,19 @@ class MaterialGovernanceTests(unittest.TestCase):
     def test_bootstrap_requires_original_seed_receipt_and_does_not_restore_withdrawn(self):
         self.store.seed()
         with self.store.engine.begin() as conn:
-            conn.execute(self.store.audit.delete().where(self.store.audit.c.target_id == "checksum-tool"))
+            conn.execute(self.store.audit.delete().where(self.store.audit.c.target_id == "fixture-checksum-tool"))
         with self.assertRaises(HTTPException):
             self.service.adopt_demo_bootstrap()
         with self.store.engine.connect() as conn:
             self.assertEqual(list(conn.execute(select(self.service.versions))), [])
-            checksum = dict(conn.execute(select(self.store.materials).where(self.store.materials.c.id == "checksum-tool")).mappings().one())["body"]
+            checksum = dict(conn.execute(select(self.store.materials).where(self.store.materials.c.id == "fixture-checksum-tool")).mappings().one())["body"]
         with self.store.engine.begin() as conn:
-            conn.execute(self.store.audit.insert().values(actor_id="demo-bootstrap", action="material.seed", target_id="checksum-tool",
+            conn.execute(self.store.audit.insert().values(actor_id="demo-bootstrap", action="material.seed", target_id="fixture-checksum-tool",
                 body={"version": 1, "sha256": checksum["sha256"]}, created_at=now()))
-        self.assertEqual(len(self.service.adopt_demo_bootstrap()["adopted"]), 9)
+        self.assertEqual(len(self.service.adopt_demo_bootstrap()["adopted"]), len(SEEDS))
         with self.store.engine.begin() as conn:
-            conn.execute(self.service.versions.update().where(self.service.versions.c.material_id == "checksum-tool").values(author_id="manager"))
-        self.service.withdraw("manager", "checksum-tool", 1, "seed-withdraw")
+            conn.execute(self.service.versions.update().where(self.service.versions.c.material_id == "fixture-checksum-tool").values(author_id="manager"))
+        self.service.withdraw("manager", "fixture-checksum-tool", 1, "seed-withdraw")
         self.assertEqual(MaterialGovernance(self.store, self.auth, GovernanceConfig(review_mode="member-self-service", revision="material-governance-v1"), seed_materials=SEEDS).adopt_demo_bootstrap()["adopted"], [])
         with self.assertRaises(HTTPException):
             self.service.require_materials_current({"materialRefs": [ref(checksum)]})
@@ -433,7 +433,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         response = self.client.post("/api/factory/demo/login", json={"persona": owner})
         self.assertEqual(response.status_code, 200, response.text)
 
-    def plan(self, *, mode="literature", application="research"):
+    def plan(self, *, mode="literature", application="fixture-text"):
         response = self.client.post("/api/factory/plans", json={"topic": "Controlled material evidence comparison", "mode": mode,
                                     "application": application, "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
@@ -457,7 +457,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         self.fail(str(detail))
 
     def test_actual_checksum_evidence_survives_withdrawal_and_new_admission_denied(self):
-        plan = self.plan(application="checksum")
+        plan = self.plan(application="fixture-checksum")
         job = self.submit(plan)
         detail = self.wait(job["id"], {"completed", "failed"})
         self.assertEqual(detail["job"]["status"], "completed", detail)
@@ -466,7 +466,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         before = self.client.get(path).content
         self.assertEqual(hashlib.sha256(before).hexdigest(), artifact["sha256"])
         stored_plan = self.store.plan(plan["id"], "alice")
-        self.service.withdraw("manager", "checksum-tool", 1, "withdraw-completed-tool", "Owned fixture withdrawal")
+        self.service.withdraw("manager", "fixture-checksum-tool", 1, "withdraw-completed-tool", "Owned fixture withdrawal")
         rejected = self.client.post("/api/factory/instances", json={"planId": plan["id"], "requestId": str(uuid4())})
         self.assertEqual(rejected.status_code, 409, rejected.text)
         self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_tasks")[0]["n"], 1)
@@ -479,7 +479,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         job = self.submit(plan)
         baseline = self.wait(job["id"], {"waiting_approval", "failed"})
         self.assertEqual(baseline["job"]["status"], "waiting_approval", baseline)
-        self.service.withdraw("manager", "experiment-tool", 1, "withdraw-paused-experiment")
+        self.service.withdraw("manager", "fixture-operation-tool", 1, "withdraw-paused-experiment")
         approval = baseline["job"]["approvalDetail"]
         with patch("subprocess.Popen") as no_compute:
             result = self.client.post("/api/factory/jobs/" + job["id"] + "/approve", json={"requirementId": approval["id"], "version": approval["version"], "approved": True})
@@ -491,7 +491,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
             self.assertEqual(no_compute.call_count, 0)
         self.assertEqual(stopped["artifacts"], baseline["artifacts"])
         self.assertEqual(stopped["snapshot"]["effects"], baseline["snapshot"]["effects"])
-        evidence = {"artifact", "compute_started", "compute_stopped", "compute_cancelled", "experiment_completed"}
+        evidence = {"artifact", "operation_started", "operation_stopped", "operation_cancelled", "operation_completed"}
         self.assertEqual([event for event in stopped["events"] if event["type"] in evidence],
                          [event for event in baseline["events"] if event["type"] in evidence])
 
@@ -505,7 +505,7 @@ class MaterialGovernancePostgresTests(unittest.TestCase):
         app = applications.create_draft("alice", {**app_definition, "id": "historical-member-app"}, "old-app-draft")
         applications.publish("alice", app["id"], 1, "old-app-publish")
         legacy_config = {"review_mode": "separate-admin", "revision": "old-separate-review",
-                         "tool_contract": "legacy-v1", "source_synthesis_enabled": False}
+                         "tool_contract": "legacy-v1"}
         review = {"id": "old-material-review", "material_id": material["id"], "version": 1,
                   "author_id": "alice", "material_sha": material["sha256"],
                   "immutable_digest": self.service._immutable(material), "policy_revision": legacy_config["revision"],

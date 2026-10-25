@@ -235,3 +235,30 @@ it('selects a current member tool declaration and saves its exact adapter and sy
   expect(api.governanceDraft).toHaveBeenCalledWith(expect.objectContaining({ content: declaration.toolName, permissions: [declaration.permission],
     inputSchema: declaration.inputSchema, runtimeBinding: { adapterId: declaration.adapterId, revision: declaration.revision, config: { connectionName: 'toolConnection' } } }), expect.any(String));
 });
+
+it('keeps a tool draft empty in an empty catalog and rejects submission until an explicit tool is entered', async () => {
+  listedMaterials = [];
+  const save = vi.spyOn(api, 'governanceDraft').mockResolvedValue({ ...material, kind: 'tool', content: 'explicit_registered_tool', permissions: [] });
+  await mount('materials'); await click('新建材料');
+  const kind = host.querySelector<HTMLSelectElement>('.material-editor select')!;
+  await act(async () => { kind.value = 'tool'; kind.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(personalToolConnectionApi.descriptors).toHaveBeenCalledWith(member.id, expect.any(AbortSignal));
+  const tool = host.querySelector<HTMLInputElement>('input[list="material-registered-tools"]')!;
+  const capability = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('声明能力'))!.querySelector('textarea')!;
+  expect(tool.value).toBe(''); expect(capability.value).toBe('');
+  expect(host.querySelectorAll('#material-registered-tools option')).toHaveLength(0);
+  await act(async () => host.querySelector('.material-editor form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(save).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('请选择已接入工具或填写注册工具名称。');
+  const name = host.querySelector<HTMLInputElement>('.material-editor input')!;
+  for (const [field, value] of [[name, '显式工具'], [tool, 'explicit_registered_tool']] as const) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+  await act(async () => host.querySelector('.material-editor form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await settle(() => expect(save).toHaveBeenCalledOnce());
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ content: 'explicit_registered_tool', permissions: [] }), expect.any(String));
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});

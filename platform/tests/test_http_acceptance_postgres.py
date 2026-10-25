@@ -44,7 +44,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         # Windows normalizes environment iteration to uppercase; preserve SystemRoot explicitly.
         cls.env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'LANG', 'LC_ALL')
                    if name in os.environ}
-        cls.env.update(PYTHONPATH=os.pathsep.join([str(cls.root / part) for part in ('platform', 'apps/research', 'deployment')] + [sysconfig.get_path('purelib')]), PYTHONIOENCODING='utf-8',
+        cls.env.update(PYTHONPATH=os.pathsep.join([str(cls.root / part) for part in ('platform', 'platform/tests', 'deployment')] + [sysconfig.get_path('purelib')]), PYTHONIOENCODING='utf-8',
                        FACTORY_DATABASE_URL=cls.database.url, FACTORY_MODE='demo',
                        FACTORY_JWT_KEY=secrets.token_urlsafe(48), FACTORY_PORT=str(cls.port),
                        FACTORY_WORKSPACE=cls.directory.name, AGNO_TELEMETRY='false')
@@ -58,7 +58,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         # Windows venv launchers redirect to another PID. Own the real worker
         # and wait for its exit before releasing the log handle/workspace.
         interpreter = sys._base_executable if os.name == 'nt' else sys.executable
-        cls.process = subprocess.Popen([interpreter, '-m', 'agent_factory_server'], cwd=cls.root,
+        cls.process = subprocess.Popen([interpreter, '-c', 'import uvicorn; from agent_factory.config import Settings; from core_native_fixture import create_fixture_app; s=Settings.from_env(); uvicorn.run(create_fixture_app(s), host="127.0.0.1", port=s.port)'], cwd=cls.root,
             env=cls.env, stdout=cls.log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
             start_new_session=os.name != 'nt')
@@ -134,7 +134,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         with self.engine.connect() as connection:
             return [dict(row) for row in connection.execute(text(statement), params).mappings()]
 
-    def plan(self, topic='scope', application='research'):
+    def plan(self, topic='scope', application='fixture-text'):
         response = self.client.post('/api/factory/plans', json={
             'topic':topic, 'mode':'literature', 'application':application, 'requestId':str(uuid4())})
         response.raise_for_status()
@@ -230,7 +230,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.post('/agents/factory-executor/runs', data={'message':'bypass'}).status_code, 403)
 
     def test_05_actual_native_artifact_download_and_owner_hash(self):
-        job = self.admit(self.plan('Actual UTF-8 checksum evidence: 中文', 'checksum'), str(uuid4()))
+        job = self.admit(self.plan('Actual UTF-8 checksum evidence: 中文', 'fixture-checksum'), str(uuid4()))
         detail = self.wait_status(job['id'], 'completed')
         self.assertEqual(len(detail['artifacts']), 1)
         artifact = detail['artifacts'][0]

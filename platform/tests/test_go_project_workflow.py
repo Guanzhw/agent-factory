@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from agent_factory_server.main import native_queue_attempts
+
 _RUNNER = Path(__file__).resolve().parents[2] / "scripts" / "run_go_project_workflow.py"
 spec = importlib.util.spec_from_file_location("go_project_workflow", _RUNNER)
 assert spec is not None and spec.loader is not None
@@ -17,6 +19,13 @@ spec.loader.exec_module(runner)
 
 
 class GoProjectWorkflowTests(unittest.TestCase):
+    def test_deployment_queue_policy_bounds_default_go_profile(self):
+        for profile, live, attempts in [('disabled', False, 2), ('opencode-go', False, 1),
+                                        ('opencode-go', True, 1), ('disabled', True, 1)]:
+            with self.subTest(profile=profile, live=live):
+                settings = SimpleNamespace(development_profile=profile, development_live_validation=live)
+                self.assertEqual(native_queue_attempts(settings), attempts)
+
     def proof(self, **changes):
         ticket = dict(model="deepseek-flash", actual_model="deepseek-flash", purpose="smoke",
                       state="SETTLED", error_code=None, ordinal=4)
@@ -29,7 +38,7 @@ class GoProjectWorkflowTests(unittest.TestCase):
 
     def test_member_settings_reach_local_app_boundary_without_provider_access(self):
         with tempfile.TemporaryDirectory() as directory, \
-             patch.object(runner, 'create_app', side_effect=RuntimeError('local-boundary')) as app, \
+             patch.object(runner, 'create_fixture_app', side_effect=RuntimeError('local-boundary')) as app, \
              patch.object(runner, 'credential', side_effect=AssertionError) as credential:
             with self.assertRaisesRegex(RuntimeError, 'local-boundary'):
                 runner.execute_product(None, self.args(directory))
@@ -37,6 +46,10 @@ class GoProjectWorkflowTests(unittest.TestCase):
         settings = app.call_args.args[0]
         self.assertEqual(settings.temporary_policy, 'member-self-service')
         self.assertEqual(settings.max_tool_calls, 1)
+        self.assertTrue(settings.fee_management_enabled)
+        self.assertEqual(settings.runtime_tool_contract, 'legacy-v1')
+        self.assertTrue(settings.runtime_adapters)
+        self.assertEqual(app.call_args.kwargs['queue_max_attempts'], 1)
         self.assertEqual(settings.usage_policy.task_token_limit, 500_000)
         credential.assert_not_called()
 

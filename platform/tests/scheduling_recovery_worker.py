@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 import time
 
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 
 
 def main():

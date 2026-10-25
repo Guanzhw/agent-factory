@@ -27,7 +27,7 @@ dependencies = [
 agent-factory = "agent_factory_server.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["platform/agent_factory", "apps/research/agent_factory_research", "deployment/agent_factory_server"]
+packages = ["platform/agent_factory", "deployment/agent_factory_server"]
 
 [dependency-groups]
 browser = [
@@ -44,9 +44,7 @@ select = ["E4", "E7", "E9", "F"]
 ignore = ["E402", "E701", "E702"]
 
 [tool.pyright]
-include = ["platform/agent_factory", "apps/research/agent_factory_research", "deployment/agent_factory_server"]
-# Sealed standalone evaluator files are copied as a four-file experiment bundle.
-exclude = ["apps/research/agent_factory_research/orx_toy"]
+include = ["platform/agent_factory", "deployment/agent_factory_server"]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 venvPath = "."

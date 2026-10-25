@@ -11,7 +11,25 @@ from fastapi import HTTPException
 
 from agent_factory.process_runtime import ProcessRuntimeService
 from agent_factory.resources import PersistentResourceService
-from test_remote_scientific_evidence import lease as scientific_lease
+from test_remote_process_evidence import lease as process_lease
+from agent_factory.gpu_custody import GpuBinding, evidence_fingerprint
+
+
+def scientific_lease(*, released=False):
+    """Generic original process lease with explicit GPU custody evidence."""
+    value = process_lease()
+    value.update(targetFingerprint='5' * 64, gpuBinding=GpuBinding('6' * 64, '7' * 64).to_dict())
+    value['gpuEvidence'] = {'schema': 1, 'bindingFingerprint': evidence_fingerprint(value),
+        'state': 'HELD', 'releaseProof': None}
+    if released:
+        value.update(state='RECLAIMED', capacityHeld=False, executionStatus='COMPLETED', exitCode=0,
+            stopEvidence={'allStopped': True, 'kind': 'original-root-reaped-and-no-live-process-group-members'})
+        value['gpuEvidence'].update(state='RELEASED', releaseProof={
+            'kind': 'original-process-stopped-and-device-released',
+            'processBindingFingerprint': value['processBinding']['bindingFingerprint'],
+            'deviceObservationSha256': '9' * 64})
+    return value
+
 
 
 class ProcessRuntimeReadRaceTests(unittest.IsolatedAsyncioTestCase):

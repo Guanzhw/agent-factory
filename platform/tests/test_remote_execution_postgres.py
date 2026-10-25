@@ -1,15 +1,13 @@
 """Public product HTTP contracts with two actual apps and native PostgreSQL queues.
 
 Only provider output and inter-app transport are synthetic: authenticated routes,
-durable native admission, HITL, scoped delegation and fixed experiments are real.
+durable native admission, HITL, scoped delegation and checksum computations are real.
 Controlled ASGI does not establish deployed-host, TLS or production identity proof.
 """
-from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
 import tempfile
-import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -22,10 +20,9 @@ import httpx
 from sqlalchemy import MetaData, Table, func, inspect, select
 
 from pg_fixture import IsolatedPostgres
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.remote_handoff import HandoffTarget, TrustedOrigin
-from agent_factory_research import tools as factory_tools
 
 
 class ControlledDispatchLoss(httpx.AsyncBaseTransport):
@@ -50,6 +47,12 @@ class ControlledDispatchLoss(httpx.AsyncBaseTransport):
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires disposable loopback PostgreSQL")
 class RemoteExecutionProductPostgresTests(unittest.TestCase):
+    @staticmethod
+    def make_app(settings, *, source=None):
+        return create_app(settings)
+
+    trusted_origin_options = {}
+
     @classmethod
     def setUpClass(cls):
         cls.origin_db = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
@@ -60,15 +63,16 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.workspace.cleanup)
         cls.origin_settings = Settings(db_url=cls.origin_db.url, workspace=Path(cls.workspace.name) / "origin",
                                        max_workers=1, max_user_tasks=12, max_total_tasks=24)
-        cls.origin_app = create_app(cls.origin_settings)
+        cls.origin_app = cls.make_app(cls.origin_settings)
         cls.origin = cls.origin_app.app.state.factory
         cls.handoff = cls.origin["handoff_client"]
-        trusted = TrustedOrigin("origin-product-fixture", {"alice": "bob"}, cls.handoff.authority_callback)
+        trusted = TrustedOrigin("origin-product-fixture", {"alice": "bob"}, cls.handoff.authority_callback,
+                                **cls.trusted_origin_options)
         cls.receiver_settings = Settings(db_url=cls.receiver_db.url, workspace=Path(cls.workspace.name) / "receiver",
                                          max_workers=1, max_user_tasks=12, max_total_tasks=24,
                                          handoff_origins={trusted.reference: trusted})
         # Main creates and registers the receiver itself. No manually appended router.
-        cls.receiver_app = create_app(cls.receiver_settings)
+        cls.receiver_app = cls.make_app(cls.receiver_settings, source=cls.origin)
         cls.receiver = cls.receiver_app.app.state.factory
         for state in (cls.origin, cls.receiver):
             cls.addClassCleanup(state["store"].engine.dispose)
@@ -119,7 +123,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, expected, response.text)
         return response
 
-    def plan(self, goal="Controlled public checksum evidence", mode="literature", application="checksum"):
+    def plan(self, goal="Controlled public checksum evidence", mode="literature", application="fixture-checksum"):
         return self.request("POST", "/plans", expected=201,
                             json={"topic": goal, "mode": mode, "application": application, "requestId": str(uuid4())}).json()
 
@@ -158,35 +162,6 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                                                             old.identity_map, old.headers, transport,
                                                             configuration_revision=old.configuration_revision)
 
-    @contextmanager
-    def pause_owned_native_origin_authority_recheck(self, origin_id, remote_id):
-        """Pause only this actual compute thread after its first cancel read."""
-        reached, release = threading.Event(), threading.Event()
-        owned_thread = []
-        original_outcome = factory_tools._experiment_outcome
-        original_target = self.handoff._target
-
-        def capture_owned_thread(settings, store, context, plan, stop_signal, authority_check=None):
-            if context.session_id == remote_id:
-                owned_thread.append(threading.get_ident())
-            return original_outcome(settings, store, context, plan, stop_signal, authority_check)
-
-        def pause_second_target_read(owner, row, *, execution=True, native_cancellation=False, trusted_cleanup=False):
-            if (execution and native_cancellation and row["task_id"] == origin_id and
-                    threading.get_ident() in owned_thread and not reached.is_set()):
-                self.assertFalse(self.origin["store"].task(origin_id, owner)["cancel_requested"])
-                reached.set()
-                if not release.wait(10):
-                    raise AssertionError("Controlled native authority recheck was not released")
-            return original_target(owner, row, execution=execution, native_cancellation=native_cancellation,
-                                   trusted_cleanup=trusted_cleanup)
-
-        with mock.patch.object(factory_tools, "_experiment_outcome", side_effect=capture_owned_thread), \
-             mock.patch.object(self.handoff, "_target", side_effect=pause_second_target_read):
-            try:
-                yield reached
-            finally:
-                release.set()
 
     def cancel_with_observation_before_receiver_delivery(self, origin_id, remote_id, descendants=()):
         """Force the real origin-intent/receiver-delivery race on every host."""
@@ -280,7 +255,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                      json={"planId": plan["id"], "requestId": body["requestId"]})
 
     def test_03_native_question_stale_action_then_receiver_continuation(self):
-        job, _ = self.submit(self.plan("sort", application="research"))
+        job, _ = self.submit(self.plan("sort", application="fixture-text"))
         detail = self.wait(job["id"], {"waiting_input", "failed"})
         self.assertEqual(detail["job"]["status"], "waiting_input", detail)
         question = detail["job"]["questionDetail"]
@@ -297,7 +272,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(self.ticket_count(self.origin), 0)
 
     def test_04_child_proxy_tree_scope_duplicate_and_root_cascade(self):
-        root, _ = self.submit(self.plan("sort", application="research"))
+        root, _ = self.submit(self.plan("sort", application="fixture-text"))
         self.wait(root["id"], {"waiting_input"})
         body = {"goal": "sort", "mode": "literature", "requestId": str(uuid4())}
         path = f'/jobs/{root["id"]}/children'
@@ -385,7 +360,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual([fact["taskId"] for fact in children], [child_id])
         self.assertEqual(children[0]["link"]["parent_id"], root["id"])
         self.assertEqual(children[0]["link"]["child_id"], child_id)
-        foreign, _ = self.submit(self.plan("sort", application="research"))
+        foreign, _ = self.submit(self.plan("sort", application="fixture-text"))
         self.wait(foreign["id"], {"waiting_input"})
         foreign_remote_id = self.placement(foreign["id"])["body"]["receipt"]["remoteTaskId"]
         self.request("GET", f'/jobs/{root["id"]}~{foreign_remote_id}', expected=404)
@@ -406,7 +381,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
     def test_05_lost_receiver_reply_disabled_owner_recovery_keeps_original_dispatch(self):
         transport = ControlledDispatchLoss(self.receiver_app)
         self.install_transport(transport)
-        job, body = self.submit(self.plan("sort", application="research"))
+        job, body = self.submit(self.plan("sort", application="fixture-text"))
         self.wait(job["id"], {"waiting_input"})
         self.assertEqual(transport.attempts, 1)
         headers = self.headers()
@@ -435,7 +410,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
     def test_06_lost_request_before_delivery_retains_unknown_and_never_replays(self):
         transport = ControlledDispatchLoss(self.receiver_app, before_delivery=True)
         self.install_transport(transport)
-        job, body = self.submit(self.plan("sort", application="research"))
+        job, body = self.submit(self.plan("sort", application="fixture-text"))
         self.assertEqual(job["status"], "unknown", job)
         for _ in range(2):
             duplicate = self.request("POST", "/instances", expected=202, json=body).json()
@@ -468,51 +443,6 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         with mock.patch.object(self.receiver["store"], "artifact", side_effect=corrupt):
             self.request("GET", f'/jobs/{job["id"]}/artifacts/{artifact["id"]}', expected=409)
 
-    def test_08_native_remote_approval_running_experiment_and_complete_cleanup(self):
-        job, _ = self.submit(self.plan("Controlled remote synthetic sorting experiment", "experiment", "research"))
-        detail = self.wait(job["id"], {"waiting_approval", "failed"})
-        self.assertEqual(detail["job"]["status"], "waiting_approval", detail)
-        approval = detail["job"]["approvalDetail"]
-        body = {"requirementId": approval["id"], "version": approval["version"], "approved": True}
-        self.request("POST", f'/jobs/{job["id"]}/approve', expected=409, json={**body, "version": body["version"] + 1})
-        remote_id = self.placement(job["id"])["body"]["receipt"]["remoteTaskId"]
-        # Force cancellation after the trusted callback's initial false read,
-        # before its execution-target recheck, on the real compute thread.
-        # The receiver loop remains free to observe and issue native cleanup.
-        with self.pause_owned_native_origin_authority_recheck(job["id"], remote_id) as reached:
-            self.request("POST", f'/jobs/{job["id"]}/approve', json=body)
-            self.assertTrue(reached.wait(10), "Actual owned native authority recheck did not reach the controlled boundary")
-            self.assertTrue(any(event["type"] == "compute_started" for event in self.receiver["store"].events(remote_id)))
-            self.cancel_with_observation_before_receiver_delivery(job["id"], remote_id)
-        stopped = self.wait(job["id"], {"canceled", "failed", "unknown"})
-        self.assertEqual(stopped["job"]["status"], "canceled", stopped)
-        self.assertTrue(stopped["snapshot"]["delegation"]["allStopped"])
-        self.assertEqual([effect["status"] for effect in stopped["snapshot"]["effects"]], ["CANCELLED"])
-        self.assertTrue(any(event["type"] == "compute_stopped" and event["data"].get("cleanupComplete")
-                            for event in stopped["events"]))
-        self.assertFalse(any(event["type"] == "experiment_completed" for event in stopped["events"]))
-        self.assertFalse(self.receiver["store"].has_failures(remote_id), "Explicit trusted cancellation must not create failure provenance")
-        self.assertFalse(self.receiver["store"].failure_cleanup_requested(remote_id))
-        self.assertEqual(self.ticket_count(self.origin), 0)
-        settled_tasks = (self.receiver["store"].task(remote_id, "bob"), self.origin["store"].task(job["id"], "alice"))
-        settled_events = (self.receiver["store"].events(remote_id), self.origin["store"].events(job["id"]))
-        settled_effects, settled_artifacts = self.receiver["store"].effects(remote_id), self.receiver["store"].artifacts(remote_id)
-        settled_tickets = self.ticket_count(self.receiver, remote_id)
-        self.assertTrue(all(task["terminal"] for task in settled_tasks))
-        with mock.patch.object(self.receiver["store"], "accept", wraps=self.receiver["store"].accept) as acceptance:
-            for _ in range(3):
-                repeated = self.origin_client.portal.call(self.handoff.receipt, "alice", job["id"])
-                self.assertTrue(repeated["allStopped"])
-                self.assertEqual(repeated["applicationStatus"], "canceled")
-                self.assertEqual(self.receiver["store"].task(remote_id, "bob"), settled_tasks[0])
-                self.assertEqual(self.origin["store"].task(job["id"], "alice"), settled_tasks[1])
-            acceptance.assert_not_called()
-        self.assertEqual(self.receiver["store"].events(remote_id), settled_events[0])
-        self.assertEqual(self.origin["store"].events(job["id"]), settled_events[1])
-        self.assertEqual(self.receiver["store"].effects(remote_id), settled_effects)
-        self.assertEqual(self.receiver["store"].artifacts(remote_id), settled_artifacts)
-        self.assertEqual(self.ticket_count(self.receiver, remote_id), settled_tickets)
-        self.assertEqual(self.ticket_count(self.origin), 0)
 
     def test_09_remote_event_pages_preserve_receiver_stream_and_current_read_scope(self):
         from agent_factory.store import digest
@@ -562,7 +492,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertEqual(self.ticket_count(self.receiver, remote_id), 1)
 
     def test_10_remote_child_event_cursor_is_scoped_to_one_receiver_tree_member(self):
-        job, _ = self.submit(self.plan("sort", application="research"))
+        job, _ = self.submit(self.plan("sort", application="fixture-text"))
         self.wait(job["id"], {"waiting_input"})
         child = self.request("POST", f'/jobs/{job["id"]}/children', expected=202,
             json={"goal": "sort", "mode": "literature", "requestId": str(uuid4())}).json()["job"]

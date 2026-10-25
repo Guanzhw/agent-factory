@@ -5,7 +5,7 @@ context: |
   All artifacts must be written in zh-CN.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
   Agent Factory 面向可信小团队。用户已确认管理员只管理账号，成员可调用工作流和组件，资源由成员自行接入。
-  核心是 platform/agent_factory；科研应用是 apps/research/agent_factory_research；deployment 为显式装配入口。
+  核心是 platform/agent_factory；当前不附带 Research 应用；deployment 为显式装配入口，默认无应用。
   保留 Agno 3.1.0 原生执行生命周期、PostgreSQL 持久队列、资源所有权、凭据隔离、运行预算、取消和效果幂等。
   在真实输入和持久化边界完成校验，同进程内部复用既有契约；删除无消费者的审批与重复证明链。
   各变更分别记录其基线提交；保留既有原始工作区、数据库和验证记录。

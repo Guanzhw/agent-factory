@@ -4,16 +4,14 @@ from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any, cast
 import unittest
-from unittest.mock import patch
 
-from agno.exceptions import ModelProviderError, RunCancelledException
+from agno.exceptions import RunCancelledException
 from agno.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
 from agent_factory.execution_bindings import BindingContext, ExecutionBindings
 from agent_factory.model_dispatch import DelegatingModel
-from agent_factory_research.openresearch import OpenResearchAdapter, OpenResearchError
 from agent_factory.usage_ledger import native_response_usage
 
 
@@ -328,52 +326,3 @@ class AsyncAuthorityTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RunCancelledException):
                 await task
             self.assertEqual(calls, [])
-
-    async def test_openresearch_sync_authorizer_can_return_loop_owned_future(self):
-        loop = asyncio.get_running_loop()
-        calls = []
-
-        def authorize(operation):
-            self.assertIs(asyncio.get_running_loop(), loop)
-            calls.append(operation)
-            result = loop.create_future()
-            loop.call_soon(result.set_result, False)
-            return result
-
-        # Generic callback contract remains loop-local, including returned Future.
-        # No filesystem/environment access or ORX process is needed here.
-        adapter = SimpleNamespace(authorize=authorize)
-        with self.assertRaises(OpenResearchError):
-            await OpenResearchAdapter._allow(cast(Any, adapter), "inspect")
-        self.assertEqual(calls, ["inspect"])
-
-    async def test_cancelled_pause_preparation_never_publishes_or_mutates_native_output(self):
-        from agent_factory_research.model_compatibility import ResearchDelegatingModel
-
-        for streaming in (False, True):
-            gate = Gate(self)
-            response = RunOutput(run_id="synthetic-run", session_id="synthetic-task", user_id="synthetic-owner")
-            before = response.to_dict()
-            messages = []
-            model = ResearchDelegatingModel(cast(Any, SimpleNamespace(store=SimpleNamespace())))
-
-            def prepare(*args):
-                gate()
-                return {"controlId": "synthetic-control"}
-
-            with patch("agent_factory_research.inference_wait.prepare_pause", side_effect=prepare), \
-                    patch("agent_factory_research.inference_wait.publish_pause") as publish:
-                task = asyncio.create_task(model._apause((), {"run_response": response, "messages": messages},
-                    ModelProviderError("synthetic", status_code=503), streaming=streaming))
-                try:
-                    await gate.wait()
-                    task.cancel()
-                    with self.assertRaises(asyncio.CancelledError):
-                        await task
-                finally:
-                    gate.release.set()
-                    self.assertTrue(await asyncio.to_thread(gate.exited.wait, 2))
-                await asyncio.sleep(0)
-                publish.assert_not_called()
-                self.assertEqual(response.to_dict(), before)
-                self.assertEqual(messages, [])

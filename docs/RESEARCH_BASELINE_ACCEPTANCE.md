@@ -1,5 +1,7 @@
 # First real local baseline accepted — 2026-10-07
 
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+
 **COMPLETE for the selected local baseline.** The local execution owner verified
 this result at **09:48 UTC on 2026-10-07** and supplied the sanitized final
 handoff. This public record reconciles that owner-verified evidence; the cloud

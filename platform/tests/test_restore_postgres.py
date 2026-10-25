@@ -23,8 +23,8 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 from agent_factory.auth import EXECUTOR_ID
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_server.main import create_app
+from agent_factory.config import Settings
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import digest
 from pg_fixture import IsolatedPostgres
 
@@ -185,7 +185,7 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         run_id = store.task(task_id, "alice")["run_id"]
         self.assertEqual(store.native_db.get_job(run_id)["status"], "completed")
 
-        unknown_plan_id, unknown_review_id = self.historical_plan(client, policy, "research")
+        unknown_plan_id, unknown_review_id = self.historical_plan(client, policy, "fixture-text")
         unknown_key = uuid4().hex
         unknown, fresh = store.reserve_task(store.plan(unknown_plan_id, "alice"), unknown_key)
         self.assertTrue(fresh)
@@ -196,12 +196,12 @@ class PostgreSQLRestoreTests(unittest.TestCase):
         # Register the actual synthetic bootstrap author as a member; material
         # withdrawal belongs to that author rather than an account administrator.
         auth.directory.upsert("demo-bootstrap", name="Synthetic bootstrap material owner")
-        governance.withdraw("demo-bootstrap", "checksum-tool", 1, uuid4().hex, "Synthetic current policy withdrawal after completed evidence")
-        governance.archive("demo-bootstrap", "research-prompt", 1, uuid4().hex, "Synthetic archival after UNKNOWN reservation")
+        governance.withdraw("demo-bootstrap", "fixture-checksum-tool", 1, uuid4().hex, "Synthetic current policy withdrawal after completed evidence")
+        governance.archive("demo-bootstrap", "fixture-prompt", 1, uuid4().hex, "Synthetic archival after UNKNOWN reservation")
         old_plan, old_unknown_plan = store.plan(plan_id, "alice"), store.plan(unknown_plan_id, "alice")
         old_task, old_unknown = store.task(task_id, "alice"), store.task(unknown["id"], "alice")
         old_policy, old_governance = policy.current(), governance.current()
-        source_materials = {mid: governance.inspect_version("demo-bootstrap", mid, 1) for mid in ("checksum-tool", "research-prompt")}
+        source_materials = {mid: governance.inspect_version("demo-bootstrap", mid, 1) for mid in ("fixture-checksum-tool", "fixture-prompt")}
         source_review = policy.inspect("alice", review_id)
         source_unknown_review = policy.inspect("alice", unknown_review_id)
         source_cookie = dict(client.cookies)

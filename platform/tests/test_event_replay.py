@@ -26,10 +26,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, create_engine, select, text
 
 from agent_factory.auth import AuthService
-from agent_factory_research.config import ResearchSettings as Settings
-from agent_factory_research.demo_model import DemoModel
+from agent_factory.config import Settings
+from core_native_fixture import FixtureModel as DemoModel
 from agent_factory.event_replay import EventReplay, event_replay_router
-from agent_factory_server.main import create_app
+from core_native_fixture import create_fixture_app as create_app
 from agent_factory.store import canonical, digest
 from pg_fixture import IsolatedPostgres
 
@@ -321,7 +321,7 @@ class EventReplayPostgresTests(unittest.TestCase):
 
     def job(self, owner="alice"):
         self.login(owner)
-        proposal = self.client.post("/api/factory/plans", json={"topic": "Controlled replay checksum fixture", "mode": "literature", "application": "checksum", "requestId": str(uuid4())})
+        proposal = self.client.post("/api/factory/plans", json={"topic": "Controlled replay checksum fixture", "mode": "literature", "application": "fixture-checksum", "requestId": str(uuid4())})
         self.assertEqual(proposal.status_code, 201, proposal.text)
         admitted = self.client.post("/api/factory/instances", json={"planId": proposal.json()["id"], "requestId": str(uuid4())})
         self.assertEqual(admitted.status_code, 202, admitted.text)
