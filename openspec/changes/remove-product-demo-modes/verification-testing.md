@@ -295,3 +295,40 @@ no test deadline, timeout, assertion, GC setting, production callback or retry
 policy changes. Pool and session wrappers invoke the original operation once.
 This instrumentation is observation overhead, not a performance benchmark;
 a successful instrumented run cannot close the prior timeout's root cause.
+
+### First instrumented MCP matrix: failure retained
+
+At `175eb41` (only documentation newer than `8362eb7`), the single original
+MCP matrix with detailed diagnostics **failed**, 1 test in 67.979 seconds,
+exit 1. `/tmp/no-demo-mcp-matrix-diagnostic-once.log` and extracted safe
+`/tmp/no-demo-mcp-matrix-diagnostic-failure.json` preserve the original task
+`d0597505-b9ff-47ac-89a1-bbec99aef4fd` / run
+`4c4263fb-79eb-44f1-9887-f6fa33f27b25`. It again reached the fifth, Bob-after-restart
+run: first effect DONE, second UNKNOWN, native RUNNING, nine business calls.
+
+45 callback rows were retained without callback drops. Completed authorization
+callbacks had median 0.1832s wall / maximum 1.4947s; credentials median 0.4092s /
+maximum 1.0163s. Executor queue delay was at most 9.7ms among completed callbacks.
+**Two incomplete callbacks must not be omitted**: one credential callback had
+26 SQL statements / 8.407s accumulated SQL wall time, one authorization callback
+21 statements / 6.764s. The retained window contains 1437 matched pool acquisitions,
+median 0.00091s, p95 0.00957s, maximum 4.902s. All event streams have a 4.147s gap;
+a pending SQL operation finishes after 4.875s. Second-call initialize begins
+without a subsequent recorded server request. These are correlations, not proof
+of pool exhaustion, database locking or GC as the cause.
+
+No thread/task snapshot reached the failure evidence. The Python snapshot path
+used `traceback.extract_stack`, which may read source through linecache; no
+snapshot entry timing was logged, so its absence cannot prove event-loop
+starvation. Instrumentation is corrected before proposing another experiment:
+manual `f_code/f_lineno/f_back` metadata only; snapshots are separate files;
+a C faulthandler watchdog at the same 15-second checkpoint; passive `gc.callbacks`
+start/stop timing. No force-collection, GC disabling, deadline or product change.
+A local smoke produced actual JSON thread/task snapshots and a C stack file,
+and observed passive GC callbacks (`/tmp/af-mcp-instrumentation-smoke`). Ruff
+passes. Another PG matrix run still requires a separately scheduled slot.
+
+The two deterministic capacity fixture corrections were then independently
+verified: **2 passed, 0 skipped, 18.710s, exit 0**,
+`/tmp/no-demo-capacity-disabled-final.log`. This does not close the MCP failure
+or establish that the earlier storage cancellation timeout is harmless.
