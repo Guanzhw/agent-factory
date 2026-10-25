@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import './research.css';
-import { ApiError } from '../../api.js';
 import { time } from '../../workspaceUI.js';
 import { AgreementEditor } from './AgreementEditor.js';
-import { researchApi, sendProjectCommand, type ProjectCommand } from './client.js';
+import { researchApi } from './client.js';
+import { useProjectCommand } from './useProjectCommand.js';
 import type { AssistantSummary, Page, ResearchProject, ResearchProjectSummary } from './types.js';
 
 export interface ResearchWorkspaceProps {
@@ -15,47 +15,6 @@ export interface ResearchWorkspaceProps {
 const stateNames = { draft: '待确认约定', ready: '约定已确认', ended: '研究已结束' };
 const message = (error: unknown) => error instanceof Error ? error.message : '研究项目请求失败。';
 
-function useProjectCommand(ownerId: string, projectId: string | undefined, onSuccess: (project: ResearchProject) => void) {
-  const storageKey = `factory:research-command:${encodeURIComponent(ownerId)}:${projectId ? encodeURIComponent(projectId) : 'new'}`;
-  const [recovery] = useState(() => {
-    try {
-      const raw = window.sessionStorage.getItem(storageKey);
-      if (!raw) return { pending: null, error: '' };
-      const saved = JSON.parse(raw) as ProjectCommand;
-      const actions = projectId ? ['goal', 'confirm', 'end'] : ['create'];
-      if (!saved || !actions.includes(saved.action) || typeof saved.body?.requestId !== 'string' || !saved.body.requestId) throw new Error('invalid command');
-      return { pending: saved, error: '' };
-    } catch { return { pending: null, error: '无法读取原研究请求；请保留本页存储并排查，暂不提交新请求。' }; }
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(recovery.error);
-  const [pending, setPending] = useState<ProjectCommand | null>(recovery.pending);
-  const active = useRef(false);
-  const running = useRef(false);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  async function run(command: ProjectCommand) {
-    if (running.current || recovery.error) return;
-    try { window.sessionStorage.setItem(storageKey, JSON.stringify(command)); }
-    catch { setError('无法保存原请求，尚未提交。请检查浏览器存储后重试。'); return; }
-    running.current = true; setBusy(true); setError(''); setPending(command);
-    try {
-      const result = await sendProjectCommand(ownerId, projectId, command);
-      window.sessionStorage.removeItem(storageKey);
-      if (active.current) { setPending(null); onSuccess(result); }
-    } catch (reason) {
-      let uncertain = pending !== null || !(reason instanceof ApiError) || reason.status === 0 || reason.status === 408 || reason.status >= 500 || reason.code === 'INVALID_RESPONSE';
-      if (!uncertain) {
-        try { window.sessionStorage.removeItem(storageKey); }
-        catch { uncertain = true; }
-      }
-      if (active.current) {
-        setPending(uncertain ? command : null);
-        setError(uncertain ? `操作结果尚未确认。请重试原请求，避免重复创建。${message(reason)}` : message(reason));
-      }
-    } finally { running.current = false; if (active.current) setBusy(false); }
-  }
-  return { run, disabled: busy || pending !== null || !!recovery.error, feedback: <>{error && <p role="alert">{error}</p>}{pending && <div><p>已保留尚未确认的原请求。刷新或返回本页后，可使用原请求核对结果。</p><button disabled={busy} className="secondary" onClick={() => void run(pending)}>重试原操作</button></div>}{busy && <p role="status">正在保存…</p>}</> };
-}
 
 function Overview({ ownerId, onProject, onResources }: ResearchWorkspaceProps) {
   const [page, setPage] = useState<Page<ResearchProjectSummary> | null>(null);
@@ -138,3 +97,5 @@ function ProjectDetail({ ownerId, projectId, onProject, onResources }: ResearchW
 export function ResearchWorkspace(props: ResearchWorkspaceProps) {
   return props.projectId ? <ProjectDetail key={`${props.ownerId}:${props.projectId}`} {...props} projectId={props.projectId}/> : <Overview key={props.ownerId} {...props}/>;
 }
+
+export { ResearchWorkbench } from "./live/ResearchWorkbench.js";
