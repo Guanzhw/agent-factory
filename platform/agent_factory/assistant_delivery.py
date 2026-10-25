@@ -29,4 +29,3 @@ async def assistant_delivery_lifespan(service):
         stopping.set()
         # Finish the current metadata call before core disposes its database.
         await task
-
