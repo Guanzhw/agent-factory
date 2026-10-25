@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationComposer, ComposerProposalScope } from '../web/ApplicationComposer.js';
 import { api } from '../web/api.js';
-import type { AssemblyCandidate, AssemblyProposal, FactoryApplication, FactoryMaterial, Plan, PlanAuthorization, UserConnection } from '../web/models.js';
+import type { AssemblyCandidate, AssemblyProposal, ExecutionTarget, FactoryApplication, FactoryMaterial, Plan, PlanAuthorization, UserConnection } from '../web/models.js';
 
 const owner = { id: 'alice', name: 'Alice', role: 'user' as const };
 const proposalId = '11111111-1111-4111-8111-111111111111';
@@ -20,11 +20,13 @@ const plan: Plan = { id: 'plan-fixture', fingerprint: 'e'.repeat(64), normalized
 const baseAuthorization: PlanAuthorization = { ownerId: owner.id, planId: plan.id, planFingerprint: plan.fingerprint, executionAllowed: true, reviewRequired: false, reviewRequestSupported: false, nativeToolConfirmationRequired: false, policy: { name: 'member-self-service', revision: 'r1', fingerprint: 'f'.repeat(64), review_ttl_seconds: 300, nativeToolConfirmationSeparate: true } };
 let host: HTMLDivElement; let root: Root; let saved: AssemblyProposal | undefined; let savedPlan: Plan | null;
 let authorization: PlanAuthorization;
+let executionTargets: ExecutionTarget[];
+let acceptedPlan: Plan;
 const onCreated = vi.fn();
 function Harness() {
   const [busy, setBusy] = useState(''); const [error, setError] = useState('');
   return createElement('div', null, error && createElement('p', { role: 'alert' }, error), createElement(ApplicationComposer, {
-    user: owner, busy, materials: [tool], targets: [], onCreated,
+    user: owner, busy, materials: [tool], targets: executionTargets, onCreated,
     act: async (name, work) => { setBusy(name); setError(''); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(''); } },
   }));
 }
@@ -55,7 +57,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto);
   window.sessionStorage.clear(); window.localStorage.clear();
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
-  saved = undefined; savedPlan = null; authorization = structuredClone(baseAuthorization); onCreated.mockReset();
+  saved = undefined; savedPlan = null; executionTargets = []; acceptedPlan = plan; authorization = structuredClone(baseAuthorization); onCreated.mockReset();
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'applications').mockResolvedValue([application]);
   vi.spyOn(api, 'userConnections').mockResolvedValue([connection]);
   vi.spyOn(api, 'proposalInbox').mockResolvedValue({ schema: 1, ownerId: owner.id, snapshot: false, items: [], nextCursor: null });
@@ -63,7 +65,7 @@ beforeEach(() => {
     saved = { id: proposalId, ownerId: owner.id, createdAt: '2026-10-08T00:00:00Z', parentId: null, input, candidate: { ...candidate, normalizedGoal: input.goal }, selection: { method: 'explicit-application', matchedKeywords: [] }, fingerprint: '1'.repeat(64), state: 'pending', planId: null, allowedActions: ['revise', 'accept', 'reject'] }; return saved;
   });
   vi.spyOn(api, 'recoverProposal').mockImplementation(async () => { if (!saved) throw new Error('No saved record'); return { proposal: saved, plan: savedPlan }; });
-  vi.spyOn(api, 'acceptProposal').mockImplementation(async () => { saved = { ...saved!, state: 'accepted', planId: plan.id, allowedActions: [] }; savedPlan = plan; return plan; });
+  vi.spyOn(api, 'acceptProposal').mockImplementation(async () => { saved = { ...saved!, state: 'accepted', planId: plan.id, allowedActions: [] }; savedPlan = acceptedPlan; return acceptedPlan; });
   vi.spyOn(api, 'planAuthorization').mockImplementation(async () => authorization);
   vi.spyOn(api, 'planReviews').mockRejectedValue(new Error('Legacy history unavailable'));
   vi.spyOn(api, 'requestPlanReview');
@@ -200,4 +202,76 @@ describe('mounted task creation flow', () => {
     expect(api.instantiate).not.toHaveBeenCalled();
   });
 
+});
+
+
+describe('declared remote application contracts', () => {
+  const remote = { id: 'remote-fixture', name: 'Synthetic receiver', kind: 'remote-factory' as const, connectivityVerified: false };
+  async function selectTarget(id: string) {
+    await act(async () => {
+      const select = host.querySelector<HTMLSelectElement>('[aria-label="执行位置"]')!;
+      select.value = id; select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+  async function readyPlan(version?: 1 | 2) {
+    acceptedPlan = { ...plan, ...(version ? { contractVersion: version } : {}) };
+    await mount(); await previewAndAccept();
+    await settle(() => expect(button('开始任务').disabled).toBe(false));
+  }
+  it.each([undefined, 1] as const)('preserves omitted/default target v1 support for plan version %s', async version => {
+    executionTargets = [remote];
+    await readyPlan(version);
+    const option = host.querySelector<HTMLOptionElement>('option[value="remote-fixture"]')!;
+    expect(option.disabled).toBe(false);
+    expect(option.textContent).toContain('声明契约 v1');
+    await selectTarget(remote.id);
+    expect(host.textContent).toContain('连接未验证');
+    expect(host.textContent).not.toContain('连接已验证');
+    await click('开始任务');
+    await settle(() => expect(api.instantiate).toHaveBeenCalledWith(plan.id, expect.any(String), remote.id));
+  });
+  it('disables a v1-only receiver for an immutable v2 plan and guards submission without downgrade', async () => {
+    executionTargets = [remote];
+    await readyPlan(2);
+    expect(host.querySelector<HTMLOptionElement>('option[value="remote-fixture"]')!.disabled).toBe(true);
+    expect(host.textContent).toContain('不支持当前 v2');
+    // A synthetic change event cannot turn a disabled option into permission to submit.
+    await selectTarget(remote.id);
+    expect(button('开始任务').disabled).toBe(true);
+    expect(host.textContent).toContain('所选目标未声明支持方案契约 v2');
+    await click('开始任务');
+    expect(api.instantiate).not.toHaveBeenCalled();
+    expect(acceptedPlan.contractVersion).toBe(2);
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="执行位置"]')!.value).toBe(remote.id);
+  });
+  it('uses explicit v2 support without treating declaration or connectivity as execution proof', async () => {
+    executionTargets = [{ ...remote, supportedApplicationContracts: [1, 2] }];
+    await readyPlan(2);
+    expect(host.querySelector<HTMLOptionElement>('option[value="remote-fixture"]')!.disabled).toBe(false);
+    await selectTarget(remote.id);
+    expect(host.textContent).toContain('声明契约 v1、v2');
+    expect(host.textContent).toContain('连接未验证');
+    expect(host.textContent).toContain('目标版本为静态声明');
+    await click('开始任务');
+    await settle(() => expect(api.instantiate).toHaveBeenCalledWith(plan.id, expect.any(String), remote.id));
+  });
+  it('retains the selected receiver and blocks starting when its declared version disappears', async () => {
+    executionTargets = [{ ...remote, connectivityVerified: true, supportedApplicationContracts: [1, 2] }];
+    await readyPlan(2); await selectTarget(remote.id);
+    expect(host.textContent).toContain('连接已验证');
+    expect(host.textContent).toContain('连接验证不代表任务可执行');
+    executionTargets = [{ ...remote, connectivityVerified: true, supportedApplicationContracts: [1] }];
+    await act(async () => root.render(createElement(Harness)));
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="执行位置"]')!.value).toBe(remote.id);
+    expect(button('开始任务').disabled).toBe(true);
+    await click('开始任务'); expect(api.instantiate).not.toHaveBeenCalled();
+    executionTargets = [];
+    await act(async () => root.render(createElement(Harness)));
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="执行位置"]')!.value).toBe(remote.id);
+    expect(host.textContent).toContain('所选目标当前不可用');
+    expect(button('开始任务').disabled).toBe(true);
+    await selectTarget('');
+    expect(button('开始任务').disabled).toBe(false);
+    expect(api.instantiate).not.toHaveBeenCalled();
+  });
 });

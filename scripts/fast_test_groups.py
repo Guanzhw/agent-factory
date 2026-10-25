@@ -6,6 +6,11 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'remote_v2_contract': (
+        'test_remote_v2_manifest',
+        'test_remote_v2_bindings',
+        'test_remote_v2_authority',
+    ),
     'shared_mcp_authority_regressions': (
         'test_application_closure_authority.BoundedApplicationClosureTests',
         'test_personal_mcp_callbacks',

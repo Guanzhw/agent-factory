@@ -13,6 +13,7 @@ import { kindNames, materialKey, type AssemblyCandidate, type AssemblyProposal, 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const message = (e: unknown) => e instanceof Error ? e.message : '装配状态无法确认。';
 const refKey = (ref: MaterialReference) => `${materialKey(ref)}:${ref.sha256}`;
+const targetContracts = (target: ExecutionTarget) => target.supportedApplicationContracts ?? [1];
 
 const budgetNames: Record<string, string> = { toolCalls: '工具调用', maxDepth: '最大委派深度', maxChildren: '累计子任务', experimentSeconds: '实验秒数', operationSeconds: '单次操作时限（秒）', outputBytes: '产物字节' };
 
@@ -78,6 +79,9 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const [plan, setPlan] = useState<Plan>();
   const [executionAllowed, setExecutionAllowed] = useState(false);
   const [target, setTarget] = useState('');
+  const contractVersion = plan?.contractVersion ?? 1;
+  const selectedTarget = targets.find(item => item.id === target);
+  const targetSupported = !target || !!selectedTarget && targetContracts(selectedTarget).includes(contractVersion);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -163,7 +167,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     });
   }
   async function instantiate() {
-    if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
+    if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !targetSupported || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
     await act('instantiate', async () => { const key = await keys('instantiate', { planId: plan.id, executionTargetRef: target || null }); try { const job = await api.instantiate(plan.id, key.requestId, target || undefined); onCreated(job.id); } catch (e) { setRefresh(n => n + 1); throw e; } });
   }
   function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(undefined); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
@@ -207,7 +211,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
         <p className="policy-note">保存方案不会开始执行。修改会生成新的提案并保留原记录。能力、预算和适配器范围由已发布定义与后端检查决定。</p>
       </div>}
       {proposal?.state === 'accepted' && !plan && <div className="state-note"><p>服务端已接受此提案，但本页尚未收到最终方案。可只读找回原方案。</p><button className="secondary" disabled={!!busy || !ready} onClick={() => void restoreProposal(proposal.id)}>读取原方案</button></div>}
-      {plan && <div className="preflight"><h3>4. 开始任务</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '核对当前身份与资源后，即可提交任务。'}</p><UsageCommitmentSummary value={plan.usageBudget}/><PlanReviewGate key={plan.id} ownerId={user.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{targets.length > 0 && <label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{targets.map(item => <option key={item.id} value={item.id}>{item.name} · 远程 Factory</option>)}</select></label>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待任务确认…' : '开始任务'}</button>{onSchedule && <button className="secondary wide" disabled={!!busy || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified || !!target} onClick={() => onSchedule(plan)}>用此方案设置计划任务</button>}<details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
+      {plan && <div className="preflight"><h3>4. 开始任务</h3><p>方案已保存，材料和绑定范围不可修改。{plan.status === 'blocked' ? '预检缺项仍阻止创建任务。' : '核对当前身份与资源后，即可提交任务。'}</p><UsageCommitmentSummary value={plan.usageBudget}/><PlanReviewGate key={plan.id} ownerId={user.id} plan={plan} busy={busy} act={act} onAllowed={setExecutionAllowed}/>{!bindingsCurrent && <p role="status" className="policy-note">方案中的连接当前不可用或已变更；请重新装配。后端在执行前仍会重新检查绑定。</p>}{(targets.length > 0 || !!target) && <div><label>执行位置<select aria-label="执行位置" value={target} disabled={!!busy} onChange={event => setTarget(event.target.value)}><option value="">当前 Factory</option>{target && !selectedTarget && <option value={target} disabled>{target} · 目标当前不可用</option>}{targets.map(item => <option key={item.id} value={item.id} disabled={!targetContracts(item).includes(contractVersion)}>{item.name} · 远程 Factory · 声明契约 {targetContracts(item).map(version => `v${version}`).join('、') || '无'}{targetContracts(item).includes(contractVersion) ? '' : `（不支持当前 v${contractVersion}）`}</option>)}</select></label><p className="quiet">当前方案契约 v{contractVersion}。目标版本为静态声明，接收端仍会核对实际支持范围；连接验证不代表任务可执行。</p>{selectedTarget && <p className="quiet">{selectedTarget.name}：{selectedTarget.connectivityVerified ? '连接已验证' : '连接未验证'}。</p>}{!targetSupported && <p role="status" className="policy-note">{selectedTarget ? `所选目标未声明支持方案契约 v${contractVersion}，请选择支持该版本的执行位置。` : '所选目标当前不可用，请重新选择执行位置。'}</p>}</div>}<button className="primary wide" disabled={!!busy || !ready || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified || !targetSupported} onClick={() => void instantiate()}>{busy === 'instantiate' ? '等待任务确认…' : '开始任务'}</button>{onSchedule && <button className="secondary wide" disabled={!!busy || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !usageVerified || !!target} onClick={() => onSchedule(plan)}>用此方案设置计划任务</button>}<details className="technical-detail"><summary>最终方案凭据</summary><span>方案 {plan.id}</span><span>指纹 {plan.fingerprint}</span></details></div>}
       {proposal && (!pending || accepted) && <button className="secondary wide" disabled={!!busy || !!uncertainRevision.current} onClick={startAgain}>新建另一个任务</button>}
     </section>
     <details className="composer-history technical-detail"><summary>继续之前的任务 · 提案与方案历史</summary>

@@ -271,8 +271,17 @@ class RemoteBindingService:
         for value in (origin_task, receipt_id, receiver_plan_id):
             UUID(value)
         source = manifest.get("plan") if isinstance(manifest, dict) else None
-        if not isinstance(source, dict) or set(manifest) != {"plan", "sha256"} or digest(source) != manifest["sha256"] or origin.identity_map.get(source.get("ownerId")) != remote_owner:
+        from .remote_handoff import _contract_version, _v2_definition
+        version = _contract_version(source) if isinstance(source, dict) else 1
+        expected = {"plan", "sha256"} | ({"wireVersion", "applicationDefinition"} if version == 2 else set())
+        if not isinstance(source, dict) or set(manifest) != expected or digest(source) != manifest["sha256"] or origin.identity_map.get(source.get("ownerId")) != remote_owner:
             raise HTTPException(409, "REMOTE_BINDING_IDENTITY: exact origin manifest/receiver owner mapping is required")
+        if version == 2:
+            if (2 not in origin.supported_application_contracts or type(manifest["wireVersion"]) is not int
+                    or manifest["wireVersion"] != 2 or source.get("budget", {}).get("depth") != 0
+                    or any(key in source for key in ("delegation", "remoteHandoff", "nativeComponent", "scientificEnvelope", "sourceSnapshotRef"))):
+                raise HTTPException(409, "REMOTE_BINDING_SCOPE: v2 requires an enabled root native agent contract")
+            _v2_definition(manifest, self.store.applications, source)
         source_manifest = self.validate_source(source)
         source_config = _configuration(source_configuration)
         receiver_config = _configuration({"revision": origin.configuration_revision, "sha256": origin.fingerprint})
@@ -466,6 +475,8 @@ class RemoteBindingService:
         root = self._root(root_plan)
         if root is None:
             raise HTTPException(409, "REMOTE_BINDING_UNBOUND: receiver ancestor proof is required")
+        if root.get("contractVersion") == 2:
+            raise HTTPException(409, "REMOTE_BINDING_SCOPE: v2 receiver delegation is unsupported")
         original = self.validate_source(root)
         self.effective(root, original)
         self._material_subset(materials, root)
