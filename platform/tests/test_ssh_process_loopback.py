@@ -14,7 +14,6 @@ from dataclasses import replace
 import hashlib
 import os
 from pathlib import Path
-import pwd
 import select
 import shutil
 import socket
@@ -85,6 +84,8 @@ class TCPRelay:
 @unittest.skipUnless(sys.platform == 'linux', 'OpenSSH custody requires Linux')
 class SSHProcessLoopbackTests(unittest.TestCase):
     def setUp(self):
+        import pwd
+
         if os.getuid() == 0:
             self.skipTest('fixture must use an existing nonroot account')
         for executable in ('ssh', 'sshd', 'ssh-keygen', 'ssh-agent', 'ssh-add', 'uv'):

@@ -86,3 +86,15 @@ restart the controller service, exercise runtime budget admission or an actual
 GPU. New SSH helper processes and a fresh client transport do not substitute for
 controller restart acceptance. Those scenarios remain separate pending gates;
 the real-loopback result must not mark the complete SSH task or D01 passed.
+
+## Independent review correction: Windows discovery
+
+The reviewer found that module-level `import pwd` would fail on Windows before
+the Linux-only class skip could apply. It is now imported inside `setUp`, which
+the Linux class gate protects. A targeted local probe blocked every attempted
+`pwd` import with `ModuleNotFoundError`, loaded this test module successfully,
+then explicitly marked its class skipped and ran discovery: **1 test, 1 explicit
+skip, exit 0**, with no attempted `pwd` import. `sys.platform` remained `linux`
+throughout. This establishes import/skip mechanics under missing `pwd`; it is
+not a Windows execution claim or another real SSH pass. Ruff passed. No sshd,
+SSH agent, socket or key was created for this probe.
