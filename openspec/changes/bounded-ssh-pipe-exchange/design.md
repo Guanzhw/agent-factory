@@ -29,3 +29,5 @@
 3. `SSHProcessProvider.allocate_bound` 保留原同步fresh回调与取消Event，并保存明确的worker Task。正常await使用shield防止取消丢失worker引用；取消后set Event，将其通过显式 `cancelled` 参数从exchange调用传至实际管道read循环（只在write fresh里检查不够）。等待同一个worker完成kill/reap/close才传播原CancelledError；重复取消仍只标记同一Event并等待原worker，不创建另一次任务/submit。
 4. cleanup失败不得吞成普通取消。原worker若报告SSHExchangeCleanupError，向上报告该错误并保留取消/原错误cause；正常因cancel Event退出并已清理则传播原取消。不能catch所有异常然后假定清理成功。所有真实与测试exchange实现统一显式 `cancelled` 参数；不使用签名反射、TypeError重试或动态fallback。
 5. 集成验收覆盖async cancellation在stdout等待期间，验证caller返回前worker已结束且process已reap；保留既有部分写/EOF前撤权和UNKNOWN不重派用例。模块单测不能替代这项调用生命周期测试。
+
+A nonzero local SSH exit keeps the existing transport protocol rejection (`SSH_PROCESS_PROTOCOL_INVALID`) at the SSHProcessTransport boundary; the low-level exchange reports its subprocess error. This narrow mapping must not catch cleanup failure or turn an unconfirmed operation into stopped proof. Real wrong-host-pin testing must still prove no remote operation.
