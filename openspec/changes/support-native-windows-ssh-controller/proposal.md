@@ -1,5 +1,5 @@
 ## Why
-The deployment controller is native Windows Acetamido. Linux-only ssh-agent sockets and POSIX process assumptions currently prevent its supported remote Linux execution path. Real Stage A has validated per-call encrypted keys and authenticated ASKPASS IPC on system OpenSSH 9.5p2; Stage B authentication has a retained first failure and is not yet accepted.
+The deployment controller is native Windows Acetamido. Linux-only ssh-agent sockets and POSIX process assumptions currently prevent its supported remote Linux execution path. Real Stage A has validated per-call encrypted keys and authenticated ASKPASS IPC on system OpenSSH 9.5p2; Stage B actual system SSH authentication now passes on isolated probe head 8848b53, with both earlier command failures retained.
 
 ## What changes
 Add one Windows-specific credential/process carrier to existing SSH enrollment and pinned transports. Reuse the existing vault, scope guard, bounded ssh_exchange, remote Linux helper and original-operation journal. Preserve the Linux agent path. No WSL, new remote controller, global agent service, new credential grant or account/security setting.
