@@ -52,6 +52,10 @@ class SSHEnrollmentConfig:
 
 
 class SSHAgents:
+    folder: TemporaryDirectory
+    live: dict
+    lock: threading.RLock
+
     def __init__(self, vault, *, max_agents, seconds):
         if type(max_agents) is not int or not 1 <= max_agents <= 64: raise ValueError('SSH agent capacity invalid')
         self.vault, self.max_agents, self.seconds = vault, max_agents, seconds
