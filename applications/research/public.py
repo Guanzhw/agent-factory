@@ -13,9 +13,14 @@ def install(state, *, workflow=None):
     runs = ResearchRuns(projects, ApplicationRuns(state['factory_api']), state['local_budget_scopes'], state['applications'], records)
     if workflow is not None:
         from .rounds import ResearchRounds
+        from .setup import ResearchSetup, setup_router
         from .workflow import WORKFLOW_ID
         store = state['store']
         pin = store.native_workflows.pin(WORKFLOW_ID)
+        setup = ResearchSetup(store, state['auth'], state['connections'], store.personal_models,
+            controller_registrations=workflow.tool_registrations)
+        state['research_setup'] = setup
+        state['http_app'].include_router(setup_router(state['auth'], setup))
         rounds = ResearchRounds(runs, events=state['assistant_events'],
             endpoints=state['assistant_endpoints'], custody=store.workflow,
             control=store.workflow_control, pin=pin)

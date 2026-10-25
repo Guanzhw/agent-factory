@@ -282,3 +282,31 @@ class ResearchNativeWorkflowTests(unittest.TestCase):
         self.assertEqual({a['taskId'] for a in scope['allocations']}, {r['taskId'] for r in listing['rounds']})
         reviewed = [text for text in OBSERVED if 'previousObservation' in text and DIGEST in text]
         self.assertTrue(reviewed, 'Successor model did not receive the actual original child output')
+
+    def test_installed_setup_publishes_current_flat_pin_without_execution(self):
+        model = self.client.post('/api/factory/personal-models', json={'requestId': 'installed-setup-model',
+            'provider': 'openai-compatible', 'baseURL': 'http://localhost:9/v1', 'model': 'not-called'})
+        self.assertEqual(model.status_code, 201, model.text)
+        candidates = self.client.get('/api/factory/research/setup')
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        current_pin = self.state['store'].native_workflows.pin(WORKFLOW_ID)
+        self.assertEqual(candidates.json()['workflowPin'], current_pin)
+        tool = next(item for item in candidates.json()['experimentMaterials']
+                    if item['id'] == 'research-fixture-research-fixture-compute')
+        draft = self.client.post('/api/factory/research/setup/drafts', json={
+            'requestId': 'installed-setup-prepare', 'name': 'Explicitly configured native research',
+            'modelConnectionRef': model.json()['connectionRef'],
+            'environment': {'adapterId': 'research-fixture-environment-v1', 'revision': '1'},
+            'experimentMaterialRefs': [{key: tool[key] for key in ('id', 'version', 'sha256')}],
+            'budget': {'toolCalls': 32, 'maxDepth': 1, 'maxChildren': 1}})
+        self.assertEqual(draft.status_code, 200, draft.text)
+        published = self.client.post('/api/factory/research/setup/' + draft.json()['id'] + '/publish',
+            json={'requestId': 'installed-setup-publish'})
+        self.assertEqual(published.status_code, 200, published.text)
+        application = self.state['applications'].require_current(published.json()['applicationRef'])
+        self.assertEqual(application['modes']['research']['nativeComponent'], current_pin)
+        self.assertTrue(set(FUNCTION_TOOLS).issubset(application['modes']['research']['toolOrder']))
+        self.assertNotIn('research_stop', application['modes']['research']['toolOrder'])
+        self.assertEqual(application['modes']['experiment']['toolOrder'], ['research_fixture_compute'])
+        self.assertEqual(self.state['store'].tasks('alice'), [])
+        self.assertEqual(OBSERVED, [])
