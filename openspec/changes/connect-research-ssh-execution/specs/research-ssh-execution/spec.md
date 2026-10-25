@@ -90,3 +90,11 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 - **WHEN** the original SSH wait is completed through its versioned command
 - **THEN** its same child receives the validated execution status, exit code and at most 16384 original output bytes decoded as UTF-8 with replacement, with explicit truncation and original artifact reference
 - **AND** output remains untrusted private data; never-dispatched output is null, foreign evidence rejects, and receipt replay does not request a fresh model execution
+
+#### Scenario: Actual typed experiment conditions reach training
+- **WHEN** two experiments supply different schema-valid conditions to the same trusted training profile
+- **THEN** their derived argv contains the fixed input argument plus their respective canonical JSON as two separate entries, and each original operation stores its exact validated input and derived target identity while sharing the host capacity pool
+
+#### Scenario: Parameter bounds and original recovery
+- **WHEN** inputs contain quoted/shell-like text, violate the declared schema or total argv bounds, or a restarted operation is presented different inputs
+- **THEN** quoted text remains inert data; invalid inputs cause zero SSH/target registration; restart reconstructs only the stored original inputs and changed replay conflicts without dispatch

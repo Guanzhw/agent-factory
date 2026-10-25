@@ -78,3 +78,9 @@ def request(value):
             and str(PurePosixPath(root)) == root)
     spec, limits = specification(value['spec'], value['limits'])
     return {**value, 'binding': binding(value['binding']), 'spec': asdict(spec), 'limits': asdict(limits)}
+
+
+def ssh_target_reference(owner, material_ref, connection_pin, profile_fingerprint, inputs):
+    """One identity calculation for original SSH execution and read-only provenance."""
+    return 'ssh-' + digest({'actor': owner, 'material': material_ref, 'connection': connection_pin,
+                             'profile': profile_fingerprint, 'inputs': inputs})
