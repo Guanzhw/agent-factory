@@ -136,6 +136,19 @@ def install_research(state, *, research: ResearchServices):
     if settings.personal_agent_commands_enabled:
         from .personal_command_api import PersonalCommandAPI
         base.include_router(PersonalCommandAPI(store, auth, factory_api).router)
+    from .research_iteration_api import iteration_router
+    if settings.research_iterations_factory is not None:
+        from agent_factory.local_budget_scopes import LocalBudgetScopes
+        from .research_iterations import ResearchIterations
+        from .research_iteration_coordinator import IterationCoordinator
+        store.local_budget_scopes = LocalBudgetScopes(store, getattr(store, 'usage_ledger', None))
+        iterations = settings.research_iterations_factory(state, research=research)
+        if not isinstance(iterations, ResearchIterations) or iterations.store is not store or iterations.research is not research:
+            raise ValueError('RESEARCH_ITERATION_SERVICE_INVALID')
+        research.iterations = iterations
+        research.iteration_coordinator = IterationCoordinator(iterations)
+        store.register_execution_guard('local-budget-scopes', store.local_budget_scopes.require_current, tool_independent=True)
+    base.include_router(iteration_router(auth, research.iterations))
     research.workspace = openresearch_workspace
     research.installed = True
     state.update(research=research, openresearch_workspace=openresearch_workspace,
@@ -145,6 +158,7 @@ def install_research(state, *, research: ResearchServices):
 
 def _shutdown_pending(research):
     groups = (
+        ('iterations', research.iteration_coordinator, 'active'),
         ('receiver', research.remote_scientific_receiver, '_drives'),
         ('controllers', research.autoresearch_session_control, 'active'),
         ('controllerCleanup', research.autoresearch_session_control, 'failures'),
@@ -161,9 +175,14 @@ async def research_lifespan(app):
     fatal = state.get('shutdown_failed')
     if not callable(fatal):
         raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_REQUIRED')
+    coordinator = state['research'].iteration_coordinator
+    if coordinator is not None:
+        coordinator.start()
     try:
         yield
     finally:
+        if coordinator is not None:
+            coordinator.stop_admission()
         store = state['store']
         research = state['research']
         deadline = state.get('shutdown_deadline') or asyncio.get_running_loop().time() + 35
@@ -173,7 +192,7 @@ async def research_lifespan(app):
         failed = False
         try:
             closers = [asyncio.create_task(service.close(deadline=deadline)) for service in
-                       (research.remote_scientific_receiver, research.autoresearch_session_control, research.autoresearch)
+                       (research.iteration_coordinator, research.remote_scientific_receiver, research.autoresearch_session_control, research.autoresearch)
                        if service is not None]
             if closers:
                 done, pending = await asyncio.wait(closers, timeout=max(0, deadline - asyncio.get_running_loop().time()))

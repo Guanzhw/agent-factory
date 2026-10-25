@@ -114,6 +114,32 @@ class NativeWorkflowBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(bridge._request.call_args.kwargs['data']['tools']), [requirement['tool_execution']])
         self.assertIn('metadata', bridge._request.call_args.kwargs['data'])
 
+    async def test_original_cleanup_lookup_survives_disabled_owner_without_http(self):
+        engine = create_engine('sqlite:///:memory:'); self.addCleanup(engine.dispose)
+        self.db.db_engine, self.db.job_table_name = engine, 'absent_jobs'
+        self.bridge.auth.require_member.side_effect = HTTPException(403, 'disabled')
+        run = SimpleNamespace(run_id='original-run', workflow_id='operator-flow')
+        self.db.get_session.return_value = SimpleNamespace(workflow_id='operator-flow', user_id='alice', runs=[run])
+        with self.assertRaises(HTTPException):
+            await self.bridge.find_run(self.session, 'alice')
+        result = await self.bridge.find_original_run(self.session, 'alice')
+        self.assertEqual(result, {'run_id': 'original-run', 'session_id': self.session})
+        self.http.assert_not_awaited()
+        self.db.get_session.return_value.user_id = 'bob'
+        self.assertIsNone(await self.bridge.find_original_run(self.session, 'alice'))
+        self.db.get_session.return_value.user_id = 'alice'
+        self.db.get_session.return_value.runs = [run, run]
+        with self.assertRaises(HTTPException) as caught:
+            await self.bridge.find_original_run(self.session, 'alice')
+        self.assertEqual(caught.exception.status_code, 409)
+
+    async def test_original_cleanup_requires_persisted_resolver(self):
+        bridge = NativeBridge(None, self.db, self.bridge.auth)
+        with self.assertRaises(HTTPException) as caught:
+            await bridge.find_original_run(self.session, 'alice')
+        self.assertEqual(caught.exception.status_code, 409)
+        self.db.get_session.assert_not_called()
+
     async def test_workflow_cannot_enter_agent_approved_repair(self):
         with self.assertRaises(HTTPException):
             await self.bridge.continue_approved_run('run', self.session, 'alice', [], command_proof={},

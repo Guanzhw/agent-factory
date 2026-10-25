@@ -674,7 +674,8 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_delete_cannot_extend_cancellation_teardown_indefinitely(self):
         closed = asyncio.Event()
         cancelling, delayed_callback = threading.Event(), threading.Event()
-        invocation = Authority().invocation()
+        authority = Authority()
+        invocation = authority.invocation()
         resolve = invocation.resolve_credential
 
         def teardown_credential():
@@ -702,11 +703,36 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 teardown_timeout_seconds=0.5, http_transport_factory=ObservedTransport,
             )
             pending = asyncio.create_task(adapter.invoke(invocation))
-            await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
-            started = asyncio.get_running_loop().time()
-            cancelling.set()
-            pending.cancel()
+            ready = asyncio.create_task(server.wait_started['alice'].wait())
             try:
+                done, _ = await asyncio.wait({ready, pending}, timeout=2,
+                                            return_when=asyncio.FIRST_COMPLETED)
+                if pending in done:
+                    # Surface the adapter's fixed, redacted failure instead of
+                    # masking early termination as a missing server event.
+                    await pending
+                    self.fail('MCP invocation ended before cancellation was requested')
+                if ready not in done:
+                    # Do not inspect headers, callback values or exception text.
+                    # This snapshot diagnoses readiness only, not DELETE timing.
+                    diagnostics = {
+                        'phase': 'awaiting-remote-wait-entry',
+                        'httpMethods': {method: sum(r.method == method for r in server.requests)
+                                        for method in ('GET', 'POST', 'DELETE')},
+                        'serverWaitEntered': server.wait_started['alice'].is_set(),
+                        'deleteStarted': server.delete_started.is_set(),
+                        'transportClosed': closed.is_set(),
+                        'authorizationChecks': authority.checks,
+                        'credentialResolutions': authority.resolutions,
+                        'pendingDone': pending.done(), 'pendingCancelled': pending.cancelled(),
+                        'pendingFrames': [{'function': frame.f_code.co_name[:80], 'line': frame.f_lineno}
+                                          for frame in pending.get_stack(limit=4)],
+                    }
+                    self.fail('MCP initial readiness timed out: ' + json.dumps(diagnostics, sort_keys=True))
+                await ready
+                started = asyncio.get_running_loop().time()
+                cancelling.set()
+                pending.cancel()
                 await asyncio.wait_for(server.delete_started.wait(), 2)
                 pending.cancel()
                 # A wait with no cancellation side effect makes the deadline
@@ -724,7 +750,11 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(server.calls, [('wait', 'alice')])
             finally:
                 server.delete_release.set()
-                await asyncio.gather(pending, return_exceptions=True)
+                server.wait_release['alice'].set()
+                for task in (ready, pending):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(ready, pending, return_exceptions=True)
 
     async def test_delete_credential_resolution_is_bounded_even_when_callback_blocks(self):
         blocked, release, finished = threading.Event(), threading.Event(), threading.Event()

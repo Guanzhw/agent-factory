@@ -1,6 +1,7 @@
 import './styles.css';
 import type { WorkspaceContext } from '../../../web/App.js';
 import { OpenResearchWorkspace } from './OpenResearchWorkspace.js';
+import { ResearchIterations } from './ResearchIterations.js';
 import { AutoResearch } from './AutoResearch.js';
 import { ComparisonPanel } from './ComparisonPanel.js';
 import { researchApi } from './api.js';
@@ -15,8 +16,8 @@ export function ResearchPages({ context }: { context: WorkspaceContext }) {
     selectedProject={route.project ?? ''} selectedMode={route.mode === 'personal' ? 'personal' : route.mode === 'managed' || route.project ? 'managed' : 'personal'}
     onMode={mode => navigate({ tab: 'openresearch', mode })} onProject={project => navigate({ project, mode: 'managed' })}
     onTask={onTask} onResources={() => navigate({ tab: 'resources' })} onCatalog={() => navigate({ tab: 'catalog' })}/>;
-  if (route.tab === 'autoresearch') return <AutoResearch key={`${user.id}:${route.run || 'entry'}`} ownerId={user.id} api={researchApi.autoresearch}
-    runId={route.run || undefined} onRun={(run, passive) => { if (!passive) navigate({ tab: 'autoresearch', run }); }} onOpenTasks={() => navigate({ tab: 'catalog' })}/>;
+  if (route.tab === 'autoresearch') return <>{!route.run && <ResearchIterations key={user.id} ownerId={user.id} onTask={onTask}/>}<AutoResearch key={`${user.id}:${route.run || 'entry'}`} ownerId={user.id} api={researchApi.autoresearch}
+    runId={route.run || undefined} onRun={(run, passive) => { if (!passive) navigate({ tab: 'autoresearch', run }); }} onOpenTasks={() => navigate({ tab: 'catalog' })}/></>;
   if (route.tab === 'comparison') return <ComparisonPanel ownerId={user.id} api={researchApi.comparisons} disabled={!!busy} onPrepare={seed => onCompose?.({ key: `${seed.applicationRef.sha256}:${seed.mode}`, applicationRef: seed.applicationRef, mode: seed.mode, goal: seed.goal }, '比较输入已固定，请生成提案并确认本次任务范围。')}/>;
   return null;
 }
