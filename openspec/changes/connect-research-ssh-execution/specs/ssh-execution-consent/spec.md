@@ -32,3 +32,10 @@ The current SSH resource panel SHALL display an explicit “允许执行已配�
 #### Scenario: Refresh with an uncertain execution grant
 - **WHEN** the user refreshes after an unconfirmed bind-execution request
 - **THEN** the panel retains that owner's original request and offers receipt reading rather than automatically issuing another grant
+
+### Requirement: SSH connections resolve through the native guarded handle contract
+The SSH provider SHALL return an opaque handle supporting the existing ConnectionService `guarded(recheck)` contract. It SHALL NOT expose credential configuration or implement an HTTP/runtime client. A retained handle's `check_authorized` SHALL invoke the original connection's current owner/task/pin/capability guard; execution still uses the separately guarded SSH lease.
+
+#### Scenario: Native resolution and retained execution authority
+- **WHEN** the native connection registry resolves an explicitly execution-enabled SSH environment and retains its handle
+- **THEN** resolution succeeds without dispatch, and authorization checks reject an insufficient preparation scope or later execution-binding revocation using the original connection identity
