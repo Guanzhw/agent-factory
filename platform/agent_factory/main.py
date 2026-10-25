@@ -11,8 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .auth import AuthService, CookieBridge, EXECUTOR_ID, MemberTokenBoundary
-from .catalog import seed_catalog
+from .auth import AuthService, EXECUTOR_ID, MemberTokenBoundary
 from .config import Settings
 from .connections import ConnectionService, connection_router
 from .execution_bindings import default_bindings
@@ -63,8 +62,7 @@ class NativeIngress:
 def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                storage_governance_type=None, lifecycle_observer_type=None,
                model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
-               bindings_factory=None, seed_materials=(),
-               demo_definitions=None, governance_config=None, policy_config=None,
+               bindings_factory=None, governance_config=None, policy_config=None,
                queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
                plan_policy_type=None, shutdown_callback=None, delegation_service_type=None,
                connection_service_type=None, shutdown_guard=None):
@@ -79,8 +77,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
             diagnostics.at(stage)
     at('PREPARATION_APP_SETTINGS')
     settings = settings or Settings.from_env()
-    if settings.development_profile == 'opencode-go' and (type(queue_max_attempts) is not int or queue_max_attempts != 1):
-        raise ValueError('Go profile requires exactly one native queue attempt; provider retries retain original usage custody')
     settings.runtime_directory.mkdir(parents=True, exist_ok=True)
     at('PREPARATION_APP_NATIVE_DB')
     native_db = PostgresDb(db_url=settings.db_url, id="factory-native-postgres")
@@ -89,8 +85,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     store.native_db = native_db
     at('PREPARATION_APP_AUTH')
     auth = AuthService(settings, native_db)
-    at('PREPARATION_APP_DEMO_IDENTITIES')
-    auth.initialize_demo()
     store.auth = auth
     from .storage_governance import StorageGovernance
     from .storage_api import storage_router
@@ -99,16 +93,10 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_EVENT_REPLAY')
     replay = EventReplay(store, auth, signing_key=auth._key)
     store.event_replay = replay
-    at('PREPARATION_APP_CATALOG')
-    if settings.demo:
-        seed_catalog(store, seed_materials)
     at('PREPARATION_APP_GOVERNANCE')
     governance = MaterialGovernance(store, auth, governance_config or GovernanceConfig(
         review_mode="member-self-service", revision=settings.material_policy_revision,
-        tool_contract=cast(ToolContract, settings.runtime_tool_contract)), seed_materials=seed_materials)
-    at('PREPARATION_APP_DEMO_GOVERNANCE')
-    if settings.demo:
-        governance.adopt_demo_bootstrap()
+        tool_contract=cast(ToolContract, settings.runtime_tool_contract)))
     store.material_governance = governance
     store.register_execution_guard("material-governance",
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
@@ -156,7 +144,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
             tool_name=entry.tool_name, connection_kind=entry.connection_kind,
             required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-            demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
+            validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
     store.personal_tools.register(bindings)
     store.execution_bindings = bindings
     prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
@@ -175,8 +163,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     store.remote_bindings = remote_bindings
     at('PREPARATION_APP_APPLICATIONS')
     applications = ApplicationService(store, auth)
-    if settings.demo:
-        applications.seed_demo(demo_definitions or ())
     store.applications = applications
     at('PREPARATION_APP_COMPOSITION')
     composition = CompositionService(store, auth, applications, bindings, connections)
@@ -382,19 +368,12 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
         external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
-    if settings.development_mock_login:
-        from .development_identity import DevelopmentIdentityProvider
-        from .browser_auth import BrowserAuthBridge, BrowserSessionService
-        provider = DevelopmentIdentityProvider(demo=settings.demo, public_origin=cast(str, settings.development_public_origin))
-        browser_auth = BrowserSessionService(store, auth, provider.config, exchanger=provider.exchanger)
-        native.state.factory.update(browser_auth=browser_auth, development_identity=provider)
-        return BrowserAuthBridge(native, browser_auth, development_app=provider.app)
     if settings.browser_oidc is not None:
         from .browser_auth import BrowserAuthBridge, BrowserSessionService
         browser_auth = BrowserSessionService(store, auth, settings.browser_oidc)
         native.state.factory["browser_auth"] = browser_auth
         return BrowserAuthBridge(native, browser_auth, bearer_app=external)
-    return external if external is not None else CookieBridge(native, settings)
+    return external if external is not None else native
 
 
 def main():

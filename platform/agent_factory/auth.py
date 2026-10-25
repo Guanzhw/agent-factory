@@ -3,11 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from contextvars import Context
-from http.cookies import CookieError, SimpleCookie
 import json
-import secrets
 from typing import Any
-from urllib.parse import urlsplit
 
 from agno.os.authz import Authorization, AuthorizationContext, UserDirectory
 from agno.os.authz.native_engine import NativePolicyEngine
@@ -17,15 +14,13 @@ from fastapi import HTTPException, Request
 import jwt
 from starlette.responses import JSONResponse
 
-DEMO_COOKIE = "factory_demo_session"
 EXECUTOR_ID = "factory-executor"
 AUDIENCE = "agent-factory"
-_PERSONAS = {"manager": ("Manager", "factory-manager"), "alice": ("Alice", "factory-user"), "bob": ("Bob", "factory-user")}
 ACCOUNT_ADMIN_ROLE = "factory-manager"
 ACCOUNT_MIGRATION_KEY = "factory_account_admin_v1"
 _NATIVE_ACCOUNT_RESOURCES = {"agent_os", "authz", "users", "service_accounts"}
 _PUBLIC_PATHS = ["/", "/assets/*", "/favicon.ico", "/api/status", "/api/health",
-                 "/api/factory/status", "/api/factory/demo/login", "/api/factory/auth/config"]
+                 "/api/factory/status", "/api/factory/auth/config"]
 
 
 class TrustedTeamProvider(AuthorizationProvider):
@@ -115,10 +110,6 @@ class AuthService:
         configured: Any = getattr(settings, "jwt_key", None)
         if hasattr(configured, "get_secret_value"):
             configured = configured.get_secret_value()
-        if not configured:
-            if not settings.demo:
-                raise ValueError("Production requires an operator-configured JWT signing key")
-            configured = secrets.token_urlsafe(48)
         if not isinstance(configured, str) or len(configured.encode()) < 32:
             raise ValueError("JWT signing key must contain at least 32 bytes")
         self._key = configured
@@ -157,20 +148,6 @@ class AuthService:
                     self.account_roles.assign(user_id, ACCOUNT_ADMIN_ROLE)
                 metadata[ACCOUNT_MIGRATION_KEY] = True
                 self.directory.upsert(user_id, metadata=metadata)
-
-    def initialize_demo(self) -> None:
-        if not self.settings.demo:
-            return
-        # Native subjects and roles share a namespace; a persona named manager
-        # must not collide with a role slug named manager.
-        personas = {**_PERSONAS, **({"manager2": ("Second manager / reviewer", "factory-manager")}
-            if getattr(self.settings, "development_mock_login", False) else {})}
-        for user_id, (name, role) in personas.items():
-            # Do not restore assignments or disabled flags removed by an operator.
-            if self.directory.get(user_id) is None:
-                self.directory.upsert(user_id, name=name, metadata={ACCOUNT_MIGRATION_KEY: True})
-                if role == ACCOUNT_ADMIN_ROLE:
-                    self.account_roles.assign(user_id, role)
 
     def agentos_kwargs(self) -> dict[str, Any]:
         return {"authorization": self.authorization, "user_directory": self.directory,
@@ -230,44 +207,3 @@ class AuthService:
         now = datetime.now(timezone.utc)
         return jwt.encode({"sub": user_id, "aud": self.audience, "iat": now,
                            "exp": now + timedelta(seconds=lifetime_seconds)}, self._key, algorithm="HS256")
-
-    def issue_demo_token(self, persona: str) -> str:
-        if not self.settings.demo:
-            raise HTTPException(404, "Demo login is disabled")
-        if persona not in _PERSONAS:
-            raise HTTPException(400, "Unknown demo persona")
-        # Signing in never restores a revoked account-administrator flag.
-        return self._issue_native_token(persona, lifetime_seconds=3600)
-
-
-class CookieBridge:
-    """Pure ASGI outer wrapper: native middleware verifies the demo cookie's JWT."""
-
-    def __init__(self, app: Any, settings: Any):
-        self.app, self.settings = app, settings
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and self.settings.demo:
-            headers = list(scope.get("headers", []))
-            if not any(name.lower() == b"authorization" for name, _ in headers):
-                cookies = SimpleCookie()
-                try:
-                    for name, value in headers:
-                        if name.lower() == b"cookie":
-                            cookies.load(value.decode("latin-1"))
-                except CookieError:
-                    cookies.clear()
-                if DEMO_COOKIE in cookies:
-                    token = cookies[DEMO_COOKIE].value
-                    # SameSite=Strict belongs on the issuing response too. This guard
-                    # also rejects explicit cross-origin mutating cookie requests.
-                    origins = [value.decode("latin-1") for name, value in headers if name.lower() == b"origin"]
-                    hosts = [value.decode("latin-1") for name, value in headers if name.lower() == b"host"]
-                    if scope.get("method") not in {"GET", "HEAD", "OPTIONS"} and origins:
-                        if len(origins) != 1 or len(hosts) != 1 or urlsplit(origins[0]).netloc != hosts[0]:
-                            await JSONResponse({"detail": "Cross-origin demo session request denied"}, status_code=403)(scope, receive, send)
-                            return
-                    if token.isascii() and "\r" not in token and "\n" not in token:
-                        headers.append((b"authorization", f"Bearer {token}".encode("ascii")))
-                        scope = {**scope, "headers": headers}
-        await self.app(scope, receive, send)

@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
-import secrets
 import re
 from typing import TYPE_CHECKING, Callable
 
@@ -14,14 +13,11 @@ if TYPE_CHECKING:
 @dataclass
 class Settings:
     db_url: str
-    demo: bool = True
     jwt_key: str = ""
     jwt_audience: str = "agent-factory"
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
     browser_oidc: "BrowserOIDCConfig | None" = None
-    development_mock_login: bool = False
-    development_public_origin: str | None = None
     max_workers: int = 2
     max_queued: int = 20
     max_user_tasks: int = 2
@@ -66,10 +62,6 @@ class Settings:
     native_workflows: tuple = field(default_factory=tuple)
     workflow_runtimes: dict = field(default_factory=dict)
     runtime_tool_contract: str = "legacy-v1"
-    # Explicit coding-development profile; never credential discovery or production default.
-    development_profile: str = "disabled"
-    # Operator-only dedicated validation instance; no environment/public API switch.
-    development_live_validation: bool = False
     # Frozen operator price/policy registrations, never loaded from model input.
     fee_management_enabled: bool = False
     platform_paid_models_enabled: bool = False
@@ -116,38 +108,20 @@ class Settings:
                 if (entry.adapter_id, entry.revision) not in installed]]
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")
-        if type(self.development_mock_login) is not bool:
-            raise ValueError("Development mock login requires explicit boolean configuration")
-        if self.development_mock_login:
-            from .development_identity import validate_development_origin
-            if self.demo is not True or self.browser_oidc is not None or self.oidc_identity is not None:
-                raise ValueError("Development mock login is disabled in production")
-            validate_development_origin(self.development_public_origin)  # type: ignore[arg-type]
-        elif self.development_public_origin is not None:
-            raise ValueError("Development origin requires explicit mock login")
         if self.browser_oidc is not None:
             from .browser_oidc import BrowserOIDCConfig
-            if self.demo or type(self.browser_oidc) is not BrowserOIDCConfig:
+            if type(self.browser_oidc) is not BrowserOIDCConfig:
                 raise ValueError("Browser OIDC requires an explicit production configuration")
         if self.oidc_identity is not None:
             from .oidc_identity import OIDCIdentityConfig
-            if self.demo or type(self.oidc_identity) is not OIDCIdentityConfig:
+            if type(self.oidc_identity) is not OIDCIdentityConfig:
                 raise ValueError("External access-token identity requires an explicit production configuration")
-        if self.development_profile not in {"disabled", "opencode-go"}:
-            raise ValueError("Unsupported development profile")
-        if self.development_profile != "disabled" and not self.demo:
-            raise ValueError("Go development profile cannot enable a production provider")
-        if type(self.development_live_validation) is not bool or (self.development_live_validation
-                and (not self.demo or self.development_profile != "opencode-go" or self.max_workers != 1)):
-            raise ValueError("Live development validation requires an explicit single-worker development instance")
         if min(self.storage_task_reserve_bytes, self.storage_low_water_bytes, self.storage_scan_entries, self.storage_hash_bytes) < 1:
             raise ValueError("Storage budgets must be positive")
-        if self.storage_retention_grace_seconds < (0 if self.demo else 60):
+        if self.storage_retention_grace_seconds < 60:
             raise ValueError("Production retention needs a positive recovery window")
-        if not self.demo and len(self.jwt_key) < 32:
-            raise ValueError("Production requires an explicitly configured JWT key")
-        if self.demo and not self.jwt_key:
-            self.jwt_key = secrets.token_urlsafe(48)
+        if not isinstance(self.jwt_key, str) or len(self.jwt_key.encode()) < 32:
+            raise ValueError("Production requires an explicitly configured JWT key of at least 32 bytes")
         if self.material_review_mode != "member-self-service":
             raise ValueError("Material review modes were removed; members publish their own materials")
         if not 1 <= self.max_workers <= 4:
@@ -163,21 +137,25 @@ class Settings:
 
     @classmethod
     def from_env(cls):
-        demo = os.getenv("FACTORY_MODE", "demo") == "demo"
+        if os.getenv("FACTORY_MODE", "production") != "production":
+            raise ValueError("FACTORY_MODE only supports production; demo mode was removed")
+        obsolete = ("FACTORY_DEVELOPMENT_PROFILE", "FACTORY_DEVELOPMENT_MOCK_LOGIN",
+                    "FACTORY_DEVELOPMENT_PUBLIC_ORIGIN", "FACTORY_DEVELOPMENT_LIVE_VALIDATION")
+        if any(name in os.environ for name in obsolete):
+            raise ValueError("Development identity/profile configuration was removed")
         url = os.getenv("FACTORY_DATABASE_URL", "")
         if not url.startswith("postgresql"):
             raise ValueError("FACTORY_DATABASE_URL must configure PostgreSQL; no SQLite queue fallback")
         key = os.getenv("FACTORY_JWT_KEY", "")
-        if not demo and len(key) < 32:
+        if len(key.encode()) < 32:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 characters)")
         policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
-        return cls(db_url=url, demo=demo, jwt_key=key or secrets.token_urlsafe(48),
+        return cls(db_url=url, jwt_key=key,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "department-member-v1"),
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "member-self-service"),
                    material_policy_revision=os.getenv("FACTORY_MATERIAL_POLICY_REVISION", "material-department-v1"),
                    runtime_tool_contract=os.getenv("FACTORY_RUNTIME_TOOL_CONTRACT", "legacy-v1"),
-                   development_profile=os.getenv("FACTORY_DEVELOPMENT_PROFILE", "disabled"),
                    storage_task_reserve_bytes=int(os.getenv("FACTORY_STORAGE_TASK_RESERVE_BYTES", str(64 * 1024 * 1024))),
                    storage_low_water_bytes=int(os.getenv("FACTORY_STORAGE_LOW_WATER_BYTES", str(1024 * 1024 * 1024))),
                    storage_monitor_paths=tuple(Path(path).resolve() for path in os.getenv("FACTORY_STORAGE_MONITOR_PATHS", "").split(os.pathsep) if path),

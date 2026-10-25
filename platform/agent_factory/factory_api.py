@@ -18,10 +18,6 @@ class Body(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Login(Body):
-    persona: Literal["manager", "alice", "bob"]
-
-
 class PlanRequest(Body):
     topic: str = Field(min_length=2, max_length=2000)
     mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
@@ -233,9 +229,9 @@ class FactoryAPI:
         job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": definition["version"],
             "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
-            "runtime": "demo" if self.settings.demo else "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
+            "runtime": "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
             "allowedActions": actions, "validationStatus": "执行与结论需按产物证据分别验证",
-            "deploymentMode": "demo" if self.settings.demo else "production",
+            "deploymentMode": "production",
             "executionKind": execution_classification(plan)["executionKind"],
             "verificationStatus": "unverified", "evidenceKind": "unverified"}
         if stopped_status:
@@ -302,27 +298,14 @@ class FactoryAPI:
         def status():
             rows = self.store.sql("SELECT body->>'lastStatus' AS state,COUNT(*) AS n FROM af_tasks WHERE NOT terminal GROUP BY state")
             counts = {row["state"]: row["n"] for row in rows}
-            return {"mode": "demo" if self.settings.demo else "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
+            return {"mode": "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
                     "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
-                    "liveEnabled": not self.settings.demo, "liveIntegrationVerified": False,
-                    "deploymentMode": "demo" if self.settings.demo else "production", "verificationStatus": "unverified",
+                    "liveEnabled": True, "liveIntegrationVerified": False,
+                    "deploymentMode": "production", "verificationStatus": "unverified",
                     "admissionMode": "per-plan-preflight", "observedMetrics": True,
                     "feeManagementEnabled": self.settings.fee_management_enabled,
                     "platformPaidModelsEnabled": self.settings.platform_paid_models_enabled,
                     "personalModelSetup": "/api/factory/personal-models"}
-
-        @router.post("/demo/login")
-        def login(body: Login, response: Response):
-            if not self.settings.demo:
-                raise HTTPException(404, "Demo login is disabled")
-            token = self.auth.issue_demo_token(body.persona)
-            response.set_cookie("factory_demo_session", token, httponly=True, samesite="strict", secure=False, max_age=3600)
-            return self.auth.identity(body.persona)
-
-        @router.post("/logout", status_code=204)
-        def logout(request: Request, response: Response):
-            self.auth.user(request)
-            response.delete_cookie("factory_demo_session", httponly=True, samesite="strict")
 
         @router.get("/session")
         def session(request: Request):

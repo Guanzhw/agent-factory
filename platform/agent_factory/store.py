@@ -152,6 +152,10 @@ class Store:
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
 
     def initialize(self):
+        if self.sql("SELECT to_regclass('af_bootstrap') AS relation")[0]['relation'] is not None:
+            existing = self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")
+            if existing and existing[0]['mode'] != 'production':
+                raise ValueError("Existing demo database cannot be used in production; retained data requires separate review")
         statements = [
             "CREATE TABLE IF NOT EXISTS af_process_runs (task_id TEXT NOT NULL,effect_key TEXT NOT NULL,owner_id TEXT NOT NULL,native_run_id TEXT NOT NULL,lease_id TEXT UNIQUE NOT NULL,body JSONB NOT NULL,PRIMARY KEY(task_id,effect_key))",
             "CREATE TABLE IF NOT EXISTS af_process_allocations (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,body JSONB NOT NULL)",
@@ -180,10 +184,7 @@ class Store:
         ]
         for statement in statements:
             self.sql(statement)
-        mode = "demo" if self.settings.demo else "production"
-        self.sql("INSERT INTO af_bootstrap VALUES('mode',:mode) ON CONFLICT DO NOTHING", mode=mode)
-        if self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")[0]["mode"] != mode:
-            raise ValueError("Use a separate clean database when changing demo/production mode")
+        self.sql("INSERT INTO af_bootstrap VALUES('mode','production') ON CONFLICT DO NOTHING")
 
     def audit(self, actor, action, target, body):
         self.sql("INSERT INTO af_audit(actor_id,action,target_id,body,created_at) VALUES(:actor,:action,:target,CAST(:body AS JSONB),:at)",
@@ -196,16 +197,16 @@ class Store:
             return self.material_governance.filter_active(values)
         return values
 
-    def add_material(self, body, actor, seed=False):
+    def add_material(self, body, actor):
         material_id = body.get("id") or str(uuid4())
         with self.engine.begin() as conn:
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:id))"), {"id": "material:" + material_id})
             latest = conn.execute(text("SELECT MAX(version) FROM af_materials WHERE id=:id"), {"id": material_id}).scalar() or 0
-            body = {**body, "id": material_id, "version": latest + 1, "createdAt": now(), "published": seed}
+            body = {**body, "id": material_id, "version": latest + 1, "createdAt": now(), "published": False}
             body["sha256"] = digest({key: value for key, value in body.items() if key not in {"sha256", "published", "createdAt"}})
             conn.execute(text("INSERT INTO af_materials VALUES(:id,:version,CAST(:body AS JSONB),:published)"),
-                         {"id": material_id, "version": body["version"], "body": canonical(body), "published": seed})
-        self.audit(actor, "material.seed" if seed else "material.draft", material_id, {"version": body["version"], "sha256": body["sha256"]})
+                         {"id": material_id, "version": body["version"], "body": canonical(body), "published": False})
+        self.audit(actor, "material.draft", material_id, {"version": body["version"], "sha256": body["sha256"]})
         return body
 
     def publish_material(self, material_id, version, actor):
