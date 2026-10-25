@@ -72,6 +72,8 @@ response固定 `{protocol, binding, observation}` 或固定安全错误code；ob
 
 首实现CPU受界进程只用于机制证明；ResearchProcessSpec环境/目录、GPU绑定与真实分配/释放仍按完整任务逐步接入。没有GPU证据不输出GPU RELEASED。协议字段/文件身份、恶意response、重复submit和未知目录均有portable反例；真实helper、sshd与PG等root串行授权后执行。
 
+现ResourceService._reserve已先调用`execution_runtime(effectKey).validate_execution`再在原task行锁内核原run及(task,effect)唯一性。为SSH这一明确第二消费者，最窄扩展为所有验证过的explicit execution持久化`executionEffect`，只有实际提供requirement时持久化`executionGuard`；未注册effect仍拒绝，旧lease缺字段沿既有默认规则读取。SSH效果固定`ssh-process-run-v1`，其execution为`{nativeRunId,effectKey,requirement:{operationId}}`，runtime validate/guard核对该operation的owner/task/run/plan、adapter精确pin、工具配置targetRef与lease连接，不以requestId文本作为身份授权。provider从原executionGuard读取operationId，不解析请求字符串发明绑定。新增测试核SSH与旧bounded receipt保留各自语义、未知effect零allocate；资源层此接缝由主集成负责。
+
 资源声明和平台准入上限不等于远端 kernel enforcement。preflight 必须返回实际可证明的隔离能力，不能把本机限制或环境变量当远端强制边界。GPU 运行需现 GpuBinding 绑定实际分配设备/namespace，并由可信目标适配器提供与原 lease/process 关联的占用及释放观察，经 validate_gpu_evidence 核对；CUDA_VISIBLE_DEVICES 仅进程选择，不是分配/独占/释放证明。现 GpuBinding 自身也明确 quotaEnforced/deviceIsolationEnforced=false；不得据此声称隔离外部进程。无实际 GPU 证明时可完成 CPU机制验证，但 GPU释放/D01仍 BLOCKED。
 
 实际 stdout/stderr、退出码、选定指标和明确文件清单从原运行目录取回，经现 artifact_write 与研究精选证据契约归档；完整原结果保持 owner 私有，团队仅按现 sourceContentIds/精选字段与附件授权读取。拒绝越根路径、symlink 替换、跨运行文件和尺寸越界；先确认完整归档，再允许独立的显式清理，不把 reclaim 等同删除用户代码/数据。科学负结果保留；进程成功不自动代表目标达成。
