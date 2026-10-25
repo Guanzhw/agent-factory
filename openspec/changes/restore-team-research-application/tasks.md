@@ -23,7 +23,7 @@
 - [ ] 2.5 集成已独立review的core delegated-operation固定pin（f953118及整改最终head），不复制源码；按原operation/child/native wait验收证明唯一身份、撤权cleanup、root预算继承；未合入依赖明确stacked。
 - [ ] 2.6 先完成独立设计review并由core spec提供按原task读取delivery绑定/拒绝code的窄port；解决P3深度20与已确认round承诺不一致，验证预算约束的长链、TTL和无reset lineage；未解决时明确preflight阻塞，不能暗限科研轮数。
 - [ ] 2.7 应用静态装配固定research Workflow及精确pin owner；补最小round/实验/attempt关联的非破坏迁移，保留首切片任意app原记录；未确认、伪造content通知、无原intent/delivery均在child之前拒绝。未绑定pin失败root不能永久卡finalization。
-- [ ] 2.8 实现context→tool-free decide→固定Router stop/child→原wait→实际输出evaluate→持久决定；不增加Agent工具权限/provider while；真实native重启轨迹、不同结果分支、已达标零child及累计预算验证通过，合成结果不计C01。
+- [ ] 2.8 实现context→tool-free decide→顶层治理Function stop=True/child→原wait→实际输出evaluate→持久决定；不增加Agent工具权限/provider while；真实native重启轨迹、不同结果分支、已达标零child及累计预算验证通过，合成结果不计C01。
 - [ ] 2.9 用唯一finalization_context完成领域终态/精选content/至多一个自定向后继；PG屏障验证HELD/异常回滚与原tick恢复、唯一event/allocation/task，撤权时记录原终态但不发布/续跑，期限/额度耗尽明确无后继，P3拒绝显示原reason不重新派发。
 - [ ] 2.10 独立精简review上述完整base/head diff及spec，保留首次失败；A01/A03/A04/A06/A07及原核心受影响回归通过后再集成。记录P7 QA和P8成果接点、不展开其实现；真实C/D和UI门槛仍独立。
 

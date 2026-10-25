@@ -72,12 +72,12 @@ P5首切片允许任意已发布应用；这些已有task/plan/record继续只�
 | --- | --- | --- |
 | 1 | 受治理Function `research_context` | 校验原run/plan及研究intent或delivery；读取冻结目标objective/evaluation/stopConditions、原预算、前轮公开事实及来源版本，输出完整且有界上下文。P3消息文本仅是contentId通知，不能将通知正文当研究目标 |
 | 2 | tool-free Agent `research_decide` | 选定模型返回严格结构化`stop`或`experiment`：可见理由、来源ID；实验分支含假设、条件和goal，停止分支含met/not_met及证据。无实验必要时直接停止，不强迫做一轮 |
-| 3 | Router | 只解析上述结构化决定选择固定分支；不调用provider，不自动修补无效答案，不执行模型提供的代码/路由名 |
-| 4a | 受治理Function `research_stop` | 持久本轮停止决定及证据等级，留给原完成事务收尾 |
-| 4b | 受治理Function `research_launch` | 同事务创建/引用实验节点、具体运行引用及精选进行中记录；提交后以原RunContext调用唯一custody.start、固定step/effectSlot/adapter pin，inputs仅goal与固定experiment模式 |
-| 5b | Agent + 既有factory_wait_operations | 等待原operation；由既有WorkflowControl恢复原requirement。未确认停止/结果时不进入下一实验 |
-| 6b | 受治理Function `research_results` → tool-free Agent `research_evaluate` | Function从原custody读取已闭合的真实child结果及原约定，不信任wait模型的复述；evaluate接收这些指标/产物引用和原标准后决定continue/stop，并说明证据适用条件；进程completed不等于科学met |
-| 7b | 受治理Function `research_record_decision` | 校验结果引用属于本轮原operation，保存决定，不直接启动后继、不分配下一root预算 |
+| 3 | 受治理Function `research_launch` | 解析决定；stop分支先持久停止决定，然后返回原生`StepOutput(stop=True)`；experiment分支同事务创建/引用实验与精选进行中记录，提交后调用唯一custody.start，inputs仅goal与固定experiment模式 |
+| 4 | 顶层Agent + 既有factory_wait_operations | 等待原operation；既有WorkflowControl恢复原requirement；未确认结果不进入评估 |
+| 5 | 顶层受治理Function `research_results` → tool-free Agent `research_evaluate` | Function从原custody读取已闭合真实child结果及原约定，不信任wait模型复述；evaluate根据实际证据决定continue/stop，进程completed不等于科学met |
+| 6 | 顶层受治理Function `research_record_decision` | 校验结果引用属于本轮原operation，保存决定；不直接启动后继或分配下一root预算 |
+
+所有步骤位于Workflow顶层，模型仍只决定结构化stop/experiment。真实Agno 3.1验证发现嵌套Router/Steps的external wait恢复仅继续内层executor，然后跳到下一个顶层节点，跳过分支内剩余评估。因此删除无必要的Router/Steps和独立stop工具；复用Agno已有StepOutput.stop，不修补框架、不复制进度或恢复控制器。原嵌套失败保留；通用嵌套恢复不是本应用交付宣称。
 
 决定只记录可见理由，不记录隐藏思维链。模型的met/not_met属于带来源的agent判断；可核对指标是事实，独立验证等级不能由模型自评升级。不引入评价DSL或假定一段自由文本标准可被框架自动证明。无效结构化输出、缺来源或技术失败留下明确失败事实，不强制固定次数重试；UNKNOWN只观察原操作。工具实际结果超出既有RuntimeObservation的inert/大小边界时必须通过原artifact引用读取，不截断后假称完整证据。
 
