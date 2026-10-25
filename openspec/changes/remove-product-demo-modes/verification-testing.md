@@ -389,3 +389,11 @@ was added. Entire module: **5 passed, 0 skipped, 0.005s, exit 0**,
 `/tmp/no-demo-native-fixture-lifecycle-fixed.log`; Ruff passed. Complete fast
 Python validation is pending its serial slot. The already running full CI
 `40228654327` was not canceled or restarted and retains the old source result.
+
+Lifecycle follow-up complete fast validation at code head `fe3f85a`:
+`env -u FACTORY_TEST_DATABASE_URL python scripts/check_fast.py --suite python`
+completed **370/370 passed, 0 skipped, 0 failures/errors, 79.542s, exit 0**;
+all required groups passed and `accepted=true`.
+Log: `/tmp/no-demo-fast-python-lifecycle-fixed.log`. This was one bounded,
+exclusive local run; the old complete CI run was left untouched. No live model,
+real external runtime or production identity acceptance is inferred.
