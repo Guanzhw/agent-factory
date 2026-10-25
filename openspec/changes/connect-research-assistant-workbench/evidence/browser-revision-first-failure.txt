@@ -1,0 +1,23 @@
+/workspace/agent-factory-research-assistant-ui/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-2f7ae8a6, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-bb0fd071 poll=0.2s
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+Traceback (most recent call last):
+  File "/workspace/agent-factory-research-assistant-ui/scripts/accept_research_assistant_ui.py", line 212, in <module>
+    if __name__ == '__main__': main()
+                               ^^^^^^
+  File "/workspace/agent-factory-research-assistant-ui/scripts/accept_research_assistant_ui.py", line 207, in main
+    results = [run(browser, args, mode) for mode in (('demo', 'production-local') if args.mode == 'both' else (args.mode,))]
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-assistant-ui/scripts/accept_research_assistant_ui.py", line 139, in run
+    assert state['research_assistants'].me('bob')['assistant']['configurationRevision'] == 2
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
