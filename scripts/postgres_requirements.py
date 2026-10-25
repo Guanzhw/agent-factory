@@ -7,6 +7,7 @@ selectors pin a few model/permission invariants independently of suite size.
 REQUIRED_TESTS = {
     'ssh_original_execution': (
         'test_ssh_native_postgres.SSHNativePostgresTests',
+        'test_ssh_native_process.SSHNativeProcessTests',
         'test_research_ssh_native_postgres.ResearchSSHNativePostgresTests',
     ),
     'owner_byok_default_off': (
