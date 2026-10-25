@@ -11,7 +11,7 @@
 
 #### Scenario: Save then publish
 - WHEN 成员选择准确模型/环境/实验工具并保存，再明确发布
-- THEN 保存只建草稿；发布核对当前资源与pin，得到真实published applicationRef，不执行模型/工具/训练
+- THEN 保存只建owner setup草稿，不产生材料/应用版本；发布核对当前资源与pin，得到真实published applicationRef，不执行模型/工具/训练
 
 ### Requirement: Shared definition, personal resources
 共享定义 SHALL 只包含材料与symbolic连接要求；执行连接选择只归当前成员。
