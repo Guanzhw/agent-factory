@@ -189,6 +189,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
         require(lease.get('stopEvidence', {}).get('allStopped') is True)
         operation_id = lease['executionGuard']['operationId']
         receipt_name = f'ssh-{operation_id}-receipt.json'
+        never_dispatched = lease['stopEvidence'].get('kind') == 'never-dispatched'
         existing = [a for a in self.store.artifacts(lease['localTaskId']) if a['name'] == receipt_name]
         if existing:
             require(len(existing) == 1)
@@ -205,13 +206,18 @@ class SSHOperationRuntime(ProcessRuntimeService):
                     and all(receipt.get(k) == lease[k] for k in ('providerJobId', 'processBinding',
                         'executionStatus', 'exitCode', 'stopEvidence')))
             output = receipt['output']
-            require(output['taskId'] == lease['localTaskId'])
-            output_metadata, _ = self.store.artifact(lease['localTaskId'], output['artifactId'])
-            require(output_metadata['sha256'] == output['sha256'] and all(
-                output_metadata['provenance'].get(k) == v
-                for k, v in {**expected, 'evidenceRole': 'output'}.items()))
+            require(receipt['outputState'] == ('never_dispatched' if never_dispatched else 'artifact'))
+            if never_dispatched:
+                require(output is None)
+            else:
+                require(output['taskId'] == lease['localTaskId'])
+                output_metadata, _ = self.store.artifact(lease['localTaskId'], output['artifactId'])
+                require(output_metadata['sha256'] == output['sha256'] and all(
+                    output_metadata['provenance'].get(k) == v
+                    for k, v in {**expected, 'evidenceRole': 'output'}.items()))
             return receipt
-        raw = await asyncio.to_thread(target.provider.read_completed_output, lease['id'], lease['ownerId'])
+        raw = None if never_dispatched else await asyncio.to_thread(
+            target.provider.read_completed_output, lease['id'], lease['ownerId'])
         provenance = {'kind': 'ssh-process', 'operationId': operation_id, 'leaseId': lease['id'],
             'providerJobId': lease['providerJobId'], 'nativeRunId': lease['nativeRunId'],
             'planId': lease['planId'], 'executionStatus': lease['executionStatus'],
@@ -229,13 +235,16 @@ class SSHOperationRuntime(ProcessRuntimeService):
                                 and all(found[0]['provenance'].get(k) == v for k, v in metadata.items()))
                         return found[0]
                     return self.store.artifact_write(lease['localTaskId'], name, data, media, metadata)
-                output = artifact(f'ssh-{operation_id}-output.log', raw, 'application/octet-stream', 'output')
+                output = None if raw is None else artifact(
+                    f'ssh-{operation_id}-output.log', raw, 'application/octet-stream', 'output')
                 receipt = {key: lease[key] for key in ('providerJobId', 'processBinding', 'executionStatus',
                                                       'exitCode', 'stopEvidence')}
                 receipt.update(schema=1, kind='ssh-process', operationId=operation_id,
                     taskId=lease['localTaskId'], runId=lease['nativeRunId'], planId=lease['planId'],
                     leaseId=lease['id'], allStopped=True,
-                    output={'taskId': lease['localTaskId'], 'artifactId': output['id'], 'sha256': output['sha256']})
+                    outputState='never_dispatched' if never_dispatched else 'artifact',
+                    output=None if output is None else {
+                        'taskId': lease['localTaskId'], 'artifactId': output['id'], 'sha256': output['sha256']})
                 artifact(receipt_name, canonical(receipt).encode(), 'application/json', 'receipt')
                 return receipt
         return await asyncio.to_thread(write)

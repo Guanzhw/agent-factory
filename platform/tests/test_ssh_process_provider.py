@@ -179,3 +179,13 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(other.configuration_fingerprint, original)
         alias.host_key = 'different-host-key'
         self.assertNotEqual(other.capacity_namespace, namespace)
+
+    async def test_inspect_confirms_original_release_intent_only_with_positive_stop(self):
+        self.lease['releaseAck'] = 'unknown'
+        running = await self.provider.inspect('lease-1', 'alice')
+        self.assertEqual(running['state'], 'RUNNING')
+        self.assertFalse(running['released'])
+        self.state, self.stopped = 'COMPLETED', True
+        released = await self.provider.inspect('lease-1', 'alice')
+        self.assertEqual(released['state'], 'RECLAIMED')
+        self.assertTrue(released['released'])

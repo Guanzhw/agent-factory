@@ -64,3 +64,60 @@ class SSHExecutionEffectPostgresTests(unittest.TestCase):
         self.assertEqual(denied.exception.detail, 'PROCESS_EXECUTION_EFFECT_UNSUPPORTED')
         self.assertEqual(self.validations, [])
         self.assertEqual(self.store.sql('SELECT id FROM af_leases'), [])
+
+    def test_original_operation_cancel_uses_persistent_claim_and_stopped_journal(self):
+        """Actual claim/observe/archive SQL; native authority is an explicit fixture port."""
+        import asyncio
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessLimits, ProcessSpec
+        from agent_factory.ssh_operation_runtime import SSHOperationRuntime
+        from agent_factory.ssh_process_contract import encoded, MAX_REQUEST_BYTES
+        from agent_factory.ssh_process_helper import handle
+        from agent_factory.ssh_process_provider import SSHProcessProvider, EFFECT
+        with TemporaryDirectory() as folder:
+            server = SimpleNamespace(validate=lambda: None, host_key='synthetic-host-key',
+                pin=lambda: 'a' * 64, allowed_root=folder)
+            provider = SSHProcessProvider(server, target_ref='fixed',
+                spec=ProcessSpec('/bin/not-launched', 'b' * 64, ()), limits=ProcessLimits(),
+                exchange=lambda value, **_: handle(value), read_lease=lambda owner, key: current())
+            target = RemoteTarget('Real stopped journal fixture', 'compute', frozenset({'alice'}),
+                provider=provider, max_seconds=33,
+                capacity_pool=ComputePool('original-stop', 1, 128, 1, max_leases=1, max_owner_leases=1))
+            resources = PersistentResourceService(self.store, SimpleNamespace(require_member=lambda *args: None),
+                                                   {'fixed': target})
+            resources.execution_runtimes[EFFECT] = SimpleNamespace(validate_execution=lambda *args: None)
+            lease, _ = resources._reserve('alice', 'fixed', self.task['id'], 'original-cancel-request',
+                {'cpu': 1, 'memoryMb': 128, 'diskMb': 1, 'seconds': 33},
+                execution={'nativeRunId': self.run_id, 'effectKey': EFFECT,
+                           'requirement': {'operationId': 'original-operation'}})
+            def current():
+                return resources._body(self.store.sql('SELECT body FROM af_leases WHERE id=:id',
+                                                     id=lease['id'])[0]['body'])
+            request = provider._request(lease, 'submit')
+            directory = Path(folder) / lease['id']
+            directory.mkdir(mode=0o700)
+            (directory / 'binding.json').write_bytes(encoded({k: request[k]
+                for k in ('protocol', 'binding', 'root', 'spec', 'limits')}, MAX_REQUEST_BYTES))
+            journal = BoundedProcessAdapter.create(directory / 'custody.sqlite', owner_id='alice',
+                task_id=self.task['id'], request_id=lease['requestId'], spec=provider.spec, limits=provider.limits)
+            self.store.workflow = SimpleNamespace(_load=lambda *args: {'cancelRequested': True},
+                                                  _lock_task=lambda *args: None)
+            runtime = SSHOperationRuntime(self.store, resources, None, {})
+            runtime._custody = lambda key: (current(), target, self.task, {'status': 'running'})
+            resources.execution_runtimes[EFFECT] = runtime
+            stopped = asyncio.run(runtime.observe_lease(lease['id']))
+            self.assertEqual(stopped['cancellationReason'], 'OPERATION_CANCEL_REQUESTED')
+            self.assertTrue(stopped['cancelRequested'])
+            self.assertEqual(stopped['state'], 'RECLAIMED')
+            self.assertFalse(stopped['capacityHeld'])
+            self.assertEqual(journal.inspect(owner_id='alice')['stopReceipt']['kind'], 'never-dispatched')
+            self.assertFalse((directory / 'custody.output').exists())
+            artifacts = self.store.artifacts(self.task['id'])
+            self.assertEqual(len(artifacts), 1)
+            receipt = __import__('json').loads(self.store.artifact(self.task['id'], artifacts[0]['id'])[1])
+            self.assertEqual(receipt['outputState'], 'never_dispatched')
+            self.assertIsNone(receipt['output'])
+            again = asyncio.run(runtime.observe_lease(lease['id']))
+            self.assertEqual(again['id'], lease['id'])
+            self.assertEqual(len(self.store.artifacts(self.task['id'])), 1)

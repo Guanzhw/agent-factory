@@ -107,3 +107,58 @@ class SSHPersonalTargetTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.ensure_target(self.task, {})
         self.resources.register_target.assert_not_called()
+
+
+class SSHPreparedArchiveTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_never_launched_journal_archives_explicit_absence_then_reclaims(self):
+        from contextlib import nullcontext
+        import hashlib
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from agent_factory.process_enforcement import BoundedProcessAdapter
+        from agent_factory.resources import PersistentResourceService
+        from agent_factory.ssh_process_contract import encoded, MAX_REQUEST_BYTES
+        from agent_factory.ssh_process_helper import handle
+        import test_ssh_process_provider as provider_fixtures
+
+        fixture = provider_fixtures.SSHProcessProviderTests()
+        fixture.setUp()
+        with TemporaryDirectory() as folder:
+            fixture.provider.server.allowed_root = folder
+            sent = fixture.provider._request(fixture.lease, 'submit')
+            directory = Path(folder) / fixture.lease['id']
+            directory.mkdir(mode=0o700)
+            descriptor = {key: sent[key] for key in ('protocol', 'binding', 'root', 'spec', 'limits')}
+            (directory / 'binding.json').write_bytes(encoded(descriptor, MAX_REQUEST_BYTES))
+            journal = BoundedProcessAdapter.create(directory / 'custody.sqlite', owner_id='alice',
+                task_id=fixture.lease['localTaskId'], request_id=fixture.lease['requestId'],
+                spec=fixture.provider.spec, limits=fixture.provider.limits)
+            self.assertEqual(journal.inspect(owner_id='alice')['state'], 'PREPARED')
+            fixture.provider.exchange = lambda request, **_: handle(request)
+            stopped = await fixture.provider.cancel(fixture.lease['id'], 'alice')
+            self.assertEqual(stopped['stopEvidence']['kind'], 'never-dispatched')
+            self.assertFalse((directory / 'custody.output').exists())
+            fixture.lease.update(PersistentResourceService.process_snapshot(fixture.lease, stopped),
+                                 state=stopped['state'])
+            artifacts = {}
+            def write(task, name, raw, media, provenance):
+                identity = 'artifact-' + str(len(artifacts))
+                metadata = {'id': identity, 'name': name, 'sha256': hashlib.sha256(raw).hexdigest(),
+                            'provenance': provenance}
+                artifacts[identity] = (metadata, raw)
+                return metadata
+            store = SimpleNamespace(transaction=nullcontext,
+                workflow=SimpleNamespace(_lock_task=lambda *args: None),
+                artifacts=lambda task: [a[0] for a in artifacts.values()],
+                artifact=lambda task, identity: artifacts[identity], artifact_write=write)
+            runtime = SSHOperationRuntime(store, SimpleNamespace(auth=None), None, {})
+            runtime._custody = lambda key: (fixture.lease, SimpleNamespace(provider=fixture.provider), None, None)
+            receipt = await runtime._archive(fixture.lease)
+            self.assertEqual(receipt['outputState'], 'never_dispatched')
+            self.assertIsNone(receipt['output'])
+            self.assertEqual(len(artifacts), 1)
+            self.assertEqual(await runtime._archive(fixture.lease), receipt)
+            released = await fixture.provider.reclaim(fixture.lease['id'], 'alice')
+            self.assertTrue(released['released'])
+            self.assertEqual(released['state'], 'RECLAIMED')
+            self.assertEqual(journal.inspect(owner_id='alice')['child'], None)

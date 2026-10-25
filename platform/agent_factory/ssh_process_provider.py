@@ -145,7 +145,8 @@ class SSHProcessProvider:
                    and stop.get('kind') in {'original-group-stopped', 'never-dispatched'})
         status = observed['state'] if stopped else 'RUNNING' if observed['state'] == 'RUNNING' else 'UNKNOWN'
         state = {'CANCELLED': 'CANCEL_CONFIRMED', 'LIMIT_STOPPED': 'FAILED'}.get(status, status)
-        released = stopped and action == 'reclaim'
+        released = stopped and (action == 'reclaim' or
+                               action == 'inspect' and lease.get('releaseAck') in {'unknown', 'accepted'})
         receipt = {'leaseId': lease['id'], 'ownerId': lease['ownerId'], 'fingerprint': lease['fingerprint'],
             'providerJobId': job, 'processBinding': original_binding,
             'state': 'RECLAIMED' if released else state, 'released': released,
