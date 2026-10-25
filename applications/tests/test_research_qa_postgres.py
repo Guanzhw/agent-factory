@@ -13,7 +13,7 @@ from agent_factory.application_content import ContentPublication
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.config import Settings
 from agent_factory.usage_ledger import PricingRevision, native_response_usage
-from agent_factory_server.application_composition import factory_state
+from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from pg_fixture import IsolatedPostgres
 
