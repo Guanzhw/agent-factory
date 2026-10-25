@@ -51,3 +51,5 @@ Windows job cannot be relabelled PASS because a later bounded-pipe job succeeded
 ASKPASS/credential behavior remains a separate open gate.
 
 At 1448bb9 the first post-integration actual Linux loopback/onboarding group ran four cases in 8.668s: three onboarding cases passed, the wrong-pin portion of the helper case errored because the new low-level CalledProcessError escaped instead of the existing ValueError protocol rejection. This was an error-contract regression, not evidence that the bad host pin was accepted. The original failure log remains `/tmp/af-ssh-bounded-real-loopback.log`; the existing rejection/no-journal assertions are retained for the correction.
+
+The targeted corrected helper loopback passed 1/1, zero skips, 9.512s (`/tmp/af-ssh-bounded-real-loopback-corrected.log`): actual installed core wheel through loopback sshd and transparent mapped TCP port, pinned host rejection before a journal, original process identity/output/cancellation assertions unchanged. Combined with the three unchanged onboarding passes, this supports Linux transport compatibility only, not Windows credentials or real GPU execution.
