@@ -1,19 +1,16 @@
-# Active: Linux SSH completion and Windows credential feasibility — 2026-10-25
+# Active: Windows SSH product integration — 2026-10-25
 
-Root owns integration and exact-head CI. assistant_endpoints owns Windows Stage B/design; foundation_review owns independent review. Other implementation workers are idle. This checkpoint does not authorize deployment or paid calls.
-
-| Work / owner | Current evidence | Open boundary |
+| Owner / scope | Current evidence | Open gate |
 |---|---|---|
-| PR136 no-demo — root | Merged as `e7987e75`; [main CI40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS. Exact pre-merge full passed seven jobs; combined PG 2063 passed, 5 skipped, zero failures/errors. | Real organization identity acceptance remains separate. Historical timing failures remain recorded below. |
-| PR137 Linux SSH — root integration | Head `860e460`: [fast40240527237](https://github.com/Guanzhw/agent-factory/actions/runs/40240527237) SUCCESS. Final full newly dispatched; run ID/terminal result pending confirmation. Linux CPU root/child, helper, original wait/output, actual SIGKILL/accepted-continuation ACK-loss and loopback evidence remain valid within their recorded scope. | No final replacement full PASS yet; GPU allocation/binding UNIMPLEMENTED. |
-| PR138 Windows feasibility — assistant_endpoints design/Stage B; root integration | Stage A `44e36b9` actual five scenarios PASS in [40240758388](https://github.com/Guanzhw/agent-factory/actions/runs/40240758388); forced-termination ciphertext residue is explicitly retained as a limitation. Branch checkpoint `b1cd`. | Stage B first [40241406311](https://github.com/Guanzhw/agent-factory/actions/runs/40241406311) FAIL, diagnosis pending. Product Windows credential path NOT IMPLEMENTED. Stage A is not complete Windows SSH support. |
-| Windows bounded pipes / foundation independent review | Corrected nonblocking pipe/consumer path passed actual Windows 49/49, zero skips; prior review and rejected async-guard/cleanup findings remain documented. | Pipe success does not establish credential custody, Windows→Linux target execution or GPU support. |
+| root — integration | Linux worktree loopback/onboarding 4/4, zero skips, 10.702s; scoped-process/packaging changes stable, not a final exact-head result. Web 490/53 files (22.75s), typecheck/build and both npm audits passed. | Native PG four-case session22598 running; first unfrozen Pyright 46 errors/8 warnings retained, final check pending. |
+| assistant_endpoints — credentials | Stage B `8848b53` actual three PASS in [40242397177](https://github.com/Guanzhw/agent-factory/actions/runs/40242397177), after two preserved failures. Product implementation in progress. | Manager cleanup review BLOCKED and being corrected; probe success is not product acceptance. |
+| research_frontend — low-level Windows diagnosis | Actual group 58/59 passed; strict failure `251 != 244` preserved. | `0aba479` diagnostic CI pending; no assumed cause or relaxed expectation. |
+| assistant_messages — installed wheel | New installed-wheel tests/workflow prepared. | Independent review and actual execution pending. |
+| foundation_review; pr104_independent_review | Independent review and CI work respectively. | Root owns final integration and publication decisions. |
 
-Old PR137 d3 [full40239428444](https://github.com/Guanzhw/agent-factory/actions/runs/40239428444) ended **FAIL**: Windows had four errors and one failure; PostgreSQL passed 2166 with 5 skips, 1556.635s. The old selector path's concrete Windows pipe incompatibility and fixture errors were corrected; the later 49-case pass does not relabel that full run successful.
+PR136 is merged `e7987e75`, [main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS; its full PG result was 2063 passed/5 skipped. PR137 exact `860e460` [full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220) has Windows 1317 passed/871 skipped/zero errors, 233.556s; PG pending. Neither that partial full nor Windows Stage B establishes final PR138 acceptance.
 
-The user's controller is Windows **ACETAMIDO**. Windows→Linux actual-target execution is **NOT RUN**; Linux CPU mechanisms and isolated Windows feasibility probes cannot substitute for it. GPU allocation/binding remains **UNIMPLEMENTED**, not merely awaiting real resources. Product Windows credential support remains unimplemented pending the feasibility/design outcome. Physical SSH network fault and real model/GPU/hardware acceptance remain separate gates.
-
-Prior no-demo failures, MCP/storage root-cause uncertainty and lack of overall suite speedup evidence remain disclosed. Heavy checks stay serial; no deployment, paid model/GPU invocation or new real credential access is claimed. Historical entries below retain their original checkpoints.
+See [integration evidence](../openspec/changes/support-native-windows-ssh-controller/verification-integration.md). Actual Windows ACETAMIDO→Linux target execution remains NOT RUN; GPU allocation/binding remains UNIMPLEMENTED. C/D target execution/model/hardware inputs remain missing. Earlier selector, probe and timing failures are preserved; no whole-suite speedup or historical MCP/storage root-cause closure is claimed. Heavy checks remain serial, with no paid call or deployment.
 
 ---
 
