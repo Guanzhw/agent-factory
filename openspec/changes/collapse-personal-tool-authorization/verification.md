@@ -35,3 +35,9 @@ PR114 head e11e31d 的fast run40194639419出现3项adapter integration失败，�
 根因是该模块native_call复用Store便携fixture但没有登记新增的原run→plan映射；authorize_tool因此KeyError并被工具边界拒绝。仅在fixture补同原plan映射，不更改产品guard、期限或断言。修后adapter模块3项与execution模块36项合计39通过/0跳过，1.834秒（`tool-auth-adapter-fixed.log`）。这同时暴露最初只跑execution模块的覆盖遗漏。
 
 修后daily Python仅运行一次：362通过/0跳过，58.072秒，exit0，所有required groups通过；`tool-auth-daily-python-fixed.log`。本轮无PG重跑。
+
+## Remaining shared fixture consumers
+
+组合full40196675940的Windows检查annotations显示三项MemberMCPResources授权拒绝。普通job日志存储403，未重试受限存储；独立check annotations保存于`integration-full-40196675940-windows-annotations.json`。完整member模块Linux首复现12项7error（包含Windows跳过的CLI），不是只修三个可见MCP用例。
+
+根因是native_call将共享Store.authorize_tool替换成返回None的lambda且遗漏原plan登记。删除该旁路，登记原plan；共享Store fixture按实际adapter.descriptor.tool_name检查，替代固定fixture_query。全部真实adapter和授权断言保持。检索该Store所有导入者，除本模块外仅adapter integration，已一并运行。最终三个完整模块51通过/0跳过，5.755秒，exit0；首失败`tool-auth-member-fixture-first.log`、修后`tool-auth-all-consumers-fixed.log`。未改产品、未PG/full重跑。

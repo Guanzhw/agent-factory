@@ -55,10 +55,10 @@ class MemberToolResources(unittest.TestCase):
     def native_call(self, resource, adapter, *, values=None, actor='alice'):
         store = Store(adapter)
         store.personal_tools = self.service
-        store.authorize_tool = lambda context, name: None
         context = RunContext(user_id=actor, session_id='task-' + actor, run_id='member-run', session_state={})
         plan = {'id': 'member-plan', 'ownerId': actor}
         store.contexts[context.run_id] = (actor, context.session_id, plan['id'])
+        store.plans[context.run_id] = plan
         with self.connections._read() as conn:
             handle = self.service.binding(conn, actor, resource['registrationRef']).opaque_handle
         binding = BindingContext(None, store, plan, context,
