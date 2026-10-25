@@ -1,5 +1,15 @@
 # Verification
 
+## Current status
+
+- core reply最终已审序列已集成；身份P2独立复审PASS。
+- 正常实际native QA与OwnerChatModel合成HTTP：1 passed/8.166s。finite操作额度、scope耗尽拒绝、双方证据依赖与撤回已观测；token/费用未计量。
+- 恶意provider train tool_call反例仍BLOCKED：等待core按本次请求声明工具集合拒绝未声明调用，再运行native反例；不能用普通来源中的恶意文字替代。
+- 原身份配置PG：CAS/事务rollback 2项通过；原收据恢复目标在最新core fixture适配后1 passed/1.489s，分次证据不称最新完整组合。首次fixture失败见下文。
+- QA实际浏览器尚未完成；另一路研究UI浏览器验收不能代替QA。C02/C03真实模型/任务/费用条件与D资源仍BLOCKED，主动关联仍后续任务。
+
+以下按阶段保留证据；早期Pending只描述当时状态。
+
 本地实现，未发布；原基线`3b467519`，规范`6e8c965`、原问题恢复修订`c709c14`，身份实现`f292e33`/负例`8e74c18`，QA consumer与装配`996127f`。本记录不把机制测试当真实模型研究价值或GPU验收。
 
 ## Executed
@@ -16,10 +26,10 @@
 - `/tmp/research-qa-portable-second.log`：QA没有实验材料但复用closure(empty)触发既有拒绝；改为QA明确空实验集合。另项目change批量编辑误访问CreateProject专有字段，恢复change路径，只create纳入新关系。修复后原project完整回归通过。
 - `/tmp/research-qa-portable-third.log`及`/tmp/research-qa-portable-current-final.log`保留必要复验；没有加长超时、放宽断言或重复整套追绿。
 
-## Pending
+## Historical pending at consumer commit 996127f
 
-- core原reply最终审定提交尚待集成；应用不复制答案表或反向send兜底。
-- `test_research_qa_postgres.py`已编写实际部署/HTTP/原生队列、合成owner模型/定价/有限预算用例，尚未运行。PG须按协调槽串行；未运行不得记PASS。
+- 当时core原reply最终审定提交尚待集成；现已集成，应用没有复制答案表或反向send兜底。
+- `test_research_qa_postgres.py`已编写实际部署/HTTP/原生队列、合成owner模型/定价/有限预算用例，当时尚未运行，现已有下文正常BYOK native通过与历史失败。PG始终按协调槽串行。
 - 作者外完整diff审查、实际浏览器QA、真实C02/C03模型/任务/预算参数和D资源验收尚未完成；主动关联仍后续P7任务。
 - 当前测试计时仅运行记录，不是无争用性能基线或整体加速证据。
 
@@ -41,3 +51,9 @@
 - `/tmp/research-qa-native-byok-first.log`：1 fail/5.016s；此前为消除Registry类名警告而重命名输入类，使JSON schema title与core生成模型不同，准入明确`NATIVE_WORKFLOW_INPUT_SCHEMA_CHANGED`。撤回类重命名，保留QA治理函数唯一名称，不改core身份/模式校验；共享input helper类名警告仍如实保留。
 - `/tmp/research-qa-native-byok-fixed-schema.log`：实际native QA 1 passed/8.166s、0 skipped、exit0。真实研究部署/HTTP发布/配置/原消息准入→实际OwnerChatModel合成HTTP一次→本地Answer校验→原reply；两个输入来源全部绑定、私有canary不进模型、未引用B撤回隐藏整个答案。原scope仅1round，第二问题429且零新增task/模型请求，零delegation child。
 - 该成功使用明确BYOK操作额度，不是UsageLedger计量验证，也不是真实模型质量/C03通过。provider返回恶意train tool_call的有界失败仍待验证；Agno未知工具循环风险已报告core，不用普通源文本恶意提示替代此反例。
+
+## Final-core identity fixture adaptation
+
+- `/tmp/research-qa-byok-identity-pg.log`：3 fixture errors，2.288s，新core AssistantMessages构造已需要content；补真实ApplicationContent/ResourceSharing。
+- `/tmp/research-qa-byok-identity-pg-fixed.log`：2 passed/1 fixture error，3.757s；fake Admission未提供最终core内部原receipt读取端口。
+- `/tmp/research-qa-byok-identity-receipt.log`：只修fixture同义原receipt读取后目标1 passed/1.489s，exit0，原allocation/task/dispatch不变。未改产品权限判断，未反复完整追绿。
