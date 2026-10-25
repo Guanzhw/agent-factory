@@ -5,4 +5,4 @@
 - [x] 3. 获得串行PG槽后验证原收据、并发、回滚和双用户同定义个人连接。
 - [ ] 4. 作者外完整base/head代码精简审查与必要整改；集成方安装router并接真实浏览器无JSON旅程。
 
-- [ ] 核对实际CI discovery的应用包入口；测试使用已声明research包，不依赖仓库根目录额外PYTHONPATH。
+- [x] 核对实际CI discovery的应用包入口；测试使用已声明research包，不依赖仓库根目录额外PYTHONPATH。
