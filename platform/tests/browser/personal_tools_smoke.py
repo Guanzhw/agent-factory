@@ -78,6 +78,7 @@ class SyntheticAPI:
             '/compositions/proposals': {'schema': 1, 'ownerId': self.owner, 'items': [],
                                        'nextCursor': None, 'snapshot': False},
             '/personal-tools/descriptors': self.descriptors,
+            '/personal-tools/operations': [],
             '/personal-tools': [self.configured] if own and self.configured else [],
             '/user-connections': [self.bound] if own and self.bound else [],
             '/user-connections/registrations': [{

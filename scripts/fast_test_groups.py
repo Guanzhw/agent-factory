@@ -6,11 +6,6 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
-    'remote_v2_contract': (
-        'test_remote_v2_manifest',
-        'test_remote_v2_bindings',
-        'test_remote_v2_authority',
-    ),
     'shared_mcp_authority_regressions': (
         'test_application_closure_authority.BoundedApplicationClosureTests',
         'test_personal_mcp_callbacks',
@@ -31,6 +26,11 @@ FAST_PYTHON_TESTS = {
     'application_instance_ownership': (
         'test_application_runtime.ApplicationRuntimeTests',
         'test_application_assembly.ApplicationAssemblyTests',
+    ),
+    'remote_v2_contract': (
+        'test_remote_v2_manifest',
+        'test_remote_v2_bindings',
+        'test_remote_v2_authority',
     ),
     'architecture_checks': (
         'test_architecture_checker',
@@ -54,6 +54,11 @@ FAST_PYTHON_TESTS = {
         'test_department_plan_policy.DepartmentPlanPolicyTests',
         'test_billing_mode.BillingModeTests',
         'test_schedule_permissions.ScheduleMemberPermissionTests',
+    ),
+    'reusable_tool_operations': (
+        'test_tool_operations',
+        'test_member_tool_operations',
+        'test_reusable_tool_accounts',
     ),
     'personal_tool_connections': (
         'test_personal_tool_adapter_integration',

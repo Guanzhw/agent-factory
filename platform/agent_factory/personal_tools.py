@@ -60,12 +60,22 @@ class PersonalTools:
         self._bindings = None
         self._adapter_lock = threading.RLock()
         self._installed_ids = frozenset(self.adapters)
+        from .member_tool_operations import MemberToolOperations
+        self.operations = MemberToolOperations(self)
 
     def register(self, bindings):
         """Restore member resources into the same native registry as installed tools."""
         self._bindings = bindings
         with self.connections._read() as conn:
             bodies = conn.execute(select(self.tools.c.body).where(self.tools.c.state == 'ACTIVE')).scalars().all()
+        with self.connections._read() as conn:
+            operation_ids = conn.execute(select(self.operations.operations.c.adapter_id)).scalars().all()
+        for adapter_id in operation_ids:
+            try:
+                self.ensure_registered(adapter_id)
+            except HTTPException as error:
+                if error.detail != 'TOOL_OPERATION_ADAPTER_UNAVAILABLE':
+                    raise
         for body in bodies:
             if body.get('resource'):
                 try:
@@ -105,7 +115,13 @@ class PersonalTools:
             return self._ensure_registered(adapter_id)
 
     def _ensure_registered(self, adapter_id):
+        operation = self.operations.by_adapter(adapter_id)
         adapter = self.adapters.get(adapter_id)
+        if adapter is None and operation is not None:
+            adapter = self.operations.restore_adapter(adapter_id)
+            if adapter is None:
+                raise HTTPException(409, 'TOOL_OPERATION_ADAPTER_UNAVAILABLE')
+            self.adapters[adapter_id] = adapter
         if adapter is None:
             with self.connections._read() as conn:
                 rows = conn.execute(select(self.tools).where(self.tools.c.state == 'ACTIVE')).mappings()
@@ -122,7 +138,7 @@ class PersonalTools:
             self.adapters[adapter_id] = adapter
         if self._bindings is not None:
             from .personal_tool_execution import personal_tool_registration
-            entry = personal_tool_registration(adapter)
+            entry = personal_tool_registration(adapter, operation_sha256=operation['operationRef']['sha256'] if operation else None)
             key = (entry.kind, entry.adapter_id, entry.revision)
             with self._bindings._lock:
                 if key not in self._bindings._adapters:
@@ -161,8 +177,14 @@ class PersonalTools:
             raise HTTPException(409, 'PERSONAL_TOOL_INTEGRITY')
         return row
 
-    def _adapter(self, body):
-        if body.get('resource'):
+    def _adapter(self, body, conn=None):
+        if body.get('operationRef'):
+            reference = body['operationRef']
+            value = (self.operations._get(conn, reference['id'], reference['version'], reference['sha256'])
+                if conn is not None else self.operations.get(body['ownerId'], reference['id'], reference['version'], reference['sha256']))
+            if value['runtimeBinding']['adapterId'] != body['adapterId'] or value['descriptor'] != body['descriptor']:
+                raise HTTPException(409, 'PERSONAL_TOOL_ADAPTER_CHANGED')
+        if (body.get('resource') or body.get('operationRef')) and body['adapterId'] not in self.adapters:
             self.ensure_registered(body['adapterId'])
         adapter = self.adapters.get(body['adapterId'])
         if adapter is None:
@@ -184,17 +206,17 @@ class PersonalTools:
             provider_id=descriptor['credentialProviderId'], destination=descriptor['credentialDestination'])
 
     def _authorized(self, owner, body):
-        if body.get('resource') and body['credentialRef'] is None:
+        if (body.get('resource') or body.get('operationRef')) and body['credentialRef'] is None:
             return True
         try:
             return self.vault is not None and self.vault.authorize(**self._scope(owner, body)) is True
         except Exception:
             return False
 
-    def _current(self, owner, row):
+    def _current(self, owner, row, conn=None):
         if row['state'] == 'REVOKED':
             raise HTTPException(409, {'code': 'PERSONAL_TOOL_REVOKED', 'message': 'PERSONAL_TOOL_REVOKED'})
-        adapter = self._adapter(row['body'])
+        adapter = self._adapter(row['body'], conn)
         if not self._authorized(owner, row['body']):
             raise HTTPException(409, {'code': 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE',
                 'message': 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'})
@@ -205,7 +227,7 @@ class PersonalTools:
         body = row['body']
         status = 'configured'
         try:
-            self._current(row['owner_id'], row)
+            self._current(row['owner_id'], row, conn)
         except HTTPException as error:
             code = error.detail.get('code') if isinstance(error.detail, dict) else error.detail
             status = {'PERSONAL_TOOL_REVOKED': 'revoked',
@@ -216,6 +238,7 @@ class PersonalTools:
         if status == 'configured' and self.connections._can_bind(owner):
             actions.append('bind')
         public_fields = ['registrationRef', 'ownerId', 'adapterId', 'revision', 'createdAt']
+        if body.get('operationRef'): public_fields.append('operationRef')
         if row['owner_id'] == owner: public_fields += ['credentialRef', 'credentialRevision']
         return {key: body[key] for key in public_fields} | {
             **self.connections.sharing.projection(conn, owner, reference, row['owner_id']),
@@ -223,7 +246,8 @@ class PersonalTools:
             'toolName': descriptor['toolName'], 'transport': descriptor['transport'],
             'capabilities': descriptor['capabilities'], 'status': status,
             'available': status == 'configured', 'allowedActions': actions,
-            'runtimeBinding': {'adapterId': body['adapterId'], 'revision': descriptor['revision'], 'config': {}}}
+            'runtimeBinding': {'adapterId': body['adapterId'], 'revision': descriptor['revision'],
+                'config': {'operationSha256': body['operationRef']['sha256']} if body.get('operationRef') else {}}}
 
     def describe(self, owner):
         self.connections.auth.require_member(owner)
@@ -332,6 +356,36 @@ class PersonalTools:
             self._record(conn, owner, request.requestId, fingerprint, 'tool.configure', reference, at)
             return self._projection(conn, owner, reference)
 
+    def configure_operation(self, owner, operation_id, request):
+        service = self.connections
+        service.auth.require_member(owner)
+        service._key(request.requestId)
+        operation = self.operations.get(owner, operation_id, request.version, request.sha256)
+        configuration = operation['configuration']
+        if (configuration['transport'] == 'cli' and request.credentialRef
+                and not configuration['credentialEnvironmentVariable']):
+            raise HTTPException(422, 'PERSONAL_TOOL_CONFIGURATION_INVALID')
+        fingerprint = digest({'operation': 'tool.operation.account', 'operationRef': operation['operationRef'],
+            'credentialRef': request.credentialRef, 'credentialRevision': request.credentialRevision})
+        adapter_id = operation['runtimeBinding']['adapterId']
+        self.ensure_registered(adapter_id)
+        with service._write() as conn:
+            service._lock(conn, owner)
+            previous = service._command(conn, owner, request.requestId, fingerprint)
+            if previous:
+                return self._projection(conn, owner, previous['result_ref'])
+            reference, at = 'owner-tool-' + uuid4().hex, now()
+            body = {'registrationRef': reference, 'ownerId': owner, 'revision': uuid4().hex,
+                'adapterId': adapter_id, 'descriptor': operation['descriptor'],
+                'operationRef': operation['operationRef'], 'credentialRef': request.credentialRef,
+                'credentialRevision': request.credentialRevision, 'createdAt': at}
+            if not self._authorized(owner, body):
+                raise HTTPException(403, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE')
+            conn.execute(self.tools.insert().values(registration_ref=reference, owner_id=owner,
+                revision=body['revision'], body=body, fingerprint=digest(body), state='ACTIVE'))
+            self._record(conn, owner, request.requestId, fingerprint, 'tool.configure', reference, at)
+            return self._projection(conn, owner, reference)
+
     async def discover(self, owner, request):
         from .personal_mcp import discover_mcp_tools, mcp_url
         self.connections.auth.require_member(owner)
@@ -374,6 +428,9 @@ class PersonalTools:
             command = conn.execute(select(self.connections.commands).where(
                 self.connections.commands.c.owner_id == owner,
                 self.connections.commands.c.request_id == request_id)).mappings().first()
+            if command is not None and command['action'] == 'tool.operation.create':
+                return {'requestId': request_id, 'action': command['action'],
+                    'operation': self.operations._result(conn, command['result_ref'])}
             if command is None or command['action'] not in {'tool.configure', 'tool.revoke', 'tool.sharing'}:
                 raise HTTPException(404, 'PERSONAL_TOOL_REQUEST_NOT_FOUND')
             return {'requestId': request_id, 'action': command['action'],
@@ -382,7 +439,7 @@ class PersonalTools:
     def binding(self, conn, owner, reference):
         row = self._row(conn, owner, reference, shared=True)
         resource_owner = row['owner_id']
-        adapter = self._current(resource_owner, row)
+        adapter = self._current(resource_owner, row, conn)
         body = row['body']
         handle = PersonalToolHandle(resource_owner, MappingProxyType(json.loads(json.dumps(body))), adapter, self, actor=owner)
         return TrustedConnectionBinding(resource_owner, 'tool', body['adapterId'],
@@ -431,12 +488,12 @@ class PersonalToolHandle:
         with self.service.connections._read() as conn:
             row = self.service._row(conn, self.owner, self.configuration['registrationRef'])
             self.service.connections.sharing.owner(conn, self.requesting_actor, self.configuration['registrationRef'], self.owner)
-            if row['fingerprint'] != digest(dict(self.configuration)) or self.service._current(self.owner, row) is not self.adapter:
+            if row['fingerprint'] != digest(dict(self.configuration)) or self.service._current(self.owner, row, conn) is not self.adapter:
                 raise HTTPException(409, 'PERSONAL_TOOL_CHANGED')
 
     def resolve_credential(self) -> SecretLease | None:
         self.check_authorized()
-        if self.configuration.get('resource') and self.configuration['credentialRef'] is None:
+        if (self.configuration.get('resource') or self.configuration.get('operationRef')) and self.configuration['credentialRef'] is None:
             return None
         try:
             lease = self.service.vault.resolve(**self.service._scope(self.owner, self.configuration))
@@ -466,6 +523,28 @@ class DiscoverToolsRequest(BaseModel):
     url: str = Field(min_length=1, max_length=512)
     credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
     credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode='after')
+    def credential_pair(self):
+        if (self.credentialRef is None) != (self.credentialRevision is None):
+            raise ValueError('PERSONAL_TOOL_CONFIGURATION_INVALID')
+        return self
+
+
+class CreateOperationRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    configuration: dict
+    requestId: str = Field(min_length=1, max_length=200)
+    operationId: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class OperationAccountRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: int = Field(strict=True, ge=1)
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
+    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
+    requestId: str = Field(min_length=1, max_length=200)
 
     @model_validator(mode='after')
     def credential_pair(self):
@@ -532,6 +611,18 @@ def personal_tool_router(auth, service):
     router = APIRouter(prefix='/api/factory/personal-tools', tags=['personal-tools'], route_class=_RedactedToolRoute)
     def owner(request):
         return auth.user(request)['id']
+    @router.get('/operations')
+    def operations(request: Request):
+        return service.operations.list(owner(request))
+    @router.post('/operations', status_code=201)
+    def create_operation(body: CreateOperationRequest, request: Request):
+        return service.operations.create(owner(request), body.configuration, body.requestId, body.operationId)
+    @router.get('/operations/{operation_id}/versions/{version}')
+    def operation_version(operation_id: str, version: int, request: Request):
+        return service.operations.get(owner(request), operation_id, version)
+    @router.post('/operations/{operation_id}/accounts', status_code=201)
+    def operation_account(operation_id: str, body: OperationAccountRequest, request: Request):
+        return service.configure_operation(owner(request), operation_id, body)
     @router.get('/descriptors')
     def descriptors(request: Request):
         return service.describe(owner(request))

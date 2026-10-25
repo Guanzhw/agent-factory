@@ -1819,6 +1819,11 @@ root唯一集成；backend负责fresh材料JOIN和fixture generation；remote负
 
 #97独立Draft现c1230a9，原full5个旧fixture接口错误已定向修复，fast与新Windows full通过，PG待终态；#98独立Draft5799403，真实35秒进程关闭/原身份恢复验证、fast与Windows full通过，PG待终态。#99–102未扩展，先完成当前精确CI与稳定性判断。禁止合并、部署及付费模型。
 
+## 2026-10-24 #102 reusable member operations
+- Coordinator owns PersonalTools API/account schema/native binding integration; operation helper/registry, frontend, native fixtures and independent review have separate file ownership.
+- Local feature e001326 now stacks on #103 c2033e6 after a reproduced 20s MCP deadline failure showed excessive fresh authority SQL. No timeout changes; no #97/#99 dependency.
+- Passed:23 portable operation/account;58 legacy portable +4 existing skips;705 Web;built Chromium;five native behavior cases across targeted runs (CLI/MCP accounts, shared/material withdrawal, UNKNOWN). Preserved all initial fixture/timeout failures.
+- Passed additionally: normal OS-process replacement (distinct PID/exit0/original UNKNOWN/no replay), independent core install and final merged static checks. Pending: exact Draft CI, crash recovery; supported child-path and production authentication remain unverified. #103 historical intermittent failure diagnosis remains open independently.
 ## 2026-10-24 final stability / combined validation
 Root owns diagnosis integration, validation-only union branch and serialized heavy runs. history_remote owns scalar fixed-prefix MCP probe/read-only causal review; shutdown_tests owns ORX gate+predecessor probe and remote-parent evidence review; history_backend owns full-coverage/merge-risk audit. No newfeatures. #103 stability-followup.md records distinct failures, predeclared predictions and final full gap; only#98 currenthead has full success. Validation union retains seven independent Drafts, no mainmerge/deploy/paid calls. Initial native claim diagnostic worker_id→locked_by calibration failed as expected, corrected6pass. One ORX six-case experiment running; MCP13case preparation, complete union PG/Windows deferred until targeted experiment/fix point is frozen.
 
