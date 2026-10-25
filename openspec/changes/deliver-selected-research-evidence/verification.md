@@ -28,3 +28,9 @@
 - 30项便携通过、0跳过，17.859秒：`/tmp/research-delivery-recipe-fixed.log`。进一步实际capture负例验证坏配方不写artifact且保留缺项，5项通过、0跳过，1.593秒：`/tmp/research-delivery-recipe-capture.log`。Ruff通过。
 - 已摘取审定source authority四提交（本分支878e50f/e9d6d3a/30ecf97/0628996），未另改core。manifest保存全部原sourceContentIds权限并集，并单列recordIds标识本项目显式选择的出版物；不能因某内容仅是依赖就把其附件也偷偷打包。
 - P7 rich projection/完整peer union尚待应用接口最终集成与实际验证，不外推上述无peer运行已验证它。当前review整改后的精确head PG整组尚未重复，旧成功仍按各自版本记录。
+
+## Source-bound publication integration follow-up
+
+Spec 535ae70 adopts the independently reviewed simplification: core content stores and authorizes the full selected publication; no application shadow body or read-back proxy. Existing delivery implementation already uses that interface. Added portable coverage checks full sourceIds vs selected recordIds, rich selected body, no dependency-only body/artifact export, author losing a peer dependency, manifest/list/download denial and generic selected content denial.
+
+First run `/tmp/research-delivery-peer-portable-first.log`: 6 tests, 1 fixture error (missing required publication request_id), exit 1. Fixed the fixture to use the actual publish contract; `/tmp/research-delivery-peer-portable-fixed.log`: 6 passed, 0 skipped, 1.345s, exit 0. Ruff and whitespace checks passed. These use real core content permissions with portable storage and synthetic execution; they do not establish actual P7 native consumption or PostgreSQL concurrency. P7 final reviewed round publication merge and final serialized PG integration remain outstanding.

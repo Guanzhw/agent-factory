@@ -1,6 +1,8 @@
 """Portable delivery authority and selection; native CLI checked separately."""
 import asyncio
 import json
+from io import BytesIO
+from zipfile import ZipFile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -8,6 +10,7 @@ from unittest.mock import Mock, patch
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from agent_factory.application_content import ContentPublication
 from research.delivery import ResearchDelivery
 from research.evidence import EvidenceSelection, _valid_value
 from research.projects import ProjectCommand
@@ -47,6 +50,38 @@ class ResearchDeliveryTests(unittest.TestCase):
             with self.assertRaises(HTTPException): action('bob', manifest['id'])
         with patch.object(self.fixture.content, 'read', side_effect=RuntimeError('DB failure')):
             with self.assertRaises(RuntimeError): self.delivery.list('alice')
+
+    def test_peer_sources_restrict_access_without_exporting_dependency_only_evidence(self):
+        content = self.fixture.content
+        peer = content.publish('bob', ContentPublication(
+            source={'application': 'research', 'record': 'peer-only', 'revision': '1'}, visibility='team',
+            content={'privateToSelectedExport': 'DEPENDENCY_NOT_SELECTED',
+                'selectedEvidence': {'items': [{'reference': {'artifactId': 'not-selected'}}]}}), 'peer-source-publish')
+        selected = content.publish('alice', ContentPublication(
+            source={'application': 'research', 'record': 'selected-result', 'revision': '1'},
+            visibility='team', sourceContentIds=[peer['id']],
+            content={'kind': 'research.round', 'analysis': 'Actual selected rich body',
+                'selectedEvidence': {'items': [], 'missingEvidence': ['source']}}), 'selected-source-publish')
+        with self.fixture.store.transaction() as conn:
+            conn.execute(self.rounds.rounds.update().where(self.rounds.rounds.c.id == self.fixture.row['id'])
+                .values(terminal_record=selected['id'], terminal={'state': 'completed'}))
+        manifest = self.delivery.create('alice', self.fixture.project, self.command)
+        self.assertEqual(set(manifest['sourceIds']), {peer['id'], selected['id']})
+        self.assertEqual(manifest['recordIds'], [selected['id']])
+        self.assertEqual(manifest['records'][0]['analysis'], 'Actual selected rich body')
+        with patch.object(content, 'artifact', side_effect=AssertionError('dependency artifact exported')):
+            raw = self.delivery.download('bob', manifest['id'])
+        with ZipFile(BytesIO(raw)) as bundle:
+            self.assertEqual(bundle.namelist(), ['manifest.json'])
+            self.assertNotIn(b'DEPENDENCY_NOT_SELECTED', bundle.read('manifest.json'))
+        content.set_visibility('bob', peer['id'], 'personal', 'withdraw-peer-source')
+        self.assertEqual(self.delivery.list('alice')['items'], [])
+        for action in (lambda: self.delivery.read('alice', manifest['id']),
+                       lambda: self.delivery.download('alice', manifest['id']),
+                       lambda: content.read('alice', selected['id'])):
+            with self.assertRaises(HTTPException) as denied:
+                action()
+            self.assertIn(denied.exception.status_code, {403, 404})
 
     def test_zip_is_built_after_authorization_transaction_and_size_is_bounded(self):
         self.fixture.finish()
