@@ -197,7 +197,7 @@ P0 独立 core 与移除接缝、P1 身份、P2 消息/离线 QA、P3 事件/有
 
 ## 2026-10-25 remote execution source audit correction
 
-D01 is **not solely blocked on access to real GPU resources**. A subsequent direct
+P5 remote experiment execution / D01 is **not implemented, not solely blocked on access to real GPU resources**. A subsequent direct
 source audit of `9454000` established an implementation gap: Research
 `rounds.py` calls original delegated custody without remote placement;
 `delegation.py` rejects nonempty placement and uses the local native bridge.
