@@ -44,12 +44,19 @@ class LostReplyTransport(httpx.AsyncBaseTransport):
         self.inner = httpx.ASGITransport(app=app)
         self.suffix = suffix
         self.lost = False
+        self.dropped = []
+        self.attempts = 0
 
     async def handle_async_request(self, request):
+        if request.method == "POST" and request.url.path.endswith(self.suffix):
+            self.attempts += 1
         response = await self.inner.handle_async_request(request)
-        if request.method == "POST" and request.url.path.endswith(self.suffix) and not self.lost:
+        if request.method == "POST" and request.url.path.endswith(self.suffix) and not self.lost and response.is_success:
             self.lost = True
             await response.aread()
+            receipt = response.json()
+            self.dropped.append({'status': response.status_code, **{key: receipt.get(key)
+                for key in ('id', 'requestId', 'originTaskId', 'originOwnerId', 'remoteOwnerId', 'state')}})
             raise httpx.ReadTimeout("Synthetic lost receiver reply", request=request)
         return response
 
@@ -335,19 +342,38 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_04_lost_prepare_reply_owner_request_lookup_has_no_execution(self):
-        row = self.reserve()
-        old = self.original_target
-        self.handoff.targets["receiver"] = HandoffTarget(old.reference, old.origin_ref, old.base_url, old.identity_map,
-                                                         old.headers, LostReplyTransport(self.remote_app, "/prepare"))
-        with self.assertRaises(HTTPException):
-            self.call(self.handoff.prepare, "alice", row["task_id"])
-        self.assertEqual(self.handoff._row("alice", row["task_id"])["state"], "PREPARE_UNKNOWN")
-        receipt = self.call(self.handoff.reconcile, "alice", row["task_id"])
-        self.assertEqual(receipt["state"], "PREPARED")
-        self.assertEqual(self.ticket_count(self.remote, receipt["remoteTaskId"]), 0)
-        accepted = self.call(self.handoff.dispatch, "alice", row["task_id"])
-        self.wait_native(accepted, {"paused"})
-        self.assertEqual(self.ticket_count(self.remote, receipt["remoteTaskId"]), 1)
+        observer = self.origin['lifecycle_observer']
+        self.call(observer.stop)
+        try:
+            row = self.reserve()
+            old = self.original_target
+            transport = LostReplyTransport(self.remote_app, '/prepare')
+            self.handoff.targets['receiver'] = HandoffTarget(old.reference, old.origin_ref, old.base_url,
+                old.identity_map, old.headers, transport)
+            with self.assertRaises(HTTPException) as caught:
+                self.call(self.handoff.prepare, 'alice', row['task_id'])
+            self.assertEqual(caught.exception.status_code, 503)
+            self.assertEqual(transport.attempts, 1)
+            self.assertEqual(len(transport.dropped), 1)
+            dropped = transport.dropped[0]
+            self.assertEqual({key: dropped[key] for key in ('status', 'requestId', 'originTaskId',
+                'originOwnerId', 'remoteOwnerId', 'state')}, {'status': 201, 'requestId': row['request_id'],
+                'originTaskId': row['task_id'], 'originOwnerId': 'alice', 'remoteOwnerId': 'bob', 'state': 'PREPARED'})
+            self.assertEqual(self.handoff._row('alice', row['task_id'])['state'], 'PREPARE_UNKNOWN')
+            receipt = self.call(self.handoff.reconcile, 'alice', row['task_id'])
+            self.assertEqual(receipt['id'], dropped['id'])
+            self.assertEqual(receipt['state'], 'PREPARED')
+            self.assertEqual(self.ticket_count(self.remote, receipt['remoteTaskId']), 0)
+            self.assertEqual(self.ticket_count(self.origin), 0)
+            accepted = self.call(self.handoff.dispatch, 'alice', row['task_id'])
+            self.wait_native(accepted, {'paused'})
+            self.assertEqual(accepted['remoteTaskId'], receipt['remoteTaskId'])
+            self.assertEqual(self.ticket_count(self.remote, receipt['remoteTaskId']), 1)
+            self.assertEqual(transport.attempts, 1)
+            self.assertEqual(len(transport.dropped), 1)
+        finally:
+            self.handoff.targets['receiver'] = self.original_target
+            self.call(observer.start)
 
     def test_05_owner_key_manifest_catalog_and_budget_conflicts(self):
         row = self.reserve()

@@ -47,13 +47,22 @@ class ResearchRemovalPostgresTests(unittest.TestCase):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             before = server.facts(task_id)
+            if len(before['children']) == 1:
+                with engine.connect() as conn:
+                    child = conn.execute(text('SELECT id,run_id,terminal,body FROM af_tasks '
+                        'WHERE id=:child AND owner_id=:owner'),
+                        {'child': before['children'][0]['id'], 'owner': 'alice'}).mappings().one()
+                    before['childCompletion'] = dict(child)
             if (before['native']['status'] == 'paused' and len(before['children']) == 1
-                    and (before['children'][0]['native'] or {}).get('status') == 'completed'):
+                    and (before['children'][0]['native'] or {}).get('status') == 'completed'
+                    and before['childCompletion']['body'].get('stoppedStatus') == 'completed'):
                 break
             time.sleep(.05)
         self.assertEqual(before['native']['status'], 'paused', before)
         self.assertFalse(before['task']['terminal'], before)
         self.assertEqual(before['children'][0]['native']['status'], 'completed', before)
+        self.assertEqual(before['childCompletion']['body'].get('stoppedStatus'), 'completed', before)
+        self.assertEqual(before['childCompletion']['run_id'], before['children'][0]['runId'], before)
         with engine.connect() as conn:
             original_ops = conn.execute(text('SELECT id,closed FROM af_external_operations WHERE task_id=:task'),
                                         {'task': task_id}).mappings().all()
@@ -104,7 +113,15 @@ class ResearchRemovalPostgresTests(unittest.TestCase):
         self.assertTrue(final['task']['terminal'])
         self.assertEqual(final['task']['body']['lastStatus'], 'failed')
         self.assertTrue(final['operations'][0]['closed'])
-        self.assertEqual(final['operations'][0]['observation']['state'], 'FAILED')
+        self.assertEqual(final['operations'][0]['observation']['state'], 'COMPLETED')
+        child_output = final['operations'][0]['observation']['output']
+        self.assertEqual(child_output['taskId'], before['childCompletion']['id'])
+        self.assertEqual(child_output['runId'], before['childCompletion']['run_id'])
+        with engine.connect() as conn:
+            child = conn.execute(text('SELECT run_id,body FROM af_tasks WHERE id=:child'),
+                {'child': before['childCompletion']['id']}).mappings().one()
+        self.assertEqual(child['run_id'], before['childCompletion']['run_id'])
+        self.assertEqual(child['body']['stoppedStatus'], 'completed')
         self.assertTrue(final['operations'][0]['observation']['allStopped'])
         self.assertTrue(observed.json()['allStopped'], observed.json())
         self.assertTrue(all(fact['stopped'] and not fact['unknown'] for fact in observed.json()['facts']))
