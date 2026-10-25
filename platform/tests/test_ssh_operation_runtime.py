@@ -234,3 +234,78 @@ class SSHPreparedArchiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(released['released'])
             self.assertEqual(released['state'], 'RECLAIMED')
             self.assertEqual(journal.inspect(owner_id='alice')['child'], None)
+
+
+class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
+    setUp = SSHPersonalTargetTests.setUp
+
+    def prepare_launch(self):
+        self.store.authorize_tool = Mock()
+        self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value={})
+        self.store.sql = Mock(return_value=[])
+        self.store.workflow = SimpleNamespace(start=AsyncMock(return_value={'id': 'original-operation'}), read=Mock())
+        self.resources.targets = {}
+        def register(reference, target):
+            self.resources.targets[reference] = target
+            return target
+        self.resources.register_target.side_effect = register
+        self.resources._authorize = lambda owner, reference: self.resources.targets[reference]
+        self.resources._provider = lambda target: target.provider
+        return self.runtime._context(self.task)
+
+    @staticmethod
+    def capabilities():
+        from agent_factory.ssh_process_contract import PROTOCOL
+        return {'protocol': PROTOCOL, 'platform': 'linux', 'rootReady': True,
+            'fork': True, 'proc': True, 'rlimits': True, 'processCustody': True,
+            'scheduler': False, 'gpuAllocation': False, 'automaticInstallation': False,
+            'isolation': {'aggregateQuota': False, 'hostileCodeSandbox': False, 'networkIsolation': False}}
+
+    async def test_capabilities_precede_original_intent_with_read_only_root_request(self):
+        from unittest.mock import patch
+        context = self.prepare_launch()
+        actions = []
+        def exchange(transport, value, *, before_effect):
+            before_effect()
+            actions.append(value['action'])
+            self.assertEqual(value['root'], self.server.allowed_root)
+            self.assertEqual(set(value), {'protocol', 'action', 'root'})
+            return self.capabilities()
+        async def start(*args, **kwargs):
+            actions.append('intent')
+            self.assertTrue(kwargs['retain_inputs'])
+            return {'id': 'original-operation'}
+        self.store.workflow.start.side_effect = start
+        with patch('agent_factory.ssh_process_provider.SSHProcessTransport.__call__', exchange):
+            await self.runtime.launch(context, 'original-call', {})
+        self.assertEqual(actions, ['capabilities', 'intent'])
+
+    async def test_missing_helper_version_or_mechanism_creates_no_intent(self):
+        from unittest.mock import patch
+        context = self.prepare_launch()
+        failures = [FileNotFoundError('synthetic helper absent'),
+                    {**self.capabilities(), 'protocol': 'wrong'},
+                    {**self.capabilities(), 'rlimits': False},
+                    {**self.capabilities(), 'rootReady': False}]
+        for failure in failures:
+            def exchange(transport, value, *, before_effect):
+                if isinstance(failure, Exception):
+                    raise failure
+                return failure
+            with self.subTest(failure=failure), patch(
+                    'agent_factory.ssh_process_provider.SSHProcessTransport.__call__', exchange):
+                with self.assertRaisesRegex(ValueError, 'SSH_PROCESS_PREFLIGHT_UNAVAILABLE'):
+                    await self.runtime.launch(context, 'original-call', {})
+        self.store.workflow.start.assert_not_awaited()
+
+    async def test_original_unknown_replay_skips_preflight_and_target_recreation(self):
+        from unittest.mock import patch
+        context = self.prepare_launch()
+        self.store.sql.return_value = [{'id': 'original-operation'}]
+        self.store.workflow.read.return_value = {'stepId': 'ssh-process-launch'}
+        original = {'id': 'original-operation', 'closed': False, 'observation': None}
+        self.store.workflow.start.return_value = original
+        with patch('agent_factory.ssh_process_provider.SSHProcessTransport.__call__',
+                   side_effect=AssertionError('Original replay must not preflight')):
+            self.assertIs(await self.runtime.launch(context, 'original-call', {}), original)
+        self.resources.register_target.assert_not_called()

@@ -127,8 +127,18 @@ class SSHProcessHelperTests(unittest.TestCase):
                 request(value)
 
     def test_capability_query_is_read_only_and_not_gpu_allocation(self):
-        result = handle({'protocol': PROTOCOL, 'action': 'capabilities'})
+        result = handle({'protocol': PROTOCOL, 'action': 'capabilities', 'root': str(self.root)})
         self.assertFalse(result['gpuAllocation'])
         self.assertFalse(result['scheduler'])
         self.assertFalse(result['automaticInstallation'])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_capability_root_checks_are_read_only_and_reject_missing_or_unsafe_directory(self):
+        missing = self.root / 'missing'
+        with self.assertRaises(FileNotFoundError):
+            handle({'protocol': PROTOCOL, 'action': 'capabilities', 'root': str(missing)})
+        self.assertFalse(missing.exists())
+        self.root.chmod(0o755)
+        with self.assertRaises(ValueError):
+            handle({'protocol': PROTOCOL, 'action': 'capabilities', 'root': str(self.root)})
         self.assertEqual(list(self.root.iterdir()), [])

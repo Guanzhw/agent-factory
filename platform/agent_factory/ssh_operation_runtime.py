@@ -196,15 +196,28 @@ class SSHOperationRuntime(ProcessRuntimeService):
             return 'OPERATION_CANCEL_REQUESTED'
         return super()._reason(lease, task, ticket)
 
-    async def launch(self, context, call_id, inputs=None):
+    async def launch(self, context, call_id, inputs):
         self.store.authorize_tool(context, LAUNCH_TOOL)
         task = self.store.task(context.session_id, context.user_id)
         plan = self.store.plan(task['plan_id'], context.user_id)
-        _, profile = self._selected(task, plan)
-        checked, _ = profile.prepare({} if inputs is None else inputs)
-        target_ref = self.ensure_target(task, plan, checked)
+        spec, profile = self._selected(task, plan)
+        checked, _ = profile.prepare(inputs)
+        target_ref = ssh_target_reference(context.user_id, spec['materialRef'], spec['connection'],
+                                          profile.fingerprint, checked)
+        intent = {'targetRef': target_ref, 'callId': call_id, 'inputs': checked}
+        rows = self.store.sql('SELECT id FROM af_external_operations WHERE owner_id=:owner '
+            'AND task_id=:task AND native_run_id=:run', owner=context.user_id,
+            task=context.session_id, run=context.run_id)
+        for row in rows:
+            original = self.store.workflow.read(context.user_id, row['id'])
+            if original['stepId'] == 'ssh-process-launch':
+                return await self.store.workflow.start(context, 'ssh-process-launch', 'ssh-process',
+                                                       self.pin, intent, retain_inputs=True)
+        require(self.ensure_target(task, plan, checked) == target_ref)
+        provider = self.resources._provider(self.resources._authorize(context.user_id, target_ref))
+        await provider.preflight(before_effect=lambda: self.store.authorize_tool(context, LAUNCH_TOOL))
         return await self.store.workflow.start(context, 'ssh-process-launch', 'ssh-process', self.pin,
-                                               {'targetRef': target_ref, 'callId': call_id, 'inputs': checked}, retain_inputs=True)
+                                               intent, retain_inputs=True)
 
     async def start(self, context, operation_id, inputs):
         body = self._operation(context, operation_id)

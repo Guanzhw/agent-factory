@@ -56,8 +56,19 @@ def original(observation, binding, value):
 def handle(value):
     value = request(value)
     if value['action'] == 'capabilities':
-        return {'protocol': PROTOCOL, 'platform': sys.platform,
-                'processCustody': sys.platform == 'linux' and Path('/proc/self/stat').is_file(),
+        with directory(Path(value['root'])) as root_fd:
+            info = os.fstat(root_fd)
+            require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0)
+        try:
+            import resource
+            rlimits = all(hasattr(resource, name) for name in ('setrlimit', 'RLIMIT_CPU', 'RLIMIT_AS', 'RLIMIT_FSIZE'))
+        except ImportError:
+            rlimits = False
+        fork, proc = hasattr(os, 'fork'), Path('/proc/self/stat').is_file()
+        return {'protocol': PROTOCOL, 'platform': sys.platform, 'rootReady': True,
+                'fork': fork, 'proc': proc, 'rlimits': rlimits,
+                'processCustody': sys.platform == 'linux' and fork and proc and rlimits,
+                'isolation': {'aggregateQuota': False, 'hostileCodeSandbox': False, 'networkIsolation': False},
                 'scheduler': False, 'gpuAllocation': False, 'automaticInstallation': False}
     import fcntl
     binding, root, action = value['binding'], Path(value['root']), value['action']

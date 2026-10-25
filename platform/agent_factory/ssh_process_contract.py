@@ -68,14 +68,14 @@ def specification(spec, limits):
 def request(value):
     encoded(value, MAX_REQUEST_BYTES)
     require(type(value) is dict and value.get('protocol') == PROTOCOL and value.get('action') in ACTIONS)
-    if value['action'] == 'capabilities':
-        require(set(value) == {'protocol', 'action'})
-        return dict(value)
-    require(set(value) == {'protocol', 'action', 'binding', 'root', 'spec', 'limits'})
-    root = value['root']
+    root = value.get('root')
     require(type(root) is str and 1 < len(root) <= 4096 and root.startswith('/')
             and all(c.isprintable() for c in root) and '..' not in PurePosixPath(root).parts
             and str(PurePosixPath(root)) == root)
+    if value['action'] == 'capabilities':
+        require(set(value) == {'protocol', 'action', 'root'})
+        return dict(value)
+    require(set(value) == {'protocol', 'action', 'binding', 'root', 'spec', 'limits'})
     spec, limits = specification(value['spec'], value['limits'])
     return {**value, 'binding': binding(value['binding']), 'spec': asdict(spec), 'limits': asdict(limits)}
 

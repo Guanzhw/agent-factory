@@ -103,6 +103,21 @@ class SSHProcessProvider:
         return digest({'protocol': PROTOCOL, 'server': self.server.pin(),
                        'spec': asdict(self.spec), 'limits': asdict(self.limits)})
 
+    async def preflight(self, *, before_effect):
+        try:
+            result = await asyncio.to_thread(lambda: self.exchange(
+                {'protocol': PROTOCOL, 'action': 'capabilities', 'root': self.server.allowed_root},
+                before_effect=before_effect))
+            encoded(result, MAX_REQUEST_BYTES)
+            require(type(result) is dict and result.get('protocol') == PROTOCOL
+                    and result.get('platform') == 'linux'
+                    and all(result.get(key) is True for key in ('rootReady', 'fork', 'proc', 'rlimits', 'processCustody'))
+                    and all(result.get(key) is False for key in ('scheduler', 'gpuAllocation', 'automaticInstallation'))
+                    and result.get('isolation') == {'aggregateQuota': False,
+                        'hostileCodeSandbox': False, 'networkIsolation': False})
+        except (ValueError, TypeError, KeyError, OSError):
+            raise ValueError('SSH_PROCESS_PREFLIGHT_UNAVAILABLE') from None
+
     def _binding(self, lease):
         require(lease['connectionRef'] == self.target_ref
                 and lease['providerNamespace'] == self.capacity_namespace

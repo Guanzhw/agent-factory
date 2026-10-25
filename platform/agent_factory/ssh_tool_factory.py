@@ -34,8 +34,7 @@ def ssh_tool_registrations(runtime):
                 raise PermissionError('SSH_PROCESS_NATIVE_CONTEXT_REQUIRED')
             if set(arguments) - {'inputs'} or profile.input_schema is not None and 'inputs' not in arguments:
                 raise ValueError('SSH_PROCESS_INPUT_REQUIRED')
-            checked, _ = profile.prepare(arguments.get('inputs', {}))
-            body = await runtime.launch(run_context, fc.call_id, checked)
+            body = await runtime.launch(run_context, fc.call_id, arguments.get('inputs', {}))
             return {'operationId': body['id'], 'closed': body['closed'],
                     'observation': body['observation']}
 
