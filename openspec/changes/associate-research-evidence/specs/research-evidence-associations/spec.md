@@ -45,7 +45,7 @@
 - **THEN** 不相关不创建用户关联通知；非法工具调用有界失败且零GPU/child派发，不无限模型循环，不把失败记成功分析
 
 ### Requirement: Source-dependent derived publication
-应用 SHALL 对所有实际peer输入及派生输入影响的模型/下游字段保留完整原来源依赖并集，读权逐源委托core；不得将hypothesis/conditions/goal/child output等复制到不检查依赖的team content并称作独立事实。普通共享壳仅允许opaque IDs/固定状态。
+应用 SHALL 对所有实际peer输入及派生输入影响的模型/下游字段保留完整原来源依赖并集，读权逐源委托core；不得将hypothesis/conditions/goal/child output等复制到不检查依赖的team content并称作独立事实。精选正文仅存一次source-bound core content；研究运行投影在来源不可读时只允许opaque IDs/固定状态。
 
 #### Scenario: Uncited source withdrawal
 - **WHEN** 模型读了A/B但只显示引用A，B在提交或读取前撤回

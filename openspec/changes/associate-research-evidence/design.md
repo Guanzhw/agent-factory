@@ -10,7 +10,7 @@
 - `AssistantEvents.emit`要求调用方当前领域事务和作者自己的contentId；`delivery_for_task`核对原task/request/allocation返回7个opaque引用。`event`给作者安全状态。现有deliver_batch负责原准入/恢复，无需新增后台进程。
 - `ResearchQA.context`只接受原message/task/config，保存全部实际输入依赖；普通问题的答案由core reply拥有，tool-free模型不运行实验。
 - `ResearchRounds.context/record_decision`当前允许前轮原发布及本轮原operation，不接受任意同事证据。新的来源只应在实际consumer用到时增加。
-- `ApplicationContent`没有派生来源依赖传播。若把同事证据影响的分析直接复制进普通team publication，原来源撤回不会自动隐藏这份新正文；必须避免这种无依赖复制。
+- 基线`ApplicationContent`没有派生来源依赖传播；当前实现依赖独立审查的`bind-content-source-authority`，以完整sourceContentIds绑定精选正文和精确附件，统一所有读取/回执权限。
 
 ## Goals / Non-Goals
 
@@ -52,7 +52,7 @@
 
 保护对象不是只有reason/sourceAssessments。只要某个模型/child实际接触了peer输入或派生输入，该作用域产生/复制的hypothesis、conditions、decision.goal、结论/outcome、项目ending原因、child文本/结果/产物、输出标签与文件名等均可能携带来源信息，全部受其完整依赖集约束。不能因为字段被执行过、由child返回、被称为“实验事实”或复制到新版本，就自动脱离来源保护。
 
-普通team ApplicationContent只能保存明确allowlist的opaque记录/任务/操作ID、固定runtime状态、固定pending/ended标签和受控derivationRef；不保存上述文本、科学outcome、任意metadata、artifact引用/名称或模型生成标题。原事实页和事件consumer下钻应用受控读取后，才可取得完整派生字段。start/terminal/实验详情/project ending/关联list和detail均使用同一实际依赖判断，不能通过搜索摘要、错误详情或导出绕过。新派生child产物不自动经原artifact发布接口获得team可读权；未来P8共享/导出仍必须检查完整依赖，当前不为此新增通用artifact授权。
+精选start/terminal正文仅存一次source-bound ApplicationContent，并传入实际完整sourceContentIds；core所有read/list/artifact/回执路径当前核对原来源。不得另存无依赖正文副本、默认分享全部child文本/产物或绕过下载权限。研究project ending/experiment/round的领域投影同样逐源检查，撤回后只留safe opaque IDs/固定停止状态，不返回富字段。搜索、错误、导出也不能成为旁路。P8明确选中的typed附件复用同一publication的core artifact口，无owner代理。
 
 关联不是事实验证，不覆写他人的记录。既有原native任务私有审计保留原owner身份，不新增向同事的任务读取权；不声称可追回此前已读内容或已提交给模型的输入。撤回阻止新的应用共享读取及新消费，不能删除原运行身份、预算或停止/清理事实。
 
@@ -66,7 +66,7 @@
 
 并集随原child、terminal、后继round及目标修订后沿用的旧结果传递；记录换id、压缩成摘要、模型未引用某来源、目标revision增加，都不能清掉原依赖。保留完整并集与有界模型显示窗口是不同职责；不截断集合为“最近8条”。无任何peer输入/继承输出的历史轮次仍走原路径。Decision/Evaluation仅为这些轮次提供`sourceAssessments:[{contentId,disposition:use|reproduce|not_applicable,reason}]`；使用或引用必须来自实际input，解释适用条件，可有理由独立复现，不强迫每轮复用。该选择与原实验hypothesis/conditions/goal及原operationId一起保存，形成可核对source→decision→action；仅引用或自称复用不能满足C02。
 
-launch的原attempt准备事务在core admission锁下重新验证全部peer依赖及原goal/version/预算，并原子固化本次授权输入和原attempt意图；此提交是本次操作的准入点。撤回先于准入则拒绝；准入先完成，则该已授权原操作可继续，不声称撤回能追回已读知识或取消已授权工作。重试只恢复原意图，不重新授权/派发；新后继round重新当前read，原child/UNKNOWN仍可按原身份观察取消。已有结果仍由原finalizer记录。所有实际受peer输入或其后继输出影响的字段按第4节保护；team start/terminal仅共享safe opaque IDs/固定状态和derivationRef，绝不把hypothesis/conditions/goal/child output重新标成无依赖事实。owner项目/ending/experiment/round API也逐源检查后才返回这些新派生字段。撤回后仅原状态/identity仍可见；新round即使只读上轮摘要或原child结果，也必须继承并核对完整并集，不能借摘要洗掉来源。旧无peer输入的历史记录不批量重写。
+launch的原attempt准备事务在core admission锁下重新验证全部peer依赖及原goal/version/预算，并原子固化本次授权输入和原attempt意图；此提交是本次操作的准入点。撤回先于准入则拒绝；准入先完成，则该已授权原操作可继续，不声称撤回能追回已读知识或取消已授权工作。重试只恢复原意图，不重新授权/派发；新后继round重新当前read，原child/UNKNOWN仍可按原身份观察取消。已有结果仍由原finalizer记录。所有实际受peer输入或其后继输出影响的字段按第4节保护；team start/terminal精选正文绑定完整原来源，绝不把hypothesis/conditions/goal/child output重新标成无依赖事实。owner项目/ending/experiment/round API也逐源检查后才返回这些新派生字段。撤回后仅原状态/identity仍可见；新round即使只读上轮摘要或原child结果，也必须继承并核对完整并集，不能借摘要洗掉来源。旧无peer输入的历史记录不批量重写。
 
 不为新关联自动开始项目或触发GPU。运行中的项目只能在本来获准的下一round/launch决策边界消费证据；P3关联事件绝不路由到`round.continue`。任何原UNKNOWN不因收到新证据而重派。
 
@@ -77,7 +77,7 @@ launch的原attempt准备事务在core admission锁下重新验证全部peer依�
 - `GET /api/factory/research/associations/{id}`：作者、agent_analysis、适用性、已授权来源与原记录链接；不提供编辑他人内容或自动启动接口。
 - project/experiment原详情仅在实际使用peer来源时增加sourceAssessments和原action引用；不另造“采纳”按钮来伪造模型真实使用。
 
-A08测确定性收件规则、无匹配零发送、重复/restart原event/message/task/allocation、耗尽/过期零新准入；A03用独特canary让模型复制进hypothesis/conditions/goal、child返回值/文件和ending，再撤回未被最终引用的原来源，逐一读取start/terminal/project ending/experiment/association及下一round context：安全壳只留IDs/固定状态，所有派生字段隐藏，新消费拒绝且原操作继续可核对；B02测真实两会话显示/刷新/来源撤回/不能改别人。C02用真实先导证据与同构任务有/无经验配对，保留无关/过时负对照，按事前rubric观察真实动作差异；C03要求有用关联，不能全沉默通过。合成模型只证明机制，正式费用/模型/硬件未冻结仍BLOCKED。
+A08测确定性收件规则、无匹配零发送、重复/restart原event/message/task/allocation、耗尽/过期零新准入；A03用独特canary让模型复制进hypothesis/conditions/goal、child返回值/文件和ending，再撤回未被最终引用的原来源，逐一读取start/terminal/project ending/experiment/association及下一round context：领域运行投影只留IDs/固定状态，source-bound正文及所有派生字段隐藏，新消费拒绝且原操作继续可核对；B02测真实两会话显示/刷新/来源撤回/不能改别人。C02用真实先导证据与同构任务有/无经验配对，保留无关/过时负对照，按事前rubric观察真实动作差异；C03要求有用关联，不能全沉默通过。合成模型只证明机制，正式费用/模型/硬件未冻结仍BLOCKED。
 
 ## Risks / Trade-offs
 
@@ -92,7 +92,7 @@ P6仍支持的selected-app首root入口也使用`ResearchRecords.start`，不能
 
 ### 依赖绑定publication接入
 
-依赖独立审查的`bind-content-source-authority`核心变更：将实际完整来源集合传入`ContentPublication.sourceContentIds`，复用统一read/list/artifact/旧回执当前权限。应用仍只向普通content写safe IDs/状态壳，富正文在研究表；`read_publication`先核原publication及完整来源。P8明确精选附件使用同一个source-bound publication的artifact口，不代理owner整job下载。来源在finalization前已不可读时仍持久化原终态，但sharing/source continuation标为不可用，不发布新正文或后继。原快照准入语义不变，未撤销原已授权运行。
+依赖独立审查的`bind-content-source-authority`核心变更：将实际完整来源集合传入`ContentPublication.sourceContentIds`，复用统一read/list/artifact/旧回执当前权限。应用精选正文仅存一次source-bound core content，不另建正文表；直接调用core.content.read/artifact核原publication及完整来源。P8明确精选附件使用同一个source-bound publication的artifact口，不代理owner整job下载。来源在finalization前已不可读时仍持久化原终态，但sharing/source continuation标为不可用，不发布新正文或后继。原快照准入语义不变，未撤销原已授权运行。
 
 普通私问reply保留模型实际选中的全部publication IDs（最多8，绝非最终citations）；每个source-bound publication已由core强制检查完整原source集合，无需把同一内部依赖重复展开塞进reply的20输入ID限制。association/round仍保存完整平面依赖并集，不削减权限语义或扩大core接口。
 
@@ -100,4 +100,4 @@ P6仍支持的selected-app首root入口也使用`ResearchRecords.start`，不能
 
 1. 项目create（含原request回执）与change在入口复用原core admission锁，再取research namespace；不得等到_protect内才倒序取admission。新增PG双向barrier须证明其不会与原round准备/来源guard形成环。
 2. for_round必须直接从当前可读团队研究记录最多50条窗口检索，复用相同research_terms筛选和8条/16KiB输入边界。即使从未产生association，只要原记录相关也进入模型context；无关/个人/撤回记录不进入。关联分析是附加导航而非唯一入口。冻结实际显示原content IDs与关联IDs，完整原来源并集独立保留，模型不能裁剪依赖。
-3. 新core sourceContentIds已让统一read/list/artifact/replay强制原来源权限，取消未发布的research_derived_publications影子正文与safe壳回填。精选正文只存core source-bound ContentPublication一次；撤回后该正文/精确附件由core隐藏，研究自身运行投影仅保留safe IDs/status。此项取代前述无core支持时的临时双存储设计，不增迁移/第二ACL；P8直接复用core content.read/artifact。round实际输入表与完整依赖仍保留。
+3. 新core sourceContentIds已让统一read/list/artifact/replay强制原来源权限，取消未发布的research_derived_publications影子正文与safe壳回填。精选正文只存core source-bound ContentPublication一次；撤回后该正文/精确附件由core隐藏，研究自身运行投影仅保留safe IDs/status。不增迁移/第二ACL；P8直接复用core content.read/artifact。round实际输入表与完整依赖仍保留。

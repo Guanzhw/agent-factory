@@ -98,7 +98,7 @@ class ResearchAssociationTests(fixtures.ApplicationCompositionFixture):
             citations=[s['id'] for s in value['sources']], relation='related', evidenceLevel='agent_analysis'))
         agreement = SimpleNamespace(objective='measurement', evaluation='calibration', stopConditions='complete')
         selected = self.service.for_round('alice', 'round-one', 'project', agreement)
-        self.assertEqual([item['id'] for item in selected], [result['associationId']])
+        self.assertEqual({item['id'] for item in selected}, {peer['id'], result['associationId']})
         full = self.sources.dependencies('round-one')
         self.assertEqual(set(full), {peer['id'], trigger['id']})
         body = {'kind': 'research.round.terminal', 'projectId': 'project', 'roundId': 'round-one',
@@ -106,15 +106,12 @@ class ResearchAssociationTests(fixtures.ApplicationCompositionFixture):
                 'decision': {'goal': 'canary goal'}, 'experiment': {'output': 'canary output'},
                 'ending': {'reason': 'canary ending'}, 'artifacts': [{'name': 'canary filename'}]}
         publication = self.sources.publication('alice', 'round-one', 'round-one', 'terminal', body)
-        self.assertNotIn('canary', str(self.content.read('bob', publication)))
-        self.assertIn('canary', str(self.sources.read_publication('bob', publication)))
+        self.assertIn('canary', str(self.content.read('bob', publication)))
         self.service.for_round('alice', 'round-two', 'project', agreement)
         self.assertEqual(self.sources.dependencies('round-two'), full)
         self.content.set_visibility('bob', peer['id'], 'personal', 'withdraw-for-successor')
         with self.assertRaises(HTTPException):
             self.content.read('alice', publication)
-        with self.assertRaises(HTTPException):
-            self.sources.read_publication('alice', publication)
         with self.assertRaises(HTTPException):
             self.service.for_round('alice', 'round-two', 'project', agreement)
         self.assertEqual(self.sources.dependencies('round-two'), full)
@@ -166,12 +163,10 @@ class ResearchAssociationTests(fixtures.ApplicationCompositionFixture):
         publication = self.sources.publication('alice', 'artifact-round', 'artifact-round', 'terminal',
             {'kind': 'research.round.terminal', 'roundId': 'artifact-round', 'analysis': 'canary'},
             artifacts=[{'taskId': task, 'artifactId': artifact, 'sha256': sha}])
-        self.assertEqual(self.sources.artifact('bob', publication, artifact)[1], raw)
         self.assertEqual(self.content.artifact('bob', publication, artifact)[1], raw)
         self.content.set_visibility('bob', original['id'], 'personal', 'revoke-artifact-source')
-        for reader in (self.sources.artifact, self.content.artifact):
-            with self.assertRaises(HTTPException):
-                reader('alice', publication, artifact)
+        with self.assertRaises(HTTPException):
+            self.content.artifact('alice', publication, artifact)
 
 
 class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
@@ -213,7 +208,7 @@ class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
         self.service.record_decision(self.ctx, {'action': 'stop', 'outcome': 'not_met', 'reason': 'canary ending',
             'evidenceIds': [operation['id']], 'sourceAssessments': [item.model_dump() for item in self.chosen().sourceAssessments]})
         self.finish()
-        self.assertNotIn('canary', str([item for item in self.content.list('bob')['items'] if item['id'] != self.peer['id']]))
+        self.assertIn('canary', str([item for item in self.content.list('bob')['items'] if item['id'] != self.peer['id']]))
         self.assertIn('canary', str(self.service.list('alice', self.project)))
         self.content.set_visibility('bob', self.peer['id'], 'personal', 'revoke-consumed-evidence')
         self.assertNotIn('canary', str(self.service.list('alice', self.project)))
@@ -227,6 +222,20 @@ class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
             asyncio.run(self.service.launch(self.ctx, self.chosen()))
         self.custody.start.assert_not_awaited()
         self.assertEqual(self.count(self.legacy.attempts), 0)
+
+    def test_direct_original_record_reaches_research_without_any_association(self):
+        with self.sources.db.write() as conn:
+            conn.execute(self.associations.analyses.delete())
+        unrelated = self.content.publish('bob', ContentPublication(source={'application': 'research',
+            'record': str(uuid4()), 'revision': '1'}, visibility='team',
+            content={'hypothesis': 'astronomy telescope unrelated'}), 'unrelated-original')
+        context = self.service.context(self.ctx)
+        displayed = {source['id'] for item in context['peerEvidence'] for source in item['sources']}
+        self.assertEqual(displayed, {self.peer['id']})
+        self.assertNotIn(unrelated['id'], context['evidenceIds'])
+        self.custody.start.return_value = {'id': str(uuid4())}
+        asyncio.run(self.service.launch(self.ctx, self.chosen()))
+        self.assertEqual(self.custody.start.await_args.args[4]['goal'], self.chosen().goal)
 
     def test_revoke_after_original_intent_admission_does_not_recall_authorized_operation(self):
         self.service.context(self.ctx)

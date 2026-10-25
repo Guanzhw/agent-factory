@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import time
 import unittest
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import httpx
@@ -16,6 +17,58 @@ from agent_factory.config import Settings
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from pg_fixture import IsolatedPostgres
+import test_research_workflow_postgres as workflow_fixture
+
+
+@unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'requires disposable PostgreSQL')
+class ResearchDirectEvidenceNativeTests(unittest.TestCase):
+    def test_original_team_source_without_association_changes_real_native_child_input(self):
+        base = workflow_fixture.ResearchNativeWorkflowTests('runTest')
+        self.addCleanup(base.doCleanups)
+        base.setUp()
+        content = base.state['application_content']
+        marker = 'calibrated-child-input-from-original-record'
+        source = content.publish('bob', ContentPublication(source={'application': 'research',
+            'record': str(uuid4()), 'revision': '1'}, content={'kind': 'research.experiment.start',
+            'hypothesis': 'Compute actual agreed bytes once', 'conditions': {'recommendedGoal': marker}},
+            visibility='team'), 'direct-native-original')
+        unrelated = content.publish('bob', ContentPublication(source={'application': 'research',
+            'record': str(uuid4()), 'revision': '1'}, content={'hypothesis': 'unrelated telescope astronomy'},
+            visibility='team'), 'direct-native-unrelated')
+        original = workflow_fixture.ResearchModel._response
+        child_inputs = []
+        def response(model, messages):
+            if model.context.plan.get('mode') == 'experiment':
+                child_inputs.append('\n'.join(str(message.content) for message in messages))
+                return original(model, messages)
+            result = original(model, messages)
+            if result.content is None:
+                return result
+            value = json.loads(result.content) if result.content.startswith('{') else None
+            inputs = next((item for item in workflow_fixture.objects(messages) if 'peerEvidence' in item), None)
+            if value and inputs:
+                actual = [record for item in inputs['peerEvidence'] for record in item['sources']]
+                value['sourceAssessments'] = [{'contentId': record['id'], 'disposition': 'reproduce',
+                    'reason': 'Verify the actual prior condition with the selected child'} for record in actual]
+                if value.get('action') == 'experiment':
+                    value['goal'] = actual[0]['content']['conditions']['recommendedGoal']
+                result.content = json.dumps(value)
+            return result
+        with patch.object(workflow_fixture.ResearchModel, '_response', response):
+            receipt = base.start('Compute actual agreed bytes once')
+            base.completed(receipt['execution']['taskId'])
+        self.assertTrue(child_inputs)
+        self.assertIn(marker, child_inputs[0])
+        self.assertNotIn(unrelated['id'], '\n'.join(workflow_fixture.OBSERVED))
+        self.assertEqual(len(base.state['store'].tasks('alice')), 2)
+        self.assertEqual(base.state['research_associations'].list('alice')['items'], [])
+        rounds = base.client.get(base.url + '/experiments').json()['rounds']
+        self.assertEqual(rounds[0]['decision']['sourceAssessments'][0]['contentId'], source['id'])
+        self.assertEqual(base.state['research_peer_sources'].dependencies(receipt['roundId']), [source['id']])
+        content.set_visibility('bob', source['id'], 'personal', 'withdraw-direct-native-source')
+        hidden = base.client.get(base.url + '/experiments').json()
+        self.assertTrue(hidden['rounds'][0]['sourceUnavailable'])
+        self.assertNotIn(marker, str(hidden))
 
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'requires disposable PostgreSQL')

@@ -116,12 +116,12 @@ class ResearchRounds:
             with self.db.write(), self.content.db.write(), self.events.db.write(), self.endpoints.db.write():
                 yield conn
 
-    def _publish(self, owner, identifier, revision, content, *, round_id=None):
+    def _publish(self, owner, identifier, revision, content, *, round_id=None, artifacts=()):
         if self.peer_sources is not None:
-            result = self.peer_sources.publication(owner, round_id or identifier, identifier, revision, content)
+            result = self.peer_sources.publication(owner, round_id or identifier, identifier, revision, content, artifacts=artifacts)
         else:
             result = self.content.publish(owner, ContentPublication(source=ContentSource(
-                application='research', record=identifier, revision=revision), content=content, visibility='team'),
+                application='research', record=identifier, revision=revision), content=content, visibility='team', artifacts=list(artifacts)),
                 'research-record:' + identifier + ':' + revision)['id']
         if self.associations is not None:
             sources = self.associations.sources
@@ -250,7 +250,7 @@ class ResearchRounds:
             if row['predecessor_id']:
                 prior = conn.execute(select(self.rounds).where(self.rounds.c.id == row['predecessor_id'])).mappings().one()
                 if prior['terminal_record']:
-                    reader = self.peer_sources.read_publication if self.peer_sources else self.content.read
+                    reader = self.content.read
                     sources.append(reader(row['owner_id'], prior['terminal_record']))
                 attempt = conn.execute(select(self.legacy.attempts).where(
                     self.legacy.attempts.c.round_id == prior['id'])).mappings().first()
@@ -264,7 +264,7 @@ class ResearchRounds:
                 'scope': self.scopes.inspect(row['owner_id'], row['scope_id']), 'sources': sources,
                 'previousObservation': previous_observation,
                 'peerEvidence': peers, 'evidenceIds': sorted({item['id'] for item in sources}
-                    | {identifier for item in peers for identifier in item['sourceIds']})}
+                    | {source['id'] for item in peers for source in item['sources']})}
 
     async def launch(self, run_context, decision):
         def prepare():
@@ -307,10 +307,9 @@ class ResearchRounds:
             if operation['taskId'] != row['task_id'] or operation['nativeRunId'] != run_context.run_id or not operation['closed']:
                 reject('RESEARCH_ORIGINAL_RESULT_REQUIRED', '原操作尚未确认结束')
             agreement = self._goal(conn, row['project_id'], row['goal_version'])
-            bound = self.peer_sources.bound(row['id']) if self.peer_sources else None
-            peers = [self.associations.read(row['owner_id'], identifier) for identifier in bound['association_ids']] if bound and self.associations else []
+            peers = self.associations.round_inputs(row['owner_id'], row['id']) if self.associations else []
             return {'agreement': agreement.model_dump(exclude={'execution', 'resourceRefs'}),
-                'evidenceIds': sorted({operation['id']} | {identifier for item in peers for identifier in item['sourceIds']}), 'peerEvidence': peers,
+                'evidenceIds': sorted({operation['id']} | {source['id'] for item in peers for source in item['sources']}), 'peerEvidence': peers,
                 'operation': deepcopy(operation['observation'])}
 
     def record_decision(self, run_context, decision):
@@ -344,9 +343,8 @@ class ResearchRounds:
     def _assessments(self, row, decision):
         if self.peer_sources is None:
             return
-        bound = self.peer_sources.bound(row['id'])
-        expected = {source_id for identifier in bound['association_ids']
-                    for source_id in self.associations.read(row['owner_id'], identifier)['sourceIds']} if bound and self.associations else set()
+        expected = {source['id'] for item in self.associations.round_inputs(row['owner_id'], row['id'])
+                    for source in item['sources']} if self.associations else set()
         supplied = decision.get('sourceAssessments', [])
         if {item['contentId'] for item in supplied} != expected or len(supplied) != len(expected):
             reject('RESEARCH_SOURCE_ASSESSMENTS_REQUIRED', '必须说明实际读取的经验是否适用或需要独立复现')

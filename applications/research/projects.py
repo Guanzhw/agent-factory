@@ -136,6 +136,9 @@ class ResearchProjects:
             reject('RESEARCH_PROJECT_NOT_FOUND', '未找到自己的研究项目', 404)
         return row
 
+    def _write(self):
+        return self.peer_sources.guard() if self.peer_sources is not None else self.db.write()
+
     def _summary(self, row):
         execution = {'available': False, 'reason': 'RESEARCH_EXECUTION_NOT_INSTALLED'}
         if self.execution is not None:
@@ -170,7 +173,7 @@ class ResearchProjects:
         if body.researchAssistantId is None:
             value.pop('researchAssistantId')
         fingerprint = digest({'action': 'create', **value})
-        with self.db.write() as conn:
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
             if old is not None:
                 return self._protect(owner, old)
@@ -204,7 +207,7 @@ class ResearchProjects:
         self.auth.require_member(owner)
         value = body.model_dump(exclude={'requestId'})
         fingerprint = digest({'action': action, 'project': identifier, **value})
-        with self.db.write() as conn:
+        with self._write() as conn:
             row = self._owned(conn, owner, identifier)
             old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
             if old is not None:

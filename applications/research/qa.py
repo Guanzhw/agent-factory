@@ -43,7 +43,7 @@ class ResearchQA:
         return message, config
 
     def _source(self, message, identifier):
-        read = self.associations.sources.read_publication if self.associations is not None else self.content.read
+        read = self.content.read
         source = read(message['senderId'], identifier)
         read(message['recipientId'], identifier)
         if source['visibility'] != 'team' or source['source']['application'] != 'research':
