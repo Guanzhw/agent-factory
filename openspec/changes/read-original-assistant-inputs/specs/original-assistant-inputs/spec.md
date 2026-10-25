@@ -1,5 +1,13 @@
 ## ADDED Requirements
 
+### Requirement: Original event outcome is owner readable without creating work
+The system SHALL let the current event author read the event scan status and its existing delivery status/error codes without exposing recipient execution or budget records.
+
+#### Scenario: Rejection precedes successor task creation
+- **WHEN** an event candidate is rejected before an allocation or task exists
+- **THEN** the event author can read the existing rejection and endpoint reference without triggering prepare, admission or recovery
+- **AND** another member receives 404 and no recipient scope, task, message or input fields are returned
+
 ### Requirement: 原任务决定事件输入身份
 系统 SHALL 从当前成员自有原任务的持久request/delivery/allocation关联读取事件引用，不相信caller或agent指定内容身份，也不产生执行副作用。
 
