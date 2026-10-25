@@ -11,6 +11,7 @@ import httpx
 
 from agent_factory.application_content import ContentPublication
 from agent_factory.config import Settings
+from agent_factory.execution_bindings import AdapterRegistration
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from pg_fixture import IsolatedPostgres
@@ -28,7 +29,10 @@ class ResearchQANativeTests(unittest.TestCase):
     def run_qa(self, *, malicious=False):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory())
-        calls = []
+        calls, train_dispatches = [], []
+        def train_adapter(ctx):
+            train_dispatches.append(ctx)
+            raise AssertionError('QA must not resolve a training adapter')
         source_ids = []
         def wire(request):
             body = json.loads(request.content)
@@ -48,6 +52,7 @@ class ResearchQANativeTests(unittest.TestCase):
             return httpx.Response(200, json={'choices': [{'finish_reason': 'tool_calls' if malicious else 'stop', 'message': message}],
                 'usage': {'prompt_tokens': 15, 'completion_tokens': 8, 'total_tokens': 23}})
         settings = Settings(db_url=isolated.url, workspace=Path(directory), max_workers=1,
+            runtime_adapters=[AdapterRegistration('tool', 'qa-training-trap-v1', '1', train_adapter, tool_name='train')],
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         app = create_app(settings)
         state = factory_state(app)
@@ -69,10 +74,17 @@ class ResearchQANativeTests(unittest.TestCase):
         published = post('/setup/' + draft['id'] + '/publish', {'requestId': 'native-qa-publish'})
         assistant = post('/assistants', {'requestId': 'native-qa-assistant'})
         caps = {'rounds': 1, 'toolCalls': 4, 'tokenLimit': None, 'amountMicros': None, 'currency': None}
-        configured = post('/assistants/me/configurations', {'requestId': 'native-qa-configure', 'expectedRevision': 0,
+        configuration = {'requestId': 'native-qa-configure', 'expectedRevision': 0,
             'applicationRef': published['applicationRef'], 'connectionRefs': published['connectionRefs'],
             'budget': {'caps': caps, 'perQuestionCaps': {**caps, 'rounds': 1, 'toolCalls': 4},
-                'deadline': time.time() + 180}})
+                'deadline': time.time() + 180}}
+        unsupported = {**configuration, 'requestId': 'unsupported-metered-qa', 'budget': {
+            **configuration['budget'], 'caps': {**caps, 'tokenLimit': 100, 'amountMicros': 10, 'currency': 'USD'}}}
+        denied = post('/assistants/me/configurations', unsupported, expected=422)
+        self.assertIn('RESEARCH_QA_BYOK_METERING_UNSUPPORTED', str(denied))
+        self.assertEqual(state['research_assistants'].me('alice')['assistant']['configurationRevision'], 0)
+        configured = post('/assistants/me/configurations', configuration)
+        self.assertEqual(configured['qa']['accounting']['mode'], 'operational_limits_only')
         content = state['application_content']
         for name in ('first', 'second', 'private-canary'):
             source = content.publish('alice', ContentPublication(source={'application': 'research', 'record': name, 'revision': '1'},
@@ -104,6 +116,7 @@ class ResearchQANativeTests(unittest.TestCase):
         self.assertEqual(len(store.tasks('alice')), 1)
         self.assertEqual(store.tasks('bob'), [])
         self.assertEqual(store.sql('SELECT * FROM af_delegation_links'), [])
+        self.assertEqual(train_dispatches, [])
         if not malicious:
             content.set_visibility('alice', source_ids[1], 'personal', 'withdraw-uncited-qa-source')
             hidden = state['assistant_messages'].read('bob', question['id'])

@@ -12,6 +12,8 @@ from agno.db.postgres import PostgresDb
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
+from agent_factory.application_content import ApplicationContent
+from agent_factory.resource_sharing import ResourceSharing
 from agent_factory.assistant_endpoints import AssistantEndpoints
 from agent_factory.assistant_messages import AssistantMessages, SendAssistantMessage
 from agent_factory.local_budget_scopes import LocalBudgetScopes
@@ -38,6 +40,8 @@ class Admission:
             raise HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND')
         return self.receipts[(owner, request_id)]
 
+    _request_receipt = request
+
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'requires disposable loopback PostgreSQL')
 class ResearchAssistantsPostgresTests(unittest.TestCase):
@@ -57,7 +61,8 @@ class ResearchAssistantsPostgresTests(unittest.TestCase):
         self.store.local_budget_scopes = self.scopes
         self.endpoints = AssistantEndpoints(self.store, self.auth, self.apps)
         self.admission = Admission()
-        self.messages = AssistantMessages(self.store, self.auth, self.endpoints, self.admission)
+        content = ApplicationContent(self.store, self.auth, ResourceSharing(self.store, self.auth))
+        self.messages = AssistantMessages(self.store, self.auth, self.endpoints, self.admission, content)
         qa = ResearchQAWorkflow()
         self.setup.qa_workflow = qa
         self.pin.update(id='research-qa')
