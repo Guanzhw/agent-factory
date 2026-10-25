@@ -68,3 +68,15 @@ it('recovers a start timeout with the original key rather than dispatching a new
   expect(vi.mocked(researchApi.start).mock.calls[1]).toEqual(vi.mocked(researchApi.start).mock.calls[0]);
   expect(host.textContent).not.toContain('研究执行成功');
 });
+it.each([403, 404])('retains an acknowledged start if its following project read returns HTTP %s, including remount', async status => {
+  await mount('p1');
+  vi.mocked(researchApi.project).mockRejectedValueOnce(new ApiError('项目读取被拒绝', status));
+  await act(async () => button('按当前约定启动或续接研究').click());
+  const first = vi.mocked(researchApi.start).mock.calls[0];
+  expect(window.sessionStorage.getItem('factory:research-command:alice:p1')).not.toBeNull();
+  expect(button('按当前约定启动或续接研究').disabled).toBe(true);
+  await act(async () => root.unmount()); root = createRoot(host); await mount('p1');
+  expect(button('重试原操作')).toBeDefined();
+  await act(async () => button('重试原操作').click());
+  expect(vi.mocked(researchApi.start).mock.calls[1]).toEqual(first);
+});

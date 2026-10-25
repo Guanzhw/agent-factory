@@ -30,3 +30,11 @@
 此实质接线后的必要完整`npm run check` exit0：49文件、464测试通过、0跳过，lint/typecheck/default core build通过。前阶段完整失败仍保留；coordinator发现并停止两份长期占CPU的遗留Pyright进程，争用可能有关但没有本用例因果证明，不把本轮通过抹成从未失败或用作无争用性能基线。
 
 真实Chromium两视口项目/资源旅程通过，追加setup无真实环境时保存按钮禁用及缺项提示，console/pageerror均空；仍合成API transport、无业务写入。真实后端setup/项目/执行整合浏览器由coordinator排PG；本结果不代模型/GPU/外部身份验收。P7助手问答与团队记录访问HTTP仍待后端，不把当前提示当完整旅程交付。
+
+## 独立review P1：启动响应后读取失败
+
+作者外review指出client.start将POST与后续GET连为一次返回；首次POST成功后GET403/404会被通用hook误判为写入未发生并清原意图。新增两个回归在修复前均失败（storage实际null），见[start-refresh-first-failure.txt](evidence/start-refresh-first-failure.txt)。
+
+修复只改变成功POST之后的读取错误语义：明确返回“启动已响应、状态尚未核对”的复合Error并保留原cause/错误说明，原恢复hook保留request/payload。POST本身4xx分类不变，没有新增重试控制器。32项相关测试通过，含403/404、remount、新启动禁用、同键恢复。修复仍待独立精确head复审与集成最终完整检查，不用此前464项通过冒充新head全量结果。
+
+项目/资源轻量浏览器所用4176 Vite已停止；依赖symlink仅本地测试使用，未纳入提交。实际npm完整/生产audit均exit0、0 vulnerabilities，lock未改。
