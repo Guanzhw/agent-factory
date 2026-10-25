@@ -227,3 +227,52 @@ paths fixed. Owned targeted IDs are recorded in
 `/tmp/no-demo-owned-failed-ids.txt` (32 exact original failures). Ruff and diff
 whitespace checks pass; targeted PG execution is pending its exclusive slot.
 No production changes, weakened limits, assertion deletion, or new skips.
+
+### Owned 32-case follow-up and next diagnostics
+
+Fixture head `9e0b729` ran the 32 exact original failing IDs once, serially,
+under a 900-second process cap: **28 passed, 3 failed, 1 errored, 0 skipped**,
+435.902 seconds, exit 1. Log:
+`/tmp/no-demo-full-failures-targeted-first.log`.
+
+- Two newly reached disabled-member checks remained in capacity case 02 and
+  resource-maintenance cleanup; `28d5daa` gives these the same public-OIDC and
+  internal-native assertions. Their post-fix execution is not yet claimed.
+- Storage now starts successfully, but its real cancellation HTTP request
+  exceeds the unchanged 15-second client deadline. This is a new observed
+  runtime failure, not evidence of an authentication failure. Normal fixture
+  teardown removed its temporary server log; no server stack was captured.
+- The MCP account-reuse matrix reached Bob after controller restart. Its first
+  tool effect is DONE, its second UNKNOWN; the original native queue is still
+  running at 20.071 seconds. There are nine actual business calls. The observer
+  reports no error. The global diagnostic ring discarded 108 callbacks, so its
+  empty per-run list cannot establish that no callbacks ran. Safe original
+  metadata is preserved in `/tmp/no-demo-full-targeted-mcp-original.json`.
+
+No additional unchanged rerun is justified by these results. Proposed bounded
+single-case diagnostics (not yet executed):
+
+1. Storage cancellation: retain the subprocess server log before fixture
+   cleanup; record entry/exit metadata for ControlCommands submit/dispatch,
+   delegation cascade/inspect, owned-runtime cancellation, native cancel and
+   final job detail. A test-only watchdog before the existing deadline captures
+   all-thread stacks (no locals) and schedules a native-loop asyncio task-stack
+   snapshot. Log pool-connect entry/exit and checkout/checkin plus SQL duration,
+   without SQL text/parameters, on the Store/native/root-lock pools. An absent
+   loop snapshot with a thread stuck acquiring a lock is evidence distinct
+   from an awaited native cancellation. Do not extend any deadline.
+2. MCP original account-reuse matrix: increase only the bounded diagnostic
+   metadata capacity enough for its five original runs; retain queued/thread
+   entry/thread exit/await-exit and SQL timing for the failing run. At its
+   original wait's pre-deadline checkpoint collect the same safe thread/task
+   and pool-acquisition evidence, plus initialize/list-tools/tool-call phase
+   boundaries. This distinguishes pool acquisition, SQL execution, synchronous
+   authorization/credential work, event-loop starvation and SDK/service waits.
+
+Static cancellation chain: FactoryAPI compatibility cancel awaits
+ControlCommands submission, then job detail. Dispatch persists its boundary,
+then awaits delegation cascade; cascade records cancellation under the original
+root lock, invokes owned-runtime/workflow cleanup, native cancel, and group
+inspection. Source alone does not identify which stage consumed this timeout.
+The MCP callback chain still rechecks current authorization around credentials;
+no authority cache, callback removal, GC change or retry is proposed.
