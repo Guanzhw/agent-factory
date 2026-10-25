@@ -66,8 +66,15 @@ def ssh_log_summary(path):
     reasons = {b'no such file or directory': 'NOT_FOUND', b'permission denied': 'PERMISSION_DENIED',
                b'exec format error': 'EXEC_FORMAT', b'invalid argument': 'INVALID_ARGUMENT',
                b'bad file descriptor': 'BAD_DESCRIPTOR'}
-    spawn_failures = []
+    spawn_failures, spawn_errors = [], []
+    spawn_errors_truncated = False
     for line in text.splitlines():
+        match = re.search(rb'createprocessw failed error:([0-9]{1,10})$', line.rstrip(b'\r'))
+        if match and (code := int(match[1])) <= 4294967295 and code not in spawn_errors:
+            if len(spawn_errors) < 8:
+                spawn_errors.append(code)
+            else:
+                spawn_errors_truncated = True
         if prefix in line:
             suffix = line.split(prefix, 1)[1].strip()
             reason = reasons.get(suffix, 'UNKNOWN')
@@ -75,6 +82,7 @@ def ssh_log_summary(path):
                 spawn_failures.append(reason)
     return {'present': True, 'truncated': len(raw) > 65536,
             'askpassSpawnFailures': spawn_failures,
+            'windowsSpawnErrors': spawn_errors, 'windowsSpawnErrorsTruncated': spawn_errors_truncated,
             'authenticatedPublicKey': b'authenticated to ' in text and b'using "publickey"' in text,
             'permissionDenied': b'permission denied' in text,
             'hostKeyRejected': b'host key verification failed' in text or b'host identification has changed' in text,
