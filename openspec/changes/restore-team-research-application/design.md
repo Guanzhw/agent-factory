@@ -52,11 +52,56 @@ POST `/projects/{id}/start` 只接收requestId/expectedVersion。短事务按cor
 
 应用通过public.install注入ApplicationRuns与LocalBudgetScopes实例，不从公开context取出Store调用私有执行器。end在同一领域事务取消已建立scope，阻断未准入/后续工具模型入口；不声称中断已在途外部操作。旧目标原请求已确认的意图可按旧约定结束，修订创建的新目标没有自动启动权；首切片没有冲突后继。结束后的未准入意图不得恢复执行。UNKNOWN不释放预算。P5首切片不是自主多轮或C/D验收完成。
 
+### P5 后续：受控 Workflow、原 child custody 与已落地完成契约
+
+当前源码基线f25c8992f5c286db3cca3554e3c74a255dfe9f82（PR111）已提供完成事务机制；本节仅规划应用接入，PR110首轮执行不等于已自主科研。选定每轮一个受控Workflow：读取确认约定/前轮证据→无工具模型决策→Router选择停止或治理函数启动child→既有factory_wait_operations原生等待→模型接收实际child输出后判断继续/结束→治理函数保存决策。模型来源为确认的材料/连接；结构受控不等于固定答案。不得将带动态tools/pre_hooks的factory-executor直接塞入Step，也不放开NativeWorkflows的工具限制或新增Loop/provider while。
+
+#### 无需扩展 ApplicationExecutionContext
+
+`native_workflows.py::_wrap`已支持治理函数同时声明`run_context`与`application_context`：先核对原Workflow/root，再authorize_tool并consume_tool_budget后注入。直接复用如下具体签名即可：
+
+```python
+async def launch_experiment(step_input, run_context, application_context): ...
+```
+
+composition为该函数闭包注入唯一的`start_operation` callable，其调用仍是既有公开`OperationCustody.start(run_context, step_id, effect_slot, adapter_pin, inputs)`。step_id/effect_slot/adapter_pin由已注册实现固定，模型只提供受约定校验的goal/实验参数。application_context负责原身份/证据接口，RunContext不是用户请求中的可伪造数据。无需在`_application_context`新增start_operation，不给函数rawStore、任意服务字典或反射入口。函数定义在core创建之前提供给NativeWorkflowRegistration；闭包服务只在显式install阶段绑定确定实例，不能新增通用动态服务定位器。
+
+#### 尚缺的通用 delegated-operation runtime 属于 core
+
+现`OperationCustody`要求运行时实现`start(context, operation_id, inputs)`、`inspect(context, handle)`、`lookup(context, operation_id)`、`cancel(context, handle)`；context是既有WorkflowContext，含原owner/task(run-time workflow_id)/run/step/plan摘要。`DelegationService.create/children/inspect_group/cascade_cancel`已提供正常准入/观察/取消，但public方法重查当前成员，不能直接用于撤权后的原custody清理。通用适配器尚未实现，必须先由core建立独立OpenSpec；不在research复制。
+
+最小适配器契约：
+
+- start核对OperationCustody持久原operation和context一致，用operation_id派生唯一delegation request，再调用既有DelegationService.create；输入仅含批准的goal/mode及明确支持的资源引用，不由模型指定owner/parent。现基础DelegationService拒绝placement，因此不得承诺远端placement已经接通。
+- handle携带不可变原child身份；lookup只查原parent+request的持久delegation link并读取原child，不再次调用create。丢回执、link尚无child、缺native回执均UNKNOWN，不造新请求、不以缺失推断未dispatch。
+- inspect核对原operation→parent/plan/run→child/link一致，只观察该child子树的native/effect/产物事实；不能inspect整个父group来判child停止，因为父task正持有当前OperationCustody，会形成自等待。观察科学结果和进程状态分别返回，allStopped必须是该child子树的正向停止证据。
+- cancel在已核验原custody身份下只取消原child子树，允许成员已撤权后的停止/回收，不恢复新执行权限。该特例留在core内部：复用既有原身份cleanup路径，不让research调用私有方法或另开无认证HTTP。没有handle时由原lookup保守核对；如要证明从未dispatch，必须同时封闭迟到start并取得正向原身份证据，不能靠“没有link”直接关闭。
+
+具体等待与恢复仍由core现有OperationCustody/WorkflowControl承担。应用的`observe_waits(observer, task)`只沿自己的原operation检查已有结果；尚未闭合不发continue，确认closed后提交与原requirement绑定的唯一reconcile命令。不能每tick用新commandId重试，也不能把第一次“尚未closed”的命令收据重复当作已继续。重启后读取原command/requirement，UNKNOWN只核对，不重新start child。撤权后不继续模型，只通过core原custody取消/观察收尾。
+
+#### PR111 完成接口的唯一用法
+
+通过`ApplicationRuntimeRegistry.register(..., native_components=(精确已有pin元组,), finalizes=True)`附加研究owner，保留其他binding/effect owner。声明不可仅按用户app名；组件被多个成员应用复用仍按原pin归属。当前唯一同步接口是context manager `finalization_context(conn, task)`：进入时按root→admission之后的顺序取得具体research/content/event namespace锁，yield一个同步callback。core随后写group terminal、调用settle_task，再调用callback，其参数为`{'task': root, 'group': current, 'settlement': settlement}`，最后共同提交storage/reclaimed/应用记录/outbox。
+
+callback只核对已持久研究决策并写终态记录/精选内容/后继事件，不submit，不自行settle，不await模型/远端；不要重建旧提案的finalize_original独立端口、waiting_usage通知表或UsageLedger hook。HELD或callback异常由core回滚整个group完成事务；正向停止观察独立保留，原observer下tick继续。scope后来到期不能改写原已停止成功，UNKNOWN用量不释放也不触发后继。
+
+下一轮仅由P3自定向事件进入原生准入。使用项目限定namespace和owner执行端点，订阅固定原项目scope/perRoundCaps/deadline；后继沿原delivery继承lineage，不重置深度。事件只传内容ID，模型从有权内容读取完整目标与真实结果；回调只发模型已保存的继续意图。后继delivery已经拥有allocation/task，应用仅关联下一attempt，不再次allocate或start。现有maxDepth20与允许轮数须显式校验，不暗中截断或重开事件根。
+
+研究执行端点必须匹配确认的app pin/mode/材料/连接，并要求可信研究intent或原delivery绑定；普通peer消息不能授予训练。长期助手的QA端点单独采用无child/GPU工具的模式。工具材料通过既有AdapterRegistration/应用发布装配，模型与账号配置仍归底座。
+
+#### 接入前必须成立的证据
+
+core delegated-operation的独立spec和原child/cleanup验证是实现此路线的前置，不被PR111完成机制通过替代。针对性PG/native测试需覆盖：原operation丢回执lookup零create、child子树停止无父custody循环、撤权后可停止但不可续跑、原requirement重启继续且模型确实接收不同实际结果、完成callback只产生一个后继。正式模型自主选择属于C01，合成固定输出只证明机制；真实GPU仍属D01。研究UI继续等待用户设计确认。
+
 ### 4. 目标修订与停止
 
 用户提交目标修改附当前版本；冲突返回当前版本，不最后写入覆盖。修改先形成新约定与影响说明，明确后生效。默认允许已在途的不冲突操作按旧目标完结并标为旧版证据；与新目标冲突的操作请求原身份取消，正向停止证明到达前不启动冲突后继。目标修订不重置scope消费；需要增加预算是另一次明确资源约定，不隐式扩容。整体停止仅阻止新尝试；UNKNOWN和子任务清理继续显示待核对，不要求伪造清理完成才能保存研究结束理由。
 
 ### 5. 自动记录与限定共享
+
+P6可先独立交付开始记录：在首轮root intent、scope/allocation及原request绑定的同一事务，发布精选开始快照并在有明确相关接收端点时写既有P3 outbox；无接收者不补全员广播。快照区分“意图已记录/待准入”和实际已运行，不把创建内容当native成功；只包含明确共享的目标、条件和证据引用，不复制原聊天/连接秘密。PG验证事务失败全部回滚、同请求只有一个开始记录、双用户团队读作者写。此切片不宣称终态记录已接通。
+
+PR110允许用户选择任意符合输入契约的已发布应用，用于验证首root机制；不能把这些app注册成research runtime owner，也不能将其原生成功包装成科学结论。固定研究Workflow经明确注册并取得精确pin后，才启用研究finalization_context consumer和终态/后继记录；其前可准备结构与接口测试，不注册临时catch-all consumer。后续新研究项目以该固定研究组件为执行契约，旧首轮切片的原task继续按其原计划观察，不重写或重新执行。
 
 实验开始事务保存领域记录并产生通用事件；运行完成后从core原输出追加记录修订。记录包含作者、项目/goal版本、实验条件、运行/产物引用、观察事实与agent解释；不把LLM自评当验证。产物字节仍归core，应用只确定哪些条件/证据/结论进入共享视图。科学验证来自预先声明评价标准与实际指标；未知结果不填成零分或失败。
 
@@ -84,7 +129,7 @@ Python新增deployment的research组合入口，调用既有ApplicationAssembly�
 
 ## Risks / Trade-offs
 
-- [P1–P3与限定内容port尚在实施] → 按下表接入门槛推进，依赖未过不写伪实现或临时跨权限通道。
+- [部分接入能力仍为待CI的stacked Draft] → 按下表接入门槛推进，依赖未过不写伪实现或临时跨权限通道。
 - [实际模型未必得到科研提升] → 验收实际输出后的有据决策/停止/复现，固定oracle与样本，失败保留；不要求每次指标改善。
 - [真实GPU/身份/容量未提供] → 确定性与本地浏览器先验收，C/D保持BLOCKED/NOTRUN；20人负载不由账号数或云端配置外推。
 - [未知外部操作长期占用] → 保留原身份与预算，显式呈现，不用补偿重派让页面变绿。
@@ -98,10 +143,12 @@ Python新增deployment的research组合入口，调用既有ApplicationAssembly�
 
 | 接入项 | 当前事实 | 开始依赖实现前需完成的可检查契约 |
 | --- | --- | --- |
-| P1端点/P2消息 | add-member-assistant-messaging正在实现 | 端点owner/app pin、固定配置、消息双方读、原request/task关联及重复不dispatch通过 |
-| P3事件/自动预算 | 尚未交付 | 同事务outbox、去重、receiver预算/TTL、循环限额及崩溃恢复责任明确，不重派UNKNOWN |
-| 限定产物共享 | 现有artifact按task owner读 | 精确内容授权/撤权测试通过；应用不能代理全job读取 |
-| 预算与child接入 | core已有LocalBudgetScopes/DelegationService，public context未暴露 | 最小可信composition桥接验证原run/plan绑定、取消与UNKNOWN；不建立通用反射服务层 |
+| P1端点/P2消息 | PR105/106已合入main | 复用现有固定端点与原消息/task身份，研究QA/自动执行各自限定mode与工具，不把底座验证外推成研究旅程通过 |
+| P3事件/自动预算 | PR109为待CI的stacked Draft，尚非main | 合并前核对精确head CI/独立review；接入验证同事务outbox、receiver预算/TTL及UNKNOWN不重派 |
+| 限定产物共享 | PR107已合入main | 使用ApplicationContent精选快照与精确artifact授权；研究记录需自身验收，不代理全job读取 |
+| 首轮预算/准入 | PR110为待CI的stacked Draft，尚非main | 首轮可选用户发布应用只证明真实原root准入，不等于固定研究Workflow或自主科研 |
+| 完成事务 | PR111/f25c899已本地实现并通过所报PG/review，仍为待CI的stacked Draft，尚非main | 固定研究Workflow pin后才能注册finalizes=True；精确head CI仍须跟进 |
+| child/custody | core已有DelegationService及OperationCustody，通用delegated-operation adapter尚缺 | 治理函数可直接接收原RunContext；适配器需独立core spec，验证原child身份、撤权cleanup与子树停止，不能由应用复制控制器 |
 
 ## Open Questions
 

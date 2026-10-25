@@ -20,7 +20,14 @@
 - [ ] 2.2 实现实验/运行引用及native研究组件，模型读取实际输出后选择继续/结束；确定性边界测试验证已达标不做无用轮次、负结果/后端失败不伪报达标，文档标明不是C01真实自主通过。
 - [ ] 2.3 实现在途目标v1/v2规则、父子取消及停止投影；A03/A07真实进程/PG故障测试证明不换原身份、不重置预算、不以取消响应代停止，保留首次失败证据。
 - [ ] 2.4 对接选定Factory远端后端并记录运行/指标/产物来源；本地实际协议验证与D01真实GPU状态分别报告。作者之外精简review P5完整diff，整改复审。
+- [ ] 2.5 先由core独立spec定义通用delegated-operation adapter，再验证原operation→parent/child绑定、lookup不重派、撤权后原custody清理与child子树停止；复用已注入RunContext及OperationCustody.start，不新增public context服务容器。
+- [ ] 2.6 实现受控Workflow的无工具模型决策、治理函数、原child等待和实际结果判断；真实native暂停/重启/reconcile轨迹证明同一原requirement，模型确实收到工具结果，不以固定脚本计C01通过。
+- [ ] 2.7 按PR111唯一finalization_context(conn,task)→yield callback及register(finalizes=True)接入研究记录/P3后继；PG验证HELD回滚、真实用量后原tick完成、一个事件/端点一个原task，不恢复旧通知表或直接start。
+- [ ] 2.8 独立精简review后续完整diff与spec，记录工具/模型实际轨迹和未验收C/D；QA零GPU、目标变更/结束、事件lineage及原项目预算累计通过后才解除对应后端门槛，UI仍待设计确认。
+
 ## 3. P6 自动记录与证据共享
+
+- [ ] 3.0 先实现可独立的开始精选记录：与root intent/request/allocation同事务发布content及有明确接收者的outbox，PG验证回滚/去重/团队读作者写；任意用户app首轮不注册研究owner，固定研究Workflow pin前不接终态callback或宣称完整自动记录。
 
 - [ ] 3.1 先确认core限定内容授权和P3事务事件契约；实现开始即自动发布的精选记录及原运行终态更新，PG测试覆盖科学负结果/技术失败/取消/UNKNOWN和重复事件（A04/A06），明确产物归档责任。
 - [ ] 3.2 实现团队读/作者写和精确产物读取，保存出处版本与证据等级；A02/A06证明不可看私聊/凭据、不可覆盖他人、撤权后旧handle无效，UI区分事实/推断/验证。
