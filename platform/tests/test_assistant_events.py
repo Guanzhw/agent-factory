@@ -28,7 +28,7 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         self.publication = self.content.publish('alice', ContentPublication(source={
             'application': 'research', 'record': 'experiment-1', 'revision': '1'},
             content={'result': 'negative'}, visibility='team'), 'publish-content')
-        self.messages = AssistantMessages(self.store, self.auth, self.endpoints, Mock())
+        self.messages = AssistantMessages(self.store, self.auth, self.endpoints, Mock(), self.content)
         self.scopes = Mock()
         self.store.local_budget_scopes = self.scopes
         self.scopes.settle.return_value = {'state': 'HELD'}
