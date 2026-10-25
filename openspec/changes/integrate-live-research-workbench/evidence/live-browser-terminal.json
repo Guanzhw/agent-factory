@@ -1,0 +1,1027 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "mode": "demo",
+      "database": "af_test_f138f99ea3294f8384d95a25aa7e1cb0",
+      "businessAPIsMocked": false,
+      "identity": "development-selector",
+      "result": {
+        "projectId": "41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+        "rounds": [
+          {
+            "id": "4b7bb54b-9724-4dde-ad27-d989606f0966",
+            "goalVersion": 2,
+            "scopeId": "aba325e9-f723-4636-be71-7a21a7c7eebc",
+            "allocationId": "4b7bb54b-9724-4dde-ad27-d989606f0966",
+            "taskId": "665c88fc-bdda-4ff7-9456-bf30bc876672",
+            "deliveryId": null,
+            "decision": {
+              "action": "stop",
+              "reason": "Observed expected checksum",
+              "evidenceIds": [
+                "59c13b54-b9fa-4d93-8b44-e03e577d839d"
+              ],
+              "outcome": "met"
+            },
+            "terminal": {
+              "taskId": "665c88fc-bdda-4ff7-9456-bf30bc876672",
+              "runId": "dc72b7ba-acbc-4421-abf8-8799e44de0a0",
+              "decision": {
+                "action": "stop",
+                "reason": "Observed expected checksum",
+                "evidenceIds": [
+                  "59c13b54-b9fa-4d93-8b44-e03e577d839d"
+                ],
+                "outcome": "met"
+              },
+              "runtime": [
+                {
+                  "taskId": "665c88fc-bdda-4ff7-9456-bf30bc876672",
+                  "runId": "dc72b7ba-acbc-4421-abf8-8799e44de0a0",
+                  "status": "completed"
+                },
+                {
+                  "taskId": "b3b6b4c5-d44c-48b2-bc46-edfadd9e64ae",
+                  "runId": "937f4d1a-f735-44b9-8cf8-79a81742f96a",
+                  "status": "completed"
+                }
+              ],
+              "verificationStatus": "unverified",
+              "sharing": "published",
+              "continuationBlocked": null
+            },
+            "terminalRecordId": "1b271f28-0b2d-44c8-8b6b-f4134fe3fcbd",
+            "continuations": []
+          }
+        ],
+        "experiments": [
+          {
+            "id": "3475e023-33f5-47b6-baa1-eb3bdcbcdbe9",
+            "projectId": "41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "goalVersion": 2,
+            "hypothesis": "Checksum matches the agreed bytes",
+            "conditions": {
+              "description": "Local deterministic UTF-8 tool"
+            },
+            "attempts": [
+              {
+                "id": "f0936ed7-f3ed-4142-9230-cc53b4112278",
+                "operationId": "59c13b54-b9fa-4d93-8b44-e03e577d839d",
+                "operation": {
+                  "id": "59c13b54-b9fa-4d93-8b44-e03e577d839d",
+                  "closed": true,
+                  "handle": {
+                    "id": "59c13b54-b9fa-4d93-8b44-e03e577d839d",
+                    "revision": "1",
+                    "adapterId": "native-delegated-operations-v1"
+                  },
+                  "planId": "ff590b3e-2902-43fb-9f47-12dff41f5021",
+                  "schema": 1,
+                  "stepId": "research_launch",
+                  "taskId": "665c88fc-bdda-4ff7-9456-bf30bc876672",
+                  "ownerId": "alice",
+                  "version": 3,
+                  "adapterPin": {
+                    "revision": "1",
+                    "adapterId": "native-delegated-operations-v1",
+                    "configFingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                  },
+                  "effectSlot": "external-operation:f8f8639f32c4e58297cb324f0542ec75b2ca5499f90e2d039944f3605be4cd68",
+                  "planSha256": "c9d1a51be77dd9ea81ab204659a50b07b6a2ba840d18764f908b82a504241171",
+                  "nativeRunId": "dc72b7ba-acbc-4421-abf8-8799e44de0a0",
+                  "observation": {
+                    "state": "COMPLETED",
+                    "handle": {
+                      "id": "59c13b54-b9fa-4d93-8b44-e03e577d839d",
+                      "revision": "1",
+                      "adapterId": "native-delegated-operations-v1"
+                    },
+                    "output": {
+                      "runId": "937f4d1a-f735-44b9-8cf8-79a81742f96a",
+                      "result": "{\"sha256\": \"9e749afd018df8a42ef4cc77771665e8e7469a3d1c703c308b02f30e15056267\", \"inputBytes\": 42}",
+                      "taskId": "b3b6b4c5-d44c-48b2-bc46-edfadd9e64ae",
+                      "artifacts": [
+                        {
+                          "sha256": "9aed97e4ed02cee5a0a12c2ff827ef2cb80855fb7b6932a17f81037642eb23c0",
+                          "taskId": "b3b6b4c5-d44c-48b2-bc46-edfadd9e64ae",
+                          "artifactId": "add3a854-4250-48ab-bac1-103d7a29d770"
+                        }
+                      ]
+                    },
+                    "schema": 1,
+                    "failure": null,
+                    "allStopped": true,
+                    "operationId": "59c13b54-b9fa-4d93-8b44-e03e577d839d"
+                  },
+                  "inputsSha256": "940e01f0d60ce75c0c9e35fc0de4083cf6e7c4d5994c00797128b8ae02efc639",
+                  "requestSha256": "4788a6c3333296ffcdf7cb6a67ca9ef9013760be0682c3914bcbe87f84df9ee6",
+                  "cancelRequested": false
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": [],
+        "consoleErrors": [],
+        "expectedUnauthorized": [
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          }
+        ],
+        "apiResponses": [
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/authorize",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/select",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/assistants",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 201
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/goals",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/applications",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/user-connections",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/drafts",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/4a0e8cda-b6da-4c4c-8f9a-bccd491011c3",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/4a0e8cda-b6da-4c4c-8f9a-bccd491011c3/publish",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/user-connections",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/applications",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/goals",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/confirm",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/start",
+            "status": 202
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/logout",
+            "status": 204
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/authorize",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/select",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/41b96d2d-b970-4d27-bd3a-f8db64f7e0f1/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/logout",
+            "status": 204
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/authorize",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/dev-identity/select",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          }
+        ],
+        "crossOwnerReadStatus": 404,
+        "crossOwnerWriteStatus": 404,
+        "modelConfiguredVia": "real core HTTP fixture prerequisite, no saved secret",
+        "researchTeamReading": "NOTDONE: P7 API absent",
+        "realProviderOrGPU": false
+      }
+    },
+    {
+      "mode": "production-local",
+      "database": "af_test_b4b696cb88614f54a2c1b2006e3db0d6",
+      "businessAPIsMocked": false,
+      "identity": "local-synthetic-oidc",
+      "result": {
+        "projectId": "0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+        "rounds": [
+          {
+            "id": "185ac68e-82ea-4f4b-b508-f090cc370713",
+            "goalVersion": 2,
+            "scopeId": "907596a2-55b4-4aec-bd42-095da1ad5fed",
+            "allocationId": "185ac68e-82ea-4f4b-b508-f090cc370713",
+            "taskId": "1772646a-4c21-44bc-8069-7a1f7e2a4d85",
+            "deliveryId": null,
+            "decision": {
+              "action": "stop",
+              "reason": "Observed expected checksum",
+              "evidenceIds": [
+                "2661d0dc-52b4-48ef-88d9-15707639695c"
+              ],
+              "outcome": "met"
+            },
+            "terminal": {
+              "taskId": "1772646a-4c21-44bc-8069-7a1f7e2a4d85",
+              "runId": "3efc47fc-9353-4996-8b12-84f8cd47e02d",
+              "decision": {
+                "action": "stop",
+                "reason": "Observed expected checksum",
+                "evidenceIds": [
+                  "2661d0dc-52b4-48ef-88d9-15707639695c"
+                ],
+                "outcome": "met"
+              },
+              "runtime": [
+                {
+                  "taskId": "1772646a-4c21-44bc-8069-7a1f7e2a4d85",
+                  "runId": "3efc47fc-9353-4996-8b12-84f8cd47e02d",
+                  "status": "completed"
+                },
+                {
+                  "taskId": "ee7dd83e-3d86-46ca-9315-55de917ae478",
+                  "runId": "cf6bec1a-dc72-43f5-969b-a41f7db2e799",
+                  "status": "completed"
+                }
+              ],
+              "verificationStatus": "unverified",
+              "sharing": "published",
+              "continuationBlocked": null
+            },
+            "terminalRecordId": "b7c1334d-4256-41f4-970d-10742566eed8",
+            "continuations": []
+          }
+        ],
+        "experiments": [
+          {
+            "id": "c755bb91-3746-48a3-95ff-8c04c1475d89",
+            "projectId": "0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "goalVersion": 2,
+            "hypothesis": "Checksum matches the agreed bytes",
+            "conditions": {
+              "description": "Local deterministic UTF-8 tool"
+            },
+            "attempts": [
+              {
+                "id": "9ed42800-ecb8-41f5-b38f-9afba641ca03",
+                "operationId": "2661d0dc-52b4-48ef-88d9-15707639695c",
+                "operation": {
+                  "id": "2661d0dc-52b4-48ef-88d9-15707639695c",
+                  "closed": true,
+                  "handle": {
+                    "id": "2661d0dc-52b4-48ef-88d9-15707639695c",
+                    "revision": "1",
+                    "adapterId": "native-delegated-operations-v1"
+                  },
+                  "planId": "de65f0f7-7064-4a78-9f54-ec29dc8d11c9",
+                  "schema": 1,
+                  "stepId": "research_launch",
+                  "taskId": "1772646a-4c21-44bc-8069-7a1f7e2a4d85",
+                  "ownerId": "alice",
+                  "version": 3,
+                  "adapterPin": {
+                    "revision": "1",
+                    "adapterId": "native-delegated-operations-v1",
+                    "configFingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                  },
+                  "effectSlot": "external-operation:f8f8639f32c4e58297cb324f0542ec75b2ca5499f90e2d039944f3605be4cd68",
+                  "planSha256": "d55997a76a60a42c2123ede15c17d8f51ff52e9ab9047ba41849518f2fab72c3",
+                  "nativeRunId": "3efc47fc-9353-4996-8b12-84f8cd47e02d",
+                  "observation": {
+                    "state": "COMPLETED",
+                    "handle": {
+                      "id": "2661d0dc-52b4-48ef-88d9-15707639695c",
+                      "revision": "1",
+                      "adapterId": "native-delegated-operations-v1"
+                    },
+                    "output": {
+                      "runId": "cf6bec1a-dc72-43f5-969b-a41f7db2e799",
+                      "result": "{\"sha256\": \"9e749afd018df8a42ef4cc77771665e8e7469a3d1c703c308b02f30e15056267\", \"inputBytes\": 42}",
+                      "taskId": "ee7dd83e-3d86-46ca-9315-55de917ae478",
+                      "artifacts": [
+                        {
+                          "sha256": "9aed97e4ed02cee5a0a12c2ff827ef2cb80855fb7b6932a17f81037642eb23c0",
+                          "taskId": "ee7dd83e-3d86-46ca-9315-55de917ae478",
+                          "artifactId": "52e82004-addc-40c6-8888-88fde40b5a05"
+                        }
+                      ]
+                    },
+                    "schema": 1,
+                    "failure": null,
+                    "allStopped": true,
+                    "operationId": "2661d0dc-52b4-48ef-88d9-15707639695c"
+                  },
+                  "inputsSha256": "940e01f0d60ce75c0c9e35fc0de4083cf6e7c4d5994c00797128b8ae02efc639",
+                  "requestSha256": "b1b5ac7442c770582f4d498d25ec296116d4d70c4a112ac0c4d4ba024a2366e5",
+                  "cancelRequested": false
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": [],
+        "consoleErrors": [],
+        "expectedUnauthorized": [
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          }
+        ],
+        "apiResponses": [
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/assistants",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 201
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/goals",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/applications",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/drafts",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/a3af4069-ae90-4005-8d7a-bbf2a4bbfd2b",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/setup/a3af4069-ae90-4005-8d7a-bbf2a4bbfd2b/publish",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/applications",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/user-connections",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/goals",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/confirm",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/start",
+            "status": 202
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/logout",
+            "status": 204
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects/0d7a40cb-ca05-4e28-9800-0776a2d862dc/experiments",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 401
+          },
+          {
+            "path": "/api/factory/auth/login",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/auth/callback",
+            "status": 303
+          },
+          {
+            "path": "/api/factory/auth/config",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/session",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/status",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/research/projects",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/execution-targets",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/jobs",
+            "status": 200
+          },
+          {
+            "path": "/api/factory/materials",
+            "status": 200
+          }
+        ],
+        "crossOwnerReadStatus": 404,
+        "crossOwnerWriteStatus": 404,
+        "modelConfiguredVia": "real core HTTP fixture prerequisite, no saved secret",
+        "researchTeamReading": "NOTDONE: P7 API absent",
+        "realProviderOrGPU": false
+      }
+    }
+  ],
+  "productCodeHead": "9ce15e4c3a63ab44705d14ae6abcb5ba37616d62",
+  "checkoutAtRun": "1e001c4",
+  "frontendBuildSource": "30699a37838dd3c59d0b02f361741e753e3a0b80",
+  "frontendSourcesUnchangedThroughProductHead": true,
+  "scriptSha256": "8e7d36e7abf6ad05f7b6ad09cab1787d1d079624a50eaf585508107800d38850",
+  "cleanup": {
+    "generatedPostgresDatabasesRemaining": 0,
+    "originalContainerRetained": true,
+    "ownedServersStopped": true
+  }
+}

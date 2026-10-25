@@ -1,0 +1,15 @@
+  File "<stdin>", line 7, in observed
+  File "/workspace/agent-factory-research-product/platform/agent_factory/byok_model.py", line 106, in _body
+    body = encode_request(self._protocol, chat, continuation=continuation)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-product/platform/agent_factory/model_protocol.py", line 378, in encode_request
+    body['tools'] = _tools(chat_body['tools'], responses)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-product/platform/agent_factory/model_protocol.py", line 134, in _tools
+    _fail('TOOL')
+  File "/workspace/agent-factory-research-product/platform/agent_factory/model_protocol.py", line 20, in _fail
+    raise ValueError('MODEL_PROTOCOL_' + code)
+EXACT_CODE MODEL_PROTOCOL_TOOL
+TOOL_METADATA [{'type': 'function', 'function': {'name': 'factory_wait_operations', 'description': 'Wait for original external operation IDs; never start or replace an operation.', 'parameters': {'type': 'object', 'properties': {'operationIds': {'type': 'array', 'items': {'type': 'string'}}}, 'required': ['operationIds'], 'additionalProperties': False}, 'external_execution': True}}]
+ERROR   Non-retryable model provider error: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Error in Agent run: PERSONAL_MODEL_REQUEST_FAILED
