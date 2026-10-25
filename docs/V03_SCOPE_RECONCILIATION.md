@@ -1,5 +1,7 @@
 # Factory v0.3 scope reconciliation — 2026-10-04
 
+> Historical milestone evidence. Product demo/mock login and the standalone HTML research prototype have since been removed. Their descriptions below record the original runs, not a supported current entry point. Current identity migration and its validation are recorded in [remove-product-demo-modes](../openspec/changes/remove-product-demo-modes/verification-testing.md).
+
 ## Latest local evidence — 2026-10-07
 
 The [first real local baseline acceptance](RESEARCH_BASELINE_ACCEPTANCE.md) closes the selected pinned autoresearch

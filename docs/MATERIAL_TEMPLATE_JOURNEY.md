@@ -1,5 +1,7 @@
 # Approved application template to native task
 
+> Historical milestone evidence. Product demo/mock login and the standalone HTML research prototype have since been removed. Their descriptions below record the original runs, not a supported current entry point. Current identity migration and its validation are recorded in [remove-product-demo-modes](../openspec/changes/remove-product-demo-modes/verification-testing.md).
+
 This milestone continues accepted draft PR29 at
 `57a3f2f1c44b0dc151752162a4a1a6db5354e9db`. It adds a guided authoring path
 on the existing application governance service. No new scheduler, execution

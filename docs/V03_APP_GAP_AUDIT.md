@@ -1,5 +1,7 @@
 # v0.3 application workflow gap audit
 
+> Historical milestone evidence. Product demo/mock login and the standalone HTML research prototype have since been removed. Their descriptions below record the original runs, not a supported current entry point. Current identity migration and its validation are recorded in [remove-product-demo-modes](../openspec/changes/remove-product-demo-modes/verification-testing.md).
+
 Audit baseline: PR28 commit `3afdef7` (2026-10-04). This is a read-only
 code/test audit, not a new test run, browser acceptance, production deployment,
 or a revalidation of the unavailable private design documents. Test references

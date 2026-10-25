@@ -1,5 +1,7 @@
 # Application recovery and aggregate contracts — 2026-10-04
 
+> Historical milestone evidence. Product demo/mock login and the standalone HTML research prototype have since been removed. Their descriptions below record the original runs, not a supported current entry point. Current identity migration and its validation are recorded in [remove-product-demo-modes](../openspec/changes/remove-product-demo-modes/verification-testing.md).
+
 Continuation of draft PR28 at `3afdef7c42556206910ad952b8816a5c1258f972`.
 The stage PR records the exact final commit and independent terminal CI checks;
 this file does not claim that an unobserved CI run passed.
