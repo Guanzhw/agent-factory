@@ -1,5 +1,7 @@
 # Verification
 
+2026-10-25 original-event projection follow-up (spec `c9fc0a7`): 12 portable tests passed, zero skips, 3.510 seconds with the environment's network permission enabled; Ruff/diff checks passed. The new test covers an event rejected before any task/allocation, author-only visibility, exact output fields and zero allocation/start side effects. The first restricted-network invocation stalled in an existing asynchronous delivery test after the new test passed; its log and process observation are retained at `/tmp/assistant-original-event-status.log` and `...-process.txt`. That run was terminated, not counted as a pass. The bounded same-source run is `/tmp/assistant-original-event-status-network.log`; no assertion or product timeout changed. This environment difference alone does not prove a general asyncio root cause.
+
 基线f25c899；spec先行提交08156ca。范围仅原任务事件输入只读端口、非负订阅深度与安全技术错误码，无schema/main/UI或新执行链。
 
 - 最终便携：`PYTHONPATH=platform:platform/tests python -m unittest test_assistant_events -v`，11通过、0跳过，2.063秒；日志`/tmp/assistant-original-inputs-portable-final-head.log`。使用现有真实SQLite成员/内容和显式预算mock，不把它作为PG预算证明。

@@ -6,5 +6,7 @@
 
 ## 2. Verification
 
+- [ ] 2.3 Add the original-event status projection for the concrete research successor consumer; verify rejected-before-task visibility, owner isolation and no execution side effects.
+
 - [ ] 2.1 便携测试原绑定/权限/深度/code，记录首次结果；不把mock当PG证明。
 - [ ] 2.2 经协调安排串行PG原绑定测试，独立完整diff精简审查后冻结。
