@@ -27,6 +27,8 @@ class _ProcessInfo(ctypes.Structure):
 
 def _kernel():
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateJobObjectW.argtypes = [wt.LPVOID, wt.LPCWSTR]
+    kernel.CreateJobObjectW.restype = wt.HANDLE
     kernel.InitializeProcThreadAttributeList.argtypes = [wt.LPVOID, wt.DWORD, wt.DWORD, ctypes.POINTER(ctypes.c_size_t)]
     kernel.InitializeProcThreadAttributeList.restype = wt.BOOL
     kernel.UpdateProcThreadAttribute.argtypes = [wt.LPVOID, wt.DWORD, ctypes.c_size_t, wt.LPVOID,
@@ -62,7 +64,11 @@ class WindowsSSHProcess:
         self.returncode = None
         child_handles = []
         try:
-            self._job = win32job.CreateJobObject(None, None)
+            kernel = _kernel()
+            raw_job = kernel.CreateJobObjectW(None, None)
+            if not raw_job:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._job = pywintypes.HANDLE(raw_job)
             win32api.SetHandleInformation(self._job, win32con.HANDLE_FLAG_INHERIT, 0)
             limits = win32job.QueryInformationJobObject(self._job, win32job.JobObjectExtendedLimitInformation)
             limits['BasicLimitInformation']['LimitFlags'] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -85,7 +91,6 @@ class WindowsSSHProcess:
             self.stdout = os.fdopen(output_read, 'rb', buffering=0)
             child_output = child_end(output_write)
             child_error = child_end(os.open(os.devnull, os.O_WRONLY | os.O_BINARY))
-            kernel = _kernel()
             size = ctypes.c_size_t()
             kernel.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
             attributes = ctypes.create_string_buffer(size.value)
