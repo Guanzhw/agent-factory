@@ -5,7 +5,6 @@ HTTP and portal callbacks belong to the already-authorized in-process operator.
 Persist progress outside this helper before starting a different invocation; failures
 never resubmit a native task or research process. An UNKNOWN lease stays held.
 """
-from .services import services_for
 from copy import deepcopy
 import asyncio
 import re
@@ -157,7 +156,7 @@ class ResearchBootstrapController:
             task = post('/instances', {'planId': plan['id']}, key='instance')
             progress['taskId'] = task['id']
             mark('TASK_ACCEPTED')
-            runtime = services_for(self.state['store']).research_runtime
+            runtime = self.state['research'].research_runtime
             while True:
                 value = detail()
                 if value['job']['status'] == 'waiting_approval':
@@ -170,7 +169,7 @@ class ResearchBootstrapController:
                 _require(value['job']['status'] not in {'completed', 'failed', 'canceled', 'unknown'})
                 pause_poll()
             mark('NATIVE_PAUSED')
-            runtime = services_for(self.state['store']).research_runtime
+            runtime = self.state['research'].research_runtime
             lease = invoke(runtime.submit, owner, progress['taskId'])  # Exactly one allocation attempt.
             progress['leaseId'] = lease['id']
             lease_current(lease)
@@ -241,7 +240,7 @@ class ResearchBootstrapController:
                         pass
             if validated_original:
                 cleanup = cleanup_original(self.state, owner, progress['taskId'],
-                    runtime=services_for(self.state['store']).research_runtime, call_async=self.call_async,
+                    runtime=self.state['research'].research_runtime, call_async=self.call_async,
                     clock=self.clock, sleep=self.sleep)
                 progress['cancelRequested'] = progress['cancelRequested'] or cleanup['cancelRequested']
                 progress['cleanupConfirmed'] = cleanup['cleanupConfirmed']

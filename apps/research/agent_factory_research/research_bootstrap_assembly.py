@@ -4,7 +4,6 @@ No public JSON adapter registry, provider credentials or task identities enter
 this module. Callers supply locally captured input evidence and existing pinned
 executables. The application still creates its native identities and execution authorization.
 """
-from .services import services_for
 from copy import deepcopy
 from dataclasses import replace
 import json
@@ -80,7 +79,7 @@ def prepare_application(*, app_factory, db_url, workspace, program_root, program
         store = state['store']
         at('PREPARATION_STORE')
         preparation = ResearchPreparationStore(store, state['auth'], store.process_runtime.resources,
-            store.storage, preparation_manifest_sha256=preparation_manifest_sha256,
+            store.storage, research=state['research'], preparation_manifest_sha256=preparation_manifest_sha256,
             source_sha256=driver.configuration_fingerprint)
         pending['preparation'] = preparation
         return {'app': app, 'state': state, 'preparation': preparation, 'target': target,
@@ -201,12 +200,12 @@ def research_application(*, app_factory, db_url, workspace, upstream_files, capt
         app = app_factory(settings)
         state = app.app.state.factory
         checkpoints = ResearchCheckpointStore(state['store'], state['auth'],
-            services_for(state['store']).research_runtime.resources, state['store'].storage)
+            state['research'].research_runtime.resources, state['store'].storage, research=state['research'])
         pending.update(state=state, checkpoints=checkpoints)
         if evaluating:
-            state['research_evaluation'] = services_for(state['store']).research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
-                services_for(state['store']).research_runtime.resources, {digest(manifest['evaluator']): reference},
-                checkpoint_reader=checkpoints.identity)
+            state['research_evaluation'] = state['research'].research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
+                state['research'].research_runtime.resources, {digest(manifest['evaluator']): reference},
+                checkpoint_reader=checkpoints.identity, research=state['research'])
         return {'app': app, 'state': state, 'checkpoints': checkpoints, 'target': target,
                 'settings': settings, 'providerStore': bootstrap, 'pending': pending,
                 'orchestrationKind': 'deterministic-development-control', 'syntheticProvider': False}

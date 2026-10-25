@@ -1,10 +1,21 @@
 import { factoryRequest as request } from '../../../web/api.js';
 import type { Plan } from '../../../web/models.js';
 import type { SynthesisCreate } from './synthesisJourneyState.js';
+import type { IterationStart } from './iterationState.js';
 const segment = encodeURIComponent;
 
 /** Research endpoints retain their existing URLs and request/receipt contracts. */
 export const researchApi = {
+  iterations: {
+    presets: (owner: string, signal?: AbortSignal) => request<unknown>('/research-iterations/presets', 'GET', undefined, signal, owner),
+    list: (owner: string, signal?: AbortSignal) => request<unknown>('/research-iterations', 'GET', undefined, signal, owner),
+    start: (owner: string, input: IterationStart) => request<unknown>('/research-iterations', 'POST', input, undefined, owner),
+    get: (owner: string, id: string, signal?: AbortSignal) => request<unknown>(`/research-iterations/${segment(id)}`, 'GET', undefined, signal, owner),
+    recover: (owner: string, id: string) => request<unknown>(`/research-iterations/requests/${segment(id)}`, 'GET', undefined, undefined, owner),
+    advance: (owner: string, id: string, input: { previousRoundId: string; requestId: string }) => request<unknown>(`/research-iterations/${segment(id)}/advance`, 'POST', input, undefined, owner),
+    reconcile: (owner: string, id: string) => request<unknown>(`/research-iterations/${segment(id)}/reconcile`, 'POST', {}, undefined, owner),
+    cancel: (owner: string, id: string) => request<unknown>(`/research-iterations/${segment(id)}/cancel`, 'POST', {}, undefined, owner),
+  },
   autoresearch: {
     presets: (signal?: AbortSignal) => request<unknown>('/autoresearch/presets', 'GET', undefined, signal),
     start: (input: { presetId: string; goal?: string; requestId: string }, signal?: AbortSignal) => request<unknown>('/autoresearch/runs', 'POST', input, signal),

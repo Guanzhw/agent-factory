@@ -1,5 +1,5 @@
 """Readonly terminal custody versus execution; real SQLite member execution, mocked peers."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -74,7 +74,8 @@ class ReceiverCustodyFallbackTests(unittest.TestCase):
         context = SimpleNamespace(user_id='alice', session_id='receiver-task', run_id='receiver-run')
         plan = {'application': APPLICATION_ID, 'mode': 'remote-scientific-training', 'remoteHandoff': {'receiptId': 'receipt'}}
         store = Mock()
-        services_for(store).remote_scientific_receiver = Mock()
+        self.research = ResearchServices(store, installed=True)
+        self.research.remote_scientific_receiver = Mock()
         store.require_plan_execution.side_effect = HTTPException(403, 'execution ended')
         store.execution_guards = {'remote_receiver': Mock(side_effect=AssertionError('must use typed custody proof')),
                                   'other': Mock()}
@@ -83,26 +84,26 @@ class ReceiverCustodyFallbackTests(unittest.TestCase):
     def test_active_normal_path_does_not_request_custody_or_repeat_guards(self):
         store, plan, context = self.fixture()
         store.require_plan_execution.side_effect = None
-        require_original_custody(store, 'alice', plan, context, stopped=False)
-        services_for(store).remote_scientific_receiver.require_completed_custody.assert_not_called()
+        require_original_custody(store, 'alice', plan, context, research=self.research, stopped=False)
+        self.research.remote_scientific_receiver.require_completed_custody.assert_not_called()
         store.plan_policy.require_execution.assert_not_called()
 
     def test_only_stopped_training_with_installed_receiver_can_fallback(self):
         for failure in ('unstopped', 'phase', 'receiver', 'status'):
             with self.subTest(failure=failure):
                 store, plan, context = self.fixture()
-                receiver = services_for(store).remote_scientific_receiver
+                receiver = self.research.remote_scientific_receiver
                 if failure == 'phase': plan['mode'] = 'remote-scientific-evaluation'
-                if failure == 'receiver': services_for(store).remote_scientific_receiver = None
+                if failure == 'receiver': self.research.remote_scientific_receiver = None
                 if failure == 'status': store.require_plan_execution.side_effect = HTTPException(503, 'unavailable')
                 with self.assertRaises((HTTPException, PermissionError)):
-                    require_original_custody(store, 'alice', plan, context, stopped=failure != 'unstopped')
+                    require_original_custody(store, 'alice', plan, context, research=self.research, stopped=failure != 'unstopped')
                 receiver.require_completed_custody.assert_not_called()
 
     def test_typed_custody_does_not_bypass_other_current_guards(self):
         store, plan, context = self.fixture()
-        require_original_custody(store, 'alice', plan, context, stopped=True)
-        services_for(store).remote_scientific_receiver.require_completed_custody.assert_called_once_with('alice', plan, context)
+        require_original_custody(store, 'alice', plan, context, research=self.research, stopped=True)
+        self.research.remote_scientific_receiver.require_completed_custody.assert_called_once_with('alice', plan, context)
         store.plan_policy.require_execution.assert_called_once_with('alice', plan, run_context=context)
         store.execution_bindings.recheck.assert_called_once_with(plan, context)
         store.material_governance.require_materials_current.assert_called_once_with(plan)
@@ -111,5 +112,5 @@ class ReceiverCustodyFallbackTests(unittest.TestCase):
                       store.material_governance.require_materials_current, store.execution_guards['other']):
             check.side_effect = PermissionError('fresh denial')
             with self.assertRaises(PermissionError):
-                require_original_custody(store, 'alice', plan, context, stopped=True)
+                require_original_custody(store, 'alice', plan, context, research=self.research, stopped=True)
             check.side_effect = None

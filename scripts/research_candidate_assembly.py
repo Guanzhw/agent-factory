@@ -44,7 +44,6 @@ def research_application(*, db_url, workspace, upstream_files, candidate_files, 
     training) authority and provider fingerprints. Keep their provider stores
     alive until the complete controller has stopped and returned custody.
     """
-    from agent_factory_research.services import services_for
     _require(type(launch_spec) is UvResearchProcessSpec and type(limits) is ResearchProcessLimits
              and type(gpu_binding) is GpuBinding and callable(device_observer)
              and (training is None) == (training_store is None))
@@ -112,12 +111,12 @@ def research_application(*, db_url, workspace, upstream_files, candidate_files, 
         app = create_app(settings)
         state = app.app.state.factory
         checkpoints = ResearchCheckpointStore(state['store'], state['auth'],
-            services_for(state['store']).research_runtime.resources, state['store'].storage)
+            state['research'].research_runtime.resources, state['store'].storage, research=state['research'])
         pending.update(state=state, checkpoints=checkpoints)
         if evaluating:
-            state['research_evaluation'] = services_for(state['store']).research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
-                services_for(state['store']).research_runtime.resources, {digest(manifest['evaluator']): reference},
-                checkpoint_reader=checkpoints.identity)
+            state['research_evaluation'] = state['research'].research_evaluation = ResearchEvaluationService(state['store'], state['auth'],
+                state['research'].research_runtime.resources, {digest(manifest['evaluator']): reference},
+                checkpoint_reader=checkpoints.identity, research=state['research'])
         return {'app': app, 'state': state, 'checkpoints': checkpoints, 'target': target,
                 'settings': settings, 'providerStore': bootstrap, 'pending': pending,
                 'orchestrationKind': 'deterministic-development-control', 'syntheticProvider': False}

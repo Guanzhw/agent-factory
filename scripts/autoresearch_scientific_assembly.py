@@ -277,14 +277,13 @@ class ScientificPhaseAssembler:
         return self.prep_target
 
     def _register(self, phase, candidate, prior, pin, target):
-        from agent_factory_research.services import services_for
         if phase == 'preparation' and getattr(self, 'preparation_store', self.store) is not self.store:
             # Verification binding only. Never expose the legacy provider as an
             # allocatable target in the independent candidate control plane.
             require(target is self.phase_target(phase, pin))
             return target
         resources = self.store.process_runtime.resources
-        require(services_for(self.store).research_runtime.resources is resources)
+        require(self.state['research'].research_runtime.resources is resources)
         for registry in (resources.targets, self.state['settings'].remote_targets):
             previous = registry.get(pin['targetRef'])
             require(previous is None or previous is target)
@@ -441,13 +440,12 @@ class ScientificPhaseAssembler:
         return self._register(phase, candidate, prior, pin, target)
 
     def evaluation_service(self, pin):
-        from agent_factory_research.services import services_for
         require(type(pin) is dict and set(pin) == {'targetRef', 'comparisonManifest',
             'comparisonManifestSha256', 'variantSha256'})
         record = self.evaluation_registrations.get(pin['targetRef'])
         require(record is not None and record['pin'] == pin)
         assert record is not None
-        resources = services_for(self.store).research_runtime.resources
+        resources = self.state['research'].research_runtime.resources
         require(resources is self.store.process_runtime.resources)
         target = record['target']
         require(resources.targets.get(pin['targetRef']) is target
@@ -457,5 +455,5 @@ class ScientificPhaseAssembler:
         if pin['targetRef'] not in self.evaluation_services:
             self.evaluation_services[pin['targetRef']] = ResearchEvaluationService(self.store,
                 self.state['auth'], resources, {digest(self.manifest['evaluator']): pin['targetRef']},
-                checkpoint_reader=self.checkpoints.identity)
+                checkpoint_reader=self.checkpoints.identity, research=self.state['research'])
         return self.evaluation_services[pin['targetRef']]

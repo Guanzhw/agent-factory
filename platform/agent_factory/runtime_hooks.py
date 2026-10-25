@@ -5,18 +5,23 @@ Native Agno remains the execution owner. Hooks cannot grant admission, submit
 work, or infer stop from elapsed time or a cancellation acknowledgement.
 """
 def effect_unresolved(effect, store=None):
-    held = getattr(store, "runtime_effect_held", None)
+    registry = getattr(store, 'application_runtime', None)
+    held = registry.effect_held if registry is not None else None
     return (effect.get("status") not in {"DONE", "CANCELLED"}
             or bool(held is not None and held(effect)))
 
 
 def runtime_custody_held(store, task_id):
+    registry = getattr(store, 'application_runtime', None)
+    if registry and registry.task_held(store.task(task_id)):
+        return True
     return any(service is not None and service.task_held(task_id)
                for service in (getattr(store, "process_runtime", None), getattr(store, "workflow", None)))
 
 
 def native_ended_reason(store, task):
-    observe = getattr(store, "runtime_ended_reason", None)
+    registry = getattr(store, 'application_runtime', None)
+    observe = registry.ended_reason if registry is not None else None
     reason = observe(task) if observe is not None else None
     if reason:
         return reason
@@ -27,9 +32,12 @@ def native_ended_reason(store, task):
 
 
 async def cancel_owned_runtime(store, task):
-    cancel = getattr(store, "runtime_cancel_owned", None)
+    registry = getattr(store, 'application_runtime', None)
+    cancel = registry.cancel if registry is not None else None
     if cancel is not None:
         await cancel(task)
+    # Keep the existing outer cleanup ordering: ambiguous application cleanup
+    # propagates before the core workflow continuation is considered.
     workflow = getattr(store, "workflow", None)
     if workflow is not None:
         await workflow.cancel_task(task["owner_id"], task["id"])

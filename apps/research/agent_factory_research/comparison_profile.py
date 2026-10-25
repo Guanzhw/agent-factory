@@ -4,7 +4,7 @@ One native task and one bounded process evaluate both sides. No new runner,
 commands from users, publication bypass or scientific-model claim is introduced.
 """
 from __future__ import annotations
-from .services import services_for
+from .services import ResearchFactory
 
 import json
 from typing import Any
@@ -98,7 +98,7 @@ def registrations():
             {'evidenceKind': 'controlled-comparison-input', 'choice': value['choice'],
              'inputManifestSha256': digest(manifest), 'scientificValidation': False})
 
-    def runner(ctx):
+    def runner(ctx, research):
         value = dict(ctx.spec['config']); _tool_config(value)
         choice, target_ref = ctx.plan.get('mode'), value['targetRef']
         _scope(ctx, choice=choice, target_ref=target_ref)
@@ -108,18 +108,20 @@ def registrations():
             """Run the approved paired evaluator and derive evidence from its original receipt."""
             _require(all(getattr(run_context, key, None) == getattr(ctx.run_context, key, None)
                          for key in ('user_id', 'session_id', 'run_id')))
+            research.require_store(ctx.store, ready=True)
             _scope(ctx, choice=choice, target_ref=target_ref)
             ctx.store.authorize_tool(run_context, TOOL_NAME)
             receipt = await ctx.store.process_runtime.run(run_context, {'targetRef': target_ref})
             ctx.store.authorize_tool(run_context, TOOL_NAME)
             _scope(ctx, choice=choice, target_ref=target_ref)
-            result = await services_for(ctx.store).comparisons.persist(run_context, receipt)
+            research.require_store(ctx.store, ready=True)
+            result = await research.comparisons.persist(run_context, receipt)
             ctx.store.authorize_tool(run_context, TOOL_NAME)
             return json.dumps(result, sort_keys=True, allow_nan=False)
         return bounded_process_run
 
     return [AdapterRegistration('model', MODEL_ID, '1', model, validator=_config, demo_only=True),
-        AdapterRegistration('tool', TOOL_ID, '1', runner, validator=_tool_config, tool_name=TOOL_NAME,
+        AdapterRegistration('tool', TOOL_ID, '1', ResearchFactory(runner), validator=_tool_config, tool_name=TOOL_NAME,
                             permissions=(PERMISSION,), demo_only=True),
         AdapterRegistration('knowledge', KNOWLEDGE_ID, '1', knowledge, validator=_config, demo_only=True),
         AdapterRegistration('environment', ENVIRONMENT_ID, '1', environment, validator=_config, demo_only=True)]

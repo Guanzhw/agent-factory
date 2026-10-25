@@ -40,6 +40,7 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
             server.control("role-restore")
             server.control("usage-price-restore")
             server.control("usage-known")
+        self.origin.control('origin-observation-release')
 
     def tearDown(self):
         for server in (self.origin, self.receiver):
@@ -48,6 +49,7 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
             server.control("role-restore")
             server.control("usage-price-restore")
             server.control("usage-known")
+        self.origin.control('origin-observation-release')
         for task in self.tasks:
             self.call(self.origin, "POST", f"/jobs/{task}/cancel")
 
@@ -66,6 +68,10 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
         self.assertEqual(plan["usageBudget"]["adapterId"], MODEL_SOURCE)
         self.assertEqual(prepared["receiverUsageCommitment"]["adapterId"], MODEL_RECEIVER)
         completed = self.wait(self.origin, task, {"completed"})
+        # Native completion is not a barrier for asynchronous origin accounting.
+        # Explicitly settle the original receipt before asserting its ledger.
+        self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
+        completed = self.call(self.origin, "GET", f"/jobs/{task}").json()
         receipt = completed["snapshot"]["remoteHandoff"]
         remote = receipt["remoteTaskId"]
         self.assertTrue(receipt["allStopped"])
@@ -92,6 +98,66 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
         self.call(self.origin, "POST", "/instances", expected=202, json=body)
         self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
         self.assertEqual(self.task_scope(self.usage(self.origin, task), task), before)
+        self.assertEqual(self.receiver.facts(remote)["nativeTickets"], 1)
+        self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
+
+    def test_01b_get_preserves_origin_hold_until_explicit_original_reconcile(self):
+        self.origin.control('origin-observation-hold')
+        plan, task, _, prepared = self.execute("paused")
+        paused = self.wait(self.origin, task, {"waiting_input"})
+        original = paused["snapshot"]["remoteHandoff"]
+        remote = original["remoteTaskId"]
+        identity = {key: original[key] for key in
+                    ("id", "remoteTaskId", "remotePlanId", "remoteRunId", "manifestHash", "usageGrant")}
+        source_before = self.usage(self.origin, task)
+        held = self.task_scope(source_before, task)
+        # Dispatch may already report the first settled attempt, but a paused
+        # original must retain its unspent allocation. GET must preserve this
+        # exact captured baseline regardless of that legitimate timing.
+        self.assertEqual(held["settledTokens"] + held["heldTokens"], 40)
+        self.assertEqual(held["settledAmountMicros"] + held["heldAmountMicros"], 64)
+        self.assertGreater(held["heldTokens"], 0)
+        self.assertGreater(held["heldAmountMicros"], 0)
+        grant_before = self.grant(self.origin, original["id"])
+        self.assertEqual(grant_before["state"], "ALLOCATED")
+        placement_before = next(row for row in self.origin.facts()["placements"] if row["task_id"] == task)
+
+        # Stop the original receiver through its real owner-authorized endpoint.
+        # No origin action can settle its grant during the following GET window.
+        self.call(self.receiver, "POST", f"/jobs/{remote}/cancel")
+        self.stopped(self.receiver, remote, "canceled")
+        stopped = self.call(self.origin, "GET", f"/jobs/{task}").json()
+        self.assertEqual(stopped["job"]["status"], "canceling")
+        for detail in (stopped, self.call(self.origin, "GET", f"/jobs/{task}").json()):
+            receipt = detail["snapshot"]["remoteHandoff"]
+            self.assertEqual({key: receipt[key] for key in identity}, identity)
+            self.assertTrue(receipt["allStopped"])
+            self.assertEqual(detail["usageLedger"], source_before)
+        self.assertEqual(self.usage(self.origin, task), source_before)
+        self.assertEqual(self.grant(self.origin, original["id"]), grant_before)
+        self.assertEqual(next(row for row in self.origin.facts()["placements"] if row["task_id"] == task), placement_before)
+
+        self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
+        settled = self.call(self.origin, "GET", f"/jobs/{task}").json()
+        receipt = settled["snapshot"]["remoteHandoff"]
+        self.assertEqual({key: receipt[key] for key in identity}, identity)
+        self.assertTrue(receipt["allStopped"])
+        self.assertEqual(receipt["receiverUsageCommitment"], prepared["receiverUsageCommitment"])
+        self.assertEqual(receipt["receiverPlanSha256"], prepared["receiverPlanSha256"])
+        source, actual = self.usage(self.origin, task), self.usage(self.receiver, remote)
+        self.assertEqual(len(actual["attempts"]), 1)
+        self.assertEqual(actual["attempts"][0]["state"], "SETTLED")
+        for scope in (self.task_scope(source, task), self.task_scope(actual, remote)):
+            self.assertEqual((scope["settledTokens"], scope["settledAmountMicros"],
+                              scope["heldTokens"], scope["heldAmountMicros"]), (5, 7, 0, 0))
+        self.assertEqual(source["attempts"], [])
+        self.assertEqual(settled["usageLedger"], source)
+        statement = receipt["usageStatement"]
+        self.assertEqual(statement["sha256"], digest({key: value for key, value in statement.items() if key != "sha256"}))
+        self.assertEqual((statement["settledTokens"], statement["settledAmountMicros"]), (5, 7))
+        self.assertEqual(self.grant(self.origin, original["id"])["state"], "SETTLED")
+        self.assertEqual(self.grant(self.receiver, original["id"])["state"], "CLOSED")
+        self.assertEqual(digest(self.origin.facts(task)["plan"]), digest(plan))
         self.assertEqual(self.receiver.facts(remote)["nativeTickets"], 1)
         self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
 
@@ -165,7 +231,8 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
         self.assertEqual(completed["usageLedger"]["taskId"], proxy)
         self.assertEqual(completed["usageLedger"]["rootTaskId"], task)
         self.assertEqual(completed["usageLedger"]["ownerId"], ORIGIN_OWNER)
-        # Refresh root statement after the actual child attempts settle.
+        # Explicitly refresh root accounting after actual child attempts settle.
+        self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
         root = self.call(self.origin, "GET", f"/jobs/{task}").json()
         statement = root["snapshot"]["remoteHandoff"]["usageStatement"]
         self.assertEqual((statement["settledTokens"], statement["settledAmountMicros"]), (15, 21))
@@ -181,27 +248,37 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
     def test_05_changed_pricing_or_model_refuses_prepared_receiver_and_retains_original_hold(self):
         for operation in ("usage-price-change", "usage-model-change"):
             with self.subTest(operation=operation):
-                self.receiver.control("usage-price-restore")
-                task, body, receipt = self.prepare(self.plan())
-                before = self.receiver.facts()["nativeTickets"]
-                self.origin.control('dispatch-release')
-                self.receiver.control(operation)
-                self.call(self.origin, "POST", "/instances", expected=409, json=body)
-                self.assertEqual(self.receiver.facts()["nativeTickets"], before)
-                # Preparation now reserves the receiver and its immutable quote
-                # immediately. A rejected dispatch retains that original source
-                # allocation until positive no-dispatch cancellation evidence.
-                allocated = self.grant(self.origin, receipt['id'])
-                self.assertEqual(allocated['state'], 'ALLOCATED')
-                self.assertFalse(any(g['id'] == receipt['id'] for g in self.receiver.facts()['usageGrants']))
-                held = self.task_scope(self.usage(self.origin, task), task)
-                self.assertEqual((held['heldTokens'], held['heldAmountMicros'], held['settledTokens']), (40, 64, 0))
-                self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
-                self.receiver.control("usage-price-restore")
+                # Autonomous observation may legitimately revoke a PREPARED
+                # task before allocation. Here isolate the distinct dispatch
+                # rejection boundary while the native service remains running.
+                self.receiver.control('receiver-observer-stop')
+                try:
+                    self.receiver.control("usage-price-restore")
+                    task, body, receipt = self.prepare(self.plan())
+                    before = self.receiver.facts()["nativeTickets"]
+                    self.origin.control('dispatch-release')
+                    self.receiver.control(operation)
+                    self.call(self.origin, "POST", "/instances", expected=409, json=body)
+                    self.assertEqual(self.receiver.facts()["nativeTickets"], before)
+                    # Preparation now reserves the receiver and its immutable quote
+                    # immediately. A rejected dispatch retains that original source
+                    # allocation until positive no-dispatch cancellation evidence.
+                    allocated = self.grant(self.origin, receipt['id'])
+                    self.assertEqual(allocated['state'], 'ALLOCATED')
+                    self.assertFalse(any(g['id'] == receipt['id'] for g in self.receiver.facts()['usageGrants']))
+                    held = self.task_scope(self.usage(self.origin, task), task)
+                    self.assertEqual((held['heldTokens'], held['heldAmountMicros'], held['settledTokens']), (40, 64, 0))
+                    self.assertEqual(self.origin.facts(task)["nativeTickets"], 0)
+                finally:
+                    try:
+                        self.receiver.control("usage-price-restore")
+                    finally:
+                        self.receiver.control('receiver-observer-start')
                 self.call(self.origin, 'POST', '/instances', expected=202, json=body)
                 self.assertEqual(self.grant(self.origin, receipt['id'])['body'], allocated['body'])
                 self.assertEqual(self.receiver.facts()['nativeTickets'], before)
                 self.call(self.origin, 'POST', '/jobs/' + task + '/cancel')
+                self.call(self.origin, 'POST', '/jobs/' + task + '/reconcile')
                 proof = self.call(self.receiver, 'GET', '/remote-handoffs/' + receipt['id']).json()
                 self.assertEqual(proof['state'], 'CANCELLED_NO_DISPATCH')
                 self.assertTrue(proof['allStopped'])
@@ -238,6 +315,8 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
         self.assertFalse(any(g["id"] == prepared["id"] for g in self.receiver.facts()["usageGrants"]))
         self.call(self.origin, "POST", "/instances", expected=202, json=body)
         completed = self.wait(self.origin, task, {"completed"})
+        self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
+        completed = self.call(self.origin, "GET", f"/jobs/{task}").json()
         self.assertEqual(completed["snapshot"]["remoteHandoff"]["id"], prepared["id"])
         self.assertEqual(self.receiver.facts(prepared["remoteTaskId"])["nativeTickets"], 1)
         self.assertEqual(self.grant(self.origin, prepared["id"])["state"], "SETTLED")
@@ -266,6 +345,7 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
         self.assertEqual(self.receiver.facts()["nativeTickets"], before)
         self.assertEqual(self.grant(self.origin, receipt["id"])["hash"], original["hash"])
         self.call(self.origin, "POST", f"/jobs/{task}/cancel")
+        self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
         positive = self.call(self.receiver, "GET", f"/remote-handoffs/{receipt['id']}").json()
         self.assertEqual(positive["state"], "CANCELLED_NO_DISPATCH")
         self.assertTrue(positive["allStopped"])
@@ -294,6 +374,9 @@ class RemoteUsageProcessPostgresTests(unittest.TestCase):
                 self.assertEqual(failed["artifacts"], [])
                 self.assertFalse(any(e["type"] == "checksum_completed" for e in failed["events"]))
                 self.assertEqual(len(self.usage(self.receiver, remote)["attempts"]), 1)
+                # Receiver stop is not an origin-accounting barrier. Settle the
+                # original receipt explicitly; pure GET must not release its hold.
+                self.call(self.origin, "POST", f"/jobs/{task}/reconcile")
                 current = self.call(self.origin, "GET", f"/jobs/{task}").json()
                 statement = current["snapshot"]["remoteHandoff"]["usageStatement"]
                 self.assertTrue(statement["allStopped"])

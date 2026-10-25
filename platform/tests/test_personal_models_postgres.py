@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from urllib.parse import urlencode
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -270,7 +271,15 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             time.sleep(.05)
         self.assertEqual(native.get('status'), 'completed', native)
         self.assertEqual(len(self.calls), 2)
-        # Capture history after the public observer records native completion.
+        # Background observation, not GET detail, persists completion. Keep the
+        # existing native deadline and wait for its positive terminal record.
+        while time.monotonic() < deadline:
+            task = self.store.task_for_request('credential-context-task', 'alice')
+            if task['terminal'] and task['body']['lastStatus'] == 'completed':
+                break
+            time.sleep(.05)
+        self.assertTrue(task['terminal'], 'Observer must persist native stop before history capture')
+        self.assertIsNotNone(task['body'].get('observedAt'))
         detail = self.request('GET', '/jobs/' + task['id'])
         self.assertEqual(detail['job']['status'], 'completed')
         task = self.store.task_for_request('credential-context-task', 'alice')
@@ -329,12 +338,31 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             if native.get('status') in {'completed', 'failed'}: break
             time.sleep(.05)
         self.assertEqual(native.get('status'), 'completed', native)
+        # Native completion can precede durable accounting/stop observation.
+        # Keep the same deadline; GET must not perform that finalization.
+        while time.monotonic() < deadline:
+            task = self.store.task_for_request('legacy-byok-read', 'alice')
+            if task['terminal'] and task['body']['lastStatus'] == 'completed':
+                break
+            time.sleep(.05)
+        self.assertTrue(task['terminal'], 'Observer must finalize before completed history is asserted')
+        self.assertEqual(task['body']['lastStatus'], 'completed')
         detail = self.request('GET', '/jobs/' + task['id'])
         self.assertEqual(detail['job']['status'], 'completed')
         self.assertIsNone(detail['usageLedger'])
         self.assertTrue(detail['events'])
         self.assertTrue(detail['artifacts'])
-        self.assertIn(task['id'], [job['id'] for job in self.request('GET', '/jobs')])
+        job_ids, cursor, seen = [], None, set()
+        while True:
+            page = self.request('GET', '/jobs?' + urlencode({
+                'limit': 50, **({'cursor': cursor} if cursor else {})}))
+            job_ids.extend(job['id'] for job in page['items'])
+            cursor = page['nextCursor']
+            if cursor is None:
+                break
+            self.assertNotIn(cursor, seen, 'History pagination repeated a cursor')
+            seen.add(cursor)
+        self.assertIn(task['id'], job_ids)
         self.request('GET', '/jobs/' + task['id'], owner='bob', expected=404)
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(self.store.sql('SELECT COUNT(*) AS n FROM af_usage_accounts')[0]['n'], 0)

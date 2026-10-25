@@ -1,6 +1,5 @@
 """Governed finite profile wiring with mocks; no process/DB/provider execution."""
-from research_services_fixture import with_research_services
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices, bind_registrations
 from copy import deepcopy
 from types import SimpleNamespace
 import unittest
@@ -19,12 +18,15 @@ from agent_factory.store import digest
 def context(choice='linear-v1', adapter=MODEL_ID) -> Any:
     run = RunContext(user_id='alice', session_id='task', run_id='native')
     config = {'targetRef': 'fixed-target'}
-    return SimpleNamespace(settings=SimpleNamespace(demo=True, temporary_policy='member-self-service'),
+    store = SimpleNamespace(authorize_tool=Mock(), process_runtime=SimpleNamespace(run=AsyncMock(return_value={'original': True})))
+    research = ResearchServices(factory_store=store, installed=True, comparisons=SimpleNamespace(persist=AsyncMock(return_value={'verified': True})))
+    ctx = SimpleNamespace(settings=SimpleNamespace(demo=True, temporary_policy='member-self-service'),
         run_context=run, spec={'config': config if adapter == TOOL_ID else {**config, 'choice': choice}},
         plan={'ownerId': 'alice', 'application': APPLICATION_ID, 'applicationRef': {'id': APPLICATION_ID},
               'mode': choice, 'tools': [TOOL_NAME], 'capabilities': ['compute:local'],
               'executionBindings': {'tools': [{'adapterId': TOOL_ID, 'revision': '1', 'config': config}]}},
-        store=with_research_services(SimpleNamespace(authorize_tool=Mock(), process_runtime=SimpleNamespace(run=AsyncMock(return_value={'original': True}))), comparisons=SimpleNamespace(persist=AsyncMock(return_value={'verified': True}))))
+        store=store)
+    return ctx, research
 
 
 class ComparisonProfileTests(unittest.IsolatedAsyncioTestCase):
@@ -47,14 +49,14 @@ class ComparisonProfileTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): material_drafts(choice, target)
 
     def test_controlled_model_pricing_and_knowledge_context_preserve_pins(self):
-        model = self.entries[MODEL_ID].factory(context())
+        model = self.entries[MODEL_ID].factory(context()[0])
         self.assertIsInstance(model, ComparisonFixtureModel)
         self.assertEqual(model.id, MODEL_ID)
-        knowledge = self.entries[KNOWLEDGE_ID].factory(context(adapter=KNOWLEDGE_ID))
+        knowledge = self.entries[KNOWLEDGE_ID].factory(context(adapter=KNOWLEDGE_ID)[0])
         self.assertIsInstance(knowledge, KnowledgeContext)
         self.assertEqual(knowledge.provenance['inputManifestSha256'], digest(input_manifest('linear-v1')))
         self.assertFalse(knowledge.provenance['scientificValidation'])
-        limits = self.entries[ENVIRONMENT_ID].factory(context(adapter=ENVIRONMENT_ID))
+        limits = self.entries[ENVIRONMENT_ID].factory(context(adapter=ENVIRONMENT_ID)[0])
         self.assertEqual((limits.timeout_seconds, limits.memory_bytes, limits.output_bytes), (5, 128 * 1024 * 1024, 65536))
         self.assertIs(pricing_registration().local_model_type, ComparisonFixtureModel)
 
@@ -64,33 +66,33 @@ class ComparisonProfileTests(unittest.IsolatedAsyncioTestCase):
                    ('plan', 'application', 'other'), ('plan', 'delegation', {'parent': 'x'}),
                    ('plan', 'remoteHandoff', {'origin': 'x'})]
         for area, key, value in changes:
-            ctx = context()
+            ctx, research = context()
             if area == 'plan': ctx.plan[key] = value
             else: setattr(ctx.settings, key, value)
-            with self.subTest(key=key), self.assertRaises(ValueError): self.entries[MODEL_ID].factory(ctx)
-        ctx = context(); ctx.plan['executionBindings']['tools'][0]['config']['targetRef'] = 'another'
-        with self.assertRaises(ValueError): self.entries[MODEL_ID].factory(ctx)
+            with self.subTest(key=key), self.assertRaises(ValueError): bind_registrations([self.entries[MODEL_ID]], research)[0].factory(ctx)
+        ctx, research = context(); ctx.plan['executionBindings']['tools'][0]['config']['targetRef'] = 'another'
+        with self.assertRaises(ValueError): bind_registrations([self.entries[MODEL_ID]], research)[0].factory(ctx)
 
     async def test_tool_reuses_single_runtime_then_derived_persistence_with_fresh_checks(self):
-        ctx = context(adapter=TOOL_ID)
-        function = self.entries[TOOL_ID].factory(ctx)
+        ctx, research = context(adapter=TOOL_ID)
+        function = bind_registrations([self.entries[TOOL_ID]], research)[0].factory(ctx)
         result = await function.entrypoint(run_context=ctx.run_context)
         self.assertIn('verified', result)
         ctx.store.process_runtime.run.assert_awaited_once_with(ctx.run_context, {'targetRef': 'fixed-target'})
-        services_for(ctx.store).comparisons.persist.assert_awaited_once_with(ctx.run_context, {'original': True})
+        research.comparisons.persist.assert_awaited_once_with(ctx.run_context, {'original': True})
         self.assertEqual(ctx.store.authorize_tool.call_count, 3)
 
     async def test_no_persist_after_revoke_or_failed_process_and_no_foreign_context(self):
-        ctx = context(adapter=TOOL_ID)
-        function = self.entries[TOOL_ID].factory(ctx)
+        ctx, research = context(adapter=TOOL_ID)
+        function = bind_registrations([self.entries[TOOL_ID]], research)[0].factory(ctx)
         ctx.store.authorize_tool.side_effect = [None, PermissionError('revoked')]
         with self.assertRaises(PermissionError): await function.entrypoint(run_context=ctx.run_context)
-        services_for(ctx.store).comparisons.persist.assert_not_awaited()
-        ctx = context(adapter=TOOL_ID); ctx.store.process_runtime.run.side_effect = ValueError('UNKNOWN')
-        function = self.entries[TOOL_ID].factory(ctx)
+        research.comparisons.persist.assert_not_awaited()
+        ctx, research = context(adapter=TOOL_ID); ctx.store.process_runtime.run.side_effect = ValueError('UNKNOWN')
+        function = bind_registrations([self.entries[TOOL_ID]], research)[0].factory(ctx)
         with self.assertRaises(ValueError): await function.entrypoint(run_context=ctx.run_context)
-        services_for(ctx.store).comparisons.persist.assert_not_awaited()
-        ctx = context(adapter=TOOL_ID); function = self.entries[TOOL_ID].factory(ctx)
+        research.comparisons.persist.assert_not_awaited()
+        ctx, research = context(adapter=TOOL_ID); function = bind_registrations([self.entries[TOOL_ID]], research)[0].factory(ctx)
         with self.assertRaises(ValueError):
             await function.entrypoint(run_context=RunContext(user_id='bob', session_id='task', run_id='native'))
         ctx.store.process_runtime.run.assert_not_awaited()

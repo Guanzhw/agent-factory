@@ -171,14 +171,15 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
                 owned_thread.append(threading.get_ident())
             return original_outcome(settings, store, context, plan, stop_signal, authority_check)
 
-        def pause_second_target_read(owner, row, *, execution=True, native_cancellation=False):
+        def pause_second_target_read(owner, row, *, execution=True, native_cancellation=False, trusted_cleanup=False):
             if (execution and native_cancellation and row["task_id"] == origin_id and
                     threading.get_ident() in owned_thread and not reached.is_set()):
                 self.assertFalse(self.origin["store"].task(origin_id, owner)["cancel_requested"])
                 reached.set()
                 if not release.wait(10):
                     raise AssertionError("Controlled native authority recheck was not released")
-            return original_target(owner, row, execution=execution, native_cancellation=native_cancellation)
+            return original_target(owner, row, execution=execution, native_cancellation=native_cancellation,
+                                   trusted_cleanup=trusted_cleanup)
 
         with mock.patch.object(factory_tools, "_experiment_outcome", side_effect=capture_owned_thread), \
              mock.patch.object(self.handoff, "_target", side_effect=pause_second_target_read):
@@ -221,7 +222,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         self.assertNotEqual(self.origin_db.name, self.receiver_db.name)
         targets = self.request("GET", "/execution-targets").json()
         self.assertEqual(targets, [{"id": self.target.reference, "name": self.target.reference,
-                                   "kind": "remote-factory", "connectivityVerified": False}])
+                                   "kind": "remote-factory", "connectivityVerified": False, "supportedApplicationContracts": [1]}])
         self.assertNotIn(self.target.base_url, str(targets))
         self.assertEqual(self.request("GET", "/execution-targets", owner="bob").json(), [])
         plan = self.plan()

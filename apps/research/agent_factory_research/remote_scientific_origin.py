@@ -3,7 +3,6 @@
 No new queue, native ticket, provider launch or authority grant is created here.
 The operator derives variant identity; the native parent remains the mandate.
 """
-from .services import services_for
 from copy import deepcopy
 import inspect
 import re
@@ -56,8 +55,9 @@ def validate_source(plan: Any, envelope: Any):
 
 
 class RemoteScientificOrigin:
-    def __init__(self, store, auth, *, handoff_client, project_validator, project_bindings=None):
+    def __init__(self, store, auth, *, research, handoff_client, project_validator, project_bindings=None):
         require(callable(project_validator))
+        self.research = research.require_store(store)
         self.store, self.auth = store, auth
         self.handoff, self.project_validator = handoff_client, project_validator
         self.project_bindings: dict[str, Any] = deepcopy(project_bindings or {})
@@ -105,8 +105,8 @@ class RemoteScientificOrigin:
         ticket = self.store.lifecycle_observer._binding(actual)
         require(ticket and ticket['status'] == ticket['persistedRunStatus'] == 'paused')
         context = SimpleNamespace(run_context=self.store.process_runtime._context(actual))
-        preset = services_for(self.store).autoresearch.current(context)
-        session = services_for(self.store).autoresearch.row(owner, actual['id'])['body']
+        preset = self.research.autoresearch.current(context)
+        session = self.research.autoresearch.row(owner, actual['id'])['body']
         require(type(session['deadline']) in (int, float) and time.time() < session['deadline']
                 and any(digest(candidate) == digest(placement['candidate']) for candidate in session['candidates'].values()))
         plan = self.store.plan(actual['plan_id'], owner)
@@ -368,37 +368,57 @@ class RemoteScientificOrigin:
         require(self.store.task(child_id, owner)['cancel_requested'] is True)
         return await self._phase_receipt(owner, child_id, cleanup=True)
 
-    async def _phase_receipt(self, owner, child_id, *, cleanup):
+    async def reconcile_phase(self, owner, child_id, *, cleanup=False):
+        """Advance original custody for a controller, without dispatching work."""
+        if cleanup:
+            require(self.store.task(child_id, owner)['cancel_requested'] is True)
+        else:
+            self.auth.require_member(owner)
+        return await self._phase_receipt(owner, child_id, cleanup=cleanup, reconcile=True)
+
+    async def _phase_receipt(self, owner, child_id, *, cleanup, reconcile=False):
         row = self._row(owner, child_id)
         scope = row['body']['envelope']['scope']
         if cleanup:
-            receipt = await self.handoff.scientific_cleanup_receipt(owner, child_id, expected_scope=deepcopy(scope))
+            receipt = await self.handoff.scientific_cleanup_receipt(
+                owner, child_id, expected_scope=deepcopy(scope), reconcile=reconcile)
+        elif reconcile:
+            receipt = await self.handoff.reconcile(owner, child_id)
         else:
             receipt = await self.handoff.receipt(owner, child_id)
-        # HTTP may overlap another observer. Serialize only the local journal,
-        # then use the latest already-authenticated persisted handoff receipt.
-        # Never overwrite it with the potentially stale response we awaited.
-        with self.store.transaction():
-            locked = self.store.sql('SELECT * FROM af_remote_scientific_origins WHERE child_id=:child AND owner_id=:owner FOR UPDATE',
-                                    child=child_id, owner=owner)
-            require(len(locked) == 1)
+        if reconcile:
+            # The control request persisted its validated receipt. Serialize the
+            # journal and use the latest receipt if another observer overtook it.
+            with self.store.transaction():
+                locked = self.store.sql('SELECT * FROM af_remote_scientific_origins WHERE child_id=:child AND owner_id=:owner FOR UPDATE',
+                                        child=child_id, owner=owner)
+                require(len(locked) == 1)
+                current = self._row(owner, child_id)
+                require(current['fingerprint'] == row['fingerprint'] and current['body']['envelope']['scope'] == scope)
+                placement = self.handoff._row(owner, child_id)
+                receipt = deepcopy(placement['body'].get('receipt'))
+                require(type(receipt) is dict)
+                receipt = cast(dict[str, Any], receipt)
+                receipt['originDispatchState'] = placement['state']
+                self.validate_received_native(owner, child_id, receipt)
+                validate_scientific_evidence(receipt, expected_scope=scope, previous=current['receipt'])
+                changed = self.store.sql('''UPDATE af_remote_scientific_origins SET receipt=CAST(:receipt AS JSONB)
+                    WHERE child_id=:child AND owner_id=:owner AND fingerprint=:fp
+                    AND receipt IS NOT DISTINCT FROM CAST(:previous AS JSONB) RETURNING child_id''',
+                    receipt=canonical(receipt), child=child_id, owner=owner, fp=current['fingerprint'],
+                    previous=canonical(current['receipt']) if current['receipt'] is not None else None)
+                require(len(changed) == 1)
+        else:
+            # History consumes the validated response, never a stale placement
+            # copy, and never advances either journal or resource custody.
             current = self._row(owner, child_id)
             require(current['fingerprint'] == row['fingerprint'] and current['body']['envelope']['scope'] == scope)
-            placement = self.handoff._row(owner, child_id)
-            receipt = deepcopy(placement['body'].get('receipt'))
-            require(type(receipt) is dict)
-            receipt = cast(dict[str, Any], receipt)
-            receipt['originDispatchState'] = placement['state']
+            receipt = deepcopy(receipt)
+            receipt['originDispatchState'] = self.handoff._row(owner, child_id)['state']
             self.validate_received_native(owner, child_id, receipt)
             validate_scientific_evidence(receipt, expected_scope=scope, previous=current['receipt'])
-            changed = self.store.sql('''UPDATE af_remote_scientific_origins SET receipt=CAST(:receipt AS JSONB)
-                WHERE child_id=:child AND owner_id=:owner AND fingerprint=:fp
-                AND receipt IS NOT DISTINCT FROM CAST(:previous AS JSONB) RETURNING child_id''',
-                receipt=canonical(receipt), child=child_id, owner=owner, fp=current['fingerprint'],
-                previous=canonical(current['receipt']) if current['receipt'] is not None else None)
-            require(len(changed) == 1)
         status = str(receipt.get('applicationStatus', receipt.get('nativeStatus', 'unknown'))).lower()
-        status = {'waiting_approval': 'paused', 'waiting_input': 'paused', 'canceling': 'running'}.get(status, status)
+        status = {'waiting_approval': 'paused', 'waiting_input': 'paused', 'canceling': 'running', 'finalizing': 'running'}.get(status, status)
         if (not receipt.get('remoteRunId') and receipt.get('state') in {'PREPARING', 'PREPARED'}
                 and receipt.get('originDispatchState', receipt['state']) in {'PREPARING', 'PREPARED'}):
             status = 'pending'

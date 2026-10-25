@@ -88,12 +88,19 @@ class AuthorityBudget(BaseModel):
     outputBytes: StrictInt = Field(ge=1024, le=1048576)
 
 
-class AuthorityScope(BaseModel):
+class AuthorityBudgetV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    toolCalls: StrictInt = Field(ge=1, le=128)
+    maxDepth: StrictInt = Field(ge=1, le=8)
+    maxChildren: StrictInt = Field(ge=1, le=64)
+    operationSeconds: StrictInt = Field(ge=1, le=600)
+    outputBytes: StrictInt = Field(ge=1024, le=1048576)
+
+
+class AuthorityScopeBase(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     capabilities: list[str] = Field(min_length=1, max_length=30)
     tools: list[str] = Field(min_length=1, max_length=30)
-    budget: AuthorityBudget
-    usageGrantSha256: str | None = Field(default=None, pattern=HASH)
 
     @model_validator(mode="after")
     def identifiers(self):
@@ -106,9 +113,20 @@ class AuthorityScope(BaseModel):
         return self
 
 
+class AuthorityScope(AuthorityScopeBase):
+    budget: AuthorityBudget
+    usageGrantSha256: str | None = Field(default=None, pattern=HASH)
+
+
+class AuthorityScopeV2(AuthorityScopeBase):
+    contractVersion: StrictInt = Field(ge=2, le=2)
+    budget: AuthorityBudgetV2
+    usageGrantSha256: str | None = Field(default=None, pattern=HASH)
+
+
 class AuthorityReply(AuthorityCheck):
     outcome: Literal["authorized", "cancelled"]
-    authority: AuthorityScope | None
+    authority: AuthorityScope | AuthorityScopeV2 | None
 
     @model_validator(mode="after")
     def outcome_scope(self):
@@ -182,8 +200,14 @@ endpoint additionally requires the persisted phase scope and atomic debit fence.
             proof = (authority.origin_ref, authority.target_ref, authority.receiver_identity, authority.target_revision, authority.target_fingerprint)
             if proof != (body.originRef, body.targetRef, actor, body.targetRevision, body.targetFingerprint):
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: current source configuration proof differs")
-            scope = AuthorityScope.model_validate({"capabilities": sorted(authority.capabilities), "tools": sorted(authority.tools), "budget": dict(authority.budget),
-                "usageGrantSha256": authority.usage_grant_sha256})
+            scope_data = {"capabilities": sorted(authority.capabilities), "tools": sorted(authority.tools),
+                "budget": dict(authority.budget), "usageGrantSha256": authority.usage_grant_sha256}
+            if type(authority.contract_version) is not int or authority.contract_version not in (1, 2):
+                raise PermissionError("Unsupported original application contract")
+            if authority.contract_version == 2:
+                scope = AuthorityScopeV2.model_validate({**scope_data, "contractVersion": 2})
+            else:
+                scope = AuthorityScope.model_validate(scope_data)
         except HandoffCancellationRequested as signal:
             if (signal.owner, signal.task_id, signal.manifest_hash) != (body.originOwner, body.originTaskId, body.manifestSha256):
                 raise HTTPException(403, "ORIGIN_AUTHORITY_BINDING_DENIED: cleanup signal differs") from signal
@@ -344,7 +368,8 @@ bearer, callback implementation, credential handle or secret digest.
         return HandoffAuthority(frozenset(reply.authority.capabilities), frozenset(reply.authority.tools),
             reply.authority.budget.model_dump(), origin_ref=self.origin_ref, target_ref=self.target_ref,
             receiver_identity=receiver, target_revision=self.target_revision, target_fingerprint=self.target_fingerprint,
-            usage_grant_sha256=reply.authority.usageGrantSha256)
+            usage_grant_sha256=reply.authority.usageGrantSha256,
+            contract_version=2 if isinstance(reply.authority, AuthorityScopeV2) else 1)
 
     def consume_scientific_tool(self, owner: str, task_id: str, manifest_hash: str, tool: str, *,
                                call_id: str, receiver_task_id: str, native_run_id: str,

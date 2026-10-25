@@ -131,9 +131,18 @@ v2 不回退到 v1 的时间上限。执行仍会检查当前成员、素材状�
 当前底座目标为 Agno 3.1.0；素材中的 compatibility 声明不代表已验证跨 Agno 版本、
 任意 provider 或目标机器兼容。
 
-v2 已有本机原生合成执行证据；当前通用 `remote_handoff` 对不支持的中立 v2 manifest
-返回 `REMOTE_CONTRACT_UNSUPPORTED`。ORX 原生会话需按其自身协议验收，不能推断所有
-远端 runtime 已支持 v2。真实研究、模型请求、外部后端及停止证据仍需分别验收。
+v2 支持显式启用的根 native agent 远程 handoff。`HandoffTarget` 和接收端 `TrustedOrigin`
+均须设置 `supported_application_contracts=(1, 2)`；接收端另外配置完整 `v2_budget`
+（toolCalls、maxDepth、maxChildren、operationSeconds、outputBytes）。默认仅 v1，不自动降级。
+目标列表的 supportedApplicationContracts 是静态声明，connectivityVerified 不由声明推断。
+接收端须已有与原 applicationRef 精确匹配的已发布应用版本及实际运行绑定。
+
+v2 wire 为 `{wireVersion: 2, plan, applicationDefinition, sha256}`；sha256 仍是 plan 摘要，
+完整应用定义由 plan.applicationRef 的版本摘要间接绑定。输入/schema/config/材料与绑定逐项核对，
+operationSeconds 不改名为 experimentSeconds。旧 v1 manifest、默认配置指纹及响应字段保留。
+workflow、scientific、delegation 与嵌套 remote placement 未启用，明确拒绝。
+本地双进程/独立PG的确定性 checksum 已验证准确配置、预算、产物和丢回执重启/取消原身份；
+这不是任意远端 runtime 或真实供应商兼容证明。ORX、真实科研与外部后端仍需分别验收。
 
 ## 选择最小路径
 

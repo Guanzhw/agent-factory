@@ -10,16 +10,16 @@ from contextlib import contextmanager
 
 @contextmanager
 def open_state(settings, *, full_verification=False):
-    from agent_factory_research.services import services_for, release_services
+    from agent_factory_research.services import ResearchServices, bind_registrations
     from agno.db.postgres import PostgresDb
     from agent_factory.store import Store
     from agent_factory.auth import AuthService
-    from agent_factory_research.lifecycle_compatibility import ResearchLifecycleObserver
+    from agent_factory.lifecycle_observer import FactoryLifecycleObserver
     from agent_factory.resources import PersistentResourceService
     from agent_factory.process_runtime import ProcessRuntimeService
     from agent_factory_research.research_runtime import ResearchProcessRuntimeService
-    from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
-    from agent_factory_research.inference_wait import initialize as initialize_inference_wait, mark_cancel_requested
+    from agent_factory_research.runtime_registration import register_research_runtime
+    from agent_factory_research.inference_wait import initialize as initialize_inference_wait
     from agent_factory_research.storage_compatibility import ResearchStorageGovernance
     from agent_factory.delegation import DelegationService
     from agent_factory.native_bridge import NativeBridge
@@ -49,40 +49,44 @@ def open_state(settings, *, full_verification=False):
                 raise ValueError('RESEARCH_CANDIDATE_EXISTING_DATABASE_REQUIRED')
 
     store = ExistingStore(settings.db_url, settings)
+    research = ResearchServices(store)
     native = PostgresDb(db_url=settings.db_url, id='factory-native-postgres')
     try:
         store.native_db = native
         initialize_inference_wait(store)
-        store.runtime_mark_cancel_requested = lambda task_id: mark_cancel_requested(store, task_id)
         auth = store.auth = AuthService(settings, native)
         resources = PersistentResourceService(store, auth, settings.remote_targets)
         store.process_runtime = ProcessRuntimeService(store, auth, resources)
-        services_for(store).research_runtime = ResearchProcessRuntimeService(store, auth, resources)
-        resources.execution_runtimes['research-process-run-v1'] = services_for(store).research_runtime
-        store.runtime_effect_held = ResearchRuntimeHooks.effect_held
-        store.runtime_cancel_owned = lambda task: ResearchRuntimeHooks.cancel(store, task)
-        store.runtime_ended_reason = lambda task: ResearchRuntimeHooks.ended_reason(store, task)
-        store.lifecycle_observer = ResearchLifecycleObserver(store, auth, native, lambda: None)
+        research.research_runtime = ResearchProcessRuntimeService(store, auth, resources, research=research)
+        resources.execution_runtimes['research-process-run-v1'] = research.research_runtime
+        store.lifecycle_observer = FactoryLifecycleObserver(store, auth, native, lambda: None)
         store.delegation = DelegationService(settings, store, auth, NativeBridge(settings, native, auth))
         store.storage = ExistingStorage(store, auth)
         if full_verification:
-            _verification_services(store, auth, settings)
-        yield {'store': store, 'auth': auth, 'resources': resources,
-               'research_runtime': services_for(store).research_runtime, 'process_runtime': store.process_runtime,
+            _verification_services(store, auth, settings, research=research)
+        else:
+            from agent_factory.execution_bindings import ExecutionBindings
+            store.execution_bindings = ExecutionBindings(settings, store)
+            _register_adapters(store.execution_bindings, bind_registrations(settings.runtime_adapters, research))
+        register_research_runtime(store, research=research)
+        research.installed = True
+        yield {'store': store, 'auth': auth, 'resources': resources, 'research': research,
+               'research_runtime': research.research_runtime, 'process_runtime': store.process_runtime,
                'settings': settings, 'lifecycle_observer': store.lifecycle_observer}
     finally:
-        release_services(store)
+        research.release()
         store.dispose_root_locks()
         store.engine.dispose()
         native.db_engine.dispose()
 
 
-def _verification_services(store, auth, settings):
+def _verification_services(store, auth, settings, *, research):
     from pathlib import Path
     from agent_factory.material_governance import MaterialGovernance, GovernanceConfig
     from agent_factory_research.bootstrap_catalog import SEEDS
     from agent_factory.connections import ConnectionService
     from agent_factory_research.synthetic_runtime import default_bindings
+    from agent_factory_research.services import bind_registrations
     from agent_factory.applications import ApplicationService
     from agent_factory.plan_policy import PlanPolicyService, PlanPolicyConfig, persisted_ancestor_guard
     from agent_factory.delegation import DelegationService
@@ -105,12 +109,8 @@ def _verification_services(store, auth, settings):
     store.register_execution_guard('material-governance',
         lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     connections = store.connections = ConnectionService(store, auth, settings.trusted_connections)
-    bindings = store.execution_bindings = default_bindings(settings, store, connections)
-    for entry in settings.runtime_adapters:
-        bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-            tool_name=entry.tool_name, connection_kind=entry.connection_kind,
-            required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-            demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
+    bindings = store.execution_bindings = default_bindings(settings, store, connections, research=research)
+    _register_adapters(bindings, bind_registrations(settings.runtime_adapters, research))
     store.remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
     applications = store.applications = ApplicationService(store, auth)
     store.register_execution_guard('execution-bindings',
@@ -132,3 +132,11 @@ def _verification_services(store, auth, settings):
     for price in settings.usage_pricing:
         prices[(price.adapter_id, price.adapter_revision)] = price
     store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
+
+
+def _register_adapters(bindings, entries):
+    for entry in entries:
+        bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
+            tool_name=entry.tool_name, connection_kind=entry.connection_kind,
+            required_capabilities=entry.required_capabilities, permissions=entry.permissions,
+            demo_only=entry.demo_only, validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)

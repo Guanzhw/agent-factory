@@ -5,10 +5,10 @@ import { PERSONAL_PROVIDER, ORX_PERSONAL_PROVIDER } from './personalAgentApi.js'
 import { CredentialForm } from '../../../web/CredentialForm.js';
 import { useCommandKeys } from '../../../web/commandKeys.js';
 import { personalRemoteApi, remoteCanBind, definitivelyRejected, RemoteRequestError, type PersonalCredential, type PersonalRemote, type RemoteProvider } from '../../../web/personalRemoteApi.js';
-import type { FactoryJob, User } from '../../../web/models.js';
+import type { JobSummary, User } from '../../../web/models.js';
 const statusNames: Record<string, string> = { configured: '配置已保存，尚未验证', verified: '只读验证有效', expired: '验证已过期，需重新验证并绑定', revoked: '已撤销', credential_unavailable: '凭据不可用或已轮换', policy_changed: '部署策略已变更', unavailable: '当前不可用', failed: '验证未通过' };
 function validOrigin(value: string) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && url.origin === value && !url.username && !url.password; } catch { return false; } }
-export function PersonalRemotes({ user, jobs, onChanged, onTask, researchSetup = false }: { user: User; jobs: FactoryJob[]; onChanged: () => void; onTask?: (id: string) => void; researchSetup?: boolean }) {
+export function PersonalRemotes({ user, jobs, onChanged, onTask, researchSetup = false }: { user: User; jobs: JobSummary[]; onChanged: () => void; onTask?: (id: string) => void; researchSetup?: boolean }) {
   const [providers, setProviders] = useState<RemoteProvider[]>([]); const [remotes, setRemotes] = useState<PersonalRemote[]>([]);
   const [ready, setReady] = useState(false); const [vault, setVault] = useState(false); const [error, setError] = useState('');
   const [authMode, setAuthMode] = useState<'' | 'bearer' | 'basic-proxy'>(researchSetup ? 'bearer' : ''); const [sessionTemplateId, setSessionTemplateId] = useState('');

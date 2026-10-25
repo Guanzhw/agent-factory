@@ -67,7 +67,7 @@ class SyntheticAPI:
                              'logoutPath': '/api/factory/auth/logout'},
             '/session': {'id': self.owner, 'name': 'Synthetic ' + self.owner.title(), 'role': 'user'},
             '/status': {'mode': 'demo', 'activeWorkers': 0, 'queuedJobs': 0, 'maxWorkers': 1},
-            '/materials': [], '/jobs': [], '/execution-targets': [], '/applications': [],
+            '/materials': [], '/jobs': {'items': [], 'nextCursor': None}, '/execution-targets': [], '/applications': [],
             '/commands': {'items': [], 'nextCursor': None},
             '/personal-agent/capabilities': {
                 'executionContract': 'personal-external-v1', 'nativeQueue': True,

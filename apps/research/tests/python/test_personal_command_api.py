@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from agent_factory_research.personal_command_api import PersonalCommandAPI
+from agent_factory_research.services import ResearchServices
 from agent_factory_research.factory_compatibility import ResearchFactoryAPI as FactoryAPI
 
 
@@ -106,6 +107,7 @@ class PersonalCommandAPITests(unittest.TestCase):
         self.api.store.plan.return_value = plan
         factory = FactoryAPI.__new__(FactoryAPI)
         factory.auth, factory.store, factory.remote = self.auth, self.api.store, None
+        factory.research = ResearchServices(factory.store, installed=True)
         factory.bridge = SimpleNamespace(submit=AsyncMock(return_value={'run_id': 'native-original'}))
         factory.detail = AsyncMock(return_value={'job': {'id': 'task-original'}})
         factory.store.reserve_task.return_value = ({'id': 'task-original'}, True)

@@ -6,10 +6,14 @@ PlanPolicyService. This class neither creates approvals nor adds execution roles
 from typing import Any, Mapping
 from fastapi import HTTPException
 from agent_factory.plan_policy import PlanPolicyService
-from .services import services_for
 
 
 class ResearchPlanPolicyService(PlanPolicyService):
+    def __init__(self, store, auth, config=None, *, research, **kwargs):
+        research.require_store(store)
+        self.research = research
+        super().__init__(store, auth, config, **kwargs)
+
     def extend_application_tool_catalog(self, catalog):
         if self.store.settings.source_synthesis_enabled:
             return {**catalog, 'save_literature_synthesis': 'research:read'}
@@ -43,7 +47,8 @@ class ResearchPlanPolicyService(PlanPolicyService):
                              run_context, scientific_custody):
         if not current_plan.get('delegation'):
             raise HTTPException(409, 'Scientific placement requires a delegated source plan')
-        service = services_for(self.store).remote_scientific
+        self.research.require_store(self.store, ready=True)
+        service = self.research.remote_scientific
         child = self.store.task(scientific_child_id, owner)
         if (service is None or run_context is not None or child.get('run_id') or child['plan_id'] != current_plan['id']
                 or child['cancel_requested'] or bool(child['terminal']) != scientific_custody

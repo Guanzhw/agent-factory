@@ -1,4 +1,5 @@
 """Offline nominal-accounting provenance; SQLite tests inspection, not admission."""
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 import unittest
@@ -69,16 +70,37 @@ class NominalPricingTests(unittest.TestCase):
             "bindingSha256": "0" * 64, "policyRevision": "synthetic-policy"}
         commitment["sha256"] = digest(commitment)
         plan = {"id": "synthetic-plan", "usageBudget": commitment}
-        store = SimpleNamespace(engine=engine, transaction=engine.begin,
+        transaction_modes = []
+
+        @contextmanager
+        def transaction(*, read_only=False):
+            transaction_modes.append(read_only)
+            with engine.begin() as conn:
+                # Portable fixture enforces the new read-only contract using
+                # SQLite's own write prohibition; PG MVCC is tested separately.
+                if read_only:
+                    conn.exec_driver_sql("PRAGMA query_only=ON")
+                try:
+                    yield conn
+                finally:
+                    if read_only:
+                        conn.exec_driver_sql("PRAGMA query_only=OFF")
+
+        store = SimpleNamespace(engine=engine, transaction=transaction,
             task=lambda task_id, owner: {"id": task_id, "plan_id": plan["id"]},
             plan=lambda plan_id, owner: plan)
         # PostgreSQL locking is deliberately out of scope for this read-only
         # provenance test. No reserve/settle/provider operation is performed.
-        with patch.object(UsageLedger, "_lock", return_value=None):
+        with patch.object(UsageLedger, "_lock", return_value=None) as lock:
             UsageLedger(store, prices=[stored_price])
             reopened = UsageLedger(store, prices=[current_price])
             self.assertEqual(reopened.prices[0], current_price)
-            return reopened.inspect("alice", "synthetic-task")
+            transaction_modes.clear()
+            lock.reset_mock()
+            result = reopened.inspect("alice", "synthetic-task")
+            self.assertEqual(transaction_modes, [True])
+            lock.assert_not_called()
+            return result
 
     def test_inspection_uses_persisted_nominal_tariff_when_current_registry_is_legacy(self):
         nominal = price(accounting_basis=BASIS)

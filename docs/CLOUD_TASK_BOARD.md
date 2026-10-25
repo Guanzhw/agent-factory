@@ -1827,3 +1827,54 @@ Root owns diagnosis integration, validation-only union branch and serialized hea
 Root integrated the ORX failure-path gate cleanup and exact locked_by diagnostics in #103 source0d157ff; independent reviewers approved assertion preservation and memory-only failure snapshots. One6case ORX prefix and one13case MCP prefix passed without retries; historical root cause remains open. Existing trace shows substantial fresh authority/credential cost, not a proven removable guard.
 
 Validation-only8de058a includes current#97–103 and passed full40129163038:PG3446pass/71skip,Windows2228pass/1289skip,bothWeb728pass,sevenrequiredgroupszero skips,Chromium/core/static/auditspassed. This is union coverage, not seven independent full certifications or proof of suite acceleration. #1030d157fffast40129100361also passed. OwnedPG stopped. CLI watch401credential error is separate from CI success; no new authentication attempted. Public evidence: openspec/changes/profile-and-simplify-test-cost/stability-followup.md and experiments/final-validation-summary.json. No newfeatures/mainmerge/deploy/paidcalls.
+## 2026-10-24 #98 独立关闭交付
+
+root负责core/部署集成；shutdown_design负责研究owner；shutdown_tests负责真实进程fixture，独立review完成。用户明确选择35秒后自行非零退出，UNKNOWN和原身份保留、不重新派发。owner5、真实PG进程3、policy真实子进程2、既有native PG6通过；旧控制器fixture两项错误修正后targeted2通过。Ruff/Pyright/架构/OpenSpec及独立core通过，完整证据见openspec/changes/propagate-research-shutdown-outcomes/verification.md。精确CI待运行，保持Draft。
+
+#103 b458028 fast/full成功，但云端两轮失败仍未关闭；#97 daily PG两项第二任务等待失败仍在共同MCP授权/清理诊断，不以该CI通过掩盖。#99–102暂停扩展以免混淆根因。4 CPU/16 GiB串行重型验证，不合并、部署或付费调用。
+## 2026-10-24 云端连续交付
+
+Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、部署及付费模型。
+
+| 阶段 | owner / 范围 | 依赖与状态 | 验收/限制 |
+| --- | --- | --- | --- |
+| #103 测试成本与MCP callback | root，独立review | Draft，b458028 fast/full CI成功 | 本地完整两轮均失败；局部60.974s少工作，不代表整套加速。偶发根因仍跟进 |
+| #97 历史与读取分离 | backend Store/API；remote receipt；frontend Web；root生命周期集成 | 本分支实现，独立review发现3项已修；验证中 | 205行同fixture store SQL4268→1，native2→0；保留审计与stream元数据写。PG/浏览器及精确CI待最终记录 |
+| #98 科研关闭 | shutdown_design app；shutdown_tests子进程；root core/部署 | 独立shutdown worktree；用户已选35s后非零退出 | 原UNKNOWN/identity不重派发，真实进程验证中，不把异常当退出 |
+
+旧成果与失败日志保留；#99–102尚未在此分支实施。worker测试发现与root实跑结果分别记录。
+
+## 当前 #99 组合阶段
+
+root 已集成 #98 `5799403` 与 #97 `965350f`，保持独立 stacked 分支。#103 `7fe8d90` fast40110354593/full40110374707均成功；历史本地MCP失败仍保留，不能外推已全部根治。#97 新head exact CI正在运行，#99不将其视作已通过。当前开始阶段一精确应用拥有者与单整体关闭预算；graph迁移依赖该阶段。
+
+## 2026-10-24 #99 显式graph与后续owner
+
+#99 stage1 b56e6df已Draft；stage2本地迁移完成，root独占API/assembly/生命周期集成；backend profiles、shutdown_design服务、frontend脚本、remote hooks、shutdown_tests实例fixture均freeze；takeover_review独立复核无新增阻断。daily253、实例PG4、退出5、scientific1、baseline2通过；最终core/Web/精确CI待完成。#97 965350f full40112603820仍在PG阶段，不当通过；#103 c939d56 fast40114643214 Python/PG通过、Web待终态，旧7fe full通过不覆盖新head。
+
+#100独立remote-v2 worktree依赖#97，不含#99 graph。history_backend独占remote_handoff/remote_bindings及新portable tests；root独占remote_authority/API/schema并最终集成；shutdown_tests只新增neutral core真实远程fixture/tests，重型运行由root串行；没有混入本#99 diff。#102仅只读契约分析，尚未实现。
+## 2026-10-24 #97 late authority follow-up
+
+965350f full失败4/3265，raw evidence已保存。backend仅2fixture同deadline持久barrier，root usage原receipt显式reconcile，remote拥有receiver latehistoryparity与Event测试，takeover独立review。原3PGtargeted通过、原science1通过572.256s；无超时放宽或新派发权限。root集成本次diff。#99 graph新head1d2bbb7 fast成功，fullWindows暴露6旧fixture迁移正在修，PG仍运行。#103c939 fast终态成功，日志完成与GitHub状态延迟约25min，未cancel/retry；原MCP不稳定仍需诊断。#100 independentneutralv2三真实case已有通过记录，cancel首轮fixture失败保留。#102在独立main分支仅开始recipe/helper切片，尚未API/native验收。
+
+## 2026-10-24 #101 implementation and exact CI follow-up
+
+| Work | Owner / exclusive scope | Dependency / acceptance | Remaining limits |
+| --- | --- | --- | --- |
+| #101 shared local allocation | root core/schema/hooks | PG ten cases passed across initial + three SQL-cast fixes; UNKNOWN remains held | Actual paid metering not exercised |
+| #101 activity/driver/recipe | backend state machine; remote reviewed recipe; shutdown_design driver; root API/lifecycle/profile | Real PG/native/pinned ORX two roots16→0→0, original candidate bytes, concurrent successor, ACK loss + same-process service restart passed; 44 pure +8 HTTP passed | OS crash boundary and live research not established |
+| #101 UI | frontend five UI/test files; root integration | Web713/lint/type/build passed, built Chromium lost-ACK/deadline/HITL navigation passed | Browser API is synthetic; separate real native evidence above |
+| Independent review | takeover budget/lifecycle; remote final contract | Fixed no-dispatch cancel, expiry, strict binding, real effects projection; current deadline/preflight branches have pure regression coverage | No broadening of child/depth caps or auto-HITL |
+| #100 | root + remote fixture | f4ce910 fast40122408088 success; originalfull40118326022 failed one prematurefinalizing assertion, targetedfixpassed | No replacementfull pass |
+| #102 | root + backend portable fixtures | ab24b72 fast40122424080 success; originalfull40120435697 Windows fixture failures and PG initial MCP readiness timeout | Windows corrected fixtures not actually rerun; original MCP cause remains open |
+| #103 | root + independent MCP review | e956040 diagnostic/cleanup testfix pushed; exactinitial2s/.5s bounds retained, targetedpass | Historical native and initialprotocol startup failures not closed by one pass |
+
+Workers use mocked credentials only. Heavy checks remain serial. Draft branches only; no merge/deploy/paid external calls. #101 follows #99, with no dependency on #100/#102. Original failures remain in cloud scratch reports.
+
+#101 follow-up dependency: only reviewed #103 callback custody/material-query and native fixture lifecycle/diagnostic files integrated. Initial daily69:67pass2fail0skip, budget10/10; twofailednative IDs then targeted2pass. Final portable356/356, fresh-authority/shutdown11/11. Exact firsthead d1ec7e9 fast40123372975 success; full40123407895 Windowsfound staleLFattribute path4failureevents5errors; actual Git autocrlf reproduction proves old bad/new fixed bytes. FinalfullPG still pending. No timeout/assertion relaxation or fullretry.
+
+Final no-dispatch acceptance: independent reviewer caught core cancel's deliberate UNKNOWN behavior; root added atomic explicit not-submitted rejection under scope/activity lock. shutdown_tests added actual profile/PG cancel+expiry cases; both passed with zero native dispatch and real allocation release9.931s. Earlier fake stopped proof is explicitly insufficient, preserved in verification history. New source frozen, exact-head fast pending; original full remains on d1ec7e9.
+
+2026-10-24 additional #101 review: root owns internal original cleanup/core bridge/API; shutdown_design owns cleanup-only driver/provider+pure negatives; shutdown_tests owns distinct OS interruption fixture; backend owns four PG budget boundaries and three retirement PG cases; remote performs independent read-only review. Seven budget/process cases passed60.213s (three actual exit73→newprocess exit0), retirementPG3 passed12.118s with explicit controlled stop seam. Earlier0518fast356Python/75PG zero-skip succeeded. New revocation fix pending actual ORX cleanup/finalCI; no full rerun, no merge/deploy/paid calls. Historical MCP instability remains separate/open.
+
+Final additional acceptance: real pinnedORXcompleted-before-settlement disable+cleanup-only reconstruction1pass60.765s (notlivekill); originalremote test23 joinedbothobservers and retainedfullsnapshots+newwrite-spy1pass18.805s, shared#97commit975488b integrated4301b99. FinaldailyPython381pass0skip,core17.611s,architecture764/0,OpenSpecstrict,Ruff/Pyright0. Originald1full terminalFAIL3316pass1fail68skip; all7requiredpassed. Exact finalsourceCI pending; no historicalMCPclosure claim.
