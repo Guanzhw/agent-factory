@@ -40,3 +40,9 @@ POST start沿原requestId/expectedVersion返回准入或续接事件收据。UI�
 ## 已发布执行配置
 
 项目先建立研究约定，再从core现applications列表显式选择发布版本和mode；材料选项只取该mode允许的固定pin，资源只取现有可用连接并按kind/capability筛选。deadline与每轮caps由用户填写，不预设费用/资源，不输入秘密，不创建第二composer预检。保存通过同goals命令追加待确认版本；后端固定pin及已冻结承诺仍是权威，任何拒绝清楚显示。初始无发布应用时指向现应用管理/发布与资源入口，不虚构默认研究定义；后续研究模板由应用setup集成提供。
+
+## 研究执行配置 setup 接入
+
+在同一正式应用中用可视表单读取GET research/setup候选，model必须选择实际可用connectionRef（不能把registrationRef/reference当连接）。环境与工具连接由候选实际kind/capabilities限制；缺环境/模型绑定/工具清楚阻断且不假填。POST drafts只保存private intent+preview，applicationRef=null不作为已发布定义；成功后researchSetup URL指针保留owner可读GET/{id}刷新恢复。用户检查选择及预算后显式POST publish；仅其成功真实pin交给约定执行配置，仍需填deadline/perRoundCaps并确认新版本。
+
+两个实际consumer（project mutation与setup draft/publish）共享同应用轻量命令恢复hook；不扩成core通用状态机。原owner+request/payload在HTTP408/未知应答时保留，同键恢复；不通过新的requestId重发发布。资源页往返保留researchSetup/project，平台应用入口清空这些指针。

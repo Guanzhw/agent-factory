@@ -1,20 +1,21 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../api.js';
 import type { FactoryApplication, UserConnection } from '../../../models.js';
+import type { ExecutionSelection } from './setupClient.js';
 import type { ResearchAgreement } from '../types.js';
 
 const pinKey = (pin: { id: string; version: number; sha256: string }) => `${pin.id}:${pin.version}:${pin.sha256}`;
 const localDateTime = (seconds: number) => { const date = new Date(seconds * 1000); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
-export function ExecutionEditor({ agreement, disabled, onSave, onApplications, onResources }: { agreement: ResearchAgreement; disabled: boolean; onSave: (agreement: ResearchAgreement) => void; onApplications: () => void; onResources: () => void }) {
+export function ExecutionEditor({ agreement, disabled, onSave, onApplications, onResources, selection }: { agreement: ResearchAgreement; disabled: boolean; onSave: (agreement: ResearchAgreement) => void; onApplications: () => void; onResources: () => void; selection?: ExecutionSelection }) {
   const initial = agreement.execution;
   const [applications, setApplications] = useState<FactoryApplication[]>([]);
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [applicationKey, setApplicationKey] = useState(initial ? pinKey(initial.applicationRef) : '');
-  const [mode, setMode] = useState(initial?.mode ?? '');
-  const [choices, setChoices] = useState(initial?.materialChoices ?? {});
-  const [refs, setRefs] = useState(initial?.connectionRefs ?? {});
+  const [applicationKey, setApplicationKey] = useState(selection ? pinKey(selection.applicationRef) : initial ? pinKey(initial.applicationRef) : '');
+  const [mode, setMode] = useState(selection?.mode ?? initial?.mode ?? '');
+  const [choices, setChoices] = useState(selection ? {} : initial?.materialChoices ?? {});
+  const [refs, setRefs] = useState(selection?.connectionRefs ?? initial?.connectionRefs ?? {});
   const [deadline, setDeadline] = useState(initial ? localDateTime(initial.deadline) : '');
   const [calls, setCalls] = useState(initial ? String(initial.perRoundCaps.toolCalls) : '');
   const [tokens, setTokens] = useState(initial?.perRoundCaps.tokenLimit?.toString() ?? '');

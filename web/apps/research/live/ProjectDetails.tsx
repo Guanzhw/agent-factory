@@ -1,15 +1,19 @@
 import { useState } from 'react';
 import { time } from '../../../workspaceUI.js';
 import { AgreementEditor } from '../AgreementEditor.js';
+import { SetupPanel } from './SetupPanel.js';
+import type { ExecutionSelection } from './setupClient.js';
 import { ExecutionEditor } from './ExecutionEditor.js';
 import { RunRecords } from './RunRecords.js';
 import { useProjectCommand } from '../useProjectCommand.js';
 import type { ResearchProject } from '../types.js';
 
 export const projectStates = { draft: '待确认约定', ready: '约定已确认', ended: '研究已结束' };
-export function ProjectDetails({ project, tab, onTab, onUpdate, onTask, onApplications, onResources }: { project: ResearchProject; tab: string; onTab: (tab: string) => void; onUpdate: (project: ResearchProject) => void; onTask: (id: string) => void; onApplications: () => void; onResources: () => void }) {
+export function ProjectDetails({ project, tab, onTab, onUpdate, onTask, onApplications, onResources, setupId, onSetup, onMaterials }: { project: ResearchProject; tab: string; onTab: (tab: string) => void; onUpdate: (project: ResearchProject) => void; onTask: (id: string) => void; onApplications: () => void; onResources: () => void; setupId?: string; onSetup: (id: string) => void; onMaterials: () => void }) {
   const [editing, setEditing] = useState(false);
-  const [configuring, setConfiguring] = useState(false);
+  const [configuring, setConfiguring] = useState(!!setupId);
+  const [preparing, setPreparing] = useState(!!setupId);
+  const [selection, setSelection] = useState<ExecutionSelection>();
   const [ending, setEnding] = useState(false);
   const [reason, setReason] = useState('');
   const [outcome, setOutcome] = useState<'not_met' | 'cancelled'>('not_met');
@@ -28,7 +32,8 @@ export function ProjectDetails({ project, tab, onTab, onUpdate, onTask, onApplic
       {project.state !== 'ended' && <>
         {project.execution.available && current?.confirmedAt && <div className="rw-actions"><button className="rw-primary" disabled={command.disabled || editing || configuring || ending} onClick={() => void command.run({ action: 'start', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion } })}>按当前约定启动或续接研究</button><p>将使用已确认配置与预算；准入不代表执行完成。</p></div>}
         {current && <div className="rw-actions"><button disabled={command.disabled || editing || ending} onClick={() => setConfiguring(value => !value)}>{configuring ? '取消配置' : '配置研究执行'}</button></div>}
-        {configuring && current && <ExecutionEditor key={project.currentGoalVersion} agreement={current.agreement} disabled={command.disabled} onApplications={onApplications} onResources={onResources} onSave={agreement => void command.run({ action: 'goal', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, agreement } })}/>}
+        {configuring && current && <><div className="rw-actions"><button onClick={() => setPreparing(value => !value)}>{preparing ? '选择已有发布版本' : '准备新的研究执行配置'}</button></div>{preparing ? <SetupPanel key={`${project.ownerId}:${setupId ?? 'new'}`} ownerId={project.ownerId} setupId={setupId} onSetup={onSetup} onResources={onResources} onMaterials={onMaterials} onPublished={value => { setSelection(value); setPreparing(false); }}/> : <ExecutionEditor key={`${project.currentGoalVersion}:${selection?.applicationRef.sha256 ?? ''}`} agreement={current.agreement} selection={selection} disabled={command.disabled} onApplications={onApplications} onResources={onResources} onSave={agreement => void command.run({ action: 'goal', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, agreement } })}/>}</>}
+
         {!project.execution.available && <p className="rw-muted">当前不能开始新运行：{project.execution.reason === 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED' ? '已有原运行，请在实验页核对其状态。' : project.execution.reason === 'RESEARCH_EXECUTION_CONFIGURATION_REQUIRED' ? '尚未保存执行配置。' : project.execution.reason === 'RESEARCH_CONFIRMED_GOAL_REQUIRED' ? '请先确认当前研究约定。' : project.execution.reason}</p>}
 <div className="rw-actions">{current && <button disabled={command.disabled || configuring || ending} onClick={() => setEditing(value => !value)}>{editing ? '取消修订' : '修改目标'}</button>}<button disabled={command.disabled || editing || configuring} onClick={() => { setEnding(value => !value); setOutcome(current ? 'not_met' : 'cancelled'); }}>{ending ? '取消结束' : '结束研究'}</button></div>
         {(!current || editing) && <AgreementEditor key={`${project.currentGoalVersion}:${editing}`} initial={current?.agreement} disabled={command.disabled} onSave={agreement => void command.run({ action: 'goal', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, agreement: { ...agreement, ...(current?.agreement.execution ? { execution: current.agreement.execution } : {}) } } })}/>}

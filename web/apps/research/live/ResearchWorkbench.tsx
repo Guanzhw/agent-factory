@@ -60,7 +60,7 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const selectedId = route.project || page?.items[0]?.id;
   const team = route.researchView === 'team';
   const tab = route.researchTab || 'overview';
-  const home = () => navigate({ tab: 'research', project: '', researchView: '', researchTab: '' });
+  const home = () => navigate({ tab: 'research', project: '', researchView: '', researchTab: '', researchSetup: '' });
   const resources = () => navigate({ tab: 'resources', modelReturn: 'research' });
   useEffect(() => {
     const media = window.matchMedia('(max-width:1100px)');
@@ -83,7 +83,7 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const assistant = <AssistantPanel project={project}/>;
   return <div className="rw-shell">
     <aside className="rw-sidebar"><div className="rw-brand"><IconHexagonLetterA size={33}/><div><strong>AutoResearch</strong><span>在 Agent Factory</span></div></div>
-      <nav aria-label="研究应用"><button aria-current={!team ? 'page' : undefined} onClick={home}><IconHome/>工作台</button><button aria-current={team ? 'page' : undefined} onClick={() => navigate({ tab: 'research', project: '', researchView: 'team', researchTab: '' })}><IconBook/>团队经验</button><button onClick={resources}><IconDatabase/>资源</button><button className="rw-platform-return" onClick={() => navigate({ tab: 'catalog', project: '', researchView: '', researchTab: '', modelReturn: '' })}><IconArrowLeft/>返回平台</button></nav>
+      <nav aria-label="研究应用"><button aria-current={!team ? 'page' : undefined} onClick={home}><IconHome/>工作台</button><button aria-current={team ? 'page' : undefined} onClick={() => navigate({ tab: 'research', project: '', researchView: 'team', researchTab: '' })}><IconBook/>团队经验</button><button onClick={resources}><IconDatabase/>资源</button><button className="rw-platform-return" onClick={() => navigate({ tab: 'catalog', project: '', researchView: '', researchTab: '', researchSetup: '', modelReturn: '' })}><IconArrowLeft/>返回平台</button></nav>
       <footer className="rw-identity"><button aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)}><span className="rw-avatar"><IconUser size={20}/></span><span>{user.name}</span><IconChevronDown size={16}/></button>{accountOpen && <div className="rw-account-menu"><p>{user.name}</p><button disabled={sessionBusy} onClick={onLogout}><IconLogout size={18}/>{sessionBusy ? '正在退出…' : '退出登录'}</button></div>}<p>个人研究空间</p></footer>
     </aside>
     <main className="rw-main">{sessionError && <p className="rw-error" role="alert">{sessionError}</p>}
@@ -92,16 +92,16 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
         <div className="rw-actions"><button onClick={() => setRefresh(value => value + 1)}>刷新项目</button></div>
         {!route.project && <>{listError && <p className="rw-error" role="alert">{listError}</p>}{!page && !listError && <p role="status">正在读取项目…</p>}
           {page && !page.items.length && <div className="rw-empty"><h2>{after ? '本页没有项目' : '还没有研究项目'}</h2><p>从一个目标开始，再约定评价标准和停止条件。</p><button className="rw-primary" onClick={() => setCreateOpen(true)}>建立研究项目</button><button onClick={resources}>配置模型与资源</button></div>}
-          {!!page?.items.length && <div className="rw-project-table" aria-label="研究项目"><div className="rw-project-header"><span>项目</span><span>当前状态</span><span>下一步</span></div>{page.items.map(item => <button className={`rw-project-row ${selectedId === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate({ tab: 'research', project: item.id, researchTab: '', researchView: '' })}><strong>{item.title}</strong><span className={`rw-state ${item.state}`}>{projectStates[item.state]}</span><span className="rw-next">{item.state === 'draft' ? '明确并确认研究约定' : item.state === 'ended' ? '查看结束依据与历史' : '查看实验与证据'}</span><IconArrowRight size={18}/></button>)}</div>}
+          {!!page?.items.length && <div className="rw-project-table" aria-label="研究项目"><div className="rw-project-header"><span>项目</span><span>当前状态</span><span>下一步</span></div>{page.items.map(item => <button className={`rw-project-row ${selectedId === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate({ tab: 'research', project: item.id, researchTab: '', researchView: '', researchSetup: '' })}><strong>{item.title}</strong><span className={`rw-state ${item.state}`}>{projectStates[item.state]}</span><span className="rw-next">{item.state === 'draft' ? '明确并确认研究约定' : item.state === 'ended' ? '查看结束依据与历史' : '查看实验与证据'}</span><IconArrowRight size={18}/></button>)}</div>}
           <div className="rw-actions">{after && <button onClick={() => setAfter('')}>返回第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页项目</button>}</div>
         </>}
         {projectError && <div className="rw-error" role="alert"><p>{projectError}</p><button onClick={home}>返回研究工作台</button></div>}
         {selectedId && !project && !projectError && <p role="status">正在读取项目详情…</p>}
-        {project && <ProjectDetails onApplications={() => navigate({ tab: 'applications' })} onResources={resources} onTask={task => navigate({ tab: 'tasks', task })} key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })} onUpdate={result => { setProject(result); setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === result.id ? result : item) } : previous); }}/>}
+        {project && <ProjectDetails setupId={route.researchSetup} onSetup={researchSetup => navigate({ researchSetup })} onMaterials={() => navigate({ tab: 'materials' })} onApplications={() => navigate({ tab: 'applications' })} onResources={resources} onTask={task => navigate({ tab: 'tasks', task })} key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })} onUpdate={result => { setProject(result); setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === result.id ? result : item) } : previous); }}/>}
       </>}
     </main>
     {!mobile && <aside className="rw-assistant" aria-label="研究助手">{assistant}</aside>}{mobile && <button className="rw-mobile-assistant" onClick={() => setAssistantOpen(true)}><IconMessageCircle size={22}/>研究助手</button>}
     {assistantOpen && mobile && <Dialog title="研究助手" onClose={() => setAssistantOpen(false)}>{assistant}</Dialog>}
-    {createOpen && <Dialog title="建立研究项目" onClose={() => setCreateOpen(false)}><CreateProject ownerId={user.id} onCreated={created => { setCreateOpen(false); navigate({ tab: 'research', project: created.id, researchView: '', researchTab: '' }); setRefresh(value => value + 1); }}/></Dialog>}
+    {createOpen && <Dialog title="建立研究项目" onClose={() => setCreateOpen(false)}><CreateProject ownerId={user.id} onCreated={created => { setCreateOpen(false); navigate({ tab: 'research', project: created.id, researchView: '', researchTab: '', researchSetup: '' }); setRefresh(value => value + 1); }}/></Dialog>}
   </div>;
 }
