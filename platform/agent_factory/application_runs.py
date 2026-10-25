@@ -1,5 +1,6 @@
 """Thin public application start; existing Factory intents own durability."""
 import asyncio
+from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Path, Request
 from .application_interface import ApplicationStart
@@ -15,6 +16,44 @@ def factory_request_id(request_id):
 class ApplicationRuns:
     def __init__(self, factory):
         self.factory = factory
+
+    def tool_results(self, owner, task_id, run_id):
+        """Private original CLI receipts; not permission to publish their output."""
+        self.factory.auth.require_member(owner)
+        store = self.factory.store
+        task = store.task(task_id, owner)
+        if task['id'] != task_id or not run_id or task['run_id'] != run_id:
+            raise HTTPException(404, 'APPLICATION_ORIGINAL_RUN_NOT_FOUND')
+        plan = store.plan(task['plan_id'], owner)
+        materials = [item for item in plan['materials'] if item['kind'] == 'tool']
+        bindings = plan.get('executionBindings', {}).get('tools', [])
+        if (plan.get('nativeComponent') or plan.get('remoteHandoff')
+                or len(materials) != 1 or len(bindings) != 1):
+            raise HTTPException(409, 'APPLICATION_CLI_PROVENANCE_UNAVAILABLE')
+        material, binding = materials[0], bindings[0]
+        pin = {key: material[key] for key in ('id', 'version', 'sha256')}
+        operation = store.personal_tools.operations.by_adapter(binding['adapterId'])
+        if (plan['tools'] != [binding['toolName']] or binding['materialRef'] != pin
+                or pin not in plan['materialRefs'] or operation is None
+                or operation['descriptor']['transport'] != 'cli'
+                or operation['descriptor']['toolName'] != binding['toolName']
+                or operation['runtimeBinding']['revision'] != binding['revision']
+                or operation['operationRef']['sha256'] != binding['config'].get('operationSha256')
+                or material['runtimeBinding']['adapterId'] != binding['adapterId']
+                or material['runtimeBinding']['revision'] != binding['revision']):
+            raise HTTPException(409, 'APPLICATION_CLI_PROVENANCE_UNAVAILABLE')
+        receipts = []
+        for effect in store.effects(task_id):
+            result = effect['result']
+            if (effect['effect_key'].startswith(run_id + ':personal-tool:')
+                    and effect['status'] == 'DONE' and isinstance(result, dict)
+                    and result.get('outcome') == 'completed'):
+                receipts.append({'effectKey': effect['effect_key'], 'outcome': 'completed',
+                                 'output': deepcopy(result['output'])})
+        return {'taskId': task_id, 'runId': run_id, 'planId': task['plan_id'],
+                'materialRef': pin, 'operationRef': deepcopy(operation['operationRef']),
+                'binding': {key: binding[key] for key in ('adapterId', 'revision', 'toolName')},
+                'receipts': receipts}
 
     @staticmethod
     def _handoff(plan_id, original_request):
