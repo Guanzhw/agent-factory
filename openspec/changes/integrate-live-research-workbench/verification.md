@@ -20,3 +20,13 @@
 - 当前lint/typecheck、独立research build通过；架构93模块0违规/0gap。新依赖为0，未改变冻结lock。
 - 最新真实Chromium两视口再次通过，增加项目→资源→模型→连接→模型→原项目/证据页返回；配置空目录实际显示缺项入口；轮次未决数据明确不作科学结论。仍是synthetic API transport，没有付费模型/GPU执行。
 - 窄setup接口由并行任务提供；P7团队/QA尚待后端HTTP，仍需继续接线。当前不可合并成最终完整产品。
+
+## 显式 setup 前端
+
+对齐后端4b1efaf：实际模型connectionRef（含已保存模型绑定匹配）、环境descriptor、已发布工具及其依赖连接需求。无可用候选明确阻断；不接受JSON、密钥或fixture默认环境。草稿只展示声明，显式publish成功后才提供真实pin用于约定；成功draft id在researchSetup URL保留，资源往返可回原项目。新项目/平台入口清空旧setup指针。
+
+同应用原命令恢复hook用于project与setup两个实际consumer，原11项恢复/目标行为迁移到正式UI继续通过。setup新增3项测试覆盖无真实连接/环境、草稿不发布/不假pin、显式发布后应用、丢失发布响应与owner切换原键恢复；共30项针对性通过。
+
+此实质接线后的必要完整`npm run check` exit0：49文件、464测试通过、0跳过，lint/typecheck/default core build通过。前阶段完整失败仍保留；coordinator发现并停止两份长期占CPU的遗留Pyright进程，争用可能有关但没有本用例因果证明，不把本轮通过抹成从未失败或用作无争用性能基线。
+
+真实Chromium两视口项目/资源旅程通过，追加setup无真实环境时保存按钮禁用及缺项提示，console/pageerror均空；仍合成API transport、无业务写入。真实后端setup/项目/执行整合浏览器由coordinator排PG；本结果不代模型/GPU/外部身份验收。P7助手问答与团队记录访问HTTP仍待后端，不把当前提示当完整旅程交付。

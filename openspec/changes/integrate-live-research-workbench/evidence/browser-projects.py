@@ -16,7 +16,7 @@ with sync_playwright() as p:
    data={
     '/auth/config':{'enabled':False,'loginPath':'/api/factory/auth/login','logoutPath':'/api/factory/auth/logout'},'/status':{'mode':'demo','maxWorkers':1,'activeWorkers':0,'queuedJobs':0,'liveEnabled':False,'integration':'Synthetic browser fixture'},
     '/session':{'id':'alice','name':'Alice','role':'user'},'/materials':[], '/jobs':{'items':[],'nextCursor':None},'/execution-targets':[],
-    '/research/projects/project-1/experiments':{'items':[],'rounds':[{'id':'round-original','goalVersion':1,'taskId':'task-original','decision':None,'terminal':None,'terminalRecordId':None}]},'/applications':[],'/user-connections':[],
+    '/research/projects/project-1/experiments':{'items':[],'rounds':[{'id':'round-original','goalVersion':1,'taskId':'task-original','decision':None,'terminal':None,'terminalRecordId':None}]},'/research/setup':{'workflowPin':{'kind':'workflow','id':'research-round','revision':'1','sha256':'a'*64},'models':[],'connections':[],'environments':[],'experimentMaterials':[]},'/applications':[],'/user-connections':[],
     '/personal-models/capabilities':{'enabled':False,'providers':[],'liveCompatibilityVerified':False},'/personal-models':[],
     '/user-connections/registrations':[], '/resources/leases':{'leases':[],'nextCursor':None},
     '/personal-credentials/capabilities':{'enabled':False,'providerIds':[]},'/personal-ssh/capabilities':{'enabled':False},
@@ -42,6 +42,9 @@ with sync_playwright() as p:
   page.get_by_role('button',name='取消修订',exact=True).click()
   page.get_by_role('button',name='配置研究执行',exact=True).click()
   expect(page.get_by_text('尚无可选的已发布应用。请先在应用管理中保存并发布适用的研究执行定义。')).to_be_visible()
+  page.get_by_role('button',name='准备新的研究执行配置',exact=True).click()
+  expect(page.get_by_text('缺少已注册运行环境。需要先完成实际运行环境注册，不能用演示环境替代。')).to_be_visible()
+  expect(page.get_by_role('button',name='保存私人配置草稿')).to_be_disabled()
   page.get_by_role('button',name='取消配置',exact=True).click()
   page.get_by_role('tab',name='证据',exact=True).click()
   expect(page.get_by_text('尚无助手研究决策；运行完成不等于目标达成。')).to_be_visible()

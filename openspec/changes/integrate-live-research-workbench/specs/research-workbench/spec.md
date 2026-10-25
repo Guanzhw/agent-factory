@@ -39,3 +39,18 @@
 #### Scenario: Two member browser acceptance
 - **WHEN** 独立成员完成平台、项目、目标确认/修订、执行读取、资源与退出重登流程
 - **THEN** 项目与原写入意图按owner隔离，团队内容只按实际授权读取，console错误和失败证据单独记录
+
+### Requirement: Explicit self-service research setup
+系统 SHALL 通过现有治理与个人资源完成研究执行配置，保存草稿不等于发布，发布不等于执行。
+
+#### Scenario: Empty deployment prerequisites
+- **WHEN** 尚无真实注册环境、模型绑定或可用实验工具
+- **THEN** 列出缺项并引导现资源/材料能力，不用演示适配器或伪造默认pin解除门槛
+
+#### Scenario: Prepare then publish
+- **WHEN** 成员选择真实候选保存私人草稿
+- **THEN** 仅展示声明预览；明确发布成功后才能将返回的精确applicationRef与个人connectionRefs用于研究约定，deadline与每轮上限仍需确认
+
+#### Scenario: Lost publication response
+- **WHEN** 发布应答未知并刷新或切换成员
+- **THEN** 原成员保留原请求和载荷恢复，不创建新发布版本；其他成员不能读取该恢复意图
