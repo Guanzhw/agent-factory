@@ -70,7 +70,8 @@ class SSHOperationRuntime(ProcessRuntimeService):
             require(lease['ownerId'] == owner)
             return lease
         provider = SSHProcessProvider(server, target_ref=reference, spec=profile.spec, limits=profile.limits,
-                                      exchange=transport, read_lease=read_lease)
+                                      exchange=transport, read_lease=read_lease,
+                                      archive_original=lambda owner, key: self._archive(read_lease(owner, key)))
         pool = replace(profile.pool, pool_id='ssh-host-' + provider.capacity_namespace)
         reservation = process_reservation(provider)
         target = RemoteTarget(name=server.name, axis='compute', owners=frozenset({task['owner_id']}),

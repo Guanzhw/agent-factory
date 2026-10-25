@@ -66,6 +66,12 @@ class SSHExecutionEffectPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.sql('SELECT id FROM af_leases'), [])
 
     def test_original_operation_cancel_uses_persistent_claim_and_stopped_journal(self):
+        self.exercise_original_cancel_and_archive()
+
+    def test_public_reclaim_holds_until_original_archive_then_inspect_releases(self):
+        self.exercise_original_cancel_and_archive(public_reclaim=True)
+
+    def exercise_original_cancel_and_archive(self, *, public_reclaim=False):
         """Actual claim/observe/archive SQL; native authority is an explicit fixture port."""
         import asyncio
         from pathlib import Path
@@ -80,7 +86,8 @@ class SSHExecutionEffectPostgresTests(unittest.TestCase):
                 pin=lambda: 'a' * 64, allowed_root=folder)
             provider = SSHProcessProvider(server, target_ref='fixed',
                 spec=ProcessSpec('/bin/not-launched', 'b' * 64, ()), limits=ProcessLimits(),
-                exchange=lambda value, **_: handle(value), read_lease=lambda owner, key: current())
+                exchange=lambda value, **_: handle(value), read_lease=lambda owner, key: current(),
+                archive_original=lambda owner, key: runtime._archive(current()))
             target = RemoteTarget('Real stopped journal fixture', 'compute', frozenset({'alice'}),
                 provider=provider, max_seconds=33,
                 capacity_pool=ComputePool('original-stop', 1, 128, 1, max_leases=1, max_owner_leases=1))
@@ -106,9 +113,21 @@ class SSHExecutionEffectPostgresTests(unittest.TestCase):
             runtime = SSHOperationRuntime(self.store, resources, None, {})
             runtime._custody = lambda key: (current(), target, self.task, {'status': 'running'})
             resources.execution_runtimes[EFFECT] = runtime
-            stopped = asyncio.run(runtime.observe_lease(lease['id']))
-            self.assertEqual(stopped['cancellationReason'], 'OPERATION_CANCEL_REQUESTED')
-            self.assertTrue(stopped['cancelRequested'])
+            if public_reclaim:
+                from unittest.mock import AsyncMock, patch
+                cancelled = asyncio.run(provider.cancel(lease['id'], 'alice'))
+                resources._observe('alice', lease['id'], cancelled)
+                with patch.object(runtime, '_archive', AsyncMock(side_effect=OSError('fixture archive unavailable'))):
+                    failed = asyncio.run(resources.reclaim('alice', lease['id']))
+                self.assertNotEqual(failed['state'], 'RECLAIMED')
+                self.assertTrue(failed['capacityHeld'])
+                self.assertEqual(failed['releaseAck'], 'unknown')
+                self.assertEqual(self.store.artifacts(self.task['id']), [])
+                stopped = asyncio.run(runtime.observe_lease(lease['id']))
+            else:
+                stopped = asyncio.run(runtime.observe_lease(lease['id']))
+                self.assertEqual(stopped['cancellationReason'], 'OPERATION_CANCEL_REQUESTED')
+                self.assertTrue(stopped['cancelRequested'])
             self.assertEqual(stopped['state'], 'RECLAIMED')
             self.assertFalse(stopped['capacityHeld'])
             self.assertEqual(journal.inspect(owner_id='alice')['stopReceipt']['kind'], 'never-dispatched')

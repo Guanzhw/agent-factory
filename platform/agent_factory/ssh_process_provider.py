@@ -87,11 +87,12 @@ class SSHProcessProvider:
     effect_key = EFFECT
     preflight_seconds = 30
 
-    def __init__(self, server, *, target_ref, spec, limits, exchange, read_lease):
+    def __init__(self, server, *, target_ref, spec, limits, exchange, read_lease, archive_original=None):
         server.validate()
         self.server, self.target_ref = server, target_ref
         self.spec, self.limits = specification(asdict(spec), asdict(limits))
         self.exchange, self.read_lease = exchange, read_lease
+        self.archive_original = archive_original
 
     @property
     def capacity_namespace(self):
@@ -183,7 +184,12 @@ class SSHProcessProvider:
     async def _original(self, lease_id, owner, action):
         lease = self.read_lease(owner, lease_id)
         require(lease['id'] == lease_id and lease['ownerId'] == owner)
-        return (await asyncio.to_thread(self._observe, lease, action))[0]
+        receipt = (await asyncio.to_thread(self._observe, lease, action))[0]
+        if receipt['state'] == 'RECLAIMED':
+            if self.archive_original is None:
+                raise ValueError('SSH_PROCESS_ARCHIVE_REQUIRED')
+            await self.archive_original(owner, lease_id)
+        return receipt
 
     async def inspect(self, lease_id, owner):
         return await self._original(lease_id, owner, 'inspect')

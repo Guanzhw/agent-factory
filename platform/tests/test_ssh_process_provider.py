@@ -3,7 +3,7 @@ import copy
 import os
 import selectors
 import threading
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import hashlib
 from types import SimpleNamespace
 import unittest
@@ -21,7 +21,8 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                                  scope_pin=lambda: 'b' * 64, host_key='synthetic-host-key', allowed_root='/private/runs')
         self.provider = SSHProcessProvider(server, target_ref='compute',
             spec=ProcessSpec('/bin/program', 'c' * 64, ()), limits=ProcessLimits(),
-            exchange=self.exchange, read_lease=lambda owner, key: copy.deepcopy(self.lease))
+            exchange=self.exchange, read_lease=lambda owner, key: copy.deepcopy(self.lease),
+            archive_original=AsyncMock())
         self.lease = {'id': 'lease-1', 'ownerId': 'alice', 'localTaskId': 'task-1', 'nativeRunId': 'run-1',
             'planId': 'plan-1', 'planHash': 'd' * 64, 'requestId': 'request-1', 'fingerprint': 'e' * 64,
             'targetFingerprint': 'f' * 64, 'connectionRef': 'compute',
@@ -189,3 +190,20 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         released = await self.provider.inspect('lease-1', 'alice')
         self.assertEqual(released['state'], 'RECLAIMED')
         self.assertTrue(released['released'])
+
+    async def test_every_release_path_requires_original_archive_without_output_recursion(self):
+        self.state, self.stopped = 'COMPLETED', True
+        self.lease['releaseAck'] = 'unknown'
+        self.provider.archive_original = AsyncMock(side_effect=OSError('archive unavailable'))
+        for action in (self.provider.reclaim, self.provider.inspect):
+            with self.assertRaises(OSError):
+                await action('lease-1', 'alice')
+        self.assertEqual(self.provider.archive_original.await_count, 2)
+        self.provider.archive_original = None
+        with self.assertRaisesRegex(ValueError, 'SSH_PROCESS_ARCHIVE_REQUIRED'):
+            await self.provider.inspect('lease-1', 'alice')
+        self.provider.archive_original = AsyncMock()
+        result = await self.provider.inspect('lease-1', 'alice')
+        self.assertEqual(result['state'], 'RECLAIMED')
+        self.provider.archive_original.assert_awaited_once_with('alice', 'lease-1')
+        self.assertNotIn('submit', self.calls)
