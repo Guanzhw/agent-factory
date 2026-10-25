@@ -24,6 +24,7 @@ export interface ResearchProjectSummary {
   ownerId: string;
   title: string;
   assistantId: string | null;
+  researchAssistantId?: string | null;
   state: 'draft' | 'ready' | 'ended';
   currentGoalVersion: number;
   createdAt: string;
@@ -32,4 +33,3 @@ export interface ResearchProjectSummary {
 }
 export interface ResearchProject extends ResearchProjectSummary { goals: ResearchGoal[] }
 export interface Page<T> { items: T[]; nextCursor: string | null }
-export interface AssistantSummary { id: string; ownerId: string; name: string; enabled: boolean }
