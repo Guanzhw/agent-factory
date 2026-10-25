@@ -4,13 +4,14 @@ from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 import unittest
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
+from agent_factory.store import Store
 from agent_factory.assistant_messages import AssistantMessages, SendAssistantMessage, assistant_messages_router
 
 
@@ -69,6 +70,7 @@ class AssistantMessagesTests(unittest.TestCase):
         self.engine = create_engine('sqlite:///' + str(Path(directory.name) / 'messages.sqlite'))
         self.addCleanup(self.engine.dispose)
         self.store = SimpleNamespace(engine=self.engine, _connection=ContextVar('message-test', default=None))
+        self.store.transaction = MethodType(Store.transaction, self.store)
         self.auth, self.runs = Auth(), Runs()
         self.endpoints = Endpoints(self.auth)
         self.service = AssistantMessages(self.store, self.auth, self.endpoints, self.runs)
