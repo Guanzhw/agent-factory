@@ -24,7 +24,7 @@ from sqlalchemy import select, or_
 
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID, endpoint
-from .ssh_exchange import exchange as pipe_exchange
+from .ssh_exchange import SSHExchangeCleanupError, exchange as pipe_exchange
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
 
@@ -332,7 +332,7 @@ class PersonalSSHServers:
                 if (result.get('code') != ('SSH_CONNECTION_READY' if action == 'inspect' else 'SSH_PREREQUISITES_READY')
                         or type(result.get('directoryExists')) is not bool): raise ValueError()
                 lease.validate(); return result
-            except RemoteConnectionError: raise
+            except (RemoteConnectionError, SSHExchangeCleanupError): raise
             except Exception: raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED') from None
 
     def close(self): self.agents.close()
