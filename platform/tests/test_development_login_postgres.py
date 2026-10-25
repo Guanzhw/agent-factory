@@ -10,6 +10,9 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+
+from sqlalchemy import create_engine, text
 from uuid import uuid4
 from dataclasses import replace
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -38,7 +41,7 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
         directory = TemporaryDirectory(prefix="development-login-postgres-")
         self.addCleanup(directory.cleanup)
         self.idp = BrowserIdentityFixture(redirect_uri=ORIGIN + '/api/factory/auth/callback')
-        config = replace(self.idp.config(), subject_owners={
+        config = replace(self.idp.config(), jwks=self.idp.jwks, subject_owners={
             (self.idp.issuer, 'subject-' + owner): owner for owner in ('alice', 'bob', 'manager', 'manager2')})
         settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=1,
             browser_oidc=config,
@@ -148,6 +151,30 @@ class DevelopmentLoginPostgresTests(unittest.TestCase):
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL"), "Requires isolated loopback PostgreSQL")
 class UnconfiguredPublicIdentityPostgresTests(unittest.TestCase):
+    def test_old_demo_database_is_rejected_before_schema_or_identity_writes(self):
+        from agent_factory.config import Settings as ProductSettings
+        database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
+        self.addCleanup(database.__exit__, None, None, None)
+        directory = TemporaryDirectory(prefix='old-demo-postgres-')
+        self.addCleanup(directory.cleanup)
+        engine = create_engine(database.url)
+        self.addCleanup(engine.dispose)
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE af_bootstrap(id TEXT PRIMARY KEY, mode TEXT NOT NULL)"))
+            conn.execute(text("INSERT INTO af_bootstrap VALUES('mode','demo')"))
+            conn.execute(text("CREATE TABLE retained_legacy_data(id TEXT PRIMARY KEY, value TEXT)"))
+            conn.execute(text("INSERT INTO retained_legacy_data VALUES('original','synthetic legacy data')"))
+            before = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).scalars().all()
+        settings = ProductSettings(db_url=database.url, workspace=Path(directory.name),
+            jwt_key='synthetic-explicit-native-key-at-least-32bytes')
+        with patch('agent_factory.store.create_engine', return_value=engine):
+            with self.assertRaisesRegex(ValueError, 'Existing demo database cannot be used'):
+                create_app(settings)
+        with engine.connect() as conn:
+            self.assertEqual(conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).scalars().all(), before)
+            self.assertEqual(conn.execute(text("SELECT id,mode FROM af_bootstrap")).all(), [('mode', 'demo')])
+            self.assertEqual(conn.execute(text("SELECT id,value FROM retained_legacy_data")).all(), [('original', 'synthetic legacy data')])
+
     def test_no_idp_keeps_health_but_rejects_internal_tokens_and_legacy_cookie(self):
         from agent_factory.config import Settings as ProductSettings
         database = IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]).__enter__()
