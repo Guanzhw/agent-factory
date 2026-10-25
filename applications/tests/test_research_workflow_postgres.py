@@ -8,10 +8,11 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
-import unittest
+from threading import Event
 from unittest.mock import patch
 
-from agno.db.base import SessionType
+from sqlalchemy import select
+import unittest
 
 from agno.models.base import Model
 from agno.models.response import ModelResponse
@@ -22,7 +23,6 @@ from fastapi.testclient import TestClient
 from agent_factory.config import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits, KnowledgeContext
 from agent_factory.usage_ledger import PricingRevision
-from agent_factory.native_workflows import NativeWorkflows
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from pg_fixture import IsolatedPostgres
@@ -79,9 +79,16 @@ class ResearchModel(Model):
             value = {'action': 'stop', 'outcome': 'met' if success else 'not_met',
                 'reason': 'Observed expected checksum' if success else 'Actual evidence differs',
                 'evidenceIds': result['evidenceIds']}
+            if 'review prior measurement' in result['agreement']['objective']:
+                value = {'action': 'continue', 'reason': 'Carry original evidence into the remaining review allocation',
+                    'evidenceIds': result['evidenceIds']}
         else:
             context = next(value for value in values if 'agreement' in value and 'roundId' in value)
-            if 'no experiment' in context['agreement']['objective']:
+            if context.get('previousObservation') is not None:
+                success = DIGEST in json.dumps(context['previousObservation'])
+                value = {'action': 'stop', 'outcome': 'met' if success else 'not_met',
+                    'reason': 'Review of actual original observation', 'evidenceIds': context['evidenceIds']}
+            elif 'no experiment' in context['agreement']['objective']:
                 value = {'action': 'stop', 'outcome': 'not_met', 'reason': 'Agreement rules out further experimentation'}
             else:
                 value = {'action': 'experiment', 'reason': 'Measure the specified actual bytes',
@@ -137,6 +144,19 @@ def publish(state):
     return {key: app[key] for key in ('id', 'version', 'sha256')}
 
 
+def settings_for(db_url, workspace, **overrides):
+    return Settings(db_url=db_url, workspace=Path(workspace), max_workers=2, max_user_tasks=3,
+        max_tool_calls=32, material_review_mode='member-self-service', material_policy_revision='research-fixture-v1',
+        temporary_policy='member-self-service', policy_revision='research-fixture-v1', runtime_adapters=[
+            AdapterRegistration('model', MODEL, '1', ResearchModel, demo_only=True),
+            AdapterRegistration('environment', 'research-fixture-environment-v1', '1', lambda ctx: EnvironmentLimits(timeout_seconds=30)),
+            AdapterRegistration('knowledge', 'research-fixture-knowledge-v1', '1', lambda ctx: KnowledgeContext('Synthetic', {})),
+            AdapterRegistration('tool', 'research-fixture-compute-v1', '1', fixture_compute,
+                tool_name='research_fixture_compute', permissions=(PERMISSION,))],
+        usage_pricing=(PricingRevision(MODEL, '1', PROVIDER, MODEL, 'research-zero-fixture-v1',
+            local_model_type=ResearchModel, per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),), **overrides)
+
+
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires isolated PostgreSQL/native queue')
 class ResearchNativeWorkflowTests(unittest.TestCase):
     def setUp(self):
@@ -144,49 +164,12 @@ class ResearchNativeWorkflowTests(unittest.TestCase):
         database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()
         self.addCleanup(database.__exit__, None, None, None)
         directory = TemporaryDirectory(); self.addCleanup(directory.cleanup)
-        self.settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=3,
-            max_tool_calls=32, material_review_mode='member-self-service', material_policy_revision='research-fixture-v1',
-            temporary_policy='member-self-service', policy_revision='research-fixture-v1', runtime_adapters=[
-                AdapterRegistration('model', MODEL, '1', ResearchModel, demo_only=True),
-                AdapterRegistration('environment', 'research-fixture-environment-v1', '1', lambda ctx: EnvironmentLimits(timeout_seconds=30)),
-                AdapterRegistration('knowledge', 'research-fixture-knowledge-v1', '1', lambda ctx: KnowledgeContext('Synthetic', {})),
-                AdapterRegistration('tool', 'research-fixture-compute-v1', '1', fixture_compute,
-                    tool_name='research_fixture_compute', permissions=(PERMISSION,))],
-            usage_pricing=(PricingRevision(MODEL, '1', PROVIDER, MODEL, 'research-zero-fixture-v1',
-                local_model_type=ResearchModel, per_attempt_input_tokens=32768, per_attempt_output_tokens=4096),))
-        if os.getenv('FACTORY_RESEARCH_TRACE') == '1':
-            original = NativeWorkflows._validator
-            def traced(registry, identifier, step):
-                validate = original(registry, identifier, step)
-                def check(response, task, plan):
-                    try:
-                        return validate(response, task, plan)
-                    except PermissionError:
-                        session = registry.native_db.get_session(response.session_id,
-                            session_type=SessionType.WORKFLOW, user_id=response.user_id)
-                        def shape(items):
-                            return [{'id': item.step_id, 'name': item.step_name,
-                                'type': type(item).__name__, 'children': shape(getattr(item, 'steps', None) or [])}
-                                for item in items or []]
-                        runs = [run for run in session.runs or [] if run.run_id == task['run_id']]
-                        print('RESEARCH_NATIVE_IDENTITY=' + json.dumps({
-                            'response': {'stepId': response.workflow_step_id, 'agentId': response.agent_id,
-                                         'runId': response.run_id},
-                            'runs': [{'id': run.run_id, 'steps': shape(run.step_results),
-                                'requirements': [{'id': req.step_id, 'name': req.step_name,
-                                    'executorId': req.executor_id, 'executorRunId': req.executor_run_id}
-                                    for req in run.step_requirements or []],
-                                'executors': [{'stepId': child.workflow_step_id, 'agentId': child.agent_id,
-                                    'runId': child.run_id, 'parentRunId': child.parent_run_id}
-                                    for child in run.step_executor_runs or []]} for run in runs]}), flush=True)
-                        raise
-                return check
-            tracer = patch.object(NativeWorkflows, '_validator', traced)
-            tracer.start(); self.addCleanup(tracer.stop)
+        self.settings = settings_for(database.url, directory.name)
         self.app = create_app(self.settings)
         self.state = factory_state(self.app)
         self.addCleanup(self.state['store'].native_db.db_engine.dispose)
         self.addCleanup(self.state['store'].engine.dispose)
+        self.addCleanup(self.state['store'].dispose_root_locks)
         self.client = TestClient(self.app).__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.ref = publish(self.state)
@@ -194,12 +177,12 @@ class ResearchNativeWorkflowTests(unittest.TestCase):
         self.assertEqual(self.settings.native_workflows, ())
         self.assertEqual(self.client.post('/api/factory/demo/login', json={'persona': 'alice'}).status_code, 200)
 
-    def start(self, objective):
+    def start(self, objective, *, rounds=1):
         result = self.client.post('/api/factory/research/projects', json={'requestId': 'native-project-create', 'title': 'Native controlled research'})
         self.assertEqual(result.status_code, 201, result.text)
         self.url = '/api/factory/research/projects/' + result.json()['id']
         agreement = {'objective': objective, 'evaluation': 'Compare actual UTF-8 checksum evidence',
-            'stopConditions': 'Stop on evidenced result or exhausted original budget', 'budget': {'rounds': 1, 'toolCalls': 32},
+            'stopConditions': 'Stop on evidenced result or exhausted original budget', 'budget': {'rounds': rounds, 'toolCalls': 32 * rounds},
             'execution': {'applicationRef': self.ref, 'mode': 'research', 'deadline': time.time() + 180,
                 'perRoundCaps': {'rounds': 1, 'toolCalls': 32}}}
         for path, body in (('/goals', {'requestId': 'native-goal-create', 'expectedVersion': 0, 'agreement': agreement}),
@@ -242,3 +225,60 @@ class ResearchNativeWorkflowTests(unittest.TestCase):
         self.assertIn(DIGEST, evaluation[-1])
         self.assertIn('Compare actual UTF-8 checksum evidence', evaluation[-1])
         self.assertIn('Stop on evidenced result or exhausted original budget', evaluation[-1])
+
+    def test_completion_failure_rolls_back_original_settlement_then_observer_finishes(self):
+        rounds = self.state['research_rounds']
+        original = rounds._publish
+        failed, release = Event(), Event()
+        def publication(owner, identifier, revision, content, **kwargs):
+            if revision == 'terminal' and not release.is_set():
+                failed.set()
+                raise RuntimeError('Controlled terminal publication failure')
+            return original(owner, identifier, revision, content, **kwargs)
+        with patch.object(rounds, '_publish', publication):
+            receipt = self.start('no experiment is permitted for this agreed task')
+            self.assertTrue(failed.wait(15), 'Original finalizer was not reached')
+            store = self.state['store']
+            task = store.task(receipt['execution']['taskId'], 'alice')
+            self.assertFalse(task['terminal'])
+            self.assertEqual(task['body']['stoppedStatus'], 'completed')
+            scope = store.local_budget_scopes.inspect('alice', receipt['scopeId'])
+            self.assertEqual(scope['allocations'][0]['state'], 'BOUND')
+            with store.transaction(read_only=True) as conn:
+                row = conn.execute(select(rounds.rounds).where(rounds.rounds.c.id == receipt['roundId'])).mappings().one()
+                self.assertIsNone(row['terminal'])
+                self.assertIsNone(row['terminal_record'])
+                self.assertEqual(row['continuations'], [])
+            release.set()
+            self.completed(task['id'])
+        listing = self.client.get(self.url + '/experiments').json()
+        self.assertIsNotNone(listing['rounds'][0]['terminalRecordId'])
+        self.assertEqual(len(store.tasks('alice')), 1)
+        scope = store.local_budget_scopes.inspect('alice', receipt['scopeId'])
+        self.assertEqual(len(scope['allocations']), 1)
+        self.assertEqual(scope['allocations'][0]['state'], 'SETTLED')
+
+    def test_original_p3_event_admits_one_successor_and_transports_actual_prior_result(self):
+        first = self.start('Measure once then review prior measurement against the agreement', rounds=2)
+        self.completed(first['execution']['taskId'])
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            listing = self.client.get(self.url + '/experiments').json()
+            if len(listing['rounds']) == 2 and listing['rounds'][1]['terminal'] is not None:
+                break
+            time.sleep(.05)
+        self.assertEqual(len(listing['rounds']), 2, listing)
+        first_round, second = listing['rounds']
+        self.assertIsNotNone(second['deliveryId'])
+        self.assertIsNotNone(second['terminal'])
+        self.assertEqual(first_round['decision']['action'], 'continue')
+        self.assertEqual(second['decision']['outcome'], 'met')
+        self.assertEqual(len(first_round['continuations']), 1)
+        self.assertEqual(second['continuations'], [])
+        self.assertEqual(len(listing['items']), 1)
+        self.assertEqual(len(self.state['store'].tasks('alice')), 3)
+        scope = self.state['local_budget_scopes'].inspect('alice', first['scopeId'])
+        self.assertEqual(scope['allocatedRounds'], 2)
+        self.assertEqual({a['taskId'] for a in scope['allocations']}, {r['taskId'] for r in listing['rounds']})
+        reviewed = [text for text in OBSERVED if 'previousObservation' in text and DIGEST in text]
+        self.assertTrue(reviewed, 'Successor model did not receive the actual original child output')

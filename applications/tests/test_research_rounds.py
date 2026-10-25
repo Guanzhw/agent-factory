@@ -1,5 +1,7 @@
 """Portable research facts with fake execution ports, not native/GPU evidence."""
 import asyncio
+import hashlib
+import json
 from copy import deepcopy
 from types import MethodType
 from unittest.mock import AsyncMock, Mock
@@ -7,9 +9,10 @@ from uuid import uuid4
 
 from agno.run import RunContext
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import Column, JSON, LargeBinary, MetaData, String, Table, func, inspect, select
+from sqlalchemy.exc import IntegrityError
 
-from agent_factory.application_content import ApplicationContent
+from agent_factory.application_content import ApplicationContent, ContentPublication
 from agent_factory.applications import GovernedStorage
 from agent_factory.resource_sharing import ResourceSharing
 from agent_factory.store import Store
@@ -165,18 +168,6 @@ class ResearchRoundsTests(fixtures.ApplicationCompositionFixture):
         self.assertEqual(self.count(self.content.contents), 0)
         self.events.emit.assert_not_called()
 
-    def test_migration_preserves_old_rows_and_allows_multiple_experiments(self):
-        with self.projects.db.write() as conn:
-            for value in ('first', 'second'):
-                conn.execute(self.legacy.experiments.insert().values(id=value, project_id=self.project,
-                    goal_version=1, hypothesis=value, conditions={}, created_at=value))
-                conn.execute(self.legacy.attempts.insert().values(id=value, experiment_id='first', allocation_id=value, request={}))
-        reopened = ResearchRuns(self.projects, self.native, self.scopes, self.apps, ResearchRecords(self.content))
-        ResearchRounds(reopened, events=self.events, endpoints=self.endpoint,
-                       custody=self.custody, control=self.control, pin=PIN)
-        self.assertEqual(self.count(reopened.experiments), 2)
-        self.assertEqual(self.count(reopened.attempts), 2)
-
     def test_scope_exhaustion_blocks_successor_without_scientific_met_claim(self):
         self.start()
         self.service.context(self.ctx)
@@ -272,3 +263,91 @@ class ResearchRoundsTests(fixtures.ApplicationCompositionFixture):
         self.control.receipt.return_value = {'status': 'completed'}
         asyncio.run(self.service.observe_waits(None, task))
         self.control.submit.assert_awaited_once()
+
+    def test_team_terminal_does_not_grant_original_private_artifact(self):
+        self.start()
+        metadata = MetaData()
+        tasks = Table('af_tasks', metadata, Column('id', String, primary_key=True),
+            Column('owner_id', String), Column('run_id', String))
+        artifacts = Table('af_artifacts', metadata, Column('id', String, primary_key=True),
+            Column('task_id', String), Column('body', JSON), Column('content', LargeBinary))
+        metadata.create_all(self.store.engine)
+        child_id, artifact_id = str(uuid4()), str(uuid4())
+        canary = b'synthetic private research artifact canary'
+        sha = hashlib.sha256(canary).hexdigest()
+        artifact = {'id': artifact_id, 'jobId': child_id, 'name': 'private-fixture.txt',
+                    'mediaType': 'text/plain', 'size': len(canary), 'sha256': sha, 'createdAt': 'fixture'}
+        with self.store.transaction() as conn:
+            conn.execute(tasks.insert().values(id=child_id, owner_id='alice', run_id=str(uuid4())))
+            conn.execute(artifacts.insert().values(id=artifact_id, task_id=child_id, body=artifact, content=canary))
+        # SQLite text queries return JSON strings; retain the production Store
+        # owner/hash checks with only that portable driver conversion.
+        def sql(store, statement, **params):
+            rows = Store.sql(store, statement, **params)
+            for row in rows:
+                if isinstance(row.get('body'), str):
+                    row['body'] = json.loads(row['body'])
+            return rows
+        self.store.sql = MethodType(sql, self.store)
+        self.store.task = MethodType(Store.task, self.store)
+        self.store.artifact = MethodType(Store.artifact, self.store)
+        reference = {'taskId': child_id, 'artifactId': artifact_id, 'sha256': sha}
+        personal = self.content.publish('alice', ContentPublication(
+            source={'application': 'research', 'record': 'private-canary', 'revision': '1'},
+            content={'description': 'Owner retained raw evidence'}, artifacts=[reference]), 'private-canary-original')
+        self.assertEqual(self.content.artifact('alice', personal['id'], artifact_id)[1], canary)
+        operation = {'id': str(uuid4()), 'taskId': self.task, 'nativeRunId': self.run, 'closed': True,
+            'observation': {'state': 'COMPLETED', 'output': {'result': canary.decode(), 'artifacts': [reference]}}}
+        self.custody.start.return_value = operation
+        self.custody.read.return_value = operation
+        asyncio.run(self.service.launch(self.ctx, Decision(action='experiment', reason='Measure',
+            hypothesis='Hypothesis', conditions='Controlled', goal='Measure')))
+        self.assertEqual(self.service.results(self.ctx)['operation']['output']['artifacts'], [reference])
+        self.service.record_decision(self.ctx, {'action': 'stop', 'outcome': 'not_met',
+            'reason': 'Insufficient evidence', 'evidenceIds': [operation['id']]})
+        self.finish()
+        terminal_id = self.service.list('alice', self.project)['rounds'][0]['terminalRecordId']
+        team = self.content.read('bob', terminal_id)
+        self.assertEqual(team['content']['kind'], 'research.round.terminal')
+        self.assertEqual(team['artifacts'], [])
+        self.assertNotIn(canary.decode(), str(team))
+        with self.assertRaises(HTTPException) as denied:
+            self.content.artifact('bob', terminal_id, artifact_id)
+        self.assertEqual(denied.exception.detail, 'APPLICATION_CONTENT_ARTIFACT_NOT_FOUND')
+        with self.assertRaises(HTTPException):
+            self.content.artifact('bob', personal['id'], artifact_id)
+        self.assertEqual(self.content.artifact('alice', personal['id'], artifact_id)[1], canary)
+
+
+class ResearchRoundsMigrationTests(fixtures.ApplicationCompositionFixture):
+    def test_existing_unique_rows_survive_first_migration_and_reopen(self):
+        projects = ResearchProjects(self.store, self.auth, Mock())
+        native, scopes, applications, records = Mock(), Mock(), Mock(), Mock()
+        legacy = ResearchRuns(projects, native, scopes, applications, records)
+        original_experiment = {'id': 'old-experiment', 'project_id': 'old-project', 'goal_version': 1,
+            'hypothesis': 'Preserve original hypothesis', 'conditions': {'seed': 7}, 'created_at': 'original-time'}
+        original_attempt = {'id': 'old-attempt', 'experiment_id': 'old-experiment',
+                            'allocation_id': 'old-allocation', 'request': {'requestId': 'original-request'}}
+        with projects.db.write() as conn:
+            for table in (legacy.experiments, legacy.attempts):
+                self.assertNotIn('round_id', {item['name'] for item in inspect(conn).get_columns(table.name)})
+            conn.execute(legacy.experiments.insert().values(**original_experiment))
+            conn.execute(legacy.attempts.insert().values(**original_attempt))
+            for table, original in ((legacy.experiments, original_experiment), (legacy.attempts, original_attempt)):
+                with self.assertRaises(IntegrityError):
+                    with conn.begin_nested():
+                        conn.execute(table.insert().values(**{**original, 'id': 'duplicate-before-migration'}))
+        ports = {'events': Mock(), 'endpoints': Mock(), 'custody': Mock(), 'control': Mock(), 'pin': PIN}
+        ResearchRounds(legacy, **ports)
+        with projects.db.write() as conn:
+            conn.execute(legacy.experiments.insert().values(**{**original_experiment, 'id': 'second-experiment'}))
+            conn.execute(legacy.attempts.insert().values(**{**original_attempt, 'id': 'second-attempt'}))
+        reopened = ResearchRuns(projects, native, scopes, applications, records)
+        ResearchRounds(reopened, **ports)
+        with projects.db.read() as conn:
+            experiments = {row['id']: dict(row) for row in conn.execute(select(reopened.experiments)).mappings()}
+            attempts = {row['id']: dict(row) for row in conn.execute(select(reopened.attempts)).mappings()}
+        self.assertEqual(set(experiments), {'old-experiment', 'second-experiment'})
+        self.assertEqual(set(attempts), {'old-attempt', 'second-attempt'})
+        self.assertEqual(experiments['old-experiment'], {**original_experiment, 'round_id': None})
+        self.assertEqual(attempts['old-attempt'], {**original_attempt, 'round_id': None, 'operation_id': None})

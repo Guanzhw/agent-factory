@@ -15,3 +15,25 @@ Original local evidence (synthetic only): `/tmp/research-native-workflow-evidenc
 The model is a deterministic protocol fixture; its observed tool result drives the fixture decision. No paid/live model, remote GPU, capacity, real provider identity, P7 team-value comparison or P8 independent reproduction has run. These remain NOT RUN/BLOCKED, not passes.
 
 - The independent core identity fix removed the identity exception, but the child target still failed (18.630 s): the nested branch never reached evaluation. Installed Agno 3.1.0 `workflow.py:9126–9179` routes the paused inner executor then continues the outer step loop, skipping the remaining nested branch. The application will use flat top-level steps and native `StepOutput(stop=True)` for the stop decision. The exploratory core code fix was reverted in this application branch; its separate spec and original evidence remain. This avoids a second recovery mechanism or patching Agno.
+
+## Flat consumer and review corrections
+
+The final consumer uses only top-level native steps; the stop decision uses native `StepOutput(stop=True)`. The exploratory nested-identity core code was reverted before these runs. Historical failures above remain failures; they are not overwritten by the following changed-code validation.
+
+| Check | Actual result |
+| --- | --- |
+| Flat immediate stop + actual child output/evaluation | 2 passed, 25.819 s, exit 0 |
+| Actual completion transaction rollback + P3 original successor admission | 2 passed, 36.661 s, exit 0 |
+| Actual paused consumer process SIGKILL and same-database restart | 1 passed, 23.558 s, exit 0 |
+| Final portable protocol/service/migration/privacy cases | 13 passed, 1.858 s, exit 0 |
+| Ruff / current-source Pyright / architecture | passed / 0 errors and warnings / 442 modules, 0 violations, 0 gaps |
+
+Rollback assertions check the positively stopped original root remains nonterminal, its allocation remains BOUND, and no domain terminal/continuation is published after a controlled publication failure. Releasing that fixture fault lets the existing observer complete the same root and settle the original allocation once. The actual P3 case admits one successor allocation/root from one original event; the successor model receives the private original child observation and reaches its own decision. It does not create another experimental child unnecessarily.
+
+The restart case gates only the fixture's original-wait observation, waits for a real paused parent and completed native child, kills the server process, then restarts with the same database/workspace/component. It verifies unchanged original root and child task/run IDs, a completed research decision, and idempotent start replay with no additional task. This is process recovery evidence with a synthetic model, not live model or remote GPU acceptance.
+
+Independent review rejected automatic sharing of all child artifacts. That behavior is removed: the team receives curated conditions, operation/runtime facts and labelled agent analysis. The owner retains the original result/artifacts. A real SQLite private artifact canary proves Alice can read the bytes, Bob can read the terminal summary but cannot read the unselected artifact. Explicit curated artifact selection and full P7 team evidence access remain pending. A separate migration fixture now inserts rows before the first migration, demonstrates the old unique constraints by actual duplicate-write rejection, migrates, permits the new multiple associations, and preserves exact old IDs/content after reopening.
+
+The rollback/P3 run emitted a psycopg unclosed-connection ResourceWarning. The TestClient fixture now explicitly disposes its owned root-lock connections before engine disposal; this is not a production timeout or assertion change. A temporary Pyright configuration initially used ignored absolute include paths; that check was terminated and is not counted as passing. The corrected relative includes restrict the successful check to this worktree's application and assembly sources.
+
+Additional original local logs: `flat-stop-child-first.log`, `rollback-p3-first.log`, `hardrestart-first.log`, `portable-final.log` under `/tmp/research-native-workflow-evidence/`; the privacy/migration review correction log is `/tmp/research-rounds-review-fixes-behavior.log`. These outcomes do not stand in for the parent integration's complete applicable suite or exact-commit CI.

@@ -114,10 +114,9 @@ class ResearchRounds:
             with self.db.write(), self.content.db.write(), self.events.db.write(), self.endpoints.db.write():
                 yield conn
 
-    def _publish(self, owner, identifier, revision, content, *, artifacts=()):
+    def _publish(self, owner, identifier, revision, content):
         return self.content.publish(owner, ContentPublication(source=ContentSource(
-            application='research', record=identifier, revision=revision), content=content,
-            artifacts=list(artifacts), visibility='team'),
+            application='research', record=identifier, revision=revision), content=content, visibility='team'),
             'research-record:' + identifier + ':' + revision)['id']
 
     def _prepare(self, owner, project_id, body):
@@ -398,7 +397,6 @@ class ResearchRounds:
         content_id = None
         if terminal['sharing'] == 'published':
             evidence = None
-            artifacts = []
             attempt = conn.execute(select(self.legacy.attempts).where(
                 self.legacy.attempts.c.round_id == row['id'])).mappings().first()
             if attempt:
@@ -408,14 +406,13 @@ class ResearchRounds:
                             'operation': None}
                 if attempt['operation_id']:
                     operation = self.custody.read(task['owner_id'], attempt['operation_id'])
-                    artifacts = (operation['observation'].get('output') or {}).get('artifacts', [])
                     evidence['operation'] = {'id': operation['id'], 'state': operation['observation']['state'],
                                              'allStopped': operation['closed']}
             content_id = self._publish(task['owner_id'], row['id'], 'terminal', {
                 'kind': 'research.round.terminal', 'projectId': row['project_id'], 'goalVersion': row['goal_version'],
                 'roundId': row['id'], 'taskId': task['id'], 'decision': row['decision'],
                 'runtime': group, 'experiment': evidence,
-                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'}, artifacts=artifacts)
+                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'})
             if row['decision'] and row['decision']['action'] == 'continue':
                 reason = ('RESEARCH_PROJECT_ENDED' if project['state'] == 'ended' else
                           'RESEARCH_GOAL_VERSION_CONFLICT' if project['state'] != 'ready' or project['goal_version'] != row['goal_version']
