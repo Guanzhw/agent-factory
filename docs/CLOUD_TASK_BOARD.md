@@ -1,21 +1,19 @@
-# Active: no-demo and SSH controller support checkpoint — 2026-10-25
+# Active: Linux SSH completion and Windows credential feasibility — 2026-10-25
 
-Implementation writers are idle/frozen. Root owns remaining exact-head CI and merge decisions; PR136 and PR137 are Draft/unmerged.
+Root owns integration and exact-head CI. assistant_endpoints owns Windows Stage B/design; foundation_review owns independent review. Other implementation workers are idle. This checkpoint does not authorize deployment or paid calls.
 
-| Owner / scope | Current evidence | Open boundary |
+| Work / owner | Current evidence | Open boundary |
 |---|---|---|
-| root; assistant_endpoints; assistant_messages — no-demo integration/fixtures | PR136 head `1597`: [fast40232215707](https://github.com/Guanzhw/agent-factory/actions/runs/40232215707) SUCCESS (370 Python, 61 PG with zero skips, 487 Web). Independent [full40233357540](https://github.com/Guanzhw/agent-factory/actions/runs/40233357540) RUNNING. | No final full PASS yet. Old 624 full failed; correction details below. |
-| root; research_app_spec; assistant_endpoints — SSH provider/runtime/waits | Linux controller → Linux helper CPU mechanism implemented. Native 3/3; Research 1/1 (25.758s); real loopback 1/1 (8.608s); actual accepted-continuation ACK loss plus SIGKILL 2/2 (33.152s). | Windows controller and GPU allocation/binding UNIMPLEMENTED. Physical SSH network fault and target model/GPU acceptance remain open. |
-| research_frontend; acceptance_doc_review — browser/evidence/docs | `2d3bebb` actual Linux Chromium verifies Windows-capability diagnostic projection, actual revoke and zero tasks/helper calls; `66e116d` records evidence. Prior core/research OIDC browsers retain their own scope. | This is not actual Windows execution. Old standalone HTML prototype is retired. |
-| foundation_review; pr104_independent_review — independent review | Cumulative exact `1597 → 66e116d` PASS. Helper guard `e4cf12b`: Windows/Linux static checks zero errors and 12 helper tests passed. | Current 66 fast pending; final full remains a separate gate. |
+| PR136 no-demo — root | Merged as `e7987e75`; [main CI40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS. Exact pre-merge full passed seven jobs; combined PG 2063 passed, 5 skipped, zero failures/errors. | Real organization identity acceptance remains separate. Historical timing failures remain recorded below. |
+| PR137 Linux SSH — root integration | Head `860e460`: [fast40240527237](https://github.com/Guanzhw/agent-factory/actions/runs/40240527237) SUCCESS. Final full newly dispatched; run ID/terminal result pending confirmation. Linux CPU root/child, helper, original wait/output, actual SIGKILL/accepted-continuation ACK-loss and loopback evidence remain valid within their recorded scope. | No final replacement full PASS yet; GPU allocation/binding UNIMPLEMENTED. |
+| PR138 Windows feasibility — assistant_endpoints design/Stage B; root integration | Stage A `44e36b9` actual five scenarios PASS in [40240758388](https://github.com/Guanzhw/agent-factory/actions/runs/40240758388); forced-termination ciphertext residue is explicitly retained as a limitation. Branch checkpoint `b1cd`. | Stage B first [40241406311](https://github.com/Guanzhw/agent-factory/actions/runs/40241406311) FAIL, diagnosis pending. Product Windows credential path NOT IMPLEMENTED. Stage A is not complete Windows SSH support. |
+| Windows bounded pipes / foundation independent review | Corrected nonblocking pipe/consumer path passed actual Windows 49/49, zero skips; prior review and rejected async-guard/cleanup findings remain documented. | Pipe success does not establish credential custody, Windows→Linux target execution or GPU support. |
 
-The user's actual controller is Windows **ACETAMIDO**, with Linux remote execution a possibility. Current SSH controller relies on POSIX ssh-agent, UID/socket and pipe-selector behavior, so Windows execution is not merely unverified: it is unsupported/unimplemented. `eaf292d` rejects it before vault read or Popen; capability/UI diagnostics preserve listing and revocation. GPU bindings are also rejected, not implemented by setting environment variables.
+Old PR137 d3 [full40239428444](https://github.com/Guanzhw/agent-factory/actions/runs/40239428444) ended **FAIL**: Windows had four errors and one failure; PostgreSQL passed 2166 with 5 skips, 1556.635s. The old selector path's concrete Windows pipe incompatibility and fixture errors were corrected; the later 49-case pass does not relabel that full run successful.
 
-Old PR136 624 [full40228654327](https://github.com/Guanzhw/agent-factory/actions/runs/40228654327) ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips, 2091.848s. Four lifecycle fixture errors were fixed; the two targeted corrections passed in 9.959s and 25.333s. These do not close historical MCP/storage root causes or substitute for the running full.
+The user's controller is Windows **ACETAMIDO**. Windows→Linux actual-target execution is **NOT RUN**; Linux CPU mechanisms and isolated Windows feasibility probes cannot substitute for it. GPU allocation/binding remains **UNIMPLEMENTED**, not merely awaiting real resources. Product Windows credential support remains unimplemented pending the feasibility/design outcome. Physical SSH network fault and real model/GPU/hardware acceptance remain separate gates.
 
-Old PR137 a165 full [40232239164](https://github.com/Guanzhw/agent-factory/actions/runs/40232239164) failed Windows Pyright with 14 errors, since fixed. Its PG job was cancelled/superseded to prioritize PR136; partial artifact `12613093447` has no final test count and is not PASS. Old a165 fast passed 399 Python, 62 PG with zero skips, and 489 Web; it is not current 66 exact-head evidence.
-
-No deployment, paid model/GPU call or new credential access is claimed. Heavy checks remain serial. Earlier checkpoints below preserve their original scope and failures.
+Prior no-demo failures, MCP/storage root-cause uncertainty and lack of overall suite speedup evidence remain disclosed. Heavy checks stay serial; no deployment, paid model/GPU invocation or new real credential access is claimed. Historical entries below retain their original checkpoints.
 
 ---
 
