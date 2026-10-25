@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import unittest
+import sys
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException
@@ -112,7 +113,7 @@ class SSHPersonalTargetTests(unittest.TestCase):
     def input_profile(self, *, max_length=100, argv=()):
         from dataclasses import replace
         from agent_factory.ssh_operation_runtime import SSHTrainingProfile
-        profile = SSHTrainingProfile(replace(self.profile.spec, argv=argv), self.profile.limits,
+        profile = SSHTrainingProfile(replace(self.profile.spec, argv=argv, path_style='posix'), self.profile.limits,
             self.profile.interpreter, self.profile.pool,
             input_schema={'type': 'object', 'properties': {'condition': {'type': 'string', 'maxLength': max_length}},
                           'required': ['condition'], 'additionalProperties': False}, input_argument='--experiment-json')
@@ -181,6 +182,7 @@ class SSHPersonalTargetTests(unittest.TestCase):
         self.assertEqual(self.resources.register_target.call_count, before)
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Runs the actual Linux helper and local custody journal')
 class SSHPreparedArchiveTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_never_launched_journal_archives_explicit_absence_then_reclaims(self):
         from contextlib import nullcontext
