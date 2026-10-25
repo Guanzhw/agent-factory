@@ -8,12 +8,12 @@ children. Missing receipts retain UNKNOWN custody rather than replaying work.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import InitVar, asdict, dataclass, field
 import json
 import hashlib
 import inspect
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from queue import Queue
 import re
 import sqlite3
@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from uuid import uuid4
-from typing import cast
+from typing import Literal, cast
 
 
 class ProcessEnforcementError(RuntimeError):
@@ -78,9 +78,13 @@ class ProcessSpec:
     executable: str
     sha256: str
     argv: tuple[str, ...]
+    path_style: InitVar[Literal['native', 'posix']] = field(default='native', kw_only=True)
 
-    def __post_init__(self):
-        if (type(self.executable) is not str or not Path(self.executable).is_absolute()
+    def __post_init__(self, path_style):
+        if path_style not in ('native', 'posix'):
+            _deny()
+        path = PurePosixPath if path_style == 'posix' else Path
+        if (type(self.executable) is not str or not path(self.executable).is_absolute()
                 or type(self.sha256) is not str or not re.fullmatch(r"[a-f0-9]{64}", self.sha256)
                 or type(self.argv) is not tuple or len(self.argv) > 32
                 or any(type(value) is not str or "\x00" in value for value in self.argv)
@@ -115,11 +119,12 @@ class ResearchProcessSpec(ProcessSpec):
     environment: tuple[tuple[str, str], ...] = ()
     working_directory_identity: tuple[int, int] = (0, 0)
 
-    def __post_init__(self):
-        super().__post_init__()
+    def __post_init__(self, path_style):
+        super().__post_init__(path_style)
+        path = PurePosixPath if path_style == 'posix' else Path
         allowed = {"HOME", "PATH", "CUDA_VISIBLE_DEVICES", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR",
                    "CUDA_CACHE_PATH", "TMPDIR", "HF_HOME", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONNOUSERSITE", "PYTHONPYCACHEPREFIX", "SETUPTOOLS_USE_DISTUTILS"}
-        if (type(self.working_directory) is not str or not Path(self.working_directory).is_absolute()
+        if (type(self.working_directory) is not str or not path(self.working_directory).is_absolute()
                 or "\x00" in self.working_directory or type(self.environment) is not tuple
                 or len(self.environment) > len(allowed)):
             _deny()
@@ -160,8 +165,10 @@ class UvResearchProcessSpec(ResearchProcessSpec):
     """Explicit versioned uv path; legacy research fingerprints stay unchanged."""
     interpreter_contract: str = ""
 
-    def __post_init__(self):
-        super().__post_init__()
+    def __post_init__(self, path_style):
+        if path_style != 'native':
+            _deny()
+        super().__post_init__(path_style)
         interpreter_module().validate_interpreter_contract(self.interpreter_contract, self.executable, self.sha256)
         if (len(self.argv) < 2 or self.argv[0] != '-B'
                 or not Path(self.argv[1]).is_absolute()

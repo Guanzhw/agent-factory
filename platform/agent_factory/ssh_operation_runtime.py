@@ -40,7 +40,7 @@ class SSHTrainingProfile:
             return {}, self.spec
         checked = validate_input_values(self.input_schema, inputs)
         assert self.input_argument is not None
-        derived = replace(self.spec, argv=(*self.spec.argv, self.input_argument, canonical(checked)))
+        derived = replace(self.spec, argv=(*self.spec.argv, self.input_argument, canonical(checked)), path_style='posix')
         return checked, derived
 
     @property
