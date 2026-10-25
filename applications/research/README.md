@@ -70,7 +70,10 @@ normal application `budget`; the existing explicit publish endpoint returns a
 single `qa` mode. Model connections are not published in shared definitions.
 `POST /assistants` creates the owner's stable identity. Configuration under
 `/assistants/me/configurations` requires an expected revision, published QA
-application, owner connections and finite total/per-question caps plus deadline.
+application, owner connections and finite total/per-question operation caps plus deadline.
+BYOK does not enter platform accounting: token/amount/currency must be null,
+and the configuration explicitly reports “操作额度受限，token/费用未计量”.
+Requests for unsupported token or fee hard limits are rejected, not dropped.
 A replaced endpoint remains associated with the same historical identity for
 original question recovery, but receives no new questions.
 

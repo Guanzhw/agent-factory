@@ -77,7 +77,6 @@ class ResearchQAWorkflow:
             'Return ONLY one JSON object, without markdown, matching this schema: '
             + json.dumps(Answer.model_json_schema(), ensure_ascii=False))
         schema = input_model(INPUT_SCHEMA)
-        schema.__name__ = schema.__qualname__ = 'ResearchQAInput'
         return Workflow(id=WORKFLOW_ID, name='研究经验私问', input_schema=schema,
             steps=cast(Any, [Step(name=FUNCTION_TOOLS[0], step_id=FUNCTION_TOOLS[0], executor=cast(Any, research_qa_context),
                 max_retries=0, human_review=HumanReview(on_error=OnError.fail)),

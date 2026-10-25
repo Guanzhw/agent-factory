@@ -33,3 +33,11 @@
 - 两次均为一次性PG数据库，TestClient/lifecycle正常关闭，PG槽已释放。Registry报告QA与research函数/输入schema同名，随后给QA函数及输入类型独立名称；相应portable6项通过（`/tmp/research-qa-unique-registration.log`）。
 
 身份作者额外证据：PG初轮3项中2 pass、1fixture缺真实Store schema error，补fixture后targeted1 pass；P2 disabled-recipient恢复先403反例失败，修复`cacfecd`后portable6 pass及实际PG目标1 pass/1.452s。这些分次证据不冒充最新head完整组合通过。
+
+## BYOK boundary correction and actual successful consumer
+
+源码独立核对后采用既有BYOK不入平台账务边界，规范`bdb3d22`先修正错误前提：当前QA显式finite rounds/toolCalls/deadline，tokenLimit/amountMicros/currency必须null；非null请求明确拒绝，配置返回“操作额度受限，token/费用未计量”。不以本路径解除硬token/费用验收，不开启platform-paid或宣称实际费用受控。
+
+- `/tmp/research-qa-native-byok-first.log`：1 fail/5.016s；此前为消除Registry类名警告而重命名输入类，使JSON schema title与core生成模型不同，准入明确`NATIVE_WORKFLOW_INPUT_SCHEMA_CHANGED`。撤回类重命名，保留QA治理函数唯一名称，不改core身份/模式校验；共享input helper类名警告仍如实保留。
+- `/tmp/research-qa-native-byok-fixed-schema.log`：实际native QA 1 passed/8.166s、0 skipped、exit0。真实研究部署/HTTP发布/配置/原消息准入→实际OwnerChatModel合成HTTP一次→本地Answer校验→原reply；两个输入来源全部绑定、私有canary不进模型、未引用B撤回隐藏整个答案。原scope仅1round，第二问题429且零新增task/模型请求，零delegation child。
+- 该成功使用明确BYOK操作额度，不是UsageLedger计量验证，也不是真实模型质量/C03通过。provider返回恶意train tool_call的有界失败仍待验证；Agno未知工具循环风险已报告core，不用普通源文本恶意提示替代此反例。

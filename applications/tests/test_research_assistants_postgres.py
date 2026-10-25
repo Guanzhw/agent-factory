@@ -71,10 +71,10 @@ class ResearchAssistantsPostgresTests(unittest.TestCase):
         published = self.setup.publish('alice', draft['id'], PublishSetup(requestId='publish-qa-original'))
         self.service = ResearchAssistants(self.store, self.auth, self.endpoints, self.messages, self.scopes,
             pin=self.pin, tool_registrations=qa.tool_registrations, environment_registration=qa.environment_registration)
-        caps = {'rounds': 3, 'toolCalls': 12, 'tokenLimit': 300, 'amountMicros': 30, 'currency': 'USD'}
+        caps = {'rounds': 3, 'toolCalls': 12, 'tokenLimit': None, 'amountMicros': None, 'currency': None}
         self.configuration = ConfigureAssistant(requestId='configure-first', expectedRevision=0,
             applicationRef=published['applicationRef'], connectionRefs=published['connectionRefs'],
-            budget={'caps': caps, 'perQuestionCaps': {**caps, 'rounds': 1, 'toolCalls': 4, 'tokenLimit': 100, 'amountMicros': 10},
+            budget={'caps': caps, 'perQuestionCaps': {**caps, 'rounds': 1, 'toolCalls': 4, 'tokenLimit': None, 'amountMicros': None},
                 'deadline': time.time() + 300})
 
     def counts(self):

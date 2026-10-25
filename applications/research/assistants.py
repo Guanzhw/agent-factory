@@ -29,13 +29,10 @@ class QuestionBudget(BaseModel):
     def bounded(self):
         if self.perQuestionCaps.rounds != 1:
             raise ValueError('One question consumes one native root allocation')
-        if self.caps.tokenLimit is None or self.perQuestionCaps.tokenLimit is None:
-            raise ValueError('Owner model QA requires explicit metered limits')
-        if self.caps.currency != self.perQuestionCaps.currency:
-            raise ValueError('Question and total budget currencies must match')
-        for key in ('toolCalls', 'tokenLimit', 'amountMicros'):
-            if getattr(self.perQuestionCaps, key) > getattr(self.caps, key):
-                raise ValueError('Question caps exceed the total commitment')
+        if self.caps.tokenLimit is not None or self.perQuestionCaps.tokenLimit is not None:
+            raise ValueError('RESEARCH_QA_BYOK_METERING_UNSUPPORTED: token and monetary limits are not supported')
+        if self.perQuestionCaps.toolCalls > self.caps.toolCalls:
+            raise ValueError('Question caps exceed the total commitment')
         return self
 
 
@@ -90,6 +87,8 @@ class ResearchAssistants:
                 self.configurations.c.assistant_id == row['id'],
                 self.configurations.c.revision == row['configuration_revision'])).scalar_one()
             qa = {'state': 'configured', 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration),
+                'accounting': {'mode': 'operational_limits_only', 'tokenMetered': False, 'costMetered': False,
+                               'notice': '操作额度受限，token/费用未计量'},
                 **self._availability(row)}
         return {'id': row['id'], 'ownerId': row['owner_id'],
             'configurationRevision': row['configuration_revision'], 'qa': qa}
@@ -202,10 +201,7 @@ class ResearchAssistants:
             caps, per = scope['caps'], budget['caps']
             if scope['allocatedRounds'] + 1 > caps['rounds'] or scope['heldToolCalls'] + scope['settledToolCalls'] + per['toolCalls'] > caps['toolCalls']:
                 return {'available': False, 'unavailableCode': 'LOCAL_BUDGET_EXHAUSTED'}
-            usage = scope['usage']
-            available = (usage['held_tokens'] + usage['settled_tokens'] + per['tokenLimit'] <= caps['tokenLimit']
-                and usage['held_amount'] + usage['settled_amount'] + per['amountMicros'] <= caps['amountMicros'])
-            return {'available': available, **({} if available else {'unavailableCode': 'LOCAL_BUDGET_EXHAUSTED'})}
+            return {'available': True}
         except HTTPException as error:
             if error.status_code not in {403, 404, 409, 422}:
                 raise

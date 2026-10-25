@@ -75,8 +75,8 @@ class ResearchAssistantsTests(fixtures.ApplicationCompositionFixture):
         asyncio.run(self.service.question('bob', identity['id'], body))
         self.messages.send.assert_awaited_once_with('bob', 'current', body)
 
-    def test_owner_model_budget_cannot_be_implicit_or_unmetered(self):
-        caps = dict(rounds=1, toolCalls=2, tokenLimit=None, amountMicros=None, currency=None)
+    def test_owner_model_rejects_unsupported_metering_instead_of_dropping_it(self):
+        caps = dict(rounds=1, toolCalls=2, tokenLimit=100, amountMicros=10, currency='USD')
         with self.assertRaises(ValidationError):
             QuestionBudget(caps=caps, perQuestionCaps=caps, deadline=9999999999.0)
 
