@@ -89,7 +89,7 @@ def run(args):
             handle = GoDevelopmentHandle(mode="subscription", credential=credential,
                 wire_stream=True, native_retries=0, live_campaign=campaign)
             settings = Settings(db_url=args.database_url, workspace=root / "factory",
-                
+
                 max_workers=1, max_tool_calls=1, temporary_policy="member-self-service",
                 policy_revision="go-live-policy-v1", material_policy_revision="go-live-material-v1",
                 runtime_tool_contract="legacy-v1", fee_management_enabled=True,

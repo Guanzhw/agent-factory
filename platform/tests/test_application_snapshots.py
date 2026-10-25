@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Exact inert application distribution, with independent local publication.
 
 Portable cases use synthetic SQLite metadata and actual native managed Auth;
@@ -235,7 +236,7 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
         self.assertEqual(receiver.applications.require_current(pin(snapshot)), source.applications.require_current(pin(snapshot)))
         plan = receiver.composition.create_plan("alice", "Checksum original independent receiver evidence", "literature", application_ref=pin(snapshot))
         self.assertEqual(plan["applicationRef"], pin(snapshot))
-        headers = {"Authorization": "Bearer " + receiver.auth._issue_native_token("alice")}
+        headers = {"Authorization": "Bearer " + access_token("alice")}
         admitted = receiver.client.post("/api/factory/instances", headers=headers,
             json={"planId": plan["id"], "requestId": "receiver-native-instance"})
         self.assertEqual(admitted.status_code, 202, admitted.text)
