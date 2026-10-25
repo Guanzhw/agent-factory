@@ -94,7 +94,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
 
     def test_direct_transport_async_guard_rejects_before_any_spawn(self):
         transport = SSHProcessTransport(self.provider.server,
-            lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+            lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
         async def guard():
             self.fail('async authority must never execute')
         with patch('agent_factory.ssh_process_provider.pinned_ssh') as spawn, \
@@ -105,8 +105,10 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
             exchange.assert_not_called()
 
     def test_exchange_entry_failure_exits_original_scope_with_same_deadline(self):
+        expiry = time.monotonic() + 10
+        started = time.monotonic()
         transport = SSHProcessTransport(self.provider.server,
-            lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+            lambda action: SimpleNamespace(validate=lambda: None, expires_at=expiry), interpreter='/python')
         entered, exited, deadlines = [], [], []
         process = object()
         @contextmanager
@@ -127,6 +129,12 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exited, [process])
         self.assertIs(exchange.call_args.args[0], process)
         self.assertEqual(exchange.call_args.kwargs['deadline'], deadlines[0])
+
+        if sys.platform == 'win32':
+            self.assertEqual(deadlines[0], expiry)
+        else:
+            self.assertGreaterEqual(deadlines[0], started + 30)
+            self.assertLessEqual(deadlines[0], time.monotonic() + 30)
 
     async def test_cancelled_worker_cleanup_error_is_not_hidden_as_cancelled(self):
         entered, finished = threading.Event(), threading.Event()
@@ -197,7 +205,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                         if not release.wait(3):
                             raise TimeoutError('fixture gate')
                 transport = SSHProcessTransport(self.provider.server,
-                    lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+                    lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
                 def exchange(value, **kwargs):
                     exchanges.append(threading.get_ident())
                     try:
@@ -254,7 +262,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                     process.stdin.close()
                     process.stdout.close()
             transport = SSHProcessTransport(self.provider.server,
-                lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+                lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
             def exchange(value, **kwargs):
                 try:
                     return transport(value, **kwargs)

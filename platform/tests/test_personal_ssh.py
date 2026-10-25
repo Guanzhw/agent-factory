@@ -65,7 +65,7 @@ class PersonalSSHTests(unittest.TestCase):
         self.service = PersonalSSHServers(self.auth, self.connections, self.vault,
             SSHEnrollmentConfig(max_active_seconds=60))
         self.addCleanup(self.service.close)
-        self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard))
+        self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard, expires_at=time.monotonic() + 60))
         self.service.agents.acquire = self.acquire
         self.service.probe = Mock(return_value={'ok': True})
         host = Ed25519PrivateKey.generate().public_key().public_bytes(
@@ -160,7 +160,8 @@ class PersonalSSHTests(unittest.TestCase):
         server = self.service.profile('alice', 'fixture', 'v1', {**self.input, **identity,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
         lease = SimpleNamespace(socket='/fixture/agent.sock', public_key=self.input['hostKey'])
-        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.sys.platform', 'linux'), \
+                patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
             with pinned_ssh(server, lease, Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
                 pass
             command = launch.call_args.args[0]
@@ -175,7 +176,7 @@ class PersonalSSHTests(unittest.TestCase):
     def test_probe_cleanup_error_propagates_without_becoming_unconfirmed(self):
         server = self.service.profile('alice', 'fixture', 'v1', {**self.input,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        lease = SimpleNamespace(validate=lambda: None)
+        lease = SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60)
         failure = SSHExchangeCleanupError('controlled reap failure')
         with patch('agent_factory.personal_ssh.pinned_ssh') as spawn, \
              patch('agent_factory.personal_ssh.pipe_exchange', side_effect=failure) as exchange:
@@ -194,7 +195,7 @@ class PersonalSSHTests(unittest.TestCase):
         service.package = None; service.probe_source = None
         server = service.profile('alice', 'fixture', 'v1', {**self.input,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        lease = SimpleNamespace(validate=lambda: None)
+        lease = SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60)
         @contextmanager
         def local_shell(server, lease, folder, command, *, deadline):
             self.assertNotIn('python', command); self.assertNotIn('docker', command)
@@ -279,7 +280,8 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertEqual(ssh_destination(identity['origin']), identity['origin'])
         server = self.service.profile('alice', 'fixture', 'v1', values | identity | {
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.sys.platform', 'linux'), \
+                patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
             with pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
                     Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
                 pass
