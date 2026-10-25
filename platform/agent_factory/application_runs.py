@@ -56,9 +56,44 @@ class ApplicationRuns:
                 'binding': {key: binding[key] for key in ('adapterId', 'revision', 'toolName')},
                 'receipts': receipts}
 
+    def delegated_child(self, owner, parent_operation_id):
+        """Locate an original child without observing, recovering or admitting it."""
+        from .delegated_operations import DELEGATED_OPERATION_PIN
+        from .store import digest
+
+        def require(value):
+            if not value:
+                raise HTTPException(409, 'APPLICATION_DELEGATED_CHILD_MISMATCH')
+
+        self.factory.auth.require_member(owner)
+        store = self.factory.store
+        operation = store.workflow.read(owner, parent_operation_id)
+        require(operation['id'] == parent_operation_id and operation['ownerId'] == owner
+                and operation['adapterPin'] == DELEGATED_OPERATION_PIN)
+        parent = store.task(operation['taskId'], owner)
+        plan = store.plan(parent['plan_id'], owner)
+        require(parent['id'] == operation['taskId'] and parent['owner_id'] == owner
+                and parent['run_id'] == operation['nativeRunId'] and parent['plan_id'] == operation['planId']
+                and digest(plan) == operation['planSha256'])
+        request = 'operation:' + parent_operation_id
+        links = store.sql('SELECT * FROM af_delegation_links WHERE owner_id=:owner '
+            'AND parent_id=:parent AND request_id=:request', owner=owner, parent=parent['id'], request=request)
+        require(len(links) <= 1)
+        if not links:
+            return None
+        link = links[0]
+        require(link['owner_id'] == owner and link['parent_id'] == parent['id'] and link['request_id'] == request)
+        if link['child_id'] is None:
+            return None
+        child = store.task(link['child_id'], owner)
+        require(child['id'] == link['child_id'] and child['owner_id'] == owner
+                and child['plan_id'] == link['plan_id']
+                and child['request_id'] == 'delegation:' + digest({'parent': parent['id'], 'request': request}))
+        return {'taskId': child['id'], 'runId': child['run_id'], 'planId': child['plan_id']}
+
     def ssh_results(self, owner, child_task_id, run_id):
         """Read private archived SSH evidence; never poll or resume remote work."""
-        from .ssh_process_contract import OPERATION_PIN, LAUNCH_ADAPTER_ID, WAIT_ADAPTER_ID, REVISION, LAUNCH_TOOL, WAIT_TOOL
+        from .ssh_process_contract import OPERATION_PIN, LAUNCH_ADAPTER_ID, WAIT_ADAPTER_ID, REVISION, LAUNCH_TOOL, WAIT_TOOL, ssh_target_reference
         from .store import digest
         from .resource_maintenance import ResourceMaintenance, _Held
         from .ssh_process_provider import EFFECT
@@ -128,8 +163,12 @@ class ApplicationRuns:
                     'original-root-reaped-and-no-live-process-group-members'})
         process = lease['processBinding']
         launch = next(binding for binding in bindings if binding['adapterId'] == LAUNCH_ADAPTER_ID)
-        require(lease['connectionRef'] == 'ssh-' + digest({'actor': owner, 'material': launch['materialRef'],
-            'connection': launch['connection'], 'profile': launch['config']['profileSha256']}))
+        inputs = operation.get('inputs')
+        require(isinstance(inputs, dict) and digest(inputs) == operation['inputsSha256']
+                and isinstance(inputs.get('inputs'), dict))
+        require(lease['connectionRef'] == ssh_target_reference(owner, launch['materialRef'],
+            launch['connection'], launch['config']['profileSha256'], inputs['inputs'])
+                and inputs.get('targetRef') == lease['connectionRef'])
         require(process['taskId'] == child_task_id and process['nativeRunId'] == run_id
                 and process['planId'] == task['plan_id'])
         expected = {'kind': 'ssh-process', 'operationId': operation_id, 'leaseId': lease['id'],
@@ -147,21 +186,29 @@ class ApplicationRuns:
         require(status in {'COMPLETED', 'FAILED', 'CANCELLED', 'LIMIT_STOPPED'})
         require(operation['observation']['state'] == ('FAILED' if status in {'FAILED', 'LIMIT_STOPPED'} else status))
         artifacts = []
+        private_output = None
         output = receipt.get('output')
         if lease['stopEvidence']['kind'] == 'never-dispatched':
             require(receipt.get('outputState') == 'never_dispatched' and output is None)
         else:
             require(receipt.get('outputState') == 'artifact' and isinstance(output, dict)
                     and output.get('taskId') == child_task_id)
-            output_metadata, _ = store.artifact(child_task_id, output['artifactId'])
+            output_metadata, output_bytes = store.artifact(child_task_id, output['artifactId'])
             require(output_metadata['sha256'] == output['sha256'] and output_metadata['jobId'] == child_task_id
                     and all(output_metadata['provenance'].get(key) == value
                         for key, value in {**expected, 'evidenceRole': 'output'}.items()))
             artifacts.append({key: output[key] for key in ('taskId', 'artifactId', 'sha256')})
+            try:
+                output_bytes.decode('utf-8')
+                utf8_valid = True
+            except UnicodeDecodeError:
+                utf8_valid = False
+            private_output = {'text': output_bytes[:16384].decode('utf-8', errors='replace'),
+                'truncated': len(output_bytes) > 16384, 'utf8Valid': utf8_valid, 'artifact': deepcopy(artifacts[0])}
         return {'kind': 'ssh-process', 'taskId': child_task_id, 'runId': run_id, 'planId': task['plan_id'],
             'operationId': operation_id, 'materials': selected, 'receipt': deepcopy(receipt),
             'receiptArtifact': {'taskId': child_task_id, 'artifactId': metadata['id'], 'sha256': metadata['sha256']},
-            'artifacts': artifacts}
+            'artifacts': artifacts, 'output': private_output}
 
     @staticmethod
     def _handoff(plan_id, original_request):

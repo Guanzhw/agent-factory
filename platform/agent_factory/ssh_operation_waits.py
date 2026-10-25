@@ -16,10 +16,10 @@ def require(value):
 
 
 class SSHOperationWaits:
-    def __init__(self, store, custody, operation_pin, *, commands):
+    def __init__(self, store, custody, operation_pin, *, commands, runs):
         self.store, self.custody = store, custody
         self.operation_pin = dict(operation_pin)
-        self.commands = commands
+        self.commands, self.runs = commands, runs
 
     def _selected(self, task):
         plan = self.store.plan(task['plan_id'], task['owner_id'])
@@ -47,8 +47,14 @@ class SSHOperationWaits:
         require(decision['approved'] is True)
         operations = self._operations(task, requirement)
         require(all(op['closed'] and op['observation']['allStopped'] for op in operations))
+        require(len(operations) == 1)
+        result = self.runs.ssh_results(task['owner_id'], task['id'], task['run_id'])
+        require(result['operationId'] == operations[0]['id'])
+        observed = {'operationId': result['operationId'], 'state': operations[0]['observation']['state'],
+            'allStopped': True, 'executionStatus': result['receipt']['executionStatus'],
+            'exitCode': result['receipt']['exitCode'], 'output': result['output']}
         resolved = RunRequirement.from_dict(requirement)
-        resolved.set_external_execution_result(canonical({'operations': [op['observation'] for op in operations]}))
+        resolved.set_external_execution_result(canonical({'operations': [observed]}))
         updated = [resolved.to_dict() if row['id'] == requirement['id'] else deepcopy(row) for row in requirements]
         return {'requirements': updated, 'toolsSha256': digest([row.get('tool_execution', row) for row in updated])}
 
