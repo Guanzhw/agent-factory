@@ -1,7 +1,7 @@
 # Tasks
 
 ## 1. Freeze the minimal contract
-- [ ] 1.1 独立审查设计的普通 child 外部等待接缝与复杂度，对照真实 NativeBridge/ControlCommands/custody 源码；记录可实施结论及精确责任，不能跳过父 child 协议。
+- [x] 1.1 独立审查设计的普通 child 外部等待接缝与复杂度，对照真实 NativeBridge/ControlCommands/custody 源码；记录可实施结论及精确责任，不能跳过父 child 协议。
 - [ ] 1.2 冻结直接进程 helper 版本/命令、选定资源 config 与原 receipt 字段；文档说明用户目标 scheduler 未定、自动安装不支持，portable schema/错误反例通过后才写接线。
 
 ## 2. Reuse native child waiting
@@ -23,3 +23,11 @@
 - [ ] 5.1 对精确 base/head 完整 diff 做作者外精简审查，必要整改复审；串行组合适用 PG/独立 core/前端检查，保留首失败与清理记录。
 - [ ] 5.2 获取目标最小非秘密信息并冻结执行方式、环境、预算与允许故障实验；在已明确的目标执行方式下补实际适配/验收规范（若需 scheduler），否则 D01 保持 BLOCKED，不擅选 Slurm。
 - [ ] 5.3 正式目标真实训练/停止/恢复/证据验收按冻结参数完成或明确受阻；交付实际来源与限制，不能由受控测试推定 GPU、外部模型或部署通过。
+
+## Evidence checkpoint: 8eee759
+
+- 1.1 has an independent whole-diff/simplicity PASS for exact base d6c8f62 → head 8eee759; the earlier 13755c7 output-budget blocker and correction are preserved in [review.md](review.md).
+- 2.1 has updated native PG evidence (3/3, 95.656s), but its combined foreign-ID/duplicate and final integration obligations remain tracked above rather than inferred from the test count.
+- Output-budget admission correction: 40 portable passed, zero skipped; targeted Pyright zero errors/warnings and strict spec validation passed. Existing UNKNOWN replay retains its original rules.
+- 4.1 remains open: the first Research case failed (35.567s); model-fixture signature correction 9661db2 is implemented but not rerun at this checkpoint.
+- 5.1 remains open for combined applicable verification despite code-review PASS. D01 remains open for both missing GPU execution implementation and target-specific execution/scheduler/hardware acceptance; the CPU helper rejects GPU bindings.
