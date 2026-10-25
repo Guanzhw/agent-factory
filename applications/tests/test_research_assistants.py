@@ -75,3 +75,9 @@ class ResearchAssistantsTests(fixtures.ApplicationCompositionFixture):
         caps = dict(rounds=1, toolCalls=2, tokenLimit=None, amountMicros=None, currency=None)
         with self.assertRaises(ValidationError):
             QuestionBudget(caps=caps, perQuestionCaps=caps, deadline=9999999999.0)
+
+    def test_published_compute_application_cannot_be_used_as_qa(self):
+        application = self.publish()
+        with self.assertRaises(HTTPException) as error:
+            self.service._validate_execution('alice', fixtures.pin(application), {'model': 'irrelevant'})
+        self.assertEqual(error.exception.detail, 'RESEARCH_QA_ONLY_MODE_REQUIRED')
