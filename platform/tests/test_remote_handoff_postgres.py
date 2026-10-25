@@ -357,7 +357,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.assertEqual(len(transport.dropped), 1)
             dropped = transport.dropped[0]
             self.assertEqual({key: dropped[key] for key in ('status', 'requestId', 'originTaskId',
-                'originOwnerId', 'remoteOwnerId', 'state')}, {'status': 200, 'requestId': row['request_id'],
+                'originOwnerId', 'remoteOwnerId', 'state')}, {'status': 201, 'requestId': row['request_id'],
                 'originTaskId': row['task_id'], 'originOwnerId': 'alice', 'remoteOwnerId': 'bob', 'state': 'PREPARED'})
             self.assertEqual(self.handoff._row('alice', row['task_id'])['state'], 'PREPARE_UNKNOWN')
             receipt = self.call(self.handoff.reconcile, 'alice', row['task_id'])
