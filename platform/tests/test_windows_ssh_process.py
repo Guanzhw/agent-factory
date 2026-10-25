@@ -179,11 +179,57 @@ class WindowsSSHProcessTests(unittest.TestCase):
             if not kernel.GetProcessHandleCount(int(current), ctypes.byref(count)):
                 raise ctypes.WinError(ctypes.get_last_error())
             return count.value
+        from agent_factory import windows_ssh_process as owned
+        stages = []
+        original_error, original_close = owned._error, WindowsSSHProcess.close
+        def record(stage):
+            saved_error = ctypes.get_last_error()
+            try:
+                stages.append([stage, handle_count()])
+            finally:
+                ctypes.set_last_error(saved_error)
+        def measured_error():
+            record('error.before')
+            error = original_error()
+            record('error.after')
+            return error
+        def measured_close(process):
+            record('close.before')
+            try:
+                return original_close(process)
+            finally:
+                record('close.after')
         before = handle_count()
-        for _ in range(3):
-            with self.assertRaises(OSError):
-                WindowsSSHProcess([str(Path(sys.executable).parent / 'missing-ssh-fixture.exe')], dict(os.environ))
-        self.assertEqual(handle_count(), before)
+        with patch.object(owned, '_error', measured_error), patch.object(WindowsSSHProcess, 'close', measured_close):
+            for index in range(3):
+                record(f'spawn.{index}.before')
+                with self.assertRaises(OSError):
+                    WindowsSSHProcess([str(Path(sys.executable).parent / 'missing-ssh-fixture.exe')], dict(os.environ))
+                record(f'spawn.{index}.after')
+        after = handle_count()
+        control_program = """
+import ctypes, json
+from ctypes import wintypes as w
+kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+kernel.GetCurrentProcess.argtypes = []
+kernel.GetCurrentProcess.restype = w.HANDLE
+kernel.GetProcessHandleCount.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
+kernel.GetProcessHandleCount.restype = w.BOOL
+current = kernel.GetCurrentProcess()
+def count():
+    value = w.DWORD()
+    if not kernel.GetProcessHandleCount(current, ctypes.byref(value)):
+        raise RuntimeError('control count failed')
+    return value.value
+counts = [count()]
+for _ in range(3):
+    ctypes.WinError(2)
+    counts.append(count())
+print(json.dumps({'winErrorOnly': counts}))
+"""
+        control = subprocess.run([sys.executable, '-I', '-S', '-c', control_program],
+                                 capture_output=True, text=True, timeout=10, check=True)
+        self.assertEqual(after, before, json.dumps({'stages': stages, 'control': json.loads(control.stdout)}))
 
     def test_unicode_long_child_cwd_reads_relative_identity_without_parent_chdir(self):
         original_cwd = os.getcwd()
