@@ -10,11 +10,14 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .native_component import NativeWorkflowPin
+
 
 @dataclass(frozen=True)
 class RuntimeOwner:
     identifier: str
     hooks: Any
+    finalizes: bool = False
 
 
 class ApplicationRuntimeRegistry:
@@ -25,15 +28,18 @@ class ApplicationRuntimeRegistry:
         self._applications = {}
         self._legacy = {}
         self._effects = {}
+        self._native_components = {}
 
     def __bool__(self):
         return bool(self._owners)
 
-    def register(self, owner_id, hooks, *, bindings=(), applications=(), legacy_applications=(), effects=()):
+    def register(self, owner_id, hooks, *, bindings=(), applications=(), legacy_applications=(), effects=(),
+                 native_components=(), finalizes=False):
         if not isinstance(owner_id, str) or not owner_id or owner_id in self._owners:
             raise ValueError('Duplicate or invalid application runtime owner')
         declarations = ((self._bindings, tuple(bindings)), (self._applications, tuple(applications)),
-                        (self._legacy, tuple(legacy_applications)), (self._effects, tuple(effects)))
+                        (self._legacy, tuple(legacy_applications)), (self._effects, tuple(effects)),
+                        (self._native_components, tuple(native_components)))
         for mapping, keys in declarations:
             if len(set(keys)) != len(keys) or any(key in mapping for key in keys):
                 raise ValueError('Duplicate application runtime identity')
@@ -45,7 +51,11 @@ class ApplicationRuntimeRegistry:
             raise ValueError('Invalid exact application reference')
         if any(not isinstance(key, str) or not key for key in (*legacy_applications, *effects)):
             raise ValueError('Invalid original operation identity')
-        owner = RuntimeOwner(owner_id, hooks)
+        for key in native_components:
+            if not isinstance(key, tuple) or len(key) != 4:
+                raise ValueError('Invalid exact native component reference')
+            NativeWorkflowPin.model_validate(dict(zip(('kind', 'id', 'revision', 'sha256'), key)))
+        owner = RuntimeOwner(owner_id, hooks, finalizes)
         self._owners[owner_id] = owner
         for mapping, keys in declarations:
             mapping.update((key, owner_id) for key in keys)
@@ -79,6 +89,10 @@ class ApplicationRuntimeRegistry:
                 selected.add(self._applications[key])
             elif not ref and not plan.get('executionBindings') and plan.get('application') in self._legacy:
                 selected.add(self._legacy[plan['application']])
+        component = plan.get('nativeComponent') or {}
+        key = tuple(component.get(field) for field in ('kind', 'id', 'revision', 'sha256'))
+        if key in self._native_components:
+            selected.add(self._native_components[key])
         if effects and task.get('run_id'):
             prefix = task['run_id'] + ':'
             for effect in self.store.effects(task['id']):
@@ -90,6 +104,20 @@ class ApplicationRuntimeRegistry:
     @staticmethod
     def callback(owner, name):
         return getattr(owner.hooks, name, None) if owner.hooks is not None else None
+
+    def finalization_context(self, task):
+        owners = [owner for owner in self.owners(task) if owner.finalizes]
+        if len(owners) > 1:
+            raise HTTPException(409, 'APPLICATION_FINALIZATION_OWNER: completion responsibility overlaps')
+        if not owners:
+            return None
+        callback = self.callback(owners[0], 'finalization_context')
+        if callback is not None:
+            return callback
+
+        def unavailable(*_):
+            raise HTTPException(409, 'APPLICATION_FINALIZATION_UNAVAILABLE: retain original completion responsibility')
+        return unavailable
 
     def task_held(self, task):
         for owner in self.owners(task):

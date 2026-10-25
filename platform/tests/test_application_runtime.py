@@ -92,6 +92,63 @@ class ApplicationRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             registry.register('alpha', object())
 
+    def test_native_component_owner_is_additive_to_binding_application_and_effect_owners(self):
+        component = ('workflow', 'research-round', '1', 'a' * 64)
+        store = Fixture(plan(A))
+        store.value['nativeComponent'] = dict(zip(('kind', 'id', 'revision', 'sha256'), component))
+        store.rows = [{'effect_key': 'run:original-effect', 'status': 'DONE'}]
+        registry = store.application_runtime
+        registry.register('binding', object(), bindings=(A,))
+        registry.register('application', object(), applications=(('member-published-app', 1),))
+        registry.register('effect', object(), effects=('original-effect',))
+        registry.register('research', object(), native_components=(component,))
+        self.assertEqual([owner.identifier for owner in registry.owners(store.original)], ['binding', 'effect', 'research'])
+        store.value['executionBindings'] = {}
+        self.assertEqual([owner.identifier for owner in registry.owners(store.original)], ['application', 'effect', 'research'])
+        store.value['applicationRef'] = {'id': 'another-member-app', 'version': 2}
+        self.assertEqual([owner.identifier for owner in registry.owners(store.original)], ['effect', 'research'])
+
+    def test_native_component_requires_every_original_pin_field(self):
+        component = ('workflow', 'research-round', '1', 'a' * 64)
+        original = dict(zip(('kind', 'id', 'revision', 'sha256'), component))
+        store = Fixture(plan())
+        store.application_runtime.register('research', object(), native_components=(component,))
+        for field, replacement in (('kind', 'agent'), ('id', 'research-round-other'),
+                                   ('revision', '2'), ('sha256', 'b' * 64)):
+            with self.subTest(field=field):
+                store.value['nativeComponent'] = {**original, field: replacement}
+                self.assertEqual(store.application_runtime.owners(store.original), ())
+                store.value['nativeComponent'] = {key: value for key, value in original.items() if key != field}
+                self.assertEqual(store.application_runtime.owners(store.original), ())
+        store.value['nativeComponent'] = original
+        self.assertEqual(store.application_runtime.owners(store.original)[0].identifier, 'research')
+
+    def test_duplicate_or_malformed_component_declarations_do_not_partially_register(self):
+        component = ('workflow', 'research-round', '1', 'a' * 64)
+        registry = Fixture().application_runtime
+        registry.register('research', object(), native_components=(component,))
+        with self.assertRaises(ValueError):
+            registry.register('other', object(), bindings=(B,), native_components=(component,))
+        for invalid in (component[:3], ('workflow', 'research-round', '1', 'not-a-hash'),
+                        ('agent', 'research-round', '1', 'a' * 64)):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                registry.register('other', object(), bindings=(B,), native_components=(invalid,))
+        registry.register('other', object(), bindings=(B,))
+        fresh = Fixture().application_runtime
+        with self.assertRaises(ValueError):
+            fresh.register('duplicate', object(), native_components=(component, component))
+        self.assertFalse(fresh)
+
+    def test_missing_native_component_hooks_retain_declared_custody_only_for_exact_pin(self):
+        component = ('workflow', 'research-round', '1', 'a' * 64)
+        store = Fixture(plan())
+        store.value['nativeComponent'] = dict(zip(('kind', 'id', 'revision', 'sha256'), component))
+        store.application_runtime.register('removed-research', None, native_components=(component,))
+        self.assertTrue(runtime_custody_held(store, 'task'))
+        self.assertEqual(store.application_runtime.ended_reason(store.original), 'application-runtime-owner-unavailable')
+        store.value['nativeComponent']['revision'] = '2'
+        self.assertFalse(runtime_custody_held(store, 'task'))
+
     def test_legacy_mapping_never_overrides_modern_binding(self):
         store = Fixture({'application': 'legacy-research'})
         registry = store.application_runtime
