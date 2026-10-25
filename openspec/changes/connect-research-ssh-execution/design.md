@@ -27,7 +27,7 @@
 
 ### 1. Keep the native experiment child
 
-推荐路线：research root 保持本地；其已有 delegated operation 创建本地 `factory-executor` 实验 child，继承原 scope。child 的显式治理工具将选定训练 CLI 交给 SSH operation，随后通过 `factory_wait_operations` 的原生 external_execution requirement 暂停。操作闭合后原 child/run 收到真实结果，再由既有父 operation 观察 child 终态，root 模型按真实输出评价。
+推荐路线：research root 保持本地；其已有 delegated operation 创建本地 `factory-executor` 实验 child，继承原 scope。child 的显式治理工具将选定训练 CLI 交给 SSH operation，随后通过 `factory_wait_ssh_process` 的原生 external_execution requirement 暂停。操作闭合后原 child/run 收到真实结果，再由既有父 operation 观察 child 终态，root 模型按真实输出评价。
 
 不采用直接让 root 取代实验 child，也不为此新增 child Workflow。新增 Workflow 虽能复用 WorkflowControl，但会另改现实验执行语义；普通 Agent 已有 continuation 与持久命令接缝，先用该最小路线证明。不得将 WorkflowControl 的 step_requirements 直接套给普通 Agent。
 
@@ -36,7 +36,7 @@
 - 增加一个受信 SSH process operation adapter，实现已有 `start(context, operation_id, inputs)` / `lookup(context, operation_id)` / `inspect(context, handle)` / `cancel(context, handle)`。它委托 ResourceService 原 lease 与持久 process custody；不建立第二运行状态表/调度器。需增加的 SSH 连接快照与远端原 process receipt 放现 lease/provider body。
 - child 治理 launch 工具从不可变 material config 取得显式资源引用和训练规格，模型仅提供声明允许的参数。以原 native tool call 身份确定 effect-slot，经 OperationCustody 持久化后才发 SSH。重复调用或未知回执只读原意图，不给新 UUID 重新提交。
 - 抽出既有进程“开始/原结果读取”最窄接口供 adapter 使用，保留原 `ProcessRuntimeService.run` 的现有行为；不放宽其 7 秒界限来维持长连接。远端运行不与 SSH 会话生命周期绑定。
-- SSH child 精确工具 registrations 为 launch adapter 与专用 wait adapter（例 `ssh-process-launch-v1@1`、`ssh-process-wait-v1@1`），wait factory 使用现 `factory_wait_operations`。通过 RuntimeRegistry.register 的 exact `bindings=(('tool', adapterId, revision), ...)` 同时绑定到唯一 `core-ssh-process` owner；配置指纹仍由不可变 bindings/custody 校验。其 hooks 提供 observe_waits 和 external_result。Research root 的 `research-wait-operations-v1` binding 和 research nativeComponent owner 保持不变，SSH hook 不接管父 root 的 delegated-child等待或研究finalizer。不用全局未限定 handler 抢占所有同名 wait。
+- SSH child 精确工具 registrations 为 launch adapter 与专用 wait adapter（例 `ssh-process-launch-v1@1`、`ssh-process-wait-v1@1`），wait factory 复制现 `factory_wait_operations` 的原生 Function，仅将 name 设为 `factory_wait_ssh_process`；不变更原 Function，不提供旧名兼容别名。通过 RuntimeRegistry.register 的 exact `bindings=(('tool', adapterId, revision), ...)` 同时绑定到唯一 `core-ssh-process` owner；配置指纹仍由不可变 bindings/custody 校验。其 hooks 提供 observe_waits 和 external_result。Research root 的 `research-wait-operations-v1` binding 和 research nativeComponent owner 保持不变，SSH hook 不接管父 root 的 delegated-child等待或研究finalizer。不用全局未限定 handler 抢占所有同名 wait。
 - 普通 Agent 的 external_result hook 必须核对原 requirement、owner/task/run、原 operation ID 集合与闭合证据，只返回这些 operation 的结果。调用方沿既有 registry.control 的精确 wait binding 选择 owner，模型不得用他人的 ID/伪结果继续原 run。
 - 现 lifecycle/RuntimeRegistry.observe_waits 只对匹配 SSH binding 的 child 自动收尾。命令 ID 由原 child/run/requirement/tool_call_id及原 requirement version 派生；先查询原 ControlCommands receipt，已有 PREPARED/DISPATCHING/已确认回执走原命令处理/只读恢复，不能重新读新 version 改ID重新提交。无记录才检查当前精确 requirement 并创建一次命令。继续原 NativeBridge，无新轮询器。approved 字段是既有工具结果提交协议，不新增逐轮人工审批或代替用户权限。UNKNOWN 不提交结果；continue 可能已发送但 ACK 丢失后必须核对原 queue/native metadata command proof，不重发、不新建 run。
 
@@ -60,7 +60,7 @@ ResourceService lease、准入、总额度与 PostgreSQL 记账始终留在 Fact
 
 ### 4a. Frozen first-slice protocol
 
-固定协议 `factory-ssh-process-v1`，operation adapter `ssh-process-operation-v1` revision `1`，空静态adapter配置的指纹沿现digest({})；每个operation实际target/config已包含在原inputs与lease，不能用此固定pin替代目标身份。工具adapter `ssh-process-launch-v1@1`（toolName `ssh_process_launch`）与 `ssh-process-wait-v1@1`（toolName `factory_wait_operations`）归唯一owner `core-ssh-process`。等待hooks签名 `SSHOperationWaits(store, custody, operation_pin, *, commands)`，由composition显式将两个exact tool bindings注册一次；commands显式注入现factory_api.commands，不经Store私有服务绕行。pin及tool binding常量由新增`ssh_process_contract.py`集中提供。它不负责新提交、选目标或研究finalizer，也不再装配第二cleanup链；现runtime_hooks已调用同store.workflow的task_held/cancel_task。
+固定协议 `factory-ssh-process-v1`，operation adapter `ssh-process-operation-v1` revision `1`，空静态adapter配置的指纹沿现digest({})；每个operation实际target/config已包含在原inputs与lease，不能用此固定pin替代目标身份。工具adapter `ssh-process-launch-v1@1`（toolName `ssh_process_launch`）与 `ssh-process-wait-v1@1`（toolName `factory_wait_ssh_process`）归唯一owner `core-ssh-process`。等待hooks签名 `SSHOperationWaits(store, custody, operation_pin, *, commands)`，由composition显式将两个exact tool bindings注册一次；commands显式注入现factory_api.commands，不经Store私有服务绕行。pin及tool binding常量由新增`ssh_process_contract.py`集中提供。它不负责新提交、选目标或研究finalizer，也不再装配第二cleanup链；现runtime_hooks已调用同store.workflow的task_held/cancel_task。
 
 应用/模型可见launch参数只含已声明训练参数；工具config固定 `{connectionName,profileId,profileSha256}`，targetRef由原actor/material/connection pin派生，首切片训练spec来自该目标上明确注册的不可变规格，不接受模型shell/host/key。launch调用原custody时inputs固定 `{targetRef,callId}`，callId仅来自Agno注入的原FunctionCall；step/slot固定为本child的SSH训练操作，context绑定原child/run，不同callId或输入重复调用必须冲突。operation handle.id为原operation UUID，不是SSH PID或远端URL。对lookup/inspect/cancel由原operation绑定找回唯一lease；无新allocate。
 
@@ -78,7 +78,7 @@ response固定 `{protocol, binding, observation}` 或固定安全错误code；ob
 
 实际 stdout/stderr、退出码、选定指标和明确文件清单从原运行目录取回，经现 artifact_write 与研究精选证据契约归档；完整原结果保持 owner 私有，团队仅按现 sourceContentIds/精选字段与附件授权读取。拒绝越根路径、symlink 替换、跨运行文件和尺寸越界；先确认完整归档，再允许独立的显式清理，不把 reclaim 等同删除用户代码/数据。科学负结果保留；进程成功不自动代表目标达成。
 
-明确新增窄公开应用读口（拟 `ApplicationRuns.ssh_results(owner, child_task_id, run_id, operation_id)`）：当前成员/owner检查，原task/run/plan绑定，原operation精确SSH adapter pin及其lease/remote job身份，原launch/wait材料bindings和停止证据全部核对后，返回带 `kind='ssh-process'` 的原receipt、选定材料引用、exit/status、已归档artifact引用及provenance。它只读，不启动/续跑/刷新授权。研究证据消费者按明确SSH类型分支调用，不把它送入 MemberToolOperation CLI解析；原tool_results唯一CLI检查、personal-tool DONE格式与本地路径完全保留。缺失原绑定/停止或尚未取回的文件明确未完成，不用模型输出冒充真实receipt。精选字段/文件仍由原研究evidence配置确认，不自动将整个SSH输出分享。
+明确新增窄公开应用读口（拟 `ApplicationRuns.ssh_results(owner, child_task_id, run_id)`）：当前成员/owner检查，原task/run/plan绑定，原operation精确SSH adapter pin及其lease/remote job身份，原launch/wait材料bindings和停止证据全部核对后，返回带 `kind='ssh-process'` 的原receipt、选定材料引用、exit/status、已归档artifact引用及provenance。它只读，不启动/续跑/刷新授权。研究证据消费者按明确SSH类型分支调用，不把它送入 MemberToolOperation CLI解析；原tool_results唯一CLI检查、personal-tool DONE格式与本地路径完全保留。缺失原绑定/停止或尚未取回的文件明确未完成，不用模型输出冒充真实receipt。精选字段/文件仍由原研究evidence配置确认，不自动将整个SSH输出分享。
 
 ### 4b. Operation adapter and archived result contract
 
@@ -95,7 +95,7 @@ The existing custody operation ID, resource lease ID and remote journal `provide
 
 FAILED/CANCELLED keep `output=null` as required by the existing runtime contract. For every positively stopped process, including failure/cancellation, archive bounded stdout/stderr bytes and a compact receipt through the existing task artifact store before returning terminal custody. Files are private owner artifacts, not automatic team publications. Receipt filename is `ssh-<operationId>-receipt.json`, log filename `ssh-<operationId>-output.log`. Exact artifact provenance fields are `kind="ssh-process"`, `operationId`, `leaseId`, `providerJobId`, `nativeRunId`, `planId`, `executionStatus`, `evidenceRole` (`receipt` or `output`), `verificationStatus="unverified"`; existing artifact-write provenance additions remain intact. Receipt JSON contains `schema=1`, `kind`, `operationId`, `taskId`, `runId`, `planId`, `leaseId`, `providerJobId`, `processBinding`, `executionStatus`, `exitCode`, `allStopped=true`, `stopEvidence`, and `outputState='artifact'` with the exact output artifact reference. Only an original `stopEvidence.kind='never-dispatched'` permits `outputState='never_dispatched', output=null`: a never-launched journal has no stdout file. Missing output after any dispatched process is still an archival error, not empty output. Archive idempotence checks original task artifacts under the existing task metadata lock; it does not introduce another execution state table. Network retrieval precedes that short transaction. Archive failure does not invent a terminal result or remove the remote original evidence.
 
-`ApplicationRuns.ssh_results(owner, child_task_id, run_id, operation_id)` reads these already archived artifacts plus original custody/lease and plan only; it never calls a provider or SSH transport. It checks the caller, original task/run/plan, exact operation pin, `executionGuard.operationId`, `processBinding`, positive stop and the exact archive provenance. It returns the original compact receipt, output artifact references and exact selected launch/wait material provenance. Both successful and stopped negative results are readable; absent archive is explicitly incomplete. It cannot substitute a model-written receipt or accept an artifact based solely on its filename. Runtime `output` is not the source of truth for failed/cancelled receipts. The personal-SSH-to-resource-target construction seam remains subject to the separate minimum integration review; it must reuse `PersonalSSHServers.server` and `lease`, not raw credentials or a second agent pool.
+`ApplicationRuns.ssh_results(owner, child_task_id, run_id)` reads these already archived artifacts plus original custody/lease and plan only; it never calls a provider or SSH transport. It checks the caller, original task/run/plan, exact operation pin, `executionGuard.operationId`, `processBinding`, positive stop and the exact archive provenance. It returns the original compact receipt, output artifact references and exact selected launch/wait material provenance. Both successful and stopped negative results are readable; absent archive is explicitly incomplete. It cannot substitute a model-written receipt or accept an artifact based solely on its filename. Runtime `output` is not the source of truth for failed/cancelled receipts. The personal-SSH-to-resource-target construction seam remains subject to the separate minimum integration review; it must reuse `PersonalSSHServers.server` and `lease`, not raw credentials or a second agent pool.
 
 ### 5. Validation and delivery
 
@@ -137,3 +137,14 @@ For the CPU SSH provider there is no remote capacity allocator or deletion effec
 ### Unified CPU release archival precondition
 
 `SSHProcessProvider` receives `archive_original(owner, lease_id)` from the original operation runtime. Every path about to return RECLAIMED, including direct reclaim and inspect after a prior release intent, awaits this callback first. Missing callback or archival error cannot release capacity; the original durable release intent remains held and later inspect may complete the same archival without another submit/cancel. This also governs the existing public ResourceService reclaim endpoint, not just maintenance. Archival's bounded raw-output read uses the output action, which never invokes this release callback, so no callback recursion or second ledger is introduced.
+
+### Read-port and wait-name integration decision
+
+The SSH wait name is `factory_wait_ssh_process`; Research root keeps its existing
+`factory_wait_operations`. Existing child tool/material/capability subset checks
+remain unchanged. The application result port takes only owner, original child
+task ID and run ID. Core reads that exact owned task/run's persisted custody rows
+and requires exactly one matching complete SSH operation pin before the existing
+lease/stop/archive checks. Zero or multiple matches are unavailable; the app does
+not supply operation identity or query core SQL. No generic operation-list API is
+added, and unrelated custody operations are not returned.

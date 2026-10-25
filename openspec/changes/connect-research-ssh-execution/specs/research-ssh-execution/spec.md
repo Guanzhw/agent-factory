@@ -66,3 +66,8 @@
 #### Scenario: One host through multiple connection aliases
 - **WHEN** two validated connections have the same final host key but different owner, reference, root or forwarded endpoint
 - **THEN** their providers share the same capacity namespace and fixed pool; exact per-operation configuration pins remain distinct, and a different host key has a different namespace
+
+#### Scenario: Distinct wait names and unique original result lookup
+- **WHEN** Research root delegates a child with the exact SSH launch/wait materials
+- **THEN** the child wait is named `factory_wait_ssh_process` while the root retains `factory_wait_operations`; existing child authority subset checks are unchanged
+- **AND** result lookup accepts only owner/child task/run and core requires one exact SSH custody operation; absent or ambiguous originals are rejected without dispatch or application SQL
