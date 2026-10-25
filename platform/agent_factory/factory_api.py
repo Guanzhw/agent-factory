@@ -212,7 +212,8 @@ class FactoryAPI:
                 status = "waiting_approval"
         plan = self.store.plan(task["plan_id"], task["owner_id"])
         application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
-        status = finalized_status(status, task["terminal"])
+        stopped_status = task["body"].get("stoppedStatus")
+        status = (stopped_status if task["terminal"] else "finalizing") if stopped_status else finalized_status(status, task["terminal"])
         model_binding = (plan.get("executionBindings") or {}).get("model", {})
         selected_model = next((event["data"] for event in reversed(events) if event["type"] == "model_binding_selected"), {})
         definition = {"id": application_ref["id"], "version": application_ref["version"], "name": plan["application"],
@@ -237,6 +238,8 @@ class FactoryAPI:
             "deploymentMode": "demo" if self.settings.demo else "production",
             "executionKind": execution_classification(plan)["executionKind"],
             "verificationStatus": "unverified", "evidenceKind": "unverified"}
+        if stopped_status:
+            job.update(executionStatus=stopped_status, finalizationPending=not task["terminal"])
         for requirement in native_requirements(snapshot):
             tool = requirement.get("tool_execution") or {}
             version = requirement_version(requirement)

@@ -185,6 +185,7 @@ class StoreToolBoundaryTests(unittest.TestCase):
         plan = {"id": "plan", "ownerId": "alice", "tools": ["custom_member_tool"]}
         context = SimpleNamespace(user_id="alice", session_id="task", run_id="native-run")
         store.resolve_run = Mock(return_value=plan)
+        store.task = Mock(return_value={"id": "task", "owner_id": "alice", "body": {}})
         store.plan_policy = SimpleNamespace(require_execution=Mock())
         guard = Mock()
         store.execution_guards = {"current-resource": guard}

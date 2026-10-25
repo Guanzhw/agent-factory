@@ -313,7 +313,8 @@ class Store:
                         {"id": candidate["id"]}).mappings())
                     descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
                     custody_held = runtime_custody_held(self, candidate["id"])
-                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not custody_held:
+                    completion_owned = self.completion_context(self.task(candidate["id"])) is not None
+                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not custody_held and not completion_owned:
                         conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
                         if self.storage is not None:
                             self.storage.release(candidate["id"])
@@ -394,6 +395,7 @@ class Store:
         where = "AND (t.body->>'createdAt',t.id)<(:created,:after)" if boundary else ""
         rows = self.sql(f"""SELECT t.id,t.owner_id,t.plan_id,t.admission,t.terminal,t.body->>'createdAt' AS created,
             t.body->>'updatedAt' AS updated,t.body->>'observedAt' AS observed,t.body->>'lastStatus' AS status,
+            t.body->>'stoppedStatus' AS stopped_status,
             p.body->>'application' AS application,p.body->'applicationRef' AS application_ref,
             p.body->>'normalizedGoal' AS topic,p.body->>'mode' AS mode
             FROM af_tasks t JOIN af_plans p ON p.id=t.plan_id AND p.owner_id=t.owner_id
@@ -408,11 +410,13 @@ class Store:
                 status = "failed"
             elif row["admission"] in {"reserved", "unknown"}:
                 status = "unknown"
-            status = finalized_status(status, row["terminal"])
+            status = (row["stopped_status"] if row["terminal"] else "finalizing") if row["stopped_status"] else finalized_status(status, row["terminal"])
             items.append({"id": row["id"], "ownerId": row["owner_id"], "planId": row["plan_id"],
                 "definitionId": ref["id"], "definitionVersion": ref["version"],
                 "input": {"topic": row["topic"], "mode": row["mode"], "scenario": "normal"},
                 "status": status, "createdAt": row["created"], "updatedAt": row["updated"], "observedAt": row["observed"]})
+            if row['stopped_status']:
+                items[-1].update(executionStatus=row['stopped_status'], finalizationPending=not row['terminal'])
         next_cursor = None
         if len(rows) > limit:
             last = rows[limit - 1]
@@ -435,8 +439,21 @@ class Store:
         self.sql("UPDATE af_tasks SET admission='unknown' WHERE id=:id AND run_id IS NULL", id=task_id)
         self.event(task_id, "admission_unknown", "Native acknowledgement missing; reconcile before retry", {})
 
+    def completion_context(self, task):
+        registry = getattr(self, 'application_runtime', None)
+        if registry is None:
+            return None
+        if self.delegation is not None:
+            links = self.sql('SELECT root_id FROM af_delegation_links WHERE child_id=:id', id=task['id'])
+            if links:
+                task = self.task(links[0]['root_id'], task['owner_id'])
+        return registry.finalization_context(task)
+
     def admission_failed(self, task_id, message):
-        self.sql("UPDATE af_tasks SET admission='rejected',terminal=(run_id IS NULL) WHERE id=:id", id=task_id)
+        task = self.task(task_id)
+        complete_here = self.completion_context(task) is None
+        self.sql("UPDATE af_tasks SET admission='rejected',terminal=(run_id IS NULL AND :complete) WHERE id=:id",
+                 id=task_id, complete=complete_here)
         self.event(task_id, "admission_rejected", message, {})
 
     def bind_run(self, ctx):
@@ -479,6 +496,10 @@ class Store:
             self.tool_independent_execution_guards.pop(name, None)
 
     def require_plan_execution(self, owner, plan, *, run_context=None, scientific_child_id=None, tool_name=None):
+        if run_context is not None:
+            task = self.task(run_context.session_id, owner)
+            if task['body'].get('stoppedStatus') is not None:
+                raise HTTPException(409, 'NATIVE_EXECUTION_STOPPED: original run cannot start new work')
         if self.plan_policy is not None:
             self.plan_policy.require_execution(owner, plan, run_context=run_context,
                 **({'scientific_child_id': scientific_child_id} if scientific_child_id is not None else {}))
@@ -513,6 +534,15 @@ class Store:
 
     def failure_cleanup_requested(self, task_id):
         return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
+
+    def observe_stopped(self, task, status):
+        with self.transaction():
+            current = self.sql("SELECT * FROM af_tasks WHERE id=:id FOR UPDATE", id=task['id'])[0]
+            status = current['body'].get('stoppedStatus', status)
+            body = {**current['body'], 'stoppedStatus': status}
+            self.sql("UPDATE af_tasks SET body=CAST(:body AS JSONB) WHERE id=:id", id=task['id'], body=canonical(body))
+            self._summary_locked({**current, 'body': body}, status)
+        return status
 
     def observed(self, task, status, terminal):
         # Process reservation takes this same task row lock before inserting its

@@ -83,6 +83,11 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'owned_native_finalization': (
+        'test_owned_native_finalization_postgres.OwnedNativeFinalizationPostgresTests.test_unknown_usage_retains_holds_then_original_evidence_finishes_once_after_reopen',
+        'test_owned_native_finalization_postgres.OwnedNativeFinalizationPostgresTests.test_two_observers_and_reserve_share_commit_without_duplicate_outbox',
+        'test_owned_native_finalization_queue_postgres.OwnedNativeFinalizationQueuePostgresTests.test_native_completion_callback_rollback_then_restart_finishes_original_once',
+    ),
     'bounded_assistant_admission': (
         'test_assistant_budget_request_postgres.AssistantBudgetRequestPostgresTests.test_public_handoff_wins_reservation_but_inherits_original_budget',
         'test_assistant_budget_request_postgres.AssistantBudgetRequestPostgresTests.test_bound_plan_cannot_start_with_an_unbudgeted_new_request_key',
