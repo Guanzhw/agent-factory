@@ -42,6 +42,10 @@
 
 当前进入文档规划阶段。分层规划见 [交付规划](docs/plans/research-platform-delivery-plan.md)，实际源码核对见 [底座差距分析](docs/plans/research-platform-core-gap-analysis.md)。
 
+## 实施前验收与独立审查
+
+2026-10-25 09:34–09:35 UTC，用户要求先确定最终验收测试、行为和标准，再开始实施；每个 PR 合入前须由作者之外的审查者检查完整 diff，特别识别过早通用化、无依据兜底、过度防御及无谓注释。具体判据与精确 base/head 审查门槛见[最终验收契约](docs/plans/research-platform-acceptance-contract.md)。契约当前待用户确认，尚未执行。
+
 ## OpenResearch 参考范围
 
 用户要求参考 OpenResearch 的研究记录做法，并委托我们在整场问答结束后，根据需求适配性和与平台接入的成本、便利程度，判断复用或照搬程度。我们在只读评估后选择不整体照搬或 fork OR 应用，也不抽取其 Rust executor 为 core 库；优先评估现有 Factory 远程执行能力。OR 隔离执行适配器仅为有验证门槛的候选，不作为主链依赖。具体依据和采用门槛见交付规划。
