@@ -20,7 +20,7 @@
 
 项目新增nullable `research_assistant_id`，HTTP为`researchAssistantId`，必须指向当前owner的稳定研究助手。旧`assistantId`/assistant_id仍为历史endpoint，不重解释、不覆写或根据字符串猜测迁移；旧行新列为null。新项目显式选择或通过owner助手发起时关联新字段，不要求先有task。每项目round endpoint继续内部持有，不作为助手目录中的个人身份。
 
-配置修改采用expectedRevision CAS。每次显式新预算配置可创建替代QA endpoint并更新稳定assistant指向，旧endpoint停止接收新请求；原任务、旧scope和原消息/收据保持原身份，不迁移或自动重新准入。预算用尽/到期后报告不可用，等待owner重新配置；不存在隐式续费或无限scope。
+配置修改采用expectedRevision CAS；新scope、endpoint、旧endpoint停用、不可变配置行与current指针在同一Store事务中完成，锁序admission→应用namespace→endpoint namespace→usage；失败整体回滚，不留有效孤立配置。每次显式新预算配置可创建替代QA endpoint并更新稳定assistant指向，旧endpoint停止接收新请求；原任务、旧scope和原消息/收据保持原身份，不迁移或自动重新准入。预算用尽/到期后报告不可用，等待owner重新配置；不存在隐式续费或无限scope。
 
 ### Fixed QA component and setup
 
@@ -61,7 +61,7 @@ core原消息read返回`reply:null`、`{state:'available',text,contentIds,create
 | POST `/assistants/{id}/questions` | `{requestId,text}`，原core文本限制 | 解析当前QA endpoint并用当前sender调用core send，返回原message投影；不可调用他人私有原task |
 | GET `/assistant-questions/{messageId}` | none | 直接投影core双方read，包括delivery和reply，不另设应用ACL |
 
-项目create的`researchAssistantId`为可选新字段，read保留旧assistantId与新字段。未配置/到期/撤权使用可解释的blocked状态与core安全code，不抛provider正文；发送UNKNOWN保留原message/request，只读/同ID恢复，不新建问题。QA问题不自动变团队研究记录。前端在已确认视觉方案中使用助手入口、显式setup/configuration、私有问答与来源状态，未配置时引导现有资源入口。
+项目create的`researchAssistantId`为可选新字段，read保留旧assistantId与新字段。未配置/到期/撤权使用可解释的blocked状态与core安全code，不抛provider正文；提问先以sender/requestId查core原request收据；存在时核对正文一致且原endpoint属于目标稳定助手的不可变历史配置，返回原message。只有明确原request不存在才解析当前endpoint并发送；其他assistant/异正文冲突，其他错误原样传播。发送UNKNOWN保留原message/request，只读/同ID恢复，不新建问题。QA问题不自动变团队研究记录。前端在已确认视觉方案中使用助手入口、显式setup/configuration、私有问答与来源状态，未配置时引导现有资源入口。
 
 ### Remaining P7 value path
 

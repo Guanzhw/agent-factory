@@ -75,3 +75,12 @@ P7后续交付 SHALL 包含少数相关记录的主动关联及来源对实际�
 #### Scenario: Relevant and irrelevant research events
 - **WHEN** 后续关联单元处理有关/无关/过时/无权记录与重复事件
 - **THEN** 仅按明确相关规则及当前权限选择有界接收者，保留来源与采用/拒绝理由和实际action；无全员广播、无覆盖他人、无消息数替代价值判据
+
+
+#### Scenario: Lost question acknowledgement followed by configuration replacement
+- **WHEN** sender的原问题回执丢失，recipient已更换QA配置，sender以同requestId和正文重试
+- **THEN** 先读取原request并核对历史endpoint归属，返回原message/task/allocation，零新派发；换assistant或改正文明确冲突，非not-found错误不被吞掉
+
+#### Scenario: Configuration transaction fails
+- **WHEN** 新scope/endpoint创建或旧endpoint停用后配置事务失败
+- **THEN** scope、endpoint启用状态、配置revision与current指针整体回滚，不留下有效孤立资源或部分配置
