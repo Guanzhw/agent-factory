@@ -1,8 +1,10 @@
 # Real loopback SSH process mechanism
 
 2026-10-25. CPU-only, synthetic commands; no model, GPU, external server or
-production deployment was used. Test added on parent
-`528fac92609e902544a5d96725e3e2c227a9969c`; this record and the test are the only
+production deployment was used. Documentation started at
+`528fac92609e902544a5d96725e3e2c227a9969c`; concurrent integration advanced the
+actual test commit's parent to `d3d901f33d98af7250ca4195c1acb35966b5b875`.
+This record and the test are the only
 files in this verification change. Other workers' product changes were present
 in the shared checkout: the result is a mechanism check, not exact-commit full
 integration acceptance. Independent review is pending.
