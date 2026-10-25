@@ -1932,3 +1932,20 @@ P5后续自主工作流仍需最小core完成/child契约，先设计精简评�
 正式C/D运行前最少冻结：真实参考研究任务、可用数据与评价/停止条件（验证自主决策及复现）；正式模型/版本与调用或费用预算（配置走安全资源入口，不索取明文秘密）；GPU/部署目标及既有访问方式、可用资源与暴露范围（验证真实执行/断线/恢复）；随机容差、样本量、代表性并发负载及通过线（运行前固定，结果不能反调标准）。若验收生产登录，还需实际身份来源/既有配置；demo浏览器不能替代。缺项仅使对应C/D BLOCKED/NOTRUN。
 
 原日常Python354项中MCP慢DELETE chunk-count失败继续保留；一次串行观察通过不构成根因关闭。未提高期限或删断言；正在审查其调度依赖与流期限契约的独立覆盖。后续设计草案暂存/tmp/af-research-next-evidence/p5-future-design-review.md，不将未审查方案混入已发布首轮切片。
+
+### 12:45 并行实施与独立验收
+
+root保留API/生命周期/装配集成，重型PG串行。后续有效状态如下；早期记录保留为历史。
+
+| 单元 | owner / 审查 | 当前状态 / 依赖 | 证据与剩余 |
+| --- | --- | --- | --- |
+| P3事件预算 #109 | root集成，foundation_review | 合并d910036；exactfast40190394396成功，main40194023888成功 | full40191804720 GitHub成功，但取得job日志未含PG最终summary，不能据此报完整通过数量；artifact访问被自动审批拒绝，不重试绕过 |
+| P5首root #110 | research_app_spec，pr104_independent_review | 合并68df966；exactfast40190421387成功，main40194166699待终态 | retarget完整diff逐字节相同独立复审；不是自主多轮 |
+| 原生完成事务 #111 | root，foundation_review | Draft f25c899；fast40191848338成功；full40193918455运行 | 新真实nativequeue/重启通过；本地daily PG59/61，两MCP第二任务超时保留 |
+| P6开始记录 #112 | assistant_endpoints，foundation_review | Draft b0ae625，依赖111；首CI类型检查失败修复中 | 9便携/2PG通过；只共享pending_admission快照，未终态 |
+| 通用登录回跳 #113 | root，pr104_independent_review | Draft33514f2，依赖111；fast40193966514成功 | 真Chromium四旅程，实际core API/空PG，demo及本地合成OIDC；不是外部IdP |
+| MCP重复授权收敛 | assistant_messages，foundation_review，root装配 | 本地fccc7b7，待发布/CI | 36便携+原两PG各一次通过；每callback SQL63→36/149→95，无跨callback缓存、不放宽期限；历史长尾全部因果未闭合 |
+| 原child操作桥接 | research_app_spec，root生命周期 | 独立worktree spec6ce1e89后实现，待review | 真实child+撤权+原wait硬重启验证，首fixture失败保留 |
+| UI方案2原型 | research_frontend，pr104_independent_review | spec126b9cf，独立demo实现中；正式UI合并等用户体验确认 | 已下载实际看图；平台catalog→research→project→返回平台复用导航；synthetic数据，不启动模型/GPU |
+
+P7定向经验问答/主动关联、P8可复现成果包、完整自主多轮仍未完成，不因C/D缺项全部停工。正式模型、任务、数据/指标、预算、硬件/部署目标与负载容差仍须正式运行前冻结；真实C/D未执行。无新公开部署、付费调用或凭据grant。

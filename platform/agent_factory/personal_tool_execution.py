@@ -12,7 +12,7 @@ from dataclasses import asdict, replace
 from agno.exceptions import RunCancelledException, StopAgentRun
 from agno.tools.function import Function, FunctionCall
 
-from .execution_bindings import AdapterRegistration, BindingContext
+from .execution_bindings import AdapterRegistration, BindingContext, ExecutionBindings
 from .input_schema import bounded_json
 from .personal_remote_provider import SecretLease, reject_credential_echo
 from .personal_tool_contract import PersonalToolAdapter, ToolInvocation, ToolInvocationError, validate_tool_arguments
@@ -87,9 +87,12 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
                             or handle.adapter is not adapter or handle.service is not service
                             or handle.requesting_actor != expected[0] or digest(asdict(adapter.descriptor)) != fingerprint):
                         raise PermissionError()
-                    store.require_plan_execution(expected[0], binding.plan, run_context=run_context)
-                    store.execution_bindings.recheck(binding.plan, run_context)
-                    store.authorize_tool(run_context, descriptor.tool_name)
+                    guard = ExecutionBindings.require_execution.__get__(store.execution_bindings)
+                    if store.execution_guards.get('execution-bindings') != guard:
+                        raise PermissionError()
+                    plan = store.authorize_tool(run_context, descriptor.tool_name)
+                    if (plan['id'], plan['ownerId']) != (binding.plan['id'], expected[0]):
+                        raise PermissionError()
                     handle.check_authorized()
                 except RunCancelledException:
                     raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
