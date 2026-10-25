@@ -44,7 +44,7 @@ def helper_main():
         stage = 'VERIFY_FIXTURE_DIRECTORY'
         w.verify(folder)
         stage = 'EXACT_PROMPT'
-        if len(sys.argv) != 2 or sys.argv[1] != f'Enter passphrase for "{key_path}": ':
+        if len(sys.argv) != 2 or sys.argv[1] != 'Enter passphrase: ':
             save(folder, 'helper-status', {'stage': stage, 'errorCode': 'PROMPT_MISMATCH'})
             return 1
         if os.environ.get('SSH_ASKPASS_PROMPT') in ('confirm', 'none'):

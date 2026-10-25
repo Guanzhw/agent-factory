@@ -157,7 +157,7 @@ def connect(pipe, deadline):
 def wait_io(pipe, overlapped, deadline):
     milliseconds = max(0, int((deadline - time.monotonic()) * 1000))
     if win32event.WaitForSingleObject(overlapped.hEvent, milliseconds) != win32con.WAIT_OBJECT_0:
-        win32file.CancelIoEx(pipe, overlapped)
+        win32file.CancelIo(pipe)
         if win32event.WaitForSingleObject(overlapped.hEvent, 3000) != win32con.WAIT_OBJECT_0:
             raise TimeoutError('PIPE_CANCEL_INCOMPLETE')
         raise TimeoutError('PIPE_DEADLINE')
