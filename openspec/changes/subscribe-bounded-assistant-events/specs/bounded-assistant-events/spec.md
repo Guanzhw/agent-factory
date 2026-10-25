@@ -82,3 +82,8 @@
 #### Scenario: 改请求键或改远端目标复用受限计划
 - **WHEN** 用户使用预算化原plan的新requestId，或省略内部参数将原请求送到远端root入口
 - **THEN** 明确拒绝且零新的native或remote prepare/dispatch，不使接收端绕过本地scope
+
+#### Scenario: 双端点原生队列循环在接收者边界终止
+- **WHEN** 两个成员端点收到事件后经真实 native queue 完成执行，原任务完成回调携带原 delivery lineage 向对方发出下一事件
+- **THEN** 接收者 scope 耗尽或配置 depth 达界时，下一次准入被明确拒绝，已完成任务与 allocation 不被替换或重复扣减；继续有界扫描仍无新增任务，原队列任务均达到终态
+- **AND** 合成模型仅证明协议、队列与预算边界，不代表真实模型团队价值验收
