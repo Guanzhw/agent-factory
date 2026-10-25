@@ -20,10 +20,12 @@
 - [ ] 2.2 实现实验/运行引用及native研究组件，模型读取实际输出后选择继续/结束；确定性边界测试验证已达标不做无用轮次、负结果/后端失败不伪报达标，文档标明不是C01真实自主通过。
 - [ ] 2.3 实现在途目标v1/v2规则、父子取消及停止投影；A03/A07真实进程/PG故障测试证明不换原身份、不重置预算、不以取消响应代停止，保留首次失败证据。
 - [ ] 2.4 对接选定Factory远端后端并记录运行/指标/产物来源；本地实际协议验证与D01真实GPU状态分别报告。作者之外精简review P5完整diff，整改复审。
-- [ ] 2.5 先由core独立spec定义通用delegated-operation adapter，再验证原operation→parent/child绑定、lookup不重派、撤权后原custody清理与child子树停止；复用已注入RunContext及OperationCustody.start，不新增public context服务容器。
-- [ ] 2.6 实现受控Workflow的无工具模型决策、治理函数、原child等待和实际结果判断；真实native暂停/重启/reconcile轨迹证明同一原requirement，模型确实收到工具结果，不以固定脚本计C01通过。
-- [ ] 2.7 按PR111唯一finalization_context(conn,task)→yield callback及register(finalizes=True)接入研究记录/P3后继；PG验证HELD回滚、真实用量后原tick完成、一个事件/端点一个原task，不恢复旧通知表或直接start。
-- [ ] 2.8 独立精简review后续完整diff与spec，记录工具/模型实际轨迹和未验收C/D；QA零GPU、目标变更/结束、事件lineage及原项目预算累计通过后才解除对应后端门槛，UI仍待设计确认。
+- [ ] 2.5 集成已独立review的core delegated-operation固定pin（f953118及整改最终head），不复制源码；按原operation/child/native wait验收证明唯一身份、撤权cleanup、root预算继承；未合入依赖明确stacked。
+- [ ] 2.6 先完成独立设计review并由core spec提供按原task读取delivery绑定/拒绝code的窄port；解决P3深度20与已确认round承诺不一致，验证预算约束的长链、TTL和无reset lineage；未解决时明确preflight阻塞，不能暗限科研轮数。
+- [ ] 2.7 应用静态装配固定research Workflow及精确pin owner；补最小round/实验/attempt关联的非破坏迁移，保留首切片任意app原记录；未确认、伪造content通知、无原intent/delivery均在child之前拒绝。未绑定pin失败root不能永久卡finalization。
+- [ ] 2.8 实现context→tool-free decide→顶层治理Function stop=True/child→原wait→实际输出evaluate→持久决定；不增加Agent工具权限/provider while；真实native重启轨迹、不同结果分支、已达标零child及累计预算验证通过，合成结果不计C01。
+- [ ] 2.9 用唯一finalization_context完成领域终态/精选content/至多一个自定向后继；PG屏障验证HELD/异常回滚与原tick恢复、唯一event/allocation/task，撤权时记录原终态但不发布/续跑，期限/额度耗尽明确无后继，P3拒绝显示原reason不重新派发。
+- [ ] 2.10 独立精简review上述完整base/head diff及spec，保留首次失败；A01/A03/A04/A06/A07及原核心受影响回归通过后再集成。记录P7 QA和P8成果接点、不展开其实现；真实C/D和UI门槛仍独立。
 
 ## 3. P6 自动记录与证据共享
 
