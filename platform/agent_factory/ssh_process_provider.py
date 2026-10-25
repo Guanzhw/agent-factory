@@ -37,7 +37,11 @@ class SSHProcessTransport:
         def fresh():
             lease.validate()
             if before_effect is not None:
-                before_effect()
+                result = before_effect()
+                if isawaitable(result):
+                    if iscoroutine(result):
+                        result.close()
+                    raise TypeError('SSH_PROCESS_SYNC_AUTHORITY_REQUIRED')
 
         command = shlex.quote(self.interpreter) + ' -I -B -m agent_factory.ssh_process_helper'
         with TemporaryDirectory(prefix='af-ssh-process-') as folder:
