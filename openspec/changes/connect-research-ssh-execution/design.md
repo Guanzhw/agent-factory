@@ -148,3 +148,9 @@ and requires exactly one matching complete SSH operation pin before the existing
 lease/stop/archive checks. Zero or multiple matches are unavailable; the app does
 not supply operation identity or query core SQL. No generic operation-list API is
 added, and unrelated custody operations are not returned.
+
+### Original child lookup and bounded private observation
+
+`ApplicationRuns.delegated_child(owner, parentOperationId)` reads the current member's original custody, requires the complete delegated-operation pin and exact parent identity, then the unique `operation:<id>` delegation link. It returns only child `taskId`, `runId`, `planId`; absent/unbound child returns null. Ambiguous or inconsistent binding rejects with `APPLICATION_DELEGATED_CHILD_MISMATCH` (409), while current-member/ownership errors remain 403/404. Failed/cancelled observations remain readable. No observer, admission or recovery runs.
+
+`ssh_results(owner, childTaskId, runId)` additionally returns private `output: {text, truncated, artifact}` after original artifact integrity/provenance checks, decoding only the first 16384 bytes with UTF-8 replacement. Never-dispatched output is null. This is untrusted execution data, not instructions or permission to publish. `SSHOperationWaits(..., commands=..., runs=ApplicationRuns)` supplies this checked status/exit/output to the original SSH requirement; it requires the same unique SSH operation, does not poll here, and reuses original command version/receipt recovery. At most one operation output enters a result, bounding payload independently of model behavior.

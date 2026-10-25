@@ -78,3 +78,15 @@
 - **AND** only non-truncated stdout of at most 16 KiB containing one strict JSON object is eligible for selected-field artifacts; unselected output and raw log artifacts are never automatically shared
 - **AND** absent child/output, truncated output, invalid JSON or invalid role values yield explicit missingEvidence while preserving original execution status, exit code and provenance; none is guessed or replaced with model text
 - **AND** omitted evidence kind remains the existing CLI contract, with its original tool_results checks unchanged
+
+### Requirement: Private bounded original execution results
+Core SHALL expose a read-only original delegated-child lookup and bounded private SSH output without relying on successful child output or application SQL.
+
+#### Scenario: Failed child remains attributable
+- **WHEN** an owned original delegated operation failed or was cancelled
+- **THEN** its unique original delegation link identifies only the same owned child task/plan/run; absent or unbound child returns null and inconsistent identity rejects without creating or observing work
+
+#### Scenario: Native child consumes archived output
+- **WHEN** the original SSH wait is completed through its versioned command
+- **THEN** its same child receives the validated execution status, exit code and at most 16384 original output bytes decoded as UTF-8 with replacement, with explicit truncation and original artifact reference
+- **AND** output remains untrusted private data; never-dispatched output is null, foreign evidence rejects, and receipt replay does not request a fresh model execution
