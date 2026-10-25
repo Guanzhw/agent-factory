@@ -1,0 +1,43 @@
+/workspace/agent-factory-ssh-research-plan/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+test_setup_to_original_ssh_child_and_selected_team_evidence (test_research_ssh_native_postgres.ResearchSSHNativePostgresTests.test_setup_to_original_ssh_child_and_selected_team_evidence) ... WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-4b64261b, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-4db83b76 poll=0.2s
+INFO    Workflow queued: research-round run=cf9790d2-61b2-41a3-ab7d-9f6695c4ca26
+INFO    Agent queued: factory-executor run=a908d1c8-fc3e-4cda-bc3d-53bf4b18fb35
+ERROR   Non-retryable model provider error: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Error in Agent run: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Non-retryable model provider error: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Error in Agent run: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Non-retryable model provider error: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Error in Agent run: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Workflow execution failed
+Traceback (most recent call last):
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/agno/workflow/workflow.py", line 9507, in _acontinue_execute
+    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/agno/workflow/workflow.py", line 258, in _check_failed_step
+    raise RuntimeError(output.error or f"Step {output.step_name} reported failure")
+RuntimeError: PERSONAL_MODEL_REQUEST_FAILED
+FAIL
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+
+======================================================================
+FAIL: test_setup_to_original_ssh_child_and_selected_team_evidence (test_research_ssh_native_postgres.ResearchSSHNativePostgresTests.test_setup_to_original_ssh_child_and_selected_team_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-ssh-research-plan/applications/tests/test_research_ssh_native_postgres.py", line 152, in test_setup_to_original_ssh_child_and_selected_team_evidence
+    base.until(base.started.exists, 'actual helper training start')
+  File "/workspace/agent-factory-ssh-research-plan/platform/tests/test_ssh_native_postgres.py", line 218, in until
+    self.fail('Timed out: ' + label)
+AssertionError: Timed out: actual helper training start
+
+----------------------------------------------------------------------
+Ran 1 test in 35.567s
+
+FAILED (failures=1)

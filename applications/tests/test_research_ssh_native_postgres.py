@@ -76,7 +76,7 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
         names = {tool['function']['name'] for tool in body.get('tools', [])}
         self.model_calls.append(sorted(names))
         if LAUNCH_TOOL in names:
-            result = ssh_native.SSHSequenceModel().response(messages)
+            result = ssh_native.SSHSequenceModel({'sample': 1}, []).response(messages)
             if result.tool_calls and result.tool_calls[0]['function']['name'] == LAUNCH_TOOL:
                 result.tool_calls[0]['function']['arguments'] = json.dumps({'inputs': {'sample': 1}})
             waits = [message for message in messages if message.role == 'tool' and message.tool_name == WAIT_TOOL]
