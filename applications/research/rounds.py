@@ -40,6 +40,8 @@ class ResearchRounds:
             UniqueConstraint('owner_id', 'factory_request'))
         metadata.create_all(self.db.store.engine)
         self._migrate_attempts()
+        from .evidence import ResearchEvidence
+        self.evidence = ResearchEvidence(legacy_runs)
 
     def _migrate_attempts(self):
         # These two old one-root constraints are application schema, not core state.
@@ -298,7 +300,7 @@ class ResearchRounds:
             conn.execute(self.legacy.attempts.update().where(self.legacy.attempts.c.id == attempt['id']).values(operation_id=operation['id']))
         return operation
 
-    def results(self, run_context):
+    def results(self, run_context, application_context=None):
         with self._write() as conn:
             row = self._bound(conn, run_context)
             self._require_peer_sources(row['owner_id'], row['id'])
@@ -307,6 +309,7 @@ class ResearchRounds:
             if operation['taskId'] != row['task_id'] or operation['nativeRunId'] != run_context.run_id or not operation['closed']:
                 reject('RESEARCH_ORIGINAL_RESULT_REQUIRED', '原操作尚未确认结束')
             agreement = self._goal(conn, row['project_id'], row['goal_version'])
+            self.evidence.capture(conn, row['owner_id'], attempt, operation, agreement.evidence, application_context)
             peers = self.associations.round_inputs(row['owner_id'], row['id']) if self.associations else []
             return {'agreement': agreement.model_dump(exclude={'execution', 'resourceRefs'}),
                 'evidenceIds': sorted({operation['id']} | {source['id'] for item in peers for source in item['sources']}), 'peerEvidence': peers,
@@ -450,11 +453,14 @@ class ResearchRounds:
                     operation = self.custody.read(task['owner_id'], attempt['operation_id'])
                     evidence['operation'] = {'id': operation['id'], 'state': operation['observation']['state'],
                                              'allStopped': operation['closed']}
+            selection = attempt['selection'] if attempt and attempt['selection'] else {
+                'items': [], 'artifacts': [], 'missingEvidence': ['evidence_not_collected'], 'provenance': None}
             content_id = self._publish(task['owner_id'], row['id'], 'terminal', {
                 'kind': 'research.round.terminal', 'projectId': row['project_id'], 'goalVersion': row['goal_version'],
                 'roundId': row['id'], 'taskId': task['id'], 'decision': row['decision'],
-                'runtime': group, 'experiment': evidence,
-                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'})
+                'runtime': group, 'experiment': evidence, 'selectedEvidence': selection,
+                'agreement': agreement.model_dump(include={'objective', 'evaluation', 'stopConditions'}),
+                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'}, artifacts=selection['artifacts'])
             if row['decision'] and row['decision']['action'] == 'continue':
                 reason = ('RESEARCH_PROJECT_ENDED' if project['state'] == 'ended' else
                           'RESEARCH_GOAL_VERSION_CONFLICT' if project['state'] != 'ready' or project['goal_version'] != row['goal_version']
